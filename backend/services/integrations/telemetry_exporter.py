@@ -13,6 +13,8 @@ from uuid import uuid4
 from backend import config
 from backend.db.repositories.base import TelemetryQueueRepository
 from backend.models import (
+    ArtifactOutcomePayload,
+    ArtifactVersionOutcomePayload,
     ExecutionOutcomePayload,
     PushNowResponse,
     TelemetryExportSettings,
@@ -111,6 +113,7 @@ class TelemetryExportCoordinator:
     async def _run_locked(self, *, trigger: str) -> TelemetryExportOutcome:
         started = time.monotonic()
         settings = self.settings()
+        runtime_metadata = self._runtime_metadata(trigger=trigger)
         observability.set_telemetry_export_disabled(not self._effective_enabled(settings))
         if not self.runtime_config.configured:
             return TelemetryExportOutcome(
@@ -140,7 +143,10 @@ class TelemetryExportCoordinator:
         batch = await self.repository.fetch_pending_batch(self.runtime_config.batch_size)
         if not batch:
             duration_ms = int((time.monotonic() - started) * 1000)
-            await self._record_queue_depth_metrics(project_slug="all-projects")
+            await self._record_queue_depth_metrics(
+                project_slug="all-projects",
+                runtime_metadata=runtime_metadata,
+            )
             return TelemetryExportOutcome(success=True, outcome="idle", batch_size=0, duration_ms=duration_ms)
 
         run_id = str(uuid4())
@@ -152,9 +158,19 @@ class TelemetryExportCoordinator:
             "ccdash.telemetry.project_slug": project_slug,
             "ccdash.telemetry.sam_endpoint_host": self._mask_endpoint(self.runtime_config.sam_endpoint),
         }
-        span_context = observability.start_span("telemetry.export.batch", attributes)
+        span_context = observability.start_span(
+            "telemetry.export.batch",
+            attributes,
+            runtime_metadata=runtime_metadata,
+        )
         with span_context if span_context is not None else nullcontext(None) as span:
-            outcome = await self._push_batch(batch, trigger=trigger, run_id=run_id, started=started)
+            outcome = await self._push_batch(
+                batch,
+                trigger=trigger,
+                run_id=run_id,
+                started=started,
+                runtime_metadata=runtime_metadata,
+            )
             if span is not None:
                 span.set_attribute("ccdash.telemetry.outcome", self._span_outcome(outcome.outcome))
         await self._purge_old_synced_rows()
@@ -167,15 +183,88 @@ class TelemetryExportCoordinator:
         trigger: str,
         run_id: str,
         started: float,
+        runtime_metadata: dict[str, str],
     ) -> TelemetryExportOutcome:
-        events = [
+        # Separate rows by event_type for polymorphic dispatch.
+        execution_rows: list[dict[str, Any]] = []
+        artifact_rows: list[dict[str, Any]] = []
+        artifact_version_rows: list[dict[str, Any]] = []
+        skipped_artifact_ids: list[str] = []
+
+        artifact_telemetry_enabled = self.runtime_config.artifact_telemetry_enabled
+        for row in batch:
+            et = str(row.get("event_type") or "execution_outcome")
+            if et == "artifact_outcome":
+                if artifact_telemetry_enabled:
+                    artifact_rows.append(row)
+                else:
+                    # Feature-flagged off: leave pending (do not fail or abandon).
+                    qid = str(row.get("id") or "").strip()
+                    if qid:
+                        skipped_artifact_ids.append(qid)
+            elif et == "artifact_version_outcome":
+                if artifact_telemetry_enabled:
+                    artifact_version_rows.append(row)
+                else:
+                    qid = str(row.get("id") or "").strip()
+                    if qid:
+                        skipped_artifact_ids.append(qid)
+            else:
+                execution_rows.append(row)
+
+        if skipped_artifact_ids:
+            logger.debug(
+                "Artifact telemetry disabled; skipping %d artifact rows in this batch",
+                len(skipped_artifact_ids),
+            )
+
+        # Build a synthetic batch composed only of rows we will actually push.
+        active_batch = execution_rows + artifact_rows + artifact_version_rows
+
+        # Parse each sub-batch into typed models.
+        execution_events = [
             ExecutionOutcomePayload.model_validate(row.get("payload_json") or {})
-            for row in batch
+            for row in execution_rows
         ]
-        queue_ids = [str(row.get("id") or "") for row in batch if str(row.get("id") or "").strip()]
+        artifact_events = [
+            ArtifactOutcomePayload.model_validate(row.get("payload_json") or {})
+            for row in artifact_rows
+        ]
+        artifact_version_events = [
+            ArtifactVersionOutcomePayload.model_validate(row.get("payload_json") or {})
+            for row in artifact_version_rows
+        ]
+
+        queue_ids = [str(row.get("id") or "") for row in active_batch if str(row.get("id") or "").strip()]
         client = self._client or self._build_client()
         self._client = client
-        success, error = await client.push_batch(events)
+
+        # Derive SAM base URL from the configured endpoint (strip path to API root).
+        sam_base = _sam_base_url(self.runtime_config.sam_endpoint)
+
+        # Execute all pushes; collect results.
+        results: list[tuple[bool, str | None]] = []
+        if execution_events:
+            results.append(await client.push_batch(execution_events))
+        if artifact_events:
+            results.append(await client.push_artifact_batch(artifact_events, sam_base))
+        if artifact_version_events:
+            results.append(await client.push_artifact_version_batch(artifact_version_events, sam_base))
+
+        # Merge results: success only if all sub-batches succeeded.
+        if not results:
+            # Nothing to push (all were skipped by feature flag).
+            success, error = True, None
+        elif all(ok for ok, _ in results):
+            success, error = True, None
+        else:
+            # Return the first non-success error.
+            for ok, err in results:
+                if not ok:
+                    success, error = False, err
+                    break
+            else:
+                success, error = False, "unknown"
 
         synced = 0
         failed = 0
@@ -183,6 +272,7 @@ class TelemetryExportCoordinator:
         outcome_name = "success"
         error_message = error or None
         project_slug = self._project_slug_for_batch(batch)
+        skipped_id_set = set(skipped_artifact_ids)
 
         if success:
             for queue_id in queue_ids:
@@ -198,9 +288,9 @@ class TelemetryExportCoordinator:
         else:
             outcome_name = "retry"
             retry_message = "rate_limited" if error == "rate_limited" else (error or "retry_later")
-            for row in batch:
+            for row in active_batch:
                 queue_id = str(row.get("id") or "").strip()
-                if not queue_id:
+                if not queue_id or queue_id in skipped_id_set:
                     continue
                 next_attempt = int(row.get("attempt_count") or 0) + 1
                 if next_attempt >= MAX_EXPORT_RETRY_ATTEMPTS:
@@ -218,13 +308,23 @@ class TelemetryExportCoordinator:
             project_id=project_slug,
             status=self._span_outcome(outcome_name),
             count=len(queue_ids),
+            runtime_metadata=runtime_metadata,
         )
-        observability.record_telemetry_export_latency(project_id=project_slug, duration_ms=duration_ms)
-        await self._record_queue_depth_metrics(project_slug=project_slug, stats=stats)
+        observability.record_telemetry_export_latency(
+            project_id=project_slug,
+            duration_ms=duration_ms,
+            runtime_metadata=runtime_metadata,
+        )
+        await self._record_queue_depth_metrics(
+            project_slug=project_slug,
+            stats=stats,
+            runtime_metadata=runtime_metadata,
+        )
         if error_message:
             observability.record_telemetry_export_error(
                 project_id=project_slug,
                 error_type=self._classify_error_type(error_message, outcome=outcome_name),
+                runtime_metadata=runtime_metadata,
             )
         logger.info(
             "Telemetry export run complete",
@@ -280,6 +380,7 @@ class TelemetryExportCoordinator:
         *,
         project_slug: str,
         stats: dict[str, Any] | None = None,
+        runtime_metadata: dict[str, str] | None = None,
     ) -> None:
         summary = stats or await self.repository.get_queue_stats()
         for status in ("pending", "failed", "abandoned"):
@@ -287,7 +388,20 @@ class TelemetryExportCoordinator:
                 project_id=project_slug,
                 status=status,
                 depth=int(summary.get(status, 0)),
+                runtime_metadata=runtime_metadata,
             )
+
+    def _runtime_metadata(self, *, trigger: str) -> dict[str, str]:
+        runtime_profile = "worker" if trigger == "scheduled" else "api"
+        environment_contract = config.resolve_runtime_environment_contract(
+            runtime_profile,
+            config.STORAGE_PROFILE,
+        )
+        return {
+            "runtimeProfile": runtime_profile,
+            "deploymentMode": environment_contract.deployment_mode,
+            "storageProfile": config.STORAGE_PROFILE.profile,
+        }
 
     def _project_slug_for_batch(self, batch: list[dict[str, Any]]) -> str:
         slugs = {
@@ -311,3 +425,72 @@ class TelemetryExportCoordinator:
 
     def _span_outcome(self, outcome: str) -> str:
         return "abandon" if outcome == "abandoned" else outcome
+
+
+def _sam_base_url(endpoint_url: str) -> str:
+    """Derive the SAM base URL (scheme + host + port) from a configured endpoint URL.
+
+    The execution-outcomes endpoint URL already contains a path
+    (e.g. ``https://sam.example.com/api/v1/analytics/execution-outcomes``).
+    Strip the path so callers can construct other SAM endpoint paths.
+    """
+    parsed = urlparse(str(endpoint_url or "").strip())
+    if not parsed.hostname:
+        return str(endpoint_url or "").strip()
+    port_part = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{parsed.hostname}{port_part}"
+
+
+async def emit_artifact_outcomes(
+    queue: TelemetryQueueRepository,
+    payloads: list[ArtifactOutcomePayload],
+    project_slug: str,
+) -> None:
+    """Enqueue artifact-outcome payloads for later export to SAM.
+
+    Each payload is enqueued independently.  Deduplication key is the
+    payload's ``event_id`` (a UUID), so re-enqueuing the same event is a
+    no-op.  Silently swallows enqueue errors (same pattern as sync_engine).
+    """
+    for payload in payloads:
+        dedup_key = f"art:{payload.event_id}"
+        try:
+            await queue.enqueue(
+                session_id=dedup_key,
+                project_slug=project_slug,
+                payload=payload.event_dict(),
+                queue_id=str(payload.event_id),
+                event_type="artifact_outcome",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to enqueue artifact_outcome event",
+                extra={"event_id": str(payload.event_id), "external_id": payload.external_id},
+            )
+
+
+async def emit_artifact_version_outcomes(
+    queue: TelemetryQueueRepository,
+    payloads: list[ArtifactVersionOutcomePayload],
+    project_slug: str,
+) -> None:
+    """Enqueue artifact-version-outcome payloads for later export to SAM.
+
+    Requires ``content_hash`` to be set (enforced by model validation).
+    Deduplication key is the payload's ``event_id``.
+    """
+    for payload in payloads:
+        dedup_key = f"artv:{payload.event_id}"
+        try:
+            await queue.enqueue(
+                session_id=dedup_key,
+                project_slug=project_slug,
+                payload=payload.event_dict(),
+                queue_id=str(payload.event_id),
+                event_type="artifact_version_outcome",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to enqueue artifact_version_outcome event",
+                extra={"event_id": str(payload.event_id), "external_id": payload.external_id},
+            )

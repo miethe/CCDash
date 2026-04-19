@@ -1,6 +1,6 @@
 # Enterprise Session-Intelligence Runbook
 
-Updated: 2026-04-07
+Updated: 2026-04-18
 
 This runbook is for operators who want the full hosted storage posture for CCDash and need to turn on canonical enterprise session intelligence end to end.
 
@@ -89,12 +89,33 @@ Notes:
 - SkillMeat base URL, project mapping, and API key are configured in `Settings > Integrations > SkillMeat`, not by a dedicated environment variable in this repo.
 - There is no runtime-profile environment variable for enterprise. Runtime profile is chosen by the process entrypoint.
 
+Hosted smoke additions used by the repo example:
+
+| Variable | Required for smoke | Why it matters |
+| --- | --- | --- |
+| `CCDASH_WORKER_PROJECT_ID` | yes | the worker runtime will not start background work without a resolvable project binding |
+| `CCDASH_WORKER_PROBE_HOST` | recommended | controls the probe bind host used by `/livez`, `/readyz`, and `/detailz` |
+| `CCDASH_WORKER_PROBE_PORT` | recommended | controls the probe port used in the split-runtime checks |
+| `CCDASH_TELEMETRY_EXPORT_ENABLED` | yes for the smoke job path | must be `true` for `POST /api/telemetry/export/push-now` to be accepted |
+| `CCDASH_SAM_ENDPOINT` | yes for the smoke job path | required by the exporter config even when the queue is empty |
+| `CCDASH_SAM_API_KEY` | yes for the smoke job path | required by the exporter config even when the queue is empty |
+| `CCDASH_TELEMETRY_ALLOW_INSECURE` | optional | keep `false` unless your smoke sink intentionally uses HTTP |
+
 ## 3. Runtime Topology
 
 Enterprise mode assumes a split runtime:
 
 - API runtime serves HTTP and reads canonical state
 - worker runtime owns sync, refresh, and scheduled jobs
+
+Canonical runtime matrix for hosted validation:
+
+| Runtime | Canonical entrypoint | Hosted use |
+| --- | --- | --- |
+| `api` | `backend.runtime.bootstrap_api:app` | required |
+| `worker` | `python -m backend.worker` | required |
+| `local` | `backend.main:app` and `npm run dev` | never use for hosted validation |
+| `test` | `backend.runtime.bootstrap_test:app` | test-only |
 
 Supported enterprise entrypoints:
 
@@ -114,8 +135,19 @@ Operator rules:
 
 - `backend.runtime.bootstrap_api:app` is the stateless hosted API runtime.
 - `backend.worker` is the background-only runtime for sync, refresh, and scheduled jobs.
-- `backend.main:app`, `npm run dev`, and `npm run start:backend` are local-convenience entrypoints and are not the canonical hosted API posture.
+- `backend.main:app` and `npm run dev` are local-convenience entrypoints and are not the hosted API posture.
+- `npm run dev:backend` and `npm run start:backend` are wrappers around `backend.runtime.bootstrap_api:app`; they are useful local helpers, but the canonical hosted entrypoint remains the bootstrap module itself.
 - If you are validating locally against enterprise Postgres, keep the same API/worker split. Do not rely on the desktop `local` runtime profile for enterprise validation.
+
+Repo-shipped non-container launch examples live in [`deploy/runtime/README.md`](../../deploy/runtime/README.md). Use those systemd or supervisor examples when you need the same API/worker/frontend topology on a single host without inventing a separate runtime contract.
+
+Repo-shipped compose smoke helpers live in [`package.json`](/Users/miethe/dev/homelab/development/CCDash/package.json):
+
+```bash
+npm run docker:hosted:smoke:config
+npm run docker:hosted:smoke:up
+npm run docker:hosted:smoke:ps
+```
 
 ## 4. Initial Health Validation
 
@@ -181,6 +213,27 @@ Expected shared-enterprise posture:
 
 Stop here if the health contract does not match the intended posture. Fix the deployment before starting backfill.
 
+Worker probe validation:
+
+```bash
+curl -sS http://127.0.0.1:9465/readyz
+curl -sS http://127.0.0.1:9465/detailz
+```
+
+Expected worker posture:
+
+- `runtimeProfile=worker`
+- readiness succeeds only after the worker binding contract is satisfied
+- the worker probe host/port come from `CCDASH_WORKER_PROBE_HOST` and `CCDASH_WORKER_PROBE_PORT` when overridden
+
+Hosted smoke shortcut:
+
+```bash
+npm run docker:hosted:smoke:probes
+```
+
+This combines frontend reachability, API readiness/detail checks, worker readiness/detail checks, and a migration assertion (`migrationStatus=applied`).
+
 ## 5. Pre-Backfill Checklist
 
 Make sure all of the following are true:
@@ -198,6 +251,14 @@ Recommended validation commands before rollout:
 backend/.venv/bin/python -m pytest backend/tests/test_session_intelligence_repository.py backend/tests/test_session_intelligence_service.py backend/tests/test_sync_engine_session_intelligence.py -q
 backend/.venv/bin/python -m pytest backend/tests/test_runtime_bootstrap.py backend/tests/test_storage_profiles.py -q
 ```
+
+Representative background-job control path before rollout:
+
+```bash
+npm run docker:hosted:smoke:job
+```
+
+This path toggles telemetry-export settings on and calls `POST /api/telemetry/export/push-now`. In a fresh hosted smoke stack the normal outcome is a successful idle run with `batchSize=0`. If the queue already contains rows, treat any outbound-export failure as a smoke-environment issue rather than proof that session-intelligence backfill is broken.
 
 ## 6. Run The Historical Backfill
 
@@ -336,6 +397,39 @@ Expected flow:
 
 This separation is intentional. Transcript backfill, intelligence analytics, and SkillMeat publish are related, but they are not the same operation.
 
+### CLI And MCP Operator Surface
+
+Hosted runtime validation should distinguish between:
+
+- the running split stack
+- the shipped operator adapters that query CCDash data
+
+What the repo ships today:
+
+- repo-local CLI commands in `backend.cli`
+- stdio MCP tools in `backend.mcp.server`
+- a separately packaged standalone `ccdash-cli` package documented elsewhere
+
+The hosted smoke helpers validate the first two through lightweight contract harnesses:
+
+```bash
+npm run docker:hosted:smoke:cli-contract
+npm run docker:hosted:smoke:mcp-contract
+```
+
+Those checks prove the current four-query surface still exists:
+
+- `status project`
+- `feature report`
+- `workflow failures`
+- `report aar`
+- `ccdash_project_status`
+- `ccdash_feature_forensics`
+- `ccdash_workflow_failure_patterns`
+- `ccdash_generate_aar`
+
+Treat the standalone global CLI as a separate packaging and targeting concern. It is not baked into the hosted compose stack.
+
 Relevant API endpoints:
 
 - `GET /api/integrations/skillmeat/memory-drafts?projectId=<project-id>`
@@ -367,6 +461,12 @@ If you expose this to internal users, explain three points clearly:
 - confirm the runtime profile matches the intended deployment
 - confirm shared Postgres uses explicit schema or tenant isolation
 
+### Worker never becomes ready
+
+- confirm `CCDASH_WORKER_PROJECT_ID` resolves to a real project
+- confirm the worker probe host/port do not conflict with another process
+- inspect `docker compose logs worker` before retrying
+
 ### Backfill does not finish in one run
 
 - this is expected
@@ -382,6 +482,12 @@ If you expose this to internal users, explain three points clearly:
 
 - transcript intelligence and memory publishing are separate
 - drafts should remain reviewable in CCDash even when SkillMeat publish is unavailable
+
+### Telemetry push-now smoke fails
+
+- if `configured=false`, set `CCDASH_SAM_ENDPOINT` and `CCDASH_SAM_API_KEY`
+- if `envLocked=true`, set `CCDASH_TELEMETRY_EXPORT_ENABLED=true`
+- if `success=false` with queued rows, point the exporter at a real sink or clear the smoke queue before retrying
 
 ## Related References
 

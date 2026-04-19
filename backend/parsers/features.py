@@ -20,6 +20,12 @@ from backend.models import (
     FeatureQualitySignals,
     LinkedFeatureRef,
     LinkedDocument,
+    PlanningEffectiveStatus,
+    PlanningMismatchState,
+    PlanningPhaseBatch,
+    PlanningPhaseBatchReadiness,
+    PlanningStatusEvidence,
+    PlanningStatusProvenance,
     ProjectTask,
     TimelineEvent,
 )
@@ -307,6 +313,52 @@ def _pick_latest_document(docs: list["LinkedDocument"]) -> Optional["LinkedDocum
     return ordered[0] if ordered else None
 
 
+def _make_status_evidence(
+    *,
+    evidence_id: str,
+    label: str,
+    detail: str,
+    source_type: str,
+    source_id: str,
+    source_path: str,
+) -> PlanningStatusEvidence:
+    return PlanningStatusEvidence(
+        id=evidence_id,
+        label=label,
+        detail=detail,
+        sourceType=source_type,
+        sourceId=source_id,
+        sourcePath=source_path,
+    )
+
+
+def _batch_sort_key(batch_id: str) -> tuple[int, str]:
+    match = re.search(r"(\d+)", str(batch_id or ""))
+    if match:
+        return (int(match.group(1)), str(batch_id or ""))
+    return (10_000, str(batch_id or ""))
+
+
+def _extract_related_doc_refs(refs: dict[str, Any]) -> list[str]:
+    values = [
+        *[str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)],
+        *[str(v) for v in refs.get("sourceDocumentRefs", []) if isinstance(v, str)],
+        *[str(v) for v in refs.get("prdRefs", []) if isinstance(v, str)],
+    ]
+    related_refs: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        related_refs.append(value)
+    return related_refs
+
+
 def _safe_list(raw: Any) -> list[Any]:
     return raw if isinstance(raw, list) else []
 
@@ -486,7 +538,7 @@ def _extract_doc_metadata(
         "blocked_by": _normalize_feature_refs(_to_string_list(frontmatter.get("blocked_by"))),
         "sequence_order": _to_optional_int(frontmatter.get("sequence_order")),
         "frontmatter_keys": sorted(str(key) for key in frontmatter.keys()),
-        "related_refs": [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)],
+        "related_refs": _extract_related_doc_refs(refs),
         "feature_refs": [str(v) for v in refs.get("featureRefs", []) if isinstance(v, str)],
         "linked_feature_refs": _normalize_linked_feature_refs(
             [
@@ -746,6 +798,216 @@ def _parse_progress_tasks(tasks_raw: list, source_file: str = "") -> list[Projec
     return tasks
 
 
+def _derive_phase_planning_status(
+    *,
+    raw_status: str,
+    effective_status: str,
+    source_id: str,
+    source_path: str,
+    source_title: str,
+) -> PlanningEffectiveStatus:
+    normalized_raw = normalize_doc_status(raw_status, default="")
+    mapped_raw = _map_status(raw_status) if str(raw_status or "").strip() else ""
+    provenance_source = "raw"
+    provenance_reason = "Phase status is taken directly from progress frontmatter."
+    if normalized_raw == _INFERRED_COMPLETE_STATUS:
+        provenance_source = "inferred_complete"
+        provenance_reason = "Phase status is marked inferred_complete in progress frontmatter."
+
+    mismatch_state = PlanningMismatchState(
+        state="aligned",
+        reason="Raw phase status maps directly to the parsed phase status.",
+        isMismatch=False,
+        evidence=[
+            _make_status_evidence(
+                evidence_id=f"{source_id}:raw-status",
+                label=source_title or "Progress Phase",
+                detail=f"raw={raw_status or '(missing)'}; effective={effective_status or '(missing)'}",
+                source_type="progress",
+                source_id=source_id,
+                source_path=source_path,
+            )
+        ],
+    )
+    if mapped_raw and mapped_raw != effective_status:
+        mismatch_state = PlanningMismatchState(
+            state="derived",
+            reason="Parsed phase status differs from the direct raw-status mapping.",
+            isMismatch=False,
+            evidence=mismatch_state.evidence,
+        )
+
+    return PlanningEffectiveStatus(
+        rawStatus=str(raw_status or ""),
+        effectiveStatus=str(effective_status or ""),
+        provenance=PlanningStatusProvenance(
+            source=provenance_source,  # type: ignore[arg-type]
+            reason=provenance_reason,
+            evidence=mismatch_state.evidence,
+        ),
+        mismatchState=mismatch_state,
+    )
+
+
+def _extract_phase_batches(
+    *,
+    feature_slug: str,
+    phase: str,
+    tasks: list[ProjectTask],
+    tasks_raw: list[dict[str, Any]],
+    parallelization: Any,
+    blockers: list[str],
+    files_modified: list[str],
+    source_path: str,
+    source_title: str,
+) -> list[PlanningPhaseBatch]:
+    if not isinstance(parallelization, dict):
+        return []
+
+    task_by_id = {
+        str(task.id or "").strip(): task
+        for task in tasks
+        if str(task.id or "").strip()
+    }
+    raw_task_by_id = {
+        str(task.get("id") or "").strip(): task
+        for task in tasks_raw
+        if isinstance(task, dict) and str(task.get("id") or "").strip()
+    }
+    terminal_task_statuses = {"done", "deferred"}
+    batches: list[PlanningPhaseBatch] = []
+
+    for batch_key, batch_value in sorted(parallelization.items(), key=lambda item: _batch_sort_key(str(item[0]))):
+        batch_id = str(batch_key or "").strip()
+        if not batch_id.startswith("batch_"):
+            continue
+
+        declared_task_ids = _to_string_list(batch_value)
+        declared_agents: list[str] = []
+        declared_files: list[str] = []
+        if isinstance(batch_value, dict):
+            declared_task_ids = _to_string_list(
+                batch_value.get("tasks")
+                or batch_value.get("task_ids")
+                or batch_value.get("items")
+            )
+            declared_agents = _to_string_list(
+                batch_value.get("assigned_to")
+                or batch_value.get("owners")
+                or batch_value.get("agents")
+            )
+            declared_files = _to_string_list(
+                batch_value.get("files")
+                or batch_value.get("files_modified")
+                or batch_value.get("file_scope_hints")
+            )
+
+        task_ids: list[str] = []
+        seen_task_ids: set[str] = set()
+        for task_id in declared_task_ids:
+            token = str(task_id or "").strip()
+            if not token or token in seen_task_ids:
+                continue
+            seen_task_ids.add(token)
+            task_ids.append(token)
+        if not task_ids:
+            continue
+
+        batch_tasks = [task_by_id[task_id] for task_id in task_ids if task_id in task_by_id]
+        assigned_agents = sorted(
+            {
+                *[agent for agent in declared_agents if str(agent).strip()],
+                *[str(task.owner or "").strip() for task in batch_tasks if str(task.owner or "").strip()],
+            }
+        )
+        file_scope_hints = sorted(
+            {
+                *[value for value in declared_files if str(value).strip()],
+                *[
+                    str(path).strip()
+                    for task in batch_tasks
+                    for path in (task.relatedFiles or [])
+                    if str(path).strip()
+                ],
+                *[str(path).strip() for path in files_modified if str(path).strip()],
+            }
+        )
+
+        blocking_task_ids = [
+            task.id
+            for task in batch_tasks
+            if str(task.status or "") == "backlog"
+            and _normalize_choice_token(raw_task_by_id.get(str(task.id), {}).get("status")) == "blocked"
+        ]
+
+        unresolved_dependencies: list[str] = []
+        for task_id in task_ids:
+            raw_task = raw_task_by_id.get(task_id, {})
+            for dependency in _to_string_list(raw_task.get("dependencies")):
+                dep_task = task_by_id.get(str(dependency or "").strip())
+                if dep_task is None or dep_task.status not in terminal_task_statuses:
+                    unresolved_dependencies.append(str(dependency))
+
+        evidence: list[PlanningStatusEvidence] = []
+        for blocker in blockers:
+            blocker_value = str(blocker).strip()
+            if not blocker_value:
+                continue
+            evidence.append(
+                _make_status_evidence(
+                    evidence_id=f"{batch_id}:blocker:{len(evidence) + 1}",
+                    label=source_title or f"Phase {phase}",
+                    detail=blocker_value,
+                    source_type="progress",
+                    source_id=batch_id,
+                    source_path=source_path,
+                )
+            )
+        for task_id in blocking_task_ids:
+            evidence.append(
+                _make_status_evidence(
+                    evidence_id=f"{batch_id}:task:{task_id}",
+                    label=f"Blocked task {task_id}",
+                    detail="Task is explicitly marked blocked in progress frontmatter.",
+                    source_type="task",
+                    source_id=task_id,
+                    source_path=source_path,
+                )
+            )
+
+        if blockers or blocking_task_ids:
+            readiness_state = "blocked"
+            readiness_reason = "Batch has explicit blockers in progress metadata."
+        elif _batch_sort_key(batch_id)[0] > 1 or unresolved_dependencies:
+            readiness_state = "waiting"
+            readiness_reason = "Batch is sequenced after earlier work or depends on unfinished tasks."
+        else:
+            readiness_state = "ready"
+            readiness_reason = "No explicit blockers were found in parser-visible progress metadata."
+
+        batches.append(
+            PlanningPhaseBatch(
+                featureSlug=str(feature_slug or ""),
+                phase=str(phase or ""),
+                batchId=batch_id,
+                taskIds=task_ids,
+                assignedAgents=assigned_agents,
+                fileScopeHints=file_scope_hints,
+                readinessState=readiness_state,  # type: ignore[arg-type]
+                readiness=PlanningPhaseBatchReadiness(
+                    state=readiness_state,  # type: ignore[arg-type]
+                    reason=readiness_reason,
+                    blockingNodeIds=[],
+                    blockingTaskIds=sorted({*blocking_task_ids, *[str(dep) for dep in unresolved_dependencies if str(dep).strip()]}),
+                    evidence=evidence,
+                    isReady=readiness_state == "ready",
+                ),
+            )
+        )
+
+    return batches
+
+
 def _scan_progress_dirs(
     progress_dir: Path,
     project_root: Path,
@@ -808,6 +1070,7 @@ def _scan_progress_dirs(
                 "path": doc_meta["file_path"],
                 "title": str(fm.get("title", md_file.stem.replace("-", " ").title())),
                 "slug": doc_meta["slug"],
+                "status_raw": phase_status_raw,
                 "category": doc_meta["category"],
                 "feature_family": doc_meta.get("feature_family", ""),
                 "primary_doc_role": doc_meta.get("primary_doc_role", ""),
@@ -832,6 +1095,18 @@ def _scan_progress_dirs(
             # Pass project-relative path so tasks and links align with command args.
             source_rel = _project_relative(md_file, project_root)
             tasks = _parse_progress_tasks(tasks_raw, source_file=source_rel)
+            blockers = _to_string_list(fm.get("blockers"))
+            phase_batches = _extract_phase_batches(
+                feature_slug=slug,
+                phase=phase_num,
+                tasks=tasks,
+                tasks_raw=[task for task in tasks_raw if isinstance(task, dict)],
+                parallelization=fm.get("parallelization"),
+                blockers=blockers,
+                files_modified=[str(v) for v in _to_string_list(fm.get("files_modified")) if str(v).strip()],
+                source_path=source_rel,
+                source_title=str(fm.get("title", md_file.stem.replace("-", " ").title())),
+            )
 
             if tasks:
                 # Task statuses are the source of truth for completion math.
@@ -863,6 +1138,14 @@ def _scan_progress_dirs(
                 completedTasks=completed,
                 deferredTasks=deferred,
                 tasks=tasks,
+                planningStatus=_derive_phase_planning_status(
+                    raw_status=phase_status_raw,
+                    effective_status=phase_status,
+                    source_id=f"PROGRESS-{doc_meta['slug']}",
+                    source_path=source_rel,
+                    source_title=str(phase_title),
+                ),
+                phaseBatches=phase_batches,
             ))
 
         if not phases:
@@ -1638,6 +1921,124 @@ def _derive_feature_rollups(
     }
 
 
+def _derive_feature_planning_status(
+    feature: Feature,
+    project_root: Path,
+) -> PlanningEffectiveStatus | None:
+    cache: dict[str, dict[str, Any]] = {}
+    contexts: list[dict[str, Any]] = []
+    for doc in feature.linkedDocs:
+        frontmatter = _load_doc_frontmatter(project_root, doc, cache)
+        raw_status = str(frontmatter.get("status") or "").strip()
+        normalized = normalize_doc_status(raw_status, default="")
+        mapped = _map_status(raw_status) if raw_status else ""
+        contexts.append(
+            {
+                "doc": doc,
+                "raw": raw_status,
+                "normalized": normalized,
+                "mapped": mapped,
+            }
+        )
+
+    if not contexts and not feature.status:
+        return None
+
+    type_priority = {
+        "implementation_plan": 0,
+        "prd": 1,
+        "progress": 2,
+        "phase_plan": 3,
+        "design_doc": 4,
+        "report": 5,
+        "spec": 6,
+        "document": 7,
+    }
+
+    def _context_sort_key(ctx: dict[str, Any]) -> tuple[int, str]:
+        doc = ctx["doc"]
+        return (type_priority.get(str(doc.docType or ""), 99), str(doc.filePath or ""))
+
+    ordered_contexts = sorted(contexts, key=_context_sort_key)
+    primary_context = next((ctx for ctx in ordered_contexts if ctx.get("raw")), ordered_contexts[0] if ordered_contexts else None)
+    raw_status = str(primary_context.get("raw") or "") if primary_context else ""
+    effective_status = str(feature.status or "")
+
+    evidence: list[PlanningStatusEvidence] = []
+    for ctx in ordered_contexts[:6]:
+        doc = ctx["doc"]
+        detail_parts = []
+        raw_value = str(ctx.get("raw") or "").strip()
+        if raw_value:
+            detail_parts.append(f"raw={raw_value}")
+        mapped_value = str(ctx.get("mapped") or "").strip()
+        if mapped_value:
+            detail_parts.append(f"mapped={mapped_value}")
+        if effective_status:
+            detail_parts.append(f"effective={effective_status}")
+        evidence.append(
+            _make_status_evidence(
+                evidence_id=f"{doc.id}:status",
+                label=str(doc.title or doc.id),
+                detail="; ".join(detail_parts) or "No explicit status found.",
+                source_type=str(doc.docType or "document"),
+                source_id=str(doc.id or ""),
+                source_path=str(doc.filePath or ""),
+            )
+        )
+    for phase in feature.phases[:4]:
+        if phase.planningStatus is None:
+            continue
+        evidence.append(
+            _make_status_evidence(
+                evidence_id=f"{feature.id}:phase:{phase.phase}",
+                label=phase.title or f"Phase {phase.phase}",
+                detail=f"raw={phase.planningStatus.rawStatus or '(missing)'}; effective={phase.planningStatus.effectiveStatus or '(missing)'}",
+                source_type="phase",
+                source_id=str(phase.id or phase.phase),
+                source_path="",
+            )
+        )
+
+    mapped_raw = str(primary_context.get("mapped") or "") if primary_context else ""
+    normalized_raw = str(primary_context.get("normalized") or "") if primary_context else ""
+    if normalized_raw == _INFERRED_COMPLETE_STATUS:
+        provenance_source = "inferred_complete"
+        provenance_reason = "Primary planning artifact is marked inferred_complete."
+    elif raw_status and mapped_raw == effective_status:
+        provenance_source = "raw"
+        provenance_reason = "Effective feature status matches the primary planning artifact status."
+    else:
+        provenance_source = "derived"
+        provenance_reason = "Effective feature status is derived from combined planning and progress evidence."
+
+    if raw_status and mapped_raw == effective_status:
+        mismatch_state = PlanningMismatchState(
+            state="aligned",
+            reason="Raw and effective feature status are aligned.",
+            isMismatch=False,
+            evidence=evidence,
+        )
+    else:
+        mismatch_state = PlanningMismatchState(
+            state="derived" if effective_status else "unresolved",
+            reason="Raw feature status differs from or is missing for the effective feature status.",
+            isMismatch=bool(raw_status and effective_status and mapped_raw != effective_status),
+            evidence=evidence,
+        )
+
+    return PlanningEffectiveStatus(
+        rawStatus=raw_status,
+        effectiveStatus=effective_status,
+        provenance=PlanningStatusProvenance(
+            source=provenance_source,  # type: ignore[arg-type]
+            reason=provenance_reason,
+            evidence=evidence,
+        ),
+        mismatchState=mismatch_state,
+    )
+
+
 def _derive_feature_dates(feature: Feature) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     planning_doc_types = {"prd", "implementation_plan", "phase_plan", "report", "spec", "document"}
     progress_doc_types = {"progress"}
@@ -2031,6 +2432,13 @@ def scan_features(
         if matched_feature_id:
             feat = features[matched_feature_id]
             feat.phases = prog["phases"]
+            for phase in feat.phases:
+                phase.id = phase.id or f"{feat.id}:phase:{phase.phase}"
+                for task in phase.tasks:
+                    task.featureId = feat.id
+                    task.phaseId = phase.id
+                for batch in phase.phaseBatches:
+                    batch.featureSlug = feat.id
 
             # Smart status inference: take the furthest progression
             feat.status = _max_status(feat.status, prog["status"])
@@ -2119,6 +2527,13 @@ def scan_features(
                 updatedAt=prog.get("updated", ""),
                 linkedDocs=linked_docs,
             )
+            for phase in features[prog_slug].phases:
+                phase.id = phase.id or f"{prog_slug}:phase:{phase.phase}"
+                for task in phase.tasks:
+                    task.featureId = prog_slug
+                    task.phaseId = phase.id
+                for batch in phase.phaseBatches:
+                    batch.featureSlug = prog_slug
 
     # Step 4: Augment features with auxiliary docs (reports/specs/additional plans/PRD versions).
     for feat in features.values():
@@ -2199,6 +2614,7 @@ def scan_features(
         quality_signals = rollups.get("qualitySignals")
         if isinstance(quality_signals, FeatureQualitySignals):
             feat.qualitySignals = quality_signals
+        feat.planningStatus = _derive_feature_planning_status(feat, project_root)
 
     # Step 6: Link related features (same base slug, different versions)
     feature_list = list(features.values())

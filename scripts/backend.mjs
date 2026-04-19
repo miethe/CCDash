@@ -13,10 +13,22 @@ const readArg = (flag, fallback) => {
 };
 
 const hasFlag = (flag) => args.includes(flag);
+const runtimeEntrypoints = {
+  api: 'backend.runtime.bootstrap_api:app',
+  local: 'backend.main:app',
+};
 
 const host = readArg('--host', process.env.CCDASH_BACKEND_HOST || '127.0.0.1');
 const port = Number.parseInt(readArg('--port', process.env.CCDASH_BACKEND_PORT || process.env.PORT || '8000'), 10);
 const reload = hasFlag('--reload');
+const runtime = readArg('--runtime', process.env.CCDASH_BACKEND_RUNTIME || 'api');
+
+if (!(runtime in runtimeEntrypoints)) {
+  console.error(
+    `[backend] invalid runtime: ${runtime}. Supported runtimes: ${Object.keys(runtimeEntrypoints).join(', ')}`,
+  );
+  process.exit(1);
+}
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   console.error(`[backend] invalid backend port: ${readArg('--port', process.env.CCDASH_BACKEND_PORT || process.env.PORT)}`);
@@ -82,7 +94,7 @@ const uvicornArgs = [
   ...pythonPrefix,
   '-m',
   'uvicorn',
-  'backend.main:app',
+  runtimeEntrypoints[runtime],
   '--host',
   host,
   '--port',
@@ -93,7 +105,9 @@ if (reload) {
 }
 
 console.log(`[backend] Python: ${pythonExec}`);
-console.log(`[backend] Starting backend at http://${host}:${port}${reload ? ' (reload)' : ''}`);
+console.log(
+  `[backend] Starting ${runtime} runtime via ${runtimeEntrypoints[runtime]} at http://${host}:${port}${reload ? ' (reload)' : ''}`,
+);
 
 const backend = spawn(pythonExec, uvicornArgs, {
   cwd: root,

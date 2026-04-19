@@ -10,7 +10,8 @@ from backend.application.services.session_intelligence import SessionIntelligenc
 from backend.application.services.sessions import SessionTranscriptService
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
-from .models import DocumentRef, FeatureForensicsDTO, SessionRef, TaskRef
+from .cache import memoized_query
+from .models import DocumentRef, FeatureForensicsDTO, SessionRef, TaskRef, TelemetryAvailability
 
 
 def _safe_float(value: Any) -> float:
@@ -175,23 +176,59 @@ async def _enrich_session_refs(
     return refs, sorted(set(rework_signals)), sorted(set(failure_patterns))
 
 
+def _feature_forensics_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    feature_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    return {"feature_id": feature_id}
+
+
 class FeatureForensicsQueryService:
     """Assemble feature execution history from linked entities."""
 
+    @memoized_query("feature_forensics", param_extractor=_feature_forensics_params)
     async def get_forensics(
         self,
         context: RequestContext,
         ports: CorePorts,
         feature_id: str,
     ) -> FeatureForensicsDTO:
+        """Assemble and return the full forensic DTO for a feature.
+
+        ``linked_sessions`` in the returned DTO is the single authoritative
+        session list for a feature.  Both ``GET /v1/features/{id}`` and
+        ``GET /v1/features/{id}/sessions`` consume this same field via
+        ``_get_forensics()`` in the router — the two endpoints are structurally
+        incapable of disagreeing on the session array.
+
+        Session linkage is eventually-consistent: links are written by the
+        background filesystem sync job (``sync_engine._build_feature_session_links``)
+        and read back via ``entity_links.get_links_for("feature", id, "related")``.
+        A freshly-imported session may not appear until the next sync cycle.
+        """
         scope = resolve_project_scope(context, ports)
         if scope is None:
-            return FeatureForensicsDTO(status="error", feature_id=feature_id, source_refs=[feature_id])
+            return FeatureForensicsDTO(
+                status="error",
+                feature_id=feature_id,
+                name=feature_id,
+                telemetry_available=TelemetryAvailability(),
+                source_refs=[feature_id],
+            )
 
         partial = False
         feature_row = await ports.storage.features().get_by_id(feature_id)
         if feature_row is None:
-            return FeatureForensicsDTO(status="error", feature_id=feature_id, source_refs=[feature_id])
+            return FeatureForensicsDTO(
+                status="error",
+                feature_id=feature_id,
+                name=feature_id,
+                telemetry_available=TelemetryAvailability(),
+                source_refs=[feature_id],
+            )
 
         links: list[dict[str, Any]] = []
         try:
@@ -268,6 +305,18 @@ class FeatureForensicsQueryService:
             f"Observed cost is {total_cost:.2f} across {total_tokens} tokens."
         )
 
+        name = str(
+            feature_row.get("name")
+            or feature_row.get("title")
+            or _feature_slug(feature_row)
+            or feature_id
+        )
+        telemetry_available = TelemetryAvailability(
+            tasks=len(task_refs) > 0,
+            documents=len(document_refs) > 0,
+            sessions=len(session_refs) > 0,
+        )
+
         status = "ok"
         if partial:
             status = "partial"
@@ -277,6 +326,8 @@ class FeatureForensicsQueryService:
             feature_id=feature_id,
             feature_slug=_feature_slug(feature_row),
             feature_status=str(feature_row.get("status") or ""),
+            name=name,
+            telemetry_available=telemetry_available,
             linked_sessions=session_refs,
             linked_documents=document_refs,
             linked_tasks=task_refs,

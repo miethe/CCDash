@@ -123,6 +123,20 @@ def resolve_storage_composition_contract(
     )
 
 
+def build_migration_governance_metadata(
+    storage_profile: config.StorageProfileConfig,
+) -> dict[str, tuple[str, ...] | str]:
+    composition = resolve_storage_composition_contract(storage_profile)
+    return {
+        "storageComposition": composition.composition,
+        "migrationGovernanceStatus": "verified",
+        "supportedStorageCompositions": tuple(
+            contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS
+        ),
+        "supportedBackendDifferenceCategories": SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES,
+    }
+
+
 def _extract_table_blocks(ddl: str) -> dict[str, str]:
     blocks: dict[str, str] = {}
     for match in _CREATE_TABLE_RE.finditer(ddl):

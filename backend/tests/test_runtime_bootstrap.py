@@ -1,29 +1,35 @@
 import asyncio
+import json
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from backend.application.ports.core import ProjectBinding
 from backend.adapters.auth import LocalIdentityProvider, StaticBearerTokenIdentityProvider
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
+from backend.db import connection
+from backend.main import app as local_entrypoint_app
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.db.repositories.identity_access import LocalPrincipalRepository
 from backend.db.repositories.postgres.identity_access import PostgresPrincipalRepository
 from backend.runtime.bootstrap_api import build_api_app
 from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
-from backend.runtime.bootstrap_worker import build_worker_runtime
+from backend.runtime.bootstrap_worker import build_worker_probe_app, build_worker_runtime
 from backend.runtime.profiles import get_runtime_profile, iter_runtime_profiles
 from backend.runtime.storage_contract import (
     build_storage_profile_validation_matrix,
+    get_storage_capability_contract,
     get_runtime_storage_contract,
     resolve_storage_mode,
 )
 from backend.runtime_ports import build_core_ports
-from backend.worker import serve_worker
+from backend.worker import _resolve_probe_binding, serve_worker
 
 
 class _ResolvedBundle:
@@ -42,6 +48,7 @@ class _ResolvedBundle:
 def _active_project() -> types.SimpleNamespace:
     return types.SimpleNamespace(
         id="project-1",
+        name="Project 1",
         testConfig=types.SimpleNamespace(
             autoSyncOnStartup=False,
             maxFilesPerScan=25,
@@ -56,6 +63,23 @@ def _fake_sync_engine() -> types.SimpleNamespace:
         sync_test_sources=AsyncMock(return_value={"synced": 0}),
         rebuild_links=AsyncMock(return_value={"created": 0}),
         capture_analytics_snapshot=AsyncMock(return_value={"captured": True}),
+    )
+
+
+def _project_binding(
+    project: types.SimpleNamespace | None = None,
+    bundle: _ResolvedBundle | None = None,
+    *,
+    source: str = "explicit",
+    requested_project_id: str | None = None,
+) -> ProjectBinding:
+    resolved_project = project or _active_project()
+    resolved_bundle = bundle or _ResolvedBundle()
+    return ProjectBinding(
+        project=resolved_project,
+        paths=resolved_bundle,
+        source=source,
+        requested_project_id=requested_project_id or resolved_project.id,
     )
 
 
@@ -88,6 +112,12 @@ def _health_payload(app: object) -> dict[str, object]:
     return health_route.endpoint(types.SimpleNamespace(), None)
 
 
+def _probe_payload(app: object, path: str) -> tuple[int, dict[str, object]]:
+    probe_route = next(route for route in app.routes if getattr(route, "path", None) == path)
+    response = probe_route.endpoint(types.SimpleNamespace(), None)
+    return response.status_code, json.loads(response.body.decode("utf-8"))
+
+
 def _expected_health_validation_matrix() -> list[dict[str, object]]:
     return [
         {
@@ -117,6 +147,28 @@ class RuntimeProfileTests(unittest.TestCase):
         container = build_worker_runtime()
 
         self.assertEqual(container.profile, get_runtime_profile("worker"))
+
+    def test_canonical_runtime_entrypoint_matrix_is_explicit(self) -> None:
+        local_app = build_local_app()
+        api_app = build_api_app()
+        test_app = build_test_app()
+        worker_runtime = build_worker_runtime()
+
+        self.assertEqual(local_entrypoint_app.state.runtime_profile, get_runtime_profile("local"))
+        self.assertEqual(local_app.state.runtime_profile, get_runtime_profile("local"))
+        self.assertEqual(api_app.state.runtime_profile, get_runtime_profile("api"))
+        self.assertEqual(test_app.state.runtime_profile, get_runtime_profile("test"))
+        self.assertEqual(worker_runtime.profile, get_runtime_profile("worker"))
+
+    def test_backend_main_health_contract_remains_local_only(self) -> None:
+        local_entrypoint_app.state.runtime_container.storage_profile = _local_storage_profile()
+
+        payload = _health_payload(local_entrypoint_app)
+
+        self.assertEqual(payload["profile"], "local")
+        self.assertEqual(payload["storageProfile"], "local")
+        self.assertTrue(payload["watchEnabled"])
+        self.assertTrue(payload["jobsEnabled"])
 
     def test_runtime_to_storage_mapping_is_explicit(self) -> None:
         mappings = {
@@ -250,6 +302,14 @@ class RuntimeProfileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Runtime profile 'worker' only supports storage profiles: enterprise"):
             build_core_ports(object(), runtime_profile=get_runtime_profile("worker"), storage_profile=local_profile)
+
+    def test_local_runtime_rejects_enterprise_storage_profile(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Runtime profile 'local' only supports storage profiles: local"):
+            build_core_ports(
+                object(),
+                runtime_profile=get_runtime_profile("local"),
+                storage_profile=_enterprise_storage_profile(),
+            )
 
     def test_test_runtime_allows_shared_enterprise_storage_profile(self) -> None:
         shared_enterprise = config.StorageProfileConfig(
@@ -412,6 +472,368 @@ class RuntimeProfileTests(unittest.TestCase):
 
         self.assertEqual(payload["storageProfileValidationMatrix"], _expected_health_validation_matrix())
 
+    def test_health_endpoint_exposes_runtime_contract_metadata(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile(shared=True)
+
+        with patch.dict("os.environ", {"CCDASH_API_BEARER_TOKEN": "secret-token"}, clear=False):
+            payload = _health_payload(app)
+
+        self.assertFalse(payload["watchEnabled"])
+        self.assertFalse(payload["syncEnabled"])
+        self.assertFalse(payload["jobsEnabled"])
+        self.assertTrue(payload["authEnabled"])
+        self.assertTrue(payload["integrationsEnabled"])
+        self.assertEqual(payload["recommendedStorageProfile"], "enterprise")
+        self.assertEqual(payload["supportedStorageProfiles"], ["enterprise"])
+        self.assertEqual(payload["allowedStorageProfiles"], ["enterprise"])
+        self.assertEqual(payload["runtimeSyncBehavior"], "no_incidental_sync_or_watch")
+        self.assertEqual(payload["runtimeJobBehavior"], "no_background_jobs")
+        self.assertEqual(payload["runtimeAuthBehavior"], "hosted_auth_expected")
+        self.assertEqual(payload["runtimeIntegrationBehavior"], "integrations_available")
+        self.assertEqual(payload["authGuardrail"]["mode"], "path_scoped_static_bearer")
+        self.assertEqual(payload["authGuardrail"]["bearerProtectedPathPrefix"], "/api/v1")
+        self.assertTrue(payload["authGuardrail"]["anonymousFallbackEnabled"])
+        self.assertEqual(
+            payload["authGuardrail"]["warningCodes"],
+            ["anonymous_fallback_outside_bearer_path"],
+        )
+        self.assertEqual(
+            payload["probeDetailWarningCodes"],
+            ["anonymous_fallback_outside_bearer_path"],
+        )
+        self.assertEqual(payload["deploymentMode"], "hosted")
+        self.assertTrue(payload["environmentContractValid"])
+        self.assertEqual(
+            payload["environmentContractRequired"],
+            ["CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"],
+        )
+        self.assertEqual(
+            payload["environmentContractSecrets"],
+            ["CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"],
+        )
+        self.assertEqual(payload["environmentContract"]["deploymentMode"], "hosted")
+        self.assertEqual(payload["environmentContract"]["runtimeProfile"], "api")
+        self.assertIn("CCDASH_DATABASE_URL", payload["environmentContract"]["requiredVariables"])
+        self.assertEqual(payload["environmentContract"]["shared"][2]["name"], "CCDASH_DATABASE_URL")
+        self.assertEqual(payload["environmentContract"]["apiOnly"][0]["name"], "CCDASH_API_BEARER_TOKEN")
+        self.assertEqual(payload["storageIsolationMode"], "schema")
+        self.assertEqual(payload["supportedStorageIsolationModes"], ["schema", "tenant"])
+        self.assertEqual(
+            payload["requiredStorageGuarantees"],
+            list(
+                get_storage_capability_contract(
+                    app.state.runtime_container.storage_profile
+                ).required_guarantees
+            ),
+        )
+
+    def test_health_endpoint_preserves_legacy_fields_and_exposes_probe_contract(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            payload = _health_payload(app)
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["db"], "connected")
+        self.assertEqual(payload["profile"], "api")
+        self.assertEqual(payload["storageComposition"], "enterprise-postgres")
+        self.assertEqual(payload["probeSchemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["probeLiveState"], "live")
+        self.assertEqual(payload["probeLiveStatus"], "pass")
+        self.assertEqual(payload["probeReadyState"], "ready")
+        self.assertEqual(payload["probeReadyStatus"], "pass")
+        self.assertEqual(payload["probeDetailStatus"], "pass")
+        self.assertTrue(payload["probeReady"])
+        self.assertFalse(payload["probeDegraded"])
+        self.assertEqual(payload["degradedReasonCodes"], [])
+        self.assertEqual(payload["probeDetailWarningCodes"], ["anonymous_fallback_outside_bearer_path"])
+        self.assertEqual(payload["authGuardrail"]["anonymousFallbackReasonCode"], "anonymous_fallback_outside_bearer_path")
+        self.assertEqual(payload["probeContract"]["ready"]["state"], "ready")
+
+    def test_live_probe_endpoint_reports_process_liveness_when_readiness_fails(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=None),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/live")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "api")
+        self.assertEqual(payload["state"], "live")
+        self.assertEqual(payload["status"], "pass")
+        self.assertEqual(payload["recommendedCadence"], {"liveSeconds": 15, "readySeconds": 20, "detailSeconds": 60})
+
+    def test_ready_probe_endpoint_returns_503_for_missing_auth_contract(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=None),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/ready")
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "api")
+        self.assertEqual(payload["state"], "not_ready")
+        self.assertEqual(payload["status"], "fail")
+        self.assertFalse(payload["ready"])
+        self.assertFalse(payload["degraded"])
+        self.assertIn("auth_contract", payload["requiredReadinessChecks"])
+        self.assertIn("auth_contract", payload["reasonCodes"])
+        self.assertIn(
+            {
+                "code": "auth_contract",
+                "category": "auth",
+                "severity": "fail",
+                "summary": "Hosted auth contract is missing its bearer token.",
+            },
+            payload["reasons"],
+        )
+        check_states = {check["code"]: check["status"] for check in payload["checks"]}
+        self.assertEqual(check_states["db_connection"], "pass")
+        self.assertEqual(check_states["schema_migrations"], "pass")
+        self.assertEqual(check_states["storage_pairing"], "pass")
+        self.assertEqual(check_states["auth_contract"], "fail")
+
+    def test_ready_probe_endpoint_returns_503_for_pending_migrations(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "pending"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/ready")
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "api")
+        self.assertEqual(payload["state"], "not_ready")
+        self.assertEqual(payload["status"], "fail")
+        self.assertFalse(payload["ready"])
+        self.assertFalse(payload["degraded"])
+        self.assertIn("migration_governance", payload["requiredReadinessChecks"])
+        self.assertIn("schema_migrations", payload["requiredReadinessChecks"])
+        self.assertEqual(payload["reasonCodes"], ["schema_migrations"])
+        self.assertIn(
+            {
+                "code": "schema_migrations",
+                "category": "migration",
+                "severity": "fail",
+                "summary": "Schema migrations are not applied.",
+            },
+            payload["reasons"],
+        )
+        check_states = {check["code"]: check["status"] for check in payload["checks"]}
+        self.assertEqual(check_states["migration_governance"], "pass")
+        self.assertEqual(check_states["schema_migrations"], "fail")
+        self.assertEqual(check_states["auth_contract"], "pass")
+
+    def test_detail_probe_endpoint_surfaces_degraded_runtime_storage_and_database_state(self) -> None:
+        app = build_local_app()
+        app.state.runtime_container.storage_profile = _local_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with patch.object(connection, "_connection", object()):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "local")
+        self.assertEqual(payload["live"]["state"], "live")
+        self.assertEqual(payload["ready"]["state"], "degraded")
+        self.assertEqual(payload["ready"]["status"], "warn")
+        self.assertTrue(payload["ready"]["ready"])
+        self.assertTrue(payload["ready"]["degraded"])
+        self.assertIn("watcher_runtime", payload["ready"]["reasonCodes"])
+        self.assertEqual(payload["detail"]["runtime"]["profile"], "local")
+        self.assertEqual(payload["detail"]["runtime"]["recommendedStorageProfile"], "local")
+        self.assertEqual(payload["detail"]["storage"]["backend"], "sqlite")
+        self.assertEqual(payload["detail"]["storage"]["composition"], "local-sqlite")
+        self.assertEqual(payload["detail"]["database"]["status"], "connected")
+        self.assertEqual(payload["detail"]["database"]["migrationStatus"], "applied")
+        self.assertEqual(payload["detail"]["activities"]["watcher"], "stopped")
+        self.assertEqual(payload["detail"]["activities"]["startupSync"], "idle")
+        check_categories = {check["code"]: check["category"] for check in payload["detail"]["checks"]}
+        self.assertEqual(check_categories["db_connection"], "database")
+        self.assertEqual(check_categories["storage_pairing"], "storage")
+        self.assertEqual(check_categories["schema_migrations"], "migration")
+        self.assertEqual(check_categories["watcher_runtime"], "runtime")
+
+    def test_detail_probe_endpoint_surfaces_hosted_auth_guardrail_without_degrading_ready_state(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["ready"]["state"], "ready")
+        self.assertEqual(payload["ready"]["status"], "pass")
+        self.assertTrue(payload["ready"]["ready"])
+        self.assertFalse(payload["ready"]["degraded"])
+        self.assertEqual(payload["ready"]["reasonCodes"], [])
+        self.assertEqual(payload["detail"]["status"], "pass")
+        self.assertEqual(payload["detail"]["warningCodes"], ["anonymous_fallback_outside_bearer_path"])
+        self.assertEqual(payload["detail"]["auth"]["behavior"], "hosted_auth_expected")
+        self.assertTrue(payload["detail"]["auth"]["enabled"])
+        self.assertTrue(payload["detail"]["auth"]["configured"])
+        self.assertEqual(payload["detail"]["auth"]["guardrail"]["mode"], "path_scoped_static_bearer")
+        self.assertEqual(payload["detail"]["auth"]["guardrail"]["bearerProtectedPathPrefix"], "/api/v1")
+        self.assertTrue(payload["detail"]["auth"]["guardrail"]["anonymousFallbackEnabled"])
+        self.assertIn(
+            {
+                "code": "anonymous_fallback_outside_bearer_path",
+                "category": "auth",
+                "severity": "warn",
+                "summary": "Hosted bearer auth only protects /api/v1; other hosted routes may still allow anonymous access.",
+            },
+            payload["detail"]["warnings"],
+        )
+
+    def test_detail_probe_endpoint_returns_503_for_pending_migrations(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "pending"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "api")
+        self.assertEqual(payload["ready"]["state"], "not_ready")
+        self.assertEqual(payload["ready"]["status"], "fail")
+        self.assertFalse(payload["ready"]["ready"])
+        self.assertFalse(payload["ready"]["degraded"])
+        self.assertEqual(payload["ready"]["reasonCodes"], ["schema_migrations"])
+        self.assertEqual(payload["detail"]["state"], "not_ready")
+        self.assertEqual(payload["detail"]["status"], "fail")
+        self.assertEqual(payload["detail"]["database"]["status"], "connected")
+        self.assertEqual(payload["detail"]["database"]["migrationStatus"], "pending")
+        self.assertEqual(payload["detail"]["database"]["migrationGovernanceStatus"], "verified")
+        check_states = {check["code"]: check["status"] for check in payload["detail"]["checks"]}
+        self.assertEqual(check_states["migration_governance"], "pass")
+        self.assertEqual(check_states["schema_migrations"], "fail")
+        self.assertEqual(check_states["auth_contract"], "pass")
+
+    def test_worker_probe_ready_endpoint_returns_503_for_missing_project_binding(self) -> None:
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
+        container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id="project-1"),
+            ),
+        ):
+            client = TestClient(build_worker_probe_app(container))
+            response = client.get("/readyz")
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "worker")
+        self.assertEqual(payload["ready"]["state"], "not_ready")
+        self.assertEqual(payload["ready"]["status"], "fail")
+        self.assertFalse(payload["ready"]["ready"])
+        self.assertIn(
+            {
+                "code": "worker_binding",
+                "category": "worker",
+                "severity": "fail",
+                "summary": "Worker project binding is unresolved.",
+            },
+            payload["ready"]["reasons"],
+        )
+        check_states = {check["code"]: check["status"] for check in payload["ready"]["checks"]}
+        self.assertEqual(check_states["worker_binding"], "fail")
+
+    def test_worker_probe_ready_endpoint_reports_bound_runtime_on_happy_path(self) -> None:
+        project = _active_project()
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
+        container.migration_status = "applied"
+        container.project_binding = _project_binding(project, source="explicit")
+        container.job_adapter = types.SimpleNamespace(
+            status_snapshot=lambda: {
+                "watcher": "stopped",
+                "startupSync": "idle",
+                "analyticsSnapshots": "idle",
+                "telemetryExports": "idle",
+                "cacheWarming": "idle",
+                "jobsEnabled": True,
+                "workerProbe": {
+                    "schemaVersion": "ops-203-v1",
+                    "watcherDisabled": True,
+                    "syncLagSeconds": 0,
+                    "backpressure": {
+                        "hasBackpressure": False,
+                        "jobsWithBacklog": [],
+                        "totalBacklogCount": 0,
+                        "maxBacklogCount": 0,
+                    },
+                    "jobs": {
+                        "startupSync": {
+                            "state": "succeeded",
+                            "details": {"projectId": project.id, "projectName": project.name},
+                        }
+                    },
+                    "summary": {
+                        "activeJobs": [],
+                        "backlogCounts": {"startupSync": 0},
+                        "lastSuccessMarkers": {},
+                        "maxCheckpointFreshnessSeconds": 0,
+                    },
+                },
+            }
+        )
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id=project.id),
+            ),
+        ):
+            client = TestClient(build_worker_probe_app(container))
+            response = client.get("/readyz")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "worker")
+        self.assertEqual(payload["ready"]["state"], "ready")
+        self.assertEqual(payload["ready"]["status"], "pass")
+        self.assertTrue(payload["ready"]["ready"])
+        self.assertEqual(payload["worker"]["schemaVersion"], "ops-203-v1")
+        self.assertEqual(payload["worker"]["jobs"]["startupSync"]["details"]["projectId"], project.id)
+        self.assertEqual(payload["worker"]["summary"]["backlogCounts"]["startupSync"], 0)
+
 
 class StorageAdapterCompositionTests(unittest.TestCase):
     """DPM-101 / DPM-102 — Adapter composition and unit-of-work split.
@@ -522,6 +944,29 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         initialize_observability.assert_not_called()
         get_connection.assert_not_awaited()
 
+    async def test_api_profile_rejects_local_database_url_placeholder_before_opening_db(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+            }
+        )
+
+        with (
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'api' requires an explicit non-placeholder CCDASH_DATABASE_URL before serving hosted traffic.",
+            ):
+                async with app.router.lifespan_context(app):
+                    await asyncio.sleep(0)
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
+
     async def test_worker_profile_rejects_local_storage_before_opening_db(self) -> None:
         local_profile = config.StorageProfileConfig(
             profile="local",
@@ -551,6 +996,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         app.state.runtime_container.storage_profile = _local_storage_profile()
         project = _active_project()
         bundle = _ResolvedBundle()
+        binding = _project_binding(project, bundle, source="active", requested_project_id=None)
         fake_sync = _fake_sync_engine()
 
         with (
@@ -569,8 +1015,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
             patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
-            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
+            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -589,8 +1034,6 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_api_profile_skips_incidental_background_startup(self) -> None:
         app = build_api_app()
         app.state.runtime_container.storage_profile = _enterprise_storage_profile()
-        project = _active_project()
-        bundle = _ResolvedBundle()
         fake_sync = _fake_sync_engine()
 
         with (
@@ -600,13 +1043,12 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.runtime.container.connection.close_connection", AsyncMock()) as close_connection,
             patch("backend.runtime.container.migrations.run_migrations", AsyncMock()),
             patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="test-token"),
             patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]),
             patch("backend.adapters.jobs.runtime.effective_test_flags", return_value=types.SimpleNamespace(testVisualizerEnabled=False)),
             patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
             patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
-            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -621,6 +1063,25 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
             watcher_stop.assert_not_awaited()
             close_connection.assert_awaited_once()
+
+    async def test_api_profile_requires_bearer_token_before_opening_db(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+
+        with (
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=""),
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'api' requires a non-empty CCDASH_API_BEARER_TOKEN before serving traffic.",
+            ):
+                async with app.router.lifespan_context(app):
+                    await asyncio.sleep(0)
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
 
     async def test_test_profile_disables_background_work_by_default(self) -> None:
         app = build_test_app()
@@ -637,7 +1098,6 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
             patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=None),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -655,6 +1115,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_worker_process_starts_without_http_server(self) -> None:
         project = _active_project()
         bundle = _ResolvedBundle()
+        binding = _project_binding(project, bundle)
         fake_sync = _fake_sync_engine()
         stop_event = asyncio.Event()
         container = build_worker_runtime()
@@ -683,18 +1144,114 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
             patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
-            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id=project.id),
+            ),
+            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding),
+            patch("backend.runtime_ports.project_manager.get_active_project") as get_active_project,
         ):
-            task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
-            await asyncio.sleep(0.05)
-            self.assertTrue(fake_sync.sync_project.await_count >= 1)
-            watcher_start.assert_not_awaited()
-            stop_event.set()
-            await task
+            with patch("backend.worker._resolve_probe_binding", return_value=None):
+                task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
+                await asyncio.sleep(0.05)
+                self.assertTrue(fake_sync.sync_project.await_count >= 1)
+                self.assertEqual(container.project_binding.project.id, project.id)
+                runtime_status = container.runtime_status()
+                self.assertEqual(runtime_status["boundProjectId"], project.id)
+                self.assertTrue(runtime_status["projectBindingLocked"])
+                worker_probe = runtime_status["workerProbe"]
+                self.assertEqual(
+                    worker_probe["jobs"]["startupSync"]["details"]["projectId"],
+                    project.id,
+                )
+                self.assertEqual(
+                    worker_probe["jobs"]["startupSync"]["details"]["projectName"],
+                    project.name,
+                )
+                watcher_start.assert_not_awaited()
+                get_active_project.assert_not_called()
+                stop_event.set()
+                await task
 
         watcher_stop.assert_not_awaited()
         close_connection.assert_awaited_once()
+
+    async def test_worker_profile_requires_explicit_project_binding_before_opening_db(self) -> None:
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
+
+        with (
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id=""),
+            ),
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'worker' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+            ):
+                await serve_worker(container=container, stop_event=asyncio.Event())
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
+
+    async def test_worker_profile_rejects_local_database_url_placeholder_before_opening_db(self) -> None:
+        container = build_worker_runtime()
+        container.storage_profile = config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+            }
+        )
+
+        with (
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'worker' requires an explicit non-placeholder CCDASH_DATABASE_URL before serving hosted traffic.",
+            ):
+                await serve_worker(container=container, stop_event=asyncio.Event())
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
+
+    async def test_worker_profile_rejects_unknown_project_binding_before_opening_db(self) -> None:
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
+
+        with (
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id="missing-project"),
+            ),
+            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=None),
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'worker' could not resolve project 'missing-project' from the workspace registry.",
+            ):
+                await serve_worker(container=container, stop_event=asyncio.Event())
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
+
+    def test_worker_probe_binding_defaults_to_documented_admin_port(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(_resolve_probe_binding(probe_host=None, probe_port=None), ("127.0.0.1", 9465))
+
+    def test_worker_probe_binding_rejects_invalid_env_port(self) -> None:
+        with patch.dict("os.environ", {"CCDASH_WORKER_PROBE_PORT": "invalid"}, clear=True):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "CCDASH_WORKER_PROBE_PORT must be an integer greater than 0.",
+            ):
+                _resolve_probe_binding(probe_host=None, probe_port=None)
 
 
 if __name__ == "__main__":

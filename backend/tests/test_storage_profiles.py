@@ -1,14 +1,27 @@
 import unittest
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from backend.config import resolve_storage_profile_config
-from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS, validate_migration_governance_contract
+from backend.config import (
+    resolve_runtime_environment_contract,
+    resolve_storage_profile_config,
+    validate_runtime_environment_contract,
+)
+from backend.db.migration_governance import (
+    SUPPORTED_STORAGE_COMPOSITIONS,
+    build_migration_governance_metadata,
+    validate_migration_governance_contract,
+)
+from backend.runtime.container import RuntimeContainer
+from backend.runtime.profiles import get_runtime_profile
 from backend.runtime.storage_contract import (
     build_storage_profile_validation_matrix,
     get_storage_capability_contract,
+    get_runtime_storage_contract,
     resolve_storage_mode,
 )
+from backend.runtime_ports import build_runtime_metadata
 
 
 class StorageProfileConfigTests(unittest.TestCase):
@@ -105,6 +118,89 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(resolve_storage_mode(profile), "shared-enterprise")
         self.assertEqual(contract.mode, "shared-enterprise")
         self.assertEqual(contract.supported_isolation_modes, ("schema", "tenant"))
+
+    def test_api_environment_contract_requires_shared_database_url_and_api_secret(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        contract = resolve_runtime_environment_contract(
+            "api",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_API_BEARER_TOKEN": "secret-token",
+            },
+        )
+
+        self.assertEqual(contract.deployment_mode, "hosted")
+        self.assertTrue(contract.valid)
+        self.assertEqual(
+            contract.required_variables,
+            ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"),
+        )
+        self.assertEqual(
+            contract.secret_variables,
+            ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"),
+        )
+        self.assertEqual(contract.shared[2].name, "CCDASH_DATABASE_URL")
+        self.assertEqual(contract.shared[2].status, "configured")
+        self.assertEqual(contract.api_only[0].status, "configured")
+
+    def test_hosted_environment_contract_rejects_local_database_url_placeholder(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+            }
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Runtime profile 'api' requires an explicit non-placeholder CCDASH_DATABASE_URL before serving hosted traffic.",
+        ):
+            validate_runtime_environment_contract(
+                "api",
+                profile,
+                {
+                    "CCDASH_STORAGE_PROFILE": "enterprise",
+                    "CCDASH_DB_BACKEND": "postgres",
+                },
+            )
+
+    def test_worker_environment_contract_requires_project_binding(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        contract = resolve_runtime_environment_contract(
+            "worker",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            },
+        )
+
+        self.assertFalse(contract.valid)
+        self.assertEqual(contract.required_variables, ("CCDASH_DATABASE_URL", "CCDASH_WORKER_PROJECT_ID"))
+        self.assertEqual(contract.worker_only[0].name, "CCDASH_WORKER_PROJECT_ID")
+        self.assertEqual(contract.worker_only[0].status, "missing")
+        self.assertIn(
+            "Runtime profile 'worker' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+            contract.errors,
+        )
 
     def test_capability_matrix_freezes_expected_canonical_stores(self) -> None:
         local_profile = resolve_storage_profile_config({"CCDASH_DB_BACKEND": "sqlite"})
@@ -235,6 +331,126 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(compositions["shared-enterprise-postgres"].storage_mode, "shared-enterprise")
         self.assertEqual(compositions["shared-enterprise-postgres"].backend, "postgres")
         self.assertEqual(compositions["shared-enterprise-postgres"].isolation_modes, ("schema", "tenant"))
+
+    def test_runtime_probe_contract_metadata_is_stable(self) -> None:
+        profile = get_runtime_profile("api")
+        storage_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        contract = get_runtime_storage_contract(profile)
+        metadata = build_runtime_metadata(profile, storage_profile)
+
+        self.assertEqual(
+            contract.readiness_checks,
+            (
+                "db_connection",
+                "storage_pairing",
+                "migration_governance",
+                "schema_migrations",
+                "auth_contract",
+            ),
+        )
+        self.assertEqual(
+            metadata["probeCadence"],
+            {"liveSeconds": 15, "readySeconds": 20, "detailSeconds": 60},
+        )
+        self.assertEqual(
+            metadata["requiredReadinessChecks"],
+            (
+                "db_connection",
+                "storage_pairing",
+                "migration_governance",
+                "schema_migrations",
+                "auth_contract",
+            ),
+        )
+        self.assertEqual(
+            metadata["runtimeCapabilities"],
+            {
+                "watch": False,
+                "sync": False,
+                "jobs": False,
+                "auth": True,
+                "integrations": True,
+            },
+        )
+        self.assertIn("enterprise-postgres", metadata["supportedStorageCompositions"])
+        self.assertIn("json_storage", metadata["supportedBackendDifferenceCategories"])
+
+    def test_migration_governance_metadata_reports_supported_probe_dimensions(self) -> None:
+        storage_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_STORAGE_SHARED_POSTGRES": "true",
+                "CCDASH_STORAGE_ISOLATION_MODE": "schema",
+            }
+        )
+
+        metadata = build_migration_governance_metadata(storage_profile)
+
+        self.assertEqual(metadata["storageComposition"], "shared-enterprise-postgres")
+        self.assertEqual(metadata["migrationGovernanceStatus"], "verified")
+        self.assertIn("local-sqlite", metadata["supportedStorageCompositions"])
+        self.assertIn("shared-enterprise-postgres", metadata["supportedStorageCompositions"])
+        self.assertIn("postgres_gin_indexes", metadata["supportedBackendDifferenceCategories"])
+
+    def test_runtime_status_marks_optional_local_watcher_gap_as_degraded(self) -> None:
+        container = RuntimeContainer(profile=get_runtime_profile("local"))
+        container.storage_profile = resolve_storage_profile_config({"CCDASH_DB_BACKEND": "sqlite"})
+        container.migration_status = "applied"
+
+        with patch("backend.runtime.container.connection._connection", object()):
+            status = container.runtime_status()
+
+        probe = status["probeContract"]
+
+        self.assertEqual(probe["schemaVersion"], "ops-201-v1")
+        self.assertEqual(probe["live"]["state"], "live")
+        self.assertEqual(probe["ready"]["state"], "degraded")
+        self.assertEqual(probe["ready"]["status"], "warn")
+        self.assertTrue(probe["ready"]["ready"])
+        self.assertTrue(probe["ready"]["degraded"])
+        self.assertIn("watcher_runtime", status["degradedReasonCodes"])
+        self.assertEqual(
+            probe["detail"]["recommendedCadence"],
+            {"liveSeconds": 30, "readySeconds": 30, "detailSeconds": 90},
+        )
+        self.assertEqual(probe["detail"]["runtime"]["profile"], "local")
+
+    def test_worker_runtime_status_marks_missing_binding_as_not_ready(self) -> None:
+        container = RuntimeContainer(profile=get_runtime_profile("worker"))
+        container.storage_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+        container.migration_status = "applied"
+
+        with patch("backend.runtime.container.connection._connection", object()):
+            with patch("backend.runtime.container.config.resolve_worker_binding_config") as binding_config:
+                binding_config.return_value = type(
+                    "BindingConfig",
+                    (),
+                    {"configured": False, "project_id": ""},
+                )()
+                status = container.runtime_status()
+
+        probe = status["probeContract"]
+
+        self.assertEqual(probe["ready"]["state"], "not_ready")
+        self.assertEqual(probe["ready"]["status"], "fail")
+        self.assertFalse(probe["ready"]["ready"])
+        self.assertIn("worker_binding", status["degradedReasonCodes"])
+        self.assertEqual(probe["detail"]["binding"]["projectId"], None)
 
 
 if __name__ == "__main__":

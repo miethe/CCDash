@@ -63,7 +63,36 @@ class PostgresFeatureRepository:
             rows = await self.db.fetch("SELECT * FROM features ORDER BY name")
         return [dict(r) for r in rows]
 
-    async def list_paginated(self, project_id: str | None, offset: int, limit: int) -> list[dict]:
+    async def list_paginated(
+        self,
+        project_id: str | None,
+        offset: int,
+        limit: int,
+        *,
+        keyword: str | None = None,
+    ) -> list[dict]:
+        if keyword:
+            pattern = f"%{keyword}%"
+            if project_id:
+                rows = await self.db.fetch(
+                    "SELECT * FROM features WHERE project_id = $1"
+                    " AND (name ILIKE $2 OR id ILIKE $2)"
+                    " ORDER BY name LIMIT $3 OFFSET $4",
+                    project_id,
+                    pattern,
+                    limit,
+                    offset,
+                )
+            else:
+                rows = await self.db.fetch(
+                    "SELECT * FROM features WHERE name ILIKE $1 OR id ILIKE $1"
+                    " ORDER BY name LIMIT $2 OFFSET $3",
+                    pattern,
+                    limit,
+                    offset,
+                )
+            return [dict(r) for r in rows]
+
         if project_id:
             rows = await self.db.fetch(
                 "SELECT * FROM features WHERE project_id = $1 ORDER BY name LIMIT $2 OFFSET $3",
@@ -79,7 +108,23 @@ class PostgresFeatureRepository:
             )
         return [dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None) -> int:
+    async def count(self, project_id: str | None = None, *, keyword: str | None = None) -> int:
+        if keyword:
+            pattern = f"%{keyword}%"
+            if project_id:
+                value = await self.db.fetchval(
+                    "SELECT COUNT(*) FROM features WHERE project_id = $1"
+                    " AND (name ILIKE $2 OR id ILIKE $2)",
+                    project_id,
+                    pattern,
+                )
+            else:
+                value = await self.db.fetchval(
+                    "SELECT COUNT(*) FROM features WHERE name ILIKE $1 OR id ILIKE $1",
+                    pattern,
+                )
+            return int(value or 0)
+
         if project_id:
             value = await self.db.fetchval("SELECT COUNT(*) FROM features WHERE project_id = $1", project_id)
         else:

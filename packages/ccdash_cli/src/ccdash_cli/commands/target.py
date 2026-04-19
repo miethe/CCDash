@@ -343,9 +343,10 @@ def target_check(
     - The server is reachable
     - The stored credentials (if any) are accepted
     """
+    from ccdash_cli.runtime import state as app_state
     from ccdash_cli.runtime.client import (
         AuthenticationError,
-        CCDashClient,
+        build_client,
         CCDashClientError,
     )
 
@@ -361,9 +362,12 @@ def target_check(
 
     target = resolve_target(target_flag=name, config_store=store)
 
+    _timeout_source_labels = {"flag": "(flag)", "env": "(env: CCDASH_TIMEOUT)", "default": "(default)"}
+    timeout_label = _timeout_source_labels.get(app_state.TIMEOUT_SOURCE, "(default)")
     typer.echo(f"Checking target '{name}' at {target.url} ...")
+    typer.echo(f"  Timeout:    {app_state.TIMEOUT_SECONDS:.1f}s {timeout_label}")
 
-    with CCDashClient(target.url, token=target.token) as client:
+    with build_client(target) as client:
         # Step 1: basic connectivity via check_health (swallows ConnectionError).
         reachable = client.check_health()
         if not reachable:

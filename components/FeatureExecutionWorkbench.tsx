@@ -40,6 +40,10 @@ import {
   LinkedDocument,
   PlanDocument,
   ProjectTask,
+  FeaturePlanningContext,
+  PhaseContextItem,
+  PlanningPhaseBatch,
+  PlanningNode,
 } from '../types';
 import {
   approveExecutionRun,
@@ -53,6 +57,7 @@ import {
   retryExecutionRun,
   trackExecutionEvent,
 } from '../services/execution';
+import { getFeaturePlanningContext, PlanningApiError } from '../services/planning';
 import { isStackRecommendationsEnabled, isWorkflowAnalyticsEnabled } from '../services/agenticIntelligence';
 import { listTestRuns } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
@@ -73,11 +78,23 @@ import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tok
 import { resolveDisplayCost } from '../lib/sessionSemantics';
 import {
   executionRunTopic,
+  featurePlanningTopic,
   isExecutionLiveUpdatesEnabled,
   sharedLiveConnectionManager,
   type LiveConnectionStatus,
   type LiveEventEnvelope,
+  useLiveInvalidation,
 } from '../services/live';
+
+import {
+  BatchReadinessPill,
+  castPlanningStatus,
+  EffectiveStatusChips,
+  LineageRow,
+  MismatchBadge,
+} from '@/components/shared/PlanningMetadata';
+import { PhaseOperationsPanel } from '@/components/Planning/primitives/PhaseOperationsPanel';
+import { computeActivePhase, PLANNING_NODE_TYPE_ORDER } from '../lib/planningHelpers';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
@@ -600,6 +617,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [artifactSourceSessions, setArtifactSourceSessions] = useState<AgentSession[]>([]);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
   const [hasFeatureTestRuns, setHasFeatureTestRuns] = useState(false);
+  const [planningContext, setPlanningContext] = useState<FeaturePlanningContext | null>(null);
+  const [planningLoading, setPlanningLoading] = useState(false);
+  const [planningError, setPlanningError] = useState<string>('');
+  const planningReloadTickRef = useRef(0);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState('');
@@ -1084,6 +1105,55 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     };
   }, [activeProject?.id, selectedFeatureId]);
 
+  // Planning context reload callback (used by live invalidation and error retry)
+  const reloadPlanningContext = useCallback(() => {
+    planningReloadTickRef.current += 1;
+  }, []);
+
+  useEffect(() => {
+    if (!selectedFeatureId) {
+      setPlanningContext(null);
+      setPlanningError('');
+      return;
+    }
+
+    let cancelled = false;
+    setPlanningLoading(true);
+    setPlanningError('');
+
+    void getFeaturePlanningContext(selectedFeatureId, { projectId: activeProject?.id })
+      .then(payload => {
+        if (cancelled) return;
+        setPlanningContext(payload);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof PlanningApiError && err.status === 404) {
+          // Feature has no planning context yet — treat as empty, not an error
+          setPlanningContext(null);
+        } else {
+          setPlanningContext(null);
+          setPlanningError(err instanceof Error ? err.message : 'Failed to load planning context');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPlanningLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // planningReloadTickRef.current intentionally triggers re-fetch on manual reload
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFeatureId, activeProject?.id, planningReloadTickRef.current]);
+
+  // Live invalidation: re-fetch planning context whenever derived state changes on the backend
+  useLiveInvalidation({
+    topics: selectedFeatureId ? [featurePlanningTopic(selectedFeatureId)] : [],
+    enabled: Boolean(selectedFeatureId),
+    onInvalidate: reloadPlanningContext,
+  });
+
   useEffect(() => {
     const featureId = context?.feature.id || '';
     if (!featureId || activeTab !== 'phases' || (fullFeature && fullFeature.id === featureId)) return;
@@ -1111,6 +1181,47 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       cancelled = true;
     };
   }, [activeTab, context?.feature.id, fullFeature]);
+
+  // ── Planning context derived values ──────────────────────────────────────────
+
+  const activePhase = useMemo<PhaseContextItem | null>(() => {
+    if (!planningContext?.phases?.length) return null;
+    return computeActivePhase(planningContext.phases);
+  }, [planningContext?.phases]);
+
+  const actionableBatch = useMemo<PlanningPhaseBatch | null>(() => {
+    if (!activePhase) return null;
+    const readyBatch = activePhase.batches.find(b => b.readinessState === 'ready');
+    if (readyBatch) return readyBatch;
+    return activePhase.batches[0] ?? null;
+  }, [activePhase]);
+
+  const isMismatch = useMemo<boolean>(() => {
+    if (!planningContext) return false;
+    const state = planningContext.mismatchState;
+    return Boolean(state && state !== 'aligned' && state !== 'unknown');
+  }, [planningContext]);
+
+  const mismatchEvidenceLabels = useMemo<string[]>(() => {
+    if (!planningContext?.planningStatus) return [];
+    const ps = castPlanningStatus(planningContext.planningStatus);
+    return ps?.mismatchState?.evidence?.map(ev => ev.label) ?? [];
+  }, [planningContext?.planningStatus]);
+
+  const lineageNodes = useMemo<PlanningNode[]>(() => {
+    const nodes = planningContext?.graph?.nodes ?? [];
+    if (!nodes.length) return [];
+    const order = PLANNING_NODE_TYPE_ORDER as readonly string[];
+    return [...nodes].sort((a, b) => {
+      const ai = order.indexOf(a.type);
+      const bi = order.indexOf(b.type);
+      const aRank = ai >= 0 ? ai : order.length;
+      const bRank = bi >= 0 ? bi : order.length;
+      return aRank - bRank;
+    });
+  }, [planningContext?.graph?.nodes]);
+
+  // ── End planning derived values ───────────────────────────────────────────────
 
   const documentByPath = useMemo(() => {
     const map = new Map<string, PlanDocument>();
@@ -2270,6 +2381,156 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               {activeTab === 'overview' && featureDetail && (
                 <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1 xl:grid xl:grid-cols-[minmax(0,1.12fr)_minmax(20rem,0.88fr)] xl:overflow-hidden xl:pr-0">
                   <div className="space-y-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
+
+                  {/* ── Planning Control Plane ── */}
+                  {planningLoading && !planningContext && (
+                    <div className="h-10 animate-pulse rounded-lg bg-panel-border/40" aria-label="Loading planning context" />
+                  )}
+                  {!planningLoading && planningError && (
+                    <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-200">
+                      <ShieldAlert size={14} className="shrink-0 text-amber-400" />
+                      <span className="flex-1 min-w-0 truncate">{planningError}</span>
+                      <button
+                        onClick={reloadPlanningContext}
+                        className="shrink-0 flex items-center gap-1 text-xs text-amber-300 hover:text-amber-100"
+                      >
+                        <RefreshCw size={11} />
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {planningContext && (() => {
+                    const ps = castPlanningStatus(planningContext.planningStatus);
+                    const provenance = ps?.provenance;
+                    const visibleLineage = lineageNodes.slice(0, 5);
+                    const extraLineageCount = lineageNodes.length - visibleLineage.length;
+                    return (
+                      <section
+                        aria-label="Planning Control Plane"
+                        className="rounded-xl border border-panel-border bg-panel p-4 space-y-3"
+                      >
+                        {/* Header row */}
+                        <div className="flex flex-wrap items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-panel-foreground truncate">
+                              Planning Control Plane
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                              {planningContext.featureName}
+                              <span className="ml-1.5 font-mono opacity-60">{planningContext.featureId}</span>
+                            </p>
+                          </div>
+                          <div className="shrink-0 pt-0.5">
+                            <EffectiveStatusChips
+                              rawStatus={planningContext.rawStatus}
+                              effectiveStatus={planningContext.effectiveStatus}
+                              isMismatch={isMismatch}
+                              provenance={provenance}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Mismatch banner */}
+                        {isMismatch && (
+                          <MismatchBadge
+                            state={planningContext.mismatchState}
+                            reason={ps?.mismatchState?.reason ?? ''}
+                            evidenceLabels={mismatchEvidenceLabels}
+                            compact={false}
+                          />
+                        )}
+
+                        {/* Three sub-cards */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {/* Active Phase card */}
+                          <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 space-y-2">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Active Phase</p>
+                            {activePhase ? (
+                              <>
+                                <p className="text-sm font-medium text-panel-foreground truncate" title={activePhase.phaseTitle}>
+                                  {activePhase.phaseTitle || activePhase.phaseToken || activePhase.phaseId}
+                                </p>
+                                <EffectiveStatusChips
+                                  rawStatus={activePhase.rawStatus}
+                                  effectiveStatus={activePhase.effectiveStatus}
+                                  isMismatch={activePhase.isMismatch}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  {activePhase.completedTasks}/{activePhase.totalTasks} tasks
+                                </p>
+                                <button
+                                  onClick={() => setActiveTab('phases')}
+                                  className="text-xs text-indigo-400 hover:text-indigo-200 flex items-center gap-1"
+                                >
+                                  <ChevronRight size={11} />
+                                  View phases
+                                </button>
+                              </>
+                            ) : (
+                              <p className="text-xs text-muted-foreground italic">No active phase</p>
+                            )}
+                          </div>
+
+                          {/* Actionable Batch card */}
+                          <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 space-y-2">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Actionable Batch</p>
+                            {actionableBatch ? (
+                              <>
+                                <p className="text-xs font-mono text-panel-foreground truncate" title={actionableBatch.batchId}>
+                                  {actionableBatch.batchId}
+                                </p>
+                                <BatchReadinessPill
+                                  readinessState={actionableBatch.readinessState}
+                                  blockingNodeIds={actionableBatch.readiness?.blockingNodeIds}
+                                  blockingTaskIds={actionableBatch.readiness?.blockingTaskIds}
+                                />
+                                {actionableBatch.assignedAgents?.length > 0 && (
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    Agents: {actionableBatch.assignedAgents.join(', ')}
+                                  </p>
+                                )}
+                                {actionableBatch.fileScopeHints?.length > 0 && (
+                                  <p className="text-xs text-muted-foreground/70 truncate" title={actionableBatch.fileScopeHints.join(', ')}>
+                                    Scope: {actionableBatch.fileScopeHints.slice(0, 2).join(', ')}
+                                    {actionableBatch.fileScopeHints.length > 2 && ` +${actionableBatch.fileScopeHints.length - 2}`}
+                                  </p>
+                                )}
+                              </>
+                            ) : (
+                              <p className="text-xs text-muted-foreground italic">No ready batch</p>
+                            )}
+                          </div>
+
+                          {/* Lineage card */}
+                          <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 space-y-1">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Lineage</p>
+                            {visibleLineage.length > 0 ? (
+                              <>
+                                <div className="divide-y divide-panel-border/50 rounded overflow-hidden">
+                                  {visibleLineage.map(node => (
+                                    <LineageRow key={node.id} node={node} />
+                                  ))}
+                                </div>
+                                {extraLineageCount > 0 && (
+                                  <Link
+                                    to={`/planning/features/${encodeURIComponent(planningContext.featureId)}`}
+                                    className="mt-1.5 flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-200"
+                                  >
+                                    <ExternalLink size={10} />
+                                    +{extraLineageCount} more
+                                  </Link>
+                                )}
+                              </>
+                            ) : (
+                              <p className="text-xs text-muted-foreground italic">No lineage nodes</p>
+                            )}
+                          </div>
+                        </div>
+                      </section>
+                    );
+                  })()}
+                  {/* ── End Planning Control Plane ── */}
+
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                     <button
                       onClick={() => openBoardFeature(featureDetail.id, 'overview')}
@@ -2461,12 +2722,34 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   {phases.length === 0 && (
                     <p className="text-sm text-muted-foreground">No phase details available.</p>
                   )}
+                  {/* Helper card when planning context exists but has no phases */}
+                  {planningContext && planningContext.phases.length === 0 && phases.length > 0 && featureDetail && (
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-4 py-3">
+                      <p className="text-xs text-muted-foreground">
+                        Planning graph has no phases recorded for this feature.{' '}
+                        <Link
+                          to={`/planning/features/${encodeURIComponent(featureDetail.id)}`}
+                          className="text-indigo-400 hover:text-indigo-200 underline-offset-2 hover:underline"
+                        >
+                          View planning graph
+                        </Link>
+                      </p>
+                    </div>
+                  )}
                   {phases.map(phase => {
                     const phaseKey = phase.id || phase.phase;
                     const isExpanded = expandedPhases.has(phaseKey);
                     const phaseTasks = dedupePhaseTasks(phase.tasks || []);
                     const phaseRelatedSessions = phaseSessionLinks.get(String(phase.phase || '').trim()) || [];
                     const pendingTasks = getPhasePendingTasks(phase);
+                    // Match this FeaturePhase to a PhaseContextItem by comparing
+                    // the numeric portion of phaseToken (e.g. "PHASE-2" → 2) against phase.phase.
+                    const phaseNum = parseInt(String(phase.phase || ''), 10);
+                    const hasMatchingPlanningPhase = planningContext != null
+                      && !isNaN(phaseNum)
+                      && planningContext.phases.some(
+                          pc => parseInt(pc.phaseToken.replace(/\D+/g, ''), 10) === phaseNum,
+                        );
                     return (
                       <div key={phaseKey} className="rounded-lg border border-panel-border bg-surface-overlay/70 overflow-hidden">
                         <div className="w-full px-3 py-3 text-left hover:bg-panel/70">
@@ -2531,6 +2814,18 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
                         {isExpanded && (
                           <div className="border-t border-panel-border px-3 py-2 bg-surface-overlay/70 space-y-1.5 overflow-hidden">
+                            {/* Phase Operations Panel — only when planning context includes this phase */}
+                            {hasMatchingPlanningPhase && featureDetail && !isNaN(phaseNum) && (
+                              <div className="mb-3">
+                                <PhaseOperationsPanel
+                                  featureId={featureDetail.id}
+                                  phaseNumber={phaseNum}
+                                  projectId={activeProject?.id}
+                                  fallbackTitle={phase.title}
+                                  embedded={true}
+                                />
+                              </div>
+                            )}
                             {phaseTasks.length === 0 && (
                               <p className="text-xs text-muted-foreground italic">No task details currently available for this phase.</p>
                             )}

@@ -1917,6 +1917,113 @@ export interface LinkedDocument {
   timeline?: TimelineEvent[];
 }
 
+export type PlanningNodeType =
+  | 'design_spec'
+  | 'prd'
+  | 'implementation_plan'
+  | 'progress'
+  | 'context'
+  | 'tracker'
+  | 'report';
+
+export type PlanningEdgeRelationType =
+  | 'promotes_to'
+  | 'implements'
+  | 'phase_of'
+  | 'informs'
+  | 'blocked_by'
+  | 'family_member_of'
+  | 'tracked_by'
+  | 'executed_by';
+
+export type PlanningStatusProvenanceSource = 'raw' | 'derived' | 'inferred_complete' | 'unknown';
+
+export type PlanningMismatchStateValue =
+  | 'aligned'
+  | 'derived'
+  | 'mismatched'
+  | 'blocked'
+  | 'stale'
+  | 'reversed'
+  | 'unresolved'
+  | 'unknown';
+
+export type PlanningPhaseBatchReadinessState = 'ready' | 'blocked' | 'waiting' | 'unknown';
+
+export interface PlanningStatusEvidence {
+  id: string;
+  label: string;
+  detail: string;
+  sourceType: string;
+  sourceId: string;
+  sourcePath: string;
+}
+
+export interface PlanningStatusProvenance {
+  source: PlanningStatusProvenanceSource;
+  reason: string;
+  evidence: PlanningStatusEvidence[];
+}
+
+export interface PlanningMismatchState {
+  state: PlanningMismatchStateValue;
+  reason: string;
+  isMismatch: boolean;
+  evidence: PlanningStatusEvidence[];
+}
+
+export interface PlanningEffectiveStatus {
+  rawStatus: string;
+  effectiveStatus: string;
+  provenance: PlanningStatusProvenance;
+  mismatchState: PlanningMismatchState;
+}
+
+export interface PlanningNode {
+  id: string;
+  type: PlanningNodeType;
+  path: string;
+  title: string;
+  featureSlug: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  mismatchState: PlanningMismatchState;
+  updatedAt: string;
+  statusDetail?: PlanningEffectiveStatus | null;
+}
+
+export interface PlanningEdge {
+  sourceId: string;
+  targetId: string;
+  relationType: PlanningEdgeRelationType;
+}
+
+export interface PlanningPhaseBatchReadiness {
+  state: PlanningPhaseBatchReadinessState;
+  reason: string;
+  blockingNodeIds: string[];
+  blockingTaskIds: string[];
+  evidence: PlanningStatusEvidence[];
+  isReady: boolean;
+}
+
+export interface PlanningPhaseBatch {
+  featureSlug: string;
+  phase: string;
+  batchId: string;
+  taskIds: string[];
+  assignedAgents: string[];
+  fileScopeHints: string[];
+  readinessState: PlanningPhaseBatchReadinessState;
+  readiness: PlanningPhaseBatchReadiness;
+}
+
+export interface PlanningGraph {
+  nodes: PlanningNode[];
+  edges: PlanningEdge[];
+  phaseBatches: PlanningPhaseBatch[];
+}
+
 export interface FeaturePhase {
   id?: string;
   phase: string;
@@ -1927,6 +2034,8 @@ export interface FeaturePhase {
   completedTasks: number;
   deferredTasks?: number;
   tasks: ProjectTask[];
+  planningStatus?: PlanningEffectiveStatus | null;
+  phaseBatches?: PlanningPhaseBatch[];
 }
 
 export interface Feature {
@@ -1972,6 +2081,7 @@ export interface Feature {
   nextRecommendedFamilyItem?: FeatureFamilyItem | null;
   phases: FeaturePhase[];
   relatedFeatures: string[];
+  planningStatus?: PlanningEffectiveStatus | null;
   dates?: EntityDates;
   timeline?: TimelineEvent[];
 }
@@ -2344,8 +2454,138 @@ export interface FeatureExecutionContext {
   stackAlternatives: RecommendedStack[];
   stackEvidence: StackRecommendationEvidence[];
   definitionResolutionWarnings: FeatureExecutionWarning[];
+  planningGraph?: PlanningGraph | null;
   generatedAt: string;
 }
+
+// ── Planning Launch Preparation (PCP-504) ────────────────────────────────────
+
+export type LaunchBatchReadinessState = 'ready' | 'blocked' | 'partial' | 'unknown';
+export type LaunchApprovalRequirement = 'none' | 'optional' | 'required';
+export type LaunchRiskLevel = 'low' | 'medium' | 'high';
+export type WorktreeContextStatus = 'draft' | 'ready' | 'in_use' | 'archived' | 'error';
+
+export interface LaunchProviderCapability {
+  provider: string;
+  label: string;
+  supported: boolean;
+  supportsWorktrees: boolean;
+  supportsModelSelection: boolean;
+  defaultModel: string;
+  availableModels: string[];
+  requiresApproval: boolean;
+  unsupportedReason: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface LaunchBatchTaskSummary {
+  taskId: string;
+  title: string;
+  status: string;
+  assignees: string[];
+  blockers: string[];
+}
+
+export interface LaunchBatchSummary {
+  batchId: string;
+  phaseNumber: number;
+  featureId: string;
+  featureName: string;
+  phaseTitle: string;
+  readinessState: LaunchBatchReadinessState;
+  isReady: boolean;
+  blockedReason: string;
+  taskIds: string[];
+  tasks: LaunchBatchTaskSummary[];
+  owners: string[];
+  dependencies: string[];
+}
+
+export interface LaunchWorktreeSelection {
+  worktreeContextId: string;
+  createIfMissing: boolean;
+  branch: string;
+  worktreePath: string;
+  baseBranch: string;
+  notes: string;
+}
+
+export interface LaunchApprovalRequirementDetail {
+  requirement: LaunchApprovalRequirement;
+  reasonCodes: string[];
+  riskLevel: LaunchRiskLevel;
+}
+
+export interface WorktreeContext {
+  id: string;
+  projectId: string;
+  featureId: string;
+  phaseNumber: number | null;
+  batchId: string;
+  branch: string;
+  worktreePath: string;
+  baseBranch: string;
+  baseCommitSha: string;
+  status: WorktreeContextStatus;
+  lastRunId: string;
+  provider: string;
+  notes: string;
+  metadata: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LaunchPreparationRequest {
+  projectId: string;
+  featureId: string;
+  phaseNumber: number;
+  batchId: string;
+  providerPreference?: string;
+  modelPreference?: string;
+  worktreeContextId?: string;
+}
+
+export interface LaunchPreparation {
+  projectId: string;
+  featureId: string;
+  phaseNumber: number;
+  batchId: string;
+  batch: LaunchBatchSummary;
+  providers: LaunchProviderCapability[];
+  selectedProvider: string;
+  selectedModel: string;
+  worktreeCandidates: WorktreeContext[];
+  worktreeSelection: LaunchWorktreeSelection;
+  approval: LaunchApprovalRequirementDetail;
+  warnings: string[];
+  generatedAt: string;
+}
+
+export interface LaunchStartRequest {
+  projectId: string;
+  featureId: string;
+  phaseNumber: number;
+  batchId: string;
+  provider: string;
+  model?: string;
+  worktree: LaunchWorktreeSelection;
+  commandOverride?: string;
+  envProfile?: string;
+  approvalDecision?: 'approved' | '';
+  actor?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LaunchStartResponse {
+  runId: string;
+  worktreeContextId: string;
+  status: string;
+  requiresApproval: boolean;
+  warnings: string[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type ExecutionPolicyVerdict = 'allow' | 'requires_approval' | 'deny';
 export type ExecutionRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'blocked';
@@ -2708,4 +2948,139 @@ export interface LinkAuditResponse {
   fanout_floor: number;
   generated_at?: string;
   suspects: LinkAuditSuspect[];
+}
+
+// ── Planning Control Plane types (PCP-204) ────────────────────────────────────
+// Wire format is snake_case (backend publishes no camelCase aliases).
+// services/planning.ts adapts to camelCase on ingestion; these types reflect
+// the adapted (camelCase) shape that the rest of the frontend consumes.
+
+/** Common envelope fields present on every agent-query planning response. */
+export interface AgentQueryEnvelope {
+  /** Query resolution status: "ok" | "partial" | "error" */
+  status: 'ok' | 'partial' | 'error';
+  /** ISO-8601 timestamp indicating when the underlying data was last synced. */
+  dataFreshness: string;
+  /** ISO-8601 timestamp of when this response was generated. */
+  generatedAt: string;
+  /** Stable identifiers for the primary data sources consulted. */
+  sourceRefs: string[];
+}
+
+/** Counts of PlanningNode instances bucketed by node type. */
+export interface PlanningNodeCountsByType {
+  prd: number;
+  designSpec: number;
+  implementationPlan: number;
+  progress: number;
+  context: number;
+  tracker: number;
+  report: number;
+}
+
+/** Lightweight per-feature summary used in project-level planning views. */
+export interface FeatureSummaryItem {
+  featureId: string;
+  featureName: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  isMismatch: boolean;
+  mismatchState: string;
+  hasBlockedPhases: boolean;
+  phaseCount: number;
+  blockedPhaseCount: number;
+  nodeCount: number;
+}
+
+/** Project-level planning health summary (PCP-201 query 1). */
+export interface ProjectPlanningSummary extends AgentQueryEnvelope {
+  projectId: string;
+  projectName: string;
+  totalFeatureCount: number;
+  activeFeatureCount: number;
+  staleFeatureCount: number;
+  blockedFeatureCount: number;
+  mismatchCount: number;
+  reversalCount: number;
+  staleFeatureIds: string[];
+  reversalFeatureIds: string[];
+  blockedFeatureIds: string[];
+  nodeCountsByType: PlanningNodeCountsByType;
+  featureSummaries: FeatureSummaryItem[];
+}
+
+/** Aggregated planning graph for a project or feature seed (PCP-201 query 2). */
+export interface ProjectPlanningGraph extends AgentQueryEnvelope {
+  projectId: string;
+  featureId: string | null;
+  depth: number | null;
+  nodes: PlanningNode[];
+  edges: PlanningEdge[];
+  phaseBatches: PlanningPhaseBatch[];
+  nodeCount: number;
+  edgeCount: number;
+}
+
+/** One phase's planning context inside FeaturePlanningContext. */
+export interface PhaseContextItem {
+  phaseId: string;
+  phaseNumber?: number | null;
+  phaseToken: string;
+  phaseTitle: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  isMismatch: boolean;
+  mismatchState: string;
+  /** Serialised PlanningEffectiveStatus dict from the backend. */
+  planningStatus: Record<string, unknown>;
+  /** Serialised PlanningPhaseBatch dicts. */
+  batches: PlanningPhaseBatch[];
+  blockedBatchIds: string[];
+  totalTasks: number;
+  completedTasks: number;
+  deferredTasks: number;
+}
+
+/** Single-feature planning context including graph, status, and phases (PCP-201 query 3). */
+export interface FeaturePlanningContext extends AgentQueryEnvelope {
+  featureId: string;
+  featureName: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  mismatchState: string;
+  /** Serialised PlanningEffectiveStatus dict from the backend. */
+  planningStatus: Record<string, unknown>;
+  /** Serialised subgraph as a PlanningGraph-compatible object. */
+  graph: PlanningGraph;
+  phases: PhaseContextItem[];
+  blockedBatchIds: string[];
+  linkedArtifactRefs: string[];
+}
+
+/** Task summary within a phase operations response. */
+export interface PhaseTaskItem {
+  taskId: string;
+  title: string;
+  status: string;
+  assignees: string[];
+  blockers: string[];
+  batchId: string;
+}
+
+/** Operational detail for a single phase (PCP-201 query 4). */
+export interface PhaseOperations extends AgentQueryEnvelope {
+  featureId: string;
+  phaseNumber: number;
+  phaseToken: string;
+  phaseTitle: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  isReady: boolean;
+  readinessState: string;
+  phaseBatches: PlanningPhaseBatch[];
+  blockedBatchIds: string[];
+  tasks: PhaseTaskItem[];
+  /** Serialised dependency resolution summary from the backend. */
+  dependencyResolution: Record<string, unknown>;
+  progressEvidence: string[];
 }

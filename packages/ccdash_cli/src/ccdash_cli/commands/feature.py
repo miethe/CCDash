@@ -6,7 +6,7 @@ import typer
 
 from ccdash_cli.runtime import state as app_state
 from ccdash_cli.formatters import OutputMode, get_formatter, resolve_output_mode
-from ccdash_cli.runtime.client import CCDashClient, CCDashClientError
+from ccdash_cli.runtime.client import build_client, CCDashClientError
 from ccdash_cli.runtime.config import resolve_target
 
 feature_app = typer.Typer(help="Feature investigations.")
@@ -23,8 +23,9 @@ def _expand_csv_values(values: list[str] | None) -> list[str]:
 def feature_list(
     status: Optional[List[str]] = typer.Option(None, "--status", help="Filter by status (repeatable or comma-separated)."),
     category: Optional[str] = typer.Option(None, "--category", help="Filter by category."),
-    limit: int = typer.Option(50, "--limit", help="Maximum results to return."),
+    limit: int = typer.Option(200, "--limit", help="Maximum results to return."),
     offset: int = typer.Option(0, "--offset", help="Pagination offset."),
+    q: Optional[str] = typer.Option(None, "--q", help="Keyword filter: case-insensitive substring match on feature name and ID."),
     output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
     json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
     markdown_output: bool = typer.Option(False, "--md", help="Shortcut for --output markdown."),
@@ -39,9 +40,11 @@ def feature_list(
         params["status"] = expanded_statuses
     if category:
         params["category"] = category
+    if q:
+        params["q"] = q
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get("/api/v1/features", params=params)
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)
@@ -70,17 +73,24 @@ def feature_list(
     if mode == OutputMode.human and meta:
         total = meta.get("total", len(data))
         has_more = meta.get("has_more", False)
+        truncated = meta.get("truncated", False)
         end = offset + len(data) if isinstance(data, list) else offset
         start = offset + 1 if data else 0
         summary = f"Showing {start}-{end} of {total} features"
         if has_more:
             summary += " (more available)"
         typer.echo(summary)
+        if truncated:
+            typer.secho(
+                f"Showing {limit} of {total} features. Use --limit {total} to see all.",
+                dim=True,
+            )
 
 
 @feature_app.command("show")
 def feature_show(
     feature_id: str = typer.Argument(..., help="Feature ID to inspect."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the server-side query cache and fetch fresh data."),
     output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
     json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
     markdown_output: bool = typer.Option(False, "--md", help="Shortcut for --output markdown."),
@@ -88,9 +98,13 @@ def feature_show(
     """Show full forensic detail for a feature."""
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
+    params: dict = {}
+    if no_cache:
+        params["bypass_cache"] = "true"
+
     try:
-        with CCDashClient(target.url, token=target.token) as client:
-            body = client.get(f"/api/v1/features/{feature_id}")
+        with build_client(target) as client:
+            body = client.get(f"/api/v1/features/{feature_id}", params=params or None)
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)
         raise typer.Exit(code=exc.exit_code) from exc
@@ -110,7 +124,16 @@ def feature_show(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
-    typer.echo(get_formatter(mode).render(body.get("data", {}), title=f"Feature {feature_id}"))
+    data = body.get("data", {})
+    typer.echo(get_formatter(mode).render(data, title=f"Feature {feature_id}"))
+
+    if mode not in (OutputMode.json, OutputMode.markdown):
+        n_sessions = len(data.get("linked_sessions", []))
+        typer.secho(
+            f"Sessions: {n_sessions} linked"
+            f" — run 'ccdash feature sessions {feature_id}' for paginated details.",
+            dim=True,
+        )
 
 
 @feature_app.command("sessions")
@@ -118,6 +141,7 @@ def feature_sessions(
     feature_id: str = typer.Argument(..., help="Feature ID."),
     limit: int = typer.Option(50, "--limit", help="Maximum results to return."),
     offset: int = typer.Option(0, "--offset", help="Pagination offset."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the server-side query cache and fetch fresh data."),
     output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
     json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
     markdown_output: bool = typer.Option(False, "--md", help="Shortcut for --output markdown."),
@@ -125,10 +149,12 @@ def feature_sessions(
     """List sessions linked to a feature."""
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
-    params = {"limit": limit, "offset": offset}
+    params: dict = {"limit": limit, "offset": offset}
+    if no_cache:
+        params["bypass_cache"] = "true"
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get(f"/api/v1/features/{feature_id}/sessions", params=params)
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)
@@ -166,7 +192,7 @@ def feature_documents(
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get(f"/api/v1/features/{feature_id}/documents")
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)

@@ -59,6 +59,8 @@ async def get_project_status_v1(
     project_id: str | None,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    bypass_cache: bool = False,
 ) -> ClientV1Envelope[ProjectStatusDTO]:
     """Return the current project status snapshot wrapped in a v1 envelope.
 
@@ -74,6 +76,7 @@ async def get_project_status_v1(
         app_request.context,
         app_request.ports,
         project_id_override=project_id,
+        bypass_cache=bypass_cache,
     )
     return ClientV1Envelope(
         data=result,
@@ -85,6 +88,8 @@ async def get_workflow_failures_v1(
     feature_id: str | None,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    bypass_cache: bool = False,
 ) -> ClientV1Envelope[WorkflowDiagnosticsDTO]:
     """Return workflow diagnostics (failure patterns) wrapped in a v1 envelope.
 
@@ -96,6 +101,7 @@ async def get_workflow_failures_v1(
         app_request.context,
         app_request.ports,
         feature_id=feature_id,
+        bypass_cache=bypass_cache,
     )
     return ClientV1Envelope(
         data=result,

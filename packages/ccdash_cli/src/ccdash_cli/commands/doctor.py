@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import typer
 
-from ccdash_cli.runtime.client import CCDashClient, CCDashClientError, ConnectionError
+from ccdash_cli.runtime.client import build_client, CCDashClientError, ConnectionError
 from ccdash_cli.runtime.config import resolve_target
 
 doctor_app = typer.Typer(help="Diagnose CLI configuration and server connectivity.")
@@ -72,10 +72,14 @@ def doctor_check(
         token_status = typer.style("not set (unauthenticated)", fg=typer.colors.YELLOW)
     typer.echo(f"{_label('Auth token:')}{token_status}")
 
+    _timeout_source_labels = {"flag": "(flag)", "env": "(env: CCDASH_TIMEOUT)", "default": "(default)"}
+    timeout_label = _timeout_source_labels.get(app_state.TIMEOUT_SOURCE, "(default)")
+    typer.echo(f"{_label('Timeout:')}{app_state.TIMEOUT_SECONDS:.1f}s {timeout_label}")
+
     # --- Server connectivity ---
     typer.echo(f"\n{typer.style('Server', bold=True)}")
 
-    client = CCDashClient(target.url, token=target.token)
+    client = build_client(target)
     try:
         instance = client.get_instance()
         typer.echo(f"{_label('Reachable:')}{_PASS}")

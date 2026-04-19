@@ -1,4 +1,5 @@
 import { connectLiveStream } from './client';
+import { resolveLiveStreamBaseUrl } from '../runtimeBase';
 import type {
   EventSourceLike,
   LiveConnectionSnapshot,
@@ -38,7 +39,7 @@ export class LiveConnectionManager {
   private listeningForVisibility = false;
 
   constructor(options: LiveConnectionManagerOptions = {}) {
-    this.basePath = options.basePath ?? '/api/live/stream';
+    this.basePath = options.basePath ?? resolveLiveStreamBaseUrl();
     this.createEventSource = options.createEventSource;
     this.reconnectBaseMs = options.reconnectBaseMs ?? 1000;
     this.reconnectMaxMs = options.reconnectMaxMs ?? 15000;
@@ -213,4 +214,3 @@ export class LiveConnectionManager {
 }
 
 export const sharedLiveConnectionManager = new LiveConnectionManager();
-

@@ -10,6 +10,16 @@ from backend.runtime.profiles import RuntimeProfile
 
 
 StorageModeName = Literal["local", "enterprise", "shared-enterprise"]
+ProbeCheckCode = Literal[
+    "db_connection",
+    "storage_pairing",
+    "migration_governance",
+    "schema_migrations",
+    "auth_contract",
+    "worker_binding",
+    "watcher_runtime",
+    "startup_sync",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +47,10 @@ class RuntimeStorageContract:
     job_behavior: str
     auth_behavior: str
     integration_behavior: str
+    readiness_checks: tuple[ProbeCheckCode, ...]
+    live_probe_interval_seconds: int
+    ready_probe_interval_seconds: int
+    detail_probe_interval_seconds: int
 
 
 _STORAGE_CAPABILITY_CONTRACTS: dict[StorageModeName, StorageCapabilityContract] = {
@@ -108,6 +122,15 @@ _RUNTIME_STORAGE_CONTRACTS: dict[str, RuntimeStorageContract] = {
         job_behavior="in_process_jobs_allowed",
         auth_behavior="local_no_auth",
         integration_behavior="integrations_available",
+        readiness_checks=(
+            "db_connection",
+            "storage_pairing",
+            "migration_governance",
+            "schema_migrations",
+        ),
+        live_probe_interval_seconds=30,
+        ready_probe_interval_seconds=30,
+        detail_probe_interval_seconds=90,
     ),
     "api": RuntimeStorageContract(
         runtime_profile="api",
@@ -116,6 +139,16 @@ _RUNTIME_STORAGE_CONTRACTS: dict[str, RuntimeStorageContract] = {
         job_behavior="no_background_jobs",
         auth_behavior="hosted_auth_expected",
         integration_behavior="integrations_available",
+        readiness_checks=(
+            "db_connection",
+            "storage_pairing",
+            "migration_governance",
+            "schema_migrations",
+            "auth_contract",
+        ),
+        live_probe_interval_seconds=15,
+        ready_probe_interval_seconds=20,
+        detail_probe_interval_seconds=60,
     ),
     "worker": RuntimeStorageContract(
         runtime_profile="worker",
@@ -124,6 +157,16 @@ _RUNTIME_STORAGE_CONTRACTS: dict[str, RuntimeStorageContract] = {
         job_behavior="scheduled_jobs_allowed",
         auth_behavior="request_auth_not_expected",
         integration_behavior="integrations_available",
+        readiness_checks=(
+            "db_connection",
+            "storage_pairing",
+            "migration_governance",
+            "schema_migrations",
+            "worker_binding",
+        ),
+        live_probe_interval_seconds=15,
+        ready_probe_interval_seconds=20,
+        detail_probe_interval_seconds=45,
     ),
     "test": RuntimeStorageContract(
         runtime_profile="test",
@@ -132,6 +175,15 @@ _RUNTIME_STORAGE_CONTRACTS: dict[str, RuntimeStorageContract] = {
         job_behavior="background_jobs_disabled",
         auth_behavior="auth_disabled_by_default",
         integration_behavior="integrations_disabled_by_default",
+        readiness_checks=(
+            "db_connection",
+            "storage_pairing",
+            "migration_governance",
+            "schema_migrations",
+        ),
+        live_probe_interval_seconds=60,
+        ready_probe_interval_seconds=60,
+        detail_probe_interval_seconds=120,
     ),
 }
 
@@ -150,6 +202,25 @@ def get_storage_capability_contract(
 
 def get_runtime_storage_contract(runtime_profile: RuntimeProfile) -> RuntimeStorageContract:
     return _RUNTIME_STORAGE_CONTRACTS[runtime_profile.name]
+
+
+def default_runtime_activity_snapshot(runtime_profile: RuntimeProfile) -> dict[str, str | bool]:
+    return {
+        "watcher": "stopped",
+        "startupSync": "idle",
+        "analyticsSnapshots": "idle",
+        "telemetryExports": "idle",
+        "cacheWarming": "idle",
+        "jobsEnabled": runtime_profile.capabilities.jobs,
+    }
+
+
+def serialize_probe_cadence(runtime_contract: RuntimeStorageContract) -> dict[str, int]:
+    return {
+        "liveSeconds": runtime_contract.live_probe_interval_seconds,
+        "readySeconds": runtime_contract.ready_probe_interval_seconds,
+        "detailSeconds": runtime_contract.detail_probe_interval_seconds,
+    }
 
 
 @lru_cache(maxsize=1)

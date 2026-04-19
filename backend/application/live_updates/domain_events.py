@@ -7,9 +7,12 @@ from typing import Any, Mapping
 from backend.application.live_updates.runtime_state import publish_live_append, publish_live_invalidation
 from backend.application.live_updates.topics import (
     execution_run_topic,
+    feature_phase_topic,
+    feature_planning_topic,
     feature_topic,
     project_features_topic,
     project_ops_topic,
+    project_planning_topic,
     project_tests_topic,
     session_topic,
     session_transcript_topic,
@@ -192,3 +195,56 @@ async def publish_ops_invalidation(
         occurred_at=occurred_at,
         payload=base_payload,
     )
+
+
+async def publish_planning_invalidation(
+    project_id: str,
+    *,
+    feature_id: str | None = None,
+    phase_number: int | str | None = None,
+    reason: str,
+    source: str,
+    payload: dict[str, Any] | None = None,
+    occurred_at: str | None = None,
+) -> None:
+    """Fan out planning invalidation events alongside feature/project change events.
+
+    Publishes to a subset of:
+      - project.{project_id}.planning  (always, when project_id is set)
+      - feature.{feature_id}.planning  (when feature_id is set)
+      - feature.{feature_id}.phase.{n} (when both feature_id and phase_number are set)
+
+    This must be called alongside publish_feature_invalidation at the same
+    write-through trigger sites — never at arbitrary DB writes.
+    """
+    normalized_project_id = _as_text(project_id)
+    normalized_feature_id = _as_text(feature_id)
+
+    base_payload: dict[str, Any] = {
+        "resource": "planning",
+        "projectId": normalized_project_id,
+        "featureId": normalized_feature_id,
+        "reason": reason,
+        "source": source,
+    }
+    if payload:
+        base_payload.update(payload)
+
+    if normalized_project_id:
+        await publish_live_invalidation(
+            topic=project_planning_topic(normalized_project_id),
+            occurred_at=occurred_at,
+            payload=base_payload,
+        )
+    if normalized_feature_id:
+        await publish_live_invalidation(
+            topic=feature_planning_topic(normalized_feature_id),
+            occurred_at=occurred_at,
+            payload=base_payload,
+        )
+        if phase_number is not None:
+            await publish_live_invalidation(
+                topic=feature_phase_topic(normalized_feature_id, phase_number),
+                occurred_at=occurred_at,
+                payload={**base_payload, "phaseNumber": str(phase_number)},
+            )

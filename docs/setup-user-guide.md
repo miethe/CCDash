@@ -107,7 +107,7 @@ Local upgrade note:
 
 - Existing SQLite installs should stay on `CCDASH_STORAGE_PROFILE=local`; Phase 5/6 does not require enterprise-table backfills in SQLite.
 - Back up the SQLite file if you manage a custom path, then start the updated app and allow migrations to run normally.
-- If you later move to hosted enterprise mode, bootstrap Postgres separately and re-ingest/rebuild instead of trying to promote the SQLite file in place.
+- If you later move to hosted enterprise mode, treat that as a fresh hosted bootstrap plus re-ingest/rebuild. Do not try to promote the SQLite file in place.
 - Expect `GET /api/health` to report a cache-oriented posture such as `sessionIntelligenceProfile=local_cache`, `sessionIntelligenceBackfillStrategy=local_rebuild_from_filesystem`, and `sessionEmbeddingWriteStatus=unsupported`.
 
 Dedicated enterprise Postgres:
@@ -118,9 +118,26 @@ CCDASH_DB_BACKEND=postgres
 CCDASH_DATABASE_URL=postgresql://...
 ```
 
-Use this for hosted CCDash deployments where Postgres is the canonical store. The API should stay stateless; the worker owns startup sync, refresh, and scheduled jobs.
+Use this for hosted CCDash deployments where Postgres is the canonical store. The API should stay stateless; the worker owns startup sync, startup refresh/backfill, telemetry export, and scheduled jobs.
 
 For canonical transcript intelligence, this is the authoritative posture: enterprise Postgres owns transcript intelligence, full analytics, and checkpointed historical backfill.
+
+Background job ownership in this hosted posture is explicit:
+
+| Concern | local | api | worker | test |
+| --- | --- | --- | --- | --- |
+| Startup sync | owns | none | owns | none |
+| File watch | owns | none | none | none |
+| Analytics snapshots | owns | none | owns | none |
+| Telemetry export | manual push-now only | manual push-now only | owns scheduled export | none |
+| Integration refresh/backfill | startup refresh/backfill when configured | manual sync/refresh/backfill only | startup refresh/backfill when configured | none |
+| Reconciliation / cache sync | owns | manual exception only when `sync_engine` exists | owns | none |
+
+The API-local rows are manual operator controls, not background ownership. Keep these paths narrow and fail closed when the sync engine is not provisioned. Integration refresh/backfill runs at startup in local and worker runtimes when SkillMeat is configured; it is not a separate periodic job.
+
+- `telemetry push-now`
+- `integration refresh/backfill`
+- `cache` sync/rebuild endpoints, guarded by `sync_engine` availability
 
 Shared enterprise Postgres:
 
@@ -157,16 +174,33 @@ npm run dev:worker
 
 ## Production-Style Startup
 
+Canonical runtime entrypoints:
+
+| Runtime | Canonical entrypoint | Intended use |
+| --- | --- | --- |
+| `local` | `backend.main:app` and `npm run dev` | one-command contributor workflow with local-friendly sync/watch/jobs behavior |
+| `api` | `backend.runtime.bootstrap_api:app` | hosted HTTP API only |
+| `worker` | `python -m backend.worker` | hosted or local background sync, refresh, and scheduled jobs |
+| `test` | `backend.runtime.bootstrap_test:app` | deterministic test harness with incidental background work disabled |
+
+The matrix above is the operator-facing contract. Wrapper scripts are only equivalent when they select the same runtime explicitly. `npm run dev:backend` and `npm run start:backend` are repo wrappers for the hosted `api` runtime; `npm run dev` remains the local-convenience path.
+
 Build frontend assets:
 
 ```bash
 npm run build
 ```
 
-Start backend:
+Start API via the repo wrapper:
 
 ```bash
 npm run start:backend
+```
+
+Start hosted API directly:
+
+```bash
+backend/.venv/bin/python -m uvicorn backend.runtime.bootstrap_api:app --host 0.0.0.0 --port 8000
 ```
 
 Start background worker:
@@ -181,7 +215,72 @@ Serve built frontend:
 npm run start:frontend
 ```
 
-For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. Hosted enterprise API deployments should serve `backend.runtime.bootstrap_api:app`; `backend.worker` owns startup sync and scheduled/background job execution. `backend.main:app` remains the local-convenience entrypoint.
+For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. Hosted enterprise API deployments should serve `backend.runtime.bootstrap_api:app`; `backend.worker` owns startup sync and scheduled/background job execution. `backend.main:app` and `npm run dev` remain the local-convenience entrypoints; `npm run dev:backend` and `npm run start:backend` are convenience wrappers around the hosted `api` runtime.
+
+Repo-shipped process-manager examples now live in [`deploy/runtime/README.md`](../deploy/runtime/README.md), including:
+
+- [`deploy/runtime/systemd/ccdash-api.service`](../deploy/runtime/systemd/ccdash-api.service)
+- [`deploy/runtime/systemd/ccdash-worker.service`](../deploy/runtime/systemd/ccdash-worker.service)
+- [`deploy/runtime/systemd/ccdash-frontend.service`](../deploy/runtime/systemd/ccdash-frontend.service)
+- [`deploy/runtime/supervisor/ccdash.conf`](../deploy/runtime/supervisor/ccdash.conf)
+
+Those examples mirror the current split topology only. They do not add TLS termination or a hardened public frontend server beyond the repo's existing `npm run start:frontend` helper.
+
+### Hosted Smoke Validation
+
+Use the hosted compose example when you want one repeatable runtime check for split startup, probes, migrations, one background-job control path, and the shipped CLI/MCP adapters.
+
+1. Edit [`deploy/runtime/compose.hosted.env.example`](../deploy/runtime/compose.hosted.env.example) and replace `CCDASH_WORKER_PROJECT_ID` with a project id the workspace registry can resolve.
+2. Render and start the stack:
+
+```bash
+npm run docker:hosted:smoke:config
+npm run docker:hosted:smoke:up
+npm run docker:hosted:smoke:ps
+```
+
+3. Validate startup, probes, and migrations:
+
+```bash
+npm run docker:hosted:smoke:probes
+```
+
+Expected checks:
+
+- frontend returns `200`
+- API readiness succeeds
+- API detail reports `profile=api`, `migrationStatus=applied`, and `jobsEnabled=false`
+- worker readiness succeeds
+- worker detail reports `runtimeProfile=worker` and a bound project id
+
+4. Validate one representative background-job control path:
+
+```bash
+npm run docker:hosted:smoke:job
+```
+
+This flips the telemetry exporter setting on and calls `POST /api/telemetry/export/push-now`. In a fresh smoke stack the normal result is `success=true` with `batchSize=0`. That proves the worker-owned exporter path is present without claiming the repo ships a real telemetry sink.
+
+5. Validate the shipped query adapters:
+
+```bash
+npm run docker:hosted:smoke:cli-contract
+npm run docker:hosted:smoke:mcp-contract
+```
+
+These are adapter-contract checks run inside the API container. They prove the repo-local CLI and stdio MCP server still expose the current query surface. They are not a substitute for the separately packaged global `ccdash-cli`.
+
+6. Tear the stack down:
+
+```bash
+npm run docker:hosted:smoke:down
+```
+
+Or run the full sequence with:
+
+```bash
+npm run docker:hosted:smoke:validate
+```
 
 Enterprise operator split:
 
@@ -189,6 +288,8 @@ Enterprise operator split:
 - Worker runs sync, refresh, and scheduled jobs.
 - Filesystem ingest is optional in enterprise mode and should be treated as an adapter, not an assumption.
 - Check `GET /api/health` to confirm `storageComposition`, `storageCanonicalStore`, `auditStore`, `migrationGovernanceStatus`, `syncProvisioned`, isolation mode/schema, and the runtime/job capability fields.
+- Check the worker probe on `CCDASH_WORKER_PROBE_HOST:CCDASH_WORKER_PROBE_PORT` or the default `127.0.0.1:9465` using `/livez`, `/readyz`, and `/detailz`.
+- If the worker does not resolve `CCDASH_WORKER_PROJECT_ID`, hosted validation is not complete even if the API is healthy.
 
 ### Session-Intelligence Validation
 
@@ -217,6 +318,195 @@ Memory-draft publishing remains approval-gated in every posture. CCDash can prep
 
 For the end-to-end enterprise setup, backfill, and post-rollout usage sequence, see [`docs/guides/enterprise-session-intelligence-runbook.md`](./guides/enterprise-session-intelligence-runbook.md).
 For the narrower rollout command, checkpoint semantics, and failure modes, see [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md).
+
+## Performance Tuning Quick Start
+
+If CCDash feels heavy — slow startup, repeated syncs, sluggish responses after a restart, or the Chrome tab ballooning past a gigabyte — the following defaults are the highest-leverage knobs. See [`docs/project_plans/meta_plans/performance-and-reliability-v1.md`](./project_plans/meta_plans/performance-and-reliability-v1.md) for the full initiative tracker.
+
+### Fast defaults for daily use
+
+Copy these into `.env` to smooth out cold starts and keep cached queries warm:
+
+```bash
+# Keep the agent query cache warm across warmer runs (default 60/300 leaves cold windows).
+CCDASH_QUERY_CACHE_TTL_SECONDS=600
+CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS=300
+
+# Halve startup link work — the deferred rebuild is rarely needed day-to-day.
+CCDASH_STARTUP_DEFERRED_REBUILD_LINKS=false
+
+# Keep light-mode startup on so the readiness probe passes quickly.
+CCDASH_STARTUP_SYNC_LIGHT_MODE=true
+```
+
+### Why the worker matters
+
+The query-cache warmer only runs inside the worker runtime. Without `npm run dev:worker` (or `npm run start:worker` in production), every TTL expiry is served from a cold query. For the recommended layout:
+
+```bash
+# Terminal 1 — HTTP API
+npm run dev:backend
+
+# Terminal 2 — sync + cache warmer
+npm run dev:worker
+
+# Terminal 3 — frontend
+npm run dev:frontend
+```
+
+Or run all three with `npm run dev` for the standard contributor workflow.
+
+### When to bump a knob
+
+| Symptom | Setting | Guidance |
+|---------|---------|----------|
+| Cold queries after idle | `CCDASH_QUERY_CACHE_TTL_SECONDS` | Increase to 600+; pair with warmer |
+| Slow boot-to-ready | `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` | Set `false` unless you need an immediate full relink |
+| `database is locked` under heavy sync | `CCDASH_SQLITE_BUSY_TIMEOUT_MS` | Default 30000; raise to 60000+ if still hitting |
+| Frequent relink on unchanged data | `CCDASH_LINKING_LOGIC_VERSION` | Leave at 1 unless the link logic has been updated |
+| Frontend tab memory growth | live transport toggles | Disable `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` on long-running tabs |
+
+See also: [`docs/guides/query-cache-tuning-guide.md`](./guides/query-cache-tuning-guide.md) and [`docs/sync-observability-and-audit.md`](./sync-observability-and-audit.md).
+
+## Full Configuration Reference
+
+All backend variables are read in [`backend/config.py`](../backend/config.py); frontend flags are read at Vite bundle time. The `.env.example` file at the repo root contains inline defaults and recommendations for every variable below.
+
+### Server / transport
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_BACKEND_HOST` | `127.0.0.1` | Host used by startup scripts |
+| `CCDASH_BACKEND_PORT` | `8000` | Port used by startup scripts |
+| `CCDASH_HOST` | `0.0.0.0` | FastAPI bind host |
+| `CCDASH_PORT` | `8000` | FastAPI bind port |
+| `CCDASH_API_PROXY_TARGET` | `http://127.0.0.1:8000` | Vite proxy target for `/api` |
+| `CCDASH_FRONTEND_ORIGIN` | `http://localhost:3000` | CORS allowed origin |
+| `CCDASH_PYTHON` | — | Explicit Python interpreter override |
+| `CCDASH_API_BEARER_TOKEN` | — | Optional bearer token required on API requests |
+
+### Database + storage
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_DB_BACKEND` | `sqlite` | `sqlite` or `postgres` |
+| `CCDASH_DB_PATH` | `.ccdash.db` | SQLite file path |
+| `CCDASH_DATABASE_URL` | — | PostgreSQL connection URL |
+| `CCDASH_SQLITE_BUSY_TIMEOUT_MS` | `30000` | SQLite busy-timeout (ms); floor 1000 |
+| `CCDASH_STORAGE_PROFILE` | `local` | `local` or `enterprise` |
+| `CCDASH_STORAGE_SHARED_POSTGRES` | `false` | Enables shared-enterprise posture |
+| `CCDASH_STORAGE_ISOLATION_MODE` | `dedicated` | `dedicated`, `schema`, or `tenant` |
+| `CCDASH_STORAGE_SCHEMA` | `ccdash` | Schema name for shared-enterprise |
+| `CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED` | `false` | Optional filesystem ingest in enterprise |
+
+### Project selection + workspace paths
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_ACTIVE_PROJECT` | — | Project slug to activate at boot |
+| `CCDASH_PROJECT_ROOT` | repo root | Override resolved project root |
+| `CCDASH_DATA_DIR` | `examples/skillmeat` | Base data directory |
+| `CCDASH_CLAUDE_PROJECTS_ROOT` | — | Claude projects discovery root |
+| `CCDASH_CODEX_SESSIONS_ROOT` | — | Codex sessions discovery root |
+| `CCDASH_SESSION_DISCOVERY_ROOT` | — | Generic session discovery root |
+| `CCDASH_INTEGRATIONS_SETTINGS_FILE` | `.ccdash-integrations.json` | Integrations settings file |
+| `CCDASH_REPO_WORKSPACE_CACHE_DIR` | `.ccdash-repo-cache` | Repo workspace cache |
+| `CCDASH_TEST_RESULTS_DIR` | — | Override path for test result ingestion |
+| `CCDASH_SESSION_MAPPINGS_FILE` | — | JSON file with session-mapping overrides |
+| `CCDASH_SESSION_MAPPINGS_JSON` | — | Inline JSON session-mapping overrides |
+
+### Feature gates (backend)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_TEST_VISUALIZER_ENABLED` | `false` | Global gate for `/api/tests/*` and `/tests` |
+| `CCDASH_INTEGRITY_SIGNALS_ENABLED` | `false` | Global gate for integrity signal features |
+| `CCDASH_LIVE_TEST_UPDATES_ENABLED` | `false` | Backend gate for test live invalidation |
+| `CCDASH_SEMANTIC_MAPPING_ENABLED` | `false` | Backend gate for semantic mapping |
+| `CCDASH_SKILLMEAT_INTEGRATION_ENABLED` | `true` | Enables SkillMeat cache/sync endpoints |
+| `CCDASH_AGENTIC_RECOMMENDATIONS_ENABLED` | `true` | Historical stack recommendations |
+| `CCDASH_AGENTIC_WORKFLOW_ANALYTICS_ENABLED` | `true` | Workflow intelligence endpoints |
+| `CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED` | `true` | Attribution analytics and payloads |
+| `CCDASH_SESSION_BLOCK_INSIGHTS_ENABLED` | `true` | Session block insights |
+| `CCDASH_LAUNCH_PREP_ENABLED` | `false` | Launch preparation surfaces |
+| `CCDASH_PLANNING_CONTROL_PLANE_ENABLED` | `true` | Planning control plane surfaces |
+
+### Frontend live rollout
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_CCDASH_LIVE_EXECUTION_ENABLED` | `true` | Stream-first execution updates |
+| `VITE_CCDASH_LIVE_SESSIONS_ENABLED` | `true` | Stream-first session invalidation |
+| `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` | `false` | Append-first transcript deltas |
+| `VITE_CCDASH_LIVE_FEATURES_ENABLED` | `false` | Feature board/modal live invalidation |
+| `VITE_CCDASH_LIVE_TESTS_ENABLED` | `false` | Test visualizer live invalidation |
+| `VITE_CCDASH_LIVE_OPS_ENABLED` | `false` | Ops panel live invalidation |
+
+### Startup + live tuning (performance-sensitive)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_STARTUP_SYNC_LIGHT_MODE` | `true` | Light-mode first pass at startup |
+| `CCDASH_STARTUP_SYNC_DELAY_SECONDS` | `2` | Delay before startup sync begins |
+| `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` | `true` | Deferred heavier link rebuild |
+| `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS` | `45` | Delay before deferred rebuild |
+| `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS` | `false` | Capture analytics during deferred rebuild |
+| `CCDASH_LINKING_LOGIC_VERSION` | `1` | Bump to force full relink |
+| `CCDASH_ANALYTICS_SNAPSHOT_INTERVAL_SECONDS` | `900` | Analytics snapshot cadence |
+| `CCDASH_LIVE_REPLAY_BUFFER_SIZE` | `200` | Replay buffer per live topic |
+| `CCDASH_LIVE_HEARTBEAT_SECONDS` | `15` | SSE heartbeat cadence |
+| `CCDASH_LIVE_MAX_PENDING_EVENTS` | `100` | Max pending events before coarse invalidation |
+
+### Agent query cache
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_QUERY_CACHE_TTL_SECONDS` | `60` | Cache lifetime. `0` disables. |
+| `CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS` | `300` | Worker warmer interval. `0` disables. |
+
+### CLI + worker
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_TIMEOUT` | `30` | Standalone `ccdash` CLI HTTP timeout |
+| `CCDASH_TARGET` | — | Active CLI target name |
+| `CCDASH_WORKER_PROJECT_ID` | — | Bind worker to a resolvable project id before hosted startup |
+| `CCDASH_WORKER_PROBE_HOST` | `127.0.0.1` | Worker readiness probe host |
+| `CCDASH_WORKER_PROBE_PORT` | `9465` | Worker readiness probe port |
+
+### Observability
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_OTEL_ENABLED` | `false` | Enable OpenTelemetry export |
+| `CCDASH_OTEL_ENDPOINT` | `http://localhost:4318` | OTLP endpoint |
+| `CCDASH_OTEL_SERVICE_NAME` | `ccdash-backend` | Service name reported to OTel |
+| `CCDASH_PROM_PORT` | `9464` | Prometheus scrape port |
+
+### Telemetry exporter
+
+See [`docs/guides/telemetry-exporter-guide.md`](./guides/telemetry-exporter-guide.md) for full semantics.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_TELEMETRY_EXPORT_ENABLED` | `false` | Master switch |
+| `CCDASH_SAM_ENDPOINT` | — | SAM ingestion URL |
+| `CCDASH_SAM_API_KEY` | — | SAM bearer token |
+| `CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS` | `900` | Export cadence (min 60) |
+| `CCDASH_TELEMETRY_EXPORT_BATCH_SIZE` | `50` | Rows per push (1-500) |
+| `CCDASH_TELEMETRY_EXPORT_TIMEOUT_SECONDS` | `30` | Outbound request timeout |
+| `CCDASH_TELEMETRY_EXPORT_MAX_QUEUE_SIZE` | `10000` | Pending-row cap |
+| `CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS` | `30` | Synced-row retention |
+| `CCDASH_TELEMETRY_ALLOW_INSECURE` | `false` | Allow plaintext SAM endpoints |
+| `CCDASH_SAM_ARTIFACT_TELEMETRY_ENABLED` | `false` | Optional artifact telemetry channel |
+| `CCDASH_VERSION` | `0.1.0` | Version emitted in payloads |
+
+### GitHub integration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_GITHUB_TOKEN` | — | GitHub API token for repo-backed projects |
+| `CCDASH_GITHUB_USERNAME` | — | GitHub username (optional convenience) |
 
 ## Troubleshooting
 

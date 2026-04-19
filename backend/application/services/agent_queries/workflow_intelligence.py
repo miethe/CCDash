@@ -9,6 +9,7 @@ from backend.services.workflow_effectiveness import detect_failure_patterns, get
 from backend.services.workflow_registry import get_workflow_registry_detail, list_workflow_registry
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
+from .cache import memoized_query
 from .models import SessionRef, WorkflowDiagnostic, WorkflowDiagnosticsDTO
 
 
@@ -45,9 +46,20 @@ def _session_ref_from_registry_evidence(row: dict[str, Any]) -> SessionRef:
     )
 
 
+def _workflow_diagnostics_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    feature_id: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    return {"feature_id": feature_id}
+
+
 class WorkflowDiagnosticsQueryService:
     """Aggregate workflow effectiveness and failure patterns for agents."""
 
+    @memoized_query("workflow_diagnostics", param_extractor=_workflow_diagnostics_params)
     async def get_diagnostics(
         self,
         context: RequestContext,

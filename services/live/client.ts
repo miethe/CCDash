@@ -1,4 +1,5 @@
 import type { EventSourceLike, LiveEventEnvelope } from './types';
+import { resolveLiveStreamBaseUrl } from '../runtimeBase';
 
 const LIVE_EVENT_TYPES = ['append', 'invalidate', 'heartbeat', 'snapshot_required'] as const;
 
@@ -17,7 +18,7 @@ export interface LiveStreamClientOptions {
 export const buildLiveStreamUrl = (
   topics: readonly string[],
   cursors: ReadonlyMap<string, string>,
-  basePath = '/api/live/stream',
+  basePath = resolveLiveStreamBaseUrl(),
 ): string => {
   const params = new URLSearchParams();
   topics.forEach(topic => params.append('topic', topic));
@@ -97,4 +98,3 @@ export const connectLiveStream = (
     },
   };
 };
-

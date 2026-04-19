@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in-progress
 category: refactors
 title: 'Implementation Plan: Deployment and Runtime Modularization V1'
 description: Turn CCDash runtime profiles into deployable API, worker, local, and test operating modes with explicit launch contracts, health semantics, and packaging.
@@ -17,8 +17,11 @@ audience:
 - backend-platform
 - devops
 created: 2026-04-08
-updated: '2026-04-08'
-commit_refs: []
+updated: '2026-04-18'
+commit_refs:
+- "4c64bff"
+- "80f3dfc"
+- "20887a8"
 pr_refs: []
 tags:
 - implementation
@@ -32,7 +35,7 @@ priority: high
 risk_level: high
 complexity: high
 track: Platform
-timeline_estimate: 3-5 weeks across 6 phases
+timeline_estimate: 4-6 weeks across 6 phases
 feature_slug: deployment-runtime-modularization-v1
 feature_family: ccdash-runtime-platform
 feature_version: v1
@@ -48,8 +51,11 @@ related_documents:
 - docs/project_plans/implementation_plans/refactors/ccdash-hexagonal-foundation-v1.md
 - docs/project_plans/implementation_plans/refactors/data-platform-modularization-v1.md
 - docs/project_plans/implementation_plans/telemetry-analytics-modernization-v1.md
+- docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1.md
 - docs/setup-user-guide.md
 - docs/guides/enterprise-session-intelligence-runbook.md
+- .claude/progress/deployment-runtime-modularization-v1/phase-4-progress.md
+- .claude/skill-specs/ccdash-skill/implementation-plan.md
 context_files:
 - backend/main.py
 - backend/runtime/bootstrap.py
@@ -60,6 +66,11 @@ context_files:
 - backend/runtime/profiles.py
 - backend/runtime_ports.py
 - backend/adapters/jobs/runtime.py
+- backend/cli/runtime.py
+- backend/cli/main.py
+- backend/mcp/bootstrap.py
+- backend/mcp/server.py
+- backend/mcp/README.md
 - backend/worker.py
 - scripts/dev.mjs
 - scripts/backend.mjs
@@ -67,6 +78,7 @@ context_files:
 - package.json
 - docs/setup-user-guide.md
 - deploy/observability/docker-compose.yml
+- .claude/skill-specs/ccdash-skill/implementation-plan.md
 ---
 
 # Implementation Plan: Deployment and Runtime Modularization V1
@@ -87,6 +99,8 @@ The plan starts from a partially modular runtime foundation, not a greenfield de
 4. `/api/health` exposes a rich runtime payload, but there is no explicit liveness/readiness split and no operator-grade worker probe surface.
 5. Setup and enterprise docs describe a hosted API plus worker topology, but repo-level packaging artifacts for API, worker, and frontend are still minimal.
 6. Core ports still fall back to local-friendly implementations such as permissive auth, in-process job scheduling, and local workspace registry defaults.
+7. CLI and MCP access surfaces are now shipped in-repo as lightweight query adapters using `RuntimeContainer(profile=test)` plus explicit request-context bootstrap, which means deployment-runtime changes must preserve their job-free, side-effect-light execution contract.
+8. The `ccdash` Claude Code skill now exists as a natural-language operator surface over these tools, so the final rollout needs to update skill routing, deployment guidance, and troubleshooting references after the runtime contract settles.
 
 This plan therefore focuses on converting the existing runtime seams into a safe operator model rather than redoing the foundational profile work already completed.
 
@@ -99,6 +113,7 @@ In scope:
 3. Health, readiness, and degraded-state contracts for API and worker runtimes.
 4. Deployment packaging and configuration contracts for frontend, API, and worker.
 5. Runtime observability, validation coverage, and operator-facing rollout documentation.
+6. Compatibility and documentation updates for operator query surfaces now exposed through CLI, MCP, and the `ccdash` skill.
 
 Out of scope:
 
@@ -114,6 +129,7 @@ Non-negotiables:
 3. Worker responsibilities must be independently startable, restartable, and probeable.
 4. Runtime differences should live in composition, launch, and capability guardrails, not in broad route forks.
 5. Packaging is container-first, but process-manager equivalents must remain documented and equivalent in behavior.
+6. CLI and MCP query surfaces must remain lightweight, non-serving adapters and must not inherit local startup sync, watcher, or worker side effects as hosted runtime work proceeds.
 
 ## Target Deployment Shape
 
@@ -134,6 +150,14 @@ Non-negotiables:
 4. Worker runtime exposes a lightweight probe surface on a dedicated admin port rather than relying only on logs or process exit codes.
 5. Logs, traces, and health payloads identify runtime profile, storage profile, deployment mode, and worker/job role explicitly.
 
+### Operator Query Surfaces
+
+| Surface | Current posture | Deployment-runtime implication |
+|------|-----------------|--------------------------------|
+| CLI | Lightweight query adapter bootstrapped through `backend/cli/runtime.py` | Must stay side-effect-light and compatible with the stabilized runtime contract |
+| MCP | Stdio FastMCP server bootstrapped through `backend/mcp/bootstrap.py` | Must preserve its lightweight bootstrap and transport envelope while runtime semantics evolve |
+| `ccdash` skill | Natural-language operator layer over CLI today, with MCP-aware routing planned | Final rollout must update references, recipes, and transport guidance to match the shipped topology |
+
 ### Packaging Targets
 
 Illustrative artifact targets for this plan:
@@ -148,13 +172,13 @@ Illustrative artifact targets for this plan:
 | Phase | Title | Effort | Duration | Critical Path | Objective |
 |------|-------|--------|----------|---------------|-----------|
 | 1 | Runtime Contract and Launch Surface | 8 pts | 3-4 days | Yes | Make runtime selection explicit and remove hosted entrypoint ambiguity |
-| 2 | Worker Ownership and Job Routing | 12 pts | 4-5 days | Yes | Move hosted background responsibilities behind an explicit worker contract |
-| 3 | Health, Readiness, and Degradation Semantics | 11 pts | 4-5 days | Yes | Give operators real API and worker probes with actionable state |
+| 2 | Worker Ownership and Job Routing | 14 pts | 5-6 days | Yes | Move hosted background responsibilities behind an explicit worker contract while preserving lightweight CLI/MCP tooling posture |
+| 3 | Health, Readiness, and Degradation Semantics | 13 pts | 5-6 days | Yes | Give operators real API and worker probes with actionable state plus stable machine-consumable diagnostics |
 | 4 | Packaging and Configuration Contracts | 10 pts | 4-5 days | Yes | Ship reproducible build/run artifacts and clear env boundaries |
 | 5 | Observability and Hosted Safety Guardrails | 8 pts | 3-4 days | Partial | Ensure runtime metadata and misconfiguration signals are operationally useful |
-| 6 | Validation, Documentation, and Rollout | 8 pts | 3-4 days | Final gate | Land test matrix, hosted smoke flow, and operator documentation |
+| 6 | Validation, Documentation, and Rollout | 10 pts | 4-5 days | Final gate | Land test matrix, hosted smoke flow, operator documentation, and skill refresh |
 
-**Total**: ~57 story points over 3-5 weeks
+**Total**: ~63 story points over 4-6 weeks
 
 ## Implementation Strategy
 
@@ -171,6 +195,7 @@ Illustrative artifact targets for this plan:
 1. Packaging scaffolding can start once Phase 1 freezes canonical entrypoints.
 2. Probe payload design in Phase 3 can begin while Phase 2 hardens worker ownership and job-class routing.
 3. Documentation updates and hosted smoke scripts can be drafted incrementally once each phase's runtime contract is stable.
+4. CLI/MCP compatibility coverage and `ccdash` skill doc updates can be prepared in parallel once Phase 3 locks the probe/detail contract and Phase 4 locks packaging/env boundaries.
 
 ### Migration Order
 
@@ -203,16 +228,18 @@ Illustrative artifact targets for this plan:
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| JOB-101 | Background Job Ownership Matrix | Classify all current background work including startup sync, file watch, analytics snapshots, telemetry export, integration refresh, and reconciliation by runtime owner and trigger model. | Every long-running or scheduled concern is explicitly owned by `local`, `worker`, or an API-local exception path. | 3 pts | backend-architect, DevOps | RUN-003 |
+| JOB-101 | Background Job Ownership Matrix | Classify all current background work including startup sync, file watch, analytics snapshots, telemetry export, integration refresh, and reconciliation by runtime owner and trigger model, including the API-local manual exception paths for telemetry push-now, integration refresh/backfill, and cache sync endpoints. | Every long-running or scheduled concern is explicitly owned by `local`, `worker`, or an API-local exception path, and those API-local exception paths are named explicitly. | 3 pts | backend-architect, DevOps | RUN-003 |
 | JOB-102 | Worker Binding Contract | Replace implicit active-project assumptions with an explicit worker binding contract based on operator configuration or workspace-registry resolution rules. | Worker startup does not rely on interactive local state and can be started intentionally in hosted environments. | 4 pts | backend-architect, python-backend-engineer | JOB-101 |
 | JOB-103 | Filesystem Adapter Isolation | Move watcher and filesystem-ingest assumptions behind local/worker-only adapter boundaries and prevent accidental start in `api` or `test` profiles. | API and test runtimes never start watcher/file-ingest behavior; local and worker start it only when allowed by contract. | 2 pts | python-backend-engineer | JOB-101 |
 | JOB-104 | Local Co-Run Compatibility | Preserve the current local convenience posture where API plus jobs may co-run, while keeping hosted API stateless and background-free. | Local runtime still supports one-process convenience; hosted API keeps only truly API-local responsibilities. | 3 pts | backend-architect | JOB-102 |
+| JOB-105 | CLI/MCP Lightweight Bootstrap Invariants | Codify that CLI and MCP query surfaces remain non-serving, non-job-owning adapters that use lightweight runtime bootstrap and never trigger watcher, startup sync, or worker ownership paths. | CLI and MCP continue to work through runtime modularization without inheriting API/worker side effects or requiring hosted HTTP boot. | 2 pts | backend-architect, python-backend-engineer | JOB-101 |
 
 **Phase 2 Quality Gates**
 
 1. Hosted API no longer owns watcher, startup sync, or scheduled background work.
 2. Worker can be started independently with explicit responsibility boundaries.
 3. Local runtime still supports current contributor workflows without hidden hosted assumptions.
+4. CLI and MCP remain lightweight query adapters with no accidental job or watcher ownership.
 
 ## Phase 3: Health, Readiness, and Degradation Semantics
 
@@ -224,12 +251,14 @@ Illustrative artifact targets for this plan:
 | OPS-202 | API Probe Split | Refactor the current `/api/health` surface into additive live/ready/detail endpoints or equivalent payloads that distinguish DB, migration, auth, storage, and runtime-capability state. | API probes separate "process is up" from "runtime is ready" and expose actionable degraded signals. | 3 pts | python-backend-engineer | OPS-201 |
 | OPS-203 | Worker Probe Surface | Add a lightweight probe server or equivalent admin-port surface for worker runtime that reports job state, checkpoint freshness, backlog, and last-success markers. | Worker runtime is probeable by container orchestrators or process managers without serving the full API router set. | 3 pts | python-backend-engineer, DevOps | OPS-201 |
 | OPS-204 | Degradation Tests | Add tests for degraded and unready conditions such as auth provider misconfiguration, pending migrations, missing worker binding, queue backlog, and disabled integrations. | Key failure modes map to predictable probe results and are covered by automated tests. | 2 pts | python-backend-engineer | OPS-202 |
+| OPS-205 | Tooling-Facing Diagnostic Contract | Ensure readiness/detail payloads expose stable machine-consumable fields that CLI, MCP, and downstream skill guidance can rely on for troubleshooting and operator flows. | CLI/MCP consumers can surface deployment/runtime diagnosis without scraping human-only logs or undocumented payload details. | 2 pts | python-backend-engineer, documentation-writer | OPS-201 |
 
 **Phase 3 Quality Gates**
 
 1. API and worker each expose operator-grade probe surfaces.
 2. Degraded and unready states are consistent across runtimes.
 3. Hosted validation no longer depends on interpreting ad hoc log output alone.
+4. Probe and detail payloads are stable enough for CLI/MCP and skill-driven troubleshooting flows.
 
 ## Phase 4: Packaging and Configuration Contracts
 
@@ -270,12 +299,14 @@ Illustrative artifact targets for this plan:
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| VAL-501 | Runtime Matrix Test Coverage | Extend automated coverage for runtime entrypoints, invalid config cases, probe semantics, and background-job ownership boundaries. | CI covers `local`, `api`, `worker`, and `test` runtime expectations plus key negative cases. | 3 pts | python-backend-engineer | OBS-403 |
-| VAL-502 | Hosted Smoke Validation Flow | Add a repeatable hosted smoke workflow covering API start, worker start, probe checks, migrations, and one representative background job path. | Staging validation is executable and not dependent on tribal knowledge. | 3 pts | DevOps, task-completion-validator | PKG-302 |
-| VAL-503 | Operator Docs and Migration Notes | Update setup and runbook documentation with final commands, env tables, failure modes, and local-versus-hosted migration guidance. | Operator docs match the shipped entrypoints, artifacts, and probe surfaces exactly. | 2 pts | documentation-writer | VAL-502 |
+| VAL-501 | Runtime Matrix Test Coverage | Extend automated coverage for runtime entrypoints, invalid config cases, probe semantics, background-job ownership boundaries, and CLI/MCP lightweight bootstrap invariants. | CI covers `local`, `api`, `worker`, and `test` runtime expectations plus key negative cases and proves CLI/MCP do not pick up runtime side effects. | 3 pts | python-backend-engineer | OBS-403 |
+| VAL-502 | Hosted Smoke Validation Flow | Add a repeatable hosted smoke workflow covering API start, worker start, probe checks, migrations, one representative background job path, and representative CLI + MCP queries against the stabilized runtime contract. | Staging validation is executable, includes operator-tooling surfaces, and is not dependent on tribal knowledge. | 3 pts | DevOps, task-completion-validator | PKG-302 |
+| VAL-503 | Operator Docs and Migration Notes | Update setup and runbook documentation with final commands, env tables, failure modes, local-versus-hosted migration guidance, and explicit CLI/MCP operator-surface posture. | Operator docs match the shipped entrypoints, artifacts, probes, and supported query surfaces exactly. | 2 pts | documentation-writer | VAL-502 |
+| VAL-504 | `ccdash` Skill Refresh | Update the `ccdash` skill references, recipes, and transport guidance so it reflects the final deployment/runtime topology, probe semantics, and MCP-aware routing posture. | The skill no longer assumes stale deployment behavior and points operators to the correct runtime, probe, and troubleshooting flows. | 2 pts | documentation-writer, skill-creator | VAL-503 |
 
 **Phase 6 Quality Gates**
 
 1. Runtime matrix coverage passes in CI.
-2. Hosted smoke validation succeeds with split API and worker runtimes.
+2. Hosted smoke validation succeeds with split API and worker runtimes plus representative CLI and MCP queries.
 3. Documentation no longer overstates capabilities that are not actually shipped in launch artifacts.
+4. The `ccdash` skill is updated to the final runtime contract and no longer routes through stale deployment guidance.

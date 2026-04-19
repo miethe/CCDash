@@ -78,6 +78,8 @@ async def _get_forensics(
     feature_id: str,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    bypass_cache: bool = False,
 ) -> tuple[FeatureForensicsDTO, str]:
     """Return ``(forensics_dto, feature_slug)``.
 
@@ -88,6 +90,7 @@ async def _get_forensics(
         app_request.context,
         app_request.ports,
         feature_id,
+        bypass_cache=bypass_cache,
     )
     if forensics.status == "error":
         raise HTTPException(
@@ -109,8 +112,18 @@ async def list_features_v1(
     offset: int,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    q: str | None = None,
 ) -> ClientV1PaginatedEnvelope[FeatureSummaryDTO]:
-    """Return a paginated list of features for the active project."""
+    """Return a paginated list of features for the active project.
+
+    TODO(CACHE-007+): This handler is not decorated with @memoized_query because
+    it has no service-layer method to attach the decorator to — the query logic
+    lives inline here.  Caching it cleanly requires extracting a dedicated
+    FeatureListQueryService (analogous to FeatureForensicsQueryService), which is
+    scope beyond CACHE-006.  Raise a follow-up task to extract the service and
+    apply memoization in the same pass.
+    """
     effective_limit = _clamp_limit(limit)
     effective_offset = max(0, offset)
 
@@ -127,8 +140,9 @@ async def list_features_v1(
     except Exception:
         logger.debug("Could not resolve project scope for list_features_v1")
 
-    rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit)
-    total = await feature_repo.count(project_id)
+    keyword = q.strip() if q else None
+    rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit, keyword=keyword)
+    total = await feature_repo.count(project_id, keyword=keyword)
 
     # Apply optional in-memory filters (status and category are low-cardinality
     # and not yet supported at the repository layer).
@@ -140,6 +154,8 @@ async def list_features_v1(
         rows = [r for r in rows if str(r.get("category", "")).lower() == category_lower]
 
     items = [_row_to_feature_summary(row) for row in rows]
+    has_more = (effective_offset + len(items)) < total
+    truncated = len(items) >= effective_limit and has_more
 
     return ClientV1PaginatedEnvelope(
         data=items,
@@ -148,7 +164,8 @@ async def list_features_v1(
             total=total,
             offset=effective_offset,
             limit=effective_limit,
-            has_more=(effective_offset + len(items)) < total,
+            has_more=has_more,
+            truncated=truncated,
         ),
     )
 
@@ -162,9 +179,18 @@ async def get_feature_detail_v1(
     feature_id: str,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    bypass_cache: bool = False,
 ) -> ClientV1Envelope[FeatureForensicsDTO]:
-    """Return full forensic detail for a single feature."""
-    forensics, _ = await _get_forensics(feature_id, request_context, core_ports)
+    """Return full forensic detail for a single feature.
+
+    The ``data.linked_sessions`` field in the response is the authoritative
+    session list. This endpoint and ``GET /v1/features/{id}/sessions`` both
+    source that list from the same ``FeatureForensicsDTO`` via ``_get_forensics()``
+    — they cannot disagree. Linkage is eventually-consistent (populated by the
+    background sync engine).
+    """
+    forensics, _ = await _get_forensics(feature_id, request_context, core_ports, bypass_cache=bypass_cache)
     return ClientV1Envelope(
         data=forensics,
         meta=build_client_v1_meta(instance_id=_instance_id()),
@@ -182,12 +208,20 @@ async def get_feature_sessions_v1(
     offset: int,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    bypass_cache: bool = False,
 ) -> ClientV1Envelope[FeatureSessionsDTO]:
-    """Return sessions linked to a feature."""
+    """Return sessions linked to a feature, paginated.
+
+    Session data is drawn from ``forensics.linked_sessions`` — the same field
+    served by ``GET /v1/features/{id}`` — so both endpoints are always in sync.
+    ``data.total`` reflects the full linked-session count; ``data.sessions``
+    contains the requested page slice.
+    """
     effective_limit = _clamp_limit(limit)
     effective_offset = max(0, offset)
 
-    forensics, feature_slug = await _get_forensics(feature_id, request_context, core_ports)
+    forensics, feature_slug = await _get_forensics(feature_id, request_context, core_ports, bypass_cache=bypass_cache)
 
     all_sessions = forensics.linked_sessions
     page = all_sessions[effective_offset : effective_offset + effective_limit]

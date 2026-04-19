@@ -65,6 +65,7 @@ from backend.application.live_updates.domain_events import (
     SessionTranscriptAppendPayload,
     publish_feature_invalidation,
     publish_ops_invalidation,
+    publish_planning_invalidation,
     publish_session_transcript_append,
     publish_session_snapshot,
 )
@@ -2818,17 +2819,25 @@ class SyncEngine:
                 int(stats.get(key, 0) or 0) > 0
                 for key in ("documents_synced", "tasks_synced", "features_synced", "links_created")
             ):
+                _sync_payload = {
+                    "documentsSynced": int(stats.get("documents_synced", 0) or 0),
+                    "tasksSynced": int(stats.get("tasks_synced", 0) or 0),
+                    "featuresSynced": int(stats.get("features_synced", 0) or 0),
+                    "linksCreated": int(stats.get("links_created", 0) or 0),
+                    "operationId": operation_id,
+                }
                 await publish_feature_invalidation(
                     project.id,
                     reason="sync_project_completed",
                     source="sync_engine",
-                    payload={
-                        "documentsSynced": int(stats.get("documents_synced", 0) or 0),
-                        "tasksSynced": int(stats.get("tasks_synced", 0) or 0),
-                        "featuresSynced": int(stats.get("features_synced", 0) or 0),
-                        "linksCreated": int(stats.get("links_created", 0) or 0),
-                        "operationId": operation_id,
-                    },
+                    payload=_sync_payload,
+                )
+                # Fan out to planning topics — a full sync may change planning state.
+                await publish_planning_invalidation(
+                    project.id,
+                    reason="sync_project_completed",
+                    source="sync_engine",
+                    payload=_sync_payload,
                 )
             return stats
         except Exception as exc:
@@ -2908,14 +2917,22 @@ class SyncEngine:
             if should_finalize_operation:
                 await self._finish_operation(operation_id, status="completed", stats=stats)
             if int(stats.get("created", 0) or 0) > 0:
+                _links_payload = {
+                    "linksCreated": int(stats.get("created", 0) or 0),
+                    "operationId": operation_id,
+                }
                 await publish_feature_invalidation(
                     project_id,
                     reason="rebuild_links_completed",
                     source="sync_engine",
-                    payload={
-                        "linksCreated": int(stats.get("created", 0) or 0),
-                        "operationId": operation_id,
-                    },
+                    payload=_links_payload,
+                )
+                # Fan out: link rebuilds can alter cross-feature planning relationships.
+                await publish_planning_invalidation(
+                    project_id,
+                    reason="rebuild_links_completed",
+                    source="sync_engine",
+                    payload=_links_payload,
                 )
             return stats
         except Exception as exc:
@@ -3400,24 +3417,17 @@ class SyncEngine:
         should_rebuild_links = False
         project_root = infer_project_root(docs_dir, progress_dir)
         resolved_test_sources = list(test_sources or [])
-        if not resolved_test_sources:
-            resolved_test_results_dir = test_results_dir
-            if not resolved_test_results_dir and config.TEST_RESULTS_DIR:
-                configured = Path(config.TEST_RESULTS_DIR)
-                resolved_test_results_dir = (
-                    configured if configured.is_absolute() else (project_root / configured)
+        if not resolved_test_sources and test_results_dir:
+            resolved_test_sources = [
+                ResolvedTestSource(
+                    platform_id="pytest",
+                    enabled=True,
+                    watch=True,
+                    results_dir=str(test_results_dir),
+                    resolved_dir=test_results_dir,
+                    patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
                 )
-            if resolved_test_results_dir:
-                resolved_test_sources = [
-                    ResolvedTestSource(
-                        platform_id="pytest",
-                        enabled=True,
-                        watch=True,
-                        results_dir=str(resolved_test_results_dir),
-                        resolved_dir=resolved_test_results_dir,
-                        patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
-                    )
-                ]
+            ]
         root_scopes: list[Path] = []
         if docs_dir.exists():
             root_scopes.append(docs_dir)
@@ -3578,17 +3588,25 @@ class SyncEngine:
             if should_finalize_operation:
                 await self._finish_operation(operation_id, status="completed", stats=stats)
             if any(int(stats.get(key, 0) or 0) > 0 for key in ("documents", "tasks", "features", "links_created")):
+                _changed_payload = {
+                    "documentsSynced": int(stats.get("documents", 0) or 0),
+                    "tasksSynced": int(stats.get("tasks", 0) or 0),
+                    "featuresSynced": int(stats.get("features", 0) or 0),
+                    "linksCreated": int(stats.get("links_created", 0) or 0),
+                    "operationId": operation_id,
+                }
                 await publish_feature_invalidation(
                     project_id,
                     reason="sync_changed_files_completed",
                     source="sync_engine",
-                    payload={
-                        "documentsSynced": int(stats.get("documents", 0) or 0),
-                        "tasksSynced": int(stats.get("tasks", 0) or 0),
-                        "featuresSynced": int(stats.get("features", 0) or 0),
-                        "linksCreated": int(stats.get("links_created", 0) or 0),
-                        "operationId": operation_id,
-                    },
+                    payload=_changed_payload,
+                )
+                # Fan out: changed feature files may update planning projection.
+                await publish_planning_invalidation(
+                    project_id,
+                    reason="sync_changed_files_completed",
+                    source="sync_engine",
+                    payload=_changed_payload,
                 )
             return stats
         except Exception as exc:
@@ -4527,7 +4545,21 @@ class SyncEngine:
             if not token:
                 return False
             feature_token = feature_id.lower()
-            return token == feature_token or _canonical_slug(token) == _canonical_slug(feature_token)
+            if token == feature_token:
+                return True
+            if _canonical_slug(token) == _canonical_slug(feature_token):
+                return True
+            # Accept variant suffixes so phase/iteration/version plan files
+            # still resolve back to the parent feature (e.g. "foo-phase-2",
+            # "foo-iter-3", "foo-v2" all match feature_id "foo").
+            for base in {feature_token, _canonical_slug(feature_token)}:
+                if not base:
+                    continue
+                for separator in ("-phase-", "_phase_", "-iter-", "_iter_", "-iteration-", "-v"):
+                    prefix = f"{base}{separator}"
+                    if token.startswith(prefix) and token[len(prefix):len(prefix) + 1].isdigit():
+                        return True
+            return False
 
         feature_ref_paths: dict[str, set[str]] = {}
         feature_slug_aliases: dict[str, set[str]] = {}
@@ -4993,10 +5025,12 @@ class SyncEngine:
                     else 0.0
                 )
                 confidence = float(candidate["baseConfidence"])
-                if share < 0.50:
-                    confidence -= 0.20
-                elif share < 0.70:
-                    confidence -= 0.10
+                has_command_path_signal = bool(candidate.get("hasCommandPath"))
+                if not has_command_path_signal:
+                    if share < 0.50:
+                        confidence -= 0.20
+                    elif share < 0.70:
+                        confidence -= 0.10
                 if candidate["hasReadOnlySignals"]:
                     confidence -= 0.08
                 confidence = round(max(0.35, min(0.95, confidence)), 3)

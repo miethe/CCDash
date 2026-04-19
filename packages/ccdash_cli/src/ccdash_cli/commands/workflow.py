@@ -5,7 +5,7 @@ import typer
 
 from ccdash_cli.runtime import state as app_state
 from ccdash_cli.formatters import OutputMode, get_formatter, resolve_output_mode
-from ccdash_cli.runtime.client import CCDashClient, CCDashClientError
+from ccdash_cli.runtime.client import build_client, CCDashClientError
 from ccdash_cli.runtime.config import resolve_target
 
 workflow_app = typer.Typer(help="Workflow diagnostics.")
@@ -14,6 +14,7 @@ workflow_app = typer.Typer(help="Workflow diagnostics.")
 @workflow_app.command("failures")
 def failures(
     feature_id: str | None = typer.Option(None, "--feature", help="Filter by feature ID."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the server-side query cache and fetch fresh data."),
     output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
     json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
     markdown_output: bool = typer.Option(False, "--md", help="Shortcut for --output markdown."),
@@ -21,12 +22,14 @@ def failures(
     """Show workflows with the highest observed failure burden."""
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
-    params = {}
+    params: dict = {}
     if feature_id:
         params["feature_id"] = feature_id
+    if no_cache:
+        params["bypass_cache"] = "true"
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get("/api/v1/workflows/failures", params=params or None)
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)

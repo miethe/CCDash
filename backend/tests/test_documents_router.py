@@ -1,6 +1,7 @@
 import tempfile
 import types
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -15,7 +16,7 @@ from backend.routers import api as api_router
 from backend.services.project_paths.models import ResolvedProjectPath, ResolvedProjectPaths
 
 
-def _make_request(sync_engine: AsyncMock):
+def _make_request(sync_engine: AsyncMock | None):
     return types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(sync_engine=sync_engine)))
 
 
@@ -296,6 +297,23 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.document.content, "# Repo Updated\n")
         self.assertEqual(self.plan_file.read_text(encoding="utf-8"), "# Repo Updated\n")
         write_mock.assert_called_once()
+
+    async def test_update_document_rejects_when_sync_engine_missing(self) -> None:
+        project = self._local_project()
+        bundle = self._bundle(project)
+
+        with self.assertRaises(HTTPException) as exc:
+            await api_router.update_document(
+                "DOC-plan",
+                api_router.DocumentUpdateRequest(content="# Updated\n"),
+                _make_request(None),
+                replace(self._request_context(project), runtime_profile="api"),
+                self._core_ports(project, bundle),
+            )
+
+        self.assertEqual(exc.exception.status_code, 503)
+        self.assertIn("sync_engine is unavailable", str(exc.exception.detail))
+        self.assertEqual(self.plan_file.read_text(encoding="utf-8"), "# Initial\n")
 
 
 if __name__ == "__main__":

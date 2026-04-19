@@ -15,6 +15,18 @@ class AuthorizationDecision:
     reason: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectBinding:
+    project: Project
+    paths: ResolvedProjectPaths
+    source: str
+    requested_project_id: str | None = None
+
+    @property
+    def locked(self) -> bool:
+        return self.source == "explicit"
+
+
 @runtime_checkable
 class IdentityProvider(Protocol):
     async def get_principal(self, metadata: RequestMetadata, *, runtime_profile: str) -> Principal:
@@ -58,6 +70,15 @@ class WorkspaceRegistry(Protocol):
 
     def get_active_path_bundle(self, *, refresh: bool = False) -> ResolvedProjectPaths:
         """Resolve filesystem paths for the active project."""
+
+    def resolve_project_binding(
+        self,
+        project_id: str | None = None,
+        *,
+        allow_active_fallback: bool = True,
+        refresh: bool = False,
+    ) -> ProjectBinding | None:
+        """Resolve an explicit or active project binding for runtime-owned work."""
 
     def resolve_scope(self, project_id: str | None = None) -> tuple[WorkspaceScope | None, ProjectScope | None]:
         """Resolve the workspace and project scope for a request."""
@@ -103,6 +124,7 @@ class OperationalStateStorage(Protocol):
     def test_integrity(self) -> Any: ...
     def execution(self) -> Any: ...
     def agentic_intelligence(self) -> Any: ...
+    def worktree_contexts(self) -> Any: ...
 
 
 @runtime_checkable
@@ -155,6 +177,7 @@ class StorageUnitOfWork(Protocol):
     def test_integrity(self) -> Any: ...
     def execution(self) -> Any: ...
     def agentic_intelligence(self) -> Any: ...
+    def worktree_contexts(self) -> Any: ...
     def principals(self) -> Any: ...
     def scope_identifiers(self) -> Any: ...
     def memberships(self) -> Any: ...

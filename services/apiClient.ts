@@ -12,14 +12,20 @@ import type {
   TelemetryPushNowResponse,
 } from '../types';
 import type { PaginatedResponse, SessionFilters } from '../contexts/dataContextShared';
-
-const API_BASE = '/api';
+import { buildApiUrl } from './runtimeBase';
 
 export interface RuntimeHealthResponse {
   status: string;
   db: string;
   watcher: string;
   profile?: string;
+  schemaVersion?: string;
+  probeReadyState?: string;
+  probeReadyStatus?: string;
+  probeDegraded?: boolean;
+  degradedReasonCodes?: string[];
+  degradedReasons?: RuntimeProbeReasonResponse[];
+  probeContract?: RuntimeProbeContractResponse;
   startupSync?: string;
   analyticsSnapshots?: string;
   telemetryExports?: string;
@@ -36,6 +42,45 @@ export interface RuntimeHealthResponse {
   storageCanonicalStore?: string;
   storageSchema?: string;
   canonicalSessionStore?: string;
+}
+
+export interface RuntimeProbeReasonResponse {
+  code?: string;
+  category?: string;
+  severity?: string;
+  message?: string;
+  detail?: string;
+  source?: string;
+}
+
+export interface RuntimeProbeActivityResponse {
+  name?: string;
+  state?: string;
+  status?: string;
+  detail?: string;
+  code?: string;
+  severity?: string;
+}
+
+export interface RuntimeProbeSectionResponse {
+  state?: string;
+  status?: string;
+  summary?: string;
+  detail?: string;
+  reasons?: RuntimeProbeReasonResponse[];
+  activities?: RuntimeProbeActivityResponse[];
+}
+
+export interface RuntimeProbeContractResponse {
+  schemaVersion?: string;
+  live?: RuntimeProbeSectionResponse;
+  ready?: RuntimeProbeSectionResponse;
+  detail?: RuntimeProbeSectionResponse;
+  probeReadyState?: string;
+  probeReadyStatus?: string;
+  probeDegraded?: boolean;
+  degradedReasons?: RuntimeProbeReasonResponse[];
+  degradedReasonCodes?: string[];
 }
 
 export interface ApiClient {
@@ -61,9 +106,10 @@ export interface ApiClient {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, init);
+  const url = buildApiUrl(path);
+  const res = await fetch(url, init);
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText} for ${path}`);
+    throw new Error(`API error: ${res.status} ${res.statusText} for ${url}`);
   }
   return res.json() as Promise<T>;
 }

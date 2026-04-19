@@ -146,6 +146,10 @@ _FEATURE_TYPE_DIR_TOKENS = {
     "bug",
     "bugs",
     "quick-features",
+    "phase-plans",
+    "phase_plans",
+    "phases",
+    "iterations",
 }
 _LEGACY_ROOT_DOC_TYPE_STEM_HINTS: dict[str, str] = {
     "document-frontmatter-improvement-spec-2026-02-19": "spec",

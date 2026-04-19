@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildLiveStreamUrl } from '../live/client';
 import { LiveConnectionManager } from '../live/connectionManager';
+import { resolveLiveStreamBaseUrl } from '../runtimeBase';
 import {
   featureTopic,
   projectFeaturesTopic,
@@ -68,6 +69,16 @@ describe('buildLiveStreamUrl', () => {
     );
 
     expect(url).toBe('/api/live/stream?topic=execution.run.run-1&topic=session.session-1&cursor=cursor-1');
+  });
+
+  it('supports an explicit hosted API base URL contract', () => {
+    const url = buildLiveStreamUrl(
+      ['execution.run.run-1'],
+      new Map(),
+      resolveLiveStreamBaseUrl({ VITE_CCDASH_API_BASE_URL: 'https://api.example.com/api/' }),
+    );
+
+    expect(url).toBe('https://api.example.com/api/live/stream?topic=execution.run.run-1');
   });
 });
 

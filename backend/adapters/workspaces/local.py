@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from backend.application.context import ProjectScope, WorkspaceScope
+from backend.application.ports.core import ProjectBinding
 from backend.models import Project
 from backend.project_manager import ProjectManager
 from backend.services.project_paths.models import ResolvedProjectPaths
@@ -34,6 +35,19 @@ class ProjectManagerWorkspaceRegistry:
 
     def get_active_path_bundle(self, *, refresh: bool = False) -> ResolvedProjectPaths:
         return self._manager.get_active_path_bundle(refresh=refresh)
+
+    def resolve_project_binding(
+        self,
+        project_id: str | None = None,
+        *,
+        allow_active_fallback: bool = True,
+        refresh: bool = False,
+    ) -> ProjectBinding | None:
+        return self._manager.resolve_project_binding(
+            project_id,
+            allow_active_fallback=allow_active_fallback,
+            refresh=refresh,
+        )
 
     def resolve_scope(self, project_id: str | None = None) -> tuple[WorkspaceScope | None, ProjectScope | None]:
         project = self._manager.get_project(project_id) if project_id else self._manager.get_active_project()

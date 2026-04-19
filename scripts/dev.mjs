@@ -17,7 +17,7 @@ if (!Number.isInteger(backendPort) || backendPort < 1 || backendPort > 65535) {
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
-const isBackendHealthy = async () => {
+const readBackendHealth = async () => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 600);
   try {
@@ -25,9 +25,16 @@ const isBackendHealthy = async () => {
       method: 'GET',
       signal: controller.signal,
     });
-    return response.ok;
+    if (!response.ok) {
+      return { ok: false };
+    }
+    const payload = await response.json();
+    return {
+      ok: true,
+      profile: typeof payload?.profile === 'string' ? payload.profile : null,
+    };
   } catch {
-    return false;
+    return { ok: false };
   } finally {
     clearTimeout(timeout);
   }
@@ -36,15 +43,16 @@ const isBackendHealthy = async () => {
 const waitForBackendHealth = async (timeoutMs, isBackendProcessAlive) => {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (await isBackendHealthy()) {
-      return true;
+    const health = await readBackendHealth();
+    if (health.ok) {
+      return health;
     }
     if (!isBackendProcessAlive()) {
-      return false;
+      return null;
     }
     await sleep(250);
   }
-  return false;
+  return null;
 };
 
 const run = async () => {
@@ -57,8 +65,15 @@ const run = async () => {
   const viteCommand = existsSync(viteBin) ? process.execPath : 'vite';
   const viteArgs = existsSync(viteBin) ? [viteBin, ...args] : args;
 
-  if (await isBackendHealthy()) {
-    console.log(`[dev] backend already healthy on ${backendWaitHost}:${backendPort}, reusing it`);
+  const existingBackend = await readBackendHealth();
+  if (existingBackend.ok) {
+    if (existingBackend.profile !== 'local') {
+      console.error(
+        `[dev] backend port ${backendWaitHost}:${backendPort} is already owned by a healthy '${existingBackend.profile ?? 'unknown'}' runtime; npm run dev only reuses the local profile`,
+      );
+      process.exit(1);
+    }
+    console.log(`[dev] local backend already healthy on ${backendWaitHost}:${backendPort}, reusing it`);
   } else {
     console.log('[dev] starting backend');
     backendSpawnedByDev = true;
@@ -66,6 +81,8 @@ const run = async () => {
       process.execPath,
       [
         resolve(root, 'scripts/backend.mjs'),
+        '--runtime',
+        'local',
         '--reload',
         '--host',
         backendHost,
@@ -83,6 +100,15 @@ const run = async () => {
     const backendReady = await waitForBackendHealth(30000, () => backend && backend.exitCode === null);
     if (!backendReady) {
       console.error('[dev] backend did not become healthy within 30 seconds');
+      if (backend && backend.exitCode === null) {
+        backend.kill('SIGTERM');
+      }
+      process.exit(1);
+    }
+    if (backendReady.profile !== 'local') {
+      console.error(
+        `[dev] started backend reported profile '${backendReady.profile ?? 'unknown'}'; expected local`,
+      );
       if (backend && backend.exitCode === null) {
         backend.kill('SIGTERM');
       }

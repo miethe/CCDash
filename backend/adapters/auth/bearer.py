@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from backend.application.context import Principal, PrincipalMembership, RequestMetadata
 
@@ -18,8 +19,49 @@ class RequestAuthenticationError(Exception):
 class StaticBearerTokenIdentityProvider:
     """Validate a shared bearer token for protected hosted API routes."""
 
+    BEARER_PROTECTED_PATH_PREFIX = "/api/v1"
+    ANONYMOUS_FALLBACK_WARNING_CODE = "anonymous_fallback_outside_bearer_path"
+
     def __init__(self, *, token_env_var: str = "CCDASH_API_BEARER_TOKEN") -> None:
         self._token_env_var = token_env_var
+
+    @classmethod
+    def describe_runtime_guardrail(
+        cls,
+        *,
+        runtime_profile: str,
+        bearer_token_configured: bool,
+    ) -> dict[str, Any]:
+        applies = runtime_profile == "api"
+        warnings = (
+            [
+                {
+                    "code": cls.ANONYMOUS_FALLBACK_WARNING_CODE,
+                    "category": "auth",
+                    "severity": "warn",
+                    "summary": (
+                        "Hosted bearer auth only protects /api/v1; other hosted routes may still allow anonymous access."
+                    ),
+                }
+            ]
+            if applies
+            else []
+        )
+        return {
+            "mode": "path_scoped_static_bearer" if applies else "not_applicable",
+            "applies": applies,
+            "bearerTokenConfigured": bearer_token_configured if applies else False,
+            "bearerProtectedPathPrefix": cls.BEARER_PROTECTED_PATH_PREFIX if applies else None,
+            "anonymousFallbackEnabled": applies,
+            "anonymousFallbackReasonCode": cls.ANONYMOUS_FALLBACK_WARNING_CODE if applies else None,
+            "summary": (
+                "Hosted API auth is constrained to the bearer-protected /api/v1 path boundary."
+                if applies
+                else "This runtime does not use the hosted bearer path boundary."
+            ),
+            "warnings": warnings,
+            "warningCodes": [str(warning["code"]) for warning in warnings],
+        }
 
     async def get_principal(self, metadata: RequestMetadata, *, runtime_profile: str) -> Principal:
         workspace_id = str(metadata.headers.get("x-ccdash-project-id") or "").strip()
@@ -62,7 +104,9 @@ class StaticBearerTokenIdentityProvider:
         )
 
     def _requires_bearer_auth(self, metadata: RequestMetadata, *, runtime_profile: str) -> bool:
-        return runtime_profile == "api" and str(metadata.path or "").startswith("/api/v1")
+        return runtime_profile == "api" and str(metadata.path or "").startswith(
+            self.BEARER_PROTECTED_PATH_PREFIX
+        )
 
     def _extract_bearer_token(self, metadata: RequestMetadata) -> str | None:
         header = str(metadata.headers.get("authorization") or "").strip()

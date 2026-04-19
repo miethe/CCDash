@@ -1,5 +1,13 @@
 """Transport-neutral agent query service contracts and helpers."""
 
+from backend.application.services.agent_queries import cache
+from backend.application.services.agent_queries.cache import (
+    _query_cache,
+    clear_cache,
+    compute_cache_key,
+    get_cache,
+    get_data_version_fingerprint,
+)
 from backend.application.services.agent_queries._filters import (
     AgentQueryProjectScope,
     collect_source_refs,
@@ -15,7 +23,15 @@ from backend.application.services.agent_queries.models import (
     CostSummary,
     DocumentRef,
     FeatureForensicsDTO,
+    FeaturePlanningContextDTO,
+    FeatureSummaryItem,
     KeyMetrics,
+    PhaseContextItem,
+    PhaseOperationsDTO,
+    PhaseTaskItem,
+    PlanningNodeCountsByType,
+    ProjectPlanningSummaryDTO,
+    ProjectPlanningGraphDTO,
     ProjectStatusDTO,
     QueryStatus,
     SessionRef,
@@ -29,11 +45,20 @@ from backend.application.services.agent_queries.models import (
     WorkflowSummary,
 )
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
+from backend.application.services.agent_queries.planning import PlanningQueryService
 from backend.application.services.agent_queries.project_status import ProjectStatusQueryService
 from backend.application.services.agent_queries.reporting import ReportingQueryService
 from backend.application.services.agent_queries.workflow_intelligence import WorkflowDiagnosticsQueryService
 
 __all__ = [
+    # Cache module and helpers (CACHE-003)
+    "cache",
+    "_query_cache",
+    "clear_cache",
+    "compute_cache_key",
+    "get_cache",
+    "get_data_version_fingerprint",
+    # DTOs and shared contracts
     "AARReportDTO",
     "AgentQueryEnvelope",
     "AgentQueryProjectScope",
@@ -62,4 +87,14 @@ __all__ = [
     "normalize_entity_ids",
     "resolve_project_scope",
     "resolve_time_window",
+    # Planning query service and DTOs (PCP-201)
+    "PlanningQueryService",
+    "FeaturePlanningContextDTO",
+    "FeatureSummaryItem",
+    "PhaseContextItem",
+    "PhaseOperationsDTO",
+    "PhaseTaskItem",
+    "PlanningNodeCountsByType",
+    "ProjectPlanningSummaryDTO",
+    "ProjectPlanningGraphDTO",
 ]

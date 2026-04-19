@@ -6,7 +6,7 @@ import typer
 
 from ccdash_cli.runtime import state as app_state
 from ccdash_cli.formatters import OutputMode, get_formatter, resolve_output_mode
-from ccdash_cli.runtime.client import CCDashClient, CCDashClientError
+from ccdash_cli.runtime.client import build_client, CCDashClientError
 from ccdash_cli.runtime.config import resolve_target
 
 session_app = typer.Typer(help="Session intelligence.")
@@ -38,7 +38,7 @@ def session_list(
         params["root_session_id"] = root_session
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get("/api/v1/sessions", params=params)
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)
@@ -86,7 +86,7 @@ def session_show(
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get(f"/api/v1/sessions/{session_id}")
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)
@@ -134,7 +134,7 @@ def session_search(
         params["session_id"] = session
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get("/api/v1/sessions/search", params=params)
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)
@@ -183,7 +183,7 @@ def session_drilldown(
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get(
                 f"/api/v1/sessions/{session_id}/drilldown",
                 params={"concern": concern.value},
@@ -226,7 +226,7 @@ def session_family(
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get(f"/api/v1/sessions/{session_id}/family")
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)

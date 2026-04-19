@@ -124,6 +124,23 @@ class LocalAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(principal.auth_mode, "anonymous")
         self.assertFalse(principal.is_authenticated)
 
+    async def test_bearer_identity_provider_allows_probe_routes_without_token(self) -> None:
+        provider = StaticBearerTokenIdentityProvider()
+
+        with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": "secret-token"}):
+            for path in ("/api/health/live", "/api/health/ready", "/api/health/detail"):
+                principal = await provider.get_principal(
+                    RequestMetadata(
+                        headers={},
+                        method="GET",
+                        path=path,
+                        client_host="127.0.0.1",
+                    ),
+                    runtime_profile="api",
+                )
+                self.assertEqual(principal.auth_mode, "anonymous")
+                self.assertFalse(principal.is_authenticated)
+
     async def test_workspace_registry_resolves_active_project_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = ProjectManager(Path(tmpdir) / "projects.json")
@@ -296,6 +313,14 @@ class RequestContextRouteIntegrationTests(unittest.TestCase):
         dependency_calls = {dependency.call for dependency in health_route.dependant.dependencies}
 
         self.assertIn(get_request_context, dependency_calls)
+
+    def test_probe_routes_declare_request_context_dependency(self) -> None:
+        app = build_test_app()
+
+        for path in ("/api/health/live", "/api/health/ready", "/api/health/detail"):
+            route = next(route for route in app.routes if getattr(route, "path", None) == path)
+            dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
+            self.assertIn(get_request_context, dependency_calls)
 
     def test_request_context_dependency_builds_context_for_fastapi_request(self) -> None:
         app = build_test_app()

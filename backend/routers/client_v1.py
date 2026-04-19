@@ -106,11 +106,12 @@ async def get_instance_metadata() -> ClientV1Envelope[InstanceMetaDTO]:
 @client_v1_router.get("/project/status")
 async def project_status(
     project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ClientV1Envelope[ProjectStatusDTO]:
     """Return the project status snapshot."""
-    return await get_project_status_v1(project_id, request_context, core_ports)
+    return await get_project_status_v1(project_id, request_context, core_ports, bypass_cache=bypass_cache)
 
 
 # ---------------------------------------------------------------------------
@@ -121,11 +122,12 @@ async def project_status(
 @client_v1_router.get("/workflows/failures")
 async def workflow_failures(
     feature_id: str | None = Query(default=None, description="Optional feature filter."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ClientV1Envelope[WorkflowDiagnosticsDTO]:
     """Return workflow failure patterns and diagnostics."""
-    return await get_workflow_failures_v1(feature_id, request_context, core_ports)
+    return await get_workflow_failures_v1(feature_id, request_context, core_ports, bypass_cache=bypass_cache)
 
 
 # ---------------------------------------------------------------------------
@@ -137,23 +139,25 @@ async def workflow_failures(
 async def features_list(
     status: list[str] | None = Query(default=None, description="Filter by status (repeatable)."),
     category: str | None = Query(default=None, description="Filter by category."),
-    limit: int = Query(default=50, ge=1, le=200, description="Page size."),
+    limit: int = Query(default=200, ge=1, le=200, description="Page size."),
     offset: int = Query(default=0, ge=0, description="Page offset."),
+    q: str | None = Query(default=None, description="Keyword substring filter on feature name and slug (case-insensitive)."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ClientV1PaginatedEnvelope[FeatureSummaryDTO]:
     """Return a paginated list of features."""
-    return await list_features_v1(status, category, limit, offset, request_context, core_ports)
+    return await list_features_v1(status, category, limit, offset, request_context, core_ports, q=q)
 
 
 @client_v1_router.get("/features/{feature_id}")
 async def feature_detail(
     feature_id: str = Path(..., description="Feature ID to inspect."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ClientV1Envelope[FeatureForensicsDTO]:
     """Return full forensic detail for a single feature."""
-    return await get_feature_detail_v1(feature_id, request_context, core_ports)
+    return await get_feature_detail_v1(feature_id, request_context, core_ports, bypass_cache=bypass_cache)
 
 
 @client_v1_router.get("/features/{feature_id}/sessions")
@@ -161,11 +165,12 @@ async def feature_sessions(
     feature_id: str = Path(..., description="Feature ID."),
     limit: int = Query(default=50, ge=1, le=200, description="Page size."),
     offset: int = Query(default=0, ge=0, description="Page offset."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ClientV1Envelope[FeatureSessionsDTO]:
     """Return sessions linked to a feature."""
-    return await get_feature_sessions_v1(feature_id, limit, offset, request_context, core_ports)
+    return await get_feature_sessions_v1(feature_id, limit, offset, request_context, core_ports, bypass_cache=bypass_cache)
 
 
 @client_v1_router.get("/features/{feature_id}/documents")
@@ -250,6 +255,7 @@ async def session_family(
 @client_v1_router.post("/reports/aar")
 async def generate_aar_report(
     feature_id: str = Query(..., description="Feature ID for the after-action report."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ClientV1Envelope[AARReportDTO]:
@@ -265,6 +271,7 @@ async def generate_aar_report(
         app_request.context,
         app_request.ports,
         feature_id,
+        bypass_cache=bypass_cache,
     )
     return ClientV1Envelope(
         data=result,

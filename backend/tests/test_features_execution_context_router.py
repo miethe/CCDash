@@ -276,6 +276,10 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.dependencyState.state, "unblocked")
         self.assertEqual(payload.executionGate.state, "ready")
         self.assertIsNone(payload.recommendedFamilyItem)
+        self.assertIsNotNone(payload.feature.planningStatus)
+        self.assertEqual(payload.feature.planningStatus.effectiveStatus, "backlog")
+        self.assertIsNotNone(payload.planningGraph)
+        self.assertEqual(len(payload.planningGraph.nodes), 1)
         self.assertEqual(len(payload.warnings), 0)
 
     async def test_no_plan_docs_prefers_r1(self) -> None:

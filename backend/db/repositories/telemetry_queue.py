@@ -61,6 +61,7 @@ class SqliteTelemetryQueueRepository:
         project_slug: str,
         payload: dict[str, Any] | str,
         queue_id: str | None = None,
+        event_type: str = "execution_outcome",
     ) -> dict[str, Any]:
         existing = await self._get_by_session_id(session_id)
         if existing is not None:
@@ -88,11 +89,11 @@ class SqliteTelemetryQueueRepository:
         await self.db.execute(
             """
             INSERT INTO outbound_telemetry_queue (
-                id, session_id, project_slug, payload_json, status, created_at
-            ) VALUES (?, ?, ?, ?, 'pending', ?)
+                id, session_id, project_slug, payload_json, event_type, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', ?)
             ON CONFLICT(session_id) DO NOTHING
             """,
-            (queue_id, session_id, project_slug, payload_json, now),
+            (queue_id, session_id, project_slug, payload_json, event_type, now),
         )
         await self.db.commit()
         row = await self._get_by_session_id(session_id)

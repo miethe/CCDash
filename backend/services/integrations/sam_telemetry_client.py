@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import aiohttp
 
 from backend.config import TelemetryExporterConfig
-from backend.models import ExecutionOutcomePayload
+from backend.models import ArtifactOutcomePayload, ArtifactVersionOutcomePayload, ExecutionOutcomePayload
 
 logger = logging.getLogger("ccdash.integrations.sam_telemetry")
 
@@ -45,12 +45,77 @@ class SAMTelemetryClient:
             allow_insecure=exporter_config.allow_insecure,
         )
 
-    async def push_batch(self, events: list[ExecutionOutcomePayload]) -> tuple[bool, str | None]:
+    async def _post_batch(
+        self,
+        url: str,
+        events: list[dict],
+    ) -> tuple[bool, str | None]:
+        """POST a pre-serialised events list to *url*, returning (success, error)."""
         if not events:
             return True, None
         payload = {
+            "events": events,
+        }
+        timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+        request_kwargs: dict[str, object] = {}
+        if self.allow_insecure and self.endpoint_url.startswith("https://"):
+            request_kwargs["ssl"] = False
+
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    url,
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    **request_kwargs,
+                ) as response:
+                    response_text = await response.text()
+                    if response.status in {200, 202}:
+                        return True, None
+                    if response.status == 429:
+                        logger.warning(
+                            "SAM telemetry export rate limited: status=%s body=%s url=%s",
+                            response.status,
+                            response_text,
+                            url,
+                        )
+                        return False, "rate_limited"
+                    if 400 <= response.status < 500:
+                        message = response_text.strip() or f"HTTP {response.status}"
+                        logger.error(
+                            "SAM telemetry export abandoned: status=%s body=%s url=%s",
+                            response.status,
+                            response_text,
+                            url,
+                        )
+                        return False, f"abandoned:{message}"
+                    logger.warning(
+                        "SAM telemetry export failed: status=%s body=%s url=%s",
+                        response.status,
+                        response_text,
+                        url,
+                    )
+                    return False, (response_text.strip() or f"HTTP {response.status}")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.warning("SAM telemetry export request failed: %s url=%s", exc, url)
+            return False, (str(exc) or exc.__class__.__name__)
+
+    async def push_batch(self, events: list[ExecutionOutcomePayload]) -> tuple[bool, str | None]:
+        """POST execution-outcome events to the execution-outcomes endpoint.
+
+        Wraps events in ``{"schema_version": "1", "events": [...]}`` as
+        required by the existing SAM execution-outcomes contract.
+        """
+        if not events:
+            return True, None
+        serialised = [event.event_dict() for event in events]
+        # execution-outcomes endpoint uses schema_version wrapper (pre-existing contract)
+        payload = {
             "schema_version": "1",
-            "events": [event.event_dict() for event in events],
+            "events": serialised,
         }
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         request_kwargs: dict[str, object] = {}
@@ -95,6 +160,26 @@ class SAMTelemetryClient:
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             logger.warning("SAM telemetry export request failed: %s", exc)
             return False, (str(exc) or exc.__class__.__name__)
+
+    async def push_artifact_batch(
+        self,
+        events: list[ArtifactOutcomePayload],
+        sam_base_url: str,
+    ) -> tuple[bool, str | None]:
+        """POST artifact-outcome events to POST /api/v1/analytics/artifact-outcomes."""
+        url = sam_base_url.rstrip("/") + "/api/v1/analytics/artifact-outcomes"
+        serialised = [event.event_dict() for event in events]
+        return await self._post_batch(url, serialised)
+
+    async def push_artifact_version_batch(
+        self,
+        events: list[ArtifactVersionOutcomePayload],
+        sam_base_url: str,
+    ) -> tuple[bool, str | None]:
+        """POST artifact-version-outcome events to POST /api/v1/analytics/artifact-version-outcomes."""
+        url = sam_base_url.rstrip("/") + "/api/v1/analytics/artifact-version-outcomes"
+        serialised = [event.event_dict() for event in events]
+        return await self._post_batch(url, serialised)
 
 
 __all__ = ["SAMTelemetryClient"]

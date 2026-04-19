@@ -6,18 +6,26 @@ from datetime import datetime, timezone, timedelta
 from statistics import median
 from typing import Any
 
+import logging
+from uuid import uuid4
+
+from backend import config as backend_config
 from backend.db.factory import (
     get_agentic_intelligence_repository,
     get_entity_link_repository,
     get_session_repository,
+    get_telemetry_queue_repository,
     get_test_integrity_repository,
     get_test_run_repository,
 )
 from backend.services.integrations.skillmeat_routes import normalize_definitions_for_project
-from backend.models import ExecutionArtifactReference
+from backend.models import ArtifactOutcomePayload, ArtifactVersionOutcomePayload, ExecutionArtifactReference
 from backend.services.integrations.skillmeat_resolver import build_definition_indexes, resolve_component_definition
 from backend.services.stack_observations import canonicalize_stack_observation
 from backend.services.session_usage_analytics import get_session_scope_attribution_metrics
+from backend.services.integrations.telemetry_exporter import emit_artifact_outcomes, emit_artifact_version_outcomes
+
+_wfe_logger = logging.getLogger("ccdash.workflow_effectiveness")
 
 
 _FINAL_SESSION_STATUSES = {"completed", "done", "succeeded"}
@@ -478,6 +486,10 @@ def _artifact_reference_from_definition(
     description: str = "",
     metadata: dict[str, Any] | None = None,
 ) -> ExecutionArtifactReference:
+    merged_metadata = dict(metadata or {})
+    content_hash = definition.get("content_hash")
+    if content_hash and "content_hash" not in merged_metadata:
+        merged_metadata["content_hash"] = str(content_hash)
     return ExecutionArtifactReference(
         key=str(definition.get("external_id") or ""),
         label=label or str(definition.get("display_name") or definition.get("external_id") or ""),
@@ -488,7 +500,7 @@ def _artifact_reference_from_definition(
         sourceUrl=str(definition.get("source_url") or ""),
         sourceAttribution=source_attribution,
         description=description,
-        metadata=metadata or {},
+        metadata=merged_metadata,
     )
 
 
@@ -997,6 +1009,107 @@ def _aggregate_rollups(
     return items
 
 
+async def _maybe_emit_artifact_telemetry(
+    db: Any,
+    project_id: str,
+    items: list[dict[str, Any]],
+    *,
+    period: str,
+    definitions: list[dict[str, Any]],
+) -> None:
+    """Emit artifact-outcome (and artifact-version-outcome) events to the telemetry queue.
+
+    Only runs when ``CCDASH_SAM_ARTIFACT_TELEMETRY_ENABLED=true``.
+    Errors are swallowed so they never interrupt the main effectiveness response.
+    """
+    if not backend_config.TELEMETRY_EXPORTER_CONFIG.artifact_telemetry_enabled:
+        return
+
+    definition_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for definition in definitions:
+        definition_type = str(definition.get("definition_type") or "").strip()
+        external_id = str(definition.get("external_id") or "").strip()
+        if definition_type and external_id:
+            definition_by_key[(definition_type, external_id)] = definition
+
+    now = datetime.now(timezone.utc)
+    queue = get_telemetry_queue_repository(db)
+    artifact_payloads: list[ArtifactOutcomePayload] = []
+    artifact_version_payloads: list[ArtifactVersionOutcomePayload] = []
+
+    for item in items:
+        scope_type = str(item.get("scopeType") or "")
+        scope_id = str(item.get("scopeId") or "")
+        if not scope_type or not scope_id:
+            continue
+
+        # Map rollup period label to a safe period string.
+        period_label = str(item.get("period") or period or "all")
+
+        # Derive period_start / period_end from evidenceSummary or fallback to defaults.
+        evidence = _safe_dict(item.get("evidenceSummary"))
+        period_start = _parse_iso(str(item.get("generatedAt") or "")) or now
+        period_end = now
+
+        # content_hash from definition (if available).
+        definition = definition_by_key.get((scope_type, scope_id))
+        content_hash = None
+        if definition:
+            meta = _safe_dict(definition.get("metadata") or {})
+            content_hash = str(meta.get("content_hash") or definition.get("content_hash") or "").strip() or None
+            # Normalise length: must be 64-71 chars to satisfy model constraints.
+            if content_hash and not (64 <= len(content_hash) <= 71):
+                content_hash = None
+
+        common_fields = {
+            "event_id": uuid4(),
+            "definition_type": scope_type,
+            "external_id": scope_id,
+            "content_hash": content_hash,
+            "period_label": period_label,
+            "period_start": period_start,
+            "period_end": period_end,
+            "execution_count": int(item.get("sampleSize") or 0),
+            "success_count": 0,   # Not separately tracked in rollups
+            "failure_count": 0,
+            "token_input": int(item.get("attributedTokens") or 0),
+            "token_output": 0,
+            "cost_usd": float(item.get("attributedCostUsdModelIO") or 0.0),
+            "duration_ms": 0,
+            "attributed_tokens": int(item.get("attributedTokens") or 0),
+            "timestamp": now,
+            "extra_metrics": {
+                "successScore": item.get("successScore"),
+                "efficiencyScore": item.get("efficiencyScore"),
+                "qualityScore": item.get("qualityScore"),
+                "riskScore": item.get("riskScore"),
+            },
+        }
+
+        try:
+            if content_hash:
+                artifact_version_payloads.append(ArtifactVersionOutcomePayload(**common_fields))
+            else:
+                artifact_payloads.append(ArtifactOutcomePayload(**common_fields))
+        except Exception:
+            _wfe_logger.debug(
+                "Skipping artifact telemetry for scope %s:%s — payload invalid",
+                scope_type,
+                scope_id,
+                exc_info=True,
+            )
+
+    try:
+        if artifact_payloads:
+            await emit_artifact_outcomes(queue, artifact_payloads, project_id)
+        if artifact_version_payloads:
+            await emit_artifact_version_outcomes(queue, artifact_version_payloads, project_id)
+    except Exception:
+        _wfe_logger.exception(
+            "Unexpected error emitting artifact telemetry for project %s", project_id
+        )
+
+
 async def get_workflow_effectiveness(
     db: Any,
     project: Any,
@@ -1094,6 +1207,15 @@ async def get_workflow_effectiveness(
                 },
                 project_id=project_id,
             )
+
+    # Emit artifact-level telemetry after rollups are computed and persisted.
+    await _maybe_emit_artifact_telemetry(
+        db,
+        project_id,
+        items,
+        period=period,
+        definitions=definitions,
+    )
 
     total = len(items)
     return {

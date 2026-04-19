@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import {
   ExecutionGateStateValue,
@@ -30,6 +30,7 @@ import {
   Terminal, GitCommit, GitBranch, Link2, Play, TestTube2,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
+import { EffectiveStatusChips, MismatchBadge, PlanningNodeTypeIcon } from '@/components/shared/PlanningMetadata';
 import { getMotionPreset, useAnimatedListDiff, useReducedMotionPreference } from './animations';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { resolveDisplayCost } from '../lib/sessionSemantics';
@@ -39,6 +40,7 @@ import {
   projectFeaturesTopic,
   useLiveInvalidation,
 } from '../services/live';
+import { planningFeatureDetailHref, planningFeatureModalHref } from '../services/planningRoutes';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -2500,6 +2502,17 @@ const FeatureModal = ({
                 <Play size={14} />
                 Begin Work
               </button>
+              <button
+                onClick={() => {
+                  navigate(planningFeatureDetailHref(feature.id));
+                  onClose();
+                }}
+                title="Open full planning detail"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-panel-border bg-surface-elevated text-muted-foreground text-xs font-medium hover:text-panel-foreground hover:bg-slate-700/30 transition-colors"
+              >
+                <ExternalLink size={13} />
+                Expand
+              </button>
               <button onClick={onClose} className="text-muted-foreground hover:text-panel-foreground transition-colors p-1 hover:bg-surface-muted rounded">
                 <X size={24} />
               </button>
@@ -2703,7 +2716,7 @@ const FeatureModal = ({
                       {blockedByRelations.map((relation, index) => (
                         <button
                           key={`${relation.feature}-${index}`}
-                          onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(relation.feature)}&tab=overview`); }}
+                          onClick={() => { onClose(); navigate(planningFeatureModalHref(relation.feature)); }}
                           className="text-[10px] font-semibold rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200"
                         >
                           {relation.feature}
@@ -3158,7 +3171,7 @@ const FeatureModal = ({
                             onClick={() => {
                               if (!evidence.dependencyFeatureId) return;
                               onClose();
-                              navigate(`/board?feature=${encodeURIComponent(evidence.dependencyFeatureId)}&tab=overview`);
+                              navigate(planningFeatureModalHref(evidence.dependencyFeatureId));
                             }}
                             className="font-mono text-indigo-300 hover:text-indigo-200 text-left truncate"
                           >
@@ -3207,7 +3220,7 @@ const FeatureModal = ({
                   {(activeFeature.linkedFeatures || []).map((relation, index) => (
                     <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 rounded border border-panel-border bg-surface-overlay px-3 py-2 text-xs">
                       <button
-                        onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(relation.feature)}&tab=overview`); }}
+                        onClick={() => { onClose(); navigate(planningFeatureModalHref(relation.feature)); }}
                         className="font-mono text-indigo-300 hover:text-indigo-200"
                       >
                         {relation.feature}
@@ -3231,7 +3244,7 @@ const FeatureModal = ({
                   {activeFeature.relatedFeatures.map(rel => (
                     <button
                       key={rel}
-                      onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(rel)}&tab=overview`); }}
+                      onClick={() => { onClose(); navigate(planningFeatureModalHref(rel)); }}
                       className="text-xs bg-surface-muted text-indigo-400 px-2 py-1 rounded border border-panel-border"
                     >
                       {rel}
@@ -3664,8 +3677,33 @@ const FeatureCard = ({
         <div className="flex items-center gap-2">
           <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
           <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
+          {feature.planningStatus && (
+            <EffectiveStatusChips
+              rawStatus={feature.planningStatus.rawStatus}
+              effectiveStatus={feature.planningStatus.effectiveStatus}
+              isMismatch={Boolean(feature.planningStatus.mismatchState?.isMismatch)}
+              provenance={feature.planningStatus.provenance}
+            />
+          )}
         </div>
       </div>
+      {feature.planningStatus?.mismatchState?.isMismatch && (
+        <div className="mb-1.5 flex items-center gap-1.5 flex-wrap">
+          <MismatchBadge
+            compact
+            state={feature.planningStatus.mismatchState.state}
+            reason={feature.planningStatus.mismatchState.reason}
+          />
+          <Link
+            to={planningFeatureDetailHref(feature.id)}
+            onClick={e => e.stopPropagation()}
+            className="inline-flex items-center gap-1 text-[10px] text-indigo-400/70 hover:text-indigo-300"
+            title="View in planning graph"
+          >
+            <PlanningNodeTypeIcon type="implementation_plan" size={10} className="text-indigo-400/70" />
+          </Link>
+        </div>
+      )}
 
       <h4 className="font-medium text-panel-foreground mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
       {featureHasDeferred && (
@@ -3747,6 +3785,31 @@ const FeatureListCard = ({
             <span className="font-mono text-xs text-muted-foreground border border-panel-border px-1.5 py-0.5 rounded truncate max-w-[200px]">{feature.id}</span>
             <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
             <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
+            {feature.planningStatus && (
+              <EffectiveStatusChips
+                rawStatus={feature.planningStatus.rawStatus}
+                effectiveStatus={feature.planningStatus.effectiveStatus}
+                isMismatch={Boolean(feature.planningStatus.mismatchState?.isMismatch)}
+                provenance={feature.planningStatus.provenance}
+              />
+            )}
+            {feature.planningStatus?.mismatchState?.isMismatch && (
+              <MismatchBadge
+                compact
+                state={feature.planningStatus.mismatchState.state}
+                reason={feature.planningStatus.mismatchState.reason}
+              />
+            )}
+            {feature.planningStatus && (
+              <Link
+                to={planningFeatureDetailHref(feature.id)}
+                onClick={e => e.stopPropagation()}
+                className="inline-flex items-center gap-1 text-[10px] text-indigo-400/70 hover:text-indigo-300"
+                title="View in planning graph"
+              >
+                <PlanningNodeTypeIcon type="implementation_plan" size={10} className="text-indigo-400/70" />
+              </Link>
+            )}
             {feature.category && (
               <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-surface-muted text-muted-foreground capitalize">{feature.category}</span>
             )}

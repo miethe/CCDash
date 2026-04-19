@@ -315,6 +315,51 @@ class ExecutionOutcomePayload(BaseModel):
         )
 
 
+class ArtifactOutcomePayload(BaseModel):
+    """Outbound payload: CCDash → SAM POST /api/v1/analytics/artifact-outcomes
+    Mirrors SAM's ArtifactOutcomeEventRequest.
+    """
+
+    event_id: UUID  # added for queue idempotency (CCDash convention; SAM ignores)
+    definition_type: str = Field(min_length=1)
+    external_id: str = Field(min_length=1)  # format: 'type:name'
+    content_hash: Optional[str] = Field(default=None, min_length=64, max_length=71)  # 'sha256:<hex>' or bare hex
+    period_label: str = Field(min_length=1)  # e.g. 'all', '7d', '30d'
+    period_start: datetime
+    period_end: datetime
+    execution_count: int = Field(ge=0)
+    success_count: int = Field(ge=0)
+    failure_count: int = Field(ge=0)
+    token_input: int = Field(ge=0)
+    token_output: int = Field(ge=0)
+    cost_usd: float = Field(ge=0.0)
+    duration_ms: int = Field(ge=0)
+    attributed_tokens: Optional[int] = Field(default=None, ge=0)
+    ccdash_client_version: Optional[str] = None
+    extra_metrics: Optional[dict[str, Any]] = None
+    timestamp: datetime  # CCDash-side emission time (SAM uses period_end for bucketing)
+
+    # Serialize datetimes as ISO8601 UTC with 'Z' suffix, matching ExecutionOutcomePayload convention
+    @field_serializer("period_start", "period_end", "timestamp")
+    def _serialize_dt(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def event_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class ArtifactVersionOutcomePayload(ArtifactOutcomePayload):
+    """Outbound payload: CCDash → SAM POST /api/v1/analytics/artifact-version-outcomes
+    Identical shape to ArtifactOutcomePayload BUT content_hash MUST be non-null.
+    """
+
+    @model_validator(mode="after")
+    def _require_content_hash(self) -> "ArtifactVersionOutcomePayload":
+        if not self.content_hash:
+            raise ValueError("content_hash is required for ArtifactVersionOutcomePayload")
+        return self
+
+
 SessionUsageTokenFamily = Literal[
     "model_input",
     "model_output",
@@ -1413,6 +1458,113 @@ class LinkedDocument(BaseModel):
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
+PlanningNodeType = Literal[
+    "design_spec",
+    "prd",
+    "implementation_plan",
+    "progress",
+    "context",
+    "tracker",
+    "report",
+]
+PlanningEdgeRelationType = Literal[
+    "promotes_to",
+    "implements",
+    "phase_of",
+    "informs",
+    "blocked_by",
+    "family_member_of",
+    "tracked_by",
+    "executed_by",
+]
+PlanningStatusProvenanceSource = Literal["raw", "derived", "inferred_complete", "unknown"]
+PlanningMismatchStateValue = Literal[
+    "aligned",
+    "derived",
+    "mismatched",
+    "blocked",
+    "stale",
+    "reversed",
+    "unresolved",
+    "unknown",
+]
+PlanningPhaseBatchReadinessState = Literal["ready", "blocked", "waiting", "unknown"]
+
+
+class PlanningStatusEvidence(BaseModel):
+    id: str = ""
+    label: str = ""
+    detail: str = ""
+    sourceType: str = ""
+    sourceId: str = ""
+    sourcePath: str = ""
+
+
+class PlanningStatusProvenance(BaseModel):
+    source: PlanningStatusProvenanceSource = "unknown"
+    reason: str = ""
+    evidence: list[PlanningStatusEvidence] = Field(default_factory=list)
+
+
+class PlanningMismatchState(BaseModel):
+    state: PlanningMismatchStateValue = "unknown"
+    reason: str = ""
+    isMismatch: bool = False
+    evidence: list[PlanningStatusEvidence] = Field(default_factory=list)
+
+
+class PlanningEffectiveStatus(BaseModel):
+    rawStatus: str = ""
+    effectiveStatus: str = ""
+    provenance: PlanningStatusProvenance = Field(default_factory=PlanningStatusProvenance)
+    mismatchState: PlanningMismatchState = Field(default_factory=PlanningMismatchState)
+
+
+class PlanningNode(BaseModel):
+    id: str
+    type: PlanningNodeType
+    path: str
+    title: str = ""
+    featureSlug: str = ""
+    rawStatus: str = ""
+    effectiveStatus: str = ""
+    mismatchState: PlanningMismatchState = Field(default_factory=PlanningMismatchState)
+    updatedAt: str = ""
+    statusDetail: Optional[PlanningEffectiveStatus] = None
+
+
+class PlanningEdge(BaseModel):
+    sourceId: str
+    targetId: str
+    relationType: PlanningEdgeRelationType
+
+
+class PlanningPhaseBatchReadiness(BaseModel):
+    state: PlanningPhaseBatchReadinessState = "unknown"
+    reason: str = ""
+    blockingNodeIds: list[str] = Field(default_factory=list)
+    blockingTaskIds: list[str] = Field(default_factory=list)
+    evidence: list[PlanningStatusEvidence] = Field(default_factory=list)
+    isReady: bool = False
+
+
+class PlanningPhaseBatch(BaseModel):
+    featureSlug: str = ""
+    phase: str = ""
+    batchId: str = ""
+    taskIds: list[str] = Field(default_factory=list)
+    assignedAgents: list[str] = Field(default_factory=list)
+    fileScopeHints: list[str] = Field(default_factory=list)
+    readinessState: PlanningPhaseBatchReadinessState = "unknown"
+    readiness: PlanningPhaseBatchReadiness = Field(default_factory=PlanningPhaseBatchReadiness)
+
+
+class PlanningGraph(BaseModel):
+    nodes: list[PlanningNode] = Field(default_factory=list)
+    edges: list[PlanningEdge] = Field(default_factory=list)
+    phaseBatches: list[PlanningPhaseBatch] = Field(default_factory=list)
+
+
 class FeaturePhase(BaseModel):
     id: Optional[str] = None
     phase: str  # "1", "2", "all"
@@ -1423,6 +1575,8 @@ class FeaturePhase(BaseModel):
     completedTasks: int = 0
     deferredTasks: int = 0
     tasks: list[ProjectTask] = Field(default_factory=list)
+    planningStatus: Optional[PlanningEffectiveStatus] = None
+    phaseBatches: list[PlanningPhaseBatch] = Field(default_factory=list)
 
 
 class FeaturePrimaryDocuments(BaseModel):
@@ -1588,6 +1742,7 @@ class Feature(BaseModel):
     nextRecommendedFamilyItem: Optional[FeatureFamilyItem] = None
     phases: list[FeaturePhase] = Field(default_factory=list)
     relatedFeatures: list[str] = Field(default_factory=list)
+    planningStatus: Optional[PlanningEffectiveStatus] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
@@ -1737,6 +1892,7 @@ class FeatureExecutionContext(BaseModel):
     stackAlternatives: list[RecommendedStack] = Field(default_factory=list)
     stackEvidence: list[StackRecommendationEvidence] = Field(default_factory=list)
     definitionResolutionWarnings: list[FeatureExecutionWarning] = Field(default_factory=list)
+    planningGraph: Optional[PlanningGraph] = None
     generatedAt: str = ""
 
 class SkillMeatDefinitionSource(BaseModel):
@@ -2333,6 +2489,209 @@ class ExecutionRetryRequest(BaseModel):
     acknowledgeFailure: bool = False
     actor: str = "user"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Planning Worktree Context DTOs (PCP-501) ───────────────────────
+
+WorktreeContextStatus = Literal["draft", "ready", "in_use", "archived", "error"]
+
+
+class WorktreeContextDTO(BaseModel):
+    id: str
+    projectId: str
+    featureId: str = ""
+    phaseNumber: Optional[int] = None
+    batchId: str = ""
+    branch: str = ""
+    worktreePath: str = ""
+    baseBranch: str = ""
+    baseCommitSha: str = ""
+    status: WorktreeContextStatus = "draft"
+    lastRunId: str = ""
+    provider: str = ""
+    notes: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    createdBy: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class WorktreeContextCreateRequest(BaseModel):
+    projectId: str
+    featureId: str = ""
+    phaseNumber: Optional[int] = None
+    batchId: str = ""
+    branch: str = ""
+    worktreePath: str = ""
+    baseBranch: str = ""
+    baseCommitSha: str = ""
+    provider: str = "local"
+    notes: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    createdBy: str = "user"
+
+
+class WorktreeContextUpdateRequest(BaseModel):
+    status: Optional[WorktreeContextStatus] = None
+    branch: Optional[str] = None
+    worktreePath: Optional[str] = None
+    baseBranch: Optional[str] = None
+    baseCommitSha: Optional[str] = None
+    lastRunId: Optional[str] = None
+    notes: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class WorktreeContextListResponse(BaseModel):
+    items: list[WorktreeContextDTO] = Field(default_factory=list)
+    total: int = 0
+
+
+# ── Planning Launch Preparation (PCP-502) ───────────────────────────
+
+LaunchBatchReadinessState = Literal["ready", "blocked", "partial", "unknown"]
+LaunchApprovalRequirement = Literal["none", "optional", "required"]
+
+
+class LaunchProviderCapabilityDTO(BaseModel):
+    """Describes what a provider can do for plan-driven launches.
+
+    Capabilities are advisory: the UI gates choices via `supported`, and the
+    backend enforces in PCP-505 via the execution policy layer.
+    """
+    provider: str
+    label: str = ""
+    supported: bool = False
+    supportsWorktrees: bool = False
+    supportsModelSelection: bool = False
+    defaultModel: str = ""
+    availableModels: list[str] = Field(default_factory=list)
+    requiresApproval: bool = False
+    unsupportedReason: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LaunchBatchTaskSummary(BaseModel):
+    """Compact task view inside a launch preparation payload."""
+    taskId: str
+    title: str = ""
+    status: str = ""
+    assignees: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+
+
+class LaunchBatchSummaryDTO(BaseModel):
+    """Plan-derived snapshot of the batch targeted by a launch."""
+    batchId: str
+    phaseNumber: int
+    featureId: str
+    featureName: str = ""
+    phaseTitle: str = ""
+    readinessState: LaunchBatchReadinessState = "unknown"
+    isReady: bool = False
+    blockedReason: str = ""
+    taskIds: list[str] = Field(default_factory=list)
+    tasks: list[LaunchBatchTaskSummary] = Field(default_factory=list)
+    owners: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+
+
+class LaunchWorktreeSelectionDTO(BaseModel):
+    """References or creates a worktree context for the launch.
+
+    When `worktreeContextId` is set, backend will resolve and reuse the existing
+    record. When blank plus `createIfMissing` is true, a new context will be
+    provisioned from the accompanying fields during launch-start.
+    """
+    worktreeContextId: str = ""
+    createIfMissing: bool = False
+    branch: str = ""
+    worktreePath: str = ""
+    baseBranch: str = ""
+    notes: str = ""
+
+
+class LaunchApprovalRequirementDTO(BaseModel):
+    requirement: LaunchApprovalRequirement = "none"
+    reasonCodes: list[str] = Field(default_factory=list)
+    riskLevel: ExecutionRiskLevel = "low"
+
+
+class LaunchPreparationRequest(BaseModel):
+    """Operator asks the backend to assemble a launch preview for a batch.
+
+    Inputs identify the target batch; backend pulls PhaseOperationsDTO + worktree
+    candidates + provider capabilities and returns a LaunchPreparationDTO.
+    """
+    projectId: str
+    featureId: str
+    phaseNumber: int
+    batchId: str
+    providerPreference: str = ""
+    modelPreference: str = ""
+    worktreeContextId: str = ""
+
+
+class LaunchPreparationDTO(BaseModel):
+    """Full launch-prep payload combining plan + providers + worktree + approval."""
+    projectId: str
+    featureId: str
+    phaseNumber: int
+    batchId: str
+    batch: LaunchBatchSummaryDTO
+    providers: list[LaunchProviderCapabilityDTO] = Field(default_factory=list)
+    selectedProvider: str = ""
+    selectedModel: str = ""
+    worktreeCandidates: list[WorktreeContextDTO] = Field(default_factory=list)
+    worktreeSelection: LaunchWorktreeSelectionDTO = Field(default_factory=LaunchWorktreeSelectionDTO)
+    approval: LaunchApprovalRequirementDTO = Field(default_factory=LaunchApprovalRequirementDTO)
+    warnings: list[str] = Field(default_factory=list)
+    generatedAt: str = ""
+
+
+class LaunchStartRequest(BaseModel):
+    """Operator confirms and initiates a plan-driven launch.
+
+    `commandOverride` is optional — when blank, backend composes the command
+    from batch metadata + provider defaults (implemented in PCP-503/505).
+    """
+    projectId: str
+    featureId: str
+    phaseNumber: int
+    batchId: str
+    provider: str
+    model: str = ""
+    worktree: LaunchWorktreeSelectionDTO = Field(default_factory=LaunchWorktreeSelectionDTO)
+    commandOverride: str = ""
+    envProfile: str = "default"
+    approvalDecision: str = ""
+    actor: str = "user"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LaunchStartResponse(BaseModel):
+    """Successful launch initiation. `runId` references execution_runs.id.
+
+    `worktreeContextId` points to the (created or reused) planning_worktree_contexts row.
+    """
+    runId: str
+    worktreeContextId: str = ""
+    status: ExecutionRunStatus = "queued"
+    requiresApproval: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LaunchCapabilitiesDTO(BaseModel):
+    """Capability snapshot advertising whether plan-driven launch is usable.
+
+    Frontend consumes this to gate the Launch entrypoint; backend routers
+    return 503 with `error="launch_disabled"` when `enabled` is False.
+    `planningEnabled` gates the planning control plane surfaces (PCP-603).
+    """
+    enabled: bool = False
+    disabledReason: str = ""
+    providers: list[LaunchProviderCapabilityDTO] = Field(default_factory=list)
+    planningEnabled: bool = True
 
 
 # ── Test Visualizer DTOs ───────────────────────────────────────────

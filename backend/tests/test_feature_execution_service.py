@@ -2,8 +2,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from backend.models import Feature, FeaturePhase, LinkedDocument
-from backend.services.feature_execution import build_execution_recommendation, load_feature_execution_derived_state
+from backend.models import Feature, FeatureExecutionAnalyticsSummary, FeaturePhase, LinkedDocument
+from backend.services.feature_execution import build_execution_context, build_execution_recommendation, load_feature_execution_derived_state
 
 
 class FeatureExecutionRecommendationTests(unittest.TestCase):
@@ -169,7 +169,16 @@ class FeatureExecutionRecommendationTests(unittest.TestCase):
 
 
 class FeatureExecutionDerivedStateTests(unittest.IsolatedAsyncioTestCase):
-    def _feature(self, feature_id: str, *, name: str, status: str, family: str = "", linked_features: list[dict] | None = None) -> Feature:
+    def _feature(
+        self,
+        feature_id: str,
+        *,
+        name: str,
+        status: str,
+        family: str = "",
+        linked_features: list[dict] | None = None,
+        phases: list[FeaturePhase] | None = None,
+    ) -> Feature:
         return Feature(
             id=feature_id,
             name=name,
@@ -182,7 +191,7 @@ class FeatureExecutionDerivedStateTests(unittest.IsolatedAsyncioTestCase):
             linkedDocs=[],
             linkedFeatures=linked_features or [],
             featureFamily=family,
-            phases=[],
+            phases=phases or [],
             relatedFeatures=[],
         )
 
@@ -230,18 +239,34 @@ class FeatureExecutionDerivedStateTests(unittest.IsolatedAsyncioTestCase):
         status: str,
         sequence_order: int | None = None,
         file_path: str | None = None,
+        blocked_by: list[str] | None = None,
+        related_refs: list[str] | None = None,
+        prd_ref: str = "",
+        lineage_parent: str = "",
+        lineage_type: str = "",
     ) -> dict:
         metadata = {}
         frontmatter = {}
         if sequence_order is not None:
             metadata["sequenceOrder"] = sequence_order
             frontmatter["sequence_order"] = sequence_order
+        if blocked_by:
+            frontmatter["blocked_by"] = blocked_by
+        if related_refs:
+            frontmatter["relatedRefs"] = related_refs
+        if prd_ref:
+            frontmatter["prd_ref"] = prd_ref
+        if lineage_parent:
+            frontmatter["lineage_parent"] = lineage_parent
+        if lineage_type:
+            frontmatter["lineage_type"] = lineage_type
         return {
             "id": doc_id,
             "title": file_path or doc_id,
             "file_path": file_path or f"docs/{doc_id}.md",
             "doc_type": doc_type,
             "status": status,
+            "prd_ref": prd_ref,
             "feature_slug_canonical": feature_slug,
             "metadata_json": json.dumps(metadata),
             "frontmatter_json": json.dumps(frontmatter),
@@ -350,6 +375,205 @@ class FeatureExecutionDerivedStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.executionGate.state, "waiting_on_family_predecessor")
         self.assertEqual(state.executionGate.firstExecutableFamilyItemId, "feat-1")
         self.assertEqual(state.executionGate.recommendedFamilyItemId, "feat-1")
+
+    async def test_feature_planning_status_infers_completion_from_phase_tasks(self) -> None:
+        phase = FeaturePhase(
+            id="feat-current:phase-1",
+            phase="1",
+            title="Phase 1",
+            status="backlog",
+            progress=100,
+            totalTasks=3,
+            completedTasks=3,
+            deferredTasks=0,
+            tasks=[],
+        )
+        current = self._feature("feat-current", name="Current", status="backlog", family="alpha", phases=[phase])
+        feature_rows = [
+            self._feature_row(
+                "feat-current",
+                name="Current",
+                status="backlog",
+                family="alpha",
+                phases=[phase.model_dump()],
+            )
+        ]
+
+        await self._load_state(current, feature_rows, [])
+
+        assert current.planningStatus is not None
+        self.assertEqual(current.planningStatus.rawStatus, "backlog")
+        self.assertEqual(current.planningStatus.effectiveStatus, "done")
+        self.assertEqual(current.planningStatus.provenance.source, "inferred_complete")
+        self.assertEqual(current.planningStatus.mismatchState.state, "derived")
+        self.assertIsNotNone(current.phases[0].planningStatus)
+        self.assertEqual(current.phases[0].planningStatus.effectiveStatus, "done")
+
+    async def test_feature_planning_status_reverses_raw_done_when_phase_is_incomplete(self) -> None:
+        phase = FeaturePhase(
+            id="feat-current:phase-1",
+            phase="1",
+            title="Phase 1",
+            status="backlog",
+            progress=0,
+            totalTasks=3,
+            completedTasks=0,
+            deferredTasks=0,
+            tasks=[],
+        )
+        current = self._feature("feat-current", name="Current", status="done", family="alpha", phases=[phase])
+        feature_rows = [
+            self._feature_row(
+                "feat-current",
+                name="Current",
+                status="done",
+                family="alpha",
+                phases=[phase.model_dump()],
+            )
+        ]
+
+        await self._load_state(current, feature_rows, [])
+
+        assert current.planningStatus is not None
+        self.assertEqual(current.planningStatus.rawStatus, "done")
+        self.assertEqual(current.planningStatus.effectiveStatus, "backlog")
+        self.assertEqual(current.planningStatus.provenance.source, "derived")
+        self.assertEqual(current.planningStatus.mismatchState.state, "reversed")
+
+    async def test_execution_context_builds_planning_graph_from_lineage_family_and_dependency_relationships(self) -> None:
+        prd_path = "docs/project_plans/PRDs/enhancements/feat-2.md"
+        design_path = "docs/project_plans/design-specs/feat-2-architecture.md"
+        plan_path = "docs/project_plans/implementation_plans/enhancements/feat-2.md"
+        progress_path = ".claude/progress/feat-2/phase-1-progress.md"
+        report_path = "docs/project_plans/reports/enhancements/feat-2.md"
+        dependency_plan_path = "docs/project_plans/implementation_plans/enhancements/feat-1.md"
+
+        current = self._feature(
+            "feat-2",
+            name="Second",
+            status="backlog",
+            family="alpha",
+            linked_features=[{"feature": "feat-1", "type": "blocked_by", "source": "blocked_by"}],
+        )
+        feature_rows = [
+            self._feature_row("feat-1", name="First", status="done", family="alpha"),
+            self._feature_row(
+                "feat-2",
+                name="Second",
+                status="backlog",
+                family="alpha",
+                linked_features=current.linkedFeatures,
+            ),
+        ]
+        doc_rows = [
+            self._doc_row(
+                doc_id="dep-plan",
+                feature_slug="feat-1",
+                doc_type="implementation_plan",
+                status="completed",
+                sequence_order=1,
+                file_path=dependency_plan_path,
+            ),
+            self._doc_row(
+                doc_id="feat-prd",
+                feature_slug="feat-2",
+                doc_type="prd",
+                status="pending",
+                file_path=prd_path,
+            ),
+            self._doc_row(
+                doc_id="feat-design",
+                feature_slug="feat-2",
+                doc_type="design_doc",
+                status="review",
+                file_path=design_path,
+                related_refs=[plan_path],
+            ),
+            self._doc_row(
+                doc_id="feat-plan",
+                feature_slug="feat-2",
+                doc_type="implementation_plan",
+                status="pending",
+                sequence_order=2,
+                file_path=plan_path,
+                blocked_by=[dependency_plan_path],
+                related_refs=[report_path],
+                prd_ref=prd_path,
+                lineage_parent=design_path,
+                lineage_type="implementation_of",
+            ),
+            self._doc_row(
+                doc_id="feat-progress",
+                feature_slug="feat-2",
+                doc_type="progress",
+                status="in_progress",
+                file_path=progress_path,
+                related_refs=[plan_path],
+            ),
+            self._doc_row(
+                doc_id="feat-report",
+                feature_slug="feat-2",
+                doc_type="report",
+                status="review",
+                file_path=report_path,
+                related_refs=[plan_path],
+            ),
+        ]
+
+        derived_state = await self._load_state(current, feature_rows, doc_rows)
+        documents = [
+            LinkedDocument(id="feat-prd", title="PRD", filePath=prd_path, docType="prd"),
+            LinkedDocument(
+                id="feat-design",
+                title="Design",
+                filePath=design_path,
+                docType="design_doc",
+                relatedRefs=[plan_path],
+            ),
+            LinkedDocument(
+                id="feat-plan",
+                title="Plan",
+                filePath=plan_path,
+                docType="implementation_plan",
+                blockedBy=[dependency_plan_path],
+                relatedRefs=[report_path],
+                prdRef=prd_path,
+                lineageParent=design_path,
+                lineageType="implementation_of",
+                sequenceOrder=2,
+            ),
+            LinkedDocument(
+                id="feat-progress",
+                title="Progress",
+                filePath=progress_path,
+                docType="progress",
+                relatedRefs=[plan_path],
+            ),
+            LinkedDocument(
+                id="feat-report",
+                title="Report",
+                filePath=report_path,
+                docType="report",
+                relatedRefs=[plan_path],
+            ),
+        ]
+
+        context = build_execution_context(
+            feature=current,
+            documents=documents,
+            sessions=[],
+            analytics=FeatureExecutionAnalyticsSummary(sessionCount=0),
+            derived_state=derived_state,
+        )
+
+        assert context.planningGraph is not None
+        edge_set = {(edge.sourceId, edge.targetId, edge.relationType) for edge in context.planningGraph.edges}
+        self.assertIn(("feat-prd", "feat-plan", "implements"), edge_set)
+        self.assertIn(("feat-design", "feat-plan", "implements"), edge_set)
+        self.assertIn(("feat-plan", "feat-progress", "tracked_by"), edge_set)
+        self.assertIn(("feat-plan", "feat-report", "executed_by"), edge_set)
+        self.assertIn(("dep-plan", "feat-plan", "family_member_of"), edge_set)
+        self.assertIn(("dep-plan", "feat-plan", "blocked_by"), edge_set)
 
 
 if __name__ == "__main__":

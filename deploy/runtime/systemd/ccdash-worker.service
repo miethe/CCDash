@@ -1,0 +1,19 @@
+[Unit]
+Description=CCDash worker runtime
+After=network.target ccdash-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ccdash
+Group=ccdash
+WorkingDirectory=/opt/ccdash
+EnvironmentFile=/etc/ccdash/ccdash-shared.env
+EnvironmentFile=/etc/ccdash/ccdash-worker.env
+ExecStart=/opt/ccdash/backend/.venv/bin/python -m backend.worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

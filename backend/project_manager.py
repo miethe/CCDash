@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from backend import config
+from backend.application.ports.core import ProjectBinding
 from backend.models import Project
 from backend.services.project_paths.models import ResolvedProjectPath, ResolvedProjectPaths
 from backend.services.project_paths.resolver import ProjectPathResolver
@@ -125,6 +126,34 @@ class ProjectManager:
         if self._active_project_id:
             return self._projects.get(self._active_project_id)
         return None
+
+    def resolve_project_binding(
+        self,
+        project_id: str | None = None,
+        *,
+        allow_active_fallback: bool = True,
+        refresh: bool = False,
+    ) -> ProjectBinding | None:
+        requested_project_id = str(project_id or "").strip() or None
+        if requested_project_id is not None:
+            project = self.get_project(requested_project_id)
+            source = "explicit"
+        elif allow_active_fallback:
+            project = self.get_active_project()
+            source = "active"
+        else:
+            project = None
+            source = "explicit"
+
+        if project is None:
+            return None
+
+        return ProjectBinding(
+            project=project,
+            paths=self.resolve_project_paths(project, refresh=refresh),
+            source=source,
+            requested_project_id=requested_project_id,
+        )
 
     def resolve_project_paths(self, project: Project, *, refresh: bool = False) -> ResolvedProjectPaths:
         if project.id == "default-skillmeat":

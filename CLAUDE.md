@@ -106,6 +106,8 @@ ccdash feature list --status active --json
 ccdash session search "authentication" --limit 10
 ccdash report aar --feature FEAT-123
 ccdash target check local
+# CLI flags: --timeout SECONDS (default 30), --no-cache (bypass cache), --q TEXT (keyword filter on feature list)
+ccdash feature list --q "auth" --timeout 45
 
 # Standalone CLI tests
 python -m pytest packages/ccdash_cli/tests/ -v
@@ -125,6 +127,8 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 
 - **DB backend**: Default SQLite at `data/ccdash_cache.db`. Set `CCDASH_DB_BACKEND=postgres` + `CCDASH_DATABASE_URL` for PostgreSQL.
 - **Config via env vars**: All backend config is in `backend/config.py` reading from `CCDASH_*` env vars. Copy `.env.example` for local overrides.
+- **CLI timeout**: `CCDASH_TIMEOUT` (default 30s; overridden by `--timeout` flag). See `docs/guides/cli-timeout-debugging.md`.
+- **Query cache**: `CCDASH_QUERY_CACHE_TTL_SECONDS` (default 60; 0 disables). `CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS` (default 300; background warming). See `docs/guides/query-cache-tuning-guide.md`.
 - **Frontend types**: All shared interfaces are in root `types.ts`. Import from `@/types`.
 - **Router→Service→Repository pattern**: Backend follows layered architecture. Routers call services/repositories, never raw SQL.
 - **Transport-neutral agent queries**: Add new cross-domain intelligence reads in `backend/application/services/agent_queries/` first, then wire them into `backend/routers/agent.py`, `backend/cli/`, and `backend/mcp/` as needed.

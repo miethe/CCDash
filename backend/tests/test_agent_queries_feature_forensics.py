@@ -173,3 +173,45 @@ class FeatureForensicsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await FeatureForensicsQueryService().get_forensics(_context(), _ports(), "missing-feature")
         self.assertEqual(result.status, "error")
         self.assertEqual(result.feature_id, "missing-feature")
+
+    async def test_get_forensics_ok_result_carries_sessions_note(self) -> None:
+        """TEST-002.5 criterion 2 — sessions_note must be present and reference eventual-consistency."""
+        features_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(return_value={"id": "feature-1", "name": "Feature 1", "status": "in_progress", "updated_at": "2026-04-11T10:00:00+00:00"})
+        )
+        sessions_repo = types.SimpleNamespace(get_by_id=AsyncMock(return_value=None))
+        documents_repo = types.SimpleNamespace(list_paginated=AsyncMock(return_value=[]))
+        tasks_repo = types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[]))
+        links_repo = types.SimpleNamespace(get_links_for=AsyncMock(return_value=[]))
+        ports = _ports(features=features_repo, sessions=sessions_repo, documents=documents_repo, tasks=tasks_repo, links=links_repo)
+
+        result = await FeatureForensicsQueryService().get_forensics(_context(), ports, "feature-1")
+
+        # Accept ok or partial — both are non-error success states; partial can occur
+        # when ancillary data (e.g. freshness markers) is unavailable in the test env.
+        self.assertIn(result.status, {"ok", "partial"})
+        self.assertTrue(
+            hasattr(result, "sessions_note"),
+            "FeatureForensicsDTO must expose a sessions_note field",
+        )
+        self.assertIn("eventually-consistent", result.sessions_note)
+        self.assertIn("canonical", result.sessions_note.lower())
+
+    async def test_get_forensics_sessions_note_present_in_mcp_envelope(self) -> None:
+        """TEST-002.5 criterion 2 — sessions_note must appear in build_envelope(result).data."""
+        from backend.mcp.tools import build_envelope
+
+        features_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(return_value={"id": "feature-env-1", "name": "Env Feature", "status": "in_progress", "updated_at": "2026-04-11T10:00:00+00:00"})
+        )
+        sessions_repo = types.SimpleNamespace(get_by_id=AsyncMock(return_value=None))
+        documents_repo = types.SimpleNamespace(list_paginated=AsyncMock(return_value=[]))
+        tasks_repo = types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[]))
+        links_repo = types.SimpleNamespace(get_links_for=AsyncMock(return_value=[]))
+        ports = _ports(features=features_repo, sessions=sessions_repo, documents=documents_repo, tasks=tasks_repo, links=links_repo)
+
+        result = await FeatureForensicsQueryService().get_forensics(_context(), ports, "feature-env-1")
+        envelope = build_envelope(result)
+
+        self.assertIn("sessions_note", envelope["data"])
+        self.assertIn("eventually-consistent", envelope["data"]["sessions_note"])

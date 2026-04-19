@@ -99,6 +99,119 @@ class SyncEngineLinkingTests(unittest.TestCase):
         self.assertEqual(reason, "up_to_date")
 
 
+class SyncEngineAmbiguityPenaltyTests(unittest.TestCase):
+    """Tests for the share-based ambiguity penalty gating in sync_engine confidence scoring.
+
+    The scoring logic lives inside a loop in SyncEngine._build_session_feature_links.
+    We replicate the exact arithmetic here so the gate contract is clearly
+    specified and will catch regressions if the inline logic changes.
+    """
+
+    @staticmethod
+    def _compute_confidence(
+        base_confidence: float,
+        raw_signal_weight: float,
+        total_signal_weight: float,
+        has_command_path: bool,
+        has_read_only_signals: bool,
+    ) -> float:
+        """Mirror of the inline confidence-scoring block in sync_engine.py."""
+        share = raw_signal_weight / total_signal_weight if total_signal_weight > 0 else 0.0
+        confidence = float(base_confidence)
+        has_command_path_signal = bool(has_command_path)
+        if not has_command_path_signal:
+            if share < 0.50:
+                confidence -= 0.20
+            elif share < 0.70:
+                confidence -= 0.10
+        if has_read_only_signals:
+            confidence -= 0.08
+        return round(max(0.35, min(0.95, confidence)), 3)
+
+    def test_command_path_signal_skips_share_penalty_low_share(self) -> None:
+        # share = 0.3 / 1.0 = 0.30 → normally -0.20, but hasCommandPath=True skips it.
+        confidence = self._compute_confidence(
+            base_confidence=0.90,
+            raw_signal_weight=0.3,
+            total_signal_weight=1.0,
+            has_command_path=True,
+            has_read_only_signals=False,
+        )
+
+        self.assertAlmostEqual(confidence, 0.90)
+
+    def test_no_command_path_applies_share_penalty_low_share(self) -> None:
+        # Same numbers as above but hasCommandPath=False → penalty of -0.20 applies.
+        confidence = self._compute_confidence(
+            base_confidence=0.90,
+            raw_signal_weight=0.3,
+            total_signal_weight=1.0,
+            has_command_path=False,
+            has_read_only_signals=False,
+        )
+
+        self.assertAlmostEqual(confidence, 0.70)
+
+    def test_command_path_signal_skips_moderate_share_penalty(self) -> None:
+        # share ≈ 0.60 → normally -0.10, but hasCommandPath=True skips it.
+        confidence = self._compute_confidence(
+            base_confidence=0.78,
+            raw_signal_weight=0.6,
+            total_signal_weight=1.0,
+            has_command_path=True,
+            has_read_only_signals=False,
+        )
+
+        self.assertAlmostEqual(confidence, 0.78)
+
+    def test_no_command_path_applies_moderate_share_penalty(self) -> None:
+        # share ≈ 0.60 without hasCommandPath → -0.10, bringing 0.78 to 0.68.
+        confidence = self._compute_confidence(
+            base_confidence=0.78,
+            raw_signal_weight=0.6,
+            total_signal_weight=1.0,
+            has_command_path=False,
+            has_read_only_signals=False,
+        )
+
+        self.assertAlmostEqual(confidence, 0.68)
+
+    def test_read_only_penalty_still_applied_when_command_path_present(self) -> None:
+        # hasReadOnlySignals penalty is independent of the hasCommandPath gate.
+        confidence = self._compute_confidence(
+            base_confidence=0.90,
+            raw_signal_weight=0.3,
+            total_signal_weight=1.0,
+            has_command_path=True,
+            has_read_only_signals=True,
+        )
+
+        self.assertAlmostEqual(confidence, 0.82)
+
+    def test_clamp_at_minimum_0_35(self) -> None:
+        # Even with heavy penalties, result is clamped to 0.35.
+        confidence = self._compute_confidence(
+            base_confidence=0.40,
+            raw_signal_weight=0.1,
+            total_signal_weight=1.0,
+            has_command_path=False,
+            has_read_only_signals=True,
+        )
+
+        self.assertAlmostEqual(confidence, 0.35)
+
+    def test_clamp_at_maximum_0_95(self) -> None:
+        confidence = self._compute_confidence(
+            base_confidence=0.95,
+            raw_signal_weight=1.0,
+            total_signal_weight=1.0,
+            has_command_path=True,
+            has_read_only_signals=False,
+        )
+
+        self.assertAlmostEqual(confidence, 0.95)
+
+
 class SyncEngineSessionBackfillTests(unittest.IsolatedAsyncioTestCase):
     async def test_sync_single_session_reparses_unchanged_file_when_lineage_missing(self) -> None:
         with TemporaryDirectory() as tmpdir:

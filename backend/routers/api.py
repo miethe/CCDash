@@ -48,6 +48,22 @@ from backend.request_scope import get_core_ports, get_request_context
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
+
+# Workflow command verb tokens that unambiguously indicate a session was
+# launched to execute work on a specific feature.  Matched as case-insensitive
+# substrings against each command string so that prefix variants like
+# "/dev:execute-phase", "/planning:plan-feature", and bare "execute-phase" all
+# match without needing to enumerate every possible prefix.
+_PRIMARY_WORKFLOW_COMMAND_TOKENS: tuple[str, ...] = (
+    "execute-phase",
+    "plan-feature",
+    "implement-story",
+    "complete-user-story",
+    "quick-feature",
+    "create-feature",
+    "new-feature",
+    "plan-story",
+)
 logger = logging.getLogger("ccdash.api")
 session_facet_service = SessionFacetService()
 session_transcript_service = SessionTranscriptService()
@@ -315,6 +331,11 @@ def _is_primary_session_link(
     if normalized_link_role == "related":
         return False
     if strategy == "task_frontmatter":
+        return True
+    if "command_args_path" in signal_types and any(
+        any(token in cmd.lower() for token in _PRIMARY_WORKFLOW_COMMAND_TOKENS)
+        for cmd in commands
+    ):
         return True
     if confidence >= 0.9:
         return True
@@ -1302,18 +1323,36 @@ def _plan_docs_write_reference(project: Project) -> ProjectPathReference | None:
     return None
 
 
-async def _sync_changed_document_file(
+def _require_document_write_through_sync_engine(
     request: Request,
+    *,
+    runtime_profile: str,
+):
+    sync_engine = getattr(request.app.state, "sync_engine", None)
+    if sync_engine is not None:
+        return sync_engine
+    profile_name = str(runtime_profile or "unknown").strip() or "unknown"
+    logger.info(
+        "Rejecting document write-through update because sync engine is unavailable",
+        extra={"runtime_profile": profile_name},
+    )
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            f"Runtime profile '{profile_name}' does not support filesystem write-through "
+            "updates because sync_engine is unavailable."
+        ),
+    )
+
+
+async def _sync_changed_document_file(
+    sync_engine,
     project_id: str,
     file_path: Path,
     sessions_dir: Path,
     docs_dir: Path,
     progress_dir: Path,
 ) -> None:
-    sync_engine = getattr(request.app.state, "sync_engine", None)
-    if sync_engine is None:
-        logger.warning("Sync engine not available in app state; relying on file watcher")
-        return
     await sync_engine.sync_changed_files(
         project_id,
         [("modified", file_path)],
@@ -1678,6 +1717,11 @@ async def update_document(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="The document source file is outside the resolved plan-docs path.") from exc
 
+    sync_engine = _require_document_write_through_sync_engine(
+        request,
+        runtime_profile=request_context.runtime_profile,
+    )
+
     request_content = str(req.content or "").replace("\r\n", "\n")
     content = _preserve_document_frontmatter(
         source_file,
@@ -1727,7 +1771,7 @@ async def update_document(
         source_file.write_text(content, encoding="utf-8")
 
     await _sync_changed_document_file(
-        request,
+        sync_engine,
         active_project.id,
         source_file,
         bundle.sessions.path,

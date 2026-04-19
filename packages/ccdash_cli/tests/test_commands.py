@@ -3,7 +3,7 @@
 Covers the feature, session, and report command groups using
 typer.testing.CliRunner and unittest.mock to stub out the HTTP layer.
 
-Each command module imports CCDashClient directly, so the patch target is
+Each command module imports build_client, so the patch target is
 the module-level name rather than the runtime.client module.
 """
 from __future__ import annotations
@@ -57,7 +57,7 @@ FEATURES_LIST_RESPONSE: dict[str, Any] = {
             "updated_at": "2026-04-12",
         },
     ],
-    "meta": {"total": 2, "offset": 0, "limit": 50, "has_more": False},
+    "meta": {"total": 2, "offset": 0, "limit": 200, "has_more": False, "truncated": False},
 }
 
 FEATURE_DETAIL_RESPONSE: dict[str, Any] = {
@@ -212,7 +212,7 @@ def _invoke(*args: str, **kwargs: Any):
     """Invoke the CLI app under both the resolve_target and CCDashClient patches.
 
     ``_patch_modules`` should be the list of module paths to patch for
-    ``CCDashClient`` (e.g. ``["ccdash_cli.commands.feature.CCDashClient"]``).
+    ``CCDashClient`` (e.g. ``["ccdash_cli.commands.feature.build_client"]``).
     ``client`` is the mock to inject.
 
     Keyword-only:
@@ -243,6 +243,112 @@ def _invoke(*args: str, **kwargs: Any):
 # ---------------------------------------------------------------------------
 # Feature command tests
 # ---------------------------------------------------------------------------
+
+
+class TestDoctorTimeoutDisplay:
+    """AC4: ccdash doctor displays the active timeout value and its source.
+
+    The root callback always calls resolve_timeout() and writes app_state, so
+    we drive the displayed value via the --timeout flag or CCDASH_TIMEOUT env var.
+    """
+
+    def _invoke_doctor(self, args: list[str]) -> str:
+        """Invoke doctor with stubbed connectivity, return output string."""
+        mock_instance = MagicMock()
+        mock_instance.instance_id = "test-instance"
+        mock_instance.version = "1.0.0"
+        mock_instance.environment = "test"
+        mock_instance.capabilities = []
+        mock_client = MagicMock()
+        mock_client.get_instance.return_value = mock_instance
+        mock_client.close = MagicMock()
+
+        with (
+            patch("ccdash_cli.commands.doctor.resolve_target", return_value=_LOCAL_TARGET),
+            patch("ccdash_cli.commands.doctor.build_client", return_value=mock_client),
+        ):
+            result = runner.invoke(app, args)
+
+        assert result.exit_code == 0, result.output
+        return result.output
+
+    def test_doctor_shows_default_timeout(self, monkeypatch):
+        """doctor output includes '30.0s' and '(default)' when no timeout flag/env set."""
+        monkeypatch.delenv("CCDASH_TIMEOUT", raising=False)
+        output = self._invoke_doctor(["doctor"])
+        assert "30.0s" in output
+        assert "(default)" in output
+
+    def test_doctor_shows_env_timeout(self, monkeypatch):
+        """doctor output shows '120.0s' and '(env: CCDASH_TIMEOUT)' when env var is set."""
+        monkeypatch.setenv("CCDASH_TIMEOUT", "120")
+        output = self._invoke_doctor(["doctor"])
+        assert "120.0s" in output
+        assert "(env: CCDASH_TIMEOUT)" in output
+
+    def test_doctor_shows_flag_timeout(self, monkeypatch):
+        """doctor output shows '90.5s' and '(flag)' when --timeout flag is passed."""
+        monkeypatch.delenv("CCDASH_TIMEOUT", raising=False)
+        output = self._invoke_doctor(["--timeout", "90.5", "doctor"])
+        assert "90.5s" in output
+        assert "(flag)" in output
+
+    def test_doctor_timeout_label_present_in_output(self, monkeypatch):
+        """doctor output always contains the 'Timeout:' label regardless of source."""
+        monkeypatch.delenv("CCDASH_TIMEOUT", raising=False)
+        output = self._invoke_doctor(["doctor"])
+        assert "Timeout:" in output
+
+
+class TestTargetCheckTimeoutDisplay:
+    """AC4: ccdash target check displays the active timeout value and its source."""
+
+    def _invoke_target_check(self, args: list[str]) -> str:
+        """Invoke target check with stubbed connectivity, return output string."""
+        mock_instance = MagicMock()
+        mock_instance.instance_id = "test-instance"
+        mock_instance.version = "1.0.0"
+        mock_instance.environment = "test"
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.check_health.return_value = True
+        mock_client.get_instance.return_value = mock_instance
+
+        with (
+            patch("ccdash_cli.commands.target.resolve_target", return_value=_LOCAL_TARGET),
+            patch("ccdash_cli.commands.target.ConfigStore") as mock_store_cls,
+            # target_check() uses a local import, so patch the source module.
+            patch("ccdash_cli.runtime.client.build_client", return_value=mock_client),
+        ):
+            mock_store = MagicMock()
+            mock_store.get_target.return_value = {"url": "http://localhost:8000"}
+            mock_store_cls.return_value = mock_store
+            result = runner.invoke(app, args)
+
+        assert result.exit_code == 0, result.output
+        return result.output
+
+    def test_target_check_shows_default_timeout(self, monkeypatch):
+        """target check output includes '30.0s' and '(default)' with no timeout flag/env."""
+        monkeypatch.delenv("CCDASH_TIMEOUT", raising=False)
+        output = self._invoke_target_check(["target", "check", "local"])
+        assert "30.0s" in output
+        assert "(default)" in output
+
+    def test_target_check_shows_env_timeout(self, monkeypatch):
+        """target check output shows '(env: CCDASH_TIMEOUT)' when env var is set."""
+        monkeypatch.setenv("CCDASH_TIMEOUT", "120")
+        output = self._invoke_target_check(["target", "check", "local"])
+        assert "120.0s" in output
+        assert "(env: CCDASH_TIMEOUT)" in output
+
+    def test_target_check_shows_flag_timeout(self, monkeypatch):
+        """target check output shows '(flag)' when --timeout flag is passed."""
+        monkeypatch.delenv("CCDASH_TIMEOUT", raising=False)
+        output = self._invoke_target_check(["--timeout", "45", "target", "check", "local"])
+        assert "45.0s" in output
+        assert "(flag)" in output
 
 
 class TestRootAndTargetCommands:
@@ -294,7 +400,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "list", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -308,7 +414,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "list", "--status", "active", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0
         # Verify that status was in the params passed to get()
@@ -322,11 +428,66 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "list", "--status", "active,completed", "--status", "planned", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0
         _, kw = client.get.call_args
         assert kw["params"]["status"] == ["active", "completed", "planned"]
+
+    def test_feature_list_q_filter_forwarded(self):
+        """feature list --q auth should pass q param to GET."""
+        client = _mock_client({"/api/v1/features": FEATURES_LIST_RESPONSE})
+        result = _invoke(
+            "feature", "list", "--q", "auth", "--json",
+            client=client,
+            modules=["ccdash_cli.commands.feature.build_client"],
+        )
+        assert result.exit_code == 0
+        assert client.get.called
+        _, kw = client.get.call_args
+        assert kw.get("params", {}).get("q") == "auth"
+
+    def test_feature_list_truncation_hint_shown_when_truncated(self):
+        """feature list human output should show --limit hint when truncated."""
+        truncated_response: dict[str, Any] = {
+            "status": "ok",
+            "data": [
+                {
+                    "id": f"FEAT-{i}",
+                    "name": f"Feature {i}",
+                    "status": "active",
+                    "category": "",
+                    "priority": "",
+                    "total_tasks": 0,
+                    "completed_tasks": 0,
+                    "updated_at": "",
+                }
+                for i in range(200)
+            ],
+            "meta": {"total": 250, "offset": 0, "limit": 200, "has_more": True, "truncated": True},
+        }
+        client = _mock_client({"/api/v1/features": truncated_response})
+        result = _invoke(
+            "feature", "list",
+            client=client,
+            modules=["ccdash_cli.commands.feature.build_client"],
+        )
+        assert result.exit_code == 0
+        assert "--limit" in result.output
+        assert "250" in result.output
+
+    def test_feature_list_default_limit_is_200(self):
+        """feature list without --limit should send limit=200 to GET."""
+        client = _mock_client({"/api/v1/features": FEATURES_LIST_RESPONSE})
+        result = _invoke(
+            "feature", "list", "--json",
+            client=client,
+            modules=["ccdash_cli.commands.feature.build_client"],
+        )
+        assert result.exit_code == 0
+        assert client.get.called
+        _, kw = client.get.call_args
+        assert kw.get("params", {}).get("limit") == 200
 
     def test_feature_show_json_returns_feature_detail(self):
         """feature show FEAT-123 --json should return feature detail data."""
@@ -334,7 +495,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "show", "FEAT-123", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -350,7 +511,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "show", "NONEXISTENT",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 1
 
@@ -362,7 +523,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "sessions", "FEAT-123", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -378,7 +539,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "documents", "FEAT-123", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -400,7 +561,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "list", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -413,7 +574,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "list", "--feature", "FEAT-123", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0
         assert client.get.called
@@ -426,7 +587,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "show", "sess-1", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -442,7 +603,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "show", "NONEXISTENT",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 1
 
@@ -452,7 +613,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "search", "test query", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -467,7 +628,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "drilldown", "sess-1", "--concern", "sentiment", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -481,7 +642,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "family", "sess-1", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -504,7 +665,7 @@ class TestReportCommands:
         result = _invoke(
             "report", "aar", "--feature", "FEAT-123",
             client=client,
-            modules=["ccdash_cli.commands.report.CCDashClient"],
+            modules=["ccdash_cli.commands.report.build_client"],
         )
         assert result.exit_code == 0, result.output
         assert client.post.called
@@ -517,7 +678,7 @@ class TestReportCommands:
         result = _invoke(
             "report", "aar", "--feature", "FEAT-123",
             client=client,
-            modules=["ccdash_cli.commands.report.CCDashClient"],
+            modules=["ccdash_cli.commands.report.build_client"],
         )
         assert result.exit_code == 0, result.output
         # Markdown formatter produces output; JSON output would be parseable as JSON.
@@ -535,7 +696,7 @@ class TestReportCommands:
         result = _invoke(
             "report", "feature", "FEAT-123",
             client=client,
-            modules=["ccdash_cli.commands.report.CCDashClient"],
+            modules=["ccdash_cli.commands.report.build_client"],
         )
         assert result.exit_code == 0, result.output
         assert client.get.called
@@ -548,7 +709,7 @@ class TestReportCommands:
         result = _invoke(
             "report", "feature", "FEAT-123",
             client=client,
-            modules=["ccdash_cli.commands.report.CCDashClient"],
+            modules=["ccdash_cli.commands.report.build_client"],
         )
         assert result.exit_code == 0, result.output
         try:
@@ -568,9 +729,9 @@ class TestErrorHandling:
     """Shared error handling behaviour across command groups."""
 
     @pytest.mark.parametrize("cmd_args,module", [
-        (["feature", "list"], "ccdash_cli.commands.feature.CCDashClient"),
-        (["session", "list"], "ccdash_cli.commands.session.CCDashClient"),
-        (["report", "aar", "--feature", "FEAT-1"], "ccdash_cli.commands.report.CCDashClient"),
+        (["feature", "list"], "ccdash_cli.commands.feature.build_client"),
+        (["session", "list"], "ccdash_cli.commands.session.build_client"),
+        (["report", "aar", "--feature", "FEAT-1"], "ccdash_cli.commands.report.build_client"),
     ])
     def test_connection_failure_exits_code_4(self, cmd_args, module):
         """Any command should exit 4 when a ConnectionError is raised."""
@@ -591,9 +752,9 @@ class TestErrorHandling:
         )
 
     @pytest.mark.parametrize("cmd_args,module", [
-        (["feature", "list"], "ccdash_cli.commands.feature.CCDashClient"),
-        (["session", "list"], "ccdash_cli.commands.session.CCDashClient"),
-        (["report", "aar", "--feature", "FEAT-1"], "ccdash_cli.commands.report.CCDashClient"),
+        (["feature", "list"], "ccdash_cli.commands.feature.build_client"),
+        (["session", "list"], "ccdash_cli.commands.session.build_client"),
+        (["report", "aar", "--feature", "FEAT-1"], "ccdash_cli.commands.report.build_client"),
     ])
     def test_auth_failure_exits_code_2(self, cmd_args, module):
         """Any command should exit 2 when an AuthenticationError is raised."""
@@ -623,7 +784,7 @@ class TestErrorHandling:
         result = _invoke(
             "feature", "list",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         # With mix_stderr=False, stderr is available separately; with default
         # CliRunner, error output lands in result.output or result.stderr.
@@ -640,7 +801,7 @@ class TestErrorHandling:
         result = _invoke(
             "session", "list",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         error_output = (result.stderr if hasattr(result, "stderr") and result.stderr else result.output)
         assert "Error" in error_output or "error" in error_output

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-15
+
+### Added
+
+- **CLI timeout configuration**: `--timeout SECONDS` global flag and `CCDASH_TIMEOUT` env var on the standalone CLI (default 30s). Precedence: flag > env > default. `ccdash doctor` and `ccdash target check` display the active timeout and its source.
+- **Query caching** for project-status, feature-forensics, workflow-diagnostics, and aar-report endpoints: in-process TTL cache keyed on project-scoped data fingerprint. Default TTL `CCDASH_QUERY_CACHE_TTL_SECONDS=60`. `--no-cache` CLI flag and `bypass_cache=true` query param force miss. OpenTelemetry counters emitted. Graceful degradation when fingerprint unavailable.
+- **FeatureForensicsDTO ergonomics**: top-level `name` and `status` alias fields for parity with nested access, plus `telemetry_available: bool` indicator and `sessions_note` field with eventual-consistency guidance.
+- **Feature-list pagination & filtering**: default limit raised to 200. Responses include `truncated` and `total` fields. Keyword filter via `--q TEXT` (CLI) / `?q=` (HTTP), case-insensitive substring match. CLI displays truncation hint when results exceed the limit.
+- **linked_sessions reconciliation**: `feature_show.linked_sessions` now reconciled with `feature_sessions` endpoint result; CI regression guard added; CLI/MCP output includes eventual-consistency hint. Background cache-warming job scheduled every `CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS` seconds (default 300; 0 disables).
+
 ## 2026-04-13
 
 ### Added
