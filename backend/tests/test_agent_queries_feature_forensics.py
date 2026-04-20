@@ -215,3 +215,128 @@ class FeatureForensicsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("sessions_note", envelope["data"])
         self.assertIn("eventually-consistent", envelope["data"]["sessions_note"])
+
+    async def test_get_forensics_exposes_token_usage_by_model_rollup(self) -> None:
+        features_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value={
+                    "id": "feature-rollup",
+                    "name": "Rollup Feature",
+                    "status": "in_progress",
+                    "updated_at": "2026-04-11T10:00:00+00:00",
+                }
+            )
+        )
+        session_rows = {
+            "session-opus": {
+                "id": "session-opus",
+                "status": "completed",
+                "model": "claude-opus-4-1-20260101",
+                "observed_tokens": 120,
+                "started_at": "2026-04-11T09:00:00+00:00",
+                "ended_at": "2026-04-11T09:10:00+00:00",
+            },
+            "session-sonnet": {
+                "id": "session-sonnet",
+                "status": "completed",
+                "model": "claude-sonnet-4-5-20260101",
+                "observed_tokens": 80,
+                "started_at": "2026-04-11T09:10:00+00:00",
+                "ended_at": "2026-04-11T09:20:00+00:00",
+            },
+            "session-haiku": {
+                "id": "session-haiku",
+                "status": "completed",
+                "model": "claude-haiku-3-5-20260101",
+                "observed_tokens": 40,
+                "started_at": "2026-04-11T09:20:00+00:00",
+                "ended_at": "2026-04-11T09:30:00+00:00",
+            },
+            "session-other": {
+                "id": "session-other",
+                "status": "completed",
+                "model": "gpt-5",
+                "observed_tokens": 25,
+                "started_at": "2026-04-11T09:30:00+00:00",
+                "ended_at": "2026-04-11T09:40:00+00:00",
+            },
+        }
+        sessions_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(side_effect=lambda session_id: session_rows.get(session_id))
+        )
+        documents_repo = types.SimpleNamespace(list_paginated=AsyncMock(return_value=[]))
+        tasks_repo = types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[]))
+        links_repo = types.SimpleNamespace(
+            get_links_for=AsyncMock(
+                return_value=[
+                    {"source_type": "feature", "source_id": "feature-rollup", "target_type": "session", "target_id": "session-opus"},
+                    {"source_type": "feature", "source_id": "feature-rollup", "target_type": "session", "target_id": "session-sonnet"},
+                    {"source_type": "feature", "source_id": "feature-rollup", "target_type": "session", "target_id": "session-haiku"},
+                    {"source_type": "feature", "source_id": "feature-rollup", "target_type": "session", "target_id": "session-other"},
+                ]
+            )
+        )
+        ports = _ports(
+            features=features_repo,
+            sessions=sessions_repo,
+            documents=documents_repo,
+            tasks=tasks_repo,
+            links=links_repo,
+        )
+
+        with patch(
+            "backend.application.services.agent_queries.feature_forensics.SessionTranscriptService.list_session_logs",
+            new=AsyncMock(return_value=[]),
+        ):
+            result = await FeatureForensicsQueryService().get_forensics(
+                _context(),
+                ports,
+                "feature-rollup",
+            )
+
+        self.assertEqual(result.total_tokens, 265)
+        self.assertEqual(result.token_usage_by_model.opus, 120)
+        self.assertEqual(result.token_usage_by_model.sonnet, 80)
+        self.assertEqual(result.token_usage_by_model.haiku, 40)
+        self.assertEqual(result.token_usage_by_model.other, 25)
+        self.assertEqual(result.token_usage_by_model.total, result.total_tokens)
+
+    async def test_get_forensics_zero_session_rollup_defaults_to_zeroes(self) -> None:
+        features_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value={
+                    "id": "feature-empty-rollup",
+                    "name": "Empty Rollup",
+                    "status": "in_progress",
+                    "updated_at": "2026-04-11T10:00:00+00:00",
+                }
+            )
+        )
+        sessions_repo = types.SimpleNamespace(get_by_id=AsyncMock(return_value=None))
+        documents_repo = types.SimpleNamespace(list_paginated=AsyncMock(return_value=[]))
+        tasks_repo = types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[]))
+        links_repo = types.SimpleNamespace(get_links_for=AsyncMock(return_value=[]))
+        ports = _ports(
+            features=features_repo,
+            sessions=sessions_repo,
+            documents=documents_repo,
+            tasks=tasks_repo,
+            links=links_repo,
+        )
+
+        with patch(
+            "backend.application.services.agent_queries.feature_forensics.SessionIntelligenceReadService.list_sessions",
+            new=AsyncMock(return_value=types.SimpleNamespace(items=[])),
+        ):
+            result = await FeatureForensicsQueryService().get_forensics(
+                _context(),
+                ports,
+                "feature-empty-rollup",
+            )
+
+        self.assertEqual(result.total_tokens, 0)
+        self.assertEqual(result.token_usage_by_model.opus, 0)
+        self.assertEqual(result.token_usage_by_model.sonnet, 0)
+        self.assertEqual(result.token_usage_by_model.haiku, 0)
+        self.assertEqual(result.token_usage_by_model.other, 0)
+        self.assertEqual(result.token_usage_by_model.total, 0)

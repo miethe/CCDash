@@ -153,6 +153,53 @@ class TelemetryAvailability(BaseModel):
     sessions: bool = False
 
 
+class TokenUsageByModel(BaseModel):
+    """Per-feature token rollup bucketed by normalized model family."""
+
+    opus: int = 0
+    sonnet: int = 0
+    haiku: int = 0
+    other: int = 0
+    total: int = 0
+
+
+class PlanningArtifactRef(BaseModel):
+    """Artifact reference grouped into planning payload buckets."""
+
+    artifact_id: str = ""
+    title: str = ""
+    file_path: str = ""
+    canonical_path: str = ""
+    doc_type: str = ""
+    status: str = ""
+    updated_at: str = ""
+    source_ref: str = ""
+
+
+class PlanningSpikeItem(BaseModel):
+    """Derived SPIKE item for the planning drawer payload."""
+
+    spike_id: str = ""
+    title: str = ""
+    status: str = ""
+    file_path: str = ""
+    source_ref: str = ""
+
+
+class PlanningOpenQuestionItem(BaseModel):
+    """Open-question state surfaced in the planning feature payload."""
+
+    oq_id: str = ""
+    question: str = ""
+    severity: str = "medium"
+    answer_text: str = ""
+    resolved: bool = False
+    pending_sync: bool = False
+    source_document_id: str = ""
+    source_document_path: str = ""
+    updated_at: str = ""
+
+
 class FeatureForensicsDTO(AgentQueryEnvelope):
     """Feature execution history and evidence forensics.
 
@@ -173,6 +220,7 @@ class FeatureForensicsDTO(AgentQueryEnvelope):
     iteration_count: int = 0
     total_cost: float = 0.0
     total_tokens: int = 0
+    token_usage_by_model: TokenUsageByModel = Field(default_factory=TokenUsageByModel)
     workflow_mix: dict[str, float] = Field(default_factory=dict)
     rework_signals: list[str] = Field(default_factory=list)
     failure_patterns: list[str] = Field(default_factory=list)
@@ -336,6 +384,24 @@ class FeaturePlanningContextDTO(AgentQueryEnvelope):
     phases: list[PhaseContextItem] = Field(default_factory=list)
     blocked_batch_ids: list[str] = Field(default_factory=list)
     linked_artifact_refs: list[str] = Field(default_factory=list)
+    specs: list[PlanningArtifactRef] = Field(default_factory=list)
+    prds: list[PlanningArtifactRef] = Field(default_factory=list)
+    plans: list[PlanningArtifactRef] = Field(default_factory=list)
+    ctxs: list[PlanningArtifactRef] = Field(default_factory=list)
+    reports: list[PlanningArtifactRef] = Field(default_factory=list)
+    spikes: list[PlanningSpikeItem] = Field(default_factory=list)
+    open_questions: list[PlanningOpenQuestionItem] = Field(default_factory=list)
+    ready_to_promote: bool = False
+    is_stale: bool = False
+    total_tokens: int = 0
+    token_usage_by_model: TokenUsageByModel = Field(default_factory=TokenUsageByModel)
+
+
+class OpenQuestionResolutionDTO(BaseModel):
+    """Transport-neutral response payload for OQ resolution writes."""
+
+    feature_id: str
+    oq: PlanningOpenQuestionItem
 
 
 class PhaseTaskItem(BaseModel):
