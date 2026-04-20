@@ -120,13 +120,6 @@ services:
     environment:
       CCDASH_FRONTEND_PORT: "${CCDASH_FRONTEND_PORT:-3000}"
       CCDASH_API_UPSTREAM: "${CCDASH_API_UPSTREAM:-http://api:8000}"
-    depends_on:
-      backend:
-        condition: service_healthy
-        required: false
-      api:
-        condition: service_healthy
-        required: false
     healthcheck:
       test:
         - CMD-SHELL
@@ -149,7 +142,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U "${CCDASH_POSTGRES_USER:-ccdash}" -d "${CCDASH_POSTGRES_DB:-ccdash}"
+        - pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
       interval: 10s
       timeout: 5s
       retries: 6
