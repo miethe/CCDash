@@ -1,16 +1,15 @@
-import {
-  Ban,
-  ChevronRight,
-  Clock,
-  FileText,
-  GitMerge,
-  Layers,
-} from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Ban, ChevronRight, Clock, FileText, GitMerge, Layers } from 'lucide-react';
 
 import type { FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
 import type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
-
-// ── Props ─────────────────────────────────────────────────────────────────────
+import {
+  ArtifactChip,
+  MetricTile,
+  Panel,
+  SectionHeader,
+  StatusPill,
+} from './primitives';
 
 export interface PlanningSummaryPanelProps {
   summary: ProjectPlanningSummary;
@@ -18,113 +17,71 @@ export interface PlanningSummaryPanelProps {
   onDrillDown?: (type: ArtifactDrillDownType) => void;
 }
 
-// ── Health metric tile ────────────────────────────────────────────────────────
-
-interface MetricTileProps {
-  label: string;
-  value: number;
-  accent?: string;
-  dimWhenZero?: boolean;
-}
-
-function MetricTile({ label, value, accent = 'text-panel-foreground', dimWhenZero = false }: MetricTileProps) {
-  const effectiveAccent = dimWhenZero && value === 0 ? 'text-muted-foreground/50' : accent;
-  return (
-    <div className="flex flex-col items-center justify-center gap-1 rounded-lg border border-panel-border bg-surface-elevated px-4 py-3 shadow-sm">
-      <span className={`text-2xl font-bold tabular-nums leading-none ${effectiveAccent}`}>
-        {value}
-      </span>
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
-// ── Artifact chip ─────────────────────────────────────────────────────────────
-
-interface ArtifactChipProps {
-  label: string;
-  count: number;
-  drillDownType?: ArtifactDrillDownType;
-  onDrillDown?: (type: ArtifactDrillDownType) => void;
-}
-
-function ArtifactChip({ label, count, drillDownType, onDrillDown }: ArtifactChipProps) {
-  if (drillDownType && onDrillDown && count > 0) {
-    return (
-      <button
-        type="button"
-        onClick={() => onDrillDown(drillDownType)}
-        aria-label={`View ${count} ${label}`}
-        className="inline-flex items-center gap-1.5 rounded-full border border-panel-border bg-surface-elevated/70 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-info/50 hover:bg-slate-700/40 hover:text-panel-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info/50"
-      >
-        {label}
-        <span className="rounded-full bg-slate-600/60 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-panel-foreground">
-          {count}
-        </span>
-      </button>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-panel-border bg-surface-elevated/70 px-3 py-1 text-xs text-muted-foreground">
-      {label}
-      <span className="rounded-full bg-slate-600/60 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-panel-foreground">
-        {count}
-      </span>
-    </span>
-  );
-}
-
-// ── Feature row ───────────────────────────────────────────────────────────────
-
 interface FeatureRowProps {
   item: FeatureSummaryItem;
   onSelectFeature?: (featureId: string) => void;
 }
 
+interface AttentionColumnProps {
+  title: string;
+  icon: ReactNode;
+  items: FeatureSummaryItem[];
+  onSelectFeature?: (featureId: string) => void;
+  accent: string;
+}
+
+const ROW_LIMIT = 8;
+
+function artifactKindForType(type?: ArtifactDrillDownType): string {
+  switch (type) {
+    case 'design-specs':
+      return 'spec';
+    case 'prds':
+      return 'prd';
+    case 'implementation-plans':
+      return 'implementation_plan';
+    case 'contexts':
+      return 'context';
+    case 'reports':
+      return 'report';
+    default:
+      return 'tracker';
+  }
+}
+
 function FeatureRow({ item, onSelectFeature }: FeatureRowProps) {
   const statusMismatch = item.rawStatus !== item.effectiveStatus;
+
   return (
     <button
       type="button"
       aria-label={`View planning context for ${item.featureName}`}
       onClick={() => onSelectFeature?.(item.featureId)}
-      className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-slate-700/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info/50"
+      className="planning-row group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[color:var(--bg-3)] focus-visible:outline-none"
     >
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-panel-foreground group-hover:text-info">
+        <p className="truncate text-sm font-medium text-[color:var(--ink-0)] group-hover:text-[color:var(--brand)]">
           {item.featureName}
         </p>
-        <p className="truncate text-xs text-muted-foreground/70">
+        <p className="truncate text-xs text-[color:var(--ink-2)]">
           {item.phaseCount} phase{item.phaseCount !== 1 ? 's' : ''}
-          {item.blockedPhaseCount > 0 && (
-            <span className="ml-1 text-rose-400">
+          {item.blockedPhaseCount > 0 ? (
+            <span className="ml-1" style={{ color: 'var(--err)' }}>
               • {item.blockedPhaseCount} blocked
             </span>
-          )}
+          ) : null}
         </p>
-        {statusMismatch && (
-          <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/60">
-            <span className="font-medium text-slate-400">{item.rawStatus}</span>
-            <ChevronRight size={10} />
-            <span className="font-medium text-fuchsia-400">{item.effectiveStatus}</span>
-          </p>
-        )}
+        {statusMismatch ? (
+          <div className="mt-1 flex items-center gap-2 text-[10px]">
+            <StatusPill status={item.rawStatus} />
+            <ChevronRight size={10} className="text-[color:var(--ink-3)]" />
+            <StatusPill status={item.effectiveStatus} />
+          </div>
+        ) : null}
       </div>
-      <ChevronRight size={14} className="shrink-0 text-muted-foreground/40 group-hover:text-info" />
+      <ChevronRight size={14} className="shrink-0 text-[color:var(--ink-3)] group-hover:text-[color:var(--brand)]" />
     </button>
   );
-}
-
-// ── Attention column ──────────────────────────────────────────────────────────
-
-const ROW_LIMIT = 8;
-
-interface AttentionColumnProps {
-  title: string;
-  icon: React.ReactNode;
-  items: FeatureSummaryItem[];
-  onSelectFeature?: (featureId: string) => void;
-  accentClass?: string;
 }
 
 function AttentionColumn({
@@ -132,58 +89,57 @@ function AttentionColumn({
   icon,
   items,
   onSelectFeature,
-  accentClass = 'text-muted-foreground',
+  accent,
 }: AttentionColumnProps) {
   const visible = items.slice(0, ROW_LIMIT);
   const overflow = items.length - ROW_LIMIT;
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-panel-border bg-surface-elevated p-4 shadow-sm">
-      <div className={`flex items-center gap-2 text-sm font-semibold ${accentClass}`}>
+    <Panel className="flex flex-col gap-2 p-4">
+      <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: accent }}>
         {icon}
         {title}
-        <span className="ml-auto rounded-full bg-slate-700/60 px-2 py-0.5 text-[10px] font-bold tabular-nums text-panel-foreground">
+        <span
+          className="planning-tnum ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold text-[color:var(--ink-0)]"
+          style={{ background: 'color-mix(in oklab, var(--ink-2) 16%, transparent)' }}
+        >
           {items.length}
         </span>
       </div>
       <div className="mt-1 flex flex-col gap-0.5">
         {visible.length === 0 ? (
-          <p className="py-4 text-center text-xs text-muted-foreground/50">All clear.</p>
+          <p className="py-4 text-center text-xs text-[color:var(--ink-3)]">All clear.</p>
         ) : (
           <>
             {visible.map((item) => (
               <FeatureRow key={item.featureId} item={item} onSelectFeature={onSelectFeature} />
             ))}
-            {overflow > 0 && (
-              <p className="mt-1 text-center text-[11px] text-muted-foreground/60">
+            {overflow > 0 ? (
+              <p className="mt-1 text-center text-[11px] text-[color:var(--ink-3)]">
                 +{overflow} more
               </p>
-            )}
+            ) : null}
           </>
         )}
       </div>
-    </div>
+    </Panel>
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-
 export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: PlanningSummaryPanelProps) {
-  // Graceful empty state
   if (summary.featureSummaries.length === 0) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="flex max-w-sm flex-col items-center gap-3 rounded-xl border border-dashed border-panel-border bg-surface-elevated/40 px-10 py-8 text-center">
-          <FileText size={28} className="text-muted-foreground/40" />
-          <p className="text-sm text-muted-foreground">No planning artifacts discovered yet.</p>
-        </div>
+        <Panel className="flex max-w-sm flex-col items-center gap-3 border-dashed px-10 py-8 text-center">
+          <FileText size={28} className="text-[color:var(--ink-3)]" />
+          <p className="text-sm text-[color:var(--ink-2)]">No planning artifacts discovered yet.</p>
+        </Panel>
       </div>
     );
   }
 
-  // Build lookup map for quick feature resolution
   const featureById = new Map<string, FeatureSummaryItem>(
-    summary.featureSummaries.map((f) => [f.featureId, f])
+    summary.featureSummaries.map((feature) => [feature.featureId, feature]),
   );
 
   const resolveIds = (ids: string[]): FeatureSummaryItem[] =>
@@ -192,22 +148,18 @@ export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: 
       return item ? [item] : [];
     });
 
-  // Stale
   const staleItems = resolveIds(summary.staleFeatureIds);
-
-  // Blocked
   const blockedItems = resolveIds(summary.blockedFeatureIds);
-
-  // Mismatched + reversed (union, deduplicated by featureId)
-  const mismatchedFromSummaries = summary.featureSummaries.filter((f) => f.isMismatch);
+  const mismatchedFromSummaries = summary.featureSummaries.filter((feature) => feature.isMismatch);
   const reversedItems = resolveIds(summary.reversalFeatureIds);
   const mismatchSet = new Map<string, FeatureSummaryItem>();
+
   for (const item of [...mismatchedFromSummaries, ...reversedItems]) {
     mismatchSet.set(item.featureId, item);
   }
+
   const mismatchItems = Array.from(mismatchSet.values());
 
-  // Artifact composition entries
   const artifactEntries: { label: string; count: number; drillDownType?: ArtifactDrillDownType }[] = [
     { label: 'PRDs', count: summary.nodeCountsByType.prd, drillDownType: 'prds' },
     { label: 'Design Specs', count: summary.nodeCountsByType.designSpec, drillDownType: 'design-specs' },
@@ -219,80 +171,72 @@ export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: 
 
   return (
     <section className="space-y-4">
-      {/* ── Planning Health header row ─────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <MetricTile
-          label="Total Features"
-          value={summary.totalFeatureCount}
-          accent="text-panel-foreground"
-        />
+        <MetricTile label="Total Features" value={summary.totalFeatureCount} accent="var(--ink-0)" />
         <MetricTile
           label="Active"
           value={summary.activeFeatureCount}
-          accent="text-emerald-400"
-          dimWhenZero
+          accent={summary.activeFeatureCount === 0 ? 'var(--ink-3)' : 'var(--ok)'}
         />
         <MetricTile
           label="Stale"
           value={summary.staleFeatureCount}
-          accent="text-amber-400"
-          dimWhenZero
+          accent={summary.staleFeatureCount === 0 ? 'var(--ink-3)' : 'var(--warn)'}
         />
         <MetricTile
           label="Blocked"
           value={summary.blockedFeatureCount}
-          accent="text-rose-400"
-          dimWhenZero
+          accent={summary.blockedFeatureCount === 0 ? 'var(--ink-3)' : 'var(--err)'}
         />
         <MetricTile
           label="Mismatches"
           value={summary.mismatchCount}
-          accent="text-fuchsia-400"
-          dimWhenZero
+          accent={summary.mismatchCount === 0 ? 'var(--ink-3)' : 'var(--mag)'}
         />
       </div>
 
-      {/* ── Artifact Composition card ──────────────────────────────────── */}
-      <div className="rounded-xl border border-panel-border bg-surface-elevated p-4 shadow-sm">
-        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-panel-foreground">
-          <Layers size={15} className="text-info" />
-          Artifact Composition
-        </div>
+      <Panel className="p-4">
+        <SectionHeader
+          className="mb-3"
+          eyebrow="Corpus View"
+          heading="Artifact Composition"
+          glyph={<Layers size={15} />}
+        />
         <div className="flex flex-wrap gap-2">
           {artifactEntries.map(({ label, count, drillDownType }) => (
             <ArtifactChip
               key={label}
+              kind={artifactKindForType(drillDownType)}
               label={label}
               count={count}
-              drillDownType={drillDownType}
-              onDrillDown={onDrillDown}
+              onClick={drillDownType && onDrillDown && count > 0 ? () => onDrillDown(drillDownType) : undefined}
+              aria-label={drillDownType && count > 0 ? `View ${count} ${label}` : undefined}
             />
           ))}
         </div>
-      </div>
+      </Panel>
 
-      {/* ── Attention lists ────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <AttentionColumn
           title="Stale Features"
           icon={<Clock size={14} />}
           items={staleItems}
           onSelectFeature={onSelectFeature}
-          accentClass="text-amber-400"
+          accent="var(--warn)"
         />
         <AttentionColumn
           title="Blocked Features"
           icon={<Ban size={14} />}
           items={blockedItems}
           onSelectFeature={onSelectFeature}
-          accentClass="text-rose-400"
+          accent="var(--err)"
         />
         <AttentionColumn
           title="Mismatched / Reversed"
           icon={<GitMerge size={14} />}
           items={mismatchItems}
           onSelectFeature={onSelectFeature}
-          accentClass="text-fuchsia-400"
+          accent="var(--mag)"
         />
       </div>
     </section>

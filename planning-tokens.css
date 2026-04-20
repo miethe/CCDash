@@ -1,0 +1,236 @@
+.planning-route {
+  --bg-0: #0c1015;
+  --bg-1: #13161c;
+  --bg-2: #191d24;
+  --bg-3: #22272e;
+  --bg-4: #2e333c;
+  --line-1: #2a2e35;
+  --line-2: #3d434c;
+  --ink-0: #eff2f7;
+  --ink-1: #c0c4cb;
+  --ink-2: #8e929a;
+  --ink-3: #646971;
+  --ink-4: #43484f;
+  --spec: #2fb5d8;
+  --spk: #f9875e;
+  --prd: #57bc80;
+  --plan: #dc9242;
+  --prog: #b984df;
+  --ctx: #e183a1;
+  --trk: #b8a457;
+  --rep: #80a5e3;
+  --ok: #61cb7c;
+  --warn: #eba941;
+  --err: #f36164;
+  --info: #4baeed;
+  --mag: #d476cd;
+  --m-opus: #ab91f2;
+  --m-sonnet: #00c4c4;
+  --m-haiku: #8cc36d;
+  --brand: #00c9c9;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --row-h: 44px;
+  --gap: 16px;
+  --sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --serif: "Fraunces", Georgia, serif;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at 20% -10%, color-mix(in oklab, var(--brand) 8%, transparent), transparent 50%),
+    radial-gradient(circle at 110% 100%, color-mix(in oklab, var(--prog) 6%, transparent), transparent 50%),
+    var(--bg-0);
+  color: var(--ink-0);
+  font-family: var(--sans);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "ss02", "cv11";
+}
+
+@supports (color: oklch(50% 0.1 0)) {
+  .planning-route {
+    --bg-0: oklch(17% 0.012 260);
+    --bg-1: oklch(20% 0.012 260);
+    --bg-2: oklch(23% 0.014 260);
+    --bg-3: oklch(27% 0.016 260);
+    --bg-4: oklch(32% 0.018 260);
+    --line-1: oklch(30% 0.014 260);
+    --line-2: oklch(38% 0.018 260);
+    --ink-0: oklch(96% 0.008 260);
+    --ink-1: oklch(82% 0.010 260);
+    --ink-2: oklch(66% 0.012 260);
+    --ink-3: oklch(52% 0.014 260);
+    --ink-4: oklch(40% 0.014 260);
+    --spec: oklch(72% 0.12 220);
+    --spk: oklch(74% 0.15 40);
+    --prd: oklch(72% 0.13 155);
+    --plan: oklch(72% 0.13 65);
+    --prog: oklch(70% 0.14 310);
+    --ctx: oklch(72% 0.12 0);
+    --trk: oklch(72% 0.10 95);
+    --rep: oklch(72% 0.10 260);
+    --ok: oklch(76% 0.15 150);
+    --warn: oklch(78% 0.14 75);
+    --err: oklch(68% 0.18 22);
+    --info: oklch(72% 0.13 240);
+    --mag: oklch(70% 0.16 330);
+    --m-opus: oklch(72% 0.14 295);
+    --m-sonnet: oklch(74% 0.13 195);
+    --m-haiku: oklch(76% 0.13 135);
+    --brand: oklch(75% 0.14 195);
+  }
+}
+
+.planning-route.planning-density-compact {
+  --row-h: 34px;
+  --gap: 10px;
+}
+
+.planning-route.planning-density-comfortable {
+  --row-h: 44px;
+  --gap: 16px;
+}
+
+.planning-route .planning-sans {
+  font-family: var(--sans);
+}
+
+.planning-route .planning-mono {
+  font-family: var(--mono);
+  font-feature-settings: "zero" 1, "ss02" 1;
+}
+
+.planning-route .planning-serif {
+  font-family: var(--serif);
+  font-variation-settings: "opsz" 48;
+}
+
+.planning-route .planning-tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.planning-route .planning-caps {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+
+.planning-route .planning-panel {
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+}
+
+.planning-route .planning-tile {
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-sm);
+}
+
+.planning-route .planning-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-1);
+  background: var(--bg-2);
+  color: var(--ink-1);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.planning-route .planning-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-1);
+  background: var(--bg-2);
+  color: var(--ink-0);
+  font-size: 12px;
+  font-weight: 500;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.planning-route .planning-btn:hover {
+  border-color: var(--line-2);
+  background: var(--bg-3);
+}
+
+.planning-route .planning-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-2);
+}
+
+.planning-route .planning-btn-ghost:hover {
+  background: var(--bg-2);
+  color: var(--ink-0);
+}
+
+.planning-route .planning-btn-primary {
+  background: color-mix(in oklab, var(--brand) 18%, var(--bg-2));
+  border-color: color-mix(in oklab, var(--brand) 45%, var(--line-1));
+  color: color-mix(in oklab, var(--brand) 90%, white);
+}
+
+.planning-route .planning-btn-primary:hover {
+  background: color-mix(in oklab, var(--brand) 26%, var(--bg-2));
+}
+
+.planning-route .planning-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.planning-route .planning-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+}
+
+.planning-route .planning-row {
+  min-height: var(--row-h);
+}
+
+.planning-route .planning-density-gap {
+  gap: var(--gap);
+}
+
+.planning-route .planning-divider {
+  border-color: var(--line-1);
+}
+
+.planning-route button:focus-visible,
+.planning-route [role="button"]:focus-visible,
+.planning-route [tabindex]:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--brand) 60%, transparent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .planning-route *,
+  .planning-route *::before,
+  .planning-route *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

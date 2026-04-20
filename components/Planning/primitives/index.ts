@@ -33,6 +33,22 @@ export type { LineageRowProps } from './LineageRow';
 
 export { castPlanningStatus } from './castPlanningStatus';
 
+export {
+  Panel,
+  Tile,
+  Chip,
+  Btn,
+  BtnGhost,
+  BtnPrimary,
+  Dot,
+  StatusPill,
+  ArtifactChip,
+  MetricTile,
+  SectionHeader,
+  Spark,
+  ExecBtn,
+} from './PhaseZeroPrimitives';
+
 export { PhaseOperationsPanel } from './PhaseOperationsPanel';
 export type { PhaseOperationsPanelProps } from './PhaseOperationsPanel';
 export {

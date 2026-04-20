@@ -1,31 +1,38 @@
 ---
 schema_version: 2
 doc_type: implementation_plan
-status: draft
+status: in-progress
 created: 2026-04-20
-updated: 2026-04-20
+updated: '2026-04-20'
 feature_slug: ccdash-planning-reskin-v2
 feature_version: v2
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: null
-scope: Pixel-faithful reskin of /planning routes with design token system, UI primitive extraction, new surfaces (metrics, triage, live agent roster, graph enhancements), feature detail drawer interactions (SPIKEs, OQ resolution, exec buttons), and OQ write-back backend endpoint.
+scope: Pixel-faithful reskin of /planning routes with design token system, UI primitive
+  extraction, new surfaces (metrics, triage, live agent roster, graph enhancements),
+  feature detail drawer interactions (SPIKEs, OQ resolution, exec buttons), and OQ
+  write-back backend endpoint.
 effort_estimate: 65-75 story points
-architecture_summary: "Phase 0 extracts OKLCH tokens and implements primitives; Phases 1-4 reskin shell/home/graph/triage/agent-roster; Phases 5-6 implement feature detail drawer enhancements and dependency DAG; Phase 7 adds OQ write-back backend; Phases 8-9 address a11y/perf/testing; Phase 10 handles documentation finalization. Total 10 phases, ~8-10 weeks."
+architecture_summary: Phase 0 extracts OKLCH tokens and implements primitives; Phases
+  1-4 reskin shell/home/graph/triage/agent-roster; Phases 5-6 implement feature detail
+  drawer enhancements and dependency DAG; Phase 7 adds OQ write-back backend; Phases
+  8-9 address a11y/perf/testing; Phase 10 handles documentation finalization. Total
+  10 phases, ~8-10 weeks.
 related_documents:
-  - docs/project_plans/designs/ccdash-planning/README.md
-  - docs/project_plans/designs/ccdash-planning/project/Planning Deck.html
-  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/designs/ccdash-planning/README.md
+- docs/project_plans/designs/ccdash-planning/project/Planning Deck.html
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
 references:
   user_docs: []
   context: []
   specs:
-    - docs/project_plans/designs/ccdash-planning/project/app/data.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/app.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/graph.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/feature_detail.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/triage.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/primitives.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/data.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/app.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/graph.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/feature_detail.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/triage.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/primitives.jsx
 spike_ref: null
 adr_refs: []
 deferred_items_spec_refs: []
@@ -40,7 +47,14 @@ contributors: []
 priority: high
 risk_level: high
 category: enhancements
-tags: [implementation, planning, ui, reskin, design-handoff, enhancements, phases]
+tags:
+- implementation
+- planning
+- ui
+- reskin
+- design-handoff
+- enhancements
+- phases
 milestone: null
 commit_refs: []
 pr_refs: []

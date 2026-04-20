@@ -21,6 +21,7 @@ import { getProjectPlanningGraph, PlanningApiError } from '../../services/planni
 import { PlanningNodeTypeIcon } from '@miethe/ui/primitives';
 import { useData } from '../../contexts/DataContext';
 import { DocumentModal } from '../DocumentModal';
+import { BtnGhost, Chip, Panel, StatusPill } from './primitives';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -77,17 +78,8 @@ function nodeTypeLabel(type: PlanningNodeType): string {
 }
 
 function StatusBadge({ label, variant = 'default' }: { label: string; variant?: 'default' | 'mismatch' | 'ok' }) {
-  const base = 'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-none';
-  const colors: Record<string, string> = {
-    default: 'bg-slate-700/60 text-slate-300',
-    mismatch: 'bg-amber-600/20 text-amber-400',
-    ok: 'bg-emerald-600/20 text-emerald-400',
-  };
-  return (
-    <span className={`${base} ${colors[variant] ?? colors.default}`}>
-      {label}
-    </span>
-  );
+  const status = variant === 'mismatch' ? 'blocked' : variant === 'ok' ? 'completed' : label;
+  return <StatusPill status={status} aria-label={label} title={label} />;
 }
 
 function FeatureSlugChip({
@@ -101,14 +93,15 @@ function FeatureSlugChip({
     return (
       <button
         onClick={onClick}
-        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-info bg-info/10 hover:bg-info/20 transition-colors"
+        className="planning-chip px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--brand)] transition-colors"
+        style={{ background: 'color-mix(in oklab, var(--brand) 14%, transparent)', borderColor: 'var(--line-1)' }}
       >
         {slug}
       </button>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground bg-slate-700/40">
+    <span className="planning-chip px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--ink-2)]">
       {slug}
     </span>
   );
@@ -129,20 +122,20 @@ function FeatureLineageCard({ slug, nodes, onSelectFeature, onNodeClick }: Featu
   const hasMismatch = nodes.some(n => n.mismatchState?.isMismatch);
 
   return (
-    <div className="rounded-lg border border-panel-border bg-surface-elevated overflow-hidden">
+    <Panel className="overflow-hidden">
       <button
-        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-slate-700/30 transition-colors"
+        className="planning-row flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[color:var(--bg-3)]"
         onClick={() => setExpanded(e => !e)}
         aria-expanded={expanded}
       >
         <div className="flex items-center gap-2 min-w-0">
           {expanded ? (
-            <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
+            <ChevronDown size={13} className="shrink-0 text-[color:var(--ink-2)]" />
           ) : (
-            <ChevronRight size={13} className="shrink-0 text-muted-foreground" />
+            <ChevronRight size={13} className="shrink-0 text-[color:var(--ink-2)]" />
           )}
           <span
-            className="truncate text-xs font-medium text-panel-foreground hover:text-info transition-colors"
+            className="truncate text-xs font-medium text-[color:var(--ink-0)] transition-colors hover:text-[color:var(--brand)]"
             onClick={(e) => {
               if (onSelectFeature) {
                 e.stopPropagation();
@@ -153,23 +146,23 @@ function FeatureLineageCard({ slug, nodes, onSelectFeature, onNodeClick }: Featu
             {slug}
           </span>
           {hasMismatch && (
-            <AlertTriangle size={11} className="shrink-0 text-amber-400" />
+            <AlertTriangle size={11} className="shrink-0 text-[color:var(--warn)]" />
           )}
         </div>
-        <span className="shrink-0 text-[10px] text-muted-foreground">{nodes.length} nodes</span>
+        <span className="planning-mono shrink-0 text-[10px] text-[color:var(--ink-2)]">{nodes.length} nodes</span>
       </button>
 
       {expanded && (
-        <div className="border-t border-panel-border px-3 py-2 space-y-1">
+        <div className="border-t border-[color:var(--line-1)] px-3 py-2 space-y-1">
           {sorted.map((node) => {
             const isMismatch = node.mismatchState?.isMismatch;
             const effectiveVariant = isMismatch ? 'mismatch' : 'ok';
             const nodeRow = (
-              <div className="flex items-center gap-2 py-1 text-xs">
-                <span className="text-muted-foreground/70">
+              <div className="planning-row flex items-center gap-2 py-1 text-xs">
+                <span className="text-[color:var(--ink-2)]">
                   <PlanningNodeTypeIcon type={node.type} size={12} />
                 </span>
-                <span className="flex-1 truncate text-muted-foreground" title={node.title}>
+                <span className="flex-1 truncate text-[color:var(--ink-1)]" title={node.title}>
                   {node.title || nodeTypeLabel(node.type)}
                 </span>
                 <div className="flex items-center gap-1 shrink-0">
@@ -186,7 +179,7 @@ function FeatureLineageCard({ slug, nodes, onSelectFeature, onNodeClick }: Featu
                   key={node.id}
                   type="button"
                   onClick={() => onNodeClick(node)}
-                  className="w-full text-left rounded hover:bg-slate-700/20 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info"
+                  className="w-full rounded text-left transition-colors hover:bg-[color:var(--bg-3)] focus-visible:outline-none"
                 >
                   {nodeRow}
                 </button>
@@ -196,7 +189,7 @@ function FeatureLineageCard({ slug, nodes, onSelectFeature, onNodeClick }: Featu
           })}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -216,11 +209,14 @@ function AttentionRow({
   onSelectFeature?: (featureId: string) => void;
 }) {
   return (
-    <div className="flex items-start gap-2 py-1.5 text-xs border-b border-panel-border/50 last:border-0">
+    <div
+      className="planning-row flex items-start gap-2 border-b py-1.5 text-xs last:border-0"
+      style={{ borderColor: 'color-mix(in oklab, var(--line-1) 70%, transparent)' }}
+    >
       <div className="flex-1 min-w-0">
-        <p className="truncate text-muted-foreground font-medium">{title}</p>
+        <p className="truncate font-medium text-[color:var(--ink-1)]">{title}</p>
         {reason && (
-          <p className="mt-0.5 truncate text-muted-foreground/60 text-[10px]">{reason}</p>
+          <p className="mt-0.5 truncate text-[10px] text-[color:var(--ink-3)]">{reason}</p>
         )}
       </div>
       {slug && (
@@ -244,15 +240,15 @@ function AttentionSubPanel({
 }) {
   if (count === 0) return null;
   return (
-    <div className="rounded-lg border border-panel-border bg-surface-elevated overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-panel-border">
-        <span className="text-xs font-medium text-panel-foreground">{title}</span>
-        <span className="text-[10px] text-muted-foreground">{count}</span>
+    <Panel className="overflow-hidden">
+      <div className="flex items-center justify-between border-b border-[color:var(--line-1)] px-3 py-2">
+        <span className="text-xs font-medium text-[color:var(--ink-0)]">{title}</span>
+        <span className="planning-mono text-[10px] text-[color:var(--ink-2)]">{count}</span>
       </div>
       <div className="px-3 py-1">
         {children}
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -260,15 +256,18 @@ function AttentionSubPanel({
 
 function EmptyGraphState() {
   return (
-    <div className="flex items-center justify-center rounded-xl border border-dashed border-panel-border bg-surface-elevated/40 p-10 text-center">
+    <Panel
+      className="flex items-center justify-center border-dashed p-10 text-center"
+      style={{ background: 'color-mix(in oklab, var(--bg-1) 70%, transparent)' }}
+    >
       <div>
-        <FolderSearch size={28} className="mx-auto mb-3 text-muted-foreground/40" />
-        <p className="text-sm font-medium text-muted-foreground">No lineage yet.</p>
-        <p className="mt-1 text-xs text-muted-foreground/60">
+        <FolderSearch size={28} className="mx-auto mb-3 text-[color:var(--ink-3)]" />
+        <p className="text-sm font-medium text-[color:var(--ink-2)]">No lineage yet.</p>
+        <p className="mt-1 text-xs text-[color:var(--ink-3)]">
           Add a PRD or design spec to seed the planning graph.
         </p>
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -404,28 +403,28 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
   return (
     <div className="space-y-4">
       {/* Header row */}
-      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-        <span className="font-medium text-panel-foreground">
+      <div className="flex flex-wrap items-center gap-3 text-xs text-[color:var(--ink-2)]">
+        <span className="planning-mono font-medium text-[color:var(--ink-0)]">
           {graph.nodeCount} nodes
-          <span className="mx-1 text-panel-border">·</span>
+          <span className="mx-1 text-[color:var(--line-2)]">·</span>
           {graph.edgeCount} edges
-          <span className="mx-1 text-panel-border">·</span>
+          <span className="mx-1 text-[color:var(--line-2)]">·</span>
           {graph.phaseBatches.length} batches
         </span>
         {graph.generatedAt && (
-          <span className="flex items-center gap-1 text-muted-foreground/70">
+          <Chip className="text-[color:var(--ink-2)]">
             <Clock size={11} />
             Generated {formatGeneratedAt(graph.generatedAt)}
-          </span>
+          </Chip>
         )}
         {state.phase === 'ready' && (
-          <button
+          <BtnGhost
             onClick={() => void loadGraph()}
-            className="ml-auto flex items-center gap-1 rounded border border-panel-border px-2 py-1 text-[10px] text-muted-foreground hover:text-panel-foreground hover:bg-slate-700/30 transition-colors"
+            className="ml-auto planning-mono px-2 py-1 text-[10px]"
           >
             <RefreshCw size={10} />
             Refresh
-          </button>
+          </BtnGhost>
         )}
       </div>
 
@@ -433,11 +432,11 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* Left: Lineage by Feature */}
         <div className="space-y-2">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          <h3 className="planning-caps text-xs font-semibold text-[color:var(--ink-2)]">
             Lineage by Feature
           </h3>
           {slugsWithMultipleTypes.length === 0 ? (
-            <p className="text-xs text-muted-foreground/60 italic">No multi-node features detected.</p>
+            <p className="text-xs italic text-[color:var(--ink-3)]">No multi-node features detected.</p>
           ) : (
             <div className="space-y-1.5">
               {slugsWithMultipleTypes.map((slug) => (
@@ -467,13 +466,19 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
 
         {/* Right: Attention */}
         <div className="space-y-2">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          <h3 className="planning-caps text-xs font-semibold text-[color:var(--ink-2)]">
             Attention
           </h3>
           {!hasAttention ? (
-            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5">
-              <span className="text-xs text-emerald-400">All nodes aligned — no blockers or mismatches.</span>
-            </div>
+            <Panel
+              className="flex items-center gap-2 px-3 py-2.5"
+              style={{
+                borderColor: 'color-mix(in oklab, var(--ok) 28%, var(--line-1))',
+                background: 'color-mix(in oklab, var(--ok) 8%, transparent)',
+              }}
+            >
+              <span className="text-xs text-[color:var(--ok)]">All nodes aligned — no blockers or mismatches.</span>
+            </Panel>
           ) : (
             <div className="space-y-2">
               <AttentionSubPanel title="Status Mismatches" count={mismatchNodes.length}>

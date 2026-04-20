@@ -13,10 +13,15 @@ import { PlanningSummaryPanel } from './PlanningSummaryPanel';
 import type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
 import { PlanningGraphPanel } from './PlanningGraphPanel';
 import { TrackerIntakePanel } from './TrackerIntakePanel';
+import { PlanningDensityToggle } from './PlanningRouteLayout';
 import {
+  Chip,
   EffectiveStatusChips,
   MismatchBadge,
+  Panel,
   PlanningNodeTypeIcon,
+  SectionHeader,
+  Spark,
 } from './primitives';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -30,19 +35,19 @@ function formatGeneratedAt(value?: string): string {
 
 function LiveStatusDot({ status }: { status: LiveConnectionStatus }) {
   const configs: Record<LiveConnectionStatus, { color: string; label: string }> = {
-    open:       { color: 'bg-emerald-400', label: 'Live' },
-    connecting: { color: 'bg-amber-400 animate-pulse', label: 'Connecting' },
-    backoff:    { color: 'bg-amber-500 animate-pulse', label: 'Reconnecting' },
-    paused:     { color: 'bg-slate-400', label: 'Paused' },
-    closed:     { color: 'bg-rose-400', label: 'Closed' },
-    idle:       { color: 'bg-slate-500', label: 'Idle' },
+    open: { color: 'var(--ok)', label: 'Live' },
+    connecting: { color: 'var(--warn)', label: 'Connecting' },
+    backoff: { color: 'var(--warn)', label: 'Reconnecting' },
+    paused: { color: 'var(--ink-2)', label: 'Paused' },
+    closed: { color: 'var(--err)', label: 'Closed' },
+    idle: { color: 'var(--ink-3)', label: 'Idle' },
   };
   const cfg = configs[status] ?? configs.idle;
   return (
-    <span className="flex items-center gap-1.5" title={`Live updates: ${cfg.label}`}>
-      <span className={`inline-block h-2 w-2 rounded-full ${cfg.color}`} />
-      <span className="text-xs text-muted-foreground">{cfg.label}</span>
-    </span>
+    <Chip className="border-[color:var(--line-1)] bg-[color:var(--bg-2)] text-[color:var(--ink-1)]" title={`Live updates: ${cfg.label}`}>
+      <span className="planning-dot" style={{ background: cfg.color }} />
+      {cfg.label}
+    </Chip>
   );
 }
 
@@ -135,14 +140,14 @@ function PlanningFeatureRow({
       type="button"
       onClick={onClick}
       data-testid={`planning-feature-row-${feature.featureId}`}
-      className="flex w-full items-start gap-2.5 rounded-lg border border-panel-border bg-surface-base px-3 py-2.5 text-left transition-all hover:border-indigo-500/40 hover:bg-surface-elevated hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-focus/50"
+      className="planning-row flex w-full items-start gap-2.5 rounded-lg border border-[color:var(--line-1)] bg-[color:var(--bg-2)] px-3 py-2.5 text-left transition-all hover:border-[color:var(--brand)] hover:bg-[color:var(--bg-3)] focus:outline-none"
     >
-      <span className="mt-0.5 shrink-0 text-indigo-400/70">
+      <span className="mt-0.5 shrink-0 text-[color:var(--brand)]">
         <PlanningNodeTypeIcon type="implementation_plan" size={13} />
       </span>
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-start justify-between gap-2">
-          <span className="truncate text-sm font-medium leading-snug text-panel-foreground">
+          <span className="truncate text-sm font-medium leading-snug text-[color:var(--ink-0)]">
             {feature.featureName}
           </span>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -156,15 +161,15 @@ function PlanningFeatureRow({
         {feature.isMismatch && (
           <MismatchBadge compact state={feature.mismatchState} reason="" />
         )}
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-          <span className="font-mono">{feature.featureId}</span>
+        <div className="flex items-center gap-2 text-[10px] text-[color:var(--ink-2)]">
+          <span className="planning-mono">{feature.featureId}</span>
           {feature.phaseCount > 0 && (
             <span>
               {feature.phaseCount} phase{feature.phaseCount !== 1 ? 's' : ''}
             </span>
           )}
           {feature.hasBlockedPhases && (
-            <span className="text-amber-400">{feature.blockedPhaseCount} blocked</span>
+            <span style={{ color: 'var(--warn)' }}>{feature.blockedPhaseCount} blocked</span>
           )}
         </div>
       </div>
@@ -176,9 +181,9 @@ function PlanningFeatureRow({
 
 function ColumnEmptyState({ label }: { label: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-panel-border/60 py-8 text-center">
-      <Inbox size={18} className="text-muted-foreground/40" />
-      <p className="text-xs text-muted-foreground/60">{label}</p>
+    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[color:var(--line-1)] py-8 text-center">
+      <Inbox size={18} className="text-[color:var(--ink-3)]" />
+      <p className="text-xs text-[color:var(--ink-2)]">{label}</p>
     </div>
   );
 }
@@ -202,13 +207,13 @@ export function ActivePlansColumn({
   );
 
   return (
-    <div
+    <Panel
       data-testid="active-plans-column"
-      className="space-y-3 rounded-xl border border-panel-border bg-surface-elevated p-5"
+      className="space-y-3 p-5"
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-panel-foreground">Active Plans</h2>
-        <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-400">
+        <h2 className="planning-serif text-sm font-semibold text-[color:var(--ink-0)]">Active Plans</h2>
+        <span className="rounded-full px-2 py-0.5 text-[11px] font-medium text-[color:var(--brand)]" style={{ background: 'color-mix(in oklab, var(--brand) 16%, transparent)' }}>
           {active.length}
         </span>
       </div>
@@ -225,7 +230,7 @@ export function ActivePlansColumn({
           ))}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -246,13 +251,13 @@ export function PlannedFeaturesColumn({
   );
 
   return (
-    <div
+    <Panel
       data-testid="planned-features-column"
-      className="space-y-3 rounded-xl border border-panel-border bg-surface-elevated p-5"
+      className="space-y-3 p-5"
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-panel-foreground">Planned Features</h2>
-        <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+        <h2 className="planning-serif text-sm font-semibold text-[color:var(--ink-0)]">Planned Features</h2>
+        <span className="rounded-full px-2 py-0.5 text-[11px] font-medium text-[color:var(--ink-2)]" style={{ background: 'color-mix(in oklab, var(--ink-2) 14%, transparent)' }}>
           {planned.length}
         </span>
       </div>
@@ -269,7 +274,7 @@ export function PlannedFeaturesColumn({
           ))}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -286,29 +291,50 @@ function PlanningShell({
   onSelectFeature: (featureId: string) => void;
   onDrillDown: (type: ArtifactDrillDownType) => void;
 }) {
+  const sparkData = [
+    summary.totalFeatureCount,
+    summary.activeFeatureCount,
+    summary.blockedFeatureCount,
+    summary.mismatchCount,
+    summary.staleFeatureCount,
+  ];
+
   return (
-    <div className="max-w-screen-2xl space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <GitBranch size={22} className="shrink-0 text-info" />
+    <div className="max-w-screen-2xl space-y-6 px-1 py-2">
+      <Panel className="p-5">
+        <SectionHeader
+          eyebrow="Planning Control Plane"
+          heading="Planning"
+          glyph={<GitBranch size={18} />}
+          actions={
+            <>
+              {summary.generatedAt && (
+                <Chip className="border-[color:var(--line-1)] bg-[color:var(--bg-2)] text-[color:var(--ink-2)]">
+                  <Clock size={11} />
+                  {formatGeneratedAt(summary.generatedAt)}
+                </Chip>
+              )}
+              <LiveStatusDot status={liveStatus} />
+              <PlanningDensityToggle />
+            </>
+          }
+        />
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold text-panel-foreground">Planning</h1>
-            <p className="text-sm text-muted-foreground">
-              {summary.projectName || 'Unknown project'}
+            <p className="text-sm text-[color:var(--ink-1)]">{summary.projectName || 'Unknown project'}</p>
+            <p className="mt-1 text-xs text-[color:var(--ink-2)]">
+              Typography, density, and planning-surface tokens are now route-scoped.
             </p>
           </div>
+          <div className="flex items-center gap-3 rounded-lg border border-[color:var(--line-1)] bg-[color:var(--bg-2)] px-3 py-2">
+            <div>
+              <div className="planning-caps text-[10px] text-[color:var(--ink-3)]">Signal</div>
+              <div className="text-xs text-[color:var(--ink-1)]">Feature health snapshot</div>
+            </div>
+            <Spark data={sparkData} width={92} height={24} />
+          </div>
         </div>
-        <div className="flex items-center gap-4">
-          {summary.generatedAt && (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Clock size={12} />
-              {formatGeneratedAt(summary.generatedAt)}
-            </span>
-          )}
-          <LiveStatusDot status={liveStatus} />
-        </div>
-      </div>
+      </Panel>
 
       {/* PCP-302: Planning Summary */}
       <div data-testid="planning-summary-section">
@@ -335,19 +361,19 @@ function PlanningShell({
       </div>
 
       {/* PCP-303: Planning Graph Panel */}
-      <div data-testid="planning-graph-section" className="rounded-xl border border-panel-border bg-surface-elevated p-5">
+      <Panel data-testid="planning-graph-section" className="p-5">
         <PlanningGraphPanel
           projectId={summary.projectId ?? null}
           onSelectFeature={onSelectFeature}
         />
-      </div>
-      <div data-testid="planning-tracker-section" className="rounded-xl border border-panel-border bg-surface-elevated p-5">
+      </Panel>
+      <Panel data-testid="planning-tracker-section" className="p-5">
         <TrackerIntakePanel
           projectId={summary.projectId ?? null}
           summary={summary}
           onSelectFeature={onSelectFeature}
         />
-      </div>
+      </Panel>
     </div>
   );
 }

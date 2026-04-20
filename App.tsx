@@ -16,7 +16,7 @@ import { CodebaseExplorer } from './components/CodebaseExplorer';
 import { FeatureExecutionWorkbench } from './components/FeatureExecutionWorkbench';
 import { TestingPage } from './components/TestVisualizer/TestingPage';
 import { WorkflowRegistryPage } from './components/Workflows/WorkflowRegistryPage';
-import { PlanningHomePage, PlanningNodeDetail } from './components/Planning';
+import { PlanningHomePage, PlanningNodeDetail, PlanningRouteLayout } from './components/Planning';
 import { ArtifactDrillDownPage } from './components/Planning/ArtifactDrillDownPage';
 
 const App: React.FC = () => {
@@ -32,9 +32,11 @@ const App: React.FC = () => {
                 <Route path="/plans" element={<PlanCatalog />} />
                 <Route path="/sessions" element={<SessionInspector />} />
                 <Route path="/execution" element={<FeatureExecutionWorkbench />} />
-                <Route path="/planning" element={<PlanningHomePage />} />
-                <Route path="/planning/feature/:featureId" element={<PlanningNodeDetail />} />
-                <Route path="/planning/artifacts/:type" element={<ArtifactDrillDownPage />} />
+                <Route element={<PlanningRouteLayout />}>
+                  <Route path="/planning" element={<PlanningHomePage />} />
+                  <Route path="/planning/feature/:featureId" element={<PlanningNodeDetail />} />
+                  <Route path="/planning/artifacts/:type" element={<ArtifactDrillDownPage />} />
+                </Route>
                 <Route path="/tests" element={<TestingPage />} />
                 <Route path="/analytics" element={<AnalyticsDashboard />} />
                 <Route path="/workflows" element={<WorkflowRegistryPage />} />
