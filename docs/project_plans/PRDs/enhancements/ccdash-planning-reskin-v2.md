@@ -72,7 +72,7 @@ Control-plane v1 delivered a functional planning surface covering the planning g
 **Key Outcomes:**
 - Outcome 1: The `/planning` route reaches visual parity with the design handoff, measurable per surface.
 - Outcome 2: All eight planning artifact types are navigable, filterable, and cross-linked in-app.
-- Outcome 3: Operators gain actionable triage, open-question resolution, SPIKE management, and token/effort telemetry without leaving the planning surface.
+- Outcome 3: Operators gain actionable triage, open-question resolution, SPIKE management, and token/effort telemetry (backed by actual session-forensics token counts) without leaving the planning surface.
 
 ---
 
@@ -133,7 +133,7 @@ Stack: React 19 + TypeScript + Vite, HashRouter, Tailwind CSS (slate dark-mode t
 | Artifact types navigable in-app | 4 (spec, prd, plan, prog) | 8 | Feature flag enabled, QA walkthrough |
 | Triage items surfaced automatically | 0 | blocked + mismatch + stale + ready | triage tab counts match backend derivation |
 | Open questions resolvable in-app | 0 | Yes (inline write-back) | OQ resolved state persists across reload |
-| Token/effort visible per feature | 0 | Points + tokens + model bar visible | Planning graph totals column |
+| Token/effort visible per feature | 0 | Points + actual session tokens + per-model bar visible | Planning graph totals column (backed by FeatureForensicsQueryService) |
 
 ---
 
@@ -222,7 +222,7 @@ graph LR
 | FR-602 | Feature cell: category badge (color-coded) + complexity chip + mismatch/stale indicators (⚑ mag / ◷ warn); title (2-line clamp); status pill + slug | Must | |
 | FR-603 | Lane cells support multiple stacked DocChips per artifact (e.g., 2 specs, 2 PRDs, 2 plans); DocChip shows type label + title truncated + status dot; completed/superseded artifacts muted | Must | Requires backend to return arrays of artifacts per type per feature |
 | FR-604 | Progress lane: PhaseStackInline — row of PhaseDots (14×14, filled=completed, pulsing ring=in-progress, ! =blocked) with completed/total count | Must | |
-| FR-605 | Effort+Tokens totals lane (TotalsCell): story-points large number, total tokens right-aligned, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots | Must | Token rollup computed from phase tasks on backend or client-side from phase payload |
+| FR-605 | Effort+Tokens totals lane (TotalsCell): story-points large number, total tokens right-aligned, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots | Must | Token rollup sourced from `FeatureForensicsQueryService` (`feature_forensics.py:324`, `FeatureForensicsDTO.total_tokens` + `linked_sessions[*].{model, total_tokens}`) — actual session-forensics values, grouped by model identity via `backend/model_identity.py` |
 | FR-606 | SVG edge layer: animated dashed flow edges for active features (brand color), static edges for inactive; per-feature row edges connect existing lane cells | Must | |
 | FR-607 | Selected row highlight: brand-tinted background + 3px left border; clicking a row opens feature detail drawer | Must | |
 | FR-608 | Graph filter controls: "All categories" filter button (dropdown: features / enhancements / refactors / spikes); "New feature" button (stub, shows toast for now) | Should | |
@@ -239,7 +239,7 @@ graph LR
 | FR-705 | PRD section (prd color, only shown when ≥2 PRDs): list of PRD tiles with ID, title, updated date, status pill | Should | |
 | FR-706 | Execution tasks section (plan color): segment control "Batches" / "Dependency DAG"; in Batches view: ModelLegend strip + per-PhaseCard list | Must | |
 | FR-707 | PhaseCard: phase header (PHASE N, name, status, "run phase" ExecBtn, progress bar + % and pts/tokens); per-batch BatchCol (parallel label, task count, ExecBtn); per-task TaskRow (task ID, title, agent chip with model color, token display, status pill, hover-reveal ExecBtn) | Must | |
-| FR-708 | ModelLegend: shows opus/sonnet/haiku color dots + label + token count + %, total pts + tokens right-aligned | Must | |
+| FR-708 | ModelLegend: shows opus/sonnet/haiku color dots + label + token count + %, total pts + tokens right-aligned | Must | Per-model token counts sourced from feature-forensics session aggregation (see FR-605); displayed as actuals, not estimates |
 | FR-709 | Dependency DAG view: absolute-positioned SVG canvas; nodes arranged by phase (horizontal bands) and batch (columns); SVG cubic bezier edges with arrowheads; active edges animated (flow dashes); blocked edges red; legend for edge states | Must | Per-feature phases + task deps from existing phase payload |
 | FR-710 | Agent activity section (bottom of drawer): live agent rows filtered to feature context, showing state dot, agent name, state, task, since | Should | Existing live-agent data filtered by feature slug |
 | FR-711 | Exec toast: bottom-center fixed toast showing dispatched action label (e.g., "▶ running Phase 02 — Service layer") with brand dot; auto-dismisses after 2.4s | Must | Client-side only for now; actual execution wired to existing batch launch API |
@@ -284,10 +284,10 @@ graph LR
 ### In scope
 
 - Visual reskin of all `/planning` route surfaces to match the handoff token system and component inventory.
-- New/enhanced UI surfaces: metrics strip, artifact chip row, triage inbox, live agent roster, graph totals lane, graph filter controls, artifact legend.
+- New/enhanced UI surfaces: metrics strip, artifact chip row, triage inbox, live agent roster, graph totals lane (with actual session-forensics tokens), graph filter controls, artifact legend.
 - Enhanced feature detail drawer: SPIKEs section, OQ inline resolution, model legend, dependency DAG, per-task/batch/phase exec buttons, exec toast.
 - New backend endpoint for OQ write-back (`PATCH /api/planning/features/:id/open-questions/:oq_id`).
-- Token/effort rollup surfacing (client-side computation from existing phase payloads, or simple backend aggregation endpoint).
+- Token/effort rollup surfacing backed by actual session-forensics totals: feature payload extended with per-model token breakdown derived from `FeatureForensicsQueryService` linked sessions grouped via `backend/model_identity.py` (no client-side estimation).
 - Design token CSS extraction and Tailwind mapping.
 - Primitive component extraction to `components/Planning/primitives/` (StatusPill, ArtifactChip, MetricTile, etc.).
 - A11y hardening of new surfaces to WCAG 2.1 AA.
@@ -321,7 +321,7 @@ graph LR
 
 - The design handoff is authoritative for visual decisions. Where implementation constraints require deviation (e.g., OKLCH not fully supported in all browsers — use CSS custom properties with fallbacks), the deviation must be documented.
 - Backend feature payload already includes or can cheaply include: per-feature artifact arrays by type, spike list, openQuestions list, phase list with tasks, and mismatch/stale/readyToPromote derived fields. This was introduced in v1; v2 assumes it is stable.
-- Token/effort rollup can be computed client-side from existing phase task payloads (task.points, task.agent → model → base token estimate). No new backend aggregation endpoint is required unless client computation is too slow.
+- Token/effort rollup is sourced from existing session forensics: `FeatureForensicsQueryService` already correlates sessions to features (`backend/application/services/agent_queries/feature_forensics.py:266` via links repository) and returns `total_tokens` plus per-session `{model, total_tokens}`. A small backend extension (Phase 7) aggregates this into a per-feature `tokenUsageByModel` field keyed by model family (opus/sonnet/haiku/other) using `backend/model_identity.py`. No client-side estimation.
 - `CCDASH_LIVE_AGENTS` data is already available from the existing live-update context for the agent roster display.
 - OQ write-back endpoint (`PATCH`) returns 200/accepted and triggers a filesystem deferred write; actual frontmatter write-through is out of scope for this wave.
 
@@ -377,12 +377,12 @@ After v2 ships:
 | Artifact chips | 8 chips visible with correct counts; clicking chip navigates to `/planning/artifacts/:type` |
 | Triage inbox | All 4 filter tabs present; Blocked tab shows blocked task items; Mismatch tab shows status-mismatch features; Stale tab shows features stale > 30d; Ready tab shows readyToPromote features; empty state shows check |
 | Agent roster | Rows render with state dots; running/thinking dots glow; live/paused toggle dims rows |
-| Planning graph | Feature column 240px; 7 lane columns; DocChips render for multi-artifact features; PhaseStackInline shows PhaseDots; TotalsCell shows pts, tokens, model bar; animated edges for in-progress features |
+| Planning graph | Feature column 240px; 7 lane columns; DocChips render for multi-artifact features; PhaseStackInline shows PhaseDots; TotalsCell shows pts and **server-provided actual tokens from session forensics** (total + per-model breakdown via stacked bar); animated edges for in-progress features |
 | Feature detail — header | Mismatch pill visible when present; raw→effective arrow shown when they differ; complexity + tag chips |
 | Feature detail — lineage | 7 artifact tile buttons; muted tiles for empty types; clicking tile scrolls and opens section |
 | Feature detail — SPIKEs | SPIKE tiles with ID, title, status, hover exec button; exec button fires toast |
 | Feature detail — OQs | OQ tiles with severity bar; "+ answer…" button opens textarea; Cmd+Enter saves; saved answer renders with ok background |
-| Feature detail — batches | ModelLegend strip; PhaseCards with BatchCols; TaskRow per task showing agent chip with model color, token count, status pill; exec buttons fire toast |
+| Feature detail — batches | ModelLegend strip populated from **server-provided actuals (session-forensics tokens grouped by model family)** — not client-side estimates; PhaseCards with BatchCols; TaskRow per task showing agent chip with model color, token count, status pill; exec buttons fire toast |
 | Feature detail — DAG | Switching to DAG renders SVG canvas with nodes (phase bands, batch columns) and cubic edges; blocked edges red; active edges animated |
 | Exec toast | Toast appears bottom-center within 50ms of exec action; auto-dismisses in 2.4s |
 | A11y | All interactive elements have visible focus ring; planning graph rows have ARIA roles; all color-only status elements have text labels; screen reader can read feature title in graph row |
@@ -398,8 +398,8 @@ After v2 ships:
 - [ ] **OQ-01**: Does the backend already return `spikes[]` and `openQuestions[]` arrays in the feature planning payload from `PlanningQueryService`, or do those fields need to be added? If not present, this is a backend extension task.
   - **A:** TBD — implementation planner to audit `backend/application/services/agent_queries/` before Phase 1.
 
-- [ ] **OQ-02**: Token rollup — is client-side token estimation (base cost × points × agent-model) acceptable for the v2 telemetry tiles, or does the backend need to return actual session-linked token counts?
-  - **A:** TBD — client-side estimation acceptable for v2 (matching handoff prototype behavior); actual session-linked tokens are deferred (DEFER-05).
+- [x] **OQ-02**: Token rollup — is client-side token estimation (base cost × points × agent-model) acceptable for the v2 telemetry tiles, or does the backend need to return actual session-linked token counts?
+  - **A:** **Resolved — use actual token counts from existing session forensics.** `FeatureForensicsQueryService` already correlates sessions to features (`backend/application/services/agent_queries/feature_forensics.py:324`) and returns `FeatureForensicsDTO.total_tokens` plus per-session `{model, total_tokens}` on `linked_sessions[*]`. Phase 7 adds a thin per-feature `tokenUsageByModel` aggregation (grouping linked sessions via `backend/model_identity.py:29`) so the Planning graph TotalsCell and Feature detail ModelLegend render server-authoritative actuals. No client-side estimation.
 
 - [ ] **OQ-03**: Geist font license — is using Google Fonts CDN acceptable for local-first deployment, or should fonts be bundled? This affects whether font loading is non-blocking or requires a one-time download step.
   - **A:** TBD — default to CDN; add bundling as a follow-up if offline use is required.
@@ -417,7 +417,7 @@ After v2 ships:
 | DEFER-02 | Actual SPIKE / phase / batch / task execution wiring | ExecBtn dispatch | Depends on execution connector roadmap (phase 5 v1 incomplete providers) |
 | DEFER-03 | OQ frontmatter write-through to filesystem | OQ inline resolution | File-system mutation from API is a separate concern; v2 ships endpoint stub |
 | DEFER-04 | Bundled font assets for offline use | Typography | Not needed for local dev target; add if offline deployment is required |
-| DEFER-05 | Session-linked actual token counts (vs estimated) | Token telemetry in totals lane | Requires session→task linkage work; estimated values sufficient for v2 |
+| ~~DEFER-05~~ | ~~Session-linked actual token counts (vs estimated)~~ | **Promoted to v2 scope (2026-04-20):** feature↔session correlation already exists in `FeatureForensicsQueryService`; Phase 7 exposes per-feature + per-model actuals. No remaining deferred work. | — |
 | DEFER-06 | "New spec" creation flow | Top bar CTA | Out of scope for reskin wave; add in a future creation-workflow PRD |
 | DEFER-07 | @miethe/ui extraction of v2 Planning primitives | New component inventory | Follow v1 Phase 7 extraction process; evaluate after 2-week stability window |
 | DEFER-08 | Collab / comment threads on planning artifacts | Implied by OQ thread UI | Multi-user collaboration requires auth/tenancy work out of scope |

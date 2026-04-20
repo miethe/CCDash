@@ -52,10 +52,10 @@ tasks:
     assigned_model: "sonnet"
 
   - id: "T6-003"
-    description: "Render ModelLegend strip with opus/sonnet/haiku color dots, labels, token counts per model, totals right-aligned; compute token rollup from phase tasks"
+    description: "Render ModelLegend strip with opus/sonnet/haiku color dots, labels, token counts per model, totals right-aligned. Data source: server-provided feature.tokenUsageByModel from T7-004 — actual session-forensics tokens, not client-side estimates"
     status: "pending"
     assigned_to: ["frontend-developer", "ui-engineer-enhanced"]
-    dependencies: ["T6-002"]
+    dependencies: ["T6-002", "T7-004"]
     estimated_effort: "1.5 pts"
     priority: "medium"
     assigned_model: "sonnet"
@@ -103,7 +103,7 @@ success_criteria:
   - { id: "SC-6.1", description: "SPIKEs and OQ sections render correctly with correct borders and counts", status: "pending" }
   - { id: "SC-6.2", description: "OQ inline editor functional (Cmd+Enter saves, Escape cancels)", status: "pending" }
   - { id: "SC-6.3", description: "OQ resolution fires PATCH and updates UI on success", status: "pending" }
-  - { id: "SC-6.4", description: "ModelLegend accurate with per-model token counts", status: "pending" }
+  - { id: "SC-6.4", description: "ModelLegend accurate with per-model token counts sourced from server-provided feature.tokenUsageByModel (session-forensics actuals, not estimates)", status: "pending" }
   - { id: "SC-6.5", description: "Batches view complete with all PhaseCard/BatchCol/TaskRow layers", status: "pending" }
   - { id: "SC-6.6", description: "DAG view renders SVG correctly with phase bands and batch columns", status: "pending" }
   - { id: "SC-6.7", description: "Exec buttons show toast within 50ms", status: "pending" }
@@ -143,7 +143,7 @@ Note: T6-002 fires `PATCH /api/planning/features/:id/open-questions/:oq_id` — 
 |---------|-------------|-------------|-----|------|--------|
 | T6-001 | SPIKEs + OQ section | ui-engineer-enhanced, frontend-developer | 2 pts | T5-003 | pending |
 | T6-002 | OQ inline resolution editor | frontend-developer, ui-engineer-enhanced | 2 pts | T6-001 | pending |
-| T6-003 | ModelLegend strip | frontend-developer, ui-engineer-enhanced | 1.5 pts | T6-002 | pending |
+| T6-003 | ModelLegend strip (server-provided actuals) | frontend-developer, ui-engineer-enhanced | 1.5 pts | T6-002, T7-004 | pending |
 | T6-004 | Execution tasks section — batches view | ui-engineer-enhanced, frontend-developer | 3 pts | T6-003 | pending |
 | T6-005 | Dependency DAG SVG view | ui-engineer-enhanced | 3 pts | T6-004 | pending |
 | T6-006 | Exec buttons and toast | frontend-developer, ui-engineer-enhanced | 1.5 pts | T6-005 | pending |
@@ -164,7 +164,7 @@ Task("frontend-developer", "T6-002: OQ inline resolution editor. Clicking '+ ans
 
 ### Batch 3 — After T6-002 completes
 ```
-Task("frontend-developer", "T6-003: Render ModelLegend strip: opus color dot + label + token count, sonnet color dot + label + token count, haiku color dot + label + token count, totals (pts + tokens) right-aligned. Compute token rollup per model from phase tasks.")
+Task("frontend-developer", "T6-003: Render ModelLegend strip: opus color dot + label + token count, sonnet color dot + label + token count, haiku color dot + label + token count, totals (pts + tokens) right-aligned. Data source: server-provided feature.tokenUsageByModel from T7-004 — actuals from session forensics (FeatureForensicsQueryService linked_sessions grouped by modelFamily), not client-side estimates.")
 ```
 
 ### Batch 4 — After T6-003 completes
@@ -189,7 +189,7 @@ Task("frontend-developer", "T6-006: Wire all exec buttons (per-phase, per-batch,
 - [ ] SPIKEs and OQ sections render correctly with color-coded borders
 - [ ] OQ inline editor functional (Cmd+Enter saves, Escape cancels)
 - [ ] OQ resolution fires PATCH and updates UI on success
-- [ ] ModelLegend accurate with per-model token counts
+- [ ] ModelLegend accurate with per-model token counts sourced from server-provided feature.tokenUsageByModel (session-forensics actuals)
 - [ ] Batches view complete with all card/col/row layers
 - [ ] DAG view renders SVG with phase bands, batch columns, and correct edges
 - [ ] Exec buttons show toast within 50ms

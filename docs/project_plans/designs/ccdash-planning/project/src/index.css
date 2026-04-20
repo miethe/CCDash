@@ -1,0 +1,450 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  min-height: 100%;
+  background-color: hsl(var(--app-background));
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  min-height: 100%;
+  background-color: hsl(var(--app-background));
+  color: hsl(var(--app-foreground));
+}
+
+@layer base {
+  :root {
+    --background: 210 40% 99%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 222 47% 16%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 214 32% 94%;
+    --secondary-foreground: 222 47% 16%;
+    --muted: 214 32% 95%;
+    --muted-foreground: 215 16% 37%;
+    --accent: 214 32% 94%;
+    --accent-foreground: 222 47% 16%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 100% 98%;
+    --border: 214 28% 89%;
+    --input: 214 28% 89%;
+    --ring: 217 91% 60%;
+    --chart-1: 221 83% 53%;
+    --chart-2: 160 60% 40%;
+    --chart-3: 30 84% 48%;
+    --chart-4: 268 70% 56%;
+    --chart-5: 336 78% 53%;
+    --radius: 0.5rem;
+    --app-background: var(--background);
+    --app-foreground: var(--foreground);
+    --panel: 0 0% 100%;
+    --panel-foreground: var(--foreground);
+    --panel-border: 214 28% 88%;
+    --sidebar: 214 38% 97%;
+    --sidebar-foreground: 222 47% 15%;
+    --sidebar-accent: 214 33% 93%;
+    --sidebar-border: 214 28% 88%;
+    --surface-muted: 214 33% 95%;
+    --surface-elevated: 0 0% 100%;
+    --surface-overlay: 0 0% 100%;
+    --success: 142 63% 36%;
+    --success-foreground: 138 76% 97%;
+    --success-border: 142 52% 48%;
+    --warning: 38 92% 46%;
+    --warning-foreground: 33 100% 14%;
+    --warning-border: 39 84% 58%;
+    --danger: 0 72% 51%;
+    --danger-foreground: 0 100% 98%;
+    --danger-border: 0 79% 67%;
+    --info: 217 91% 56%;
+    --info-foreground: 210 100% 98%;
+    --info-border: 217 91% 68%;
+    --chart-grid: 214 28% 86%;
+    --chart-axis: 215 19% 39%;
+    --chart-tooltip: 0 0% 100%;
+    --chart-tooltip-foreground: var(--foreground);
+    --selection: 221 100% 92%;
+    --focus: 217 91% 60%;
+    --hover: 214 33% 93%;
+    --disabled: 214 23% 90%;
+    --disabled-foreground: 215 16% 43%;
+    --scrollbar-track: 214 33% 95%;
+    --scrollbar-thumb: 215 16% 55%;
+    --scrollbar-thumb-hover: 215 18% 43%;
+    --viewer-shell: var(--surface-overlay);
+    --viewer-shell-border: var(--panel-border);
+    --viewer-shell-header: 214 38% 99%;
+    --viewer-inner-surface: var(--surface-muted);
+    --viewer-shell-shadow: 0 0 0 1px rgb(148 163 184 / 0.12), 0 20px 64px rgb(15 23 42 / 0.12);
+    --markdown-foreground: var(--foreground);
+    --markdown-heading: var(--foreground);
+    --markdown-link: 230 70% 48%;
+    --markdown-strong: var(--foreground);
+    --markdown-quote-border: 226 73% 58%;
+    --markdown-quote-background: 220 100% 98%;
+    --markdown-quote-foreground: 221 75% 34%;
+    --markdown-inline-code-background: 214 33% 95%;
+    --markdown-inline-code-foreground: 222 47% 16%;
+    --markdown-inline-code-border: 214 28% 88%;
+    --markdown-code-background: 214 38% 98%;
+    --markdown-code-border: 214 28% 88%;
+    --markdown-code-foreground: var(--foreground);
+    --markdown-table-border: 214 28% 88%;
+    --markdown-table-head: 214 33% 95%;
+  }
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    --app-background: var(--background);
+    --app-foreground: var(--foreground);
+    --panel: 222 47% 11%;
+    --panel-foreground: 210 40% 98%;
+    --panel-border: 215 28% 17%;
+    --sidebar: 222 47% 11%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-accent: 222 47% 16%;
+    --sidebar-border: 215 28% 17%;
+    --surface-muted: 217 33% 18%;
+    --surface-elevated: 222 41% 14%;
+    --surface-overlay: 222 63% 8%;
+    --success: 142 69% 42%;
+    --success-foreground: 138 76% 92%;
+    --success-border: 142 46% 30%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 89%;
+    --warning-border: 35 65% 34%;
+    --danger: 0 72% 51%;
+    --danger-foreground: 0 100% 97%;
+    --danger-border: 0 52% 34%;
+    --info: 217 91% 60%;
+    --info-foreground: 214 100% 97%;
+    --info-border: 217 54% 38%;
+    --chart-grid: 215 28% 22%;
+    --chart-axis: 215 16% 67%;
+    --chart-tooltip: 222 47% 11%;
+    --chart-tooltip-foreground: 210 40% 96%;
+    --selection: 226 70% 58%;
+    --focus: 217 91% 60%;
+    --hover: 217 33% 22%;
+    --disabled: 217 19% 28%;
+    --disabled-foreground: 215 18% 62%;
+    --scrollbar-track: 222 63% 8%;
+    --scrollbar-thumb: 215 28% 27%;
+    --scrollbar-thumb-hover: 215 20% 38%;
+    --viewer-shell: var(--surface-overlay);
+    --viewer-shell-border: var(--panel-border);
+    --viewer-shell-header: 222 63% 9%;
+    --viewer-inner-surface: 222 63% 9%;
+    --viewer-shell-shadow: 0 0 0 1px rgb(15 23 42 / 0.25), 0 24px 80px rgb(2 6 23 / 0.6);
+    --markdown-foreground: 214 32% 91%;
+    --markdown-heading: 210 40% 98%;
+    --markdown-link: 235 89% 74%;
+    --markdown-strong: 210 40% 98%;
+    --markdown-quote-border: 238 60% 56%;
+    --markdown-quote-background: 222 47% 11% / 0.78;
+    --markdown-quote-foreground: 213 97% 87%;
+    --markdown-inline-code-background: 222 47% 11% / 0.9;
+    --markdown-inline-code-foreground: 213 97% 87%;
+    --markdown-inline-code-border: 215 28% 27%;
+    --markdown-code-background: 222 63% 8% / 0.95;
+    --markdown-code-border: 215 28% 17%;
+    --markdown-code-foreground: 214 32% 91%;
+    --markdown-table-border: 215 28% 17%;
+    --markdown-table-head: 222 47% 11% / 0.92;
+  }
+
+  ::selection {
+    background: hsl(var(--selection) / 0.4);
+    color: hsl(var(--app-foreground));
+  }
+}
+
+@layer components {
+  /* Shared scrollbar styling is token-backed so future theme modes only swap variables. */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--scrollbar-track));
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--scrollbar-thumb));
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--scrollbar-thumb-hover));
+  }
+
+  /* Bridge remaining Settings palette literals onto semantic tokens in light mode. */
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-950,
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-950\/60 {
+    background-color: hsl(var(--surface-overlay)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-900,
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-900\/70 {
+    background-color: hsl(var(--surface-elevated)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-900\/30 {
+    background-color: hsl(var(--surface-muted) / 0.85) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-800 {
+    background-color: hsl(var(--surface-muted)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .border-slate-900,
+  html[data-theme='light'] .settings-legacy-theme .border-slate-800,
+  html[data-theme='light'] .settings-legacy-theme .border-slate-700,
+  html[data-theme='light'] .settings-legacy-theme .border-slate-600 {
+    border-color: hsl(var(--panel-border)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .text-slate-100,
+  html[data-theme='light'] .settings-legacy-theme .text-slate-200,
+  html[data-theme='light'] .settings-legacy-theme .text-slate-300 {
+    color: hsl(var(--panel-foreground)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .text-slate-400,
+  html[data-theme='light'] .settings-legacy-theme .text-slate-500 {
+    color: hsl(var(--muted-foreground)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-indigo-600,
+  html[data-theme='light'] .settings-legacy-theme .bg-indigo-500\/10 {
+    background-color: hsl(var(--info) / 0.14) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .border-indigo-500\/20,
+  html[data-theme='light'] .settings-legacy-theme .border-indigo-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-indigo-500\/35,
+  html[data-theme='light'] .settings-legacy-theme .border-indigo-500\/40 {
+    border-color: hsl(var(--info-border)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .text-indigo-200,
+  html[data-theme='light'] .settings-legacy-theme .text-indigo-300,
+  html[data-theme='light'] .settings-legacy-theme .text-indigo-400 {
+    color: hsl(var(--info)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-cyan-500\/8,
+  html[data-theme='light'] .settings-legacy-theme .bg-cyan-500\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-emerald-500\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-amber-500\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-rose-500\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-rose-600\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-emerald-900\/30,
+  html[data-theme='light'] .settings-legacy-theme .bg-rose-900\/30 {
+    background-color: hsl(var(--surface-muted)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .border-cyan-400\/35,
+  html[data-theme='light'] .settings-legacy-theme .border-cyan-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-cyan-500\/35,
+  html[data-theme='light'] .settings-legacy-theme .border-emerald-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-emerald-500\/40,
+  html[data-theme='light'] .settings-legacy-theme .border-emerald-600\/40,
+  html[data-theme='light'] .settings-legacy-theme .border-emerald-700\/50,
+  html[data-theme='light'] .settings-legacy-theme .border-amber-500\/20,
+  html[data-theme='light'] .settings-legacy-theme .border-amber-500\/25,
+  html[data-theme='light'] .settings-legacy-theme .border-amber-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-rose-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-rose-500\/40,
+  html[data-theme='light'] .settings-legacy-theme .border-rose-600\/50,
+  html[data-theme='light'] .settings-legacy-theme .border-rose-700\/50 {
+    border-color: hsl(var(--panel-border)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .text-cyan-100,
+  html[data-theme='light'] .settings-legacy-theme .text-cyan-200,
+  html[data-theme='light'] .settings-legacy-theme .text-cyan-300,
+  html[data-theme='light'] .settings-legacy-theme .text-emerald-200,
+  html[data-theme='light'] .settings-legacy-theme .text-emerald-300,
+  html[data-theme='light'] .settings-legacy-theme .text-amber-200,
+  html[data-theme='light'] .settings-legacy-theme .text-amber-300,
+  html[data-theme='light'] .settings-legacy-theme .text-amber-400,
+  html[data-theme='light'] .settings-legacy-theme .text-rose-200,
+  html[data-theme='light'] .settings-legacy-theme .text-rose-300 {
+    color: hsl(var(--panel-foreground)) !important;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown {
+    color: hsl(var(--markdown-foreground));
+    line-height: 1.75;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown > :first-child {
+    margin-top: 0;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown > :last-child {
+    margin-bottom: 0;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown h1,
+  .ccdash-content-viewer .ccdash-markdown h2,
+  .ccdash-content-viewer .ccdash-markdown h3,
+  .ccdash-content-viewer .ccdash-markdown h4,
+  .ccdash-content-viewer .ccdash-markdown h5,
+  .ccdash-content-viewer .ccdash-markdown h6 {
+    color: hsl(var(--markdown-heading));
+    font-weight: 700;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown h1 {
+    font-size: 1.5rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown h2 {
+    font-size: 1.25rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown h3 {
+    font-size: 1.125rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown p,
+  .ccdash-content-viewer .ccdash-markdown ul,
+  .ccdash-content-viewer .ccdash-markdown ol,
+  .ccdash-content-viewer .ccdash-markdown blockquote,
+  .ccdash-content-viewer .ccdash-markdown pre,
+  .ccdash-content-viewer .ccdash-markdown table {
+    margin-top: 0.875rem;
+    margin-bottom: 0.875rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown ul,
+  .ccdash-content-viewer .ccdash-markdown ol {
+    padding-left: 1.5rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown ul {
+    list-style: disc;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown ol {
+    list-style: decimal;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown li + li {
+    margin-top: 0.25rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown a {
+    color: hsl(var(--markdown-link));
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown strong {
+    color: hsl(var(--markdown-strong));
+    font-weight: 700;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown blockquote {
+    border-left: 3px solid hsl(var(--markdown-quote-border) / 0.55);
+    background: hsl(var(--markdown-quote-background));
+    color: hsl(var(--markdown-quote-foreground));
+    padding: 0.875rem 1rem;
+    border-radius: 0.75rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown :not(pre) > code {
+    background: hsl(var(--markdown-inline-code-background));
+    color: hsl(var(--markdown-inline-code-foreground));
+    border: 1px solid hsl(var(--markdown-inline-code-border));
+    border-radius: 0.4rem;
+    padding: 0.15rem 0.35rem;
+    font-size: 0.85em;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown pre {
+    overflow-x: auto;
+    background: hsl(var(--markdown-code-background));
+    border: 1px solid hsl(var(--markdown-code-border));
+    border-radius: 0.9rem;
+    padding: 1rem;
+    color: hsl(var(--markdown-code-foreground));
+  }
+
+  .ccdash-content-viewer .ccdash-markdown pre code {
+    display: block;
+    min-width: max-content;
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow: hidden;
+    border-radius: 0.9rem;
+    border: 1px solid hsl(var(--markdown-table-border));
+  }
+
+  .ccdash-content-viewer .ccdash-markdown thead {
+    background: hsl(var(--markdown-table-head));
+  }
+
+  .ccdash-content-viewer .ccdash-markdown th,
+  .ccdash-content-viewer .ccdash-markdown td {
+    border-bottom: 1px solid hsl(var(--markdown-table-border));
+    padding: 0.7rem 0.85rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .ccdash-content-viewer[data-content-viewer-mode='code'] pre,
+  .ccdash-content-viewer[data-content-viewer-mode='text'] pre {
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+  }
+}

@@ -71,7 +71,7 @@ CCDash Planning Control Plane v1 (completed) delivered a functional planning sur
 2. **Shell + home reskin** — apply new typography (Geist/Mono/Fraunces), hero header with corpus stats, 6-tile metrics strip, 8-artifact composition chip row, layout frame.
 3. **Enhanced surfaces** — triage inbox (filterable tabs), live agent roster (two-up layout), planning graph totals lane (effort + tokens + model-identity bar).
 4. **Feature detail drawer enhancements** — lineage strip, SPIKEs section with exec buttons, OQ inline resolution, model legend, dependency DAG SVG, per-batch/task exec buttons, exec toast.
-5. **Backend extension** — NEW `PATCH /api/planning/features/:id/open-questions/:oq_id` endpoint for OQ write-back; verify `spikes[]` and `openQuestions[]` in planning payload (resolve OQ-01).
+5. **Backend extension** — NEW `PATCH /api/planning/features/:id/open-questions/:oq_id` endpoint for OQ write-back; verify `spikes[]` and `openQuestions[]` in planning payload (resolve OQ-01); add per-feature `tokenUsageByModel` aggregation on planning/feature forensics payload sourced from existing session↔feature correlation (resolve OQ-02; replaces former DEFER-05).
 6. **A11y + perf + testing** — keyboard navigation, ARIA roles, color-only fallback text, performance budgets, Vitest coverage.
 7. **Documentation finalization** — CHANGELOG `[Unreleased]` entry, README updates, design specs for deferred items (DEFER-01 through DEFER-10).
 
@@ -125,11 +125,11 @@ Canonical orchestration table. Keep synced with detailed phase breakdowns below.
 | 4 | Planning graph reskin & enhancements | 8 pts | ui-engineer-enhanced, react-performance-optimizer | sonnet | Lane headers, DocChips, PhaseStack, TotalsCell, edges, filter legend |
 | 5 | Feature detail drawer — header + lineage | 5 pts | ui-engineer-enhanced, frontend-developer | sonnet | Mismatch pill, raw↔effective, lineage strip, collapsible sections |
 | 6 | Feature detail drawer — SPIKEs, OQ, DAG, exec | 10 pts | ui-engineer-enhanced, frontend-developer | sonnet | SPIKE tiles, OQ inline editor, DAG SVG, batch/task exec buttons, toast |
-| 7 | Backend OQ write-back endpoint | 4 pts | python-backend-engineer, backend-architect | sonnet | PATCH endpoint, service method, schema validation, OTEL |
+| 7 | Backend OQ write-back endpoint + token-usage-by-model aggregation | 6 pts | python-backend-engineer, backend-architect | sonnet | PATCH endpoint, service method, schema validation, OTEL; per-feature tokenUsageByModel sourced from FeatureForensicsQueryService linked sessions |
 | 8 | A11y hardening & performance tuning | 6 pts | web-accessibility-checker, react-performance-optimizer | sonnet | Keyboard nav, ARIA roles, font perf, graph render budgets, perf tests |
 | 9 | Testing: unit, integration, component | 8 pts | frontend-developer, testing specialist | sonnet | Vitest coverage, component tests, OQ write-back integration tests |
 | 10 | Documentation finalization | 4 pts | changelog-generator, documentation-writer, ai-artifacts-engineer | haiku (sonnet for skill updates) | CHANGELOG, README, context files, design specs for deferred items |
-| **Total** | — | **71 pts** | — | — | — |
+| **Total** | — | **73 pts** | — | — | — |
 
 ---
 
@@ -143,12 +143,13 @@ Canonical orchestration table. Keep synced with detailed phase breakdowns below.
 | DEFER-02 | feature | Actual SPIKE/phase/batch/task execution dispatch | Execution connector roadmap settled | docs/project_plans/design-specs/spike-execution-wiring-v1.md |
 | DEFER-03 | backend | OQ frontmatter write-through to filesystem | File-system mutation design doc | docs/project_plans/design-specs/oq-frontmatter-writeback-v1.md |
 | DEFER-04 | ops | Bundled font assets for offline deployment | Offline requirement confirmed | docs/project_plans/design-specs/bundled-fonts-offline-v1.md |
-| DEFER-05 | data | Session-linked actual token counts (vs estimated) | Session→task linkage work | docs/project_plans/design-specs/session-token-tracking-v1.md |
 | DEFER-06 | feature | "New spec" creation flow UI | Creation workflow PRD | docs/project_plans/design-specs/spec-creation-workflow-v1.md |
 | DEFER-07 | engineering | @miethe/ui extraction of v2 Planning primitives | Post-2-week stability window | docs/project_plans/design-specs/planning-primitives-extraction-v1.md |
 | DEFER-08 | feature | Collab/comment threads on planning artifacts | Auth/tenancy work | docs/project_plans/design-specs/planning-collab-threads-v1.md |
 | DEFER-09 | design | Light-mode variant of planning token system | Design + testing investment | docs/project_plans/design-specs/planning-lightmode-tokens-v1.md |
 | DEFER-10 | perf | Planning graph virtualization for >200 features | Project scale exceeds threshold | docs/project_plans/design-specs/planning-graph-virtualization-v1.md |
+
+**Scope change — 2026-04-20:** DEFER-05 (session-linked actual token counts) was promoted into v2 scope. The feature↔session correlation already exists in `FeatureForensicsQueryService` (`backend/application/services/agent_queries/feature_forensics.py:266,324`); exposing per-feature + per-model actuals is a thin aggregation over existing data. Phase 7 now carries that work (see T7-004). OQ-02 resolved accordingly.
 
 **N/A — no additional deferred items identified during planning.**
 
@@ -173,7 +174,8 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 1. Extract OKLCH tokens from handoff to `planning-tokens.css` and Tailwind config.
 2. Implement all base primitive components in `components/Planning/primitives/`.
 3. Audit backend `PlanningQueryService` for `spikes[]`, `openQuestions[]`, and artifact array completeness (resolve OQ-01).
-4. Set up typography (Geist/Mono/Fraunces) via Google Fonts CDN.
+4. Audit backend session-forensics token aggregation for per-feature totals AND per-model breakdown (opus/sonnet/haiku/other) (resolve OQ-02). Per-feature `total_tokens` already exists on `FeatureForensicsDTO` (`feature_forensics.py:336`) and per-session `{model, total_tokens}` is on each `SessionRef` (`feature_forensics.py:68-75`); confirm a per-model aggregation is exposed or scope it for Phase 7 (T7-004).
+5. Set up typography (Geist/Mono/Fraunces) via Google Fonts CDN.
 
 #### Tasks
 
@@ -184,6 +186,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 | T0-003 | Typography setup | Load Geist (sans), JetBrains Mono (mono), and Fraunces (serif) via Google Fonts CDN in planning route; apply via CSS custom properties (`--sans`, `--mono`, `--serif`); fall back to system fonts; measure font load impact and confirm non-blocking swap strategy | Fonts load with `display: swap`; h1/h2 render in Fraunces italic; body text uses Geist; preconnect links added; paint timing <50ms impact | 1 pt | ui-engineer-enhanced | sonnet | T0-001 |
 | T0-004 | Backend payload audit (OQ-01) | Inspect `backend/application/services/agent_queries/planning_query_service.py` (or equivalent) to confirm feature payloads include `spikes[]`, `openQuestions[]`, artifact arrays per type, and mismatch/stale/readyToPromote flags. If missing, add them. | Feature payload structure documented; `spikes[]` and `openQuestions[]` present in sample payload; test coverage added if new fields added | 1.5 pts | python-backend-engineer, ui-engineer-enhanced | sonnet | None |
 | T0-005 | Density modes (localStorage) | Implement session-local toggle for comfortable (row-h 44px, gap 16px) and compact (row-h 34px, gap 10px) density modes; store in localStorage `planning_density_preference` | User can toggle density; preference persists across page reloads; all planning surfaces respect density setting | 0.5 pts | frontend-developer | sonnet | T0-002 |
+| T0-006 | Session-forensics token aggregation audit (OQ-02) | Inspect `backend/application/services/agent_queries/feature_forensics.py` and `planning.py` to confirm (a) per-feature `total_tokens` is exposed on planning payload (already present on `FeatureForensicsDTO.total_tokens`), and (b) per-model breakdown keyed by `modelFamily` (opus/sonnet/haiku/other) is present OR scoped to T7-004 as the extension task. Document feature↔session correlation path (`feature_forensics.py:266` + links repo) and model-identity derivation path (`backend/model_identity.py:29`). | Audit notes recorded in Phase 0 worknote; per-feature total_tokens confirmed on payload; per-model breakdown either confirmed OR T7-004 added with concrete DTO field name (`tokenUsageByModel`) | 0.5 pts | python-backend-engineer | sonnet | None |
 
 **Phase 0 Quality Gates:**
 - [ ] All OKLCH tokens defined in `planning-tokens.css` with browser-compatible fallbacks
@@ -191,6 +194,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 - [ ] Storybook stories or documented usage for each primitive
 - [ ] Typography loads non-blocking with correct fallbacks
 - [ ] Backend payload includes `spikes[]`, `openQuestions[]`, and artifact arrays (OQ-01 resolved)
+- [ ] Session-forensics token aggregation audited (OQ-02 resolved): per-feature total_tokens confirmed; per-model breakdown confirmed on payload OR scoped to T7-004
 - [ ] Density toggle works and persists
 
 ---
@@ -312,7 +316,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 | T4-001 | Lane headers and feature cell reskin | Reskin lane header row with colored square glyphs (each artifact type, glyph color = artifact color), sticky positioning, lane labels. Reskin feature cell with category badge, complexity chip, mismatch/stale indicators (⚑ mag / ◷ warn), title (2-line clamp), status pill + slug. | Lane headers sticky and match handoff design; feature cells render all fields; mismatch/stale indicators visible; colors match artifact-identity tokens; grid layout correct | 2 pts | ui-engineer-enhanced | sonnet | T2-001 |
 | T4-002 | DocChips and multi-artifact lanes | Implement DocChip component (type label + title truncated + status dot); support multiple stacked chips per lane cell for features with 2+ PRDs/Plans/Progress/etc. Gray out completed/superseded artifacts. | DocChips render in lanes; multiple chips per lane stack correctly; status dots visible; completed artifacts muted; spacing correct | 2 pts | ui-engineer-enhanced | sonnet | T4-001 |
 | T4-003 | PhaseStackInline and PhaseDots | Implement PhaseDot (14×14, filled=completed, pulsing ring=in-progress, ! =blocked). Implement PhaseStackInline in progress lane showing row of dots with completed/total count. | PhaseDots render all 3 states (completed, in-progress, blocked); animation smooth for in-progress; PhaseStackInline shows correct count | 1.5 pts | ui-engineer-enhanced, react-performance-optimizer | sonnet | T4-001 |
-| T4-004 | TotalsCell with model-identity bar | Implement TotalsCell in rightmost lane showing: large story-points number, total tokens right-aligned, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots. Compute token rollup from phase tasks (base cost × points × model) or pull from backend. | TotalsCell renders with correct points and tokens; model bar proportions correct; per-model tokens and colors visible; layout right-aligned | 2 pts | ui-engineer-enhanced, react-performance-optimizer | sonnet | T4-002, T4-003 |
+| T4-004 | TotalsCell with model-identity bar | Implement TotalsCell in rightmost lane showing: large story-points number, total tokens right-aligned, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots. **Data source: server-provided `feature.tokenUsage` from `PlanningQueryService` / `FeatureForensicsQueryService` — specifically `total_tokens` plus the per-feature `tokenUsageByModel` breakdown delivered by T7-004. No client-side estimator.** | TotalsCell renders server-provided actual tokens; model bar proportions match server breakdown; per-model tokens and colors visible; layout right-aligned; component falls back gracefully when backend returns 0 (e.g., feature with no linked sessions) | 2 pts | ui-engineer-enhanced, react-performance-optimizer | sonnet | T4-002, T4-003, T7-004 |
 | T4-005 | SVG edge layer with animation | Add SVG layer beneath/above grid rendering animated dashed flow edges for active features (brand color), static edges for inactive. Edges connect per-row lane cells in sequence. | Edges visible for active features; brand color correct; animation smooth; no performance regression on graph render; edges hidden for inactive features | 2 pts | ui-engineer-enhanced, react-performance-optimizer | sonnet | T4-004 |
 | T4-006 | Graph filter controls and legend | Add "All categories" dropdown filter (features/enhancements/refactors/spikes); implement legend below graph showing color swatch + label per artifact type and animated edge example labeled "active edge". | Filter dropdown present and filters graph; legend renders with all 8 artifact types and edge example; "New feature" button renders (stub, shows toast for v2) | 1.5 pts | frontend-developer, ui-engineer-enhanced | sonnet | T4-005 |
 
@@ -320,7 +324,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 - [ ] Lane headers sticky and match design
 - [ ] DocChips render for multi-artifact lanes
 - [ ] PhaseStackInline with PhaseDots correct states
-- [ ] TotalsCell shows points, tokens, and model bar
+- [ ] TotalsCell shows points and server-provided actual tokens (total + per-model bar) from session forensics; no client-side estimation present
 - [ ] SVG edges animated and performant
 - [ ] Filter controls and legend functional
 - [ ] Graph render time ≤1.5s for 50 features
@@ -384,7 +388,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 |---------|-----------|-------------|---------------------|----------|-------------|-------|--------------|
 | T6-001 | SPIKEs + OQ section | Render collapsible section (spec color left border, eyebrow, bold title, chevron, count). Two-column grid: SPIKEs list on left (tile with SPIKE ID, title, status pill, hover-reveal ExecBtn), Open Questions list on right (OQ tile with severity bar, OQ ID, question text, "+ answer…" button). | Section renders with color-coded border; SPIKE tiles visible with exec button on hover; OQ tiles visible with answer button; grid responsive; counts accurate | 2 pts | ui-engineer-enhanced, frontend-developer | sonnet | T5-003 |
 | T6-002 | OQ inline resolution editor | Clicking "+ answer…" on OQ tile opens inline textarea (Cmd+Enter to resolve, Escape to cancel, click outside to cancel). On Cmd+Enter, show pending state and fire `PATCH /api/planning/features/:id/open-questions/:oq_id` request with answer text. On success, mark OQ resolved (ok background, answer text visible). On error, show error toast. Component state stores pending answers. | Textarea opens on button click; Cmd+Enter fires PATCH request; pending state shows briefly; on success, OQ marked resolved with ok background; error toast on failure; escape cancels edit | 2 pts | frontend-developer, ui-engineer-enhanced | sonnet | T6-001 |
-| T6-003 | ModelLegend strip | Render horizontal strip showing: opus color dot + label + token count, sonnet color dot + label + token count, haiku color dot + label + token count, totals (pts + tokens) right-aligned. Compute token rollup per model from phase tasks. | Legend renders with all 3 models and correct colors; token counts per model accurate; totals right-aligned; layout horizontal and compact | 1.5 pts | frontend-developer, ui-engineer-enhanced | sonnet | T6-002 |
+| T6-003 | ModelLegend strip | Render horizontal strip showing: opus color dot + label + token count, sonnet color dot + label + token count, haiku color dot + label + token count, totals (pts + tokens) right-aligned. **Data source: `feature.tokenUsageByModel` from the server (per T7-004) — actuals from session forensics, not estimates.** | Legend renders with all 3 models and correct colors; token counts per model reflect server-provided session-forensics actuals; totals right-aligned; layout horizontal and compact | 1.5 pts | frontend-developer, ui-engineer-enhanced | sonnet | T6-002, T7-004 |
 | T6-004 | Execution tasks section — batches view | Render collapsible section with segment control "Batches" / "Dependency DAG" at top. In Batches view: ModelLegend strip, then per-PhaseCard list. PhaseCard: phase header (PHASE N, name, status, "run phase" ExecBtn, progress bar + % and pts/tokens); per-batch BatchCol (parallel label, task count, ExecBtn); per-task TaskRow (task ID, title, agent chip with model color, token display, status pill, hover-reveal ExecBtn). | Batches view renders with ModelLegend; PhaseCards render with batch structure; per-task rows visible; exec buttons visible on hover; progress bar shows correctly | 3 pts | ui-engineer-enhanced, frontend-developer | sonnet | T6-003 |
 | T6-005 | Dependency DAG SVG view | Switching to DAG view renders SVG canvas (absolute-positioned). Nodes arranged by phase (horizontal bands) and batch (columns); cubic bezier edges with arrowheads; active edges animated (flow dashes); blocked edges red; legend for edge states. Render from phase/task/deps data in feature payload (no separate API call). | DAG view renders SVG with correct phase bands and batch columns; edges visible and bezier curves smooth; arrowheads correct; animation smooth for active edges; blocked edges red; legend present | 3 pts | ui-engineer-enhanced | sonnet | T6-004 |
 | T6-006 | Exec buttons and toast | Wire all exec buttons (per-phase, per-batch, per-task, per-SPIKE) to dispatch action and show exec toast. Toast: bottom-center fixed, shows label (e.g., "▶ running Phase 02 — Service layer"), brand color dot, auto-dismisses 2.4s. For v2, toast is client-side only; actual execution is stubbed (future DEFER-02). | Exec buttons visible and clickable on all surfaces; clicking button shows toast within 50ms; toast auto-dismisses 2.4s; no errors thrown; actual execution stubbed (no API call for now) | 1.5 pts | frontend-developer, ui-engineer-enhanced | sonnet | T6-005 |
@@ -393,7 +397,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 - [ ] SPIKEs and OQ sections render correctly
 - [ ] OQ inline editor functional (Cmd+Enter saves, Escape cancels)
 - [ ] OQ resolution fires PATCH and updates UI
-- [ ] ModelLegend accurate
+- [ ] ModelLegend accurate — values are server-provided session-forensics actuals (from `feature.tokenUsageByModel`), not client-side estimates
 - [ ] Batches view complete with all card/col/row layers
 - [ ] DAG view renders SVG correctly
 - [ ] Exec buttons show toast
@@ -401,12 +405,12 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 
 ---
 
-### Phase 7: Backend OQ Write-Back Endpoint
+### Phase 7: Backend OQ Write-Back Endpoint + Per-Feature Token-Usage-By-Model
 
-**Duration**: 1–2 days  
-**Dependencies**: Phase 0 backend audit (OQ-01) complete  
-**Entry Criteria**: `spikes[]` and `openQuestions[]` in feature payload confirmed  
-**Exit Criteria**: `PATCH /api/planning/features/:id/open-questions/:oq_id` endpoint live with schema validation and OTEL spans  
+**Duration**: 2–3 days  
+**Dependencies**: Phase 0 backend audit (OQ-01, OQ-02) complete  
+**Entry Criteria**: `spikes[]`, `openQuestions[]` confirmed on feature payload; session-forensics token aggregation audited (T0-006)  
+**Exit Criteria**: `PATCH /api/planning/features/:id/open-questions/:oq_id` endpoint live with schema validation and OTEL spans; per-feature `tokenUsageByModel` field exposed on planning/feature-forensics payload  
 **Assigned Subagent(s)**: python-backend-engineer, backend-architect
 
 #### Objectives
@@ -416,6 +420,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 3. Request validation (Pydantic schema for answer text).
 4. Response: 200 OK with updated OQ state, or 202 Accepted with pending status (deferred file-write per DEFER-03).
 5. Add OpenTelemetry spans for observability.
+6. Extend `FeatureForensicsQueryService` / `PlanningQueryService` with a per-feature `tokenUsageByModel` aggregation (opus / sonnet / haiku / other) derived from existing `linked_sessions[*].{model, total_tokens}` using `backend/model_identity.py:derive_model_identity`. Expose on the planning feature payload consumed by TotalsCell (T4-004) and ModelLegend (T6-003). Resolves OQ-02 and absorbs the former DEFER-05.
 
 #### Tasks
 
@@ -424,6 +429,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 | T7-001 | Transport-neutral OQ resolution service | Add method to `backend/application/services/agent_queries/` (or existing planning service) that accepts feature_id, oq_id, answer_text and returns OQ state with resolved flag. No file writes; state stored in component cache only (per DEFER-03). Include request validation. | Service method callable; returns OQ state with resolved flag; answer_text stored in payload; validation rejects empty answers | 1.5 pts | backend-architect, python-backend-engineer | sonnet | T0-004 |
 | T7-002 | REST endpoint wrapper | Add `PATCH /api/planning/features/:id/open-questions/:oq_id` endpoint in `backend/routers/features.py` (or new `planning.py` router). Request body: `{ answer: string }`. Response: 200 with updated OQ state, or 202 if file-sync pending. Integrate service method from T7-001. | Endpoint callable via curl/frontend; accepts answer text; returns 200 with OQ state or 202 with pending status; error handling (404 for missing feature/OQ, 400 for invalid answer) | 1.5 pts | python-backend-engineer, backend-architect | sonnet | T7-001 |
 | T7-003 | OpenTelemetry instrumentation | Add OTEL spans for OQ resolution (span name: `planning.oq.resolve`, attributes: feature_id, oq_id, answer_length, success). Integrate with existing otel.py observability layer. | Spans exported to configured OTEL exporter; span attributes correct; logs captured if configured | 0.5 pts | python-backend-engineer | sonnet | T7-002 |
+| T7-004 | Per-feature `tokenUsageByModel` aggregation | Extend `FeatureForensicsQueryService.build_feature_forensics` (and the planning feature payload consumed by the Planning Deck) with a `tokenUsageByModel` field shaped `{opus: int, sonnet: int, haiku: int, other: int, total: int}`. Derive by iterating `linked_sessions[*]`, normalizing `model` via `backend/model_identity.derive_model_identity(raw_model)["modelFamily"]`, and summing `total_tokens`. Treat unknown families as `other`. Keep legacy `total_tokens` untouched. Add unit tests covering multi-session features with mixed models and zero-session features. | New field present on feature forensics + planning feature payloads; unit tests pass (multi-model, empty, partial data); `modelFamily` resolution covers lowercase variants; `total` equals existing `total_tokens`; no frontend breakage | 2 pts | python-backend-engineer, backend-architect | sonnet | T0-006 |
 
 **Phase 7 Quality Gates:**
 - [ ] Service method implemented and tested
@@ -432,6 +438,7 @@ Lazy-creation rule: Findings doc created on **first real finding only**. Path: `
 - [ ] OpenTelemetry spans exported
 - [ ] Error handling for missing/invalid inputs
 - [ ] Integration tests pass
+- [ ] `tokenUsageByModel` field present on planning feature payload (T7-004) with opus/sonnet/haiku/other breakdown sourced from `FeatureForensicsQueryService` linked sessions
 
 ---
 
@@ -530,14 +537,14 @@ Evaluate and update all documentation affected by this feature. All doc tasks de
 | DOC-001 | Update CHANGELOG | Add entry for user-facing changes under `[Unreleased]` following Keep A Changelog format. Include: "Added: CCDash Planning Reskin v2 with new design tokens, hero header, metrics strip, triage inbox, live agent roster, planning graph enhancements (effort/token totals lane, animated edges), feature detail drawer SPIKEs/OQ resolution, dependency DAG, exec buttons, and OQ write-back API endpoint. Changed: Planning routes now use new Geist/JetBrains Mono/Fraunces typography and OKLCH token system. Improved: A11y (WCAG 2.1 AA) and performance (graph render <1.5s for 50 features)." Categorization per `.claude/specs/changelog-spec.md`. | `[Unreleased]` contains planning v2 entry with all major features; categorization correct; readability good | 0.5 pts | changelog-generator | haiku | T9-005 |
 | DOC-002 | Update README | Update planning section in root README (or create new Planning Guide under `docs/guides/`) describing new surfaces (home, graph, triage, drawer), new interactions (OQ resolution, exec buttons), and how to access them. Include screenshots of main surfaces if available. | README or planning guide updated with new surfaces and navigation; screenshots present; clear and concise | 0.5 pts | documentation-writer | haiku | T9-005 |
 | DOC-003 | Update context files (CLAUDE.md, key-context) | Update `docs/project_plans/CLAUDE.md` with pointer to planning design token system (one-liner referencing `planning-tokens.css`). Update key-context file for planning UI patterns if needed (new primitives, token usage). | CLAUDE.md pointer added (≤3 lines); key-context file updated if applicable; progressive disclosure maintained | 0.5 pts | documentation-writer | haiku | T9-005 |
-| DOC-004 | Author design specs for deferred items | For each deferred item (DEFER-01 through DEFER-10), author a design_spec at `docs/project_plans/design-specs/[item-slug].md` with `maturity: shaping` (or `idea` if research-needed), set `prd_ref` to this plan's parent PRD, and populate with problem statement and open questions. Example: `docs/project_plans/design-specs/live-agent-sse-streaming-v1.md` for DEFER-01. | All 10 deferred items have corresponding design specs; specs have correct frontmatter and maturity; `deferred_items_spec_refs` frontmatter populated with all paths | 2 pts | documentation-writer | sonnet | T9-005 |
+| DOC-004 | Author design specs for deferred items | For each remaining deferred item (DEFER-01, 02, 03, 04, 06, 07, 08, 09, 10 — DEFER-05 was promoted into v2 scope on 2026-04-20 and is not deferred), author a design_spec at `docs/project_plans/design-specs/[item-slug].md` with `maturity: shaping` (or `idea` if research-needed), set `prd_ref` to this plan's parent PRD, and populate with problem statement and open questions. | All 9 remaining deferred items have corresponding design specs; specs have correct frontmatter and maturity; `deferred_items_spec_refs` frontmatter populated with all paths | 1.8 pts | documentation-writer | sonnet | T9-005 |
 | DOC-005 | Update plan frontmatter | Set status: completed, populate commit_refs (if PRs merged), files_affected list (key files: components/Planning/*, backend/routers/features.py, planning-tokens.css, tailwind.config.js), and updated date. | Frontmatter complete; status = completed; all key files listed; dates accurate | 0.5 pts | documentation-writer | haiku | DOC-001 through DOC-004 |
 
 **Phase 10 Quality Gates:**
 - [ ] CHANGELOG entry complete and under `[Unreleased]`
 - [ ] README or planning guide updated with new surfaces
 - [ ] Context files updated (CLAUDE.md pointer, key-context)
-- [ ] Design specs authored for all 10 deferred items
+- [ ] Design specs authored for the 9 remaining deferred items (DEFER-05 removed from deferred list on 2026-04-20 — promoted into v2 scope)
 - [ ] Plan frontmatter complete (status, commit_refs, files_affected)
 
 ---
@@ -599,7 +606,7 @@ Evaluate and update all documentation affected by this feature. All doc tasks de
 - OQ write-back: integration test pass.
 
 ### Deferred Items
-- All 10 DEFER-01 through DEFER-10 items have corresponding design specs at documented paths.
+- All 9 remaining deferred items (DEFER-01, 02, 03, 04, 06, 07, 08, 09, 10) have corresponding design specs at documented paths. DEFER-05 was promoted into v2 scope on 2026-04-20 and no longer requires a design spec.
 - `deferred_items_spec_refs` frontmatter populated.
 
 ---
@@ -628,9 +635,9 @@ Evaluate and update all documentation affected by this feature. All doc tasks de
 - **Question**: Does `PlanningQueryService` already return `spikes[]` and `openQuestions[]` arrays, or do those need to be added?
 - **Recommendation**: Audit during Phase 0 (T0-004); if missing, add them (in-scope as part of Phase 0 backend audit).
 
-### OQ-02: Token estimation
-- **Question**: Is client-side token estimation (base cost × points × agent-model) acceptable for v2 telemetry tiles?
-- **Recommendation**: **Yes, client-side estimation acceptable for v2.** Session-linked actual token counts deferred to DEFER-05; spec authored in Phase 10.
+### OQ-02: Token source
+- **Question**: Is client-side token estimation acceptable for v2 telemetry tiles, or should the backend return actual session-linked token counts?
+- **Resolution (2026-04-20)**: **Use actual session-forensics tokens.** The feature↔session correlation already exists: `FeatureForensicsQueryService` loads links via `_load_feature_session_rows` (`backend/application/services/agent_queries/feature_forensics.py:266`) and returns `FeatureForensicsDTO.total_tokens` plus `linked_sessions[*].{model, total_tokens}`. Phase 7 (T7-004) adds a per-feature `tokenUsageByModel` aggregation keyed by `modelFamily` (opus/sonnet/haiku/other) via `backend/model_identity.py:29`. Former DEFER-05 is promoted into scope; no client-side estimator.
 
 ### OQ-03: Font loading
 - **Question**: Is Google Fonts CDN acceptable for local-first deployment, or should fonts be bundled?

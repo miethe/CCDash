@@ -61,10 +61,10 @@ tasks:
     assigned_model: "sonnet"
 
   - id: "T4-004"
-    description: "Implement TotalsCell showing story-points, total tokens, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots"
+    description: "Implement TotalsCell showing story-points, total tokens, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots. Data source: server-provided feature.tokenUsage from PlanningQueryService / FeatureForensicsQueryService (total_tokens + per-model tokenUsageByModel delivered by T7-004) — actual session-forensics tokens, not client-side estimates"
     status: "pending"
     assigned_to: ["ui-engineer-enhanced", "react-performance-optimizer"]
-    dependencies: ["T4-002", "T4-003"]
+    dependencies: ["T4-002", "T4-003", "T7-004"]
     estimated_effort: "2 pts"
     priority: "high"
     assigned_model: "sonnet"
@@ -102,7 +102,7 @@ success_criteria:
   - { id: "SC-4.1", description: "Lane headers sticky and match design", status: "pending" }
   - { id: "SC-4.2", description: "DocChips render for multi-artifact lanes", status: "pending" }
   - { id: "SC-4.3", description: "PhaseStackInline with PhaseDots in all 3 states", status: "pending" }
-  - { id: "SC-4.4", description: "TotalsCell shows points, tokens, and model bar", status: "pending" }
+  - { id: "SC-4.4", description: "TotalsCell shows points and server-provided actual tokens from session forensics (total + per-model bar via feature.tokenUsageByModel); no client-side estimation", status: "pending" }
   - { id: "SC-4.5", description: "SVG edges animated and performant", status: "pending" }
   - { id: "SC-4.6", description: "Filter controls and legend functional", status: "pending" }
   - { id: "SC-4.7", description: "Graph render time <=1.5s for 50 features", status: "pending" }
@@ -142,7 +142,7 @@ Phase 4 is on the critical path: Phases 5-6 (feature detail drawer) require grap
 | T4-001 | Lane headers and feature cell reskin | ui-engineer-enhanced | 2 pts | T2-001 | pending |
 | T4-002 | DocChips and multi-artifact lanes | ui-engineer-enhanced | 2 pts | T4-001 | pending |
 | T4-003 | PhaseStackInline and PhaseDots | ui-engineer-enhanced, react-performance-optimizer | 1.5 pts | T4-001 | pending |
-| T4-004 | TotalsCell with model-identity bar | ui-engineer-enhanced, react-performance-optimizer | 2 pts | T4-002, T4-003 | pending |
+| T4-004 | TotalsCell with model-identity bar (server-provided actuals) | ui-engineer-enhanced, react-performance-optimizer | 2 pts | T4-002, T4-003, T7-004 | pending |
 | T4-005 | SVG edge layer with animation | ui-engineer-enhanced, react-performance-optimizer | 2 pts | T4-004 | pending |
 | T4-006 | Graph filter controls and legend | frontend-developer, ui-engineer-enhanced | 1.5 pts | T4-005 | pending |
 
@@ -163,7 +163,7 @@ Task("ui-engineer-enhanced", "T4-003: Implement PhaseDot (14x14px): filled=compl
 
 ### Batch 3 — After T4-002 and T4-003 complete
 ```
-Task("ui-engineer-enhanced", "T4-004: Implement TotalsCell in rightmost lane: large story-points number, total tokens right-aligned, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots. Compute token rollup from phase tasks (base cost x points x model) or pull from backend.")
+Task("ui-engineer-enhanced", "T4-004: Implement TotalsCell in rightmost lane: large story-points number, total tokens right-aligned, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots. Data source: server-provided feature.tokenUsage from PlanningQueryService / FeatureForensicsQueryService — specifically total_tokens plus the per-feature tokenUsageByModel breakdown delivered by T7-004 (actual session-forensics tokens, not estimates). Graceful fallback when backend returns 0.")
 ```
 
 ### Batch 4 — After T4-004 completes
@@ -183,7 +183,7 @@ Task("frontend-developer", "T4-006: Add 'All categories' dropdown filter (featur
 - [ ] Lane headers sticky and match design
 - [ ] DocChips render for multi-artifact lanes; multiple chips stack correctly
 - [ ] PhaseStackInline with PhaseDots in all 3 states (completed/in-progress/blocked)
-- [ ] TotalsCell shows points, tokens, and model bar
+- [ ] TotalsCell shows points and server-provided actual tokens (total + per-model bar) from session forensics; no client-side estimator present
 - [ ] SVG edges animated and performant
 - [ ] Filter controls and legend functional
 - [ ] Graph render time <=1.5s for 50 features

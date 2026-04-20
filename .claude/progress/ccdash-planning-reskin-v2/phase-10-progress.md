@@ -61,11 +61,11 @@ tasks:
     assigned_model: "haiku"
 
   - id: "DOC-004"
-    description: "Author design specs for DEFER-01 through DEFER-10 at docs/project_plans/design-specs/[item-slug].md with maturity: shaping/idea; populate deferred_items_spec_refs frontmatter on parent PRD"
+    description: "Author design specs for remaining deferred items (DEFER-01, 02, 03, 04, 06, 07, 08, 09, 10 — DEFER-05 was promoted into v2 scope on 2026-04-20 and is no longer deferred) at docs/project_plans/design-specs/[item-slug].md with maturity: shaping/idea; populate deferred_items_spec_refs frontmatter on parent PRD"
     status: "pending"
     assigned_to: ["documentation-writer"]
     dependencies: ["T9-005"]
-    estimated_effort: "2 pts"
+    estimated_effort: "1.8 pts"
     priority: "high"
     assigned_model: "sonnet"
 
@@ -90,7 +90,7 @@ success_criteria:
   - { id: "SC-10.1", description: "CHANGELOG entry complete and under [Unreleased]", status: "pending" }
   - { id: "SC-10.2", description: "README or planning guide updated with new surfaces", status: "pending" }
   - { id: "SC-10.3", description: "Context files updated (CLAUDE.md pointer, key-context)", status: "pending" }
-  - { id: "SC-10.4", description: "Design specs authored for all 10 deferred items (DEFER-01..10)", status: "pending" }
+  - { id: "SC-10.4", description: "Design specs authored for all 9 remaining deferred items (DEFER-01, 02, 03, 04, 06, 07, 08, 09, 10; DEFER-05 promoted into v2 scope)", status: "pending" }
   - { id: "SC-10.5", description: "Plan frontmatter complete (status=completed, commit_refs, files_affected)", status: "pending" }
 
 files_modified: []
@@ -128,7 +128,7 @@ Phase 10 can begin asynchronously once all feature phases are complete. DOC-001 
 | DOC-001 | Update CHANGELOG | changelog-generator | 0.5 pts | T9-005 | pending |
 | DOC-002 | Update README / planning guide | documentation-writer | 0.5 pts | T9-005 | pending |
 | DOC-003 | Update context files (CLAUDE.md, key-context) | documentation-writer | 0.5 pts | T9-005 | pending |
-| DOC-004 | Author design specs for DEFER-01..10 | documentation-writer | 2 pts | T9-005 | pending |
+| DOC-004 | Author design specs for 9 remaining deferred items (excl. DEFER-05) | documentation-writer | 1.8 pts | T9-005 | pending |
 | DOC-005 | Update plan frontmatter (status=completed) | documentation-writer | 0.5 pts | DOC-001, DOC-002, DOC-003, DOC-004 | pending |
 
 ---
@@ -140,7 +140,7 @@ Phase 10 can begin asynchronously once all feature phases are complete. DOC-001 
 Task("changelog-generator", "DOC-001: Add [Unreleased] entry to CHANGELOG following Keep A Changelog format per .claude/specs/changelog-spec.md. Include: Added (planning reskin v2 with design tokens/hero header/metrics strip/triage inbox/live agent roster/graph enhancements/feature detail drawer SPIKEs+OQ resolution/DAG/exec buttons/OQ write-back API endpoint); Changed (planning routes use Geist/JetBrains Mono/Fraunces typography and OKLCH token system); Improved (a11y WCAG 2.1 AA, graph render <1.5s for 50 features).")
 Task("documentation-writer", "DOC-002: Update planning section in root README (or create docs/guides/planning-guide.md) describing: new surfaces (home, graph, triage, drawer), new interactions (OQ resolution, exec buttons), and how to access them. Include screenshots of main surfaces if available.")
 Task("documentation-writer", "DOC-003: Update docs/project_plans/CLAUDE.md with pointer to planning design token system: add <=3 lines referencing planning-tokens.css and components/Planning/primitives/. Update key-context file for planning UI patterns (new primitives, token usage) if applicable.")
-Task("documentation-writer", "DOC-004: For each deferred item (DEFER-01 through DEFER-10), author design_spec at docs/project_plans/design-specs/[slug].md with maturity: shaping (or idea if research-needed), prd_ref to this plan's parent PRD, problem statement, and open questions. Paths: live-agent-sse-streaming-v1.md / spike-execution-wiring-v1.md / oq-frontmatter-writeback-v1.md / bundled-fonts-offline-v1.md / session-token-tracking-v1.md / spec-creation-workflow-v1.md / planning-primitives-extraction-v1.md / planning-collab-threads-v1.md / planning-lightmode-tokens-v1.md / planning-graph-virtualization-v1.md. Then populate deferred_items_spec_refs on the parent PRD frontmatter.")
+Task("documentation-writer", "DOC-004: For each remaining deferred item (DEFER-01, 02, 03, 04, 06, 07, 08, 09, 10 — DEFER-05 was promoted into v2 scope on 2026-04-20 and is no longer deferred), author design_spec at docs/project_plans/design-specs/[slug].md with maturity: shaping (or idea if research-needed), prd_ref to this plan's parent PRD, problem statement, and open questions. Paths: live-agent-sse-streaming-v1.md / spike-execution-wiring-v1.md / oq-frontmatter-writeback-v1.md / bundled-fonts-offline-v1.md / spec-creation-workflow-v1.md / planning-primitives-extraction-v1.md / planning-collab-threads-v1.md / planning-lightmode-tokens-v1.md / planning-graph-virtualization-v1.md. Do NOT author session-token-tracking-v1.md (former DEFER-05 is in scope via T7-004). Then populate deferred_items_spec_refs on the parent PRD frontmatter.")
 ```
 
 ### Batch 2 — After all DOC-001..DOC-004 complete
@@ -155,7 +155,7 @@ Task("documentation-writer", "DOC-005: Update implementation plan frontmatter at
 - [ ] CHANGELOG entry complete and under [Unreleased]
 - [ ] README or planning guide updated with new surfaces and navigation
 - [ ] Context files updated (CLAUDE.md pointer, key-context)
-- [ ] Design specs authored for all 10 deferred items (DEFER-01..10)
+- [ ] Design specs authored for 9 remaining deferred items (DEFER-01, 02, 03, 04, 06, 07, 08, 09, 10); DEFER-05 no longer deferred (promoted to v2 scope)
 - [ ] `deferred_items_spec_refs` frontmatter populated on parent PRD
 - [ ] Plan frontmatter complete (status=completed, commit_refs, files_affected)
 
