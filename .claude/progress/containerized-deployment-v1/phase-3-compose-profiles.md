@@ -8,7 +8,7 @@ prd_ref: docs/project_plans/PRDs/infrastructure/containerized-deployment-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/containerized-deployment-v1.md
 phase: 3
 title: Unified compose.yaml with Profiles
-status: not_started
+status: completed
 created: '2026-04-20'
 updated: '2026-04-20'
 commit_refs: []
@@ -21,7 +21,7 @@ tasks:
 - id: COMP-001
   description: Write deploy/runtime/compose.yaml with local/enterprise/postgres profiles;
     backend + frontend services
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   - platform-engineer
@@ -29,7 +29,7 @@ tasks:
 - id: COMP-002
   description: 'Add healthcheck blocks to backend services (api: /api/health/ready,
     worker: /readyz on 9465)'
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   dependencies:
@@ -37,7 +37,7 @@ tasks:
 - id: COMP-003
   description: "Wire depends_on with condition: service_healthy for worker\u2192api\
     \ (enterprise) and api/worker\u2192postgres"
-  status: pending
+  status: completed
   assigned_to:
   - platform-engineer
   dependencies:
@@ -45,7 +45,7 @@ tasks:
 - id: COMP-004
   description: Write deploy/runtime/.env.example covering all CCDASH_* vars for all
     three profiles
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   dependencies:

@@ -16,9 +16,14 @@ FROM nginx:1.27-alpine AS runtime
 ENV CCDASH_FRONTEND_PORT=3000 \
     CCDASH_API_UPSTREAM=http://api:8000
 
-COPY deploy/runtime/frontend/default.conf.template /etc/nginx/templates/default.conf.template
-COPY --from=build /app/dist /usr/share/nginx/html
+RUN mkdir -p /etc/nginx/conf.d /var/cache/nginx \
+    && chown -R nginx:nginx /etc/nginx/conf.d /var/cache/nginx
+
+COPY --chown=nginx:nginx deploy/runtime/frontend/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build --chown=nginx:nginx /app/dist /usr/share/nginx/html
+
+USER nginx
 
 EXPOSE 3000
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["nginx", "-g", "pid /tmp/nginx.pid; daemon off;"]

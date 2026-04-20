@@ -8,7 +8,7 @@ prd_ref: docs/project_plans/PRDs/infrastructure/containerized-deployment-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/containerized-deployment-v1.md
 phase: 1
 title: Backend Dockerfile Consolidation
-status: not_started
+status: completed
 created: '2026-04-20'
 updated: '2026-04-20'
 commit_refs: []
@@ -21,7 +21,7 @@ tasks:
 - id: BE-001
   description: Create deploy/runtime/Dockerfile as multi-stage Python 3.12-slim image
     consolidating api + worker Dockerfiles
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   - python-backend-engineer
@@ -29,7 +29,7 @@ tasks:
 - id: BE-002
   description: Write deploy/runtime/entrypoint.sh to dispatch on CCDASH_RUNTIME_PROFILE
     (local/api/worker)
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -37,7 +37,7 @@ tasks:
 - id: BE-003
   description: Add BUILD_UID and BUILD_GID build args (default 1000:1000) to Dockerfile;
     verify non-root UID
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   dependencies:
@@ -45,7 +45,7 @@ tasks:
 - id: BE-004
   description: Execute backend.tests.test_runtime_bootstrap inside container for all
     three profiles
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:

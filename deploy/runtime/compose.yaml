@@ -1,0 +1,164 @@
+name: ccdash
+
+x-backend-build: &backend-build
+  context: ../..
+  dockerfile: deploy/runtime/Dockerfile
+  args:
+    BUILD_UID: "${CCDASH_UID:-1000}"
+    BUILD_GID: "${CCDASH_GID:-1000}"
+
+x-backend-service: &backend-service
+  build: *backend-build
+  init: true
+  restart: unless-stopped
+  user: "${CCDASH_UID:-1000}:${CCDASH_GID:-1000}"
+  environment: &backend-shared-env
+    CCDASH_PROJECT_ROOT: "${CCDASH_PROJECT_ROOT:-/app}"
+    CCDASH_HOST: "0.0.0.0"
+    CCDASH_PORT: "8000"
+    CCDASH_FRONTEND_ORIGIN: "${CCDASH_FRONTEND_ORIGIN:-http://localhost:3000}"
+    CCDASH_OTEL_ENABLED: "${CCDASH_OTEL_ENABLED:-false}"
+    CCDASH_OTEL_ENDPOINT: "${CCDASH_OTEL_ENDPOINT:-http://localhost:4318}"
+    CCDASH_OTEL_SERVICE_NAME: "${CCDASH_OTEL_SERVICE_NAME:-ccdash-backend}"
+    CCDASH_PROM_PORT: "${CCDASH_PROM_PORT:-9464}"
+    CCDASH_STORAGE_SHARED_POSTGRES: "${CCDASH_STORAGE_SHARED_POSTGRES:-false}"
+    CCDASH_STORAGE_ISOLATION_MODE: "${CCDASH_STORAGE_ISOLATION_MODE:-dedicated}"
+    CCDASH_STORAGE_SCHEMA: "${CCDASH_STORAGE_SCHEMA:-ccdash}"
+    CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED: "${CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED:-false}"
+  healthcheck: &api-healthcheck
+    test:
+      - CMD
+      - python
+      - -c
+      - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_PORT", "8000") + "/api/health/ready", timeout=3)
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+
+x-postgres-connection: &postgres-connection
+  CCDASH_STORAGE_PROFILE: "${CCDASH_STORAGE_PROFILE:-enterprise}"
+  CCDASH_DB_BACKEND: "${CCDASH_DB_BACKEND:-postgres}"
+  CCDASH_DATABASE_URL: "${CCDASH_DATABASE_URL:-postgresql://ccdash:ccdash@postgres:5432/ccdash}"
+
+services:
+  backend:
+    <<: *backend-service
+    profiles: ["local"]
+    environment:
+      <<: *backend-shared-env
+      CCDASH_RUNTIME_PROFILE: "local"
+      CCDASH_STORAGE_PROFILE: "local"
+      CCDASH_DB_BACKEND: "sqlite"
+      CCDASH_DB_PATH: "${CCDASH_DB_PATH:-/var/lib/ccdash/ccdash.db}"
+    ports:
+      - "${CCDASH_API_PORT:-8000}:8000"
+    networks:
+      default:
+        aliases:
+          - api
+    volumes:
+      - ccdash-local-data:/var/lib/ccdash
+
+  api:
+    <<: *backend-service
+    profiles: ["enterprise"]
+    environment:
+      <<: *backend-shared-env
+      <<: *postgres-connection
+      CCDASH_RUNTIME_PROFILE: "api"
+      CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    ports:
+      - "${CCDASH_API_PORT:-8000}:8000"
+
+  worker:
+    <<: *backend-service
+    profiles: ["enterprise"]
+    environment:
+      <<: *backend-shared-env
+      <<: *postgres-connection
+      CCDASH_RUNTIME_PROFILE: "worker"
+      CCDASH_WORKER_PROJECT_ID: "${CCDASH_WORKER_PROJECT_ID:-smoke-stack}"
+      CCDASH_WORKER_PROBE_HOST: "${CCDASH_WORKER_PROBE_HOST:-0.0.0.0}"
+      CCDASH_WORKER_PROBE_PORT: "${CCDASH_WORKER_PROBE_PORT:-9465}"
+      CCDASH_TELEMETRY_EXPORT_ENABLED: "${CCDASH_TELEMETRY_EXPORT_ENABLED:-false}"
+      CCDASH_SAM_ENDPOINT: "${CCDASH_SAM_ENDPOINT:-}"
+      CCDASH_SAM_API_KEY: "${CCDASH_SAM_API_KEY:-}"
+      CCDASH_TELEMETRY_ALLOW_INSECURE: "${CCDASH_TELEMETRY_ALLOW_INSECURE:-false}"
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_PROBE_PORT", "9465") + "/readyz", timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    ports:
+      - "${CCDASH_WORKER_PROBE_PORT:-9465}:${CCDASH_WORKER_PROBE_PORT:-9465}"
+
+  frontend:
+    profiles: ["local", "enterprise"]
+    build:
+      context: ../..
+      dockerfile: deploy/runtime/frontend/Dockerfile
+      args:
+        VITE_CCDASH_API_BASE_URL: "${VITE_CCDASH_API_BASE_URL:-/api}"
+    init: true
+    restart: unless-stopped
+    environment:
+      CCDASH_FRONTEND_PORT: "${CCDASH_FRONTEND_PORT:-3000}"
+      CCDASH_API_UPSTREAM: "${CCDASH_API_UPSTREAM:-http://api:8000}"
+    depends_on:
+      backend:
+        condition: service_healthy
+        required: false
+      api:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null "http://127.0.0.1:${CCDASH_FRONTEND_PORT:-3000}/" || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "${CCDASH_FRONTEND_PORT:-3000}:${CCDASH_FRONTEND_PORT:-3000}"
+
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${CCDASH_POSTGRES_DB:-ccdash}"
+      POSTGRES_USER: "${CCDASH_POSTGRES_USER:-ccdash}"
+      POSTGRES_PASSWORD: "${CCDASH_POSTGRES_PASSWORD:-ccdash}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "${CCDASH_POSTGRES_USER:-ccdash}" -d "${CCDASH_POSTGRES_DB:-ccdash}"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    ports:
+      - "${CCDASH_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ccdash-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  ccdash-local-data:
+  ccdash-postgres-data:

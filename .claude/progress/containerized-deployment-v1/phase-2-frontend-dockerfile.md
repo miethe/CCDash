@@ -8,7 +8,7 @@ prd_ref: docs/project_plans/PRDs/infrastructure/containerized-deployment-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/containerized-deployment-v1.md
 phase: 2
 title: Frontend Dockerfile Hardening
-status: not_started
+status: completed
 created: '2026-04-20'
 updated: '2026-04-20'
 commit_refs: []
@@ -20,20 +20,20 @@ contributors: []
 tasks:
 - id: FE-001
   description: Add non-root nginx user (UID 101) to runtime stage of deploy/runtime/frontend/Dockerfile
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   dependencies: []
 - id: FE-002
   description: Verify default.conf.template uses envsubst for CCDASH_API_UPSTREAM
     and CCDASH_FRONTEND_PORT
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies: []
 - id: FE-003
   description: Build and validate frontend image size < 50 MB
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   dependencies:
