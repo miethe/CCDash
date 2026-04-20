@@ -4,7 +4,7 @@ doc_type: meta-plan
 title: "CCDash Performance & Reliability Meta-Plan v1"
 status: active
 created: "2026-04-17"
-updated: "2026-04-17"
+updated: "2026-04-19"
 owner: "@nick"
 tags: [meta-plan, performance, reliability, caching, sync, memory]
 waves:
@@ -48,24 +48,24 @@ waves:
         status: planned
   - id: 5
     title: "Runtime + Storage Sustain Work"
-    status: planned
+    status: completed
     items:
       - title: "Deployment Runtime Mod v1 P4 Packaging + Config Contracts"
-        status: in-progress
+        status: completed
         artifacts:
           impl: docs/project_plans/implementation_plans/refactors/deployment-runtime-modularization-v1.md
       - title: "Deployment Runtime Mod v1 P5 Observability + Hosted Guardrails"
-        status: in-progress
+        status: completed
       - title: "Deployment Runtime Mod v1 P6 Validation + Rollout"
-        status: in-progress
+        status: completed
       - title: "DB Caching Layer v1 P2 Local vs enterprise storage composition"
-        status: in-progress
+        status: completed
         artifacts:
           impl: docs/project_plans/implementation_plans/db-caching-layer-v1.md
       - title: "DB Caching Layer v1 P3 Session-storage modernization"
-        status: planned
+        status: completed
       - title: "DB Caching Layer v1 P4 Migration governance + isolation verification"
-        status: planned
+        status: completed
   - id: 6
     title: "Benchmark Validation"
     status: planned
@@ -108,8 +108,8 @@ observability.
 | # | Initiative | Kind | Status | Phase / Depth | Reference |
 |---|-----------|------|--------|---------------|-----------|
 | 1 | Data Platform Modularization v1 | Foundation refactor | ✅ Done | All 6 phases | [plan](../implementation_plans/refactors/data-platform-modularization-v1.md) |
-| 2 | Deployment Runtime Modularization v1 | Runtime separation | 🟡 In-progress | Phases 1–3 ✅, 4–6 ⏳ | [plan](../implementation_plans/refactors/deployment-runtime-modularization-v1.md) |
-| 3 | DB Caching Layer v1 | Sync + query cache | 🟡 In-progress | Phase 0–1 ✅, 2–4 ⏳ | [plan](../implementation_plans/db-caching-layer-v1.md) |
+| 2 | Deployment Runtime Modularization v1 | Runtime separation | ✅ Done | All 6 phases | [plan](../implementation_plans/refactors/deployment-runtime-modularization-v1.md) |
+| 3 | DB Caching Layer v1 | Sync + query cache | ✅ Done | Phase 0 baseline + 1–4 complete | [plan](../implementation_plans/db-caching-layer-v1.md) |
 | 4 | Runtime Performance Hardening v1 | Gap fixes | 🆕 Draft | Design-spec only | [spec](../design-specs/runtime-performance-hardening-v1.md) |
 
 Status legend: ✅ done · 🟡 in-progress · 🆕 draft · 🔴 blocked · ⏸ paused.
@@ -141,26 +141,26 @@ Status legend: ✅ done · 🟡 in-progress · 🆕 draft · 🔴 blocked · ⏸
 | P5 Migration Governance + Sync Boundary Refactor | ✅ | |
 | P6 Rollout, Validation, Handoff | ✅ | |
 
-### 4.2 Deployment Runtime Modularization v1 — 🟡 Phases 1–3
+### 4.2 Deployment Runtime Modularization v1 — ✅ Done
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | P1 Runtime Contract + Launch Surface | ✅ | |
 | P2 Worker Ownership + Job Routing | ✅ | |
 | P3 Health, Readiness, Degradation | ✅ | Commits a6cd153, 0f36c24, 0c050f8 |
-| P4 Packaging + Configuration Contracts | ⏳ | In-progress |
-| P5 Observability + Hosted Safety Guardrails | ⏳ | In-progress |
-| P6 Validation, Documentation, Rollout | ⏳ | In-progress |
+| P4 Packaging + Configuration Contracts | ✅ | Closed via `.claude/progress/deployment-runtime-modularization-v1/phase-4-progress.md` |
+| P5 Observability + Hosted Safety Guardrails | ✅ | Closed via `.claude/progress/deployment-runtime-modularization-v1/phase-5-progress.md` |
+| P6 Validation, Documentation, Rollout | ✅ | Closed on 2026-04-19 via `.claude/progress/deployment-runtime-modularization-v1/phase-6-progress.md` |
 
-### 4.3 DB Caching Layer v1 — 🟡 Phase 0–1
+### 4.3 DB Caching Layer v1 — ✅ Done
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | P0 Baseline (runtime profiles, migrations) | ✅ | |
 | P1 Sync engine + TTL query cache + entity links | ✅ | Shipped; `CCDASH_QUERY_CACHE_TTL_SECONDS`, `CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS` |
-| P2 Local vs enterprise storage composition | ⏳ | Partial via profiles; router migration outstanding |
-| P3 Session-storage modernization (canonical `session_messages`) | ⏳ | Seams exist; table design deferred |
-| P4 Migration governance + shared-Postgres isolation verification | ⏳ | Partial |
+| P2 Local vs enterprise storage composition | ✅ | Reflected in `docs/guides/storage-profiles-guide.md` and downstream hosted runbooks |
+| P3 Session-storage modernization (canonical `session_messages`) | ✅ | Closed via `.claude/progress/db-caching-layer-v1/phase-3-progress.md` |
+| P4 Migration governance + shared-Postgres isolation verification | ✅ | Closed via `.claude/progress/db-caching-layer-v1/phase-4-progress.md` |
 
 ### 4.4 Runtime Performance Hardening v1 — 🆕 Draft
 
@@ -182,14 +182,15 @@ Status legend: ✅ done · 🟡 in-progress · 🆕 draft · 🔴 blocked · ⏸
 | Symptom | Owning initiative(s) | Short-term workaround |
 |---------|---------------------|-----------------------|
 | Browser tab grows to 2GB+ on long-running sessions | 4 | Close + reopen tab; disable `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` |
-| Startup feels slow; backend not immediately operational | 3 (warming) + 4 (scan cache, deferred-off default) | Set `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS=false`; run `npm run dev:worker` |
+| Startup feels slow; backend not immediately operational | 3 (warming) + 4 (scan cache, deferred-off default) | Set `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS=false`; run `npm run dev:worker` or hosted `worker` |
 | Cache-warm misses produce cold queries every few minutes | 3 (TTL tuning) + 4 (default flip) | Set `CCDASH_QUERY_CACHE_TTL_SECONDS=600` |
 | Routine re-syncs and link rebuilds on unchanged data | 3 (P2/P3) + 4 (incremental rebuild) | Keep `CCDASH_LINKING_LOGIC_VERSION=1`; ensure worker is running |
 | Workflow diagnostics slow on large registries | 4 (§3.3.2) | No supported workaround; wait for batch query |
 
 Cross-ref: the operator-facing knobs listed here are all documented in
 [`docs/setup-user-guide.md`](../../setup-user-guide.md) under **Performance
-Tuning Quick Start**.
+Tuning Quick Start** and in
+[`docs/guides/runtime-storage-and-performance-quickstart.md`](../../guides/runtime-storage-and-performance-quickstart.md).
 
 ---
 
@@ -198,13 +199,16 @@ Tuning Quick Start**.
 ```
 data-platform-modularization-v1 (done)
         │
-        ├─► deployment-runtime-modularization-v1  ──► worker runtime enables cache warming
+        ├─► deployment-runtime-modularization-v1 (done)
+        │        └─► split API/worker runtime, probes, hosted smoke validation
         │
-        └─► db-caching-layer-v1 ──► provides TTL cache + sync engine
-                                        │
-                                        └─► runtime-performance-hardening-v1
-                                              consumes both; ships default flips,
-                                              incremental rebuild, memory guards
+        └─► db-caching-layer-v1 (done)
+                 └─► storage profiles, TTL cache, sync engine, canonical transcript seam
+                              │
+                              └─► runtime-performance-hardening-v1
+                                    consumes the completed foundation and ships
+                                    default flips, incremental rebuild, and
+                                    frontend memory guards
 ```
 
 - Initiative 4 assumes Initiative 2 Phase 3 is merged (worker readiness
@@ -289,20 +293,17 @@ Targets PERF-G4 directly.
 **Soak**: one minor-version window with flag on in a dev profile; flip to
 `true` default in Wave 6 after PERF-G4 < 3 s is sustained.
 
-### Wave 5 — Runtime + storage sustain work _(parallel, unblocks hosted/enterprise)_
+### Wave 5 — Runtime + storage sustain work _(completed foundation)_
 
-Runs throughout Waves 1–4 on a separate track; required for parity with
-hosted/enterprise but not blocking local perf wins.
+This wave is now complete and becomes a prerequisite baseline rather than an
+active execution track.
 
-- **Initiative 2** (Deployment Runtime Mod v1): complete P4 Packaging +
-  Config Contracts, P5 Observability + Hosted Guardrails, P6 Validation +
-  Rollout.
-- **Initiative 3** (DB Caching Layer v1): complete P2 (router migration to
-  storage profiles), then P3 (`session_messages` canonicalization), then P4
-  (migration governance + shared-Postgres isolation verification).
-
-**Sequencing note**: Initiative 3 P3 depends on Initiative 2 P4 landing so
-that session-storage tables can be owned by the correct runtime profile.
+- **Initiative 2** closed P4-P6 on 2026-04-19, including hosted packaging,
+  probes, smoke validation, and operator/runbook alignment.
+- **Initiative 3** closed its remaining profile, canonical-transcript, and
+  migration-governance work during 2026-03-27 through 2026-03-29.
+- Follow-on enterprise plans already consume these contracts rather than
+  treating them as open prerequisites.
 
 ### Wave 6 — Benchmark validation + default-on flip
 
@@ -311,13 +312,44 @@ that session-storage tables can be owned by the correct runtime profile.
 - Flip Wave 4 flags to default-on after soak.
 - Close initiative 4; decide whether to spin a v2 meta-plan per §7.
 
+## 10. Current Next Steps
+
+The remaining work is now concentrated in **Runtime Performance Hardening v1**.
+Because runtime separation and storage-profile work are complete, the next
+cycle should optimize defaults and measure before attempting deeper structural
+changes.
+
+### Recommended order
+
+1. **Wave 1 first**: ship the low-risk default flips and the workflow
+   diagnostics batching fix.
+   - Change default `CCDASH_QUERY_CACHE_TTL_SECONDS` `60 → 600`.
+   - Change default `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` `true → false`.
+   - Replace per-workflow detail fetches with the batch query path in
+     `workflow_intelligence.py`.
+2. **Wave 3 next**: add the perf observability fields/counters needed to
+   measure whether Waves 1 and 4 actually help.
+3. **Wave 2 in parallel where convenient**: land the frontend memory guards
+   behind the proposed flag with focused Vitest coverage and a manual idle-tab
+   validation pass.
+4. **Wave 4 after telemetry exists**: implement incremental link rebuild and
+   filesystem scan manifest caching behind `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED=false`.
+5. **Wave 6 last**: run PERF-G1..G5 on the reference workspace, record the
+   results, then decide whether the remaining gaps justify a v2 meta-plan.
+
+### Operator note
+
+Until Wave 1 lands as true defaults, the recommended operator posture is still
+to set the tuned cache/deferred-rebuild values manually in `.env` and run a
+worker alongside the API for any non-trivial workload.
+
 ### Sequencing summary
 
 ```
 Wave 1 ─┐
         ├─► Wave 3 ─► Wave 4 ─┐
 Wave 2 ─┘                     ├─► Wave 6
-          Wave 5 (parallel) ──┘
+          Wave 5 (completed baseline)
 ```
 
 ---

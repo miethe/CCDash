@@ -2,6 +2,10 @@
 
 This guide covers local setup, development startup, and a production-style startup flow.
 
+If you want the shortest path to the current runtime split, Postgres posture,
+worker ownership model, and performance knobs, start with
+[`docs/guides/runtime-storage-and-performance-quickstart.md`](./guides/runtime-storage-and-performance-quickstart.md).
+
 ## Prerequisites
 
 - Node.js 20+ and npm
