@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Containerized deployment infrastructure: unified backend Dockerfile, hardened frontend image, `compose.yaml` with `local`, `enterprise`, and `postgres` profiles, rootless Podman support, and single-command deployment via `docker compose` or `podman-compose`.
+
 ## 2026-04-15
 
 ### Added

@@ -2,14 +2,34 @@
 
 This guide covers local setup, development startup, and a production-style startup flow.
 
-If you want the shortest path to the current runtime split, Postgres posture,
-worker ownership model, and performance knobs, start with
-[`docs/guides/runtime-storage-and-performance-quickstart.md`](./guides/runtime-storage-and-performance-quickstart.md).
+If you want the shortest path to a working deployment, start with
+[`docs/guides/containerized-deployment-quickstart.md`](./guides/containerized-deployment-quickstart.md).
+
+The container quickstart is the preferred onboarding route. The host-installed
+workflow below remains available for contributors who need direct access to the
+repo runtime.
 
 ## Prerequisites
 
+- Docker Compose v2 or `podman-compose` for the container path
 - Node.js 20+ and npm
 - Python 3.10+ with `venv`
+
+## Containerized Deployment (Preferred)
+
+1. Copy `deploy/runtime/.env.example` to `deploy/runtime/.env`.
+1. Choose the profile set you want to run:
+   - `--profile local` for a single backend container with SQLite
+   - `--profile enterprise` for split API and worker containers with an external Postgres URL
+   - `--profile enterprise --profile postgres` for the bundled Postgres service
+1. Start the stack with `deploy/runtime/compose.yaml`:
+
+```bash
+docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile local up --build
+```
+
+For the enterprise and bundled Postgres variants, replace `--profile local` with the matching profile set above. The canonical operator flow is documented in
+[`docs/guides/containerized-deployment-quickstart.md`](./guides/containerized-deployment-quickstart.md).
 
 ## 1) Install Frontend Dependencies
 
@@ -228,11 +248,11 @@ Repo-shipped process-manager examples now live in [`deploy/runtime/README.md`](.
 - [`deploy/runtime/systemd/ccdash-frontend.service`](../deploy/runtime/systemd/ccdash-frontend.service)
 - [`deploy/runtime/supervisor/ccdash.conf`](../deploy/runtime/supervisor/ccdash.conf)
 
-Those examples mirror the current split topology only. They do not add TLS termination or a hardened public frontend server beyond the repo's existing `npm run start:frontend` helper.
+Those examples mirror the current runtime contract and the canonical `deploy/runtime/compose.yaml` deployment path. They do not add TLS termination or a hardened public frontend server beyond the repo's existing `npm run start:frontend` helper.
 
 ### Hosted Smoke Validation
 
-Use the hosted compose example when you want one repeatable runtime check for split startup, probes, migrations, one background-job control path, and the shipped CLI/MCP adapters.
+Use the hosted smoke profile set when you want one repeatable runtime check for split startup, probes, migrations, one background-job control path, and the shipped CLI/MCP adapters.
 
 1. Edit [`deploy/runtime/compose.hosted.env.example`](../deploy/runtime/compose.hosted.env.example) and replace `CCDASH_WORKER_PROJECT_ID` with a project id the workspace registry can resolve.
 2. Render and start the stack:
