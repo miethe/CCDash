@@ -49,6 +49,12 @@ export {
   ExecBtn,
 } from './PhaseZeroPrimitives';
 
+export { DocChip } from './DocChip';
+export type { DocChipProps } from './DocChip';
+
+export { EdgeLayer } from './EdgeLayer';
+export type { EdgeLayerProps, EdgeLayerFeature } from './EdgeLayer';
+
 export { PhaseOperationsPanel } from './PhaseOperationsPanel';
 export type { PhaseOperationsPanelProps } from './PhaseOperationsPanel';
 export {

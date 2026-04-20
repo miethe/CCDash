@@ -2,112 +2,158 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2"
-feature_slug: "ccdash-planning-reskin-v2"
+prd: ccdash-planning-reskin-v2
+feature_slug: ccdash-planning-reskin-v2
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md
 phase: 4
-title: "Planning Graph Reskin & Enhancements"
-status: "pending"
-created: 2026-04-20
-updated: 2026-04-20
+title: Planning Graph Reskin & Enhancements
+status: completed
+created: '2026-04-20'
+updated: '2026-04-20'
 started: null
 completed: null
-commit_refs: []
+commit_refs:
+- 361b3fc
 pr_refs: []
-
-overall_progress: 0
-completion_estimate: "on-track"
-
+overall_progress: 100
+completion_estimate: on-track
 total_tasks: 6
-completed_tasks: 0
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["ui-engineer-enhanced", "react-performance-optimizer"]
-contributors: ["frontend-developer"]
-
+owners:
+- ui-engineer-enhanced
+- react-performance-optimizer
+contributors:
+- frontend-developer
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "T4-001"
-    description: "Reskin lane headers with colored square glyphs and sticky positioning; reskin feature cells with category badge, complexity chip, mismatch/stale indicators, 2-line title clamp, status pill"
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced"]
-    dependencies: ["T2-001"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
-  - id: "T4-002"
-    description: "Implement DocChip component with type label, truncated title, status dot; support multiple stacked chips per lane cell; mute completed/superseded artifacts"
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced"]
-    dependencies: ["T4-001"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
-  - id: "T4-003"
-    description: "Implement PhaseDot (filled=completed, pulsing ring=in-progress, !=blocked) and PhaseStackInline showing completed/total count in progress lane"
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced", "react-performance-optimizer"]
-    dependencies: ["T4-001"]
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-
-  - id: "T4-004"
-    description: "Implement TotalsCell showing story-points, total tokens, stacked model-identity bar (opus/sonnet/haiku proportional widths), per-model token counts with colored dots. Data source: server-provided feature.tokenUsage from PlanningQueryService / FeatureForensicsQueryService (total_tokens + per-model tokenUsageByModel delivered by T7-004) — actual session-forensics tokens, not client-side estimates"
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced", "react-performance-optimizer"]
-    dependencies: ["T4-002", "T4-003", "T7-004"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
-  - id: "T4-005"
-    description: "Add SVG edge layer with animated dashed flow edges for active features (brand color); static edges for inactive; no performance regression"
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced", "react-performance-optimizer"]
-    dependencies: ["T4-004"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
-  - id: "T4-006"
-    description: "Add graph filter controls dropdown (All categories/features/enhancements/refactors/spikes) and artifact legend below graph with color swatches and animated edge example"
-    status: "pending"
-    assigned_to: ["frontend-developer", "ui-engineer-enhanced"]
-    dependencies: ["T4-005"]
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-
+- id: T4-001
+  description: Reskin lane headers with colored square glyphs and sticky positioning;
+    reskin feature cells with category badge, complexity chip, mismatch/stale indicators,
+    2-line title clamp, status pill
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  dependencies:
+  - T2-001
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+- id: T4-002
+  description: Implement DocChip component with type label, truncated title, status
+    dot; support multiple stacked chips per lane cell; mute completed/superseded artifacts
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  dependencies:
+  - T4-001
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+- id: T4-003
+  description: Implement PhaseDot (filled=completed, pulsing ring=in-progress, !=blocked)
+    and PhaseStackInline showing completed/total count in progress lane
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  - react-performance-optimizer
+  dependencies:
+  - T4-001
+  estimated_effort: 1.5 pts
+  priority: medium
+  assigned_model: sonnet
+- id: T4-004
+  description: "Implement TotalsCell showing story-points, total tokens, stacked model-identity\
+    \ bar (opus/sonnet/haiku proportional widths), per-model token counts with colored\
+    \ dots. Data source: server-provided feature.tokenUsage from PlanningQueryService\
+    \ / FeatureForensicsQueryService (total_tokens + per-model tokenUsageByModel delivered\
+    \ by T7-004) \u2014 actual session-forensics tokens, not client-side estimates"
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  - react-performance-optimizer
+  dependencies:
+  - T4-002
+  - T4-003
+  - T7-004
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+- id: T4-005
+  description: Add SVG edge layer with animated dashed flow edges for active features
+    (brand color); static edges for inactive; no performance regression
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  - react-performance-optimizer
+  dependencies:
+  - T4-004
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+- id: T4-006
+  description: Add graph filter controls dropdown (All categories/features/enhancements/refactors/spikes)
+    and artifact legend below graph with color swatches and animated edge example
+  status: completed
+  assigned_to:
+  - frontend-developer
+  - ui-engineer-enhanced
+  dependencies:
+  - T4-005
+  estimated_effort: 1.5 pts
+  priority: medium
+  assigned_model: sonnet
 parallelization:
-  batch_1: ["T4-001"]
-  batch_2: ["T4-002", "T4-003"]
-  batch_3: ["T4-004"]
-  batch_4: ["T4-005"]
-  batch_5: ["T4-006"]
-  critical_path: ["T4-001", "T4-002", "T4-004", "T4-005", "T4-006"]
-  estimated_total_time: "4-5 days"
-
+  batch_1:
+  - T4-001
+  batch_2:
+  - T4-002
+  - T4-003
+  batch_3:
+  - T4-004
+  batch_4:
+  - T4-005
+  batch_5:
+  - T4-006
+  critical_path:
+  - T4-001
+  - T4-002
+  - T4-004
+  - T4-005
+  - T4-006
+  estimated_total_time: 4-5 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-4.1", description: "Lane headers sticky and match design", status: "pending" }
-  - { id: "SC-4.2", description: "DocChips render for multi-artifact lanes", status: "pending" }
-  - { id: "SC-4.3", description: "PhaseStackInline with PhaseDots in all 3 states", status: "pending" }
-  - { id: "SC-4.4", description: "TotalsCell shows points and server-provided actual tokens from session forensics (total + per-model bar via feature.tokenUsageByModel); no client-side estimation", status: "pending" }
-  - { id: "SC-4.5", description: "SVG edges animated and performant", status: "pending" }
-  - { id: "SC-4.6", description: "Filter controls and legend functional", status: "pending" }
-  - { id: "SC-4.7", description: "Graph render time <=1.5s for 50 features", status: "pending" }
-
+- id: SC-4.1
+  description: Lane headers sticky and match design
+  status: pending
+- id: SC-4.2
+  description: DocChips render for multi-artifact lanes
+  status: pending
+- id: SC-4.3
+  description: PhaseStackInline with PhaseDots in all 3 states
+  status: pending
+- id: SC-4.4
+  description: TotalsCell shows points and server-provided actual tokens from session
+    forensics (total + per-model bar via feature.tokenUsageByModel); no client-side
+    estimation
+  status: pending
+- id: SC-4.5
+  description: SVG edges animated and performant
+  status: pending
+- id: SC-4.6
+  description: Filter controls and legend functional
+  status: pending
+- id: SC-4.7
+  description: Graph render time <=1.5s for 50 features
+  status: pending
 files_modified: []
+progress: 100
 ---
 
 # ccdash-planning-reskin-v2 - Phase 4: Planning Graph Reskin & Enhancements

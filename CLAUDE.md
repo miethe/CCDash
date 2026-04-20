@@ -138,3 +138,239 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Project switching**: Multi-project support via `projects.json` and `backend/project_manager.py`. Each project has its own session/doc/progress paths.
 - **MCP transport**: `backend/mcp/server.py` is a stdio server. Running it manually will block waiting for an MCP client; use `.mcp.json` or `backend/tests/test_mcp_server.py` for normal validation.
 - **Frontend tests**: Vitest covers utility and architecture guardrail tests under `components/**/__tests__`, `contexts/__tests__`, `lib/__tests__`, and `services/__tests__`.
+
+---
+
+## Operating Procedures
+
+### Prime Directives
+
+| Directive | Implementation |
+|-----------|---------------|
+| **Delegate everything** | Opus reasons & orchestrates; subagents implement |
+| Token efficient | Symbol system, codebase-explorer, CLI-first status updates |
+| Rapid iteration | PRD → plan → phase → code → verify |
+| No over-architecture | YAGNI until proven |
+
+### Opus Delegation Principle
+
+**You are Opus. Tokens are expensive. You orchestrate; subagents execute.**
+
+- ✗ **Never** write code directly (Read/Edit/Write for implementation)
+- ✗ **Never** do token-heavy exploration yourself
+- ✗ **Never** read full implementation files before delegating
+- ✓ **Always** delegate implementation to specialized subagents
+- ✓ **Always** use `codebase-explorer` (or Explore) for pattern discovery
+- ✓ **Focus** on reasoning, analysis, planning, orchestration, and commits
+
+**Delegation Pattern:**
+
+```text
+1. Analyze task → identify what needs to change
+2. Delegate exploration → codebase-explorer finds files/patterns
+3. Read progress YAML → get assigned_to and batch strategy
+4. Delegate implementation → parallel Task() calls
+5. Update progress → CLI scripts mark tasks complete
+6. Commit → only direct action Opus takes
+```
+
+**File context for subagents**: Provide file paths, not file contents. Subagents read files themselves. Only read files directly when planning decisions require understanding current state.
+
+**When you catch yourself about to edit a file**: STOP. Delegate instead.
+
+### Documentation Policy
+
+**Allowed:**
+
+- `/docs/` → user/dev/architecture docs (with frontmatter where applicable)
+- `.claude/progress/[prd-slug]/phase-N-progress.md` → ONE per phase (YAML+Markdown hybrid, schema_version: 2)
+- `.claude/worknotes/[prd-slug]/` → context notes and investigation scratch per PRD
+- `CHANGELOG.md` → user-facing changes; populated via `/release:bump` + `changelog-sync`
+
+**Prohibited:**
+
+- Debugging summaries as standalone files → use git commit messages
+- Multiple progress files per phase
+- Daily/weekly reports
+- Session notes committed as docs
+
+### Command–Skill Bindings
+
+**Commands do not automatically load skills.** When executing `/dev:*`, `/fix:*`, `/plan:*`, or other workflow commands, you MUST explicitly invoke the required skill via the `Skill` tool before proceeding.
+
+| Command                    | Required Skills                                    | Invoke First                                                            |
+| -------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------- |
+| `/dev:execute-phase`       | dev-execution, artifact-tracking                   | `Skill("dev-execution")` then `Skill("artifact-tracking")`              |
+| `/dev:quick-feature`       | dev-execution                                      | `Skill("dev-execution")`                                                |
+| `/dev:implement-story`     | dev-execution, artifact-tracking                   | `Skill("dev-execution")` then `Skill("artifact-tracking")`              |
+| `/dev:complete-user-story` | dev-execution, artifact-tracking                   | `Skill("dev-execution")` then `Skill("artifact-tracking")`              |
+| `/dev:create-feature`      | dev-execution                                      | `Skill("dev-execution")`                                                |
+| `/plan:*`                  | planning                                           | `Skill("planning")`                                                     |
+| `/fix:debug`               | debugging (+ planning, artifact-tracking if critical) | `Skill("debugging")` then conditionally the others                    |
+| `/release:pr`              | release, changelog-sync                            | `Skill("release")` then `Skill("changelog-sync")`                       |
+| `/mc`                      | meatycapture-capture (self-contained)              | no additional skills needed                                             |
+
+**Enforcement**: First action after receiving a listed command is calling `Skill()` for each required skill. Do not proceed with any other actions until skills are loaded. Referenced file paths inside skill prompts are NOT auto-read — the skill load is what brings them in.
+
+---
+
+## Agent Delegation
+
+**Mandatory**: All implementation work is delegated. Opus orchestrates only.
+
+### Model Selection
+
+| Model | Use When |
+|-------|----------|
+| **Opus 4.7** | Orchestration, deep reasoning, architectural decisions, cross-system debugging |
+| **Sonnet 4.6** | Implementation, review, moderate reasoning (DEFAULT for subagents) |
+| **Haiku 4.5** | Mechanical search, extraction, simple queries, doc writing |
+
+Default: Sonnet 4.6 for subagents. Escalate to Opus only when the task genuinely requires deep reasoning.
+
+### Multi-Model Integration (opt-in supplements)
+
+External models are execution targets; Claude Opus remains the sole orchestrator.
+
+| Capability | Model | Trigger |
+|-----------|-------|---------|
+| Plan review / second opinion | GPT-5.3-Codex via `codex` skill | Opt-in checkpoint before large changes |
+| PR cross-validation / web research | Gemini 3.1 Pro/Flash via `gemini-cli` skill | Current web info; alternative perspective |
+| Debug escalation | GPT-5.3-Codex | After 2+ failed Claude debug cycles |
+| Scaffold / bounded subtasks | IBM Bob Shell via `bob-shell-delegate` | Drafting, scaffolding, exploration |
+| Image generation | Nano Banana / Nano Banana Pro | Task requires image output |
+| Video generation | Sora 2 via `sora` skill | Explicit request |
+
+**Disagreement protocol**: When models conflict, tests decide — not model preference. CI is the neutral arbiter.
+
+### Background Execution
+
+| Parameter | Purpose |
+|-----------|---------|
+| `run_in_background: true` | Launch agent without blocking |
+| `TaskOutput(task_id)` | Retrieve results (blocking) |
+| `TaskOutput(task_id, block: false)` | Check status without waiting |
+
+**Use background** for: 5+ independent tasks, productive work to do while waiting, long-running research.
+**Do not use background** for: 2–3 small tasks, immediately-needed results, sequential-dependency tasks.
+
+**Critical rule — file-writing agents**: Do NOT call `TaskOutput()` on background agents that wrote files. Verify their work on disk instead (read the file, grep for the change, run the test). Pulling their transcript defeats the parallelism gain.
+
+### Context Budget Discipline
+
+**Budget**: ~52K baseline leaves ~148K for work. Aim for ~25–30K per phase.
+
+**Key rules:**
+- Task prompts < 500 words (paths, not contents)
+- Don't explore work you'll delegate — let the subagent do it
+- Always scope `Glob` with a `path`
+- No full-file reads before a delegation decision is made
+- Verify background-agent output on disk, not via `TaskOutput()`
+
+---
+
+## Orchestration & Progress Tracking
+
+**Reference**: Use the `artifact-tracking` skill for anything beyond a single-task status flip.
+
+### File Locations
+
+| Type | Location | Limit |
+|------|----------|-------|
+| Progress | `.claude/progress/[prd-slug]/phase-N-progress.md` | ONE per phase |
+| Context / worknotes | `.claude/worknotes/[prd-slug]/` | ONE context.md per PRD |
+| PRD | `docs/project_plans/PRDs/**/[prd-slug].md` | ONE per feature |
+| Implementation plan | `docs/project_plans/implementation_plans/**/[prd-slug].md` | ONE per PRD |
+
+Task IDs in progress YAML use the `T{phase}-{nnn}` convention (e.g., `T0-001`, `T7-012`). Match whatever the phase file declares.
+
+### CLI-First Updates (0 agent tokens)
+
+Four scripts under `.claude/skills/artifact-tracking/scripts/`:
+
+```bash
+# Single task status
+python .claude/skills/artifact-tracking/scripts/update-status.py \
+  -f .claude/progress/ccdash-planning-reskin-v2/phase-7-progress.md \
+  -t T7-003 -s completed
+
+# Batch update
+python .claude/skills/artifact-tracking/scripts/update-batch.py \
+  -f .claude/progress/ccdash-planning-reskin-v2/phase-7-progress.md \
+  --updates "T7-001:completed,T7-002:completed,T7-003:in_progress"
+
+# Arbitrary field (overall_progress, completion_estimate, etc.)
+python .claude/skills/artifact-tracking/scripts/update-field.py \
+  -f FILE --field overall_progress --value 85
+
+# Plan / PRD status lifecycle (draft → approved → in-progress → completed)
+python .claude/skills/artifact-tracking/scripts/manage-plan-status.py \
+  --file docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md \
+  --status in-progress
+```
+
+**Use agents only for**: creating new progress files, status updates that need context/notes, recording blockers, validation after phase completion.
+
+### Orchestration Workflow
+
+1. **Read phase YAML frontmatter** → get `parallelization.batch_N` and `tasks[].assigned_to` / `assigned_model`
+2. **Execute batch in parallel** → single message with multiple `Task()` calls (one per independent task)
+3. **Update via CLI** → `update-batch.py` after tasks complete (verify on disk first for background agents)
+4. **Validate** → senior-code-reviewer / task-completion-validator before marking phase complete
+
+### Token Efficiency
+
+| Operation | Agent-driven | CLI-first | Savings |
+|-----------|--------------|-----------|---------|
+| Single status update | ~25KB | ~50 bytes | 99.8% |
+| Batch update (5 tasks) | ~50KB | ~100 bytes | 99.8% |
+| Query blockers | ~75KB | ~3KB | 96% |
+
+---
+
+## Progressive Disclosure Context
+
+Load context in this order — stop as soon as you have what you need:
+
+1. **Runtime truth** — the code and generated artifacts
+   - `backend/application/services/agent_queries/` (intelligence layer)
+   - `backend/routers/` + `types.ts` (API and type shapes)
+   - `ai/` generated graphs if present
+2. **Root `CLAUDE.md`** — this file (scope, invariants, conventions)
+3. **Authoritative spec / PRD / phase plan** for the current work
+   - PRD: `docs/project_plans/PRDs/**/[prd-slug].md`
+   - Plan: `docs/project_plans/implementation_plans/**/[prd-slug].md`
+   - Progress: `.claude/progress/[prd-slug]/phase-N-progress.md`
+4. **Distilled project context** (only if the above is insufficient)
+   - `.claude/context/distilled/project-purpose-and-feature-catalog.md`
+   - `.claude/context/distilled/project-fundamentals-and-design-context.md`
+   - `.claude/context/distilled/research-agent-context-pack.md`
+   - `.claude/context/distilled/project-opportunity-map.md`
+5. **Historical plans/reports** — for rationale only; verify behavior from runtime truth, not stale plans.
+
+**Anti-pattern**: reading deep plans before runtime truth. Plans drift. The code is the contract.
+
+---
+
+## `.claude/` Directory Inventory
+
+| Path | Purpose |
+|------|---------|
+| `.claude/agents/` | Subagent definitions (symlink to shared SkillMeat agent roster) |
+| `.claude/commands/` | Custom slash commands (symlink to SkillMeat commands) |
+| `.claude/skills/` | Skills (symlink to SkillMeat skills) — `artifact-tracking`, `planning`, `dev-execution`, `debugging`, `release`, `changelog-sync`, `ccdash`, etc. |
+| `.claude/progress/` | Phase progress files (one per phase per PRD) |
+| `.claude/worknotes/` | PRD-scoped context and investigation notes |
+| `.claude/context/distilled/` | Project-context-distiller output (feature catalog, fundamentals, opportunity map, research pack) |
+| `.claude/specs/` | Project-specific specs and cross-project examples |
+| `.claude/hooks/` | Project-local hook scripts |
+| `.claude/findings/` | Spike / research output |
+| `.claude/plans/` | Legacy / ad-hoc planning docs |
+
+## External Systems
+
+| System | Purpose |
+|--------|---------|
+| `.mcp.json` (ccdash stdio) | The in-repo CCDash MCP server — feature forensics, project status, workflow failure patterns, AAR |
+| Local filesystem | Agent session JSONL logs + markdown docs (the parser source of truth) |
+| SQLite / PostgreSQL cache | Derived DB cache; frontend reads from API, not filesystem directly |

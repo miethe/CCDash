@@ -1992,6 +1992,32 @@ export interface PlanningNode {
   statusDetail?: PlanningEffectiveStatus | null;
 }
 
+/**
+ * Per-model token breakdown within a FeatureTokenRollup.
+ * Delivered by T7-004 (PlanningQueryService / FeatureForensicsQueryService).
+ */
+export interface FeatureModelTokens {
+  /** Normalized model identity key: "opus" | "sonnet" | "haiku" */
+  model: 'opus' | 'sonnet' | 'haiku' | string;
+  totalTokens: number;
+  tokenInput?: number;
+  tokenOutput?: number;
+}
+
+/**
+ * Feature-level token + story-point rollup, added to ProjectPlanningGraph by T7-004.
+ * The backend attaches this per featureSlug; frontend reads it as server truth only.
+ */
+export interface FeatureTokenRollup {
+  featureSlug: string;
+  /** Aggregated story-point estimate from progress files. 0 when unavailable. */
+  storyPoints: number;
+  /** Sum of all session tokens linked to this feature. 0 when no sessions linked. */
+  totalTokens: number;
+  /** Per-model breakdown. Empty array when no sessions linked. */
+  byModel: FeatureModelTokens[];
+}
+
 export interface PlanningEdge {
   sourceId: string;
   targetId: string;
@@ -3019,6 +3045,12 @@ export interface ProjectPlanningGraph extends AgentQueryEnvelope {
   phaseBatches: PlanningPhaseBatch[];
   nodeCount: number;
   edgeCount: number;
+  /**
+   * Per-feature token + story-point rollups, keyed by featureSlug.
+   * Present when the backend delivers T7-004 data; absent (undefined) otherwise.
+   * UI must fall back to empty-state rendering when undefined or entry missing.
+   */
+  featureTokenRollups?: Record<string, FeatureTokenRollup>;
 }
 
 /** One phase's planning context inside FeaturePlanningContext. */

@@ -5,6 +5,7 @@
 import type {
   FeaturePlanningContext,
   FeatureSummaryItem,
+  FeatureTokenRollup,
   PhaseContextItem,
   PhaseOperations,
   PhaseTaskItem,
@@ -96,6 +97,20 @@ interface WireProjectPlanningSummary extends WireEnvelope {
   feature_summaries: WireFeatureSummaryItem[];
 }
 
+interface WireFeatureModelTokens {
+  model: string;
+  total_tokens: number;
+  token_input?: number;
+  token_output?: number;
+}
+
+interface WireFeatureTokenRollup {
+  feature_slug: string;
+  story_points: number;
+  total_tokens: number;
+  by_model: WireFeatureModelTokens[];
+}
+
 interface WireProjectPlanningGraph extends WireEnvelope {
   project_id: string;
   feature_id: string | null;
@@ -105,6 +120,8 @@ interface WireProjectPlanningGraph extends WireEnvelope {
   phase_batches: Record<string, unknown>[];
   node_count: number;
   edge_count: number;
+  /** T7-004: per-feature token + story-point rollups, keyed by featureSlug. */
+  feature_token_rollups?: Record<string, WireFeatureTokenRollup>;
 }
 
 interface WirePhaseContextItem {
@@ -228,6 +245,27 @@ function castPhaseBatches(dicts: Record<string, unknown>[]): PlanningPhaseBatch[
   return dicts as unknown as PlanningPhaseBatch[];
 }
 
+function adaptFeatureTokenRollups(
+  wire: Record<string, WireFeatureTokenRollup> | undefined,
+): Record<string, FeatureTokenRollup> | undefined {
+  if (!wire) return undefined;
+  const result: Record<string, FeatureTokenRollup> = {};
+  for (const [slug, r] of Object.entries(wire)) {
+    result[slug] = {
+      featureSlug: r.feature_slug ?? slug,
+      storyPoints: r.story_points ?? 0,
+      totalTokens: r.total_tokens ?? 0,
+      byModel: (r.by_model ?? []).map(m => ({
+        model: m.model ?? '',
+        totalTokens: m.total_tokens ?? 0,
+        tokenInput: m.token_input,
+        tokenOutput: m.token_output,
+      })),
+    };
+  }
+  return result;
+}
+
 function adaptPhaseContextItem(wire: WirePhaseContextItem): PhaseContextItem {
   return {
     phaseId: wire.phase_id ?? '',
@@ -318,6 +356,7 @@ export async function getProjectPlanningGraph(opts?: {
     phaseBatches: castPhaseBatches(wire.phase_batches ?? []),
     nodeCount: wire.node_count ?? 0,
     edgeCount: wire.edge_count ?? 0,
+    featureTokenRollups: adaptFeatureTokenRollups(wire.feature_token_rollups),
   };
 }
 
