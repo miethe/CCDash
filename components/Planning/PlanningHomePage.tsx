@@ -16,6 +16,8 @@ import { PlanningMetricsStrip } from './PlanningMetricsStrip';
 import { PlanningArtifactChipRow } from './PlanningArtifactChipRow';
 import { TrackerIntakePanel } from './TrackerIntakePanel';
 import { PlanningDensityToggle } from './PlanningRouteLayout';
+import { PlanningTriagePanel } from './PlanningTriagePanel';
+import { PlanningAgentRosterPanel } from './PlanningAgentRosterPanel';
 import {
   Chip,
   EffectiveStatusChips,
@@ -471,11 +473,13 @@ function PlanningShell({
   liveStatus,
   onSelectFeature,
   onDrillDown,
+  onRefresh,
 }: {
   summary: ProjectPlanningSummary;
   liveStatus: LiveConnectionStatus;
   onSelectFeature: (featureId: string) => void;
   onDrillDown: (type: ArtifactDrillDownType) => void;
+  onRefresh?: () => void;
 }) {
   return (
     <div className="max-w-screen-2xl space-y-6 px-1 py-2">
@@ -514,6 +518,19 @@ function PlanningShell({
       <Panel className="px-5 py-3" data-testid="planning-artifact-chip-row-section">
         <PlanningArtifactChipRow nodeCountsByType={summary.nodeCountsByType} />
       </Panel>
+
+      {/* T3-003: Two-up layout — Triage (1.3fr) + Agent Roster (1fr); stacks below 1280px */}
+      <div
+        className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_1fr]"
+        data-testid="planning-triage-roster-grid"
+      >
+        <PlanningTriagePanel
+          summary={summary}
+          onSelectFeature={onSelectFeature}
+          onRefresh={onRefresh}
+        />
+        <PlanningAgentRosterPanel />
+      </div>
 
       {/* PCP-302: Planning Summary */}
       <div data-testid="planning-summary-section">
@@ -665,6 +682,7 @@ export default function PlanningHomePage() {
       onDrillDown={(type) =>
         navigate(planningArtifactsHref(type))
       }
+      onRefresh={() => void loadSummary()}
     />
   );
 }
