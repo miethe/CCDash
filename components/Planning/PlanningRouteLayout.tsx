@@ -4,6 +4,7 @@ import { Outlet } from 'react-router-dom';
 import '../../planning-tokens.css';
 import { cn } from '@/lib/utils';
 import { Btn, BtnGhost } from './primitives';
+import { PlanningTopBar } from './PlanningTopBar';
 
 export const PLANNING_DENSITY_STORAGE_KEY = 'planning_density_preference';
 
@@ -167,11 +168,32 @@ export function PlanningRouteLayout() {
 
   return (
     <PlanningRouteContext.Provider value={value}>
+      {/*
+       * Outer shell: fills the space left by the fixed app rail and becomes the
+       * independent scroll container for all planning content. The rail itself
+       * is sticky/fixed at the app-shell level (T1-001) and does not scroll
+       * with this region.
+       */}
       <div
-        className={cn('planning-route min-h-full planning-density-comfortable', density === 'compact' && 'planning-density-compact')}
+        className={cn(
+          'planning-route flex-1 min-w-0 overflow-y-auto',
+          'planning-density-comfortable',
+          density === 'compact' && 'planning-density-compact',
+        )}
         data-planning-density={density}
       >
-        <Outlet />
+        {/*
+         * Canvas container: enforces the 1680px max-width design spec and
+         * provides consistent 22px vertical / 28px horizontal padding for
+         * both the top bar and page content rendered by <Outlet />.
+         *
+         * px-7   = 28px left/right  (design: padding-left/right 28px)
+         * pt-[22px] / pb-20 = 22px top, 80px bottom (matches design bottom clearance)
+         */}
+        <div className="mx-auto w-full max-w-[1680px] px-7 pt-[22px] pb-20 xl:max-w-[1680px]">
+          <PlanningTopBar />
+          <Outlet />
+        </div>
       </div>
     </PlanningRouteContext.Provider>
   );

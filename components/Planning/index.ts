@@ -2,6 +2,8 @@ export { default as PlanningHomePage } from './PlanningHomePage';
 export { ArtifactDrillDownPage } from './ArtifactDrillDownPage';
 export type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
 export { PlanningRouteLayout, PlanningDensityToggle } from './PlanningRouteLayout';
+export { PlanningTopBar } from './PlanningTopBar';
+export type { PlanningTopBarProps } from './PlanningTopBar';
 export type { PlanningDensity } from './PlanningRouteLayout';
 export { PlanningSummaryPanel } from './PlanningSummaryPanel';
 export type { PlanningSummaryPanelProps } from './PlanningSummaryPanel';
