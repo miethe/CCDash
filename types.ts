@@ -2018,6 +2018,45 @@ export interface FeatureTokenRollup {
   byModel: FeatureModelTokens[];
 }
 
+export interface PlanningArtifactRef {
+  artifactId: string;
+  title: string;
+  filePath: string;
+  canonicalPath: string;
+  docType: string;
+  status: string;
+  updatedAt: string;
+  sourceRef: string;
+}
+
+export interface PlanningSpikeItem {
+  spikeId: string;
+  title: string;
+  status: string;
+  filePath: string;
+  sourceRef: string;
+}
+
+export interface PlanningOpenQuestionItem {
+  oqId: string;
+  question: string;
+  severity: string;
+  answerText: string;
+  resolved: boolean;
+  pendingSync: boolean;
+  sourceDocumentId: string;
+  sourceDocumentPath: string;
+  updatedAt: string;
+}
+
+export interface PlanningTokenUsageByModel {
+  opus: number;
+  sonnet: number;
+  haiku: number;
+  other: number;
+  total: number;
+}
+
 export interface PlanningEdge {
   sourceId: string;
   targetId: string;
@@ -3087,6 +3126,21 @@ export interface FeaturePlanningContext extends AgentQueryEnvelope {
   phases: PhaseContextItem[];
   blockedBatchIds: string[];
   linkedArtifactRefs: string[];
+  specs?: PlanningArtifactRef[];
+  prds?: PlanningArtifactRef[];
+  plans?: PlanningArtifactRef[];
+  ctxs?: PlanningArtifactRef[];
+  reports?: PlanningArtifactRef[];
+  spikes?: PlanningSpikeItem[];
+  openQuestions?: PlanningOpenQuestionItem[];
+  readyToPromote?: boolean;
+  isStale?: boolean;
+  totalTokens?: number;
+  tokenUsageByModel?: PlanningTokenUsageByModel;
+  category?: string;
+  slug?: string;
+  complexity?: string;
+  tags?: string[];
 }
 
 /** Task summary within a phase operations response. */

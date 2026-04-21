@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -10,8 +11,10 @@ import {
   FolderSearch,
   Link2,
   PackageOpen,
+  Play,
   RefreshCw,
   Users,
+  X,
 } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
@@ -30,13 +33,18 @@ import { useLiveInvalidation } from '../../services/live/useLiveInvalidation';
 import type { LiveConnectionStatus } from '../../services/live';
 import {
   castPlanningStatus,
-  EffectiveStatusChips,
   LineageRow,
   MismatchBadge,
   BatchReadinessPill,
   StatusChip,
   statusVariant,
 } from '@/components/shared/PlanningMetadata';
+import {
+  BtnGhost,
+  BtnPrimary,
+  Chip,
+  StatusPill,
+} from './primitives/PhaseZeroPrimitives';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -56,6 +64,106 @@ function sortNodesByType(nodes: PlanningNode[]): PlanningNode[] {
   );
 }
 
+type LineageKind = 'spec' | 'spike' | 'prd' | 'plan' | 'phase' | 'ctx' | 'report';
+type DetailSectionKey = 'lineage' | 'phases' | 'blockers' | 'artifacts';
+
+interface LineageTileModel {
+  kind: LineageKind;
+  label: string;
+  count: number;
+  status: string | null;
+  color: string;
+  section: DetailSectionKey;
+}
+
+interface DerivedFeatureMeta {
+  category?: string;
+  slug?: string;
+}
+
+const LINEAGE_TILE_CONFIG: Array<Omit<LineageTileModel, 'count' | 'status'>> = [
+  { kind: 'spec', label: 'SPEC', color: 'var(--spec)', section: 'artifacts' },
+  { kind: 'spike', label: 'SPIKE', color: 'var(--spk)', section: 'artifacts' },
+  { kind: 'prd', label: 'PRD', color: 'var(--prd)', section: 'artifacts' },
+  { kind: 'plan', label: 'PLAN', color: 'var(--plan)', section: 'artifacts' },
+  { kind: 'phase', label: 'PHASE', color: 'var(--prog)', section: 'phases' },
+  { kind: 'ctx', label: 'CTX', color: 'var(--ctx)', section: 'artifacts' },
+  { kind: 'report', label: 'REPORT', color: 'var(--rep)', section: 'artifacts' },
+];
+
+function representativeStatus(items: Array<{ status?: string; effectiveStatus?: string; rawStatus?: string }>): string | null {
+  const priority = ['blocked', 'in-progress', 'in_progress', 'ready', 'approved', 'completed', 'draft', 'shaping', 'idea'];
+  for (const status of priority) {
+    if (items.some(item => (item.status || item.effectiveStatus || item.rawStatus) === status)) {
+      return status;
+    }
+  }
+  const first = items.find(item => item.status || item.effectiveStatus || item.rawStatus);
+  return first ? (first.status || first.effectiveStatus || first.rawStatus || null) : null;
+}
+
+function countNodesByType(nodes: PlanningNode[], type: PlanningNodeType): number {
+  return nodes.filter(node => node.type === type).length;
+}
+
+export function buildLineageTiles(context: FeaturePlanningContext): LineageTileModel[] {
+  const nodes = context.graph.nodes ?? [];
+  const specs = context.specs?.length ? context.specs : nodes.filter(node => node.type === 'design_spec');
+  const prds = context.prds?.length ? context.prds : nodes.filter(node => node.type === 'prd');
+  const plans = context.plans?.length ? context.plans : nodes.filter(node => node.type === 'implementation_plan');
+  const ctxs = context.ctxs?.length ? context.ctxs : nodes.filter(node => node.type === 'context');
+  const reports = context.reports?.length ? context.reports : nodes.filter(node => node.type === 'report');
+  const spikes = context.spikes ?? [];
+  const phases = context.phases?.length ? context.phases : nodes.filter(node => node.type === 'progress');
+
+  const byKind: Record<LineageKind, { count: number; status: string | null }> = {
+    spec: { count: specs.length || countNodesByType(nodes, 'design_spec'), status: representativeStatus(specs) },
+    spike: { count: spikes.length, status: representativeStatus(spikes) },
+    prd: { count: prds.length || countNodesByType(nodes, 'prd'), status: representativeStatus(prds) },
+    plan: { count: plans.length || countNodesByType(nodes, 'implementation_plan'), status: representativeStatus(plans) },
+    phase: { count: phases.length, status: representativeStatus(phases) },
+    ctx: { count: ctxs.length || countNodesByType(nodes, 'context'), status: representativeStatus(ctxs) },
+    report: { count: reports.length || countNodesByType(nodes, 'report'), status: representativeStatus(reports) },
+  };
+
+  return LINEAGE_TILE_CONFIG.map(config => ({
+    ...config,
+    count: byKind[config.kind].count,
+    status: byKind[config.kind].status,
+  }));
+}
+
+export function deriveFeatureMeta(context: FeaturePlanningContext, fallbackFeatureId?: string): DerivedFeatureMeta {
+  const explicitSlug = context.slug || context.featureId || fallbackFeatureId;
+  const allPaths = [
+    ...(context.linkedArtifactRefs ?? []),
+    ...(context.graph.nodes ?? []).map(node => node.path),
+    ...(context.specs ?? []).map(item => item.filePath || item.canonicalPath),
+    ...(context.prds ?? []).map(item => item.filePath || item.canonicalPath),
+    ...(context.plans ?? []).map(item => item.filePath || item.canonicalPath),
+  ].filter(Boolean);
+
+  const categoryFromPath = allPaths
+    .map(path => path.match(/project_plans\/(?:PRDs|implementation_plans|design-specs|design_specs)\/([^/]+)\//i)?.[1])
+    .find(Boolean);
+
+  const slugFromPath = allPaths
+    .map(path => path.match(/([^/]+)\.md$/)?.[1])
+    .find(Boolean);
+
+  return {
+    category: context.category || categoryFromPath,
+    slug: explicitSlug || slugFromPath,
+  };
+}
+
+function phaseDotState(status: string): 'completed' | 'in_progress' | 'blocked' | 'pending' {
+  if (status === 'completed') return 'completed';
+  if (status === 'in-progress' || status === 'in_progress') return 'in_progress';
+  if (status === 'blocked') return 'blocked';
+  return 'pending';
+}
+
 // ── Small shared UI pieces ────────────────────────────────────────────────────
 
 function LiveStatusDot({ status }: { status: LiveConnectionStatus }) {
@@ -73,6 +181,50 @@ function LiveStatusDot({ status }: { status: LiveConnectionStatus }) {
       <span className={`inline-block h-2 w-2 rounded-full ${cfg.color}`} />
       <span className="text-xs text-muted-foreground">{cfg.label}</span>
     </span>
+  );
+}
+
+function DrawerShell({ children }: { children: ReactNode }) {
+  return (
+    <aside
+      className="fixed bottom-0 right-0 top-0 z-50 flex w-[min(920px,64vw)] min-w-[920px] max-w-[64vw] flex-col border-l border-[color:var(--line-2)] bg-[color:var(--bg-1)] shadow-[-20px_0_60px_rgba(0,0,0,0.4)] max-[1279px]:w-[min(640px,100vw)] max-[1279px]:min-w-0 max-[1279px]:max-w-[100vw]"
+      aria-label="Planning feature detail"
+    >
+      {children}
+    </aside>
+  );
+}
+
+function DrawerStateHeader({ onClose, children }: { onClose: () => void; children?: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4 border-b border-[color:var(--line-1)] px-[22px] py-[18px]">
+      <div className="min-w-0">{children}</div>
+      <BtnGhost
+        size="sm"
+        onClick={onClose}
+        aria-label="Close planning detail"
+        className="shrink-0 px-2"
+      >
+        <X size={14} />
+      </BtnGhost>
+    </div>
+  );
+}
+
+function DrawerBody({
+  children,
+  bodyRef,
+}: {
+  children: ReactNode;
+  bodyRef?: RefObject<HTMLDivElement>;
+}) {
+  return (
+    <div
+      ref={bodyRef}
+      className="flex-1 space-y-[18px] overflow-y-auto px-[22px] py-[18px]"
+    >
+      {children}
+    </div>
   );
 }
 
@@ -364,7 +516,7 @@ function LinkedArtifactsPanel({
 
 // ── Section card wrapper ──────────────────────────────────────────────────────
 
-function SectionCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+function SectionCard({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
     <div className="rounded-xl border border-panel-border bg-surface-elevated overflow-hidden">
       <div className="flex items-center gap-2.5 border-b border-panel-border px-4 py-3">
@@ -375,6 +527,159 @@ function SectionCard({ title, icon, children }: { title: string; icon: React.Rea
         {children}
       </div>
     </div>
+  );
+}
+
+function CollapsibleSection({
+  title,
+  eyebrow,
+  icon,
+  color = 'var(--brand)',
+  open,
+  onToggle,
+  children,
+  sectionRef,
+}: {
+  title: string;
+  eyebrow?: string;
+  icon: ReactNode;
+  color?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  sectionRef?: RefObject<HTMLElement>;
+}) {
+  return (
+    <div
+      ref={sectionRef as RefObject<HTMLDivElement>}
+      className="planning-panel overflow-hidden rounded-[var(--radius)]"
+      style={{ borderLeft: `3px solid ${color}` }}
+    >
+      <div className="flex items-center gap-2.5 border-b border-[color:var(--line-1)] px-4 py-3">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="flex rounded p-1 text-[color:var(--ink-2)] transition-colors hover:bg-[color:var(--bg-2)] hover:text-[color:var(--ink-0)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--info)]"
+        >
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+        <span className="shrink-0" style={{ color }}>{icon}</span>
+        <div className="min-w-0 flex-1">
+          {eyebrow ? (
+            <div className="planning-caps text-[9.5px]" style={{ color }}>
+              {eyebrow}
+            </div>
+          ) : null}
+          <h2 className="truncate text-sm font-semibold text-[color:var(--ink-0)]">{title}</h2>
+        </div>
+      </div>
+      {open ? <div className="px-4 py-4">{children}</div> : null}
+    </div>
+  );
+}
+
+function PhaseDot({
+  status,
+  label,
+  title,
+}: {
+  status: string;
+  label: string;
+  title: string;
+}) {
+  const state = phaseDotState(status);
+  const colorMap = {
+    completed: 'var(--ok)',
+    in_progress: 'var(--info)',
+    blocked: 'var(--err)',
+    pending: 'var(--ink-3)',
+  };
+  const color = colorMap[state];
+
+  return (
+    <span
+      title={title}
+      className="planning-mono relative inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[7.5px] font-semibold"
+      style={{
+        color: state === 'completed' ? 'var(--bg-0)' : color,
+        background: state === 'completed' ? color : `color-mix(in oklab, ${color} 8%, transparent)`,
+        border: `1.5px solid ${color}`,
+      }}
+    >
+      {state === 'completed' ? '✓' : state === 'blocked' ? '!' : label}
+      {state === 'in_progress' ? (
+        <span
+          aria-hidden="true"
+          className="absolute -inset-1 rounded-md border"
+          style={{ borderColor: `color-mix(in oklab, ${color} 55%, transparent)` }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function LineageStrip({
+  tiles,
+  phases,
+  onSelect,
+}: {
+  tiles: LineageTileModel[];
+  phases: PhaseContextItem[];
+  onSelect: (tile: LineageTileModel) => void;
+}) {
+  return (
+    <section>
+      <div className="planning-caps mb-2.5 text-[10px] text-[color:var(--ink-3)]">
+        Lineage - click to expand below
+      </div>
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
+        {tiles.map(tile => {
+          const muted = tile.count === 0;
+          return (
+            <button
+              key={tile.kind}
+              type="button"
+              onClick={() => onSelect(tile)}
+              disabled={muted}
+              className="planning-tile min-h-[88px] text-left transition-colors disabled:cursor-default disabled:opacity-45"
+              style={{
+                padding: 10,
+                borderColor: `color-mix(in oklab, ${tile.color} 30%, var(--line-1))`,
+                background: `linear-gradient(180deg, color-mix(in oklab, ${tile.color} ${muted ? 4 : 10}%, var(--bg-2)), var(--bg-2))`,
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="planning-mono planning-caps text-[10px]" style={{ color: tile.color }}>
+                  {tile.label}
+                </span>
+                <span className="planning-mono planning-tnum rounded border border-[color:var(--line-1)] bg-[color:var(--bg-0)] px-1.5 text-[10px] text-[color:var(--ink-2)]">
+                  x{tile.count}
+                </span>
+              </div>
+              <div className="mt-2 min-h-[20px]">
+                {tile.kind === 'phase' && tile.count > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {phases.slice(0, 12).map((phase, index) => (
+                      <PhaseDot
+                        key={phase.phaseId || phase.phaseToken || index}
+                        status={phase.effectiveStatus || phase.rawStatus}
+                        label={String(phase.phaseNumber ?? index + 1)}
+                        title={phase.phaseTitle || phase.phaseToken || `Phase ${index + 1}`}
+                      />
+                    ))}
+                  </div>
+                ) : tile.status ? (
+                  <StatusPill status={tile.status} />
+                ) : (
+                  <span className="text-[10px] text-[color:var(--ink-3)]">-</span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -392,6 +697,33 @@ export function PlanningNodeDetail() {
   const { activeProject, documents } = useData();
   const [state, setState] = useState<DetailFetchState>({ phase: 'idle' });
   const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
+  const [openSections, setOpenSections] = useState<Record<DetailSectionKey, boolean>>({
+    lineage: true,
+    phases: true,
+    blockers: true,
+    artifacts: true,
+  });
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = {
+    lineage: useRef<HTMLElement>(null),
+    phases: useRef<HTMLElement>(null),
+    blockers: useRef<HTMLElement>(null),
+    artifacts: useRef<HTMLElement>(null),
+  };
+
+  const closeDetail = useCallback(() => {
+    navigate('/planning');
+  }, [navigate]);
+
+  const scrollToSection = useCallback((section: DetailSectionKey) => {
+    setOpenSections(current => ({ ...current, [section]: true }));
+    window.setTimeout(() => {
+      const body = bodyRef.current;
+      const target = sectionRefs[section].current;
+      if (!body || !target) return;
+      body.scrollTo({ top: Math.max(target.offsetTop - 16, 0), behavior: 'smooth' });
+    }, 0);
+  }, [sectionRefs]);
 
   const loadContext = useCallback(async () => {
     if (!featureId) {
@@ -429,32 +761,46 @@ export function PlanningNodeDetail() {
 
   if (!activeProject) {
     return (
-      <div className="max-w-screen-xl space-y-6">
-        <NoProjectShell />
-      </div>
+      <DrawerShell>
+        <DrawerStateHeader onClose={closeDetail}>
+          <p className="planning-caps text-[10px] text-[color:var(--ink-3)]">Planning detail</p>
+        </DrawerStateHeader>
+        <DrawerBody>
+          <NoProjectShell />
+        </DrawerBody>
+      </DrawerShell>
     );
   }
 
   if (state.phase === 'idle' || state.phase === 'loading') {
     return (
-      <div className="max-w-screen-xl">
-        <DetailSkeleton />
-      </div>
+      <DrawerShell>
+        <DrawerStateHeader onClose={closeDetail}>
+          <p className="planning-caps text-[10px] text-[color:var(--ink-3)]">Planning detail</p>
+        </DrawerStateHeader>
+        <DrawerBody>
+          <DetailSkeleton />
+        </DrawerBody>
+      </DrawerShell>
     );
   }
 
   if (state.phase === 'error') {
     return (
-      <div className="max-w-screen-xl space-y-4">
-        <button
-          onClick={() => navigate('/planning')}
-          className="flex items-center gap-2 text-xs text-muted-foreground hover:text-panel-foreground transition-colors"
-        >
-          <ArrowLeft size={13} />
-          Back to Planning
-        </button>
-        <DetailError message={state.message} onRetry={() => void loadContext()} />
-      </div>
+      <DrawerShell>
+        <DrawerStateHeader onClose={closeDetail}>
+          <button
+            onClick={closeDetail}
+            className="flex items-center gap-2 text-xs text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--ink-0)]"
+          >
+            <ArrowLeft size={13} />
+            Back to Planning
+          </button>
+        </DrawerStateHeader>
+        <DrawerBody>
+          <DetailError message={state.message} onRetry={() => void loadContext()} />
+        </DrawerBody>
+      </DrawerShell>
     );
   }
 
@@ -463,93 +809,137 @@ export function PlanningNodeDetail() {
   const isMismatch = context.mismatchState !== 'aligned' && context.mismatchState !== 'unknown';
   const mismatchReason = planningStatus?.mismatchState?.reason ?? context.mismatchState;
   const evidenceLabels = planningStatus?.mismatchState?.evidence?.map(ev => ev.label) ?? [];
+  const featureMeta = deriveFeatureMeta(context, featureId);
+  const lineageTiles = buildLineageTiles(context);
+  const visibleTags = (context.tags ?? []).slice(0, 3);
 
   return (
-    <div className="max-w-screen-xl space-y-5">
-      {/* Header */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-4">
-          <button
-            onClick={() => navigate('/planning')}
-            className="flex items-center gap-2 rounded-lg border border-panel-border bg-surface-elevated px-3 py-1.5 text-xs text-muted-foreground hover:text-panel-foreground hover:bg-slate-700/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info"
-          >
-            <ArrowLeft size={13} />
-            Back to Planning
-          </button>
-          <LiveStatusDot status={liveStatus} />
-        </div>
-
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold text-panel-foreground">
+    <DrawerShell>
+      <header className="border-b border-[color:var(--line-1)] px-[22px] py-[18px]">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2">
+              {featureMeta.category ? (
+                <span className="planning-caps text-[10px] text-[color:var(--ink-3)]">{featureMeta.category}</span>
+              ) : null}
+              {featureMeta.category && featureMeta.slug ? (
+                <span className="text-[color:var(--ink-4)]">/</span>
+              ) : null}
+              {featureMeta.slug ? (
+                <span className="planning-mono text-[11px] text-[color:var(--ink-2)]">{featureMeta.slug}</span>
+              ) : null}
+              {isMismatch ? (
+                <Chip className="planning-mono border-[color:color-mix(in_oklab,var(--mag)_35%,transparent)] bg-[color:color-mix(in_oklab,var(--mag)_18%,transparent)] text-[10px] text-[color:var(--mag)]">
+                  mismatch - {context.mismatchState}
+                </Chip>
+              ) : null}
+              <LiveStatusDot status={liveStatus} />
+            </div>
+            <h1 className="planning-serif m-0 truncate text-[26px] font-medium italic tracking-[0] text-[color:var(--ink-0)]">
               {context.featureName || featureId}
             </h1>
-            <p className="mt-0.5 text-xs font-mono text-muted-foreground/70">{featureId}</p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <StatusPill status={context.rawStatus || 'unknown'} />
+              {context.rawStatus !== context.effectiveStatus ? (
+                <>
+                  <span className="text-[color:var(--ink-3)]">-&gt;</span>
+                  <StatusPill status={context.effectiveStatus || 'unknown'} />
+                </>
+              ) : null}
+              {context.complexity ? (
+                <Chip className="planning-mono text-[10px]">{context.complexity}</Chip>
+              ) : null}
+              {visibleTags.map(tag => (
+                <Chip key={tag} className="text-[10.5px]">{tag}</Chip>
+              ))}
+            </div>
           </div>
-
-          {/* Status chips with provenance tooltip */}
-          <EffectiveStatusChips
-            rawStatus={context.rawStatus}
-            effectiveStatus={context.effectiveStatus}
-            isMismatch={isMismatch}
-            provenance={planningStatus?.provenance}
-          />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <BtnPrimary size="sm" onClick={() => undefined}>
+              <Play size={13} />
+              Execute
+            </BtnPrimary>
+            <BtnGhost size="sm" onClick={closeDetail} aria-label="Close planning detail" className="px-2">
+              <X size={14} />
+            </BtnGhost>
+          </div>
         </div>
-
-        {/* Mismatch banner */}
-        {isMismatch && (
-          <MismatchBadge state={context.mismatchState} reason={mismatchReason} evidenceLabels={evidenceLabels} />
-        )}
-      </div>
-
-      {/* Lineage */}
-      <SectionCard
-        title="Lineage"
-        icon={<FolderSearch size={15} />}
-      >
-        <LineagePanel
-          nodes={sortNodesByType(context.graph.nodes)}
-          documents={documents}
-          onSelectDoc={setSelectedDoc}
-        />
-      </SectionCard>
-
-      {/* Phases */}
-      {context.phases.length > 0 && (
-        <SectionCard
-          title="Phases"
-          icon={<BookOpen size={15} />}
-        >
-          <div className="space-y-2">
-            {context.phases.map((phase) => (
-              <PhaseAccordion key={phase.phaseId} phase={phase} />
-            ))}
+        {isMismatch ? (
+          <div className="mt-3">
+            <MismatchBadge state={context.mismatchState} reason={mismatchReason} evidenceLabels={evidenceLabels} />
           </div>
+        ) : null}
+      </header>
+
+      <DrawerBody bodyRef={bodyRef}>
+        <section ref={sectionRefs.lineage}>
+          <LineageStrip
+            tiles={lineageTiles}
+            phases={context.phases}
+            onSelect={(tile) => scrollToSection(tile.section)}
+          />
+        </section>
+
+        {context.phases.length > 0 && (
+          <CollapsibleSection
+            title="Phases"
+            eyebrow="Linked to plan"
+            icon={<BookOpen size={15} />}
+            color="var(--prog)"
+            open={openSections.phases}
+            onToggle={() => setOpenSections(current => ({ ...current, phases: !current.phases }))}
+            sectionRef={sectionRefs.phases}
+          >
+            <div className="space-y-2">
+              {context.phases.map((phase) => (
+                <PhaseAccordion key={phase.phaseId} phase={phase} />
+              ))}
+            </div>
+          </CollapsibleSection>
+        )}
+
+        <CollapsibleSection
+          title="Blockers"
+          eyebrow="Planning health"
+          icon={<AlertTriangle size={15} />}
+          color="var(--warn)"
+          open={openSections.blockers}
+          onToggle={() => setOpenSections(current => ({ ...current, blockers: !current.blockers }))}
+          sectionRef={sectionRefs.blockers}
+        >
+          <BlockersPanel
+            blockedBatchIds={context.blockedBatchIds}
+            nodes={context.graph.nodes}
+          />
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          title="Linked Artifacts"
+          eyebrow="Artifact lineage"
+          icon={<Link2 size={15} />}
+          color="var(--plan)"
+          open={openSections.artifacts}
+          onToggle={() => setOpenSections(current => ({ ...current, artifacts: !current.artifacts }))}
+          sectionRef={sectionRefs.artifacts}
+        >
+          <LinkedArtifactsPanel
+            refs={context.linkedArtifactRefs}
+            documents={documents}
+            onSelectDoc={setSelectedDoc}
+          />
+        </CollapsibleSection>
+
+        <SectionCard
+          title="Raw Lineage Nodes"
+          icon={<FolderSearch size={15} />}
+        >
+          <LineagePanel
+            nodes={sortNodesByType(context.graph.nodes)}
+            documents={documents}
+            onSelectDoc={setSelectedDoc}
+          />
         </SectionCard>
-      )}
-
-      {/* Blockers */}
-      <SectionCard
-        title="Blockers"
-        icon={<AlertTriangle size={15} />}
-      >
-        <BlockersPanel
-          blockedBatchIds={context.blockedBatchIds}
-          nodes={context.graph.nodes}
-        />
-      </SectionCard>
-
-      {/* Linked Artifacts */}
-      <SectionCard
-        title="Linked Artifacts"
-        icon={<Link2 size={15} />}
-      >
-        <LinkedArtifactsPanel
-          refs={context.linkedArtifactRefs}
-          documents={documents}
-          onSelectDoc={setSelectedDoc}
-        />
-      </SectionCard>
+      </DrawerBody>
 
       {selectedDoc && (
         <DocumentModal
@@ -559,6 +949,6 @@ export function PlanningNodeDetail() {
           backLabel="Planning Detail"
         />
       )}
-    </div>
+    </DrawerShell>
   );
 }

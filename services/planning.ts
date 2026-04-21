@@ -5,7 +5,9 @@
 import type {
   FeaturePlanningContext,
   FeatureSummaryItem,
+  PlanningArtifactRef,
   FeatureTokenRollup,
+  PlanningOpenQuestionItem,
   PhaseContextItem,
   PhaseOperations,
   PhaseTaskItem,
@@ -13,6 +15,8 @@ import type {
   PlanningNode,
   PlanningNodeCountsByType,
   PlanningPhaseBatch,
+  PlanningSpikeItem,
+  PlanningTokenUsageByModel,
   ProjectPlanningGraph,
   ProjectPlanningSummary,
 } from '../types';
@@ -111,6 +115,45 @@ interface WireFeatureTokenRollup {
   by_model: WireFeatureModelTokens[];
 }
 
+interface WirePlanningArtifactRef {
+  artifact_id: string;
+  title: string;
+  file_path: string;
+  canonical_path: string;
+  doc_type: string;
+  status: string;
+  updated_at: string;
+  source_ref: string;
+}
+
+interface WirePlanningSpikeItem {
+  spike_id: string;
+  title: string;
+  status: string;
+  file_path: string;
+  source_ref: string;
+}
+
+interface WirePlanningOpenQuestionItem {
+  oq_id: string;
+  question: string;
+  severity: string;
+  answer_text: string;
+  resolved: boolean;
+  pending_sync: boolean;
+  source_document_id: string;
+  source_document_path: string;
+  updated_at: string;
+}
+
+interface WirePlanningTokenUsageByModel {
+  opus: number;
+  sonnet: number;
+  haiku: number;
+  other: number;
+  total: number;
+}
+
 interface WireProjectPlanningGraph extends WireEnvelope {
   project_id: string;
   feature_id: string | null;
@@ -151,6 +194,21 @@ interface WireFeaturePlanningContext extends WireEnvelope {
   phases: WirePhaseContextItem[];
   blocked_batch_ids: string[];
   linked_artifact_refs: string[];
+  specs?: WirePlanningArtifactRef[];
+  prds?: WirePlanningArtifactRef[];
+  plans?: WirePlanningArtifactRef[];
+  ctxs?: WirePlanningArtifactRef[];
+  reports?: WirePlanningArtifactRef[];
+  spikes?: WirePlanningSpikeItem[];
+  open_questions?: WirePlanningOpenQuestionItem[];
+  ready_to_promote?: boolean;
+  is_stale?: boolean;
+  total_tokens?: number;
+  token_usage_by_model?: WirePlanningTokenUsageByModel;
+  category?: string;
+  slug?: string;
+  complexity?: string;
+  tags?: string[];
 }
 
 interface WirePhaseTaskItem {
@@ -264,6 +322,55 @@ function adaptFeatureTokenRollups(
     };
   }
   return result;
+}
+
+function adaptPlanningArtifactRef(wire: WirePlanningArtifactRef): PlanningArtifactRef {
+  return {
+    artifactId: wire.artifact_id ?? '',
+    title: wire.title ?? '',
+    filePath: wire.file_path ?? '',
+    canonicalPath: wire.canonical_path ?? '',
+    docType: wire.doc_type ?? '',
+    status: wire.status ?? '',
+    updatedAt: wire.updated_at ?? '',
+    sourceRef: wire.source_ref ?? '',
+  };
+}
+
+function adaptPlanningSpikeItem(wire: WirePlanningSpikeItem): PlanningSpikeItem {
+  return {
+    spikeId: wire.spike_id ?? '',
+    title: wire.title ?? '',
+    status: wire.status ?? '',
+    filePath: wire.file_path ?? '',
+    sourceRef: wire.source_ref ?? '',
+  };
+}
+
+function adaptPlanningOpenQuestionItem(wire: WirePlanningOpenQuestionItem): PlanningOpenQuestionItem {
+  return {
+    oqId: wire.oq_id ?? '',
+    question: wire.question ?? '',
+    severity: wire.severity ?? 'medium',
+    answerText: wire.answer_text ?? '',
+    resolved: wire.resolved ?? false,
+    pendingSync: wire.pending_sync ?? false,
+    sourceDocumentId: wire.source_document_id ?? '',
+    sourceDocumentPath: wire.source_document_path ?? '',
+    updatedAt: wire.updated_at ?? '',
+  };
+}
+
+function adaptPlanningTokenUsageByModel(
+  wire: WirePlanningTokenUsageByModel | undefined,
+): PlanningTokenUsageByModel {
+  return {
+    opus: wire?.opus ?? 0,
+    sonnet: wire?.sonnet ?? 0,
+    haiku: wire?.haiku ?? 0,
+    other: wire?.other ?? 0,
+    total: wire?.total ?? 0,
+  };
 }
 
 function adaptPhaseContextItem(wire: WirePhaseContextItem): PhaseContextItem {
@@ -397,6 +504,21 @@ export async function getFeaturePlanningContext(
     phases: (wire.phases ?? []).map(adaptPhaseContextItem),
     blockedBatchIds: wire.blocked_batch_ids ?? [],
     linkedArtifactRefs: wire.linked_artifact_refs ?? [],
+    specs: (wire.specs ?? []).map(adaptPlanningArtifactRef),
+    prds: (wire.prds ?? []).map(adaptPlanningArtifactRef),
+    plans: (wire.plans ?? []).map(adaptPlanningArtifactRef),
+    ctxs: (wire.ctxs ?? []).map(adaptPlanningArtifactRef),
+    reports: (wire.reports ?? []).map(adaptPlanningArtifactRef),
+    spikes: (wire.spikes ?? []).map(adaptPlanningSpikeItem),
+    openQuestions: (wire.open_questions ?? []).map(adaptPlanningOpenQuestionItem),
+    readyToPromote: wire.ready_to_promote ?? false,
+    isStale: wire.is_stale ?? false,
+    totalTokens: wire.total_tokens ?? 0,
+    tokenUsageByModel: adaptPlanningTokenUsageByModel(wire.token_usage_by_model),
+    category: wire.category,
+    slug: wire.slug,
+    complexity: wire.complexity,
+    tags: wire.tags,
   };
 }
 
