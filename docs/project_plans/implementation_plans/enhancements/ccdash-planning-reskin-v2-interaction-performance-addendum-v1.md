@@ -1,36 +1,40 @@
 ---
-title: "Implementation Plan: CCDash Planning Reskin v2 Interaction and Performance Addendum"
+title: 'Implementation Plan: CCDash Planning Reskin v2 Interaction and Performance
+  Addendum'
 schema_version: 2
 doc_type: implementation_plan
-status: draft
-created: "2026-04-21"
-updated: "2026-04-21"
-
+status: approved
+created: '2026-04-21'
+updated: '2026-04-21'
 feature_slug: ccdash-planning-reskin-v2-interaction-performance-addendum
 feature_version: v1
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md
-scope: Planning-page follow-up for in-page modal navigation, active-first cached loading, missing metric wiring, tracker/intake side-panel behavior, and agent roster detail interactions.
+scope: Planning-page follow-up for in-page modal navigation, active-first cached loading,
+  missing metric wiring, tracker/intake side-panel behavior, and agent roster detail
+  interactions.
 effort_estimate: 30-38 story points
-architecture_summary: Six focused phases: route-local modal orchestration, planning query/cache tightening, metric and density wiring, tracker/intake side panel, agent roster details, and verification/performance gates.
+architecture_summary: 'Six focused phases: route-local modal orchestration, planning
+  query/cache tightening, metric and density wiring, tracker/intake side panel, agent
+  roster details, and verification/performance gates.'
 related_documents:
-  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md
-  - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/implementation_plans/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
-  - docs/guides/planning-control-plane-guide.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md
+- docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
+- docs/guides/planning-control-plane-guide.md
 references:
   user_docs: []
   context:
-    - components/Planning/PlanningHomePage.tsx
-    - components/Planning/TrackerIntakePanel.tsx
-    - components/Planning/PlanningAgentRosterPanel.tsx
-    - components/Planning/PlanningRouteLayout.tsx
-    - components/ProjectBoard.tsx
-    - components/DocumentModal.tsx
-    - services/planning.ts
-    - services/planningRoutes.ts
-    - backend/application/services/agent_queries/planning.py
-    - backend/application/services/agent_queries/cache.py
+  - components/Planning/PlanningHomePage.tsx
+  - components/Planning/TrackerIntakePanel.tsx
+  - components/Planning/PlanningAgentRosterPanel.tsx
+  - components/Planning/PlanningRouteLayout.tsx
+  - components/ProjectBoard.tsx
+  - components/DocumentModal.tsx
+  - services/planning.ts
+  - services/planningRoutes.ts
+  - backend/application/services/agent_queries/planning.py
+  - backend/application/services/agent_queries/cache.py
   specs: []
 deferred_items_spec_refs: []
 findings_doc_ref: null
@@ -45,33 +49,33 @@ priority: high
 risk_level: medium
 category: enhancements
 tags:
-  - implementation
-  - planning
-  - ui
-  - caching
-  - interactions
-  - agents
+- implementation
+- planning
+- ui
+- caching
+- interactions
+- agents
 files_affected:
-  - components/Planning/PlanningHomePage.tsx
-  - components/Planning/PlanningMetricsStrip.tsx
-  - components/Planning/TrackerIntakePanel.tsx
-  - components/Planning/PlanningAgentRosterPanel.tsx
-  - components/Planning/PlanningRouteLayout.tsx
-  - components/Planning/PlanningGraphPanel.tsx
-  - components/Planning/PlanningSummaryPanel.tsx
-  - components/ProjectBoard.tsx
-  - components/DocumentModal.tsx
-  - services/planning.ts
-  - services/planningRoutes.ts
-  - types.ts
-  - backend/application/services/agent_queries/planning.py
-  - backend/application/services/agent_queries/cache.py
-  - backend/routers/api.py
-  - backend/routers/features.py
-  - backend/tests/test_planning_query_service.py
-  - services/__tests__/planning.test.ts
-  - components/Planning/__tests__/planningHomePage.test.tsx
-  - components/Planning/__tests__/planningHomePageNavigation.test.tsx
+- components/Planning/PlanningHomePage.tsx
+- components/Planning/PlanningMetricsStrip.tsx
+- components/Planning/TrackerIntakePanel.tsx
+- components/Planning/PlanningAgentRosterPanel.tsx
+- components/Planning/PlanningRouteLayout.tsx
+- components/Planning/PlanningGraphPanel.tsx
+- components/Planning/PlanningSummaryPanel.tsx
+- components/ProjectBoard.tsx
+- components/DocumentModal.tsx
+- services/planning.ts
+- services/planningRoutes.ts
+- types.ts
+- backend/application/services/agent_queries/planning.py
+- backend/application/services/agent_queries/cache.py
+- backend/routers/api.py
+- backend/routers/features.py
+- backend/tests/test_planning_query_service.py
+- services/__tests__/planning.test.ts
+- components/Planning/__tests__/planningHomePage.test.tsx
+- components/Planning/__tests__/planningHomePageNavigation.test.tsx
 ---
 
 # Implementation Plan: CCDash Planning Reskin v2 Interaction and Performance Addendum
