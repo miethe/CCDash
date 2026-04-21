@@ -860,6 +860,10 @@ export function TrackerIntakePanel({
           doc={selectedDoc}
           onClose={() => setSelectedDoc(null)}
           onBack={() => setSelectedDoc(null)}
+          onOpenFeature={(featureId) => {
+            setSelectedDoc(null);
+            onSelectFeature?.(featureId);
+          }}
           backLabel="Tracker"
         />
       )}

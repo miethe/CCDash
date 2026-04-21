@@ -69,6 +69,23 @@ _PROMOTION_READY_STATUSES = {
     "mature",
 }
 _TERMINAL_FEATURE_STATUSES = {"done", "deferred", "completed"}
+_TERMINAL_SUMMARY_STATUSES = {
+    "done",
+    "completed",
+    "closed",
+    "deferred",
+    "superseded",
+}
+_ACTIVE_FIRST_STATUS_RANK = {
+    "active": 0,
+    "in-progress": 0,
+    "in_progress": 0,
+    "planned": 1,
+    "blocked": 2,
+    "review": 3,
+    "draft": 4,
+    "approved": 5,
+}
 _OQ_ID_PREFIX = re.compile(r"^(oq[-_\s]*\d+)\s*[:\-]\s*(.+)$", re.IGNORECASE)
 _OQ_OVERLAY_LOCK = asyncio.Lock()
 _OQ_OVERLAY: dict[str, dict[str, PlanningOpenQuestionItem]] = {}
@@ -407,6 +424,42 @@ def _is_mismatch(ps: PlanningEffectiveStatus | None) -> bool:
     return bool(ps.mismatchState.isMismatch)
 
 
+def _summary_status_token(item: FeatureSummaryItem) -> str:
+    return str(item.effective_status or item.raw_status or "").strip().lower()
+
+
+def _is_terminal_summary_item(item: FeatureSummaryItem) -> bool:
+    return _summary_status_token(item).replace("_", "-") in _TERMINAL_SUMMARY_STATUSES
+
+
+def _summary_sort_key(item: FeatureSummaryItem) -> tuple[int, str, str]:
+    token = _summary_status_token(item)
+    normalized = token.replace("_", "-")
+    rank = _ACTIVE_FIRST_STATUS_RANK.get(token)
+    if rank is None:
+        rank = _ACTIVE_FIRST_STATUS_RANK.get(normalized)
+    if rank is None:
+        rank = 50 if normalized in _TERMINAL_SUMMARY_STATUSES else 20
+    return rank, str(item.feature_name or "").lower(), str(item.feature_id or "").lower()
+
+
+def _shape_feature_summaries(
+    items: list[FeatureSummaryItem],
+    *,
+    active_first: bool,
+    include_terminal: bool,
+    limit: int | None,
+) -> list[FeatureSummaryItem]:
+    shaped = list(items)
+    if not include_terminal:
+        shaped = [item for item in shaped if not _is_terminal_summary_item(item)]
+    if active_first:
+        shaped = sorted(shaped, key=_summary_sort_key)
+    if limit is not None:
+        shaped = shaped[: max(1, int(limit))]
+    return shaped
+
+
 def _batch_dict(batch: Any) -> dict[str, Any]:
     """Serialise a PlanningPhaseBatch to a plain dict."""
     if hasattr(batch, "model_dump"):
@@ -591,9 +644,17 @@ def _summary_params(
     ports: CorePorts,
     *,
     project_id_override: str | None = None,
+    active_first: bool = True,
+    include_terminal: bool = False,
+    limit: int | None = 100,
     **_: Any,
 ) -> dict[str, Any]:
-    return {"project_id_override": project_id_override}
+    return {
+        "project_id_override": project_id_override,
+        "active_first": active_first,
+        "include_terminal": include_terminal,
+        "limit": limit,
+    }
 
 
 def _graph_params(
@@ -667,6 +728,9 @@ class PlanningQueryService:
         ports: CorePorts,
         *,
         project_id_override: str | None = None,
+        active_first: bool = True,
+        include_terminal: bool = False,
+        limit: int | None = 100,
     ) -> ProjectPlanningSummaryDTO:
         """Return project-level planning health counts and feature summaries.
 
@@ -904,7 +968,12 @@ class PlanningQueryService:
             reversal_feature_ids=sorted(set(reversal_ids)),
             blocked_feature_ids=sorted(set(blocked_ids)),
             node_counts_by_type=node_counts,
-            feature_summaries=feature_summaries,
+            feature_summaries=_shape_feature_summaries(
+                feature_summaries,
+                active_first=active_first,
+                include_terminal=include_terminal,
+                limit=limit,
+            ),
             data_freshness=data_freshness,
             source_refs=collect_source_refs(project.id, [f.id for f in projected]),
         )

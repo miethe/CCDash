@@ -9,6 +9,7 @@ import {
 import { useData } from '../../contexts/DataContext';
 import type { PlanDocument } from '../../types';
 import { DocumentModal } from '../DocumentModal';
+import { planningRouteFeatureModalHref } from '../../services/planningRoutes';
 
 // ── Artifact type mapping ─────────────────────────────────────────────────────
 
@@ -240,6 +241,10 @@ export function ArtifactDrillDownPage() {
           doc={selectedDoc}
           onClose={() => setSelectedDoc(null)}
           onBack={() => setSelectedDoc(null)}
+          onOpenFeature={(featureId) => {
+            setSelectedDoc(null);
+            navigate(planningRouteFeatureModalHref(featureId));
+          }}
           backLabel={config.label}
         />
       )}

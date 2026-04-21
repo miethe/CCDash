@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GitBranch, Inbox, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
 import type { Feature, FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
-import { getProjectPlanningSummary, PlanningApiError } from '../../services/planning';
+import { getCachedProjectPlanningSummary, getProjectPlanningSummary, PlanningApiError } from '../../services/planning';
 import { getLaunchCapabilities } from '../../services/execution';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
-import { planningArtifactsHref, type PlanningFeatureModalTab } from '../../services/planningRoutes';
+import {
+  planningArtifactsHref,
+  removePlanningRouteFeatureModalSearch,
+  resolvePlanningRouteFeatureModalState,
+  setPlanningRouteFeatureModalSearch,
+  type PlanningFeatureModalTab,
+} from '../../services/planningRoutes';
 import type { LiveConnectionStatus } from '../../services/live';
 import { ProjectBoardFeatureModal } from '../ProjectBoard';
 import { PlanningSummaryPanel } from './PlanningSummaryPanel';
@@ -624,12 +630,13 @@ type FetchState =
 export default function PlanningHomePage() {
   const { activeProject, features = [] } = useData();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
   const [planningEnabled, setPlanningEnabled] = useState<boolean>(true);
-  const [selectedFeatureModal, setSelectedFeatureModal] = useState<{
-    featureId: string;
-    tab: PlanningFeatureModalTab;
-  } | null>(null);
+  const selectedFeatureModal = useMemo(
+    () => resolvePlanningRouteFeatureModalState(searchParams),
+    [searchParams],
+  );
 
   // Check capability flag on mount. Defaults to true; silently falls back to
   // true if the capabilities endpoint is unreachable so existing deploys are
@@ -640,14 +647,29 @@ export default function PlanningHomePage() {
       .catch(() => setPlanningEnabled(true));
   }, []);
 
-  const loadSummary = useCallback(async () => {
+  const loadSummary = useCallback(async (options: { forceRefresh?: boolean } = {}) => {
     if (!activeProject?.id) {
       setFetchState({ phase: 'idle' });
       return;
     }
-    setFetchState({ phase: 'loading' });
+    const projectId = activeProject.id;
+    const warmSummary = options.forceRefresh ? null : getCachedProjectPlanningSummary(projectId);
+    if (warmSummary) {
+      setFetchState({ phase: 'ready', summary: warmSummary });
+    } else {
+      setFetchState({ phase: 'loading' });
+    }
     try {
-      const summary = await getProjectPlanningSummary(activeProject.id);
+      const summary = await getProjectPlanningSummary(projectId, {
+        forceRefresh: options.forceRefresh,
+        onRevalidated: (revalidatedSummary) => {
+          setFetchState((current) => {
+            if (current.phase !== 'ready') return current;
+            if (revalidatedSummary.projectId && revalidatedSummary.projectId !== projectId) return current;
+            return { phase: 'ready', summary: revalidatedSummary };
+          });
+        },
+      });
       setFetchState({ phase: 'ready', summary });
     } catch (err) {
       const message =
@@ -670,16 +692,16 @@ export default function PlanningHomePage() {
   const liveStatus = useLiveInvalidation({
     topics: liveTopics,
     enabled: liveTopics.length > 0,
-    onInvalidate: () => loadSummary(),
+    onInvalidate: () => loadSummary({ forceRefresh: true }),
   });
 
   const openFeatureModal = useCallback((featureId: string, tab: PlanningFeatureModalTab = 'overview') => {
-    setSelectedFeatureModal({ featureId, tab });
-  }, []);
+    navigate(`/planning${setPlanningRouteFeatureModalSearch(searchParams, featureId, tab)}`);
+  }, [navigate, searchParams]);
 
   const closeFeatureModal = useCallback(() => {
-    setSelectedFeatureModal(null);
-  }, []);
+    navigate(`/planning${removePlanningRouteFeatureModalSearch(searchParams)}`, { replace: true });
+  }, [navigate, searchParams]);
 
   const selectedFeature = useMemo(() => {
     if (!selectedFeatureModal || fetchState.phase !== 'ready') return null;

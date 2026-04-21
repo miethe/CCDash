@@ -8,17 +8,17 @@ prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 phase: 11
 title: Route-Local Modal Orchestration
-status: in_progress
+status: completed
 created: 2026-04-21
 updated: '2026-04-21'
 started: null
-completed: null
+completed: '2026-04-21'
 commit_refs: []
 pr_refs: []
-overall_progress: 25
+overall_progress: 100
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 1
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -44,7 +44,7 @@ tasks:
 - id: P11-002
   description: Replace planningFeatureModalHref primary usage with route-local modal
     state.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -55,7 +55,7 @@ tasks:
 - id: P11-003
   description: Add planning modal route state, deep-link support, and back-button
     handling.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -65,7 +65,7 @@ tasks:
   priority: high
 - id: P11-004
   description: Normalize artifact click behavior around DocumentModal.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -93,25 +93,32 @@ success_criteria:
 - id: SC-11.2
   description: Primary feature clicks no longer navigate to /board; existing explicit
     'Open board' links still work
-  status: pending
+  status: completed
 - id: SC-11.3
   description: /planning?feature=<id>&modal=feature or equivalent opens the modal;
     browser back closes it before leaving planning
-  status: pending
+  status: completed
 - id: SC-11.4
   description: Artifact rows/chips open documents in place; nested /planning/artifacts/:type
     remains available for group drill-down
-  status: pending
+  status: completed
 - id: SC-11.5
   description: All tests green
-  status: pending
+  status: completed
 files_modified:
 - components/ProjectBoard.tsx
+- components/DocumentModal.tsx
+- components/Planning/ArtifactDrillDownPage.tsx
+- components/Planning/PlanningGraphPanel.tsx
 - components/Planning/PlanningHomePage.tsx
+- components/Planning/PlanningNodeDetail.tsx
+- components/Planning/PlanningTriagePanel.tsx
+- components/Planning/TrackerIntakePanel.tsx
+- components/Planning/__tests__/planningHomePageNavigation.test.tsx
 - services/planningRoutes.ts
 - components/Planning/__tests__/planningHomePage.test.tsx
 - services/__tests__/planningRoutes.test.ts
-progress: 25
+progress: 100
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 11: Route-Local Modal Orchestration
@@ -145,9 +152,9 @@ Phase 11 is the foundational phase for this addendum. P11-001 (modal extraction)
 | Task ID | Description | Assigned To | Model | Est | Deps | Status |
 |---------|-------------|-------------|-------|-----|------|--------|
 | P11-001 | Extract/wrap ProjectBoard feature modal for /planning hosting | ui-engineer-enhanced | sonnet | 2 pts | — | pending |
-| P11-002 | Replace planningFeatureModalHref with route-local modal state | ui-engineer-enhanced | sonnet | 2 pts | P11-001 | pending |
-| P11-003 | Add modal route state, deep-link, back-button handling | frontend-developer | sonnet | 2 pts | P11-001 | pending |
-| P11-004 | Normalize artifact click behavior around DocumentModal | frontend-developer | sonnet | 2 pts | P11-001 | pending |
+| P11-002 | Replace planningFeatureModalHref with route-local modal state | ui-engineer-enhanced | sonnet | 2 pts | P11-001 | completed |
+| P11-003 | Add modal route state, deep-link, back-button handling | frontend-developer | sonnet | 2 pts | P11-001 | completed |
+| P11-004 | Normalize artifact click behavior around DocumentModal | frontend-developer | sonnet | 2 pts | P11-001 | completed |
 
 ### P11-001 Acceptance Criteria
 Planning can open a feature modal from summary panel, graph panel, and feature columns while the URL remains under `/planning`. The modal is hosted in the planning route context, not the board route context. `ProjectBoard` itself is not re-rendered.

@@ -8,7 +8,7 @@
  *
  * Filter tabs: All / Blocked / Mismatches / Stale / Ready-to-promote
  * Row anatomy: 3px severity bar · kind badge · feature slug · title · action button + chevron
- * Title click → navigate to planningFeatureModalHref (existing modal route)
+ * Title click → opens the route-local planning feature modal.
  * Empty state: green check + "Nothing to triage"
  *
  * Action button behaviour (T3-002):
@@ -23,7 +23,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Loader2 } from 'lucide-react';
 
 import type { ProjectPlanningSummary } from '../../types';
-import { planningFeatureModalHref } from '../../services/planningRoutes';
+import { planningRouteFeatureModalHref } from '../../services/planningRoutes';
 import { Panel, Btn, BtnGhost, Dot } from './primitives';
 
 // ── Toast (scoped to this panel) ──────────────────────────────────────────────
@@ -524,7 +524,7 @@ export function PlanningTriagePanel({
   const handleSelectFeature = useMemo(
     () =>
       onSelectFeature ??
-      ((featureId: string) => navigate(planningFeatureModalHref(featureId))),
+      ((featureId: string) => navigate(planningRouteFeatureModalHref(featureId))),
     [onSelectFeature, navigate],
   );
 

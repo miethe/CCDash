@@ -70,6 +70,9 @@ class GetPlanningSummaryTests(unittest.IsolatedAsyncioTestCase):
             ) as service_mock:
                 result = await agent_router.get_planning_summary(
                     project_id="proj-1",
+                    active_first=True,
+                    include_terminal=False,
+                    limit=100,
                     request_context=request_context,
                     core_ports=core_ports,
                 )
@@ -84,6 +87,9 @@ class GetPlanningSummaryTests(unittest.IsolatedAsyncioTestCase):
             app_request.context,
             app_request.ports,
             project_id_override="proj-1",
+            active_first=True,
+            include_terminal=False,
+            limit=100,
         )
 
     async def test_project_id_none_passes_through(self) -> None:
@@ -100,6 +106,9 @@ class GetPlanningSummaryTests(unittest.IsolatedAsyncioTestCase):
             ) as service_mock:
                 result = await agent_router.get_planning_summary(
                     project_id=None,
+                    active_first=True,
+                    include_terminal=False,
+                    limit=100,
                     request_context=object(),
                     core_ports=object(),
                 )
@@ -109,6 +118,40 @@ class GetPlanningSummaryTests(unittest.IsolatedAsyncioTestCase):
             app_request.context,
             app_request.ports,
             project_id_override=None,
+            active_first=True,
+            include_terminal=False,
+            limit=100,
+        )
+
+    async def test_summary_query_params_forwarded(self) -> None:
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = ProjectPlanningSummaryDTO(project_id="proj-1", source_refs=[])
+
+        with patch.object(
+            agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)
+        ):
+            with patch.object(
+                agent_router.planning_query_service,
+                "get_project_planning_summary",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_planning_summary(
+                    project_id="proj-1",
+                    active_first=False,
+                    include_terminal=True,
+                    limit=25,
+                    request_context=object(),
+                    core_ports=object(),
+                )
+
+        self.assertIs(result, dto)
+        service_mock.assert_awaited_once_with(
+            app_request.context,
+            app_request.ports,
+            project_id_override="proj-1",
+            active_first=False,
+            include_terminal=True,
+            limit=25,
         )
 
 

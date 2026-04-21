@@ -156,6 +156,9 @@ async def generate_aar_report(
 )
 async def get_planning_summary(
     project_id: str | None = Query(default=None, description="Optional project override."),
+    active_first: bool = Query(default=True, description="Sort active/planned planning work before lower-priority items."),
+    include_terminal: bool = Query(default=False, description="Include terminal feature statuses in the summary list."),
+    limit: int = Query(default=100, ge=1, le=500, description="Maximum feature summaries to return."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ProjectPlanningSummaryDTO:
@@ -170,6 +173,9 @@ async def get_planning_summary(
             app_request.context,
             app_request.ports,
             project_id_override=project_id,
+            active_first=active_first,
+            include_terminal=include_terminal,
+            limit=limit,
         )
 
 

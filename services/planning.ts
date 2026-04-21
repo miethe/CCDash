@@ -23,6 +23,47 @@ import type {
 import type { AgentQueryEnvelope } from '../types';
 
 const API_BASE = '/api/agent/planning';
+const DEFAULT_PROJECT_CACHE_KEY = '__default__';
+
+type PlanningBrowserCachePayloadType = 'summary' | 'facets' | 'list';
+
+interface PlanningBrowserCacheEntry<T> {
+  value: T;
+  inFlight?: Promise<T>;
+}
+
+interface PlanningBrowserFreshnessBucket {
+  payloads: Map<PlanningBrowserCachePayloadType, PlanningBrowserCacheEntry<unknown>>;
+}
+
+interface PlanningBrowserProjectCache {
+  latestFreshness: string | null;
+  freshnessBuckets: Map<string, PlanningBrowserFreshnessBucket>;
+}
+
+export interface ProjectPlanningSummaryCacheOptions {
+  forceRefresh?: boolean;
+  onRevalidated?: (summary: ProjectPlanningSummary) => void;
+}
+
+export const PLANNING_BROWSER_CACHE_LIMITS = {
+  projects: 8,
+  freshnessKeysPerProject: 3,
+  payloadTypesPerFreshness: 3,
+} as const;
+
+const PLANNING_BROWSER_CACHE = new Map<string, PlanningBrowserProjectCache>();
+const PENDING_CACHE_FRESHNESS = '__pending__';
+
+export interface PlanningBrowserCacheSnapshot {
+  projectsCached: number;
+  entries: Array<{
+    projectKey: string;
+    latestFreshness: string | null;
+    freshnessKeys: string[];
+    payloadTypes: PlanningBrowserCachePayloadType[];
+  }>;
+}
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
@@ -51,6 +92,174 @@ async function planningFetch<T>(path: string, params?: URLSearchParams): Promise
     );
   }
   return res.json() as Promise<T>;
+}
+
+function projectCacheKey(projectId?: string): string {
+  const trimmed = projectId?.trim();
+  return trimmed || DEFAULT_PROJECT_CACHE_KEY;
+}
+
+function touchMapKey<K, V>(map: Map<K, V>, key: K): void {
+  const value = map.get(key);
+  if (value === undefined) return;
+  map.delete(key);
+  map.set(key, value);
+}
+
+function trimMapToLimit<K, V>(map: Map<K, V>, limit: number): void {
+  while (map.size > limit) {
+    const oldestKey = map.keys().next().value as K | undefined;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+function getProjectCache(projectKey: string): PlanningBrowserProjectCache {
+  const existing = PLANNING_BROWSER_CACHE.get(projectKey);
+  if (existing) {
+    touchMapKey(PLANNING_BROWSER_CACHE, projectKey);
+    return existing;
+  }
+  const created: PlanningBrowserProjectCache = {
+    latestFreshness: null,
+    freshnessBuckets: new Map<string, PlanningBrowserFreshnessBucket>(),
+  };
+  PLANNING_BROWSER_CACHE.set(projectKey, created);
+  trimMapToLimit(PLANNING_BROWSER_CACHE, PLANNING_BROWSER_CACHE_LIMITS.projects);
+  return created;
+}
+
+function getFreshnessBucket(projectCache: PlanningBrowserProjectCache, freshness: string): PlanningBrowserFreshnessBucket {
+  const existing = projectCache.freshnessBuckets.get(freshness);
+  if (existing) {
+    touchMapKey(projectCache.freshnessBuckets, freshness);
+    return existing;
+  }
+  const created: PlanningBrowserFreshnessBucket = {
+    payloads: new Map<PlanningBrowserCachePayloadType, PlanningBrowserCacheEntry<unknown>>(),
+  };
+  projectCache.freshnessBuckets.set(freshness, created);
+  trimMapToLimit(projectCache.freshnessBuckets, PLANNING_BROWSER_CACHE_LIMITS.freshnessKeysPerProject);
+  return created;
+}
+
+function findLatestCacheEntry<T>(
+  projectCache: PlanningBrowserProjectCache,
+  payloadType: PlanningBrowserCachePayloadType,
+): PlanningBrowserCacheEntry<T> | null {
+  const latestFreshness = projectCache.latestFreshness;
+  if (!latestFreshness) return null;
+  const bucket = projectCache.freshnessBuckets.get(latestFreshness);
+  const entry = bucket?.payloads.get(payloadType);
+  if (!entry) return null;
+  touchMapKey(projectCache.freshnessBuckets, latestFreshness);
+  touchMapKey(bucket.payloads, payloadType);
+  return entry as PlanningBrowserCacheEntry<T>;
+}
+
+function storeCacheEntry<T>(
+  projectKey: string,
+  payloadType: PlanningBrowserCachePayloadType,
+  value: T,
+): PlanningBrowserCacheEntry<T> {
+  const projectCache = getProjectCache(projectKey);
+  const freshness = (value as AgentQueryEnvelope).dataFreshness || 'unknown';
+  const bucket = getFreshnessBucket(projectCache, freshness);
+  const entry: PlanningBrowserCacheEntry<T> = { value };
+  bucket.payloads.set(payloadType, entry as PlanningBrowserCacheEntry<unknown>);
+  touchMapKey(bucket.payloads, payloadType);
+  trimMapToLimit(bucket.payloads, PLANNING_BROWSER_CACHE_LIMITS.payloadTypesPerFreshness);
+  projectCache.latestFreshness = freshness;
+  touchMapKey(projectCache.freshnessBuckets, freshness);
+  touchMapKey(PLANNING_BROWSER_CACHE, projectKey);
+  trimMapToLimit(PLANNING_BROWSER_CACHE, PLANNING_BROWSER_CACHE_LIMITS.projects);
+  return entry;
+}
+
+function cacheProjectPlanningSummary(
+  projectId: string | undefined,
+  loader: () => Promise<ProjectPlanningSummary>,
+  options: ProjectPlanningSummaryCacheOptions = {},
+): Promise<ProjectPlanningSummary> {
+  const key = projectCacheKey(projectId);
+  const projectCache = getProjectCache(key);
+  const existing = findLatestCacheEntry<ProjectPlanningSummary>(projectCache, 'summary');
+
+  if (options.forceRefresh) {
+    return loader().then((value) => {
+      storeCacheEntry(key, 'summary', value);
+      return value;
+    });
+  }
+
+  if (existing?.value) {
+    if (!existing.inFlight) {
+      const pending = loader()
+        .then((value) => {
+          storeCacheEntry(key, 'summary', value);
+          options.onRevalidated?.(value);
+          return value;
+        })
+        .catch(() => existing.value)
+        .finally(() => {
+          existing.inFlight = undefined;
+        });
+      existing.inFlight = pending;
+    }
+    return Promise.resolve(existing.value);
+  }
+
+  if (existing?.inFlight) return existing.inFlight;
+
+  let pending: Promise<ProjectPlanningSummary>;
+  pending = loader()
+    .then((value) => {
+      storeCacheEntry(key, 'summary', value);
+      return value;
+    })
+    .catch((error) => {
+      const latestProjectCache = PLANNING_BROWSER_CACHE.get(key);
+      const bucket = latestProjectCache?.freshnessBuckets.get(PENDING_CACHE_FRESHNESS);
+      const pendingEntry = bucket?.payloads.get('summary');
+      if (pendingEntry?.inFlight === pending) bucket?.payloads.delete('summary');
+      if (latestProjectCache?.latestFreshness === PENDING_CACHE_FRESHNESS) latestProjectCache.latestFreshness = null;
+      throw error;
+    });
+
+  const bucket = getFreshnessBucket(projectCache, PENDING_CACHE_FRESHNESS);
+  bucket.payloads.set('summary', { value: undefined, inFlight: pending } as unknown as PlanningBrowserCacheEntry<unknown>);
+  projectCache.latestFreshness = PENDING_CACHE_FRESHNESS;
+  touchMapKey(projectCache.freshnessBuckets, PENDING_CACHE_FRESHNESS);
+  touchMapKey(PLANNING_BROWSER_CACHE, key);
+  return pending;
+}
+
+export function clearPlanningBrowserCache(projectId?: string): void {
+  if (projectId?.trim()) {
+    PLANNING_BROWSER_CACHE.delete(projectCacheKey(projectId));
+    return;
+  }
+  PLANNING_BROWSER_CACHE.clear();
+}
+
+export function getCachedProjectPlanningSummary(projectId?: string): ProjectPlanningSummary | null {
+  const cache = PLANNING_BROWSER_CACHE.get(projectCacheKey(projectId));
+  if (!cache) return null;
+  return findLatestCacheEntry<ProjectPlanningSummary>(cache, 'summary')?.value ?? null;
+}
+
+export function getPlanningBrowserCacheSnapshot(): PlanningBrowserCacheSnapshot {
+  return {
+    projectsCached: PLANNING_BROWSER_CACHE.size,
+    entries: Array.from(PLANNING_BROWSER_CACHE.entries()).map(([projectKey, cache]) => ({
+      projectKey,
+      latestFreshness: cache.latestFreshness,
+      freshnessKeys: Array.from(cache.freshnessBuckets.keys()),
+      payloadTypes: Array.from(new Set(
+        Array.from(cache.freshnessBuckets.values()).flatMap((bucket) => Array.from(bucket.payloads.keys())),
+      )),
+    })),
+  };
 }
 
 async function planningWriteFetch<T>(
@@ -437,28 +646,33 @@ function adaptPhaseTaskItem(wire: WirePhaseTaskItem): PhaseTaskItem {
  *
  * Mirrors: GET /api/agent/planning/summary
  */
-export async function getProjectPlanningSummary(projectId?: string): Promise<ProjectPlanningSummary> {
-  const params = new URLSearchParams();
-  if (projectId) params.set('project_id', projectId);
+export async function getProjectPlanningSummary(
+  projectId?: string,
+  options: ProjectPlanningSummaryCacheOptions = {},
+): Promise<ProjectPlanningSummary> {
+  return cacheProjectPlanningSummary(projectId, async () => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project_id', projectId);
 
-  const wire = await planningFetch<WireProjectPlanningSummary>('/summary', params.toString() ? params : undefined);
+    const wire = await planningFetch<WireProjectPlanningSummary>('/summary', params.toString() ? params : undefined);
 
-  return {
-    ...adaptEnvelope(wire),
-    projectId: wire.project_id ?? '',
-    projectName: wire.project_name ?? '',
-    totalFeatureCount: wire.total_feature_count ?? 0,
-    activeFeatureCount: wire.active_feature_count ?? 0,
-    staleFeatureCount: wire.stale_feature_count ?? 0,
-    blockedFeatureCount: wire.blocked_feature_count ?? 0,
-    mismatchCount: wire.mismatch_count ?? 0,
-    reversalCount: wire.reversal_count ?? 0,
-    staleFeatureIds: wire.stale_feature_ids ?? [],
-    reversalFeatureIds: wire.reversal_feature_ids ?? [],
-    blockedFeatureIds: wire.blocked_feature_ids ?? [],
-    nodeCountsByType: adaptNodeCountsByType(wire.node_counts_by_type ?? {} as WireNodeCountsByType),
-    featureSummaries: (wire.feature_summaries ?? []).map(adaptFeatureSummaryItem),
-  };
+    return {
+      ...adaptEnvelope(wire),
+      projectId: wire.project_id ?? '',
+      projectName: wire.project_name ?? '',
+      totalFeatureCount: wire.total_feature_count ?? 0,
+      activeFeatureCount: wire.active_feature_count ?? 0,
+      staleFeatureCount: wire.stale_feature_count ?? 0,
+      blockedFeatureCount: wire.blocked_feature_count ?? 0,
+      mismatchCount: wire.mismatch_count ?? 0,
+      reversalCount: wire.reversal_count ?? 0,
+      staleFeatureIds: wire.stale_feature_ids ?? [],
+      reversalFeatureIds: wire.reversal_feature_ids ?? [],
+      blockedFeatureIds: wire.blocked_feature_ids ?? [],
+      nodeCountsByType: adaptNodeCountsByType(wire.node_counts_by_type ?? {} as WireNodeCountsByType),
+      featureSummaries: (wire.feature_summaries ?? []).map(adaptFeatureSummaryItem),
+    };
+  }, options);
 }
 
 /**

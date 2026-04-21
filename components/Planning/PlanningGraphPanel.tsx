@@ -1597,6 +1597,10 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
           doc={selectedDoc}
           onClose={() => setSelectedDoc(null)}
           onBack={() => setSelectedDoc(null)}
+          onOpenFeature={(featureId) => {
+            setSelectedDoc(null);
+            onSelectFeature?.(featureId);
+          }}
           backLabel="Planning Graph"
         />
       )}

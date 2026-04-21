@@ -133,6 +133,94 @@ class GetDataVersionFingerprintTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(result)
         self.assertIn("|", result)  # type: ignore[arg-type]
+        self.assertEqual(db.execute.call_count, 6)
+
+    async def test_document_updated_at_change_advances_fingerprint(self) -> None:
+        import aiosqlite
+
+        db = await aiosqlite.connect(":memory:")
+        try:
+            await db.execute("CREATE TABLE sessions (project_id TEXT, updated_at TEXT)")
+            await db.execute("CREATE TABLE features (id TEXT PRIMARY KEY, project_id TEXT, updated_at TEXT)")
+            await db.execute(
+                "CREATE TABLE feature_phases ("
+                "id TEXT PRIMARY KEY, feature_id TEXT, phase TEXT, status TEXT, "
+                "progress INTEGER, total_tasks INTEGER, completed_tasks INTEGER)"
+            )
+            await db.execute("CREATE TABLE documents (project_id TEXT, updated_at TEXT)")
+            await db.execute("CREATE TABLE entity_links (source_type TEXT, source_id TEXT, target_type TEXT, target_id TEXT, link_type TEXT, created_at TEXT)")
+            await db.execute("CREATE TABLE planning_worktree_contexts (project_id TEXT, updated_at TEXT)")
+            await db.execute(
+                "INSERT INTO features (id, project_id, updated_at) VALUES (?, ?, ?)",
+                ("feat-1", "proj-doc", "2026-04-14T10:00:00+00:00"),
+            )
+            await db.execute(
+                "INSERT INTO documents (project_id, updated_at) VALUES (?, ?)",
+                ("proj-doc", "2026-04-14T10:00:00+00:00"),
+            )
+            await db.commit()
+
+            context = MagicMock()
+            ports = self._make_ports(db)
+            first = await get_data_version_fingerprint(context, ports, project_id="proj-doc")
+
+            await db.execute(
+                "UPDATE documents SET updated_at = ? WHERE project_id = ?",
+                ("2026-04-14T11:00:00+00:00", "proj-doc"),
+            )
+            await db.commit()
+
+            second = await get_data_version_fingerprint(context, ports, project_id="proj-doc")
+
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            self.assertNotEqual(first, second)
+        finally:
+            await db.close()
+
+    async def test_feature_phase_state_change_advances_fingerprint(self) -> None:
+        import aiosqlite
+
+        db = await aiosqlite.connect(":memory:")
+        try:
+            await db.execute("CREATE TABLE sessions (project_id TEXT, updated_at TEXT)")
+            await db.execute("CREATE TABLE features (id TEXT PRIMARY KEY, project_id TEXT, updated_at TEXT)")
+            await db.execute(
+                "CREATE TABLE feature_phases ("
+                "id TEXT PRIMARY KEY, feature_id TEXT, phase TEXT, status TEXT, "
+                "progress INTEGER, total_tasks INTEGER, completed_tasks INTEGER)"
+            )
+            await db.execute("CREATE TABLE documents (project_id TEXT, updated_at TEXT)")
+            await db.execute("CREATE TABLE entity_links (source_type TEXT, source_id TEXT, target_type TEXT, target_id TEXT, link_type TEXT, created_at TEXT)")
+            await db.execute("CREATE TABLE planning_worktree_contexts (project_id TEXT, updated_at TEXT)")
+            await db.execute(
+                "INSERT INTO features (id, project_id, updated_at) VALUES (?, ?, ?)",
+                ("feat-1", "proj-phase", "2026-04-14T10:00:00+00:00"),
+            )
+            await db.execute(
+                "INSERT INTO feature_phases (id, feature_id, phase, status, progress, total_tasks, completed_tasks) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("phase-1", "feat-1", "1", "draft", 0, 2, 0),
+            )
+            await db.commit()
+
+            context = MagicMock()
+            ports = self._make_ports(db)
+            first = await get_data_version_fingerprint(context, ports, project_id="proj-phase")
+
+            await db.execute(
+                "UPDATE feature_phases SET status = ?, completed_tasks = ? WHERE id = ?",
+                ("done", 2, "phase-1"),
+            )
+            await db.commit()
+
+            second = await get_data_version_fingerprint(context, ports, project_id="proj-phase")
+
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            self.assertNotEqual(first, second)
+        finally:
+            await db.close()
 
     # ── degradation: SQLite execute raises ───────────────────────────────
 

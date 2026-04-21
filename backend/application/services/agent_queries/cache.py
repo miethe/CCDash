@@ -3,8 +3,8 @@
 Provides the module-level TTLCache singleton and helpers consumed by the
 ``@memoized_query`` decorator (CACHE-004):
 
-- ``get_data_version_fingerprint`` — async; queries ``max(updated_at)`` across
-  the ``sessions`` and ``features`` tables and returns a stable opaque string.
+- ``get_data_version_fingerprint`` — async; queries freshness markers across
+  planning-dependent tables and returns a stable opaque string.
   Returns ``None`` on any failure; the decorator treats ``None`` as a cache
   bypass (do not read from or write to the cache for that invocation).
 
@@ -50,6 +50,21 @@ _effective_ttl: int = max(1, config.CCDASH_QUERY_CACHE_TTL_SECONDS)
 _query_cache: TTLCache[str, Any] = TTLCache(maxsize=512, ttl=_effective_ttl)
 
 
+def _row_field(row: Any, key: str, index: int, default: Any = "") -> Any:
+    if row is None:
+        return default
+    if isinstance(row, Mapping):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, TypeError):
+        pass
+    try:
+        return row[index]
+    except (IndexError, KeyError, TypeError):
+        return default
+
+
 def get_cache() -> TTLCache[str, Any]:
     """Return the module-level cache instance (useful for testing)."""
     return _query_cache
@@ -73,9 +88,11 @@ async def get_data_version_fingerprint(
 ) -> str | None:
     """Return an opaque string representing the current data version.
 
-    Queries ``MAX(updated_at)`` from both ``sessions`` and ``features`` scoped
-    to *project_id* (when provided).  The two timestamps are concatenated with
-    a pipe separator to form the fingerprint.
+    Queries freshness markers from planning-dependent tables scoped to
+    *project_id* when possible. The marker list includes features, feature
+    phases, documents, sessions, entity links, and planning writeback context
+    rows. The markers are concatenated with pipe separators to form the
+    fingerprint.
 
     Returns ``None`` on *any* failure — DB error, missing tables, missing
     connection — so the caller can treat the result as "freshness unknown" and
@@ -86,9 +103,11 @@ async def get_data_version_fingerprint(
     """
     db = ports.storage.db
     try:
-        sessions_max = await _query_max_updated_at(db, "sessions", project_id)
-        features_max = await _query_max_updated_at(db, "features", project_id)
-        return f"{sessions_max}|{features_max}"
+        parts = [
+            await _query_table_marker(db, spec, project_id)
+            for spec in _FINGERPRINT_TABLES
+        ]
+        return "|".join(parts)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "get_data_version_fingerprint: could not read freshness markers "
@@ -99,23 +118,53 @@ async def get_data_version_fingerprint(
         return None
 
 
+_FINGERPRINT_TABLES: tuple[dict[str, Any], ...] = (
+    {"name": "sessions", "column": "updated_at", "scope": "project_id"},
+    {"name": "features", "column": "updated_at", "scope": "project_id"},
+    {"name": "feature_phases", "column": "row_state", "scope": "feature_join"},
+    {"name": "documents", "column": "updated_at", "scope": "project_id"},
+    {"name": "entity_links", "column": "row_state", "scope": None},
+    {"name": "planning_worktree_contexts", "column": "updated_at", "scope": "project_id"},
+)
+
+
+async def _query_table_marker(
+    db: Any,
+    spec: Mapping[str, Any],
+    project_id: str | None,
+) -> str:
+    table = str(spec["name"])
+    if table == "feature_phases":
+        return await _query_feature_phases_marker(db, project_id)
+    if table == "entity_links":
+        return await _query_entity_links_marker(db)
+    return await _query_max_updated_at(
+        db,
+        table,
+        project_id if spec.get("scope") == "project_id" else None,
+        column=str(spec.get("column") or "updated_at"),
+    )
+
+
 async def _query_max_updated_at(
     db: Any,
     table: str,
     project_id: str | None,
+    *,
+    column: str = "updated_at",
 ) -> str:
-    """Return ``MAX(updated_at)`` for *table*, scoped to *project_id*.
+    """Return ``MAX(column)`` for *table*, scoped to *project_id*.
 
     Uses the same SQLite/asyncpg dual-path pattern established by
     ``backend/services/test_health.py``.  Returns an empty string when the
     table has no rows so the fingerprint remains well-formed.
     """
     if project_id:
-        sqlite_sql = f"SELECT MAX(updated_at) AS m FROM {table} WHERE project_id = ?"  # noqa: S608
-        pg_sql = f"SELECT MAX(updated_at) AS m FROM {table} WHERE project_id = $1"  # noqa: S608
+        sqlite_sql = f"SELECT MAX({column}) AS m FROM {table} WHERE project_id = ?"  # noqa: S608
+        pg_sql = f"SELECT MAX({column}) AS m FROM {table} WHERE project_id = $1"  # noqa: S608
         params: tuple[Any, ...] = (project_id,)
     else:
-        sqlite_sql = f"SELECT MAX(updated_at) AS m FROM {table}"  # noqa: S608
+        sqlite_sql = f"SELECT MAX({column}) AS m FROM {table}"  # noqa: S608
         pg_sql = sqlite_sql
         params = ()
 
@@ -127,6 +176,103 @@ async def _query_max_updated_at(
         # asyncpg Pool / Connection — positional $N parameters
         row = await db.fetchrow(pg_sql, *params)
         return str(row["m"] or "") if row else ""
+
+
+async def _query_feature_phases_marker(db: Any, project_id: str | None) -> str:
+    if project_id:
+        sqlite_sql = """
+            SELECT COUNT(*) AS c, GROUP_CONCAT(marker, '|') AS m
+            FROM (
+                SELECT fp.id || ':' || fp.feature_id || ':' || fp.phase || ':' ||
+                       COALESCE(fp.status, '') || ':' || COALESCE(fp.progress, 0) || ':' ||
+                       COALESCE(fp.total_tasks, 0) || ':' || COALESCE(fp.completed_tasks, 0) AS marker
+                FROM feature_phases fp
+                JOIN features f ON f.id = fp.feature_id
+                WHERE f.project_id = ?
+                ORDER BY fp.id
+            )
+        """
+        pg_sql = """
+            SELECT COUNT(*) AS c,
+                   STRING_AGG(
+                       fp.id || ':' || fp.feature_id || ':' || fp.phase || ':' ||
+                       COALESCE(fp.status, '') || ':' || COALESCE(fp.progress::text, '0') || ':' ||
+                       COALESCE(fp.total_tasks::text, '0') || ':' || COALESCE(fp.completed_tasks::text, '0'),
+                       '|' ORDER BY fp.id
+                   ) AS m
+            FROM feature_phases fp
+            JOIN features f ON f.id = fp.feature_id
+            WHERE f.project_id = $1
+        """
+        params: tuple[Any, ...] = (project_id,)
+    else:
+        sqlite_sql = """
+            SELECT COUNT(*) AS c, GROUP_CONCAT(marker, '|') AS m
+            FROM (
+                SELECT id || ':' || feature_id || ':' || phase || ':' ||
+                       COALESCE(status, '') || ':' || COALESCE(progress, 0) || ':' ||
+                       COALESCE(total_tasks, 0) || ':' || COALESCE(completed_tasks, 0) AS marker
+                FROM feature_phases
+                ORDER BY id
+            )
+        """
+        pg_sql = """
+            SELECT COUNT(*) AS c,
+                   STRING_AGG(
+                       id || ':' || feature_id || ':' || phase || ':' ||
+                       COALESCE(status, '') || ':' || COALESCE(progress::text, '0') || ':' ||
+                       COALESCE(total_tasks::text, '0') || ':' || COALESCE(completed_tasks::text, '0'),
+                       '|' ORDER BY id
+                   ) AS m
+            FROM feature_phases
+        """
+        params = ()
+
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(sqlite_sql, params) as cur:
+            row = await cur.fetchone()
+            count = str(_row_field(row, "c", 0, "0") or "0")
+            marker = str(_row_field(row, "m", 1, "") or "")
+            return f"{count}:{hashlib.sha256(marker.encode()).hexdigest()[:16]}"
+
+    row = await db.fetchrow(pg_sql, *params)
+    count = str(_row_field(row, "c", 0, "0") or "0")
+    marker = str(_row_field(row, "m", 1, "") or "")
+    return f"{count}:{hashlib.sha256(marker.encode()).hexdigest()[:16]}"
+
+
+async def _query_entity_links_marker(db: Any) -> str:
+    sqlite_sql = """
+        SELECT COUNT(*) AS c, GROUP_CONCAT(marker, '|') AS m
+        FROM (
+            SELECT COALESCE(source_type, '') || ':' || COALESCE(source_id, '') || ':' ||
+                   COALESCE(target_type, '') || ':' || COALESCE(target_id, '') || ':' ||
+                   COALESCE(link_type, '') || ':' || COALESCE(created_at, '') AS marker
+            FROM entity_links
+            ORDER BY source_type, source_id, target_type, target_id, link_type
+        )
+    """
+    pg_sql = """
+        SELECT COUNT(*) AS c,
+               STRING_AGG(
+                   COALESCE(source_type, '') || ':' || COALESCE(source_id, '') || ':' ||
+                   COALESCE(target_type, '') || ':' || COALESCE(target_id, '') || ':' ||
+                   COALESCE(link_type, '') || ':' || COALESCE(created_at, ''),
+                   '|' ORDER BY source_type, source_id, target_type, target_id, link_type
+               ) AS m
+        FROM entity_links
+    """
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(sqlite_sql) as cur:
+            row = await cur.fetchone()
+            count = str(_row_field(row, "c", 0, "0") or "0")
+            marker = str(_row_field(row, "m", 1, "") or "")
+            return f"{count}:{hashlib.sha256(marker.encode()).hexdigest()[:16]}"
+
+    row = await db.fetchrow(pg_sql)
+    count = str(_row_field(row, "c", 0, "0") or "0")
+    marker = str(_row_field(row, "m", 1, "") or "")
+    return f"{count}:{hashlib.sha256(marker.encode()).hexdigest()[:16]}"
 
 
 # ── Cache-key assembly ──────────────────────────────────────────────────────

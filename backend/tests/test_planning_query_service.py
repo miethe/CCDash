@@ -416,6 +416,67 @@ class ProjectPlanningSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.node_counts_by_type.context, 1)
         self.assertEqual(result.node_counts_by_type.tracker, 1)
 
+    async def test_summary_defaults_active_first_and_excludes_terminal_items(self) -> None:
+        features = [
+            _feature(
+                fid="feat-done",
+                name="Done Feature",
+                status="done",
+                phases=[_phase(number="1", status="done", total=1, completed=1)],
+            ),
+            _feature(fid="feat-approved", name="Approved Feature", status="approved"),
+            _feature(fid="feat-active", name="Active Feature", status="in-progress"),
+            _feature(fid="feat-draft", name="Draft Feature", status="draft"),
+        ]
+        rows = [_feature_row(feature) for feature in features]
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=rows),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_project_planning_summary(_context(), ports)
+
+        self.assertEqual(result.total_feature_count, 4)
+        self.assertEqual(
+            [item.feature_id for item in result.feature_summaries],
+            ["feat-active", "feat-draft", "feat-approved"],
+        )
+
+    async def test_summary_can_include_terminal_and_limit_results(self) -> None:
+        features = [
+            _feature(fid="feat-done", name="Done Feature", status="done"),
+            _feature(fid="feat-active", name="Active Feature", status="in-progress"),
+            _feature(fid="feat-review", name="Review Feature", status="review"),
+            _feature(fid="feat-draft", name="Draft Feature", status="draft"),
+        ]
+        rows = [_feature_row(feature) for feature in features]
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=rows),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_project_planning_summary(
+            _context(),
+            ports,
+            include_terminal=True,
+            limit=2,
+        )
+
+        self.assertEqual(
+            [item.feature_id for item in result.feature_summaries],
+            ["feat-active", "feat-review"],
+        )
+
 
 class ProjectPlanningGraphTests(unittest.IsolatedAsyncioTestCase):
     """get_project_planning_graph returns nodes + edges."""

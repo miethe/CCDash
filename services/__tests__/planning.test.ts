@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  clearPlanningBrowserCache,
   getFeaturePlanningContext,
+  getPlanningBrowserCacheSnapshot,
   getPhaseOperations,
   getProjectPlanningGraph,
   getProjectPlanningSummary,
+  PLANNING_BROWSER_CACHE_LIMITS,
 } from '../planning';
 import {
   featurePhaseTopic,
@@ -36,7 +39,36 @@ function makeEnvelope(overrides: Partial<{
   };
 }
 
+function projectSummaryPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    ...makeEnvelope(),
+    project_id: 'proj-1',
+    project_name: 'Project 1',
+    total_feature_count: 0,
+    active_feature_count: 0,
+    stale_feature_count: 0,
+    blocked_feature_count: 0,
+    mismatch_count: 0,
+    reversal_count: 0,
+    stale_feature_ids: [],
+    reversal_feature_ids: [],
+    blocked_feature_ids: [],
+    node_counts_by_type: {
+      prd: 0,
+      design_spec: 0,
+      implementation_plan: 0,
+      progress: 0,
+      context: 0,
+      tracker: 0,
+      report: 0,
+    },
+    feature_summaries: [],
+    ...overrides,
+  };
+}
+
 afterEach(() => {
+  clearPlanningBrowserCache();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -164,6 +196,98 @@ describe('getProjectPlanningSummary', () => {
     await expect(getProjectPlanningSummary()).rejects.toMatchObject({
       name: 'PlanningApiError',
       status: 500,
+    });
+  });
+
+  it('returns a warm cached summary immediately while revalidation is pending', async () => {
+    let resolveRevalidation: (response: Response) => void = () => {};
+    const revalidation = new Promise<Response>((resolve) => {
+      resolveRevalidation = resolve;
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(okResponse(projectSummaryPayload({
+        project_id: 'proj-cache',
+        project_name: 'Warm Project v1',
+        data_freshness: '2026-04-16T00:00:00Z',
+      })))
+      .mockReturnValueOnce(revalidation);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getProjectPlanningSummary('proj-cache')).resolves.toMatchObject({
+      projectName: 'Warm Project v1',
+    });
+    await expect(getProjectPlanningSummary('proj-cache')).resolves.toMatchObject({
+      projectName: 'Warm Project v1',
+      dataFreshness: '2026-04-16T00:00:00Z',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    resolveRevalidation(okResponse(projectSummaryPayload({
+      project_id: 'proj-cache',
+      project_name: 'Warm Project v2',
+      data_freshness: '2026-04-16T00:05:00Z',
+    })));
+    await revalidation;
+    await vi.waitFor(() => {
+      expect(getPlanningBrowserCacheSnapshot().entries[0]?.latestFreshness).toBe('2026-04-16T00:05:00Z');
+    });
+  });
+
+  it('refreshes the warm summary cache from background revalidation', async () => {
+    let resolveRevalidation: (response: Response) => void = () => {};
+    const revalidation = new Promise<Response>((resolve) => {
+      resolveRevalidation = resolve;
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(okResponse(projectSummaryPayload({
+        project_id: 'proj-refresh',
+        project_name: 'Refresh Project v1',
+        data_freshness: '2026-04-16T00:00:00Z',
+      })))
+      .mockReturnValueOnce(revalidation);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getProjectPlanningSummary('proj-refresh');
+    await getProjectPlanningSummary('proj-refresh');
+
+    resolveRevalidation(okResponse(projectSummaryPayload({
+      project_id: 'proj-refresh',
+      project_name: 'Refresh Project v2',
+      data_freshness: '2026-04-16T00:10:00Z',
+    })));
+    await revalidation;
+    await vi.waitFor(() => {
+      expect(getPlanningBrowserCacheSnapshot().entries[0]?.latestFreshness).toBe('2026-04-16T00:10:00Z');
+    });
+
+    await expect(getProjectPlanningSummary('proj-refresh')).resolves.toMatchObject({
+      projectName: 'Refresh Project v2',
+      dataFreshness: '2026-04-16T00:10:00Z',
+    });
+  });
+
+  it('evicts oldest project summary keys when the browser cache is bounded', async () => {
+    const projectLoads = new Map<string, number>();
+    const fetchMock = vi.fn((url: string) => {
+      const parsed = new URL(url, 'http://ccdash.local');
+      const projectId = parsed.searchParams.get('project_id') || 'default';
+      const loadCount = (projectLoads.get(projectId) ?? 0) + 1;
+      projectLoads.set(projectId, loadCount);
+      return Promise.resolve(okResponse(projectSummaryPayload({
+        project_id: projectId,
+        project_name: `${projectId} load ${loadCount}`,
+        data_freshness: `2026-04-16T00:${String(loadCount).padStart(2, '0')}:00Z`,
+      })));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let index = 0; index <= PLANNING_BROWSER_CACHE_LIMITS.projects; index += 1) {
+      await getProjectPlanningSummary(`proj-${index}`);
+    }
+
+    expect(getPlanningBrowserCacheSnapshot().projectsCached).toBe(PLANNING_BROWSER_CACHE_LIMITS.projects);
+    await expect(getProjectPlanningSummary('proj-0')).resolves.toMatchObject({
+      projectName: 'proj-0 load 2',
     });
   });
 });

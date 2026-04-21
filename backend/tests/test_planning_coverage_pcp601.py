@@ -857,6 +857,9 @@ class PlanningAPIContractTests(unittest.IsolatedAsyncioTestCase):
             ):
                 result = await agent_router.get_planning_summary(
                     project_id="proj-x",
+                    active_first=True,
+                    include_terminal=False,
+                    limit=100,
                     request_context=object(),
                     core_ports=object(),
                 )
@@ -1019,6 +1022,9 @@ class PlanningAPIContractTests(unittest.IsolatedAsyncioTestCase):
             ):
                 result = await agent_router.get_planning_summary(
                     project_id="empty-proj",
+                    active_first=True,
+                    include_terminal=False,
+                    limit=100,
                     request_context=object(),
                     core_ports=object(),
                 )
