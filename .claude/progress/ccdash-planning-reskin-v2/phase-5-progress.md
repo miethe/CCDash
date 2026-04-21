@@ -10,12 +10,13 @@ phase: 5
 title: Feature Detail Drawer — Header & Lineage
 status: completed
 created: 2026-04-20
-updated: '2026-04-20'
+updated: '2026-04-21'
 started: null
-completed: null
-commit_refs: []
+completed: '2026-04-21'
+commit_refs:
+- 4943e0e
 pr_refs: []
-overall_progress: 0
+overall_progress: 100
 completion_estimate: on-track
 total_tasks: 3
 completed_tasks: 3
@@ -83,23 +84,28 @@ blockers: []
 success_criteria:
 - id: SC-5.1
   description: Drawer shell renders with correct dimensions (920px min, 64vw max)
-  status: pending
+  status: completed
 - id: SC-5.2
   description: Header complete with all fields and correct colors
-  status: pending
+  status: completed
 - id: SC-5.3
   description: Lineage strip renders 7 tiles with correct data
-  status: pending
+  status: completed
 - id: SC-5.4
   description: Lineage tile clicks scroll and toggle sections
-  status: pending
+  status: completed
 - id: SC-5.5
   description: Close button functional
-  status: pending
+  status: completed
 - id: SC-5.6
   description: Responsive width verified (640px at <1280px)
-  status: pending
-files_modified: []
+  status: completed
+files_modified:
+- components/Planning/PlanningNodeDetail.tsx
+- services/planning.ts
+- types.ts
+- components/Planning/__tests__/PlanningNodeDetail.test.tsx
+- .claude/progress/ccdash-planning-reskin-v2/phase-5-progress.md
 progress: 100
 ---
 
