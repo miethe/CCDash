@@ -19,6 +19,7 @@ architecture_summary: Phase 0 extracts OKLCH tokens and implements primitives; P
   8-9 address a11y/perf/testing; Phase 10 handles documentation finalization. Total
   10 phases, ~8-10 weeks.
 related_documents:
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 - docs/project_plans/designs/ccdash-planning/README.md
 - docs/project_plans/designs/ccdash-planning/project/Planning Deck.html
 - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
