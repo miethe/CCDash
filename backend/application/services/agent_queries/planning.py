@@ -441,6 +441,114 @@ def _load_doc_rows_for_feature(
     ]
 
 
+_LIGHTWEIGHT_DOC_TYPE_TO_NODE_TYPE = {
+    "design_doc": "design_spec",
+    "spec": "design_spec",
+    "design_spec": "design_spec",
+    "implementation_plan": "implementation_plan",
+    "phase_plan": "implementation_plan",
+    "prd": "prd",
+    "progress": "progress",
+    "report": "report",
+}
+
+
+def _lightweight_node_type_for_doc(
+    *,
+    doc_type: str,
+    file_path: str,
+    primary_role: str = "",
+) -> str | None:
+    """Classify planning artifact rows without building a full feature graph."""
+    role_token = str(primary_role or "").strip().lower()
+    path_token = str(file_path or "").strip().lower()
+    raw_doc_type = str(doc_type or "").strip().lower()
+    if raw_doc_type == "tracker" or "tracker" in role_token or "tracker" in path_token:
+        return "tracker"
+    if raw_doc_type in {"context", "ctx"} or "context" in role_token or "context" in path_token:
+        return "context"
+
+    classified = str(
+        classify_doc_type(file_path, {"doc_type": doc_type})
+        or raw_doc_type
+    ).strip().lower()
+    return _LIGHTWEIGHT_DOC_TYPE_TO_NODE_TYPE.get(classified)
+
+
+def _doc_identity(*, doc_id: str, file_path: str, title: str = "") -> str:
+    return str(file_path or doc_id or title or "").strip().lower()
+
+
+def _linked_document_node_entries(
+    linked_docs: list[Any],
+) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for raw_doc in linked_docs or []:
+        doc = (
+            LinkedDocument.model_validate(raw_doc)
+            if isinstance(raw_doc, dict)
+            else raw_doc
+        )
+        if not isinstance(doc, LinkedDocument):
+            continue
+        node_type = _lightweight_node_type_for_doc(
+            doc_type=str(getattr(doc, "docType", "") or ""),
+            file_path=str(getattr(doc, "filePath", "") or ""),
+            primary_role=str(getattr(doc, "primaryDocRole", "") or ""),
+        )
+        if node_type is None:
+            continue
+        identity = _doc_identity(
+            doc_id=str(getattr(doc, "id", "") or ""),
+            file_path=str(getattr(doc, "filePath", "") or ""),
+            title=str(getattr(doc, "title", "") or ""),
+        )
+        if identity:
+            entries.append((identity, node_type))
+    return entries
+
+
+def _doc_row_node_entries(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for row in rows:
+        node_type = _lightweight_node_type_for_doc(
+            doc_type=str(row.get("doc_type") or ""),
+            file_path=str(row.get("file_path") or row.get("filePath") or ""),
+            primary_role=str(
+                row.get("primary_doc_role")
+                or row.get("primaryDocRole")
+                or ""
+            ),
+        )
+        if node_type is None:
+            continue
+        identity = _doc_identity(
+            doc_id=str(row.get("id") or row.get("document_id") or ""),
+            file_path=str(row.get("file_path") or row.get("filePath") or ""),
+            title=str(row.get("title") or ""),
+        )
+        if identity:
+            entries.append((identity, node_type))
+    return entries
+
+
+def _count_lightweight_planning_nodes(
+    feature: Feature,
+    current_doc_rows: list[dict[str, Any]],
+) -> tuple[Counter[str], int]:
+    """Return planning artifact counts for summary payloads only.
+
+    Full graph node/edge construction remains available through graph/detail
+    endpoints; summary only needs artifact facets and a small per-feature count.
+    """
+    nodes_by_identity: dict[str, str] = {}
+    for identity, node_type in _linked_document_node_entries(feature.linkedDocs):
+        nodes_by_identity.setdefault(identity, node_type)
+    for identity, node_type in _doc_row_node_entries(current_doc_rows):
+        nodes_by_identity.setdefault(identity, node_type)
+    return Counter(nodes_by_identity.values()), len(nodes_by_identity)
+
+
 async def _load_all_features(
     ports: CorePorts, project_id: str
 ) -> tuple[list[dict[str, Any]], list[Feature], dict[str, Feature]]:
@@ -564,7 +672,8 @@ class PlanningQueryService:
 
         Loads all features, applies planning projection, and aggregates:
         active vs stale counts, blocked/mismatch counts, reversal lists, and
-        node-type distribution across all feature planning graphs.
+        lightweight artifact facets. Full graph payloads are deferred to the
+        graph/detail endpoints.
         """
         scope = resolve_project_scope(context, ports, project_id_override)
         if scope is None:
@@ -632,29 +741,12 @@ class PlanningQueryService:
             }:
                 stale_ids.append(feature.id)
 
-            # Count node types from each feature's graph.
             current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature.id)
-            linked_docs = [
-                LinkedDocument.model_validate(d)
-                for d in (feature.linkedDocs or [])
-                if isinstance(d, dict)
-            ] + [
-                LinkedDocument(
-                    id=str(row.get("id") or ""),
-                    title=str(row.get("title") or ""),
-                    filePath=str(row.get("file_path") or ""),
-                    docType=str(row.get("doc_type") or ""),
-                )
-                for row in current_doc_rows
-            ]
-            try:
-                graph = build_planning_graph(feature, linked_docs, None)
-                for node in graph.nodes:
-                    node_type_counter[str(node.type)] += 1
-                node_count = len(graph.nodes)
-            except Exception:
-                node_count = 0
-                partial = True
+            feature_node_counts, node_count = _count_lightweight_planning_nodes(
+                feature,
+                current_doc_rows,
+            )
+            node_type_counter.update(feature_node_counts)
 
             blocked_phases = [
                 p

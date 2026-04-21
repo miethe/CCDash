@@ -2,100 +2,130 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2-interaction-performance-addendum"
-feature_slug: "ccdash-planning-reskin-v2-interaction-performance-addendum"
+prd: ccdash-planning-reskin-v2-interaction-performance-addendum
+feature_slug: ccdash-planning-reskin-v2-interaction-performance-addendum
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 phase: 12
-title: "Planning Query and Browser Cache Strategy"
-status: "pending"
+title: Planning Query and Browser Cache Strategy
+status: in_progress
 created: 2026-04-21
-updated: 2026-04-21
+updated: '2026-04-21'
 started: null
 completed: null
 commit_refs: []
 pr_refs: []
-
-overall_progress: 0
-completion_estimate: "on-track"
-
+overall_progress: 20
+completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 1
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["python-backend-engineer", "react-performance-optimizer"]
+owners:
+- python-backend-engineer
+- react-performance-optimizer
 contributors: []
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "P12-001"
-    description: "Split summary/facets from graph/detail payloads if current summary cannot meet budget."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    assigned_model: "sonnet"
-    dependencies: []
-    estimated_effort: "2 pts"
-    priority: "high"
-
-  - id: "P12-002"
-    description: "Add query params for active-first loading, terminal inclusion, and result limits."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    assigned_model: "sonnet"
-    dependencies: ["P12-001"]
-    estimated_effort: "2 pts"
-    priority: "high"
-
-  - id: "P12-003"
-    description: "Fix backend cache fingerprint coverage for planning queries."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    assigned_model: "sonnet"
-    dependencies: ["P12-001"]
-    estimated_effort: "2 pts"
-    priority: "high"
-
-  - id: "P12-004"
-    description: "Add frontend bounded stale-while-revalidate cache for planning summary/facets."
-    status: "pending"
-    assigned_to: ["react-performance-optimizer"]
-    assigned_model: "sonnet"
-    dependencies: ["P12-001"]
-    estimated_effort: "2 pts"
-    priority: "high"
-
-  - id: "P12-005"
-    description: "Add hover/open prefetch for feature context and roster/session details."
-    status: "pending"
-    assigned_to: ["react-performance-optimizer"]
-    assigned_model: "sonnet"
-    dependencies: ["P12-004"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-
+- id: P12-001
+  description: Split summary/facets from graph/detail payloads if current summary
+    cannot meet budget.
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  assigned_model: sonnet
+  dependencies: []
+  estimated_effort: 2 pts
+  priority: high
+  note: Implemented lightweight summary artifact facets without synchronous graph
+    construction; targeted planning query tests passed.
+- id: P12-002
+  description: Add query params for active-first loading, terminal inclusion, and
+    result limits.
+  status: pending
+  assigned_to:
+  - python-backend-engineer
+  assigned_model: sonnet
+  dependencies:
+  - P12-001
+  estimated_effort: 2 pts
+  priority: high
+- id: P12-003
+  description: Fix backend cache fingerprint coverage for planning queries.
+  status: pending
+  assigned_to:
+  - python-backend-engineer
+  assigned_model: sonnet
+  dependencies:
+  - P12-001
+  estimated_effort: 2 pts
+  priority: high
+- id: P12-004
+  description: Add frontend bounded stale-while-revalidate cache for planning summary/facets.
+  status: pending
+  assigned_to:
+  - react-performance-optimizer
+  assigned_model: sonnet
+  dependencies:
+  - P12-001
+  estimated_effort: 2 pts
+  priority: high
+- id: P12-005
+  description: Add hover/open prefetch for feature context and roster/session details.
+  status: pending
+  assigned_to:
+  - react-performance-optimizer
+  assigned_model: sonnet
+  dependencies:
+  - P12-004
+  estimated_effort: 1 pt
+  priority: medium
 parallelization:
-  batch_1: ["P12-001"]
-  batch_2: ["P12-002", "P12-003", "P12-004"]
-  batch_3: ["P12-005"]
-  critical_path: ["P12-001", "P12-004", "P12-005"]
-  estimated_total_time: "2.5 days"
-
+  batch_1:
+  - P12-001
+  batch_2:
+  - P12-002
+  - P12-003
+  - P12-004
+  batch_3:
+  - P12-005
+  critical_path:
+  - P12-001
+  - P12-004
+  - P12-005
+  estimated_total_time: 2.5 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-12.1", description: "Planning shell can render from a lightweight summary without building every graph synchronously", status: "pending" }
-  - { id: "SC-12.2", description: "Default home fetch prioritizes active/planned/blocked/review items; terminal features load on demand or after idle", status: "pending" }
-  - { id: "SC-12.3", description: "Cache invalidates when documents, feature phases, sessions, or entity links change, not only feature/session timestamps", status: "pending" }
-  - { id: "SC-12.4", description: "Returning to /planning renders warm state immediately (<250ms) and refreshes in background; cache has bounded keys and payload types", status: "pending" }
-  - { id: "SC-12.5", description: "Opening a recently hovered feature/agent is near-instant without preloading every detail payload", status: "pending" }
-  - { id: "SC-12.6", description: "All tests green", status: "pending" }
-
-files_modified: []
+- id: SC-12.1
+  description: Planning shell can render from a lightweight summary without building
+    every graph synchronously
+  status: completed
+- id: SC-12.2
+  description: Default home fetch prioritizes active/planned/blocked/review items;
+    terminal features load on demand or after idle
+  status: pending
+- id: SC-12.3
+  description: Cache invalidates when documents, feature phases, sessions, or entity
+    links change, not only feature/session timestamps
+  status: pending
+- id: SC-12.4
+  description: Returning to /planning renders warm state immediately (<250ms) and
+    refreshes in background; cache has bounded keys and payload types
+  status: pending
+- id: SC-12.5
+  description: Opening a recently hovered feature/agent is near-instant without preloading
+    every detail payload
+  status: pending
+- id: SC-12.6
+  description: All tests green
+  status: pending
+files_modified:
+- backend/application/services/agent_queries/planning.py
+- backend/tests/test_planning_query_service.py
+progress: 20
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 12: Planning Query and Browser Cache Strategy

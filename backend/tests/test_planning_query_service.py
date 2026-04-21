@@ -349,6 +349,73 @@ class ProjectPlanningSummaryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("blocked-feat", result.blocked_feature_ids)
 
+    async def test_summary_uses_lightweight_artifact_facets_without_building_graphs(self) -> None:
+        feature = _feature(
+            fid="feat-light",
+            name="Lightweight Feature",
+            status="in-progress",
+            linked_docs=[
+                LinkedDocument(
+                    id="linked-prd",
+                    title="Linked PRD",
+                    filePath="docs/prds/feat-light.md",
+                    docType="prd",
+                ).model_dump()
+            ],
+        )
+        rows = [_feature_row(feature)]
+        doc_rows = [
+            _doc_row(
+                did="doc-plan",
+                title="Plan",
+                doc_type="implementation_plan",
+                file_path="docs/project_plans/implementation_plans/feat-light.md",
+                feature_slug="feat-light",
+            ),
+            _doc_row(
+                did="doc-context",
+                title="Context",
+                doc_type="context",
+                file_path="docs/context/feat-light.md",
+                feature_slug="feat-light",
+            ),
+            _doc_row(
+                did="doc-tracker",
+                title="Tracker",
+                doc_type="tracker",
+                file_path=".claude/progress/feat-light/phase-12-progress.md",
+                feature_slug="feat-light",
+            ),
+        ]
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=rows),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=doc_rows),
+            list_paginated=AsyncMock(return_value=doc_rows),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        with patch(
+            "backend.application.services.agent_queries.planning.build_planning_graph",
+            new=MagicMock(side_effect=AssertionError("summary should not build graphs")),
+        ) as graph_mock:
+            result = await PlanningQueryService().get_project_planning_summary(
+                _context(), ports
+            )
+
+        graph_mock.assert_not_called()
+        self.assertEqual(result.total_feature_count, 1)
+        self.assertEqual(result.active_feature_count, 1)
+        self.assertEqual(len(result.feature_summaries), 1)
+        self.assertEqual(result.feature_summaries[0].feature_id, "feat-light")
+        self.assertEqual(result.feature_summaries[0].node_count, 4)
+        self.assertEqual(result.node_counts_by_type.prd, 1)
+        self.assertEqual(result.node_counts_by_type.implementation_plan, 1)
+        self.assertEqual(result.node_counts_by_type.context, 1)
+        self.assertEqual(result.node_counts_by_type.tracker, 1)
+
 
 class ProjectPlanningGraphTests(unittest.IsolatedAsyncioTestCase):
     """get_project_planning_graph returns nodes + edges."""
