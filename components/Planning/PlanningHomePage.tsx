@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GitBranch, Inbox, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
-import type { FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
+import type { Feature, FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
 import { getProjectPlanningSummary, PlanningApiError } from '../../services/planning';
 import { getLaunchCapabilities } from '../../services/execution';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
-import { planningFeatureModalHref, planningArtifactsHref } from '../../services/planningRoutes';
+import { planningArtifactsHref, type PlanningFeatureModalTab } from '../../services/planningRoutes';
 import type { LiveConnectionStatus } from '../../services/live';
+import { ProjectBoardFeatureModal } from '../ProjectBoard';
 import { PlanningSummaryPanel } from './PlanningSummaryPanel';
 import type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
 import { PlanningGraphPanel } from './PlanningGraphPanel';
@@ -33,6 +34,44 @@ function formatGeneratedAt(value?: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function getFeatureBaseSlug(featureId: string): string {
+  const segments = featureId.split('/');
+  return segments[segments.length - 1] || featureId;
+}
+
+function createModalFeatureFromSummary(item: FeatureSummaryItem): Feature {
+  return {
+    id: item.featureId,
+    name: item.featureName || item.featureId,
+    status: item.rawStatus || item.effectiveStatus || 'unknown',
+    totalTasks: 0,
+    completedTasks: 0,
+    category: '',
+    tags: [],
+    updatedAt: '',
+    linkedDocs: [],
+    phases: [],
+    relatedFeatures: [],
+  };
+}
+
+export function resolvePlanningModalFeature(
+  featureId: string,
+  features: Feature[],
+  summary: ProjectPlanningSummary,
+): Feature | null {
+  const requestedBase = getFeatureBaseSlug(featureId);
+  const fullFeature =
+    features.find((feature) => feature.id === featureId) ||
+    features.find((feature) => getFeatureBaseSlug(feature.id) === requestedBase);
+  if (fullFeature) return fullFeature;
+
+  const summaryFeature =
+    summary.featureSummaries.find((feature) => feature.featureId === featureId) ||
+    summary.featureSummaries.find((feature) => getFeatureBaseSlug(feature.featureId) === requestedBase);
+  return summaryFeature ? createModalFeatureFromSummary(summaryFeature) : null;
 }
 
 // ── Hero header ───────────────────────────────────────────────────────────────
@@ -583,10 +622,14 @@ type FetchState =
   | { phase: 'ready'; summary: ProjectPlanningSummary };
 
 export default function PlanningHomePage() {
-  const { activeProject } = useData();
+  const { activeProject, features = [] } = useData();
   const navigate = useNavigate();
   const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
   const [planningEnabled, setPlanningEnabled] = useState<boolean>(true);
+  const [selectedFeatureModal, setSelectedFeatureModal] = useState<{
+    featureId: string;
+    tab: PlanningFeatureModalTab;
+  } | null>(null);
 
   // Check capability flag on mount. Defaults to true; silently falls back to
   // true if the capabilities endpoint is unreachable so existing deploys are
@@ -629,6 +672,19 @@ export default function PlanningHomePage() {
     enabled: liveTopics.length > 0,
     onInvalidate: () => loadSummary(),
   });
+
+  const openFeatureModal = useCallback((featureId: string, tab: PlanningFeatureModalTab = 'overview') => {
+    setSelectedFeatureModal({ featureId, tab });
+  }, []);
+
+  const closeFeatureModal = useCallback(() => {
+    setSelectedFeatureModal(null);
+  }, []);
+
+  const selectedFeature = useMemo(() => {
+    if (!selectedFeatureModal || fetchState.phase !== 'ready') return null;
+    return resolvePlanningModalFeature(selectedFeatureModal.featureId, features, fetchState.summary);
+  }, [features, fetchState, selectedFeatureModal]);
 
   // Render
   if (!planningEnabled) {
@@ -673,16 +729,23 @@ export default function PlanningHomePage() {
   }
 
   return (
-    <PlanningShell
-      summary={summary}
-      liveStatus={liveStatus}
-      onSelectFeature={(featureId) =>
-        navigate(planningFeatureModalHref(featureId))
-      }
-      onDrillDown={(type) =>
-        navigate(planningArtifactsHref(type))
-      }
-      onRefresh={() => void loadSummary()}
-    />
+    <>
+      <PlanningShell
+        summary={summary}
+        liveStatus={liveStatus}
+        onSelectFeature={openFeatureModal}
+        onDrillDown={(type) =>
+          navigate(planningArtifactsHref(type))
+        }
+        onRefresh={() => void loadSummary()}
+      />
+      {selectedFeature && selectedFeatureModal ? (
+        <ProjectBoardFeatureModal
+          feature={selectedFeature}
+          initialTab={selectedFeatureModal.tab}
+          onClose={closeFeatureModal}
+        />
+      ) : null}
+    </>
   );
 }

@@ -22,7 +22,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import type { ProjectPlanningSummary, FeatureSummaryItem } from '../../../types';
+import type { Feature, ProjectPlanningSummary, FeatureSummaryItem } from '../../../types';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -44,7 +44,7 @@ vi.mock('../../../contexts/DataContext', () => ({
 
 import { getProjectPlanningSummary } from '../../../services/planning';
 import { PlanningSummaryPanel } from '../PlanningSummaryPanel';
-import PlanningHomePage from '../PlanningHomePage';
+import PlanningHomePage, { resolvePlanningModalFeature } from '../PlanningHomePage';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -101,6 +101,21 @@ const makeSummary = (overrides: Partial<ProjectPlanningSummary> = {}): ProjectPl
       blockedPhaseCount: 2,
     }),
   ],
+  ...overrides,
+});
+
+const makeFeature = (overrides: Partial<Feature> = {}): Feature => ({
+  id: 'feat-1',
+  name: 'Auth Revamp',
+  status: 'in-progress',
+  totalTasks: 0,
+  completedTasks: 0,
+  category: '',
+  tags: [],
+  updatedAt: '2026-04-17T00:00:00Z',
+  linkedDocs: [],
+  phases: [],
+  relatedFeatures: [],
   ...overrides,
 });
 
@@ -253,6 +268,25 @@ describe('PlanningSummaryPanel', () => {
     );
     // Overflow: 10 - 8 = 2 more
     expect(html).toContain('+2 more');
+  });
+});
+
+describe('resolvePlanningModalFeature', () => {
+  it('uses the full feature from app data when available', () => {
+    const feature = makeFeature({ id: 'enhancements/feat-1', name: 'Full Feature' });
+    const resolved = resolvePlanningModalFeature('feat-1', [feature], makeSummary());
+    expect(resolved).toBe(feature);
+  });
+
+  it('falls back to a summary-backed feature shell for route-local modal hosting', () => {
+    const resolved = resolvePlanningModalFeature('feat-1', [], makeSummary());
+    expect(resolved).toMatchObject({
+      id: 'feat-1',
+      name: 'Auth Revamp',
+      status: 'in-progress',
+      linkedDocs: [],
+      phases: [],
+    });
   });
 });
 

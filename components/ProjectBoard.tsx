@@ -40,7 +40,12 @@ import {
   projectFeaturesTopic,
   useLiveInvalidation,
 } from '../services/live';
-import { planningFeatureDetailHref, planningFeatureModalHref } from '../services/planningRoutes';
+import {
+  isPlanningFeatureModalTab,
+  planningFeatureDetailHref,
+  planningFeatureModalHref,
+  type PlanningFeatureModalTab,
+} from '../services/planningRoutes';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -206,7 +211,7 @@ interface GitCommitAggregate {
 
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
-type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'relations' | 'sessions' | 'history' | 'test-status';
+export type FeatureModalTab = PlanningFeatureModalTab;
 
 interface CoreSessionGroupDefinition {
   id: CoreSessionGroupId;
@@ -1259,7 +1264,7 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
 
 // ── Feature Detail Modal ───────────────────────────────────────────
 
-const FeatureModal = ({
+export const ProjectBoardFeatureModal = ({
   feature,
   onClose,
   initialTab = 'overview',
@@ -3956,8 +3961,7 @@ export const ProjectBoard: React.FC = () => {
   useEffect(() => {
     const featureId = searchParams.get('feature');
     const tabParam = (searchParams.get('tab') || '').trim().toLowerCase();
-    const validTabs: FeatureModalTab[] = ['overview', 'phases', 'docs', 'relations', 'sessions', 'history', 'test-status'];
-    const requestedTab = validTabs.includes(tabParam as FeatureModalTab) ? (tabParam as FeatureModalTab) : 'overview';
+    const requestedTab = isPlanningFeatureModalTab(tabParam) ? tabParam : 'overview';
     if (featureId && apiFeatures.length > 0) {
       const featureBase = getFeatureBaseSlug(featureId);
       const feat = apiFeatures.find(f => f.id === featureId)
@@ -4557,7 +4561,7 @@ export const ProjectBoard: React.FC = () => {
 
       {/* Feature Detail Modal */}
       {selectedFeature && (
-        <FeatureModal
+        <ProjectBoardFeatureModal
           feature={selectedFeature}
           initialTab={selectedFeatureTab}
           onClose={() => setSelectedFeature(null)}

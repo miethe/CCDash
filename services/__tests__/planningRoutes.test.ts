@@ -3,6 +3,7 @@
  *
  * Tests all three helpers exported from services/planningRoutes.ts:
  *   - planningFeatureModalHref
+ *   - planningRouteFeatureModalHref
  *   - planningFeatureDetailHref
  *   - planningArtifactsHref
  *
@@ -23,6 +24,7 @@ import {
   planningArtifactsHref,
   planningFeatureDetailHref,
   planningFeatureModalHref,
+  planningRouteFeatureModalHref,
   type PlanningFeatureModalTab,
 } from '../planningRoutes';
 
@@ -76,6 +78,26 @@ describe('planningFeatureModalHref', () => {
   it('passes empty featureId through without crashing', () => {
     const href = planningFeatureModalHref('');
     expect(href).toBe('/board?feature=&tab=overview');
+  });
+});
+
+describe('planningRouteFeatureModalHref', () => {
+  it('keeps feature modal links under /planning', () => {
+    expect(planningRouteFeatureModalHref('feat-1')).toBe(
+      '/planning?feature=feat-1&modal=feature&tab=overview',
+    );
+  });
+
+  it('accepts an explicit tab', () => {
+    expect(planningRouteFeatureModalHref('feat-1', 'docs')).toBe(
+      '/planning?feature=feat-1&modal=feature&tab=docs',
+    );
+  });
+
+  it('URL-encodes featureId', () => {
+    expect(planningRouteFeatureModalHref('ns/feat 1')).toBe(
+      '/planning?feature=ns%2Ffeat%201&modal=feature&tab=overview',
+    );
   });
 });
 
