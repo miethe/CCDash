@@ -4,7 +4,7 @@ Updated: 2026-04-06
 
 This guide closes Phase 7 of `session-intelligence-canonical-storage-v1`. It documents the supported rollout posture for canonical transcript intelligence, the checkpointed enterprise backfill path, and the approval-gated SkillMeat memory-draft workflow.
 
-If you need the full enterprise operator path, including storage setup, the supported API + worker topology, `/api/health` verification, and post-rollout usage guidance, start with [`enterprise-session-intelligence-runbook.md`](/Users/miethe/dev/homelab/development/CCDash/docs/guides/enterprise-session-intelligence-runbook.md).
+If you need the full enterprise operator path, including storage setup, the supported API + worker topology, `/api/health` verification, and post-rollout usage guidance, start with [`enterprise-session-intelligence-runbook.md`](enterprise-session-intelligence-runbook.md).
 
 ## Scope
 
@@ -175,7 +175,7 @@ backend/.venv/bin/python -m pytest backend/tests/test_runtime_bootstrap.py backe
 
 Related references:
 
-- [storage-profiles-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/storage-profiles-guide.md)
-- [data-platform-rollout-and-handoff.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-platform-rollout-and-handoff.md)
-- [enterprise-session-intelligence-runbook.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/enterprise-session-intelligence-runbook.md)
-- [session-intelligence-canonical-storage-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md)
+- [storage-profiles-guide.md](storage-profiles-guide.md)
+- [data-platform-rollout-and-handoff.md](data-platform-rollout-and-handoff.md)
+- [enterprise-session-intelligence-runbook.md](enterprise-session-intelligence-runbook.md)
+- [session-intelligence-canonical-storage-v1.md](../project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md)

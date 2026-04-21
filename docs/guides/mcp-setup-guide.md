@@ -11,7 +11,7 @@ CCDash exposes four transport-neutral intelligence tools through MCP:
 - `ccdash_workflow_failure_patterns`
 - `ccdash_generate_aar`
 
-The workspace config lives at [`.mcp.json`](/Users/miethe/dev/homelab/development/CCDash/.mcp.json) and launches the server with `python -m backend.mcp.server`.
+The workspace config lives at [`.mcp.json`](../../.mcp.json) and launches the server with `python -m backend.mcp.server`.
 
 ## Prerequisites
 

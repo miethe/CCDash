@@ -8,15 +8,15 @@ This document describes the Codebase Explorer implementation, APIs, data rules, 
 
 Implemented in:
 
-- `/Users/miethe/dev/homelab/development/CCDash/backend/services/codebase_explorer.py`
-- `/Users/miethe/dev/homelab/development/CCDash/backend/routers/codebase.py`
-- `/Users/miethe/dev/homelab/development/CCDash/components/CodebaseExplorer.tsx`
-- `/Users/miethe/dev/homelab/development/CCDash/components/SessionInspector.tsx`
+- `backend/services/codebase_explorer.py`
+- `backend/routers/codebase.py`
+- `components/CodebaseExplorer.tsx`
+- `components/SessionInspector.tsx`
 
 Route wiring:
 
-- `/Users/miethe/dev/homelab/development/CCDash/App.tsx` (`/codebase`)
-- `/Users/miethe/dev/homelab/development/CCDash/components/Layout.tsx` (sidebar nav)
+- `App.tsx` (`/codebase`)
+- `components/Layout.tsx` (sidebar nav)
 
 ## Session Inspector changes
 
@@ -121,7 +121,7 @@ Scanner hardening:
 
 ## Tests
 
-- `/Users/miethe/dev/homelab/development/CCDash/backend/tests/test_codebase_router.py`
+- `backend/tests/test_codebase_router.py`
 
 Covers:
 

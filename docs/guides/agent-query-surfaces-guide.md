@@ -235,7 +235,7 @@ Useful next additions would include:
 
 ## Related Docs
 
-- [CLI User Guide](/Users/miethe/dev/homelab/development/CCDash/docs/guides/cli-user-guide.md)
-- [MCP Setup Guide](/Users/miethe/dev/homelab/development/CCDash/docs/guides/mcp-setup-guide.md)
-- [MCP Troubleshooting](/Users/miethe/dev/homelab/development/CCDash/docs/guides/mcp-troubleshooting.md)
-- [backend/mcp/README.md](/Users/miethe/dev/homelab/development/CCDash/backend/mcp/README.md)
+- [CLI User Guide](cli-user-guide.md)
+- [MCP Setup Guide](mcp-setup-guide.md)
+- [MCP Troubleshooting](mcp-troubleshooting.md)
+- [backend/mcp/README.md](../../backend/mcp/README.md)

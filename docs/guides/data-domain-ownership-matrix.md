@@ -1,6 +1,6 @@
 # Data-Domain Ownership Matrix
 
-This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted concerns, includes the Phase 3 post-completion ownership-posture delta, and reflects the Phase 4 enterprise-only identity/access and audit/security boundary work now in progress. [backend/data_domains.py](/Users/miethe/dev/homelab/development/CCDash/backend/data_domains.py) is the code-owned source of truth, and [docs/guides/data-domain-schema-layout.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-schema-layout.md) captures the matching schema and repository contract.
+This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted concerns, includes the Phase 3 post-completion ownership-posture delta, and reflects the Phase 4 enterprise-only identity/access and audit/security boundary work now in progress. [backend/data_domains.py](../../backend/data_domains.py) is the code-owned source of truth, and [docs/guides/data-domain-schema-layout.md](data-domain-schema-layout.md) captures the matching schema and repository contract.
 
 ## Domain Summary
 
@@ -73,5 +73,5 @@ This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted c
 ## Enforcement Notes
 
 - The migration-owned set currently contains 44 tables and is expected to stay identical between `backend/db/sqlite_migrations.py` and `backend/db/postgres_migrations.py`.
-- [backend/tests/test_data_domain_ownership.py](/Users/miethe/dev/homelab/development/CCDash/backend/tests/test_data_domain_ownership.py) enforces that every current migration table is classified, that directly ownable concerns reserve the expected future owner subject types, and that the auth/audit placeholders stay frozen as enterprise-owned canonical concerns.
+- [backend/tests/test_data_domain_ownership.py](../../backend/tests/test_data_domain_ownership.py) enforces that every current migration table is classified, that directly ownable concerns reserve the expected future owner subject types, and that the auth/audit placeholders stay frozen as enterprise-owned canonical concerns.
 - This matrix intentionally includes non-table persisted concerns (`projects.json`, `workspace_registry_state`) so future storage work does not regress filesystem ownership assumptions.

@@ -1,8 +1,14 @@
-# CCDash Testing Integration User Guide
+# Testing Integration Guide
+
+Testing setup, ingestion behavior, and performance guardrails for the CCDash testing surface.
+
+> Consolidated from the former top-level user and developer docs. `docs/project_plans/` content was intentionally left untouched.
+
+## User Guide
 
 This guide explains how to configure a Project so the `/tests` page ingests and displays backend/frontend test artifacts reliably.
 
-## 1) Preconditions
+### 1) Preconditions
 
 1. Start CCDash backend/frontend (`npm run dev`).
 2. Ensure environment kill switches are enabled when you want testing features active:
@@ -15,7 +21,7 @@ This guide explains how to configure a Project so the `/tests` page ingests and 
 
 Effective behavior is `env_flag && project_flag`. If env is `false`, project settings cannot override it.
 
-## 2) Configure Project Testing Settings
+### 2) Configure Project Testing Settings
 
 Open `Settings` -> `Projects` -> select the project -> `Testing Configuration`.
 
@@ -38,7 +44,7 @@ Configure:
 
 Save the project.
 
-## 3) Validate and Sync
+### 3) Validate and Sync
 
 After saving:
 
@@ -52,7 +58,7 @@ After saving:
 
 `/tests` should populate after a successful sync.
 
-## 4) Generate and Export Setup Script
+### 4) Generate and Export Setup Script
 
 For each project, Settings can generate a local bootstrap script from current Testing entries:
 
@@ -67,7 +73,7 @@ chmod +x <project-id>-test-setup.sh
 
 Then return to CCDash and run `Validate Paths` and `Run Sync Now`.
 
-## 5) How Discovery Works
+### 5) How Discovery Works
 
 CCDash does not execute tests itself. It ingests result artifacts from configured platform sources.
 
@@ -82,7 +88,7 @@ For each enabled platform, CCDash:
 
 If no files are found for enabled platforms, `/tests` remains empty by design.
 
-## 6) Supported Artifact Types (Current)
+### 6) Supported Artifact Types (Current)
 
 - `pytest`: JUnit XML
 - `jest`: JSON results
@@ -93,7 +99,7 @@ If no files are found for enabled platforms, `/tests` remains empty by design.
 - `locust`: HTML/CSV metrics
 - `triage`: failure summary artifacts
 
-## 7) SkillMeat Recommended Setup
+### 7) SkillMeat Recommended Setup
 
 In SkillMeat, configure scripts/workflows to emit machine-readable outputs into stable directories, then map those directories in CCDash platform settings.
 
@@ -105,9 +111,9 @@ Typical outputs:
 4. Perf/load (`benchmark`, `lighthouse`, `locust`): JSON/HTML/CSV outputs
 5. Failure triage: JSON/Markdown/text summaries
 
-## 8) Troubleshooting
+### 8) Troubleshooting
 
-### `/api/tests/*` returns `503 Service Unavailable`
+#### `/api/tests/*` returns `503 Service Unavailable`
 
 1. If error is `feature_disabled`:
    - Enable `CCDASH_TEST_VISUALIZER_ENABLED=true` in environment
@@ -116,18 +122,18 @@ Typical outputs:
 
 The frontend includes a circuit breaker for `feature_disabled` responses to prevent retry storms.
 
-### `/tests` is empty but no 503
+#### `/tests` is empty but no 503
 
 1. `Validate Paths` and inspect `Source Status`.
 2. Confirm `matched` file count is non-zero for enabled platforms.
 3. Confirm `Results Dir` and `Patterns` match actual artifact locations.
 4. Run `Run Sync Now` and check returned sync summary.
 
-### High CPU or constant polling previously observed
+#### High CPU or constant polling previously observed
 
 Current behavior uses stream-first invalidation when both backend and frontend live gates are enabled, then falls back to polling on disconnect/backoff. Session transcript append is separate: if the transcript append flag is off, or if replay gaps/mismatches occur, Session Inspector refetches the session detail instead of trying to merge unsafe transcript changes. If you still see churn, re-check env/project flags and browser console errors.
 
-## 9) Mapping Coverage and Reuse Workflow
+### 9) Mapping Coverage and Reuse Workflow
 
 Use this workflow to get high mapping coverage without remapping every run:
 
@@ -149,7 +155,7 @@ Backfill response now reports cache and resolver state:
 - `resolver_version`
 - `cache_state`
 
-## 10) Domain and Sub-domain Mapping
+### 10) Domain and Sub-domain Mapping
 
 Mapping providers now support hierarchical domains:
 
@@ -162,7 +168,7 @@ Mapping providers now support hierarchical domains:
    - supports hierarchical markers (for example `auth/api`).
    - falls back to adaptive path-derived domain hierarchy if no explicit domain marker is present.
 
-## 11) Extensible Mapping Methods
+### 11) Extensible Mapping Methods
 
 The resolver is provider-driven to support future mapping strategies:
 
@@ -177,7 +183,7 @@ The resolver is provider-driven to support future mapping strategies:
 4. Domain hygiene:
    - backfill automatically prunes stale unmapped leaf domains so old orphaned domains do not persist in the Mapped Domains pane.
 
-## 12) Session Transcript Test Run Correlation
+### 12) Session Transcript Test Run Correlation
 
 CCDash also correlates test activity from Session tool calls (for example Claude/Codex shell execution logs) to improve session-level test insights.
 
@@ -210,3 +216,53 @@ Important behavior:
 - Non-test shell commands (for example generic Bash scripts, Git commands, or skill helper scripts) are not classified as test runs.
 - Test artifact cards in `Session > Artifacts` include parsed run details from correlated logs so run-level outcomes can be reviewed directly from artifact details.
 - Pytest parsing supports truncated output captures (for example `| tail -20`) and still extracts summary/failure metrics when sufficient pytest signals are present.
+
+## Performance Guardrails
+
+Updated: 2026-03-03
+
+### Scope
+
+This guardrail set covers `/api/tests` hot paths and the Testing page run-detail/result-table interaction flow.
+
+### Budget Targets
+
+Backend (local SQLite benchmark):
+
+- `ingest_run(100 tests)`: `< 500ms`
+- `get_domain_rollups(100 domains, 1000 tests)`: `< 500ms`
+- `list_by_run_filtered(7000-test run)`: `< 1500ms`
+- `list_filtered(feature_id)` for runs list: `< 1000ms`
+- `list_history_for_test(500 runs)`: `< 800ms`
+- `list_filtered(integrity alerts)` with 5000 rows: `< 800ms`
+
+Frontend (browser Performance timeline):
+
+- `tests.ui.runDetail.load`: stable under repeated run switches
+- `tests.ui.runResults.firstPage`: stable under filter/sort changes
+- `tests.ui.runResults.loadMore`: stable under paginated expansion
+
+### Regression Test Entry Point
+
+Run:
+
+```bash
+uv run --project backend pytest backend/tests/test_test_visualizer_performance.py -v
+```
+
+The performance suite seeds realistic large data (including a `7000` test-case run fixture) and enforces the backend budget thresholds above.
+
+### Observability Markers
+
+Backend markers:
+
+- OpenTelemetry spans on test visualizer endpoints annotate `query_mode=db_native` where DB-native filtering/pagination is used.
+
+Frontend markers:
+
+- The Testing page emits browser performance measures:
+  - `tests.ui.runDetail.load`
+  - `tests.ui.runResults.firstPage`
+  - `tests.ui.runResults.loadMore`
+
+These measures are visible in browser DevTools Performance recordings.

@@ -141,7 +141,7 @@ Operator rules:
 
 Repo-shipped non-container launch examples live in [`deploy/runtime/README.md`](../../deploy/runtime/README.md). Use those systemd or supervisor examples when you need the same API/worker/frontend topology on a single host without inventing a separate runtime contract.
 
-Repo-shipped compose smoke helpers live in [`package.json`](/Users/miethe/dev/homelab/development/CCDash/package.json):
+Repo-shipped compose smoke helpers live in [`package.json`](../../package.json):
 
 ```bash
 npm run docker:hosted:smoke:config
@@ -370,7 +370,7 @@ Use the Session Inspector to verify:
 
 Primary surface:
 
-- [components/SessionInspector.tsx](/Users/miethe/dev/homelab/development/CCDash/components/SessionInspector.tsx)
+- [components/SessionInspector.tsx](../../components/SessionInspector.tsx)
 
 ### Execution Workbench
 
@@ -382,7 +382,7 @@ Use the Execution Workbench to verify:
 
 Primary surface:
 
-- [docs/execution-workbench-user-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/execution-workbench-user-guide.md)
+- [execution-workbench.md](execution-workbench.md)
 
 ### Ops / SkillMeat Memory Draft Flow
 
@@ -491,7 +491,7 @@ If you expose this to internal users, explain three points clearly:
 
 ## Related References
 
-- [docs/guides/storage-profiles-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/storage-profiles-guide.md)
-- [docs/guides/session-intelligence-rollout-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/session-intelligence-rollout-guide.md)
-- [docs/setup-user-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/setup-user-guide.md)
-- [docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md)
+- [docs/guides/storage-profiles-guide.md](storage-profiles-guide.md)
+- [docs/guides/session-intelligence-rollout-guide.md](session-intelligence-rollout-guide.md)
+- [setup.md](setup.md)
+- [docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md](../project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md)

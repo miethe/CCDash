@@ -4,8 +4,8 @@ Archived: 2026-03-05
 
 These files were replaced by the canonical schema catalog in:
 
-- [README.md](/Users/miethe/dev/homelab/development/CCDash/docs/schemas/document_frontmatter/README.md)
-- [document-and-feature-mapping.md](/Users/miethe/dev/homelab/development/CCDash/docs/schemas/document_frontmatter/document-and-feature-mapping.md)
+- [README.md](../../../../schemas/document_frontmatter/README.md)
+- [document-and-feature-mapping.md](../../../../schemas/document_frontmatter/document-and-feature-mapping.md)
 
 Archived files:
 

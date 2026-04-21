@@ -97,7 +97,7 @@ These were either missing from the older specs or only partially implemented in 
 
 The implementation plan for adopting these schemas is:
 
-- [document-feature-schema-alignment-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/implementation_plans/refactors/document-feature-schema-alignment-v1.md)
+- [document-feature-schema-alignment-v1.md](../../project_plans/implementation_plans/refactors/document-feature-schema-alignment-v1.md)
 
 Current rollout status:
 

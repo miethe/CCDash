@@ -3,7 +3,7 @@
 This guide covers local setup, development startup, and a production-style startup flow.
 
 If you want the shortest path to a working deployment, start with
-[`docs/guides/containerized-deployment-quickstart.md`](./guides/containerized-deployment-quickstart.md).
+[`docs/guides/containerized-deployment-quickstart.md`](containerized-deployment-quickstart.md).
 
 The container quickstart is the preferred onboarding route. The host-installed
 workflow below remains available for contributors who need direct access to the
@@ -29,7 +29,7 @@ docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --p
 ```
 
 For the enterprise and bundled Postgres variants, replace `--profile local` with the matching profile set above. The canonical operator flow is documented in
-[`docs/guides/containerized-deployment-quickstart.md`](./guides/containerized-deployment-quickstart.md).
+[`docs/guides/containerized-deployment-quickstart.md`](containerized-deployment-quickstart.md).
 
 ## 1) Install Frontend Dependencies
 
@@ -72,8 +72,8 @@ Copy `.env.example` to `.env` and set values as needed:
 
 Telemetry exporter configuration is documented in the dedicated guide:
 
-- [`docs/guides/telemetry-exporter-guide.md`](./guides/telemetry-exporter-guide.md) covers the exporter settings, worker behavior, queue cap, purge behavior, and security rules.
-- [`docs/guides/telemetry-exporter-troubleshooting.md`](./guides/telemetry-exporter-troubleshooting.md) covers common failure modes and recovery steps.
+- [`docs/guides/telemetry-exporter-guide.md`](telemetry-exporter-guide.md) covers the exporter settings, worker behavior, queue cap, purge behavior, and security rules.
+- [`docs/guides/telemetry-exporter-troubleshooting.md`](telemetry-exporter-troubleshooting.md) covers common failure modes and recovery steps.
 
 The exporter uses these telemetry-specific environment variables:
 
@@ -87,10 +87,10 @@ The exporter uses these telemetry-specific environment variables:
 - `CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS` (default `30`; synced-row retention window)
 - `CCDASH_TELEMETRY_ALLOW_INSECURE` (default `false`; allow non-HTTPS SAM endpoints for local testing only)
 
-`CCDASH_STORAGE_PROFILE` is the operator-facing switch for local versus enterprise storage. `CCDASH_DB_BACKEND` remains a compatibility setting behind that contract. For the full profile matrix, see [`docs/guides/storage-profiles-guide.md`](./guides/storage-profiles-guide.md).
+`CCDASH_STORAGE_PROFILE` is the operator-facing switch for local versus enterprise storage. `CCDASH_DB_BACKEND` remains a compatibility setting behind that contract. For the full profile matrix, see [`docs/guides/storage-profiles-guide.md`](storage-profiles-guide.md).
 
-Canonical transcript intelligence is now fully rolled out under that storage contract. Use [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md) for the enterprise backfill workflow, health checks, and SkillMeat draft approval flow.
-For the full end-to-end hosted operator sequence, use [`docs/guides/enterprise-session-intelligence-runbook.md`](./guides/enterprise-session-intelligence-runbook.md).
+Canonical transcript intelligence is now fully rolled out under that storage contract. Use [`docs/guides/session-intelligence-rollout-guide.md`](session-intelligence-rollout-guide.md) for the enterprise backfill workflow, health checks, and SkillMeat draft approval flow.
+For the full end-to-end hosted operator sequence, use [`docs/guides/enterprise-session-intelligence-runbook.md`](enterprise-session-intelligence-runbook.md).
 
 ## 3) Install Backend Dependencies
 
@@ -241,7 +241,7 @@ npm run start:frontend
 
 For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. Hosted enterprise API deployments should serve `backend.runtime.bootstrap_api:app`; `backend.worker` owns startup sync and scheduled/background job execution. `backend.main:app` and `npm run dev` remain the local-convenience entrypoints; `npm run dev:backend` and `npm run start:backend` are convenience wrappers around the hosted `api` runtime.
 
-Repo-shipped process-manager examples now live in [`deploy/runtime/README.md`](../deploy/runtime/README.md), including:
+Repo-shipped process-manager examples now live in [`deploy/runtime/README.md`](../../deploy/runtime/README.md), including:
 
 - [`deploy/runtime/systemd/ccdash-api.service`](../deploy/runtime/systemd/ccdash-api.service)
 - [`deploy/runtime/systemd/ccdash-worker.service`](../deploy/runtime/systemd/ccdash-worker.service)
@@ -340,12 +340,12 @@ Expected posture by row:
 
 Memory-draft publishing remains approval-gated in every posture. CCDash can prepare reviewable SkillMeat memory drafts, but operators must still approve publication explicitly.
 
-For the end-to-end enterprise setup, backfill, and post-rollout usage sequence, see [`docs/guides/enterprise-session-intelligence-runbook.md`](./guides/enterprise-session-intelligence-runbook.md).
-For the narrower rollout command, checkpoint semantics, and failure modes, see [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md).
+For the end-to-end enterprise setup, backfill, and post-rollout usage sequence, see [`docs/guides/enterprise-session-intelligence-runbook.md`](enterprise-session-intelligence-runbook.md).
+For the narrower rollout command, checkpoint semantics, and failure modes, see [`docs/guides/session-intelligence-rollout-guide.md`](session-intelligence-rollout-guide.md).
 
 ## Performance Tuning Quick Start
 
-If CCDash feels heavy — slow startup, repeated syncs, sluggish responses after a restart, or the Chrome tab ballooning past a gigabyte — the following defaults are the highest-leverage knobs. See [`docs/project_plans/meta_plans/performance-and-reliability-v1.md`](./project_plans/meta_plans/performance-and-reliability-v1.md) for the full initiative tracker.
+If CCDash feels heavy — slow startup, repeated syncs, sluggish responses after a restart, or the Chrome tab ballooning past a gigabyte — the following defaults are the highest-leverage knobs. See [`docs/project_plans/meta_plans/performance-and-reliability-v1.md`](../project_plans/meta_plans/performance-and-reliability-v1.md) for the full initiative tracker.
 
 ### Fast defaults for daily use
 
@@ -390,7 +390,7 @@ Or run all three with `npm run dev` for the standard contributor workflow.
 | Frequent relink on unchanged data | `CCDASH_LINKING_LOGIC_VERSION` | Leave at 1 unless the link logic has been updated |
 | Frontend tab memory growth | live transport toggles | Disable `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` on long-running tabs |
 
-See also: [`docs/guides/query-cache-tuning-guide.md`](./guides/query-cache-tuning-guide.md) and [`docs/sync-observability-and-audit.md`](./sync-observability-and-audit.md).
+See also: [`query-cache-tuning-guide.md`](query-cache-tuning-guide.md) and [`operations-panel.md`](operations-panel.md).
 
 ## Full Configuration Reference
 
@@ -509,7 +509,7 @@ All backend variables are read in [`backend/config.py`](../backend/config.py); f
 
 ### Telemetry exporter
 
-See [`docs/guides/telemetry-exporter-guide.md`](./guides/telemetry-exporter-guide.md) for full semantics.
+See [`docs/guides/telemetry-exporter-guide.md`](telemetry-exporter-guide.md) for full semantics.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -575,7 +575,7 @@ Then load the UI again and inspect backend stack traces.
 - Confirm `npm run dev` shows backend health before frontend startup.
 - Confirm `CCDASH_API_PROXY_TARGET` points to the running backend.
 - Confirm `GET /api/health` responds with `status: ok`.
-- If session-intelligence rollout validation is the issue, compare `storageProfileValidationMatrix` and the resolved `sessionIntelligence*` fields against [`docs/guides/storage-profiles-guide.md`](./guides/storage-profiles-guide.md) and [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md).
+- If session-intelligence rollout validation is the issue, compare `storageProfileValidationMatrix` and the resolved `sessionIntelligence*` fields against [`docs/guides/storage-profiles-guide.md`](storage-profiles-guide.md) and [`docs/guides/session-intelligence-rollout-guide.md`](session-intelligence-rollout-guide.md).
 
 ### `/tests` disabled, empty, or returning `503`
 
@@ -585,4 +585,4 @@ Then load the UI again and inspect backend stack traces.
 4. Click `Validate Paths`, review `Source Status`, then click `Run Sync Now`.
 5. Reload `/tests` and click `Refresh`.
 
-For the complete project-scoped testing setup flow (platforms, patterns, setup script export), see [`docs/testing-user-guide.md`](./testing-user-guide.md).
+For the complete project-scoped testing setup flow (platforms, patterns, setup script export), see [`testing.md`](testing.md).

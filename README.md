@@ -347,7 +347,7 @@ Storage posture is now explicit:
 - `enterprise` + Postgres is the canonical hosted posture for transcript intelligence, full analytics, and checkpointed historical backfill.
 - `GET /api/health` reports the resolved posture through `sessionIntelligenceProfile`, `sessionIntelligenceBackfillStrategy`, `sessionIntelligenceMemoryDraftFlow`, and `storageProfileValidationMatrix`.
 
-For full setup, troubleshooting, and deployment guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md), [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md), and [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md).
+For full setup, troubleshooting, and deployment guidance, see [`docs/guides/setup.md`](docs/guides/setup.md), [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md), and [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md).
 
 ---
 
@@ -429,7 +429,8 @@ Markdown documentation with typed identity/classification metadata, canonical de
 
 | Guide | Audience |
 |-------|---------|
-| [`docs/setup-user-guide.md`](docs/setup-user-guide.md) | Setup, troubleshooting, and deployment |
+| [`docs/README.md`](docs/README.md) | Documentation index and current structure |
+| [`docs/guides/setup.md`](docs/guides/setup.md) | Setup, troubleshooting, and deployment |
 | [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md) | Configure the stdio MCP server and validate the shipped tool surface |
 | [`docs/guides/mcp-troubleshooting.md`](docs/guides/mcp-troubleshooting.md) | Common MCP startup, project-resolution, and tool-call failures |
 | [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md) | Standalone CLI operator reference: install, commands, targets, auth, and troubleshooting |
@@ -437,20 +438,17 @@ Markdown documentation with typed identity/classification metadata, canonical de
 | [`docs/guides/cli-migration-guide.md`](docs/guides/cli-migration-guide.md) | Migrating from repo-local CLI to standalone CLI |
 | [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md) | Local vs enterprise storage posture, runtime pairings, and validation matrix |
 | [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md) | Canonical transcript-intelligence rollout, checkpointed enterprise backfill, and SkillMeat draft approval flow |
-| [`docs/theme-modes-user-guide.md`](docs/theme-modes-user-guide.md) | Theme selection, persistence, and `system` behavior |
-| [`docs/testing-user-guide.md`](docs/testing-user-guide.md) | Test configuration and ingestion flow |
-| [`docs/shared-content-viewer-user-guide.md`](docs/shared-content-viewer-user-guide.md) | End-user content rendering behavior across documents, task sources, and sessions |
-| [`docs/execution-workbench-user-guide.md`](docs/execution-workbench-user-guide.md) | End-user execution workflow |
-| [`docs/agentic-sdlc-intelligence-user-guide.md`](docs/agentic-sdlc-intelligence-user-guide.md) | Workflow intelligence and recommended-stack usage |
-| [`docs/session-usage-attribution-user-guide.md`](docs/session-usage-attribution-user-guide.md) | Attribution semantics and interpretation |
-| [`docs/theme-modes-developer-reference.md`](docs/theme-modes-developer-reference.md) | Runtime contract, Settings bridge, and theme guardrails |
-| [`docs/shared-content-viewer-developer-reference.md`](docs/shared-content-viewer-developer-reference.md) | Wrapper architecture, heuristics, styling, and backend support for shared viewer flows |
-| [`docs/agentic-sdlc-intelligence-developer-reference.md`](docs/agentic-sdlc-intelligence-developer-reference.md) | Implementation details and rollout commands |
+| [`docs/guides/theme-modes.md`](docs/guides/theme-modes.md) | Theme selection, persistence, and `system` behavior |
+| [`docs/guides/testing.md`](docs/guides/testing.md) | Test configuration and ingestion flow |
+| [`docs/guides/shared-content-viewer.md`](docs/guides/shared-content-viewer.md) | End-user content rendering behavior across documents, task sources, and sessions |
+| [`docs/guides/execution-workbench.md`](docs/guides/execution-workbench.md) | End-user execution workflow |
+| [`docs/guides/agentic-sdlc-intelligence.md`](docs/guides/agentic-sdlc-intelligence.md) | Workflow intelligence and recommended-stack usage |
+| [`docs/guides/session-usage-attribution.md`](docs/guides/session-usage-attribution.md) | Attribution semantics and interpretation |
 | [`backend/mcp/README.md`](backend/mcp/README.md) | MCP server architecture, tool-registration workflow, and stdio test pattern |
-| [`docs/session-usage-attribution-developer-reference.md`](docs/session-usage-attribution-developer-reference.md) | Attribution contracts, API details, and rollout controls |
-| [`docs/sync-observability-and-audit.md`](docs/sync-observability-and-audit.md) | Sync and rebuild operation behavior |
-| [`docs/codebase-explorer-developer-reference.md`](docs/codebase-explorer-developer-reference.md) | Codebase explorer backend and scoring details |
-| [`docs/execution-workbench-developer-reference.md`](docs/execution-workbench-developer-reference.md) | Execution run architecture and API integration |
+| [`docs/guides/operations-panel.md`](docs/guides/operations-panel.md) | Sync and rebuild operation behavior |
+| [`docs/developer/codebase-explorer.md`](docs/developer/codebase-explorer.md) | Codebase explorer backend and scoring details |
+| [`docs/developer/live-update-platform.md`](docs/developer/live-update-platform.md) | Live update platform implementation details |
+| [`docs/developer/telemetry-analytics.md`](docs/developer/telemetry-analytics.md) | Telemetry and analytics implementation reference |
 
 ---
 

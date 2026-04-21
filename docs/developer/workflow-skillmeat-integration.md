@@ -49,37 +49,37 @@ The intended boundary is:
 
 Current implementation files:
 
-- [backend/services/integrations/skillmeat_client.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_client.py)
-- [backend/services/integrations/skillmeat_sync.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_sync.py)
-- [backend/services/integrations/skillmeat_contracts.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_contracts.py)
-- [backend/services/integrations/skillmeat_resolver.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_resolver.py)
-- [backend/services/integrations/skillmeat_routes.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_routes.py)
-- [backend/services/integrations/skillmeat_refresh.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_refresh.py)
-- [backend/services/stack_observations.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/stack_observations.py)
-- [backend/services/workflow_effectiveness.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/workflow_effectiveness.py)
-- [backend/services/stack_recommendations.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/stack_recommendations.py)
-- [backend/routers/integrations.py](/Users/miethe/dev/homelab/development/CCDash/backend/routers/integrations.py)
-- [backend/routers/features.py](/Users/miethe/dev/homelab/development/CCDash/backend/routers/features.py)
-- [backend/routers/analytics.py](/Users/miethe/dev/homelab/development/CCDash/backend/routers/analytics.py)
-- [components/execution/RecommendedStackCard.tsx](/Users/miethe/dev/homelab/development/CCDash/components/execution/RecommendedStackCard.tsx)
-- [components/execution/WorkflowEffectivenessSurface.tsx](/Users/miethe/dev/homelab/development/CCDash/components/execution/WorkflowEffectivenessSurface.tsx)
-- [backend/services/workflow_registry.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/workflow_registry.py)
-- [components/Workflows/WorkflowRegistryPage.tsx](/Users/miethe/dev/homelab/development/CCDash/components/Workflows/WorkflowRegistryPage.tsx)
-- [services/workflows.ts](/Users/miethe/dev/homelab/development/CCDash/services/workflows.ts)
+- [backend/services/integrations/skillmeat_client.py](../../backend/services/integrations/skillmeat_client.py)
+- [backend/services/integrations/skillmeat_sync.py](../../backend/services/integrations/skillmeat_sync.py)
+- [backend/services/integrations/skillmeat_contracts.py](../../backend/services/integrations/skillmeat_contracts.py)
+- [backend/services/integrations/skillmeat_resolver.py](../../backend/services/integrations/skillmeat_resolver.py)
+- [backend/services/integrations/skillmeat_routes.py](../../backend/services/integrations/skillmeat_routes.py)
+- [backend/services/integrations/skillmeat_refresh.py](../../backend/services/integrations/skillmeat_refresh.py)
+- [backend/services/stack_observations.py](../../backend/services/stack_observations.py)
+- [backend/services/workflow_effectiveness.py](../../backend/services/workflow_effectiveness.py)
+- [backend/services/stack_recommendations.py](../../backend/services/stack_recommendations.py)
+- [backend/routers/integrations.py](../../backend/routers/integrations.py)
+- [backend/routers/features.py](../../backend/routers/features.py)
+- [backend/routers/analytics.py](../../backend/routers/analytics.py)
+- [components/execution/RecommendedStackCard.tsx](../../components/execution/RecommendedStackCard.tsx)
+- [components/execution/WorkflowEffectivenessSurface.tsx](../../components/execution/WorkflowEffectivenessSurface.tsx)
+- [backend/services/workflow_registry.py](../../backend/services/workflow_registry.py)
+- [components/Workflows/WorkflowRegistryPage.tsx](../../components/Workflows/WorkflowRegistryPage.tsx)
+- [services/workflows.ts](../../services/workflows.ts)
 
 Telemetry exporter is intentionally separate from this SkillMeat integration surface:
 
-- worker-side export logic lives in [backend/services/integrations/telemetry_exporter.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/telemetry_exporter.py)
-- worker registration happens in [backend/runtime/container.py](/Users/miethe/dev/homelab/development/CCDash/backend/runtime/container.py)
-- exporter metrics and tracing live in [backend/observability/otel.py](/Users/miethe/dev/homelab/development/CCDash/backend/observability/otel.py)
-- operator guidance lives in [telemetry-exporter-guide.md](../telemetry-exporter-guide.md) and [telemetry-exporter-troubleshooting.md](../telemetry-exporter-troubleshooting.md)
+- worker-side export logic lives in [backend/services/integrations/telemetry_exporter.py](../../backend/services/integrations/telemetry_exporter.py)
+- worker registration happens in [backend/runtime/container.py](../../backend/runtime/container.py)
+- exporter metrics and tracing live in [backend/observability/otel.py](../../backend/observability/otel.py)
+- operator guidance lives in [telemetry-exporter-guide.md](../guides/telemetry-exporter-guide.md) and [telemetry-exporter-troubleshooting.md](../guides/telemetry-exporter-troubleshooting.md)
 
 ## Configuration and feature gates
 
 Frontend defaults and normalization live in:
 
-- [services/agenticIntelligence.ts](/Users/miethe/dev/homelab/development/CCDash/services/agenticIntelligence.ts)
-- [services/skillmeat.ts](/Users/miethe/dev/homelab/development/CCDash/services/skillmeat.ts)
+- [services/agenticIntelligence.ts](../../services/agenticIntelligence.ts)
+- [services/skillmeat.ts](../../services/skillmeat.ts)
 
 Per-project SkillMeat config includes:
 
@@ -128,7 +128,7 @@ flowchart TD
 
 ## Step 1: SkillMeat config validation and refresh
 
-Validation and refresh are exposed from [backend/routers/integrations.py](/Users/miethe/dev/homelab/development/CCDash/backend/routers/integrations.py).
+Validation and refresh are exposed from [backend/routers/integrations.py](../../backend/routers/integrations.py).
 
 Key endpoints:
 
@@ -139,7 +139,7 @@ Key endpoints:
 - `GET /api/integrations/skillmeat/definitions`
 - `GET /api/integrations/skillmeat/observations`
 
-`refresh` is the main operational path. In [backend/services/integrations/skillmeat_refresh.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_refresh.py) it does:
+`refresh` is the main operational path. In [backend/services/integrations/skillmeat_refresh.py](../../backend/services/integrations/skillmeat_refresh.py) it does:
 
 1. sync SkillMeat definitions into CCDash
 2. rebuild stack observations from current sessions and current definitions
@@ -148,7 +148,7 @@ Rollups are then computed lazily or on demand by workflow-effectiveness APIs.
 
 ## Step 2: What CCDash pulls from SkillMeat
 
-The read-only client is [backend/services/integrations/skillmeat_client.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_client.py).
+The read-only client is [backend/services/integrations/skillmeat_client.py](../../backend/services/integrations/skillmeat_client.py).
 
 Current definition pulls:
 
@@ -200,9 +200,9 @@ Additional enrichment:
 
 ## Step 3: How synced definitions are enriched
 
-Definition sync is orchestrated in [backend/services/integrations/skillmeat_sync.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_sync.py).
+Definition sync is orchestrated in [backend/services/integrations/skillmeat_sync.py](../../backend/services/integrations/skillmeat_sync.py).
 
-Important enrichment behavior from [backend/services/integrations/skillmeat_contracts.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_contracts.py):
+Important enrichment behavior from [backend/services/integrations/skillmeat_contracts.py](../../backend/services/integrations/skillmeat_contracts.py):
 
 ### Workflow enrichment
 
@@ -260,7 +260,7 @@ Important limitation:
 
 ### Stable source URLs
 
-[backend/services/integrations/skillmeat_routes.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_routes.py) rewrites cached `source_url` values to stable SkillMeat UI routes:
+[backend/services/integrations/skillmeat_routes.py](../../backend/services/integrations/skillmeat_routes.py) rewrites cached `source_url` values to stable SkillMeat UI routes:
 
 - artifacts: `/collection?collection=<id>&artifact=<external_id>`
 - workflows: `/workflows/<id>`
@@ -318,7 +318,7 @@ This separation matters:
 
 ## Step 5: How CCDash builds workflow observations from sessions
 
-Observation building lives in [backend/services/stack_observations.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/stack_observations.py).
+Observation building lives in [backend/services/stack_observations.py](../../backend/services/stack_observations.py).
 
 ### Input signals
 
@@ -368,7 +368,7 @@ This is why current workflow observations are command-shaped.
 
 ### Definition resolution
 
-After observation extraction, CCDash tries to resolve observed components against cached SkillMeat definitions via [backend/services/integrations/skillmeat_resolver.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/skillmeat_resolver.py).
+After observation extraction, CCDash tries to resolve observed components against cached SkillMeat definitions via [backend/services/integrations/skillmeat_resolver.py](../../backend/services/integrations/skillmeat_resolver.py).
 
 Resolution target types:
 
@@ -385,7 +385,7 @@ This is the core reason the system is hybrid.
 
 ## Step 6: How workflow effectiveness is computed
 
-Aggregation lives in [backend/services/workflow_effectiveness.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/workflow_effectiveness.py).
+Aggregation lives in [backend/services/workflow_effectiveness.py](../../backend/services/workflow_effectiveness.py).
 
 `get_workflow_effectiveness(...)` can:
 
@@ -415,7 +415,7 @@ Workflow and bundle enrichment contributes additional references and display met
 
 ## Step 7: How recommended workflows and stacks are built
 
-Recommendation generation lives in [backend/services/stack_recommendations.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/stack_recommendations.py) and is called from [backend/routers/features.py](/Users/miethe/dev/homelab/development/CCDash/backend/routers/features.py) when building feature execution context.
+Recommendation generation lives in [backend/services/stack_recommendations.py](../../backend/services/stack_recommendations.py) and is called from [backend/routers/features.py](../../backend/routers/features.py) when building feature execution context.
 
 Current flow:
 
@@ -622,7 +622,7 @@ In short:
 
 ## Related docs
 
-- [docs/agentic-sdlc-intelligence-developer-reference.md](/Users/miethe/dev/homelab/development/CCDash/docs/agentic-sdlc-intelligence-developer-reference.md)
-- [docs/agentic-sdlc-intelligence-user-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/agentic-sdlc-intelligence-user-guide.md)
-- [docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md)
-- [docs/project_plans/reports/agentic-sdlc-intelligence-v2-integration-overview-2026-03-08.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/reports/agentic-sdlc-intelligence-v2-integration-overview-2026-03-08.md)
+- [../guides/agentic-sdlc-intelligence.md](../guides/agentic-sdlc-intelligence.md)
+- [../guides/agentic-sdlc-intelligence.md](../guides/agentic-sdlc-intelligence.md)
+- [docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md](../project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md)
+- [docs/project_plans/reports/agentic-sdlc-intelligence-v2-integration-overview-2026-03-08.md](../project_plans/reports/agentic-sdlc-intelligence-v2-integration-overview-2026-03-08.md)

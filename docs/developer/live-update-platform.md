@@ -8,19 +8,19 @@ Session transcripts now have an append-first topic as well, gated separately fro
 ## Core files
 
 - Backend topic and contract helpers:
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/application/live_updates/contracts.py`
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/application/live_updates/topics.py`
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/application/live_updates/domain_events.py`
+  - `backend/application/live_updates/contracts.py`
+  - `backend/application/live_updates/topics.py`
+  - `backend/application/live_updates/domain_events.py`
 - Backend transport/runtime wiring:
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/adapters/live_updates/in_memory_broker.py`
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/adapters/live_updates/sse_stream.py`
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/routers/live.py`
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/runtime/container.py`
+  - `backend/adapters/live_updates/in_memory_broker.py`
+  - `backend/adapters/live_updates/sse_stream.py`
+  - `backend/routers/live.py`
+  - `backend/runtime/container.py`
 - Frontend client and helpers:
-  - `/Users/miethe/dev/homelab/development/CCDash/services/live/client.ts`
-  - `/Users/miethe/dev/homelab/development/CCDash/services/live/connectionManager.ts`
-  - `/Users/miethe/dev/homelab/development/CCDash/services/live/topics.ts`
-  - `/Users/miethe/dev/homelab/development/CCDash/services/live/useLiveInvalidation.ts`
+  - `services/live/client.ts`
+  - `services/live/connectionManager.ts`
+  - `services/live/topics.ts`
+  - `services/live/useLiveInvalidation.ts`
 
 ## Topic families
 
@@ -57,22 +57,22 @@ The nested `payload` mirrors the `SessionLog` fields Session Inspector already c
 ## Publisher entry points
 
 - Execution snapshots/events:
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/db/repositories/execution.py`
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/db/repositories/postgres/execution.py`
+  - `backend/db/repositories/execution.py`
+  - `backend/db/repositories/postgres/execution.py`
 - Session invalidation:
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/db/sync_engine.py`
+  - `backend/db/sync_engine.py`
 - Feature invalidation:
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/routers/features.py`
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/db/sync_engine.py`
+  - `backend/routers/features.py`
+  - `backend/db/sync_engine.py`
 - Test invalidation:
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/routers/test_visualizer.py`
+  - `backend/routers/test_visualizer.py`
 - Ops invalidation:
-  - `/Users/miethe/dev/homelab/development/CCDash/backend/db/sync_engine.py`
+  - `backend/db/sync_engine.py`
 
 ## Frontend subscription conventions
 
 - Prefer one topic per visible surface and let `sharedLiveConnectionManager` multiplex them into one browser-tab stream.
-- Use `/Users/miethe/dev/homelab/development/CCDash/services/live/useLiveInvalidation.ts` for invalidation-only surfaces.
+- Use `services/live/useLiveInvalidation.ts` for invalidation-only surfaces.
 - Keep REST reads as bootstrap/recovery paths.
 - Treat polling as fallback only. The intended fallback states are disabled rollout, closed connection, or backoff after stream errors.
 - Use `pauseWhenHidden` for view-scoped surfaces so hidden tabs do not keep long-lived live subscriptions open unnecessarily.
