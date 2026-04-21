@@ -4,7 +4,12 @@ import { GitBranch, Inbox, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock }
 
 import { useData } from '../../contexts/DataContext';
 import type { Feature, FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
-import { getCachedProjectPlanningSummary, getProjectPlanningSummary, PlanningApiError } from '../../services/planning';
+import {
+  getCachedProjectPlanningSummary,
+  getProjectPlanningSummary,
+  PlanningApiError,
+  prefetchFeaturePlanningContext,
+} from '../../services/planning';
 import { getLaunchCapabilities } from '../../services/execution';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
 import {
@@ -364,14 +369,18 @@ function EmptyShell({ hasProject }: { hasProject: boolean }) {
 function PlanningFeatureRow({
   feature,
   onClick,
+  onPrefetch,
 }: {
   feature: FeatureSummaryItem;
   onClick: () => void;
+  onPrefetch?: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      onMouseEnter={onPrefetch}
+      onFocus={onPrefetch}
       data-testid={`planning-feature-row-${feature.featureId}`}
       className="planning-row flex w-full items-start gap-2.5 rounded-lg border border-[color:var(--line-1)] bg-[color:var(--bg-2)] px-3 py-2.5 text-left transition-all hover:border-[color:var(--brand)] hover:bg-[color:var(--bg-3)] focus:outline-none"
     >
@@ -431,9 +440,11 @@ function ColumnEmptyState({ label }: { label: string }) {
 export function ActivePlansColumn({
   features,
   onSelectFeature,
+  onPrefetchFeature,
 }: {
   features: FeatureSummaryItem[];
   onSelectFeature: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
 }) {
   const active = features.filter(
     (f) => f.effectiveStatus === 'in_progress' || f.effectiveStatus === 'in-progress',
@@ -459,6 +470,7 @@ export function ActivePlansColumn({
               key={f.featureId}
               feature={f}
               onClick={() => onSelectFeature(f.featureId)}
+              onPrefetch={() => onPrefetchFeature?.(f.featureId)}
             />
           ))}
         </div>
@@ -475,9 +487,11 @@ export function ActivePlansColumn({
 export function PlannedFeaturesColumn({
   features,
   onSelectFeature,
+  onPrefetchFeature,
 }: {
   features: FeatureSummaryItem[];
   onSelectFeature: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
 }) {
   const planned = features.filter(
     (f) => f.effectiveStatus === 'draft' || f.effectiveStatus === 'approved',
@@ -503,6 +517,7 @@ export function PlannedFeaturesColumn({
               key={f.featureId}
               feature={f}
               onClick={() => onSelectFeature(f.featureId)}
+              onPrefetch={() => onPrefetchFeature?.(f.featureId)}
             />
           ))}
         </div>
@@ -517,12 +532,14 @@ function PlanningShell({
   summary,
   liveStatus,
   onSelectFeature,
+  onPrefetchFeature,
   onDrillDown,
   onRefresh,
 }: {
   summary: ProjectPlanningSummary;
   liveStatus: LiveConnectionStatus;
   onSelectFeature: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
   onDrillDown: (type: ArtifactDrillDownType) => void;
   onRefresh?: () => void;
 }) {
@@ -572,6 +589,7 @@ function PlanningShell({
         <PlanningTriagePanel
           summary={summary}
           onSelectFeature={onSelectFeature}
+          onPrefetchFeature={onPrefetchFeature}
           onRefresh={onRefresh}
         />
         <PlanningAgentRosterPanel />
@@ -582,6 +600,7 @@ function PlanningShell({
         <PlanningSummaryPanel
           summary={summary}
           onSelectFeature={onSelectFeature}
+          onPrefetchFeature={onPrefetchFeature}
           onDrillDown={onDrillDown}
         />
       </div>
@@ -594,10 +613,12 @@ function PlanningShell({
         <ActivePlansColumn
           features={summary.featureSummaries}
           onSelectFeature={onSelectFeature}
+          onPrefetchFeature={onPrefetchFeature}
         />
         <PlannedFeaturesColumn
           features={summary.featureSummaries}
           onSelectFeature={onSelectFeature}
+          onPrefetchFeature={onPrefetchFeature}
         />
       </div>
 
@@ -606,6 +627,7 @@ function PlanningShell({
         <PlanningGraphPanel
           projectId={summary.projectId ?? null}
           onSelectFeature={onSelectFeature}
+          onPrefetchFeature={onPrefetchFeature}
         />
       </Panel>
       <Panel data-testid="planning-tracker-section" className="p-5">
@@ -699,6 +721,11 @@ export default function PlanningHomePage() {
     navigate(`/planning${setPlanningRouteFeatureModalSearch(searchParams, featureId, tab)}`);
   }, [navigate, searchParams]);
 
+  const prefetchFeature = useCallback((featureId: string) => {
+    if (!activeProject?.id) return;
+    void prefetchFeaturePlanningContext(featureId, { projectId: activeProject.id });
+  }, [activeProject?.id]);
+
   const closeFeatureModal = useCallback(() => {
     navigate(`/planning${removePlanningRouteFeatureModalSearch(searchParams)}`, { replace: true });
   }, [navigate, searchParams]);
@@ -756,6 +783,7 @@ export default function PlanningHomePage() {
         summary={summary}
         liveStatus={liveStatus}
         onSelectFeature={openFeatureModal}
+        onPrefetchFeature={prefetchFeature}
         onDrillDown={(type) =>
           navigate(planningArtifactsHref(type))
         }

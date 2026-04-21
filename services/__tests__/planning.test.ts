@@ -8,6 +8,7 @@ import {
   getProjectPlanningGraph,
   getProjectPlanningSummary,
   PLANNING_BROWSER_CACHE_LIMITS,
+  prefetchFeaturePlanningContext,
 } from '../planning';
 import {
   featurePhaseTopic,
@@ -430,6 +431,27 @@ describe('getFeaturePlanningContext', () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       '/api/agent/planning/features/feat-1?project_id=proj-42',
     );
+  });
+
+  it('reuses a hovered prefetch for the subsequent open', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(contextPayload())));
+
+    await prefetchFeaturePlanningContext('feat-1', { projectId: 'proj-42' });
+    const result = await getFeaturePlanningContext('feat-1', { projectId: 'proj-42' });
+
+    expect(result.featureId).toBe('feat-1');
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates in-flight feature context requests', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(contextPayload())));
+
+    await Promise.all([
+      getFeaturePlanningContext('feat-1', { projectId: 'proj-42' }),
+      prefetchFeaturePlanningContext('feat-1', { projectId: 'proj-42' }),
+    ]);
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 });
 

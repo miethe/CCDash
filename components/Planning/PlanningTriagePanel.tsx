@@ -356,11 +356,13 @@ function TriageActionBtn({
 function TriageRow({
   item,
   onSelectFeature,
+  onPrefetchFeature,
   onToast,
   onRefresh,
 }: {
   item: TriageItem;
   onSelectFeature: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
   onToast: (message: string) => void;
   onRefresh?: () => void;
 }) {
@@ -422,6 +424,8 @@ function TriageRow({
         <button
           type="button"
           onClick={() => onSelectFeature(item.featureId)}
+          onMouseEnter={() => onPrefetchFeature?.(item.featureId)}
+          onFocus={() => onPrefetchFeature?.(item.featureId)}
           aria-describedby={`triage-reason-${item.id}`}
           style={{
             background: 'none',
@@ -464,6 +468,8 @@ function TriageRow({
           size="xs"
           aria-label={`Open ${item.title}`}
           onClick={() => onSelectFeature(item.featureId)}
+          onMouseEnter={() => onPrefetchFeature?.(item.featureId)}
+          onFocus={() => onPrefetchFeature?.(item.featureId)}
         >
           <ChevronRight size={12} />
         </BtnGhost>
@@ -506,6 +512,7 @@ function TriageEmptyState() {
 interface PlanningTriagePanelProps {
   summary: ProjectPlanningSummary;
   onSelectFeature?: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
   /** Called after a triage action button is clicked to trigger a planning summary refresh. */
   onRefresh?: () => void;
 }
@@ -513,6 +520,7 @@ interface PlanningTriagePanelProps {
 export function PlanningTriagePanel({
   summary,
   onSelectFeature,
+  onPrefetchFeature,
   onRefresh,
 }: PlanningTriagePanelProps) {
   const navigate = useNavigate();
@@ -597,6 +605,7 @@ export function PlanningTriagePanel({
                     key={item.id}
                     item={item}
                     onSelectFeature={handleSelectFeature}
+                    onPrefetchFeature={onPrefetchFeature}
                     onToast={pushToast}
                     onRefresh={onRefresh}
                   />

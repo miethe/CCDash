@@ -14,12 +14,14 @@ import {
 export interface PlanningSummaryPanelProps {
   summary: ProjectPlanningSummary;
   onSelectFeature?: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
   onDrillDown?: (type: ArtifactDrillDownType) => void;
 }
 
 interface FeatureRowProps {
   item: FeatureSummaryItem;
   onSelectFeature?: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
 }
 
 interface AttentionColumnProps {
@@ -27,6 +29,7 @@ interface AttentionColumnProps {
   icon: ReactNode;
   items: FeatureSummaryItem[];
   onSelectFeature?: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
   accent: string;
 }
 
@@ -49,7 +52,7 @@ function artifactKindForType(type?: ArtifactDrillDownType): string {
   }
 }
 
-function FeatureRow({ item, onSelectFeature }: FeatureRowProps) {
+function FeatureRow({ item, onSelectFeature, onPrefetchFeature }: FeatureRowProps) {
   const statusMismatch = item.rawStatus !== item.effectiveStatus;
 
   return (
@@ -57,6 +60,8 @@ function FeatureRow({ item, onSelectFeature }: FeatureRowProps) {
       type="button"
       aria-label={`View planning context for ${item.featureName}`}
       onClick={() => onSelectFeature?.(item.featureId)}
+      onMouseEnter={() => onPrefetchFeature?.(item.featureId)}
+      onFocus={() => onPrefetchFeature?.(item.featureId)}
       className="planning-row group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[color:var(--bg-3)] focus-visible:outline-none"
     >
       <div className="min-w-0 flex-1">
@@ -89,6 +94,7 @@ function AttentionColumn({
   icon,
   items,
   onSelectFeature,
+  onPrefetchFeature,
   accent,
 }: AttentionColumnProps) {
   const visible = items.slice(0, ROW_LIMIT);
@@ -112,7 +118,12 @@ function AttentionColumn({
         ) : (
           <>
             {visible.map((item) => (
-              <FeatureRow key={item.featureId} item={item} onSelectFeature={onSelectFeature} />
+              <FeatureRow
+                key={item.featureId}
+                item={item}
+                onSelectFeature={onSelectFeature}
+                onPrefetchFeature={onPrefetchFeature}
+              />
             ))}
             {overflow > 0 ? (
               <p className="mt-1 text-center text-[11px] text-[color:var(--ink-3)]">
@@ -126,7 +137,12 @@ function AttentionColumn({
   );
 }
 
-export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: PlanningSummaryPanelProps) {
+export function PlanningSummaryPanel({
+  summary,
+  onSelectFeature,
+  onPrefetchFeature,
+  onDrillDown,
+}: PlanningSummaryPanelProps) {
   if (summary.featureSummaries.length === 0) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -222,6 +238,7 @@ export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: 
           icon={<Clock size={14} />}
           items={staleItems}
           onSelectFeature={onSelectFeature}
+          onPrefetchFeature={onPrefetchFeature}
           accent="var(--warn)"
         />
         <AttentionColumn
@@ -229,6 +246,7 @@ export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: 
           icon={<Ban size={14} />}
           items={blockedItems}
           onSelectFeature={onSelectFeature}
+          onPrefetchFeature={onPrefetchFeature}
           accent="var(--err)"
         />
         <AttentionColumn
@@ -236,6 +254,7 @@ export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: 
           icon={<GitMerge size={14} />}
           items={mismatchItems}
           onSelectFeature={onSelectFeature}
+          onPrefetchFeature={onPrefetchFeature}
           accent="var(--mag)"
         />
       </div>

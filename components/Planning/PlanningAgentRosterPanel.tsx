@@ -147,7 +147,13 @@ function injectGlowStyle() {
 
 // ── Row ───────────────────────────────────────────────────────────────────────
 
-function RosterRow({ entry }: { entry: RosterEntry }) {
+function RosterRow({
+  entry,
+  onPrefetchSession,
+}: {
+  entry: RosterEntry;
+  onPrefetchSession?: (sessionId: string) => void;
+}) {
   injectGlowStyle();
   const cfg = STATE_CONFIG[entry.state];
 
@@ -163,6 +169,9 @@ function RosterRow({ entry }: { entry: RosterEntry }) {
         gridTemplateColumns: '18px 1fr 1fr max-content',
       }}
       role="row"
+      onMouseEnter={() => onPrefetchSession?.(entry.id)}
+      onFocus={() => onPrefetchSession?.(entry.id)}
+      tabIndex={0}
       aria-label={`Agent ${entry.name}: ${cfg.label}, model ${entry.model}, task ${entry.currentTask}, since ${entry.sinceLabel}`}
     >
       {/* State dot */}
@@ -268,7 +277,7 @@ export interface PlanningAgentRosterPanelProps {
 }
 
 export function PlanningAgentRosterPanel({ className }: PlanningAgentRosterPanelProps) {
-  const { sessions } = useData();
+  const { sessions, getSessionById } = useData();
 
   const entries = useMemo<RosterEntry[]>(() => {
     const mapped = sessions.map(deriveEntry);
@@ -316,7 +325,11 @@ export function PlanningAgentRosterPanel({ className }: PlanningAgentRosterPanel
           <div className="space-y-0.5" role="rowgroup">
             <RosterHeader />
             {entries.map((entry) => (
-              <RosterRow key={entry.id} entry={entry} />
+              <RosterRow
+                key={entry.id}
+                entry={entry}
+                onPrefetchSession={(sessionId) => void getSessionById(sessionId)}
+              />
             ))}
           </div>
         )}
