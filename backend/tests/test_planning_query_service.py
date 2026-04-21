@@ -6,6 +6,7 @@ Cache memoization is also verified.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import types
 import unittest
@@ -590,6 +591,170 @@ class FeaturePlanningContextTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.status, "error")
+
+    async def test_feature_context_exposes_planning_payload_contract(self) -> None:
+        feat = _feature(
+            fid="feat-contract",
+            name="Contract Feature",
+            status="done",
+            phases=[_phase(number="1", status="done", total=2, completed=2)],
+            linked_docs=[
+                LinkedDocument(id="prd-1", title="PRD", filePath="docs/project_plans/prds/enhancements/feat-contract.md", docType="prd"),
+                LinkedDocument(id="plan-1", title="Plan", filePath="docs/project_plans/implementation_plans/enhancements/feat-contract.md", docType="implementation_plan"),
+                LinkedDocument(id="report-1", title="Report", filePath="docs/project_plans/reports/feat-contract.md", docType="report"),
+            ],
+        )
+        row = _feature_row(feat)
+        data = json.loads(row["data_json"])
+        data["spikes"] = [{"id": "SPIKE-1", "title": "Investigate graph layout", "status": "done"}]
+        data["openQuestions"] = [{"id": "OQ-1", "question": "Ship now?", "severity": "high"}]
+        row["data_json"] = json.dumps(data)
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(
+                return_value=[
+                    _doc_row(
+                        did="spec-1",
+                        title="Spec",
+                        doc_type="spec",
+                        file_path="docs/project_plans/specs/feat-contract.md",
+                        feature_slug="feat-contract",
+                    ),
+                    {
+                        "id": "spike-doc-1",
+                        "title": "Spike Doc",
+                        "doc_type": "document",
+                        "doc_subtype": "spike",
+                        "file_path": "docs/project_plans/spikes/feat-contract-spike.md",
+                        "feature_slug_canonical": "feat-contract",
+                        "feature_slug_hint": "feat-contract",
+                        "updated_at": "2026-04-11T10:00:00+00:00",
+                        "status": "done",
+                        "metadata_json": "{}",
+                        "frontmatter_json": json.dumps(
+                            {
+                                "open_questions": [
+                                    {"id": "OQ-2", "question": "Document fallback?", "severity": "medium"}
+                                ]
+                            }
+                        ),
+                    },
+                ]
+            ),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=row),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+        forensics = types.SimpleNamespace(
+            status="ok",
+            total_tokens=240,
+            token_usage_by_model=types.SimpleNamespace(opus=120, sonnet=120, haiku=0, other=0, total=240),
+        )
+
+        with patch(
+            "backend.application.services.agent_queries.planning.load_execution_documents",
+            new=AsyncMock(return_value=feat.linkedDocs),
+        ):
+            with patch(
+                "backend.application.services.agent_queries.planning._feature_forensics_query_service.get_forensics",
+                new=AsyncMock(return_value=forensics),
+            ):
+                result = await PlanningQueryService().get_feature_planning_context(
+                    _context(), ports, feature_id="feat-contract"
+                )
+
+        self.assertEqual([item.artifact_id for item in result.prds], ["prd-1"])
+        self.assertEqual([item.artifact_id for item in result.plans], ["plan-1"])
+        self.assertEqual([item.artifact_id for item in result.reports], ["report-1"])
+        self.assertEqual([item.artifact_id for item in result.specs], ["spec-1"])
+        self.assertEqual(result.spikes[0].spike_id, "SPIKE-1")
+        self.assertEqual({item.oq_id for item in result.open_questions}, {"OQ-1", "OQ-2"})
+        self.assertIsInstance(result.ready_to_promote, bool)
+        self.assertIsInstance(result.is_stale, bool)
+        self.assertEqual(result.total_tokens, 240)
+        self.assertEqual(result.token_usage_by_model.total, 240)
+
+
+class ResolveOpenQuestionServiceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        clear_cache()
+
+    async def test_resolve_open_question_updates_overlay_and_sets_otel_success(self) -> None:
+        row = _feature_row(_feature(fid="feat-oq", name="Open Question Feature"))
+        data = json.loads(row["data_json"])
+        data["openQuestions"] = [{"id": "OQ-1", "question": "Need answer?", "severity": "high"}]
+        row["data_json"] = json.dumps(data)
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=row),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        class _Span:
+            def __init__(self) -> None:
+                self.attrs: dict[str, object] = {}
+
+            def set_attribute(self, key: str, value: object) -> None:
+                self.attrs[key] = value
+
+        span = _Span()
+
+        @contextlib.contextmanager
+        def _start_span(name: str, attributes: dict[str, object] | None = None):
+            self.assertEqual(name, "planning.oq.resolve")
+            self.assertEqual(attributes["feature_id"], "feat-oq")
+            self.assertEqual(attributes["oq_id"], "OQ-1")
+            self.assertEqual(attributes["answer_length"], len("Resolved"))
+            yield span
+
+        with patch(
+            "backend.application.services.agent_queries.planning.otel.start_span",
+            new=_start_span,
+        ):
+            result = await PlanningQueryService().resolve_open_question(
+                _context(),
+                ports,
+                feature_id="feat-oq",
+                oq_id="OQ-1",
+                answer_text="Resolved",
+            )
+
+        self.assertEqual(result.feature_id, "feat-oq")
+        self.assertEqual(result.oq.oq_id, "OQ-1")
+        self.assertTrue(result.oq.resolved)
+        self.assertTrue(result.oq.pending_sync)
+        self.assertEqual(result.oq.answer_text, "Resolved")
+        self.assertEqual(span.attrs["success"], True)
+
+    async def test_resolve_open_question_rejects_empty_answer(self) -> None:
+        row = _feature_row(_feature(fid="feat-empty", name="Empty"))
+        data = json.loads(row["data_json"])
+        data["openQuestions"] = [{"id": "OQ-1", "question": "Need answer?"}]
+        row["data_json"] = json.dumps(data)
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=row),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        with self.assertRaises(ValueError):
+            await PlanningQueryService().resolve_open_question(
+                _context(),
+                ports,
+                feature_id="feat-empty",
+                oq_id="OQ-1",
+                answer_text="   ",
+            )
 
 
 class PhaseOperationsTests(unittest.IsolatedAsyncioTestCase):

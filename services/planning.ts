@@ -5,6 +5,9 @@
 import type {
   FeaturePlanningContext,
   FeatureSummaryItem,
+  PlanningArtifactRef,
+  FeatureTokenRollup,
+  PlanningOpenQuestionItem,
   PhaseContextItem,
   PhaseOperations,
   PhaseTaskItem,
@@ -12,6 +15,8 @@ import type {
   PlanningNode,
   PlanningNodeCountsByType,
   PlanningPhaseBatch,
+  PlanningSpikeItem,
+  PlanningTokenUsageByModel,
   ProjectPlanningGraph,
   ProjectPlanningSummary,
 } from '../types';
@@ -39,6 +44,29 @@ async function planningFetch<T>(path: string, params?: URLSearchParams): Promise
   const qs = params?.toString();
   const url = `${API_BASE}${path}${qs ? `?${qs}` : ''}`;
   const res = await fetch(url);
+  if (!res.ok) {
+    throw new PlanningApiError(
+      `Planning API error: ${res.status} ${res.statusText} for ${url}`,
+      res.status,
+    );
+  }
+  return res.json() as Promise<T>;
+}
+
+async function planningWriteFetch<T>(
+  path: string,
+  init: RequestInit,
+  base = API_BASE,
+): Promise<T> {
+  const url = `${base}${path}`;
+  const { headers, ...rest } = init;
+  const res = await fetch(url, {
+    ...rest,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(headers ?? {}),
+    },
+  });
   if (!res.ok) {
     throw new PlanningApiError(
       `Planning API error: ${res.status} ${res.statusText} for ${url}`,
@@ -96,6 +124,64 @@ interface WireProjectPlanningSummary extends WireEnvelope {
   feature_summaries: WireFeatureSummaryItem[];
 }
 
+interface WireFeatureModelTokens {
+  model: string;
+  total_tokens: number;
+  token_input?: number;
+  token_output?: number;
+}
+
+interface WireFeatureTokenRollup {
+  feature_slug: string;
+  story_points: number;
+  total_tokens: number;
+  by_model: WireFeatureModelTokens[];
+}
+
+interface WirePlanningArtifactRef {
+  artifact_id: string;
+  title: string;
+  file_path: string;
+  canonical_path: string;
+  doc_type: string;
+  status: string;
+  updated_at: string;
+  source_ref: string;
+}
+
+interface WirePlanningSpikeItem {
+  spike_id: string;
+  title: string;
+  status: string;
+  file_path: string;
+  source_ref: string;
+}
+
+interface WirePlanningOpenQuestionItem {
+  oq_id: string;
+  question: string;
+  severity: string;
+  answer_text: string;
+  resolved: boolean;
+  pending_sync: boolean;
+  source_document_id: string;
+  source_document_path: string;
+  updated_at: string;
+}
+
+interface WireOpenQuestionResolution {
+  feature_id: string;
+  oq: WirePlanningOpenQuestionItem;
+}
+
+interface WirePlanningTokenUsageByModel {
+  opus: number;
+  sonnet: number;
+  haiku: number;
+  other: number;
+  total: number;
+}
+
 interface WireProjectPlanningGraph extends WireEnvelope {
   project_id: string;
   feature_id: string | null;
@@ -105,6 +191,8 @@ interface WireProjectPlanningGraph extends WireEnvelope {
   phase_batches: Record<string, unknown>[];
   node_count: number;
   edge_count: number;
+  /** T7-004: per-feature token + story-point rollups, keyed by featureSlug. */
+  feature_token_rollups?: Record<string, WireFeatureTokenRollup>;
 }
 
 interface WirePhaseContextItem {
@@ -134,6 +222,21 @@ interface WireFeaturePlanningContext extends WireEnvelope {
   phases: WirePhaseContextItem[];
   blocked_batch_ids: string[];
   linked_artifact_refs: string[];
+  specs?: WirePlanningArtifactRef[];
+  prds?: WirePlanningArtifactRef[];
+  plans?: WirePlanningArtifactRef[];
+  ctxs?: WirePlanningArtifactRef[];
+  reports?: WirePlanningArtifactRef[];
+  spikes?: WirePlanningSpikeItem[];
+  open_questions?: WirePlanningOpenQuestionItem[];
+  ready_to_promote?: boolean;
+  is_stale?: boolean;
+  total_tokens?: number;
+  token_usage_by_model?: WirePlanningTokenUsageByModel;
+  category?: string;
+  slug?: string;
+  complexity?: string;
+  tags?: string[];
 }
 
 interface WirePhaseTaskItem {
@@ -228,6 +331,76 @@ function castPhaseBatches(dicts: Record<string, unknown>[]): PlanningPhaseBatch[
   return dicts as unknown as PlanningPhaseBatch[];
 }
 
+function adaptFeatureTokenRollups(
+  wire: Record<string, WireFeatureTokenRollup> | undefined,
+): Record<string, FeatureTokenRollup> | undefined {
+  if (!wire) return undefined;
+  const result: Record<string, FeatureTokenRollup> = {};
+  for (const [slug, r] of Object.entries(wire)) {
+    result[slug] = {
+      featureSlug: r.feature_slug ?? slug,
+      storyPoints: r.story_points ?? 0,
+      totalTokens: r.total_tokens ?? 0,
+      byModel: (r.by_model ?? []).map(m => ({
+        model: m.model ?? '',
+        totalTokens: m.total_tokens ?? 0,
+        tokenInput: m.token_input,
+        tokenOutput: m.token_output,
+      })),
+    };
+  }
+  return result;
+}
+
+function adaptPlanningArtifactRef(wire: WirePlanningArtifactRef): PlanningArtifactRef {
+  return {
+    artifactId: wire.artifact_id ?? '',
+    title: wire.title ?? '',
+    filePath: wire.file_path ?? '',
+    canonicalPath: wire.canonical_path ?? '',
+    docType: wire.doc_type ?? '',
+    status: wire.status ?? '',
+    updatedAt: wire.updated_at ?? '',
+    sourceRef: wire.source_ref ?? '',
+  };
+}
+
+function adaptPlanningSpikeItem(wire: WirePlanningSpikeItem): PlanningSpikeItem {
+  return {
+    spikeId: wire.spike_id ?? '',
+    title: wire.title ?? '',
+    status: wire.status ?? '',
+    filePath: wire.file_path ?? '',
+    sourceRef: wire.source_ref ?? '',
+  };
+}
+
+function adaptPlanningOpenQuestionItem(wire: WirePlanningOpenQuestionItem): PlanningOpenQuestionItem {
+  return {
+    oqId: wire.oq_id ?? '',
+    question: wire.question ?? '',
+    severity: wire.severity ?? 'medium',
+    answerText: wire.answer_text ?? '',
+    resolved: wire.resolved ?? false,
+    pendingSync: wire.pending_sync ?? false,
+    sourceDocumentId: wire.source_document_id ?? '',
+    sourceDocumentPath: wire.source_document_path ?? '',
+    updatedAt: wire.updated_at ?? '',
+  };
+}
+
+function adaptPlanningTokenUsageByModel(
+  wire: WirePlanningTokenUsageByModel | undefined,
+): PlanningTokenUsageByModel {
+  return {
+    opus: wire?.opus ?? 0,
+    sonnet: wire?.sonnet ?? 0,
+    haiku: wire?.haiku ?? 0,
+    other: wire?.other ?? 0,
+    total: wire?.total ?? 0,
+  };
+}
+
 function adaptPhaseContextItem(wire: WirePhaseContextItem): PhaseContextItem {
   return {
     phaseId: wire.phase_id ?? '',
@@ -318,6 +491,7 @@ export async function getProjectPlanningGraph(opts?: {
     phaseBatches: castPhaseBatches(wire.phase_batches ?? []),
     nodeCount: wire.node_count ?? 0,
     edgeCount: wire.edge_count ?? 0,
+    featureTokenRollups: adaptFeatureTokenRollups(wire.feature_token_rollups),
   };
 }
 
@@ -358,7 +532,44 @@ export async function getFeaturePlanningContext(
     phases: (wire.phases ?? []).map(adaptPhaseContextItem),
     blockedBatchIds: wire.blocked_batch_ids ?? [],
     linkedArtifactRefs: wire.linked_artifact_refs ?? [],
+    specs: (wire.specs ?? []).map(adaptPlanningArtifactRef),
+    prds: (wire.prds ?? []).map(adaptPlanningArtifactRef),
+    plans: (wire.plans ?? []).map(adaptPlanningArtifactRef),
+    ctxs: (wire.ctxs ?? []).map(adaptPlanningArtifactRef),
+    reports: (wire.reports ?? []).map(adaptPlanningArtifactRef),
+    spikes: (wire.spikes ?? []).map(adaptPlanningSpikeItem),
+    openQuestions: (wire.open_questions ?? []).map(adaptPlanningOpenQuestionItem),
+    readyToPromote: wire.ready_to_promote ?? false,
+    isStale: wire.is_stale ?? false,
+    totalTokens: wire.total_tokens ?? 0,
+    tokenUsageByModel: adaptPlanningTokenUsageByModel(wire.token_usage_by_model),
+    category: wire.category,
+    slug: wire.slug,
+    complexity: wire.complexity,
+    tags: wire.tags,
   };
+}
+
+/**
+ * Resolve one open question in the planning writeback API.
+ *
+ * Mirrors: PATCH /api/planning/features/{featureId}/open-questions/{oqId}
+ */
+export async function resolvePlanningOpenQuestion(
+  featureId: string,
+  oqId: string,
+  answer: string,
+): Promise<PlanningOpenQuestionItem> {
+  const wire = await planningWriteFetch<WireOpenQuestionResolution>(
+    `/features/${encodeURIComponent(featureId)}/open-questions/${encodeURIComponent(oqId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ answer }),
+    },
+    '/api/planning',
+  );
+
+  return adaptPlanningOpenQuestionItem(wire.oq);
 }
 
 /**

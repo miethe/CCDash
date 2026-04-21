@@ -12,12 +12,16 @@ singleton is required.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from collections import Counter
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
+from backend.document_linking import classify_doc_subtype, classify_doc_type
 from backend.models import (
     Feature,
     FeatureDependencyState,
@@ -26,6 +30,7 @@ from backend.models import (
     PlanningEffectiveStatus,
     PlanningGraph,
 )
+from backend.observability import otel
 from backend.services.feature_execution import (
     apply_planning_projection,
     build_planning_graph,
@@ -35,19 +40,38 @@ from backend.services.feature_execution import (
 )
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
-from .cache import memoized_query
+from .cache import clear_cache, memoized_query
+from .feature_forensics import FeatureForensicsQueryService
 from .models import (
     FeaturePlanningContextDTO,
     FeatureSummaryItem,
+    OpenQuestionResolutionDTO,
     PhaseContextItem,
     PhaseOperationsDTO,
     PhaseTaskItem,
+    PlanningArtifactRef,
     PlanningNodeCountsByType,
+    PlanningOpenQuestionItem,
+    PlanningSpikeItem,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
+    TokenUsageByModel,
 )
 
 logger = logging.getLogger(__name__)
+_feature_forensics_query_service = FeatureForensicsQueryService()
+_PROMOTION_READY_STATUSES = {
+    "ready",
+    "ready-for-promotion",
+    "promote-ready",
+    "ready_to_promote",
+    "approved",
+    "mature",
+}
+_TERMINAL_FEATURE_STATUSES = {"done", "deferred", "completed"}
+_OQ_ID_PREFIX = re.compile(r"^(oq[-_\s]*\d+)\s*[:\-]\s*(.+)$", re.IGNORECASE)
+_OQ_OVERLAY_LOCK = asyncio.Lock()
+_OQ_OVERLAY: dict[str, dict[str, PlanningOpenQuestionItem]] = {}
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -57,6 +81,299 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value or default)
     except (TypeError, ValueError):
         return default
+
+
+def _safe_json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        import json  # noqa: PLC0415
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    if hasattr(value, "model_dump"):
+        dumped = value.model_dump()
+        return dumped if isinstance(dumped, dict) else {}
+    if hasattr(value, "__dict__"):
+        return {
+            str(key): raw
+            for key, raw in vars(value).items()
+            if not str(key).startswith("_")
+        }
+    return {}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _normalize_oq_id(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def _coerce_token_usage_by_model(value: Any) -> TokenUsageByModel:
+    payload = _safe_json_dict(value)
+    if not payload:
+        return TokenUsageByModel()
+    return TokenUsageByModel.model_validate(payload)
+
+
+def _artifact_ref_from_doc(doc: LinkedDocument) -> PlanningArtifactRef:
+    updated_at = ""
+    updated = getattr(getattr(doc, "dates", None), "updatedAt", None)
+    if getattr(updated, "value", ""):
+        updated_at = str(updated.value)
+    return PlanningArtifactRef(
+        artifact_id=str(getattr(doc, "id", "") or ""),
+        title=str(getattr(doc, "title", "") or ""),
+        file_path=str(getattr(doc, "filePath", "") or ""),
+        canonical_path=str(getattr(doc, "canonicalPath", "") or ""),
+        doc_type=str(getattr(doc, "docType", "") or ""),
+        status=str(getattr(doc, "status", "") or ""),
+        updated_at=updated_at,
+        source_ref=str(getattr(doc, "id", "") or getattr(doc, "filePath", "") or ""),
+    )
+
+
+def _extract_question_text(raw: Any) -> tuple[str, str]:
+    text = str(raw or "").strip()
+    if not text:
+        return "", ""
+    match = _OQ_ID_PREFIX.match(text)
+    if match:
+        return match.group(1).upper().replace(" ", ""), match.group(2).strip()
+    return "", text
+
+
+def _derive_open_question_item(
+    raw: Any,
+    *,
+    source_document_id: str,
+    source_document_path: str,
+    index: int,
+) -> PlanningOpenQuestionItem | None:
+    if isinstance(raw, str):
+        inferred_id, question = _extract_question_text(raw)
+        oq_id = inferred_id or f"{source_document_id}:oq-{index}"
+        if not question:
+            return None
+        return PlanningOpenQuestionItem(
+            oq_id=oq_id,
+            question=question,
+            source_document_id=source_document_id,
+            source_document_path=source_document_path,
+        )
+
+    if not isinstance(raw, dict):
+        return None
+
+    question = str(raw.get("question") or raw.get("text") or raw.get("title") or "").strip()
+    inferred_id, stripped_question = _extract_question_text(question)
+    question = stripped_question or question
+    if not question:
+        return None
+    answer_text = str(
+        raw.get("answer_text")
+        or raw.get("answerText")
+        or raw.get("answer")
+        or raw.get("resolution")
+        or ""
+    ).strip()
+    oq_id = str(raw.get("oq_id") or raw.get("oqId") or raw.get("id") or inferred_id or f"{source_document_id}:oq-{index}").strip()
+    resolved_raw = raw.get("resolved")
+    resolved = bool(resolved_raw) or bool(answer_text)
+    severity = str(raw.get("severity") or raw.get("priority") or "medium").strip().lower() or "medium"
+    updated_at = str(raw.get("updated_at") or raw.get("updatedAt") or "").strip()
+    pending_sync = bool(raw.get("pending_sync") or raw.get("pendingSync"))
+    return PlanningOpenQuestionItem(
+        oq_id=oq_id,
+        question=question,
+        severity=severity,
+        answer_text=answer_text,
+        resolved=resolved,
+        pending_sync=pending_sync,
+        source_document_id=source_document_id,
+        source_document_path=source_document_path,
+        updated_at=updated_at,
+    )
+
+
+def _merge_open_question_lists(
+    base_items: list[PlanningOpenQuestionItem],
+    overlay_items: list[PlanningOpenQuestionItem],
+) -> list[PlanningOpenQuestionItem]:
+    merged: dict[str, PlanningOpenQuestionItem] = {
+        _normalize_oq_id(item.oq_id): item for item in base_items if item.oq_id
+    }
+    order = [_normalize_oq_id(item.oq_id) for item in base_items if item.oq_id]
+    for item in overlay_items:
+        key = _normalize_oq_id(item.oq_id)
+        if not key:
+            continue
+        if key not in merged:
+            order.append(key)
+        merged[key] = item
+    return [merged[key] for key in order if key in merged]
+
+
+def _build_artifact_buckets(
+    linked_docs: list[LinkedDocument],
+) -> tuple[
+    list[PlanningArtifactRef],
+    list[PlanningArtifactRef],
+    list[PlanningArtifactRef],
+    list[PlanningArtifactRef],
+    list[PlanningArtifactRef],
+    list[PlanningSpikeItem],
+]:
+    specs: list[PlanningArtifactRef] = []
+    prds: list[PlanningArtifactRef] = []
+    plans: list[PlanningArtifactRef] = []
+    ctxs: list[PlanningArtifactRef] = []
+    reports: list[PlanningArtifactRef] = []
+    spikes: list[PlanningSpikeItem] = []
+    seen: set[tuple[str, str]] = set()
+
+    for doc in linked_docs:
+        artifact = _artifact_ref_from_doc(doc)
+        dedupe_key = (artifact.artifact_id, artifact.file_path)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        doc_type = str(classify_doc_type(artifact.file_path, {"doc_type": artifact.doc_type}) or artifact.doc_type).strip().lower()
+        doc_subtype = str(classify_doc_subtype(artifact.file_path, {"doc_type": artifact.doc_type}) or "").strip().lower()
+        if doc_subtype == "spike":
+            spikes.append(
+                PlanningSpikeItem(
+                    spike_id=artifact.artifact_id or artifact.file_path,
+                    title=artifact.title,
+                    status=artifact.status,
+                    file_path=artifact.file_path,
+                    source_ref=artifact.source_ref,
+                )
+            )
+            continue
+        if doc_type == "prd":
+            prds.append(artifact)
+        elif doc_type in {"implementation_plan", "phase_plan", "progress"}:
+            plans.append(artifact)
+        elif doc_type in {"report"}:
+            reports.append(artifact)
+        elif doc_type in {"context", "tracker"}:
+            ctxs.append(artifact)
+        elif doc_type in {"design_doc", "spec"}:
+            specs.append(artifact)
+
+    return specs, prds, plans, ctxs, reports, spikes
+
+
+def _payload_open_questions(data: dict[str, Any]) -> list[PlanningOpenQuestionItem]:
+    raw_items = data.get("openQuestions")
+    if raw_items is None:
+        raw_items = data.get("open_questions")
+    if not isinstance(raw_items, list):
+        return []
+    items: list[PlanningOpenQuestionItem] = []
+    for idx, raw in enumerate(raw_items, start=1):
+        item = _derive_open_question_item(
+            raw,
+            source_document_id="feature-payload",
+            source_document_path="feature-payload",
+            index=idx,
+        )
+        if item is not None:
+            items.append(item)
+    return items
+
+
+def _payload_spikes(data: dict[str, Any]) -> list[PlanningSpikeItem]:
+    raw_items = data.get("spikes")
+    if not isinstance(raw_items, list):
+        return []
+    spikes: list[PlanningSpikeItem] = []
+    for idx, raw in enumerate(raw_items, start=1):
+        if isinstance(raw, str):
+            title = raw.strip()
+            if not title:
+                continue
+            spikes.append(
+                PlanningSpikeItem(
+                    spike_id=f"feature-payload:spike-{idx}",
+                    title=title,
+                    source_ref="feature-payload",
+                )
+            )
+            continue
+        if not isinstance(raw, dict):
+            continue
+        spikes.append(
+            PlanningSpikeItem(
+                spike_id=str(raw.get("spike_id") or raw.get("spikeId") or raw.get("id") or f"feature-payload:spike-{idx}"),
+                title=str(raw.get("title") or raw.get("name") or raw.get("question") or "").strip(),
+                status=str(raw.get("status") or "").strip(),
+                file_path=str(raw.get("file_path") or raw.get("filePath") or "").strip(),
+                source_ref=str(raw.get("source_ref") or raw.get("sourceRef") or "feature-payload").strip(),
+            )
+        )
+    return [item for item in spikes if item.title]
+
+
+def _doc_row_open_questions(doc_rows: list[dict[str, Any]]) -> list[PlanningOpenQuestionItem]:
+    items: list[PlanningOpenQuestionItem] = []
+    for row in doc_rows:
+        frontmatter = _safe_json_dict(row.get("frontmatter_json") or row.get("frontmatter"))
+        raw_questions = frontmatter.get("open_questions")
+        if raw_questions is None:
+            raw_questions = frontmatter.get("openQuestions")
+        if not isinstance(raw_questions, list):
+            continue
+        doc_id = str(row.get("id") or row.get("document_id") or "")
+        doc_path = str(row.get("file_path") or row.get("filePath") or "")
+        for idx, raw in enumerate(raw_questions, start=1):
+            item = _derive_open_question_item(
+                raw,
+                source_document_id=doc_id or "document",
+                source_document_path=doc_path,
+                index=idx,
+            )
+            if item is not None:
+                items.append(item)
+    return items
+
+
+async def _open_question_overlays_for_feature(feature_id: str) -> list[PlanningOpenQuestionItem]:
+    feature_key = _feature_key(feature_id)
+    async with _OQ_OVERLAY_LOCK:
+        overlays = _OQ_OVERLAY.get(feature_key, {})
+        return [item.model_copy(deep=True) for item in overlays.values()]
+
+
+async def _set_open_question_overlay(
+    feature_id: str,
+    oq_item: PlanningOpenQuestionItem,
+) -> None:
+    feature_key = _feature_key(feature_id)
+    async with _OQ_OVERLAY_LOCK:
+        overlays = _OQ_OVERLAY.setdefault(feature_key, {})
+        overlays[_normalize_oq_id(oq_item.oq_id)] = oq_item.model_copy(deep=True)
+
+
+def _is_feature_stale(feature: Feature) -> bool:
+    return (
+        _mismatch_state(feature.planningStatus) in {"stale", "reversed", "mismatched"}
+        and str(feature.status or "").strip().lower() in _TERMINAL_FEATURE_STATUSES
+    )
+
+
+def _is_ready_to_promote(graph: PlanningGraph) -> bool:
+    for node in graph.nodes:
+        node_status = str(getattr(node, "effectiveStatus", "") or "").strip().lower()
+        if node_status in _PROMOTION_READY_STATUSES:
+            return True
+    return False
 
 
 def _feature_key(value: str) -> str:
@@ -678,6 +995,7 @@ class PlanningQueryService:
             partial = True
 
         feature = feature_from_row(feature_row)
+        feature_payload = _safe_json_dict(feature_row.get("data_json"))
         current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature_id)
         dep_state = feature_dependency_state(feature, doc_rows, feature_index)
         apply_planning_projection(feature, current_doc_rows, dep_state)
@@ -700,7 +1018,52 @@ class PlanningQueryService:
             ]
             partial = True
 
+        existing_doc_keys = {
+            (str(getattr(doc, "id", "") or ""), str(getattr(doc, "filePath", "") or ""))
+            for doc in linked_docs
+        }
+        for row in current_doc_rows:
+            candidate_key = (
+                str(row.get("id") or ""),
+                str(row.get("file_path") or row.get("filePath") or ""),
+            )
+            if candidate_key in existing_doc_keys:
+                continue
+            linked_docs.append(
+                LinkedDocument(
+                    id=str(row.get("id") or ""),
+                    title=str(row.get("title") or ""),
+                    filePath=str(row.get("file_path") or row.get("filePath") or ""),
+                    docType=str(row.get("doc_type") or row.get("docType") or ""),
+                    slug=str(row.get("slug") or ""),
+                    canonicalSlug=str(row.get("canonical_slug") or row.get("canonicalSlug") or ""),
+                )
+            )
+            existing_doc_keys.add(candidate_key)
+
         graph = build_planning_graph(feature, linked_docs, None)
+        specs, prds, plans, ctxs, reports, derived_spikes = _build_artifact_buckets(linked_docs)
+        payload_spikes = _payload_spikes(feature_payload)
+        spikes = payload_spikes or derived_spikes
+        open_questions = _merge_open_question_lists(
+            _payload_open_questions(feature_payload) + _doc_row_open_questions(current_doc_rows),
+            await _open_question_overlays_for_feature(feature_id),
+        )
+
+        try:
+            forensics = await _feature_forensics_query_service.get_forensics(
+                context,
+                ports,
+                feature_id,
+            )
+            token_usage = _coerce_token_usage_by_model(forensics.token_usage_by_model)
+            total_tokens = _safe_int(forensics.total_tokens)
+            if forensics.status == "partial":
+                partial = True
+        except Exception:
+            token_usage = TokenUsageByModel()
+            total_tokens = 0
+            partial = True
 
         # Build per-phase context items.
         phase_items: list[PhaseContextItem] = []
@@ -754,12 +1117,94 @@ class PlanningQueryService:
             phases=phase_items,
             blocked_batch_ids=sorted(set(all_blocked_batch_ids)),
             linked_artifact_refs=sorted(set(artifact_refs)),
+            specs=specs,
+            prds=prds,
+            plans=plans,
+            ctxs=ctxs,
+            reports=reports,
+            spikes=spikes,
+            open_questions=open_questions,
+            ready_to_promote=_is_ready_to_promote(graph),
+            is_stale=_is_feature_stale(feature),
+            total_tokens=total_tokens,
+            token_usage_by_model=token_usage,
             data_freshness=data_freshness,
             source_refs=collect_source_refs(
                 feature_id,
                 [node.id for node in graph.nodes],
             ),
         )
+
+    async def resolve_open_question(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        feature_id: str,
+        oq_id: str,
+        answer_text: str,
+        project_id_override: str | None = None,
+    ) -> OpenQuestionResolutionDTO:
+        normalized_answer = str(answer_text or "").strip()
+        normalized_oq_id = _normalize_oq_id(oq_id)
+        with otel.start_span(
+            "planning.oq.resolve",
+            {
+                "feature_id": feature_id,
+                "oq_id": oq_id,
+                "answer_length": len(normalized_answer),
+                "success": False,
+            },
+        ) as span:
+            if not normalized_answer:
+                raise ValueError("answer must not be empty")
+
+            scope = resolve_project_scope(context, ports, project_id_override)
+            if scope is None:
+                raise LookupError(f"Feature '{feature_id}' not found.")
+
+            feature_row = await ports.storage.features().get_by_id(feature_id)
+            if feature_row is None:
+                raise LookupError(f"Feature '{feature_id}' not found.")
+
+            try:
+                doc_rows = await _load_all_doc_rows(ports, scope.project.id)
+            except Exception:
+                doc_rows = []
+
+            current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature_id)
+            feature_payload = _safe_json_dict(feature_row.get("data_json"))
+            open_questions = _merge_open_question_lists(
+                _payload_open_questions(feature_payload) + _doc_row_open_questions(current_doc_rows),
+                await _open_question_overlays_for_feature(feature_id),
+            )
+
+            target = next(
+                (
+                    item
+                    for item in open_questions
+                    if _normalize_oq_id(item.oq_id) == normalized_oq_id
+                ),
+                None,
+            )
+            if target is None:
+                raise LookupError(
+                    f"Open question '{oq_id}' not found for feature '{feature_id}'."
+                )
+
+            resolved_item = target.model_copy(
+                update={
+                    "answer_text": normalized_answer,
+                    "resolved": True,
+                    "pending_sync": True,
+                    "updated_at": _utc_now_iso(),
+                }
+            )
+            await _set_open_question_overlay(feature_id, resolved_item)
+            clear_cache()
+            if span is not None:
+                span.set_attribute("success", True)
+            return OpenQuestionResolutionDTO(feature_id=feature_id, oq=resolved_item)
 
     # ── Query 4: Phase operations ─────────────────────────────────────────────
 

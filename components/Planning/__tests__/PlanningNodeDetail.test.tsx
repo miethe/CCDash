@@ -18,7 +18,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import type { PlanDocument } from '../../../types';
+import type { FeaturePlanningContext, PlanDocument } from '../../../types';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -52,7 +52,13 @@ vi.mock('../../DocumentModal', () => ({
   ),
 }));
 
-import { PlanningNodeDetail } from '../PlanningNodeDetail';
+import {
+  buildDependencyDag,
+  buildExecutionPhases,
+  buildLineageTiles,
+  deriveFeatureMeta,
+  PlanningNodeDetail,
+} from '../PlanningNodeDetail';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -166,5 +172,232 @@ describe('PlanningNodeDetail — phase accordion header formula', () => {
   it('phase number is always present in header text when phaseNumber is defined', () => {
     const header = phaseHeader(5, 'Final Cleanup', undefined);
     expect(header).toMatch(/Phase 5/);
+  });
+});
+
+// ── Phase 5 drawer helpers ───────────────────────────────────────────────────
+
+describe('PlanningNodeDetail — Phase 5 lineage helpers', () => {
+  function baseContext(overrides: Partial<FeaturePlanningContext> = {}): FeaturePlanningContext {
+    return {
+      status: 'ok',
+      dataFreshness: '2026-04-20T00:00:00Z',
+      generatedAt: '2026-04-20T00:00:00Z',
+      sourceRefs: [],
+      featureId: 'ccdash-planning-reskin-v2',
+      featureName: 'Planning Reskin',
+      rawStatus: 'draft',
+      effectiveStatus: 'in-progress',
+      mismatchState: 'derived',
+      planningStatus: {},
+      graph: { nodes: [], edges: [], phaseBatches: [] },
+      phases: [],
+      blockedBatchIds: [],
+      linkedArtifactRefs: [],
+      specs: [],
+      prds: [],
+      plans: [],
+      ctxs: [],
+      reports: [],
+      spikes: [],
+      openQuestions: [],
+      readyToPromote: false,
+      isStale: false,
+      totalTokens: 0,
+      tokenUsageByModel: { opus: 0, sonnet: 0, haiku: 0, other: 0, total: 0 },
+      ...overrides,
+    };
+  }
+
+  it('builds the seven Phase 5 lineage tiles in order with payload counts', () => {
+    const tiles = buildLineageTiles(baseContext({
+      specs: [{ artifactId: 's1', title: 'Spec', filePath: 'docs/spec.md', canonicalPath: '', docType: 'spec', status: 'draft', updatedAt: '', sourceRef: '' }],
+      prds: [{ artifactId: 'p1', title: 'PRD', filePath: 'docs/prd.md', canonicalPath: '', docType: 'prd', status: 'approved', updatedAt: '', sourceRef: '' }],
+      plans: [{ artifactId: 'i1', title: 'Plan', filePath: 'docs/plan.md', canonicalPath: '', docType: 'implementation_plan', status: 'in-progress', updatedAt: '', sourceRef: '' }],
+      ctxs: [{ artifactId: 'c1', title: 'Ctx', filePath: 'docs/ctx.md', canonicalPath: '', docType: 'context', status: 'completed', updatedAt: '', sourceRef: '' }],
+      reports: [{ artifactId: 'r1', title: 'Report', filePath: 'docs/report.md', canonicalPath: '', docType: 'report', status: 'completed', updatedAt: '', sourceRef: '' }],
+      spikes: [{ spikeId: 'sp1', title: 'Spike', status: 'ready', filePath: 'docs/spike.md', sourceRef: '' }],
+      phases: [{
+        phaseId: 'phase-1',
+        phaseToken: 'phase-1',
+        phaseTitle: 'Shell',
+        rawStatus: 'in-progress',
+        effectiveStatus: 'in-progress',
+        isMismatch: false,
+        mismatchState: 'aligned',
+        planningStatus: {},
+        batches: [],
+        blockedBatchIds: [],
+        totalTasks: 2,
+        completedTasks: 1,
+        deferredTasks: 0,
+      }],
+    }));
+
+    expect(tiles.map(tile => tile.label)).toEqual(['SPEC', 'SPIKE', 'PRD', 'PLAN', 'PHASE', 'CTX', 'REPORT']);
+    expect(tiles.map(tile => tile.count)).toEqual([1, 1, 1, 1, 1, 1, 1]);
+    expect(tiles.find(tile => tile.kind === 'phase')?.section).toBe('phases');
+  });
+
+  it('derives category and slug from linked planning paths when not explicit', () => {
+    const meta = deriveFeatureMeta(baseContext({
+      linkedArtifactRefs: [
+        'docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md',
+      ],
+    }));
+
+    expect(meta.category).toBe('enhancements');
+    expect(meta.slug).toBe('ccdash-planning-reskin-v2');
+  });
+});
+
+// ── Phase 6 drawer helpers ───────────────────────────────────────────────────
+
+describe('PlanningNodeDetail — Phase 6 execution helpers', () => {
+  it('adapts phase batches into stable fallback task rows from taskIds', () => {
+    const phases = buildExecutionPhases([
+      {
+        phaseId: 'phase-1',
+        phaseNumber: 1,
+        phaseToken: 'phase-1',
+        phaseTitle: 'Service Layer',
+        rawStatus: 'in-progress',
+        effectiveStatus: 'in-progress',
+        isMismatch: false,
+        mismatchState: 'aligned',
+        planningStatus: {},
+        blockedBatchIds: [],
+        totalTasks: 3,
+        completedTasks: 1,
+        deferredTasks: 0,
+        batches: [
+          {
+            featureSlug: 'feat',
+            phase: 'phase-1',
+            batchId: 'A',
+            taskIds: ['task-api-contract', 'task-router'],
+            assignedAgents: ['sonnet-worker'],
+            fileScopeHints: [],
+            readinessState: 'ready',
+            readiness: {
+              state: 'ready',
+              reason: '',
+              blockingNodeIds: [],
+              blockingTaskIds: [],
+              evidence: [],
+              isReady: true,
+            },
+          },
+          {
+            featureSlug: 'feat',
+            phase: 'phase-1',
+            batchId: 'B',
+            taskIds: ['task-writeback'],
+            assignedAgents: ['haiku-worker'],
+            fileScopeHints: [],
+            readinessState: 'blocked',
+            readiness: {
+              state: 'blocked',
+              reason: '',
+              blockingNodeIds: [],
+              blockingTaskIds: ['task-writeback'],
+              evidence: [],
+              isReady: false,
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(phases).toHaveLength(1);
+    expect(phases[0].progressPct).toBe(33);
+    expect(phases[0].batches.map(batch => batch.id)).toEqual(['A', 'B']);
+    expect(phases[0].batches[0].tasks[0]).toMatchObject({
+      id: 'task-api-contract',
+      title: 'Api Contract',
+      model: 'sonnet',
+      status: 'completed',
+    });
+    expect(phases[0].batches[1].tasks[0]).toMatchObject({
+      id: 'task-writeback',
+      status: 'blocked',
+      blocked: true,
+    });
+  });
+
+  it('builds graceful DAG progression edges when explicit dependencies are absent', () => {
+    const phases = buildExecutionPhases([
+      {
+        phaseId: 'phase-1',
+        phaseNumber: 1,
+        phaseToken: 'phase-1',
+        phaseTitle: 'First',
+        rawStatus: 'completed',
+        effectiveStatus: 'completed',
+        isMismatch: false,
+        mismatchState: 'aligned',
+        planningStatus: {},
+        blockedBatchIds: [],
+        totalTasks: 2,
+        completedTasks: 2,
+        deferredTasks: 0,
+        batches: [
+          {
+            featureSlug: 'feat',
+            phase: 'phase-1',
+            batchId: 'A',
+            taskIds: ['task-a'],
+            assignedAgents: [],
+            fileScopeHints: [],
+            readinessState: 'ready',
+            readiness: { state: 'ready', reason: '', blockingNodeIds: [], blockingTaskIds: [], evidence: [], isReady: true },
+          },
+          {
+            featureSlug: 'feat',
+            phase: 'phase-1',
+            batchId: 'B',
+            taskIds: ['task-b'],
+            assignedAgents: [],
+            fileScopeHints: [],
+            readinessState: 'ready',
+            readiness: { state: 'ready', reason: '', blockingNodeIds: [], blockingTaskIds: [], evidence: [], isReady: true },
+          },
+        ],
+      },
+      {
+        phaseId: 'phase-2',
+        phaseNumber: 2,
+        phaseToken: 'phase-2',
+        phaseTitle: 'Second',
+        rawStatus: 'ready',
+        effectiveStatus: 'ready',
+        isMismatch: false,
+        mismatchState: 'aligned',
+        planningStatus: {},
+        blockedBatchIds: [],
+        totalTasks: 1,
+        completedTasks: 0,
+        deferredTasks: 0,
+        batches: [
+          {
+            featureSlug: 'feat',
+            phase: 'phase-2',
+            batchId: 'A',
+            taskIds: ['task-c'],
+            assignedAgents: [],
+            fileScopeHints: [],
+            readinessState: 'ready',
+            readiness: { state: 'ready', reason: '', blockingNodeIds: [], blockingTaskIds: [], evidence: [], isReady: true },
+          },
+        ],
+      },
+    ]);
+
+    const dag = buildDependencyDag(phases);
+    expect(dag.nodes.map(node => node.id)).toEqual(['task-a', 'task-b', 'task-c']);
+    expect(dag.edges).toEqual([
+      { sourceId: 'task-a', targetId: 'task-b', status: 'static' },
+      { sourceId: 'task-b', targetId: 'task-c', status: 'static' },
+    ]);
   });
 });

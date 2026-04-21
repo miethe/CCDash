@@ -1,12 +1,12 @@
 # Planning Control Plane Guide
 
-Last updated: 2026-04-17
+Last updated: 2026-04-21
 
-CCDash now provides a unified planning control plane that turns frontmatter-driven planning artifacts into a live, explainable operational GUI. This guide covers enabling planning surfaces, understanding effective status semantics, and launching plan-driven agent work.
+CCDash now provides a unified planning control plane that turns frontmatter-driven planning artifacts into a live, explainable operational GUI. This guide covers enabling planning surfaces, understanding effective status semantics, and launching plan-driven agent work. The v2 reskin adds a dedicated triage inbox, live agent roster, richer planning graph lanes, and a feature drawer with SPIKE and OQ workflows.
 
 ## Overview
 
-The Planning Control Plane (Phases 1–6 of PCP-v1) unifies:
+The Planning Control Plane (Phases 1–6 of PCP-v1, plus the v2 reskin surfaces) unifies:
 
 1. **Planning Graph**: Linked design specs, PRDs, implementation plans, and progress files as a navigable graph.
 2. **Effective Status & Mismatch Detection**: Raw artifact status combined with progress and execution evidence to derive effective state and surfaced mismatches.
@@ -17,14 +17,13 @@ For background, see the full PRD at `docs/project_plans/PRDs/enhancements/ccdash
 
 ## Frontend Surfaces
 
-The planning control plane provides five main UI surfaces:
+The planning control plane provides seven primary UI surfaces:
 
 ### PlanningHomePage
 The planning entry point, showing:
-- Design specs ready for promotion
-- Active PRDs and implementation plans
-- Blocked or stale phases
-- Tracker backlog and deferred work
+- Hero stats and corpus summary
+- Metrics strip for active planning health
+- Artifact composition chips for the planning corpus
 - Status mismatch warnings
 - Recent planning-related execution activity
 
@@ -32,8 +31,23 @@ The planning entry point, showing:
 Graph visualization of linked planning artifacts:
 - Nodes represent design specs, PRDs, implementation plans, and progress files
 - Edges show parent-child and dependency relationships
+- Lane-based totals cells surface effort, token, and model-identity context
 - Click to drill into individual nodes
 - Supports feature-scoped graph views for focused planning
+
+### PlanningTriageInbox
+Fast-action queue for planning cleanup:
+- Blocked features and phases
+- Status mismatches and stale artifacts
+- Ready-to-promote items
+- Filter tabs for quick prioritization
+
+### LiveAgentRoster
+Live execution roster for planning work:
+- Running and idle agents
+- State dots and model-aware context
+- Current task summary for each agent
+- Lightweight live/idle visibility for launch prep
 
 ### PlanningNodeDetail
 Detailed view of a single planning artifact:
@@ -42,13 +56,14 @@ Detailed view of a single planning artifact:
 - Linked child and parent nodes
 - Related sessions, features, and execution runs
 - Mismatch provenance with evidence
+- Lineage strip, SPIKE tiles, inline OQ resolution, dependency DAG, and exec buttons for the feature drawer
 
-### PhaseOperationsPanel
-Operational detail for a single phase:
+### ExecutionTasksPanel
+Operational detail for phase work:
 - Task batch readiness and dependency state
 - Estimated scope and effort
 - Blocked or critical-path markers
-- Link to launch preparation for that phase
+- Model-aware execution context for launch preparation
 
 ### PlanningLaunchSheet
 Plan-driven launch dialog for multi-agent work:
@@ -192,3 +207,4 @@ No data is deleted. The frontend degrades gracefully: planning home shows a disa
 - **Implementation Plan** (phase structure, backend design): `docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md`
 - **Architecture Spec** (graph semantics, effective status model): `docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md`
 - **Telemetry Exporter Guide** (how to stream planning spans to OTEL): `docs/guides/telemetry-exporter-guide.md`
+- **Planning Reskin v2 specs** (deferred-item follow-on design work): `docs/project_plans/design-specs/`

@@ -105,12 +105,45 @@ export default {
     				axis: 'hsl(var(--chart-axis))',
     				tooltip: 'hsl(var(--chart-tooltip))',
     				'tooltip-foreground': 'hsl(var(--chart-tooltip-foreground))'
-    			}
-    		},
-    		fontFamily: {
-    			mono: [
-    				'ui-monospace',
-    				'SFMono-Regular',
+				},
+				planning: {
+					bg0: 'var(--bg-0)',
+					bg1: 'var(--bg-1)',
+					bg2: 'var(--bg-2)',
+					bg3: 'var(--bg-3)',
+					bg4: 'var(--bg-4)',
+					line1: 'var(--line-1)',
+					line2: 'var(--line-2)',
+					ink0: 'var(--ink-0)',
+					ink1: 'var(--ink-1)',
+					ink2: 'var(--ink-2)',
+					ink3: 'var(--ink-3)',
+					spec: 'var(--spec)',
+					spk: 'var(--spk)',
+					prd: 'var(--prd)',
+					plan: 'var(--plan)',
+					prog: 'var(--prog)',
+					ctx: 'var(--ctx)',
+					trk: 'var(--trk)',
+					rep: 'var(--rep)',
+					ok: 'var(--ok)',
+					warn: 'var(--warn)',
+					err: 'var(--err)',
+					info: 'var(--info)',
+					mag: 'var(--mag)',
+					opus: 'var(--m-opus)',
+					sonnet: 'var(--m-sonnet)',
+					haiku: 'var(--m-haiku)',
+					brand: 'var(--brand)'
+    				}
+    			},
+    			fontFamily: {
+    				planningSans: ['var(--sans)', '-apple-system', 'system-ui', 'sans-serif'],
+    				planningSerif: ['var(--serif)', 'Georgia', 'serif'],
+    				planningMono: ['var(--mono)', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+    				mono: [
+    					'ui-monospace',
+    					'SFMono-Regular',
     				'Menlo',
     				'Monaco',
     				'Consolas',

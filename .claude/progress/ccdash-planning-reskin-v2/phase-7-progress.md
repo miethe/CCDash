@@ -2,92 +2,129 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2"
-feature_slug: "ccdash-planning-reskin-v2"
+prd: ccdash-planning-reskin-v2
+feature_slug: ccdash-planning-reskin-v2
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md
 phase: 7
-title: "Backend OQ Write-Back Endpoint + Per-Feature Token-Usage-By-Model"
-status: "pending"
+title: Backend OQ Write-Back Endpoint + Per-Feature Token-Usage-By-Model
+status: completed
 created: 2026-04-20
-updated: 2026-04-20
+updated: '2026-04-20'
 started: null
 completed: null
 commit_refs: []
 pr_refs: []
-
 overall_progress: 0
-completion_estimate: "on-track"
-
+completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["python-backend-engineer", "backend-architect"]
+owners:
+- python-backend-engineer
+- backend-architect
 contributors: []
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "T7-001"
-    description: "Add transport-neutral OQ resolution service method to backend/application/services/agent_queries/ accepting feature_id, oq_id, answer_text; returns OQ state with resolved flag; in-memory cache only (DEFER-03)"
-    status: "pending"
-    assigned_to: ["backend-architect", "python-backend-engineer"]
-    dependencies: ["T0-004"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
-  - id: "T7-002"
-    description: "Add PATCH /api/planning/features/:id/open-questions/:oq_id REST endpoint in backend/routers/features.py or planning.py; request body {answer: string}; response 200 with OQ state or 202 pending; error handling (404, 400)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer", "backend-architect"]
-    dependencies: ["T7-001"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
-  - id: "T7-003"
-    description: "Add OTEL spans for OQ resolution (span name: planning.oq.resolve, attributes: feature_id, oq_id, answer_length, success); integrate with existing backend/observability/otel.py"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["T7-002"]
-    estimated_effort: "0.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-
-  - id: "T7-004"
-    description: "Extend FeatureForensicsQueryService.build_feature_forensics (and the planning feature payload consumed by the Planning Deck) with a tokenUsageByModel field {opus:int, sonnet:int, haiku:int, other:int, total:int}. Derive by iterating linked_sessions[*], normalizing model via backend/model_identity.derive_model_identity(raw_model)['modelFamily'], and summing total_tokens. Preserves legacy total_tokens. Resolves OQ-02 and absorbs former DEFER-05. Unit tests cover multi-model, empty, and partial data."
-    status: "pending"
-    assigned_to: ["python-backend-engineer", "backend-architect"]
-    dependencies: ["T0-006"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
+- id: T7-001
+  description: Add transport-neutral OQ resolution service method to backend/application/services/agent_queries/
+    accepting feature_id, oq_id, answer_text; returns OQ state with resolved flag;
+    in-memory cache only (DEFER-03)
+  status: completed
+  assigned_to:
+  - backend-architect
+  - python-backend-engineer
+  dependencies:
+  - T0-004
+  estimated_effort: 1.5 pts
+  priority: high
+  assigned_model: sonnet
+- id: T7-002
+  description: 'Add PATCH /api/planning/features/:id/open-questions/:oq_id REST endpoint
+    in backend/routers/features.py or planning.py; request body {answer: string};
+    response 200 with OQ state or 202 pending; error handling (404, 400)'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  - backend-architect
+  dependencies:
+  - T7-001
+  estimated_effort: 1.5 pts
+  priority: high
+  assigned_model: sonnet
+- id: T7-003
+  description: 'Add OTEL spans for OQ resolution (span name: planning.oq.resolve,
+    attributes: feature_id, oq_id, answer_length, success); integrate with existing
+    backend/observability/otel.py'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T7-002
+  estimated_effort: 0.5 pts
+  priority: medium
+  assigned_model: sonnet
+- id: T7-004
+  description: Extend FeatureForensicsQueryService.build_feature_forensics (and the
+    planning feature payload consumed by the Planning Deck) with a tokenUsageByModel
+    field {opus:int, sonnet:int, haiku:int, other:int, total:int}. Derive by iterating
+    linked_sessions[*], normalizing model via backend/model_identity.derive_model_identity(raw_model)['modelFamily'],
+    and summing total_tokens. Preserves legacy total_tokens. Resolves OQ-02 and absorbs
+    former DEFER-05. Unit tests cover multi-model, empty, and partial data.
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  - backend-architect
+  dependencies:
+  - T0-006
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
 parallelization:
-  batch_1: ["T7-001", "T7-004"]
-  batch_2: ["T7-002"]
-  batch_3: ["T7-003"]
-  critical_path: ["T7-001", "T7-002", "T7-003"]
-  estimated_total_time: "2-3 days"
-
+  batch_1:
+  - T7-001
+  - T7-004
+  batch_2:
+  - T7-002
+  batch_3:
+  - T7-003
+  critical_path:
+  - T7-001
+  - T7-002
+  - T7-003
+  estimated_total_time: 2-3 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-7.1", description: "Service method implemented with request validation", status: "pending" }
-  - { id: "SC-7.2", description: "PATCH endpoint callable and validates input", status: "pending" }
-  - { id: "SC-7.3", description: "OQ state updated correctly (resolved flag, answer text)", status: "pending" }
-  - { id: "SC-7.4", description: "OpenTelemetry spans exported with correct attributes", status: "pending" }
-  - { id: "SC-7.5", description: "Error handling for missing/invalid inputs (404 feature, 404 OQ, 400 empty answer)", status: "pending" }
-  - { id: "SC-7.6", description: "Integration tests pass", status: "pending" }
-  - { id: "SC-7.7", description: "tokenUsageByModel field present on planning feature payload (opus/sonnet/haiku/other + total) with unit tests covering multi-model, empty, and partial data (T7-004; resolves OQ-02)", status: "pending" }
-
+- id: SC-7.1
+  description: Service method implemented with request validation
+  status: pending
+- id: SC-7.2
+  description: PATCH endpoint callable and validates input
+  status: pending
+- id: SC-7.3
+  description: OQ state updated correctly (resolved flag, answer text)
+  status: pending
+- id: SC-7.4
+  description: OpenTelemetry spans exported with correct attributes
+  status: pending
+- id: SC-7.5
+  description: Error handling for missing/invalid inputs (404 feature, 404 OQ, 400
+    empty answer)
+  status: pending
+- id: SC-7.6
+  description: Integration tests pass
+  status: pending
+- id: SC-7.7
+  description: tokenUsageByModel field present on planning feature payload (opus/sonnet/haiku/other
+    + total) with unit tests covering multi-model, empty, and partial data (T7-004;
+    resolves OQ-02)
+  status: pending
 files_modified: []
+progress: 100
 ---
 
 # ccdash-planning-reskin-v2 - Phase 7: Backend OQ Write-Back Endpoint

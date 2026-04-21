@@ -2,81 +2,111 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2"
-feature_slug: "ccdash-planning-reskin-v2"
+prd: ccdash-planning-reskin-v2
+feature_slug: ccdash-planning-reskin-v2
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md
 phase: 5
-title: "Feature Detail Drawer — Header & Lineage"
-status: "pending"
+title: Feature Detail Drawer — Header & Lineage
+status: completed
 created: 2026-04-20
-updated: 2026-04-20
+updated: '2026-04-21'
 started: null
-completed: null
-commit_refs: []
+completed: '2026-04-21'
+commit_refs:
+- 4943e0e
 pr_refs: []
-
-overall_progress: 0
-completion_estimate: "on-track"
-
+overall_progress: 100
+completion_estimate: on-track
 total_tasks: 3
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["ui-engineer-enhanced", "frontend-developer"]
+owners:
+- ui-engineer-enhanced
+- frontend-developer
 contributors: []
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "T5-001"
-    description: "Render fixed right drawer panel (min 920px / 64vw, bg-1, border-left line-2, box-shadow); scroll independent; close button top-right; responsive width at <1280px"
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced", "frontend-developer"]
-    dependencies: ["T4-006"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
-  - id: "T5-002"
-    description: "Render drawer header: category/slug breadcrumb, mismatch pill, serif italic h1 title, raw→effective status pills with arrow, complexity chip, tags, Execute CTA, Close button"
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced", "frontend-developer"]
-    dependencies: ["T5-001"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
-  - id: "T5-003"
-    description: "Render lineage strip: 7 clickable artifact-type tiles (SPEC/SPIKE/PRD/PLAN/PHASE/CTX/REPORT) with type label, count, status pill, PhaseDot stack for PHASE; clicking scrolls to section"
-    status: "pending"
-    assigned_to: ["frontend-developer", "ui-engineer-enhanced"]
-    dependencies: ["T5-001"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-
+- id: T5-001
+  description: Render fixed right drawer panel (min 920px / 64vw, bg-1, border-left
+    line-2, box-shadow); scroll independent; close button top-right; responsive width
+    at <1280px
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  - frontend-developer
+  dependencies:
+  - T4-006
+  estimated_effort: 1.5 pts
+  priority: high
+  assigned_model: sonnet
+- id: T5-002
+  description: 'Render drawer header: category/slug breadcrumb, mismatch pill, serif
+    italic h1 title, raw→effective status pills with arrow, complexity chip, tags,
+    Execute CTA, Close button'
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  - frontend-developer
+  dependencies:
+  - T5-001
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+- id: T5-003
+  description: 'Render lineage strip: 7 clickable artifact-type tiles (SPEC/SPIKE/PRD/PLAN/PHASE/CTX/REPORT)
+    with type label, count, status pill, PhaseDot stack for PHASE; clicking scrolls
+    to section'
+  status: completed
+  assigned_to:
+  - frontend-developer
+  - ui-engineer-enhanced
+  dependencies:
+  - T5-001
+  estimated_effort: 1.5 pts
+  priority: high
+  assigned_model: sonnet
 parallelization:
-  batch_1: ["T5-001"]
-  batch_2: ["T5-002", "T5-003"]
-  critical_path: ["T5-001", "T5-002"]
-  estimated_total_time: "2-3 days"
-
+  batch_1:
+  - T5-001
+  batch_2:
+  - T5-002
+  - T5-003
+  critical_path:
+  - T5-001
+  - T5-002
+  estimated_total_time: 2-3 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-5.1", description: "Drawer shell renders with correct dimensions (920px min, 64vw max)", status: "pending" }
-  - { id: "SC-5.2", description: "Header complete with all fields and correct colors", status: "pending" }
-  - { id: "SC-5.3", description: "Lineage strip renders 7 tiles with correct data", status: "pending" }
-  - { id: "SC-5.4", description: "Lineage tile clicks scroll and toggle sections", status: "pending" }
-  - { id: "SC-5.5", description: "Close button functional", status: "pending" }
-  - { id: "SC-5.6", description: "Responsive width verified (640px at <1280px)", status: "pending" }
-
-files_modified: []
+- id: SC-5.1
+  description: Drawer shell renders with correct dimensions (920px min, 64vw max)
+  status: completed
+- id: SC-5.2
+  description: Header complete with all fields and correct colors
+  status: completed
+- id: SC-5.3
+  description: Lineage strip renders 7 tiles with correct data
+  status: completed
+- id: SC-5.4
+  description: Lineage tile clicks scroll and toggle sections
+  status: completed
+- id: SC-5.5
+  description: Close button functional
+  status: completed
+- id: SC-5.6
+  description: Responsive width verified (640px at <1280px)
+  status: completed
+files_modified:
+- components/Planning/PlanningNodeDetail.tsx
+- services/planning.ts
+- types.ts
+- components/Planning/__tests__/PlanningNodeDetail.test.tsx
+- .claude/progress/ccdash-planning-reskin-v2/phase-5-progress.md
+progress: 100
 ---
 
 # ccdash-planning-reskin-v2 - Phase 5: Feature Detail Drawer — Header & Lineage

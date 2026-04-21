@@ -8,10 +8,18 @@ from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services.session_intelligence import SessionIntelligenceReadService
 from backend.application.services.sessions import SessionTranscriptService
+from backend.model_identity import derive_model_identity
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
 from .cache import memoized_query
-from .models import DocumentRef, FeatureForensicsDTO, SessionRef, TaskRef, TelemetryAvailability
+from .models import (
+    DocumentRef,
+    FeatureForensicsDTO,
+    SessionRef,
+    TaskRef,
+    TelemetryAvailability,
+    TokenUsageByModel,
+)
 
 
 def _safe_float(value: Any) -> float:
@@ -34,6 +42,21 @@ def _as_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
         return value.model_dump()
     return {}
+
+
+def _aggregate_token_usage_by_model(session_refs: list[SessionRef]) -> TokenUsageByModel:
+    counts = {
+        "opus": 0,
+        "sonnet": 0,
+        "haiku": 0,
+        "other": 0,
+    }
+    for ref in session_refs:
+        family = str(derive_model_identity(ref.model).get("modelFamily") or "").strip().lower()
+        bucket = family if family in counts else "other"
+        counts[bucket] += _safe_int(ref.total_tokens)
+    counts["total"] = sum(counts.values())
+    return TokenUsageByModel(**counts)
 
 
 def _feature_slug(row: dict[str, Any]) -> str:
@@ -334,6 +357,7 @@ class FeatureForensicsQueryService:
             iteration_count=len(session_refs),
             total_cost=round(total_cost, 6),
             total_tokens=total_tokens,
+            token_usage_by_model=_aggregate_token_usage_by_model(session_refs),
             workflow_mix=workflow_mix,
             rework_signals=rework_signals,
             failure_patterns=failure_patterns,

@@ -5,6 +5,7 @@
 ### Added
 
 - Containerized deployment infrastructure: unified backend Dockerfile, hardened frontend image, `compose.yaml` with `local`, `enterprise`, and `postgres` profiles, rootless Podman support, and single-command deployment via `docker compose` or `podman-compose`.
+- CCDash Planning Reskin v2 documentation finalization: updated the root README and planning control-plane guide, added a planning context pointer in the design-handoff bundle, and authored deferred-item design specs for DEFER-01, DEFER-02, DEFER-03, DEFER-04, DEFER-06, DEFER-07, DEFER-08, DEFER-09, and DEFER-10 under `docs/project_plans/design-specs/`.
 
 ## 2026-04-15
 

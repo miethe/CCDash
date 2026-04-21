@@ -5,25 +5,57 @@ import { useData } from '../contexts/DataContext';
 import { cn } from '../lib/utils';
 import { ProjectSelector } from './ProjectSelector';
 
-const NavItem = ({ to, icon: Icon, label, active, isCollapsed }: { to: string; icon: any; label: string; active: boolean; isCollapsed: boolean }) => (
-  <Link
-    to={to}
-    className={cn(
-      'group relative flex items-center gap-3 rounded-lg border px-4 py-3 transition-all duration-200',
-      active
-        ? 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-sm'
-        : 'border-transparent text-muted-foreground hover:bg-hover/60 hover:text-sidebar-foreground',
-    )}
-  >
-    <Icon size={20} className="shrink-0" />
-    {!isCollapsed && <span className="font-medium text-sm truncate">{label}</span>}
-    {isCollapsed && (
-      <div className="absolute left-16 z-50 whitespace-nowrap rounded-lg border border-panel-border bg-surface-overlay px-2 py-1 text-xs text-panel-foreground opacity-0 shadow-lg pointer-events-none transition-opacity group-hover:opacity-100">
-        {label}
-      </div>
-    )}
-  </Link>
-);
+// Brand color for the Planning nav item active ring (matches planning-tokens.css --brand)
+const PLANNING_BRAND = 'oklch(75% 0.14 195)';
+
+const NavItem = ({
+  to,
+  icon: Icon,
+  label,
+  active,
+  isCollapsed,
+  planningHighlight,
+}: {
+  to: string;
+  icon: any;
+  label: string;
+  active: boolean;
+  isCollapsed: boolean;
+  planningHighlight?: boolean;
+}) => {
+  const brandActiveStyle =
+    planningHighlight && active
+      ? {
+          background: `color-mix(in oklab, ${PLANNING_BRAND} 16%, hsl(var(--sidebar)))`,
+          borderColor: `color-mix(in oklab, ${PLANNING_BRAND} 40%, hsl(var(--sidebar-border)))`,
+          color: PLANNING_BRAND,
+          boxShadow: `0 0 0 1px color-mix(in oklab, ${PLANNING_BRAND} 22%, transparent), inset 0 0 12px color-mix(in oklab, ${PLANNING_BRAND} 8%, transparent)`,
+        }
+      : undefined;
+
+  return (
+    <Link
+      to={to}
+      style={brandActiveStyle}
+      className={cn(
+        'group relative flex items-center gap-3 rounded-lg border px-4 py-3 transition-all duration-200',
+        active && !planningHighlight
+          ? 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-sm'
+          : !active
+            ? 'border-transparent text-muted-foreground hover:bg-hover/60 hover:text-sidebar-foreground'
+            : '',
+      )}
+    >
+      <Icon size={20} className="shrink-0" />
+      {!isCollapsed && <span className="font-medium text-sm truncate">{label}</span>}
+      {isCollapsed && (
+        <div className="absolute left-16 z-50 whitespace-nowrap rounded-lg border border-panel-border bg-surface-overlay px-2 py-1 text-xs text-panel-foreground opacity-0 shadow-lg pointer-events-none transition-opacity group-hover:opacity-100">
+          {label}
+        </div>
+      )}
+    </Link>
+  );
+};
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -59,7 +91,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden">
           <NavItem to="/" icon={LayoutDashboard} label="Overview" active={location.pathname === '/'} isCollapsed={isCollapsed} />
-          <NavItem to="/planning" icon={GitBranch} label="Planning" active={location.pathname === '/planning'} isCollapsed={isCollapsed} />
+          <NavItem to="/planning" icon={GitBranch} label="Planning" active={location.pathname.startsWith('/planning')} isCollapsed={isCollapsed} planningHighlight />
           <NavItem to="/board" icon={ListTodo} label="Project Board" active={location.pathname === '/board'} isCollapsed={isCollapsed} />
           <NavItem to="/execution" icon={Command} label="Execution" active={location.pathname === '/execution'} isCollapsed={isCollapsed} />
           <NavItem to="/tests" icon={TestTube2} label="Testing" active={location.pathname === '/tests'} isCollapsed={isCollapsed} />
