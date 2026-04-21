@@ -52,7 +52,13 @@ vi.mock('../../DocumentModal', () => ({
   ),
 }));
 
-import { buildLineageTiles, deriveFeatureMeta, PlanningNodeDetail } from '../PlanningNodeDetail';
+import {
+  buildDependencyDag,
+  buildExecutionPhases,
+  buildLineageTiles,
+  deriveFeatureMeta,
+  PlanningNodeDetail,
+} from '../PlanningNodeDetail';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -242,5 +248,156 @@ describe('PlanningNodeDetail — Phase 5 lineage helpers', () => {
 
     expect(meta.category).toBe('enhancements');
     expect(meta.slug).toBe('ccdash-planning-reskin-v2');
+  });
+});
+
+// ── Phase 6 drawer helpers ───────────────────────────────────────────────────
+
+describe('PlanningNodeDetail — Phase 6 execution helpers', () => {
+  it('adapts phase batches into stable fallback task rows from taskIds', () => {
+    const phases = buildExecutionPhases([
+      {
+        phaseId: 'phase-1',
+        phaseNumber: 1,
+        phaseToken: 'phase-1',
+        phaseTitle: 'Service Layer',
+        rawStatus: 'in-progress',
+        effectiveStatus: 'in-progress',
+        isMismatch: false,
+        mismatchState: 'aligned',
+        planningStatus: {},
+        blockedBatchIds: [],
+        totalTasks: 3,
+        completedTasks: 1,
+        deferredTasks: 0,
+        batches: [
+          {
+            featureSlug: 'feat',
+            phase: 'phase-1',
+            batchId: 'A',
+            taskIds: ['task-api-contract', 'task-router'],
+            assignedAgents: ['sonnet-worker'],
+            fileScopeHints: [],
+            readinessState: 'ready',
+            readiness: {
+              state: 'ready',
+              reason: '',
+              blockingNodeIds: [],
+              blockingTaskIds: [],
+              evidence: [],
+              isReady: true,
+            },
+          },
+          {
+            featureSlug: 'feat',
+            phase: 'phase-1',
+            batchId: 'B',
+            taskIds: ['task-writeback'],
+            assignedAgents: ['haiku-worker'],
+            fileScopeHints: [],
+            readinessState: 'blocked',
+            readiness: {
+              state: 'blocked',
+              reason: '',
+              blockingNodeIds: [],
+              blockingTaskIds: ['task-writeback'],
+              evidence: [],
+              isReady: false,
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(phases).toHaveLength(1);
+    expect(phases[0].progressPct).toBe(33);
+    expect(phases[0].batches.map(batch => batch.id)).toEqual(['A', 'B']);
+    expect(phases[0].batches[0].tasks[0]).toMatchObject({
+      id: 'task-api-contract',
+      title: 'Api Contract',
+      model: 'sonnet',
+      status: 'completed',
+    });
+    expect(phases[0].batches[1].tasks[0]).toMatchObject({
+      id: 'task-writeback',
+      status: 'blocked',
+      blocked: true,
+    });
+  });
+
+  it('builds graceful DAG progression edges when explicit dependencies are absent', () => {
+    const phases = buildExecutionPhases([
+      {
+        phaseId: 'phase-1',
+        phaseNumber: 1,
+        phaseToken: 'phase-1',
+        phaseTitle: 'First',
+        rawStatus: 'completed',
+        effectiveStatus: 'completed',
+        isMismatch: false,
+        mismatchState: 'aligned',
+        planningStatus: {},
+        blockedBatchIds: [],
+        totalTasks: 2,
+        completedTasks: 2,
+        deferredTasks: 0,
+        batches: [
+          {
+            featureSlug: 'feat',
+            phase: 'phase-1',
+            batchId: 'A',
+            taskIds: ['task-a'],
+            assignedAgents: [],
+            fileScopeHints: [],
+            readinessState: 'ready',
+            readiness: { state: 'ready', reason: '', blockingNodeIds: [], blockingTaskIds: [], evidence: [], isReady: true },
+          },
+          {
+            featureSlug: 'feat',
+            phase: 'phase-1',
+            batchId: 'B',
+            taskIds: ['task-b'],
+            assignedAgents: [],
+            fileScopeHints: [],
+            readinessState: 'ready',
+            readiness: { state: 'ready', reason: '', blockingNodeIds: [], blockingTaskIds: [], evidence: [], isReady: true },
+          },
+        ],
+      },
+      {
+        phaseId: 'phase-2',
+        phaseNumber: 2,
+        phaseToken: 'phase-2',
+        phaseTitle: 'Second',
+        rawStatus: 'ready',
+        effectiveStatus: 'ready',
+        isMismatch: false,
+        mismatchState: 'aligned',
+        planningStatus: {},
+        blockedBatchIds: [],
+        totalTasks: 1,
+        completedTasks: 0,
+        deferredTasks: 0,
+        batches: [
+          {
+            featureSlug: 'feat',
+            phase: 'phase-2',
+            batchId: 'A',
+            taskIds: ['task-c'],
+            assignedAgents: [],
+            fileScopeHints: [],
+            readinessState: 'ready',
+            readiness: { state: 'ready', reason: '', blockingNodeIds: [], blockingTaskIds: [], evidence: [], isReady: true },
+          },
+        ],
+      },
+    ]);
+
+    const dag = buildDependencyDag(phases);
+    expect(dag.nodes.map(node => node.id)).toEqual(['task-a', 'task-b', 'task-c']);
+    expect(dag.edges).toEqual([
+      { sourceId: 'task-a', targetId: 'task-b', status: 'static' },
+      { sourceId: 'task-b', targetId: 'task-c', status: 'static' },
+    ]);
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -8,11 +8,14 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  Check,
   FolderSearch,
   Link2,
+  Network,
   PackageOpen,
   Play,
   RefreshCw,
+  Send,
   Users,
   X,
 } from 'lucide-react';
@@ -24,10 +27,13 @@ import type {
   FeaturePlanningContext,
   PlanningNode,
   PlanningNodeType,
+  PlanningOpenQuestionItem,
   PlanningPhaseBatch,
+  PlanningSpikeItem,
+  PlanningTokenUsageByModel,
   PhaseContextItem,
 } from '../../types';
-import { getFeaturePlanningContext, PlanningApiError } from '../../services/planning';
+import { getFeaturePlanningContext, PlanningApiError, resolvePlanningOpenQuestion } from '../../services/planning';
 import { featurePlanningTopic } from '../../services/live/topics';
 import { useLiveInvalidation } from '../../services/live/useLiveInvalidation';
 import type { LiveConnectionStatus } from '../../services/live';
@@ -43,6 +49,8 @@ import {
   BtnGhost,
   BtnPrimary,
   Chip,
+  Dot,
+  ExecBtn,
   StatusPill,
 } from './primitives/PhaseZeroPrimitives';
 
@@ -65,7 +73,8 @@ function sortNodesByType(nodes: PlanningNode[]): PlanningNode[] {
 }
 
 type LineageKind = 'spec' | 'spike' | 'prd' | 'plan' | 'phase' | 'ctx' | 'report';
-type DetailSectionKey = 'lineage' | 'phases' | 'blockers' | 'artifacts';
+type DetailSectionKey = 'lineage' | 'spec' | 'phases' | 'tasks' | 'blockers' | 'artifacts';
+type ExecutionViewMode = 'batches' | 'dag';
 
 interface LineageTileModel {
   kind: LineageKind;
@@ -82,8 +91,8 @@ interface DerivedFeatureMeta {
 }
 
 const LINEAGE_TILE_CONFIG: Array<Omit<LineageTileModel, 'count' | 'status'>> = [
-  { kind: 'spec', label: 'SPEC', color: 'var(--spec)', section: 'artifacts' },
-  { kind: 'spike', label: 'SPIKE', color: 'var(--spk)', section: 'artifacts' },
+  { kind: 'spec', label: 'SPEC', color: 'var(--spec)', section: 'spec' },
+  { kind: 'spike', label: 'SPIKE', color: 'var(--spk)', section: 'spec' },
   { kind: 'prd', label: 'PRD', color: 'var(--prd)', section: 'artifacts' },
   { kind: 'plan', label: 'PLAN', color: 'var(--plan)', section: 'artifacts' },
   { kind: 'phase', label: 'PHASE', color: 'var(--prog)', section: 'phases' },
@@ -162,6 +171,217 @@ function phaseDotState(status: string): 'completed' | 'in_progress' | 'blocked' 
   if (status === 'in-progress' || status === 'in_progress') return 'in_progress';
   if (status === 'blocked') return 'blocked';
   return 'pending';
+}
+
+const MODEL_KEYS = ['opus', 'sonnet', 'haiku'] as const;
+type ModelKey = (typeof MODEL_KEYS)[number];
+
+const MODEL_COLORS: Record<ModelKey, string> = {
+  opus: 'var(--m-opus)',
+  sonnet: 'var(--m-sonnet)',
+  haiku: 'var(--m-haiku)',
+};
+
+const MODEL_LABELS: Record<ModelKey, string> = {
+  opus: 'Opus',
+  sonnet: 'Sonnet',
+  haiku: 'Haiku',
+};
+
+interface ExecutionTaskModel {
+  id: string;
+  title: string;
+  status: string;
+  agent: string;
+  model: ModelKey;
+  batchId: string;
+  phaseId: string;
+  phaseIndex: number;
+  blocked: boolean;
+}
+
+interface ExecutionBatchModel {
+  id: string;
+  label: string;
+  status: string;
+  readinessState: string;
+  agents: string[];
+  tasks: ExecutionTaskModel[];
+}
+
+interface ExecutionPhaseModel {
+  id: string;
+  number: number;
+  title: string;
+  status: string;
+  totalTasks: number;
+  completedTasks: number;
+  deferredTasks: number;
+  progressPct: number;
+  batches: ExecutionBatchModel[];
+}
+
+interface DagNodeModel {
+  id: string;
+  title: string;
+  status: string;
+  phaseId: string;
+  phaseNumber: number;
+  phaseTitle: string;
+  batchId: string;
+}
+
+interface DagEdgeModel {
+  sourceId: string;
+  targetId: string;
+  status: 'active' | 'blocked' | 'static';
+}
+
+interface DagModel {
+  nodes: DagNodeModel[];
+  edges: DagEdgeModel[];
+}
+
+function formatCompactNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1_000)}k`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function humanizeTaskId(taskId: string): string {
+  const cleaned = taskId
+    .replace(/^task[-_:]*/i, '')
+    .replace(/^[tp]\d+[-_:]*/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  if (!cleaned) return `Task ${taskId}`;
+  return cleaned.replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function normalizePhaseNumber(phase: PhaseContextItem, index: number): number {
+  if (typeof phase.phaseNumber === 'number') return phase.phaseNumber;
+  const token = `${phase.phaseToken || phase.phaseId || phase.phaseTitle}`.match(/(?:phase[-_\s]*)?(\d+)/i);
+  return token ? Number(token[1]) : index + 1;
+}
+
+function agentToModel(agent: string | undefined, index: number): ModelKey {
+  const normalized = (agent || '').toLowerCase();
+  if (normalized.includes('opus')) return 'opus';
+  if (normalized.includes('haiku')) return 'haiku';
+  if (normalized.includes('sonnet')) return 'sonnet';
+  return MODEL_KEYS[index % MODEL_KEYS.length];
+}
+
+function taskStatusForBatch(
+  phase: PhaseContextItem,
+  batch: PlanningPhaseBatch,
+  taskId: string,
+  taskIndex: number,
+): string {
+  if (batch.readiness?.blockingTaskIds?.includes(taskId)) return 'blocked';
+  if (phase.effectiveStatus === 'completed') return 'completed';
+  if (batch.readinessState === 'blocked') return 'blocked';
+  if (phase.effectiveStatus === 'in-progress' || phase.effectiveStatus === 'in_progress') {
+    return taskIndex < phase.completedTasks ? 'completed' : taskIndex === phase.completedTasks ? 'in-progress' : 'todo';
+  }
+  return batch.readinessState === 'ready' ? 'ready' : 'todo';
+}
+
+export function buildExecutionPhases(phases: PhaseContextItem[]): ExecutionPhaseModel[] {
+  return phases.map((phase, phaseIndex) => {
+    const number = normalizePhaseNumber(phase, phaseIndex);
+    const totalTasks = Math.max(phase.totalTasks, phase.batches.reduce((sum, batch) => sum + (batch.taskIds?.length ?? 0), 0));
+    const progressPct = totalTasks > 0 ? Math.round((phase.completedTasks / totalTasks) * 100) : 0;
+
+    return {
+      id: phase.phaseId || phase.phaseToken || `phase-${number}`,
+      number,
+      title: phase.phaseTitle || phase.phaseToken || `Phase ${number}`,
+      status: phase.effectiveStatus || phase.rawStatus || 'unknown',
+      totalTasks,
+      completedTasks: phase.completedTasks,
+      deferredTasks: phase.deferredTasks,
+      progressPct: Math.max(0, Math.min(100, progressPct)),
+      batches: phase.batches.map((batch, batchIndex) => {
+        const agents = batch.assignedAgents?.length ? batch.assignedAgents : ['unassigned'];
+        const tasks = (batch.taskIds ?? []).map((taskId, taskIndex) => {
+          const agent = agents[taskIndex % agents.length] || 'unassigned';
+          return {
+            id: taskId,
+            title: humanizeTaskId(taskId),
+            status: taskStatusForBatch(phase, batch, taskId, taskIndex),
+            agent,
+            model: agentToModel(agent, taskIndex + batchIndex + phaseIndex),
+            batchId: batch.batchId || `batch-${batchIndex + 1}`,
+            phaseId: phase.phaseId || phase.phaseToken || `phase-${number}`,
+            phaseIndex,
+            blocked: Boolean(batch.readiness?.blockingTaskIds?.includes(taskId) || batch.readinessState === 'blocked'),
+          };
+        });
+
+        return {
+          id: batch.batchId || `batch-${batchIndex + 1}`,
+          label: batch.batchId || String(batchIndex + 1),
+          status: batch.readinessState || 'unknown',
+          readinessState: batch.readinessState || 'unknown',
+          agents,
+          tasks,
+        };
+      }),
+    };
+  });
+}
+
+export function buildDependencyDag(phases: ExecutionPhaseModel[]): DagModel {
+  const nodes: DagNodeModel[] = phases.flatMap(phase =>
+    phase.batches.flatMap(batch =>
+      batch.tasks.map(task => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        phaseId: phase.id,
+        phaseNumber: phase.number,
+        phaseTitle: phase.title,
+        batchId: batch.id,
+      })),
+    ),
+  );
+  const nodeIds = new Set(nodes.map(node => node.id));
+  const edges: DagEdgeModel[] = [];
+
+  for (const phase of phases) {
+    for (let i = 0; i < phase.batches.length - 1; i += 1) {
+      const leftTasks = phase.batches[i].tasks;
+      const rightTasks = phase.batches[i + 1].tasks;
+      if (!leftTasks.length || !rightTasks.length) continue;
+      for (const target of rightTasks) {
+        const source = leftTasks[Math.min(rightTasks.indexOf(target), leftTasks.length - 1)];
+        if (source && nodeIds.has(source.id) && nodeIds.has(target.id)) {
+          edges.push({
+            sourceId: source.id,
+            targetId: target.id,
+            status: target.blocked || target.status === 'blocked' ? 'blocked' : target.status === 'in-progress' ? 'active' : 'static',
+          });
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < phases.length - 1; i += 1) {
+    const lastBatch = phases[i].batches[phases[i].batches.length - 1];
+    const source = lastBatch?.tasks[lastBatch.tasks.length - 1];
+    const target = phases[i + 1].batches[0]?.tasks[0];
+    if (source && target && nodeIds.has(source.id) && nodeIds.has(target.id)) {
+      edges.push({
+        sourceId: source.id,
+        targetId: target.id,
+        status: target.blocked || target.status === 'blocked' ? 'blocked' : 'static',
+      });
+    }
+  }
+
+  return { nodes, edges };
 }
 
 // ── Small shared UI pieces ────────────────────────────────────────────────────
@@ -535,6 +755,8 @@ function CollapsibleSection({
   eyebrow,
   icon,
   color = 'var(--brand)',
+  count,
+  actions,
   open,
   onToggle,
   children,
@@ -544,6 +766,8 @@ function CollapsibleSection({
   eyebrow?: string;
   icon: ReactNode;
   color?: string;
+  count?: number;
+  actions?: ReactNode;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
@@ -571,8 +795,16 @@ function CollapsibleSection({
               {eyebrow}
             </div>
           ) : null}
-          <h2 className="truncate text-sm font-semibold text-[color:var(--ink-0)]">{title}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="truncate text-sm font-semibold text-[color:var(--ink-0)]">{title}</h2>
+            {typeof count === 'number' ? (
+              <span className="planning-mono planning-tnum rounded border border-[color:var(--line-1)] bg-[color:var(--bg-0)] px-1.5 text-[10px] text-[color:var(--ink-3)]">
+                {count}
+              </span>
+            ) : null}
+          </div>
         </div>
+        {actions ? <div className="shrink-0">{actions}</div> : null}
       </div>
       {open ? <div className="px-4 py-4">{children}</div> : null}
     </div>
@@ -683,6 +915,625 @@ function LineageStrip({
   );
 }
 
+function SubHeader({ label, count, color }: { label: string; count: number; color: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="planning-caps text-[10px]" style={{ color }}>{label}</div>
+      <span className="planning-mono planning-tnum rounded border border-[color:var(--line-1)] bg-[color:var(--bg-0)] px-1.5 text-[10px] text-[color:var(--ink-3)]">
+        {count}
+      </span>
+    </div>
+  );
+}
+
+function EmptyMiniState({ children }: { children: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-dashed border-[color:var(--line-1)] px-3 py-3 text-xs italic text-[color:var(--ink-3)]">
+      {children}
+    </div>
+  );
+}
+
+function SpikeTile({
+  spike,
+  onExec,
+}: {
+  spike: PlanningSpikeItem;
+  onExec: (label: string) => void;
+}) {
+  const id = spike.spikeId || 'SPIKE';
+  return (
+    <div className="group planning-tile flex min-h-[48px] items-center gap-2.5 px-3 py-2.5" style={{ borderLeft: '3px solid var(--spk)' }}>
+      <span className="planning-mono planning-caps shrink-0 text-[10px] text-[color:var(--spk)]">{id}</span>
+      <span className="min-w-0 flex-1 truncate text-xs text-[color:var(--ink-0)]" title={spike.title}>{spike.title || id}</span>
+      <StatusPill status={spike.status || 'unknown'} />
+      <ExecBtn
+        compact
+        aria-label={`Run ${id}`}
+        title={`Run ${id}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onExec(`running ${id} - ${spike.title || 'SPIKE'}`);
+        }}
+        className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+      />
+    </div>
+  );
+}
+
+function severityColor(severity: string): string {
+  const normalized = severity.toLowerCase();
+  if (normalized === 'high' || normalized === 'critical') return 'var(--err)';
+  if (normalized === 'medium') return 'var(--warn)';
+  if (normalized === 'low') return 'var(--info)';
+  return 'var(--spec)';
+}
+
+function OpenQuestionTile({
+  oq,
+  onResolve,
+}: {
+  oq: PlanningOpenQuestionItem;
+  onResolve: (oq: PlanningOpenQuestionItem, answer: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [answer, setAnswer] = useState(oq.answerText || '');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const color = severityColor(oq.severity || 'medium');
+
+  useEffect(() => {
+    if (!editing) return;
+    textareaRef.current?.focus();
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current || rootRef.current.contains(event.target as Node)) return;
+      setEditing(false);
+      setError(null);
+      setAnswer(oq.answerText || '');
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [editing, oq.answerText]);
+
+  const save = useCallback(async () => {
+    const trimmed = answer.trim();
+    if (!trimmed || pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      await onResolve(oq, trimmed);
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resolve open question.');
+    } finally {
+      setPending(false);
+    }
+  }, [answer, onResolve, oq, pending]);
+
+  return (
+    <div
+      ref={rootRef}
+      className="planning-tile overflow-hidden px-3 py-2.5"
+      style={{
+        borderLeft: `3px solid ${oq.resolved ? 'var(--ok)' : color}`,
+        background: oq.resolved
+          ? 'color-mix(in oklab, var(--ok) 8%, var(--bg-2))'
+          : 'var(--bg-2)',
+      }}
+    >
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 h-8 w-1 shrink-0 rounded-full" style={{ background: oq.resolved ? 'var(--ok)' : color }} />
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="planning-mono planning-caps text-[10px]" style={{ color }}>{oq.oqId || 'OQ'}</span>
+            {oq.resolved ? (
+              <span className="inline-flex items-center gap-1 text-[10px] text-[color:var(--ok)]">
+                <Check size={11} />
+                resolved
+              </span>
+            ) : (
+              <span className="planning-caps text-[9px] text-[color:var(--ink-4)]">{oq.severity || 'medium'}</span>
+            )}
+          </div>
+          <p className="text-xs leading-5 text-[color:var(--ink-0)]">{oq.question || 'Open question'}</p>
+          {oq.resolved && oq.answerText ? (
+            <p className="mt-2 rounded border border-[color:color-mix(in_oklab,var(--ok)_22%,transparent)] bg-[color:color-mix(in_oklab,var(--ok)_7%,transparent)] px-2 py-1.5 text-xs leading-5 text-[color:var(--ink-1)]">
+              {oq.answerText}
+            </p>
+          ) : null}
+          {!oq.resolved && !editing ? (
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(true);
+                setAnswer(oq.answerText || '');
+              }}
+              className="mt-2 inline-flex items-center gap-1.5 rounded border border-[color:var(--line-1)] px-2 py-1 text-[11px] text-[color:var(--spec)] transition-colors hover:bg-[color:var(--bg-3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--info)]"
+            >
+              + answer
+            </button>
+          ) : null}
+          {editing ? (
+            <div className="mt-2 space-y-2">
+              <textarea
+                ref={textareaRef}
+                value={answer}
+                disabled={pending}
+                onChange={event => setAnswer(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setEditing(false);
+                    setAnswer(oq.answerText || '');
+                    setError(null);
+                  }
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void save();
+                  }
+                }}
+                className="min-h-[88px] w-full resize-y rounded-md border border-[color:var(--line-1)] bg-[color:var(--bg-0)] px-3 py-2 text-xs leading-5 text-[color:var(--ink-0)] outline-none transition-colors placeholder:text-[color:var(--ink-4)] focus:border-[color:var(--info)] disabled:opacity-60"
+                placeholder="Write the resolution..."
+              />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] text-[color:var(--ink-4)]">Cmd/Ctrl+Enter to save</span>
+                <div className="flex items-center gap-1.5">
+                  <BtnGhost
+                    size="xs"
+                    disabled={pending}
+                    onClick={() => {
+                      setEditing(false);
+                      setAnswer(oq.answerText || '');
+                      setError(null);
+                    }}
+                  >
+                    Cancel
+                  </BtnGhost>
+                  <BtnPrimary size="xs" disabled={pending || !answer.trim()} onClick={() => void save()}>
+                    <Send size={11} />
+                    {pending ? 'Saving' : 'Save'}
+                  </BtnPrimary>
+                </div>
+              </div>
+              {error ? <p className="text-[11px] text-[color:var(--err)]">{error}</p> : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SpecQuestionsSection({
+  spikes,
+  openQuestions,
+  onResolveQuestion,
+  onExec,
+}: {
+  spikes: PlanningSpikeItem[];
+  openQuestions: PlanningOpenQuestionItem[];
+  onResolveQuestion: (oq: PlanningOpenQuestionItem, answer: string) => Promise<void>;
+  onExec: (label: string) => void;
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="min-w-0 space-y-2">
+        <SubHeader label="SPIKEs" count={spikes.length} color="var(--spk)" />
+        {spikes.length === 0 ? (
+          <EmptyMiniState>No SPIKEs on record.</EmptyMiniState>
+        ) : (
+          <div className="space-y-2">
+            {spikes.map(spike => (
+              <SpikeTile key={spike.spikeId || spike.title} spike={spike} onExec={onExec} />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="min-w-0 space-y-2">
+        <SubHeader label="Open Questions" count={openQuestions.length} color="var(--spec)" />
+        {openQuestions.length === 0 ? (
+          <EmptyMiniState>No open questions.</EmptyMiniState>
+        ) : (
+          <div className="space-y-2">
+            {openQuestions.map(oq => (
+              <OpenQuestionTile key={oq.oqId || oq.question} oq={oq} onResolve={onResolveQuestion} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SegmentButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded px-2.5 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--info)]"
+      style={{
+        background: active ? 'var(--bg-3)' : 'transparent',
+        color: active ? 'var(--ink-0)' : 'var(--ink-2)',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ModelLegend({
+  tokenUsage,
+  totalTokens,
+}: {
+  tokenUsage?: PlanningTokenUsageByModel;
+  totalTokens?: number;
+}) {
+  const total = tokenUsage?.total && tokenUsage.total > 0 ? tokenUsage.total : (totalTokens ?? 0);
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-md border border-[color:var(--line-1)] bg-[color:var(--bg-2)] px-3 py-2 text-[10.5px] text-[color:var(--ink-2)]">
+      <span className="planning-caps text-[9.5px] text-[color:var(--ink-4)]">models</span>
+      {MODEL_KEYS.map(key => {
+        const value = tokenUsage?.[key] ?? 0;
+        const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+        return (
+          <span key={key} className="inline-flex items-center gap-1.5">
+            <Dot tone={MODEL_COLORS[key]} />
+            <span className="planning-mono text-[10.5px]" style={{ color: MODEL_COLORS[key] }}>
+              {MODEL_LABELS[key]}
+            </span>
+            <span className="planning-mono planning-tnum text-[10px] text-[color:var(--ink-3)]">
+              {formatCompactNumber(value)} · {pct}%
+            </span>
+          </span>
+        );
+      })}
+      {tokenUsage?.other ? (
+        <span className="planning-mono planning-tnum text-[10px] text-[color:var(--ink-3)]">
+          other {formatCompactNumber(tokenUsage.other)}
+        </span>
+      ) : null}
+      <span className="planning-mono planning-tnum ml-auto text-[10.5px]">
+        <span className="text-[color:var(--ink-3)]">Σ </span>
+        <span className="text-[color:var(--ink-0)]">{formatCompactNumber(total)}</span>
+        <span className="text-[color:var(--ink-3)]"> tokens</span>
+      </span>
+    </div>
+  );
+}
+
+function TaskRow({ task, onExec }: { task: ExecutionTaskModel; onExec: (label: string) => void }) {
+  return (
+    <div
+      className="group grid items-center gap-2 rounded px-2 py-1.5 transition-colors hover:bg-[color:var(--bg-2)]"
+      style={{
+        gridTemplateColumns: 'minmax(58px, 74px) minmax(120px, 1fr) auto minmax(30px, auto) auto 24px',
+        borderLeft: `2px solid ${MODEL_COLORS[task.model]}`,
+        background: task.blocked ? 'color-mix(in oklab, var(--err) 9%, transparent)' : 'transparent',
+      }}
+    >
+      <span className="planning-mono truncate text-[10.5px] text-[color:var(--ink-3)]" title={task.id}>{task.id}</span>
+      <span className="truncate text-xs text-[color:var(--ink-0)]" title={task.title}>{task.title}</span>
+      <span
+        className="planning-mono max-w-[112px] truncate rounded border px-1.5 py-0.5 text-[9.5px]"
+        title={`${task.agent} - ${MODEL_LABELS[task.model]}`}
+        style={{
+          color: MODEL_COLORS[task.model],
+          borderColor: `color-mix(in oklab, ${MODEL_COLORS[task.model]} 40%, transparent)`,
+          background: `color-mix(in oklab, ${MODEL_COLORS[task.model]} 10%, transparent)`,
+        }}
+      >
+        {task.agent}
+      </span>
+      <span className="planning-mono planning-tnum text-right text-[10px] text-[color:var(--ink-4)]" title="Task token actuals unavailable in feature planning context">
+        -
+      </span>
+      <StatusPill status={task.status || 'todo'} />
+      <ExecBtn
+        compact
+        aria-label={`Run task ${task.id}`}
+        title={`Run task ${task.id}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onExec(`running ${task.id} - ${task.title}`);
+        }}
+        className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+      />
+    </div>
+  );
+}
+
+function BatchColumn({ batch, phase, onExec }: { batch: ExecutionBatchModel; phase: ExecutionPhaseModel; onExec: (label: string) => void }) {
+  return (
+    <div className="min-w-[220px] flex-1 rounded-md border border-[color:var(--line-1)] bg-[color:var(--bg-1)] p-2.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="planning-caps text-[9.5px] text-[color:var(--ink-3)]">batch {batch.label}</div>
+          <div className="planning-mono text-[10px] text-[color:var(--ink-4)]">{batch.tasks.length} tasks · parallel</div>
+        </div>
+        <ExecBtn
+          compact
+          aria-label={`Run batch ${batch.label}`}
+          title={`Run batch ${batch.label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onExec(`running Phase ${String(phase.number).padStart(2, '0')} batch ${batch.label}`);
+          }}
+        />
+      </div>
+      {batch.tasks.length === 0 ? (
+        <EmptyMiniState>No task IDs in this batch.</EmptyMiniState>
+      ) : (
+        <div className="space-y-1">
+          {batch.tasks.map(task => (
+            <TaskRow key={task.id} task={task} onExec={onExec} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PhaseExecutionCard({ phase, onExec }: { phase: ExecutionPhaseModel; onExec: (label: string) => void }) {
+  const color = phase.status === 'blocked'
+    ? 'var(--err)'
+    : phase.status === 'completed'
+      ? 'var(--ok)'
+      : phase.status === 'in-progress' || phase.status === 'in_progress'
+        ? 'var(--plan)'
+        : 'var(--prog)';
+
+  return (
+    <div className="planning-tile p-3.5" style={{ borderLeft: `3px solid ${color}` }}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+          <span className="planning-mono planning-caps text-[10.5px] text-[color:var(--ink-3)]">
+            PHASE {String(phase.number).padStart(2, '0')}
+          </span>
+          <h3 className="m-0 min-w-0 truncate text-sm font-semibold text-[color:var(--ink-0)]">{phase.title}</h3>
+          <StatusPill status={phase.status || 'unknown'} />
+          <ExecBtn
+            label="run phase"
+            onClick={(event) => {
+              event.stopPropagation();
+              onExec(`running Phase ${String(phase.number).padStart(2, '0')} - ${phase.title}`);
+            }}
+          />
+        </div>
+        <div className="flex min-w-[190px] items-center gap-2">
+          <span className="planning-mono planning-tnum text-[10.5px] text-[color:var(--ink-3)]">
+            {phase.completedTasks}/{phase.totalTasks} · {phase.progressPct}%
+          </span>
+          <div className="h-1.5 min-w-[110px] flex-1 overflow-hidden rounded-full bg-[color:var(--bg-3)]">
+            <div className="h-full rounded-full" style={{ width: `${phase.progressPct}%`, background: color }} />
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 xl:flex-row">
+        {phase.batches.length === 0 ? (
+          <EmptyMiniState>No batches defined.</EmptyMiniState>
+        ) : (
+          phase.batches.map(batch => (
+            <BatchColumn key={batch.id} batch={batch} phase={phase} onExec={onExec} />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DependencyDagView({ phases }: { phases: ExecutionPhaseModel[] }) {
+  const dag = useMemo(() => buildDependencyDag(phases), [phases]);
+  const phaseGap = 28;
+  const nodeW = 180;
+  const nodeH = 48;
+  const colGap = 46;
+  const rowGap = 12;
+  const pad = 16;
+  const headerH = 42;
+
+  const phaseBlocks = phases.map(phase => {
+    const rows = Math.max(1, ...phase.batches.map(batch => Math.max(batch.tasks.length, 1)));
+    const width = pad * 2 + Math.max(1, phase.batches.length) * nodeW + Math.max(0, phase.batches.length - 1) * colGap;
+    const height = pad * 2 + headerH + rows * nodeH + Math.max(0, rows - 1) * rowGap;
+    return { phase, rows, width, height };
+  });
+  const totalWidth = Math.max(640, ...phaseBlocks.map(block => block.width));
+  let yCursor = 0;
+  const blockTops = phaseBlocks.map(block => {
+    const top = yCursor;
+    yCursor += block.height + phaseGap;
+    return top;
+  });
+  const totalHeight = Math.max(220, yCursor - phaseGap);
+
+  const positions: Record<string, { x: number; y: number; w: number; h: number }> = {};
+  phaseBlocks.forEach((block, blockIndex) => {
+    const yStart = blockTops[blockIndex] + pad + headerH;
+    block.phase.batches.forEach((batch, batchIndex) => {
+      batch.tasks.forEach((task, taskIndex) => {
+        positions[task.id] = {
+          x: pad + batchIndex * (nodeW + colGap),
+          y: yStart + taskIndex * (nodeH + rowGap),
+          w: nodeW,
+          h: nodeH,
+        };
+      });
+    });
+  });
+  const nodeMap = new Map(dag.nodes.map(node => [node.id, node]));
+
+  if (dag.nodes.length === 0) {
+    return <EmptyMiniState>No task IDs available for DAG rendering.</EmptyMiniState>;
+  }
+
+  return (
+    <div className="overflow-auto rounded-md border border-[color:var(--line-1)] bg-[color:var(--bg-0)]">
+      <div className="relative" style={{ width: totalWidth, height: totalHeight }}>
+        {phaseBlocks.map((block, blockIndex) => (
+          <div
+            key={block.phase.id}
+            className="absolute border-b border-dashed border-[color:var(--line-1)]"
+            style={{
+              left: 0,
+              top: blockTops[blockIndex],
+              width: totalWidth,
+              height: block.height,
+            }}
+          >
+            <div className="absolute left-4 top-2.5 flex items-center gap-2">
+              <span className="planning-mono planning-caps text-[10px] text-[color:var(--prog)]">
+                PHASE {String(block.phase.number).padStart(2, '0')}
+              </span>
+              <span className="max-w-[320px] truncate text-xs font-medium text-[color:var(--ink-1)]">{block.phase.title}</span>
+              <StatusPill status={block.phase.status || 'unknown'} />
+            </div>
+            {block.phase.batches.map((batch, batchIndex) => (
+              <div
+                key={batch.id}
+                className="planning-caps absolute text-[9.5px] text-[color:var(--ink-4)]"
+                style={{ left: pad + batchIndex * (nodeW + colGap), top: 29, width: nodeW }}
+              >
+                batch {batch.label} · parallel
+              </div>
+            ))}
+          </div>
+        ))}
+
+        <svg width={totalWidth} height={totalHeight} className="pointer-events-none absolute inset-0">
+          <defs>
+            <marker id="planning-detail-dag-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+            </marker>
+          </defs>
+          {dag.edges.map((edge, index) => {
+            const from = positions[edge.sourceId];
+            const to = positions[edge.targetId];
+            if (!from || !to) return null;
+            const x1 = from.x + from.w;
+            const y1 = from.y + from.h / 2;
+            const x2 = to.x;
+            const y2 = to.y + to.h / 2;
+            const mx = (x1 + x2) / 2;
+            const color = edge.status === 'blocked' ? 'var(--err)' : edge.status === 'active' ? 'var(--plan)' : 'var(--line-2)';
+            return (
+              <path
+                key={`${edge.sourceId}-${edge.targetId}-${index}`}
+                d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2 - 6} ${y2}`}
+                fill="none"
+                stroke={color}
+                strokeWidth="1.4"
+                strokeDasharray={edge.status === 'active' ? '5 4' : undefined}
+                markerEnd="url(#planning-detail-dag-arrow)"
+                style={{ color }}
+              />
+            );
+          })}
+        </svg>
+
+        {dag.nodes.map(node => {
+          const pos = positions[node.id];
+          if (!pos) return null;
+          const color = node.status === 'blocked' ? 'var(--err)' : node.status === 'completed' ? 'var(--ok)' : node.status === 'in-progress' ? 'var(--plan)' : 'var(--ink-2)';
+          return (
+            <div
+              key={node.id}
+              className="absolute flex flex-col justify-between rounded-md border bg-[color:var(--bg-2)] px-2.5 py-2"
+              style={{
+                left: pos.x,
+                top: pos.y,
+                width: pos.w,
+                height: pos.h,
+                borderColor: node.status === 'blocked' ? 'color-mix(in oklab, var(--err) 45%, var(--line-1))' : 'var(--line-1)',
+                borderLeft: `3px solid ${color}`,
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="planning-mono truncate text-[10px] text-[color:var(--ink-3)]">{node.id}</span>
+                <Dot tone={color} />
+              </div>
+              <div className="line-clamp-2 text-[11px] leading-[1.25] text-[color:var(--ink-0)]" title={nodeMap.get(node.id)?.title}>
+                {node.title}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-3 border-t border-[color:var(--line-1)] bg-[color:var(--bg-1)] px-3 py-2 text-[10.5px] text-[color:var(--ink-3)]">
+        <span className="planning-caps text-[9.5px]">deps</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-5 bg-[color:var(--line-2)]" /> progression</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-5 bg-[color:var(--plan)]" /> active</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-5 bg-[color:var(--err)]" /> blocked</span>
+        <span className="ml-auto">Batch columns show parallelizable task groups.</span>
+      </div>
+    </div>
+  );
+}
+
+function ExecutionTasksSection({
+  phases,
+  tokenUsage,
+  totalTokens,
+  viewMode,
+  onViewModeChange,
+  onExec,
+}: {
+  phases: ExecutionPhaseModel[];
+  tokenUsage?: PlanningTokenUsageByModel;
+  totalTokens?: number;
+  viewMode: ExecutionViewMode;
+  onViewModeChange: (mode: ExecutionViewMode) => void;
+  onExec: (label: string) => void;
+}) {
+  if (phases.length === 0) {
+    return <EmptyMiniState>No execution phases available.</EmptyMiniState>;
+  }
+
+  return (
+    <div className="space-y-3.5">
+      <div className="flex justify-end">
+        <div className="flex gap-1 rounded-md border border-[color:var(--line-1)] bg-[color:var(--bg-0)] p-1">
+          <SegmentButton active={viewMode === 'batches'} onClick={() => onViewModeChange('batches')}>Batches</SegmentButton>
+          <SegmentButton active={viewMode === 'dag'} onClick={() => onViewModeChange('dag')}>Dependency DAG</SegmentButton>
+        </div>
+      </div>
+      {viewMode === 'batches' ? (
+        <>
+          <ModelLegend tokenUsage={tokenUsage} totalTokens={totalTokens} />
+          <div className="space-y-3">
+            {phases.map(phase => (
+              <PhaseExecutionCard key={phase.id} phase={phase} onExec={onExec} />
+            ))}
+          </div>
+        </>
+      ) : (
+        <DependencyDagView phases={phases} />
+      )}
+    </div>
+  );
+}
+
+function BottomToast({ message, tone }: { message: string; tone: 'exec' | 'error' | 'success' }) {
+  const color = tone === 'error' ? 'var(--err)' : tone === 'success' ? 'var(--ok)' : 'var(--brand)';
+  return (
+    <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-md border border-[color:var(--line-2)] bg-[color:var(--bg-0)] px-4 py-2.5 shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
+      <div className="flex items-center gap-2 text-xs text-[color:var(--ink-0)]">
+        <Dot tone={color} />
+        <span className="planning-mono">{tone === 'exec' ? '▶ ' : ''}{message}</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 type DetailFetchState =
@@ -697,16 +1548,24 @@ export function PlanningNodeDetail() {
   const { activeProject, documents } = useData();
   const [state, setState] = useState<DetailFetchState>({ phase: 'idle' });
   const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
+  const [openQuestions, setOpenQuestions] = useState<PlanningOpenQuestionItem[]>([]);
+  const [executionViewMode, setExecutionViewMode] = useState<ExecutionViewMode>('batches');
+  const [toast, setToast] = useState<{ message: string; tone: 'exec' | 'error' | 'success' } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const [openSections, setOpenSections] = useState<Record<DetailSectionKey, boolean>>({
     lineage: true,
+    spec: true,
     phases: true,
+    tasks: true,
     blockers: true,
     artifacts: true,
   });
   const bodyRef = useRef<HTMLDivElement>(null);
   const sectionRefs = {
     lineage: useRef<HTMLElement>(null),
+    spec: useRef<HTMLElement>(null),
     phases: useRef<HTMLElement>(null),
+    tasks: useRef<HTMLElement>(null),
     blockers: useRef<HTMLElement>(null),
     artifacts: useRef<HTMLElement>(null),
   };
@@ -725,6 +1584,25 @@ export function PlanningNodeDetail() {
     }, 0);
   }, [sectionRefs]);
 
+  const showToast = useCallback((message: string, tone: 'exec' | 'error' | 'success' = 'exec') => {
+    if (toastTimerRef.current != null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    setToast({ message, tone });
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2400);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current != null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
   const loadContext = useCallback(async () => {
     if (!featureId) {
       setState({ phase: 'idle' });
@@ -736,6 +1614,7 @@ export function PlanningNodeDetail() {
         projectId: activeProject?.id,
       });
       setState({ phase: 'ready', context });
+      setOpenQuestions(context.openQuestions ?? []);
     } catch (err) {
       const message =
         err instanceof PlanningApiError
@@ -758,6 +1637,29 @@ export function PlanningNodeDetail() {
     enabled: liveTopics.length > 0,
     onInvalidate: () => loadContext(),
   });
+  const readyContext = state.phase === 'ready' ? state.context : null;
+  const executionPhases = useMemo(
+    () => buildExecutionPhases(readyContext?.phases ?? []),
+    [readyContext?.phases],
+  );
+  const totalExecutionTasks = executionPhases.reduce((sum, phase) => sum + phase.totalTasks, 0);
+  const handleExecToast = useCallback((label: string) => {
+    showToast(label, 'exec');
+  }, [showToast]);
+  const handleResolveQuestion = useCallback(async (oq: PlanningOpenQuestionItem, answer: string) => {
+    if (!featureId) return;
+    try {
+      const resolved = await resolvePlanningOpenQuestion(featureId, oq.oqId, answer);
+      setOpenQuestions(current => current.map(item => (
+        item.oqId === oq.oqId ? resolved : item
+      )));
+      showToast(`${oq.oqId || 'Open question'} resolved`, 'success');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to resolve open question.';
+      showToast(message, 'error');
+      throw err;
+    }
+  }, [featureId, showToast]);
 
   if (!activeProject) {
     return (
@@ -812,6 +1714,7 @@ export function PlanningNodeDetail() {
   const featureMeta = deriveFeatureMeta(context, featureId);
   const lineageTiles = buildLineageTiles(context);
   const visibleTags = (context.tags ?? []).slice(0, 3);
+  const spikes = context.spikes ?? [];
 
   return (
     <DrawerShell>
@@ -855,7 +1758,7 @@ export function PlanningNodeDetail() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <BtnPrimary size="sm" onClick={() => undefined}>
+            <BtnPrimary size="sm" onClick={() => handleExecToast(`running ${context.featureName || featureId || 'feature'}`)}>
               <Play size={13} />
               Execute
             </BtnPrimary>
@@ -880,6 +1783,24 @@ export function PlanningNodeDetail() {
           />
         </section>
 
+        <CollapsibleSection
+          title="SPIKEs & Open Questions"
+          eyebrow="Design Spec lineage"
+          icon={<AlertCircle size={15} />}
+          color="var(--spec)"
+          count={spikes.length + openQuestions.length}
+          open={openSections.spec}
+          onToggle={() => setOpenSections(current => ({ ...current, spec: !current.spec }))}
+          sectionRef={sectionRefs.spec}
+        >
+          <SpecQuestionsSection
+            spikes={spikes}
+            openQuestions={openQuestions}
+            onResolveQuestion={handleResolveQuestion}
+            onExec={handleExecToast}
+          />
+        </CollapsibleSection>
+
         {context.phases.length > 0 && (
           <CollapsibleSection
             title="Phases"
@@ -895,6 +1816,28 @@ export function PlanningNodeDetail() {
                 <PhaseAccordion key={phase.phaseId} phase={phase} />
               ))}
             </div>
+          </CollapsibleSection>
+        )}
+
+        {context.phases.length > 0 && (
+          <CollapsibleSection
+            title="Execution tasks"
+            eyebrow="Linked to Plan"
+            icon={<Network size={15} />}
+            color="var(--plan)"
+            count={totalExecutionTasks}
+            open={openSections.tasks}
+            onToggle={() => setOpenSections(current => ({ ...current, tasks: !current.tasks }))}
+            sectionRef={sectionRefs.tasks}
+          >
+            <ExecutionTasksSection
+              phases={executionPhases}
+              tokenUsage={context.tokenUsageByModel}
+              totalTokens={context.totalTokens}
+              viewMode={executionViewMode}
+              onViewModeChange={setExecutionViewMode}
+              onExec={handleExecToast}
+            />
           </CollapsibleSection>
         )}
 
@@ -949,6 +1892,7 @@ export function PlanningNodeDetail() {
           backLabel="Planning Detail"
         />
       )}
+      {toast ? <BottomToast message={toast.message} tone={toast.tone} /> : null}
     </DrawerShell>
   );
 }

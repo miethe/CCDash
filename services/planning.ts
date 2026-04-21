@@ -53,6 +53,29 @@ async function planningFetch<T>(path: string, params?: URLSearchParams): Promise
   return res.json() as Promise<T>;
 }
 
+async function planningWriteFetch<T>(
+  path: string,
+  init: RequestInit,
+  base = API_BASE,
+): Promise<T> {
+  const url = `${base}${path}`;
+  const { headers, ...rest } = init;
+  const res = await fetch(url, {
+    ...rest,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(headers ?? {}),
+    },
+  });
+  if (!res.ok) {
+    throw new PlanningApiError(
+      `Planning API error: ${res.status} ${res.statusText} for ${url}`,
+      res.status,
+    );
+  }
+  return res.json() as Promise<T>;
+}
+
 // ── Snake-case wire shapes (internal) ─────────────────────────────────────────
 
 interface WireEnvelope {
@@ -144,6 +167,11 @@ interface WirePlanningOpenQuestionItem {
   source_document_id: string;
   source_document_path: string;
   updated_at: string;
+}
+
+interface WireOpenQuestionResolution {
+  feature_id: string;
+  oq: WirePlanningOpenQuestionItem;
 }
 
 interface WirePlanningTokenUsageByModel {
@@ -520,6 +548,28 @@ export async function getFeaturePlanningContext(
     complexity: wire.complexity,
     tags: wire.tags,
   };
+}
+
+/**
+ * Resolve one open question in the planning writeback API.
+ *
+ * Mirrors: PATCH /api/planning/features/{featureId}/open-questions/{oqId}
+ */
+export async function resolvePlanningOpenQuestion(
+  featureId: string,
+  oqId: string,
+  answer: string,
+): Promise<PlanningOpenQuestionItem> {
+  const wire = await planningWriteFetch<WireOpenQuestionResolution>(
+    `/features/${encodeURIComponent(featureId)}/open-questions/${encodeURIComponent(oqId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ answer }),
+    },
+    '/api/planning',
+  );
+
+  return adaptPlanningOpenQuestionItem(wire.oq);
 }
 
 /**
