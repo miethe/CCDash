@@ -18,6 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Loader2 } from 'lucide-react';
 
@@ -201,6 +202,16 @@ function TabStrip({
   active: FilterKey;
   onChange: (k: FilterKey) => void;
 }) {
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowRight' ? 1 : -1;
+    const nextIndex = (index + direction + tabs.length) % tabs.length;
+    onChange(tabs[nextIndex].key);
+    const tabButtons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    tabButtons?.[nextIndex]?.focus();
+  };
+
   return (
     <div
       className="flex gap-0.5"
@@ -208,15 +219,20 @@ function TabStrip({
       role="tablist"
       aria-label="Triage filter tabs"
     >
-      {tabs.map((t) => {
+      {tabs.map((t, index) => {
         const isActive = t.key === active;
+        const panelId = `planning-triage-panel-${t.key}`;
         return (
           <button
             key={t.key}
+            id={`planning-triage-tab-${t.key}`}
             role="tab"
             aria-selected={isActive}
+            aria-controls={panelId}
+            tabIndex={isActive ? 0 : -1}
             type="button"
             onClick={() => onChange(t.key)}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
             style={{
               padding: '8px 12px',
               fontSize: 12,
@@ -354,6 +370,8 @@ function TriageRow({
   return (
     <div
       data-testid={`triage-row-${item.id}`}
+      role="listitem"
+      aria-label={`${kindLabel}: ${item.title}. ${item.reason}`}
       style={{
         display: 'grid',
         gridTemplateColumns: '6px 110px 1fr auto',
@@ -404,6 +422,7 @@ function TriageRow({
         <button
           type="button"
           onClick={() => onSelectFeature(item.featureId)}
+          aria-describedby={`triage-reason-${item.id}`}
           style={{
             background: 'none',
             border: 'none',
@@ -424,6 +443,7 @@ function TriageRow({
           {item.title}
         </button>
         <div
+          id={`triage-reason-${item.id}`}
           style={{
             fontSize: 11.5,
             color: 'var(--ink-3)',
@@ -566,15 +586,23 @@ export function PlanningTriagePanel({
           {filtered.length === 0 ? (
             <TriageEmptyState />
           ) : (
-            filtered.map((item) => (
-              <TriageRow
-                key={item.id}
-                item={item}
-                onSelectFeature={handleSelectFeature}
-                onToast={pushToast}
-                onRefresh={onRefresh}
-              />
-            ))
+            <div
+              role="tabpanel"
+              id={`planning-triage-panel-${activeFilter}`}
+              aria-labelledby={`planning-triage-tab-${activeFilter}`}
+            >
+              <div role="list" aria-label={`${tabs.find(tab => tab.key === activeFilter)?.label ?? 'All'} triage items`}>
+                {filtered.map((item) => (
+                  <TriageRow
+                    key={item.id}
+                    item={item}
+                    onSelectFeature={handleSelectFeature}
+                    onToast={pushToast}
+                    onRefresh={onRefresh}
+                  />
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </Panel>

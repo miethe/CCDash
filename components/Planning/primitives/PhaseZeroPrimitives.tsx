@@ -207,6 +207,7 @@ export function ArtifactChip({
 
   return (
     <Component
+      aria-label={`${label ?? token.short}${typeof count === 'number' ? `, ${count}` : ''}`}
       className={cn(
         'planning-chip planning-mono border-[color:var(--line-1)] bg-[color:var(--bg-2)]',
         props.onClick && 'transition-colors hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)]',
@@ -326,6 +327,7 @@ export function ExecBtn({ className, compact = false, label = 'run', size, ...pr
     <BtnPrimary
       size={size ?? (compact ? 'xs' : 'sm')}
       className={cn('planning-mono tracking-[0.02em]', className)}
+      aria-label={props['aria-label'] ?? (compact ? label : undefined)}
       {...props}
     >
       <span aria-hidden="true">▶</span>

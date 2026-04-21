@@ -74,6 +74,7 @@ export function DocChip({ node, className, style, ...props }: DocChipProps) {
     <button
       type="button"
       title={node.path || node.title}
+      aria-label={`${identity.short} ${displayTitle}, status ${status}`}
       className={cn('planning-mono', className)}
       style={{
         display: 'flex',
@@ -129,6 +130,7 @@ export function DocChip({ node, className, style, ...props }: DocChipProps) {
       {/* Status dot */}
       <span
         className="planning-dot"
+        aria-hidden="true"
         style={{ background: dotColor, flexShrink: 0 }}
       />
     </button>

@@ -181,6 +181,8 @@ export function PlanningRouteLayout() {
           density === 'compact' && 'planning-density-compact',
         )}
         data-planning-density={density}
+        role="main"
+        aria-label="Planning workspace"
       >
         {/*
          * Canvas container: enforces the 1680px max-width design spec and

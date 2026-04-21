@@ -218,7 +218,11 @@
 }
 
 .planning-route button:focus-visible,
+.planning-route select:focus-visible,
+.planning-route textarea:focus-visible,
+.planning-route input:focus-visible,
 .planning-route [role="button"]:focus-visible,
+.planning-route [role="rowheader"]:focus-visible,
 .planning-route [tabindex]:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--brand) 60%, transparent);
   outline-offset: 2px;

@@ -352,6 +352,7 @@ function deriveEffectiveStatus(nodes: PlanningNode[]): string {
 function GraphHeaderRow() {
   return (
     <div
+      role="row"
       style={{
         display: 'grid',
         gridTemplateColumns: `${FEATURE_COL_W}px repeat(${LANES.length}, ${LANE_W}px) ${TOTALS_COL_W}px`,
@@ -364,6 +365,8 @@ function GraphHeaderRow() {
     >
       {/* Feature column header */}
       <div
+        role="columnheader"
+        aria-colindex={1}
         style={{
           padding: '14px 16px',
           borderRight: '1px solid var(--line-1)',
@@ -381,6 +384,8 @@ function GraphHeaderRow() {
       {LANES.map(lane => (
         <div
           key={lane.key}
+          role="columnheader"
+          aria-colindex={LANES.indexOf(lane) + 2}
           style={{
             padding: '14px 14px',
             borderRight: '1px solid var(--line-1)',
@@ -413,6 +418,8 @@ function GraphHeaderRow() {
 
       {/* Totals column header — neutral, no colored glyph */}
       <div
+        role="columnheader"
+        aria-colindex={LANES.length + 2}
         style={{
           padding: '14px 14px',
           display: 'flex',
@@ -466,9 +473,15 @@ function FeatureCell({ slug, nodes, selected, onSelectFeature }: FeatureCellProp
   return (
     <div
       onClick={() => onSelectFeature?.(slug)}
-      role="button"
+      role="rowheader"
+      aria-label={`${title}, ${category}, ${complexity} complexity, ${effectiveStatus}${mismatch ? ', frontmatter mismatch' : ''}${stale ? ', stale status' : ''}`}
       tabIndex={0}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onSelectFeature?.(slug); }}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelectFeature?.(slug);
+        }
+      }}
       style={{
         padding: '12px 14px',
         paddingLeft: selected ? 11 : 14,
@@ -518,6 +531,7 @@ function FeatureCell({ slug, nodes, selected, onSelectFeature }: FeatureCellProp
         {mismatch && (
           <span
             title="Frontmatter mismatch detected"
+            aria-label="Frontmatter mismatch detected"
             style={{
               marginLeft: 'auto',
               color: 'var(--mag)',
@@ -534,6 +548,7 @@ function FeatureCell({ slug, nodes, selected, onSelectFeature }: FeatureCellProp
         {stale && !mismatch && (
           <span
             title="Stale or reversed status"
+            aria-label="Stale or reversed status"
             style={{
               marginLeft: 'auto',
               color: 'var(--warn)',
@@ -550,6 +565,7 @@ function FeatureCell({ slug, nodes, selected, onSelectFeature }: FeatureCellProp
         {stale && mismatch && (
           <span
             title="Stale or reversed status"
+            aria-label="Stale or reversed status"
             style={{
               color: 'var(--warn)',
               fontSize: 10,
@@ -703,7 +719,9 @@ function PhaseStackInline({ nodes, onOpen }: PhaseStackInlineProps) {
 
   return (
     <button
+      type="button"
       onClick={onOpen}
+      aria-label={`Open progress lane with ${completedCount} of ${total} phases complete`}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -775,6 +793,8 @@ function LaneCell({ lane, nodes, onNodeClick }: LaneCellProps) {
 
   return (
     <div
+      role="gridcell"
+      aria-label={`${lane.label}: ${laneNodes.length === 0 ? 'no artifacts' : `${laneNodes.length} artifact${laneNodes.length === 1 ? '' : 's'}`}`}
       style={{
         padding: '10px 10px',
         borderRight: '1px solid var(--line-1)',
@@ -817,6 +837,7 @@ function LaneCell({ lane, nodes, onNodeClick }: LaneCellProps) {
 function EmptyDash() {
   return (
     <span
+      aria-label="No artifact"
       style={{
         fontSize: 14,
         color: 'var(--ink-4)',
@@ -869,6 +890,8 @@ function TotalsCell({ rollup }: TotalsCellProps) {
   if (!rollup) {
     return (
       <div
+        role="gridcell"
+        aria-label="Token data not yet available"
         style={{
           padding: '10px 12px',
           display: 'flex',
@@ -901,6 +924,8 @@ function TotalsCell({ rollup }: TotalsCellProps) {
 
   return (
     <div
+      role="gridcell"
+      aria-label={`${rollup.storyPoints || 0} story points, ${hasTokens ? `${total.toLocaleString()} tokens` : 'no linked session tokens'}`}
       style={{
         padding: '10px 12px',
         display: 'flex',
@@ -995,6 +1020,7 @@ function TotalsCell({ rollup }: TotalsCellProps) {
                 key={m}
                 className="planning-mono planning-tnum"
                 style={{ fontSize: 9, color: MODEL_COLORS[m], display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                aria-label={`${m} ${count.toLocaleString()} tokens`}
               >
                 <span
                   aria-hidden="true"
@@ -1041,6 +1067,8 @@ interface GraphRowProps {
 function GraphRow({ slug, nodes, rollup, selected, onSelectFeature, onNodeClick }: GraphRowProps) {
   return (
     <div
+      role="row"
+      aria-selected={selected}
       style={{
         display: 'grid',
         gridTemplateColumns: `${FEATURE_COL_W}px repeat(${LANES.length}, ${LANE_W}px) ${TOTALS_COL_W}px`,
@@ -1329,6 +1357,7 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
         <p style={{ fontSize: 12, color: 'var(--err)' }}>{message}</p>
       </div>
       <button
+        type="button"
         onClick={onRetry}
         style={{
           display: 'inline-flex',
@@ -1502,6 +1531,10 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
         {/* Graph grid — horizontally scrollable with sticky header */}
         <div
           className="planning-panel"
+          role="table"
+          aria-label="Planning feature artifact graph"
+          aria-colcount={LANES.length + 2}
+          aria-rowcount={filteredSlugs.length + 1}
           style={{ overflow: 'hidden', padding: 0 }}
         >
           {/* Sticky header */}

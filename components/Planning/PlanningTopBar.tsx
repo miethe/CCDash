@@ -55,6 +55,7 @@ function LiveAgentPill({ running, thinking, className }: LiveAgentPillProps) {
     >
       <Dot
         tone={isLive ? 'var(--ok)' : 'var(--ink-4)'}
+        aria-hidden="true"
         style={
           isLive
             ? {
@@ -87,7 +88,7 @@ function PlanningBreadcrumb() {
       <span aria-hidden="true" className="text-[color:var(--ink-4)]">/</span>
       <span className="text-[color:var(--ink-2)]">CCDash · Planning</span>
       <span aria-hidden="true" className="text-[color:var(--ink-4)]">/</span>
-      <span className="text-[color:var(--ink-0)] font-medium">Planning Deck</span>
+      <span className="text-[color:var(--ink-0)] font-medium" aria-current="page">Planning Deck</span>
     </nav>
   );
 }
@@ -184,7 +185,7 @@ export function PlanningTopBar({ className }: PlanningTopBarProps) {
               className="planning-mono pointer-events-auto flex items-center gap-2.5 rounded-[var(--radius-sm)] border border-[color:color-mix(in_oklab,var(--brand)_40%,var(--line-2))] bg-[color:var(--bg-1)] px-4 py-2.5 text-[11.5px] text-[color:var(--ink-0)] shadow-[0_14px_40px_rgba(0,0,0,0.45)]"
               style={{ backdropFilter: 'blur(8px)' }}
             >
-              <Dot tone="var(--brand)" />
+              <Dot tone="var(--brand)" aria-hidden="true" />
               {toast.message}
             </div>
           ))}

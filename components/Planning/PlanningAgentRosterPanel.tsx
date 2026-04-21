@@ -138,7 +138,7 @@ const GLOW_STYLE = `
 
 let _glowInjected = false;
 function injectGlowStyle() {
-  if (_glowInjected) return;
+  if (_glowInjected || typeof document === 'undefined') return;
   const tag = document.createElement('style');
   tag.textContent = GLOW_STYLE;
   document.head.appendChild(tag);
@@ -163,7 +163,7 @@ function RosterRow({ entry }: { entry: RosterEntry }) {
         gridTemplateColumns: '18px 1fr 1fr max-content',
       }}
       role="row"
-      aria-label={`Agent ${entry.name}: ${cfg.label}`}
+      aria-label={`Agent ${entry.name}: ${cfg.label}, model ${entry.model}, task ${entry.currentTask}, since ${entry.sinceLabel}`}
     >
       {/* State dot */}
       <div className="flex items-center justify-center">
@@ -178,8 +178,9 @@ function RosterRow({ entry }: { entry: RosterEntry }) {
               ? { boxShadow: `0 0 5px ${cfg.dotColor}` }
               : {}),
           }}
-          aria-label={cfg.label}
+          aria-hidden="true"
         />
+        <span className="sr-only">{cfg.label}</span>
       </div>
 
       {/* Name + model */}
@@ -250,12 +251,12 @@ function RosterHeader() {
         borderBottom: '1px solid var(--line-1)',
         paddingBottom: 6,
       }}
-      role="rowheader"
+      role="row"
     >
-      <span aria-label="State" />
-      <span>Agent / Model</span>
-      <span>Task</span>
-      <span>Since</span>
+      <span role="columnheader">State</span>
+      <span role="columnheader">Agent / Model</span>
+      <span role="columnheader">Task</span>
+      <span role="columnheader">Since</span>
     </div>
   );
 }
@@ -312,7 +313,7 @@ export function PlanningAgentRosterPanel({ className }: PlanningAgentRosterPanel
         {entries.length === 0 ? (
           <RosterEmpty />
         ) : (
-          <div className="space-y-0.5">
+          <div className="space-y-0.5" role="rowgroup">
             <RosterHeader />
             {entries.map((entry) => (
               <RosterRow key={entry.id} entry={entry} />

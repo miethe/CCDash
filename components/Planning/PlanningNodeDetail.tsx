@@ -409,6 +409,8 @@ function DrawerShell({ children }: { children: ReactNode }) {
     <aside
       className="fixed bottom-0 right-0 top-0 z-50 flex w-[min(920px,64vw)] min-w-[920px] max-w-[64vw] flex-col border-l border-[color:var(--line-2)] bg-[color:var(--bg-1)] shadow-[-20px_0_60px_rgba(0,0,0,0.4)] max-[1279px]:w-[min(640px,100vw)] max-[1279px]:min-w-0 max-[1279px]:max-w-[100vw]"
       aria-label="Planning feature detail"
+      role="dialog"
+      aria-modal="false"
     >
       {children}
     </aside>
@@ -470,6 +472,7 @@ function DetailError({ message, onRetry }: { message: string; onRetry: () => voi
         <p className="mt-1 text-xs text-danger-foreground/70">{message}</p>
       </div>
       <button
+        type="button"
         onClick={onRetry}
         className="flex shrink-0 items-center gap-1.5 rounded border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger-foreground hover:bg-danger/20 transition-colors"
       >
@@ -784,6 +787,7 @@ function CollapsibleSection({
           type="button"
           onClick={onToggle}
           aria-expanded={open}
+          aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`}
           className="flex rounded p-1 text-[color:var(--ink-2)] transition-colors hover:bg-[color:var(--bg-2)] hover:text-[color:var(--ink-0)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--info)]"
         >
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -832,6 +836,8 @@ function PhaseDot({
   return (
     <span
       title={title}
+      role="img"
+      aria-label={`${title}: ${state.replace('_', ' ')}`}
       className="planning-mono relative inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[7.5px] font-semibold"
       style={{
         color: state === 'completed' ? 'var(--bg-0)' : color,
@@ -874,6 +880,7 @@ function LineageStrip({
               type="button"
               onClick={() => onSelect(tile)}
               disabled={muted}
+              aria-label={`${tile.label}: ${tile.count} item${tile.count === 1 ? '' : 's'}${tile.status ? `, status ${tile.status}` : ''}`}
               className="planning-tile min-h-[88px] text-left transition-colors disabled:cursor-default disabled:opacity-45"
               style={{
                 padding: 10,
@@ -1160,6 +1167,7 @@ function SegmentButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className="rounded px-2.5 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--info)]"
       style={{
         background: active ? 'var(--bg-3)' : 'transparent',
@@ -1187,7 +1195,7 @@ function ModelLegend({
         const pct = total > 0 ? Math.round((value / total) * 100) : 0;
         return (
           <span key={key} className="inline-flex items-center gap-1.5">
-            <Dot tone={MODEL_COLORS[key]} />
+            <Dot tone={MODEL_COLORS[key]} aria-hidden="true" />
             <span className="planning-mono text-[10.5px]" style={{ color: MODEL_COLORS[key] }}>
               {MODEL_LABELS[key]}
             </span>
@@ -1232,6 +1240,7 @@ function TaskRow({ task, onExec }: { task: ExecutionTaskModel; onExec: (label: s
           background: `color-mix(in oklab, ${MODEL_COLORS[task.model]} 10%, transparent)`,
         }}
       >
+        <span className="sr-only">{MODEL_LABELS[task.model]} model: </span>
         {task.agent}
       </span>
       <span className="planning-mono planning-tnum text-right text-[10px] text-[color:var(--ink-4)]" title="Task token actuals unavailable in feature planning context">
@@ -1459,7 +1468,8 @@ function DependencyDagView({ phases }: { phases: ExecutionPhaseModel[] }) {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="planning-mono truncate text-[10px] text-[color:var(--ink-3)]">{node.id}</span>
-                <Dot tone={color} />
+                <Dot tone={color} aria-hidden="true" />
+                <span className="sr-only">Status {node.status}</span>
               </div>
               <div className="line-clamp-2 text-[11px] leading-[1.25] text-[color:var(--ink-0)]" title={nodeMap.get(node.id)?.title}>
                 {node.title}
@@ -1525,9 +1535,9 @@ function ExecutionTasksSection({
 function BottomToast({ message, tone }: { message: string; tone: 'exec' | 'error' | 'success' }) {
   const color = tone === 'error' ? 'var(--err)' : tone === 'success' ? 'var(--ok)' : 'var(--brand)';
   return (
-    <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-md border border-[color:var(--line-2)] bg-[color:var(--bg-0)] px-4 py-2.5 shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
+    <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-md border border-[color:var(--line-2)] bg-[color:var(--bg-0)] px-4 py-2.5 shadow-[0_16px_40px_rgba(0,0,0,0.35)]" aria-live="polite">
       <div className="flex items-center gap-2 text-xs text-[color:var(--ink-0)]">
-        <Dot tone={color} />
+        <Dot tone={color} aria-hidden="true" />
         <span className="planning-mono">{tone === 'exec' ? '▶ ' : ''}{message}</span>
       </div>
     </div>
@@ -1692,6 +1702,7 @@ export function PlanningNodeDetail() {
       <DrawerShell>
         <DrawerStateHeader onClose={closeDetail}>
           <button
+            type="button"
             onClick={closeDetail}
             className="flex items-center gap-2 text-xs text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--ink-0)]"
           >
@@ -1738,7 +1749,7 @@ export function PlanningNodeDetail() {
               ) : null}
               <LiveStatusDot status={liveStatus} />
             </div>
-            <h1 className="planning-serif m-0 truncate text-[26px] font-medium italic tracking-[0] text-[color:var(--ink-0)]">
+            <h1 id="planning-detail-title" className="planning-serif m-0 truncate text-[26px] font-medium italic tracking-[0] text-[color:var(--ink-0)]">
               {context.featureName || featureId}
             </h1>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
