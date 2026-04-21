@@ -8,6 +8,8 @@ A user mocked up designs in HTML/CSS/JS using an AI design tool, then exported t
 
 **Read `ccdash-planning/project/Planning Deck.html` in full.** The user had this file open when they triggered the handoff, so it's almost certainly the primary design they want built. Read it top to bottom — don't skim. Then **follow its imports**: open every file it pulls in (shared components, CSS, scripts) so you understand how the pieces fit together before you start implementing.
 
+Phase 10 follow-on specs live in `docs/project_plans/design-specs/`. Use those production docs for the deferred planning surfaces instead of editing this handoff bundle.
+
 **If anything is ambiguous, ask the user to confirm before you start implementing.** It's much cheaper to clarify scope up front than to build the wrong thing.
 
 ## About the design files

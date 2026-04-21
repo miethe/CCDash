@@ -85,6 +85,15 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - Session Correlation: Feature-linked session chips surface workload and cache share context
 - Deferred Task Tracking: Features with terminal-complete deferred steps land in Done with caveat badge
 
+### Planning Control Plane
+
+- Planning Home: hero stats, metrics strip, artifact chips, and the planning corpus overview
+- Planning Graph: lane-based graph with DocChips, totals cells, and dependency-aware execution context
+- Triage Inbox: blocked, mismatch, stale, and ready-to-promote tabs for fast cleanup
+- Live Agent Roster: running and idle agents with state dots and live task context
+- Feature Drawer: lineage strip, SPIKE tiles, inline OQ resolution, dependency DAG, and exec buttons
+- Planning docs: see [`docs/guides/planning-control-plane-guide.md`](docs/guides/planning-control-plane-guide.md) and the Phase 10 design specs in [`docs/project_plans/design-specs/`](docs/project_plans/design-specs/)
+
 ### Project Management
 
 - **Dynamic Project Switching**: Instantly switch between multiple local projects from the sidebar

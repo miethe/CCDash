@@ -35,7 +35,16 @@ references:
   - docs/project_plans/designs/ccdash-planning/project/app/primitives.jsx
 spike_ref: null
 adr_refs: []
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+  - docs/project_plans/design-specs/live-agent-sse-streaming-v1.md
+  - docs/project_plans/design-specs/spike-execution-wiring-v1.md
+  - docs/project_plans/design-specs/oq-frontmatter-writeback-v1.md
+  - docs/project_plans/design-specs/bundled-fonts-offline-v1.md
+  - docs/project_plans/design-specs/spec-creation-workflow-v1.md
+  - docs/project_plans/design-specs/planning-primitives-extraction-v1.md
+  - docs/project_plans/design-specs/planning-collab-threads-v1.md
+  - docs/project_plans/design-specs/planning-lightmode-tokens-v1.md
+  - docs/project_plans/design-specs/planning-graph-virtualization-v1.md
 findings_doc_ref: null
 changelog_ref: null
 changelog_required: true
@@ -555,10 +564,10 @@ Evaluate and update all documentation affected by this feature. All doc tasks de
 | DOC-005 | Update plan frontmatter | Set status: completed, populate commit_refs (if PRs merged), files_affected list (key files: components/Planning/*, backend/routers/features.py, planning-tokens.css, tailwind.config.js), and updated date. | Frontmatter complete; status = completed; all key files listed; dates accurate | 0.5 pts | documentation-writer | haiku | DOC-001 through DOC-004 |
 
 **Phase 10 Quality Gates:**
-- [ ] CHANGELOG entry complete and under `[Unreleased]`
-- [ ] README or planning guide updated with new surfaces
-- [ ] Context files updated (CLAUDE.md pointer, key-context)
-- [ ] Design specs authored for the 9 remaining deferred items (DEFER-05 removed from deferred list on 2026-04-20 — promoted into v2 scope)
+- [x] CHANGELOG entry complete and under `[Unreleased]`
+- [x] README or planning guide updated with new surfaces
+- [x] Context files updated (CLAUDE.md pointer, key-context)
+- [x] Design specs authored for the 9 remaining deferred items (DEFER-05 removed from deferred list on 2026-04-20 — promoted into v2 scope)
 - [ ] Plan frontmatter complete (status, commit_refs, files_affected)
 
 ---

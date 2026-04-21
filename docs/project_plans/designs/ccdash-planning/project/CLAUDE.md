@@ -21,4 +21,9 @@ This directory is the **designer handoff** for the `ccdash-planning-reskin-v2` P
 - **Implementation plan**: `docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md`
 - **Progress**: `.claude/progress/ccdash-planning-reskin-v2/phase-N-progress.md`
 
+## Phase 10 context pointer
+
+The deferred planning follow-up specs are the production source of truth for v2 follow-on work:
+`docs/project_plans/design-specs/`.
+
 For project-wide conventions, operating procedures, agent delegation, progress tracking, and context-loading rules, defer to the **root `CLAUDE.md`** — do not duplicate those sections here.
