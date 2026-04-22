@@ -31,6 +31,7 @@ import type {
   PlanningPhaseBatch,
   PhaseContextItem,
   FeaturePlanningContext,
+  FeatureSummaryItem,
 } from '../../../types';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
@@ -63,7 +64,11 @@ vi.mock('react-router-dom', async (importOriginal) => {
 });
 
 import { getProjectPlanningGraph, getFeaturePlanningContext, PlanningApiError } from '../../../services/planning';
-import { PlanningGraphPanel } from '../PlanningGraphPanel';
+import {
+  findGraphFeatureSummary,
+  graphFeatureMatchesFilter,
+  PlanningGraphPanel,
+} from '../PlanningGraphPanel';
 import { PlanningNodeDetail } from '../PlanningNodeDetail';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -78,6 +83,20 @@ const makeNode = (overrides: Partial<PlanningNode> = {}): PlanningNode => ({
   effectiveStatus: 'in_progress',
   mismatchState: { state: 'aligned', reason: '', isMismatch: false, evidence: [] },
   updatedAt: '2026-04-17T00:00:00Z',
+  ...overrides,
+});
+
+const makeFeatureSummary = (overrides: Partial<FeatureSummaryItem> = {}): FeatureSummaryItem => ({
+  featureId: 'feat-1',
+  featureName: 'Auth Feature',
+  rawStatus: 'in-progress',
+  effectiveStatus: 'in_progress',
+  isMismatch: false,
+  mismatchState: 'aligned',
+  hasBlockedPhases: false,
+  phaseCount: 2,
+  blockedPhaseCount: 0,
+  nodeCount: 4,
   ...overrides,
 });
 
@@ -173,6 +192,37 @@ describe('PlanningGraphPanel (initial render state)', () => {
     );
     // Initial sync render shows skeleton before effects run.
     expect(html).toContain('animate-pulse');
+  });
+});
+
+describe('PlanningGraphPanel status filtering helpers', () => {
+  it('matches graph slugs to summary feature ids by full id or base slug', () => {
+    const summaries = [
+      makeFeatureSummary({ featureId: 'enhancements/feat-active', featureName: 'Active Feature' }),
+    ];
+
+    expect(findGraphFeatureSummary('enhancements/feat-active', summaries)?.featureName).toBe('Active Feature');
+    expect(findGraphFeatureSummary('feat-active', summaries)?.featureName).toBe('Active Feature');
+  });
+
+  it('uses page summary status buckets before graph-node document statuses', () => {
+    const nodes = [
+      makeNode({
+        featureSlug: 'enhancements/feat-active',
+        rawStatus: 'approved',
+        effectiveStatus: 'approved',
+      }),
+    ];
+    const summaries = [
+      makeFeatureSummary({
+        featureId: 'enhancements/feat-active',
+        rawStatus: 'in-progress',
+        effectiveStatus: 'in_progress',
+      }),
+    ];
+
+    expect(graphFeatureMatchesFilter('enhancements/feat-active', nodes, summaries, 'active', null)).toBe(true);
+    expect(graphFeatureMatchesFilter('enhancements/feat-active', nodes, summaries, 'planned', null)).toBe(false);
   });
 });
 

@@ -141,6 +141,8 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Planning modal-first navigation**: Route helpers in `lib/planning-routes.ts` enforce planning-page-local modals for features/artifacts. See feature guide at `.claude/worknotes/ccdash-planning-reskin-v2-interaction-performance-addendum/feature-guide.md`.
 - **Planning browser cache (SWR + LRU)**: Active-first, bounded, stale-while-revalidate cache in `services/planning.ts`. Invalidates on session/doc/link changes. See feature guide for cache patterns.
 - **Planning summary payload**: Backend `statusCounts`, `ctxPerPhase`, `tokenTelemetry` fields on planning query responses. See implementation plan § Data Contracts.
+- **Runtime smoke gate**: For UI or frontend changes, start the dev server and perform a browser smoke check before marking a phase complete. If runtime is unavailable, Phase N cannot be marked `completed` without an explicit `runtime_smoke: skipped` field and reason; a clean unit-test pass is not a substitute.
+- **Resilience-by-default**: Every new optional backend field requires an explicit FE fallback AC. Missing is a contract state, not a bug.
 
 ---
 
@@ -154,6 +156,7 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 | Token efficient | Symbol system, codebase-explorer, CLI-first status updates |
 | Rapid iteration | PRD → plan → phase → code → verify |
 | No over-architecture | YAGNI until proven |
+| **Seam integrity** | Cross-owner seams are a named deliverable, not an emergent property |
 
 ### Opus Delegation Principle
 
@@ -201,17 +204,18 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 
 **Commands do not automatically load skills.** When executing `/dev:*`, `/fix:*`, `/plan:*`, or other workflow commands, you MUST explicitly invoke the required skill via the `Skill` tool before proceeding.
 
-| Command                    | Required Skills                                    | Invoke First                                                            |
-| -------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------- |
-| `/dev:execute-phase`       | dev-execution, artifact-tracking                   | `Skill("dev-execution")` then `Skill("artifact-tracking")`              |
-| `/dev:quick-feature`       | dev-execution                                      | `Skill("dev-execution")`                                                |
-| `/dev:implement-story`     | dev-execution, artifact-tracking                   | `Skill("dev-execution")` then `Skill("artifact-tracking")`              |
-| `/dev:complete-user-story` | dev-execution, artifact-tracking                   | `Skill("dev-execution")` then `Skill("artifact-tracking")`              |
-| `/dev:create-feature`      | dev-execution                                      | `Skill("dev-execution")`                                                |
-| `/plan:*`                  | planning                                           | `Skill("planning")`                                                     |
-| `/fix:debug`               | debugging (+ planning, artifact-tracking if critical) | `Skill("debugging")` then conditionally the others                    |
-| `/release:pr`              | release, changelog-sync                            | `Skill("release")` then `Skill("changelog-sync")`                       |
-| `/mc`                      | meatycapture-capture (self-contained)              | no additional skills needed                                             |
+| Command                    | Required Skills                                       | Invoke First                                                            | Post-load Hook                                                                                                                          |
+| -------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `/dev:execute-phase`       | dev-execution, artifact-tracking                      | `Skill("dev-execution")` then `Skill("artifact-tracking")`              | Before phase-exit, run `validate-phase-completion.py` and `ac-coverage-report.py`; block `status: completed` on any error               |
+| `/dev:quick-feature`       | dev-execution                                         | `Skill("dev-execution")`                                                |                                                                                                                                         |
+| `/dev:implement-story`     | dev-execution, artifact-tracking                      | `Skill("dev-execution")` then `Skill("artifact-tracking")`              |                                                                                                                                         |
+| `/dev:complete-user-story` | dev-execution, artifact-tracking                      | `Skill("dev-execution")` then `Skill("artifact-tracking")`              |                                                                                                                                         |
+| `/dev:create-feature`      | dev-execution                                         | `Skill("dev-execution")`                                                |                                                                                                                                         |
+| `/plan:plan-feature`       | planning                                              | `Skill("planning")`                                                     | After plan generation, run `ac-coverage-report.py --dry`; block `status: approved` if any AC lacks `target_surfaces`                   |
+| `/plan:*`                  | planning                                              | `Skill("planning")`                                                     |                                                                                                                                         |
+| `/fix:debug`               | debugging (+ planning, artifact-tracking if critical) | `Skill("debugging")` then conditionally the others                      | If prompt contains post-incident phrases ("Codex had to patch", "gaps after merge", "we missed", "regression after phase X"), auto-invoke debugging skill's post-incident retrospective mode |
+| `/release:pr`              | release, changelog-sync                               | `Skill("release")` then `Skill("changelog-sync")`                       |                                                                                                                                         |
+| `/mc`                      | meatycapture-capture (self-contained)                 | no additional skills needed                                             |                                                                                                                                         |
 
 **Enforcement**: First action after receiving a listed command is calling `Skill()` for each required skill. Do not proceed with any other actions until skills are loaded. Referenced file paths inside skill prompts are NOT auto-read — the skill load is what brings them in.
 

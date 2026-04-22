@@ -62,6 +62,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const location = useLocation();
   const { notifications } = useData();
   const unreadCount = notifications.filter(n => !n.isRead).length;
+  const isPlanningRoute = location.pathname.startsWith('/planning');
 
   return (
     <div className="flex h-screen overflow-hidden bg-app-background text-app-foreground">
@@ -133,7 +134,12 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
       {/* Main Content */}
       <main className="flex min-w-0 flex-1 flex-col overflow-x-auto overflow-y-hidden bg-app-background">
-        <div className="flex-1 min-w-[1024px] h-full overflow-y-auto p-4 md:p-8 scroll-smooth">
+        <div
+          className={cn(
+            'flex-1 min-w-[1024px] h-full min-h-0 scroll-smooth',
+            isPlanningRoute ? 'overflow-hidden p-0' : 'overflow-y-auto p-4 md:p-8',
+          )}
+        >
           {children}
         </div>
       </main>

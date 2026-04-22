@@ -892,6 +892,7 @@ function PlanningShell({
       <Panel data-testid="planning-graph-section" className="p-5">
         <PlanningGraphPanel
           projectId={summary.projectId ?? null}
+          featureSummaries={summary.featureSummaries}
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
           activeStatusBucket={activeStatusBucket}

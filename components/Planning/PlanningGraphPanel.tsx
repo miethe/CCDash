@@ -376,14 +376,33 @@ function graphNodesToFeatureSummary(slug: string, nodes: PlanningNode[]): Featur
   };
 }
 
-function graphFeatureMatchesFilter(
+function getFeatureBaseSlug(featureId: string): string {
+  const segments = featureId.split('/');
+  return segments[segments.length - 1] || featureId;
+}
+
+export function findGraphFeatureSummary(
+  slug: string,
+  featureSummaries: FeatureSummaryItem[] | undefined,
+): FeatureSummaryItem | null {
+  if (!featureSummaries?.length) return null;
+  const baseSlug = getFeatureBaseSlug(slug);
+  return (
+    featureSummaries.find((feature) => feature.featureId === slug) ||
+    featureSummaries.find((feature) => getFeatureBaseSlug(feature.featureId) === baseSlug) ||
+    null
+  );
+}
+
+export function graphFeatureMatchesFilter(
   slug: string,
   nodes: PlanningNode[],
+  featureSummaries: FeatureSummaryItem[] | undefined,
   activeStatusBucket: PlanningStatusBucket | null,
   activeSignal: PlanningSignal | null,
 ): boolean {
   if (!activeStatusBucket && !activeSignal) return true;
-  const summary = graphNodesToFeatureSummary(slug, nodes);
+  const summary = findGraphFeatureSummary(slug, featureSummaries) ?? graphNodesToFeatureSummary(slug, nodes);
   if (activeStatusBucket && !featureMatchesBucket(summary, activeStatusBucket)) return false;
   if (activeSignal && !featureMatchesSignal(summary, activeSignal)) return false;
   return true;
@@ -1433,6 +1452,7 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
 
 export interface PlanningGraphPanelProps {
   projectId: string | null;
+  featureSummaries?: FeatureSummaryItem[];
   onSelectFeature?: (featureId: string) => void;
   onPrefetchFeature?: (featureId: string) => void;
   activeStatusBucket?: import('../../services/planningRoutes').PlanningStatusBucket | null;
@@ -1447,6 +1467,7 @@ type GraphFetchState =
 
 export function PlanningGraphPanel({
   projectId,
+  featureSummaries,
   onSelectFeature,
   onPrefetchFeature,
   activeStatusBucket = null,
@@ -1535,6 +1556,7 @@ export function PlanningGraphPanel({
     graphFeatureMatchesFilter(
       slug,
       bySlug.get(slug) ?? [],
+      featureSummaries,
       activeStatusBucket,
       activeSignal,
     ),

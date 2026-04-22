@@ -176,7 +176,7 @@ export function PlanningRouteLayout() {
        */}
       <div
         className={cn(
-          'planning-route flex-1 min-w-0 overflow-y-auto',
+          'planning-route h-full min-h-0 flex-1 min-w-0 overflow-y-auto',
           'planning-density-comfortable',
           density === 'compact' && 'planning-density-compact',
         )}

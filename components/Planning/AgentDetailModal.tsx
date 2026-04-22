@@ -494,7 +494,7 @@ export function AgentDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -503,10 +503,10 @@ export function AgentDetailModal({
     >
       <div
         ref={dialogRef}
-        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl shadow-2xl"
+        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 shadow-2xl"
         style={{
-          background: 'var(--surface-overlay, #1a1f2e)',
-          border: '1px solid var(--line-1, #2d3347)',
+          background: 'var(--bg-1, hsl(var(--surface-overlay)))',
+          borderColor: 'var(--line-1, hsl(var(--panel-border)))',
         }}
         role="dialog"
         aria-modal="true"

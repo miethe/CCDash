@@ -293,6 +293,22 @@ describe('AgentDetailModal — A11y (SC-16.6)', () => {
     expect(html).toContain('overflow-y-auto');
   });
 
+  it('modal dialog has an opaque panel background', () => {
+    const session = createMockSession();
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <AgentDetailModal
+          session={session}
+          features={[]}
+          onClose={() => {}}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('bg-slate-900');
+    expect(html).toContain('background:var(--bg-1, hsl(var(--surface-overlay)))');
+  });
+
   it('AgentDetailModalContent (content component) renders interactive elements', () => {
     const session = createMockSession({ linkedFeatureIds: ['FEAT-001'] });
     const features = [createMockFeature({ id: 'FEAT-001' })];
