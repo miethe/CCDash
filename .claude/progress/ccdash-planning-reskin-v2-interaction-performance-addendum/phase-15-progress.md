@@ -8,7 +8,7 @@ prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 phase: 15
 title: Agent Roster Details
-status: pending
+status: completed
 created: 2026-04-21
 updated: '2026-04-21'
 started: null
@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 4
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -72,7 +72,7 @@ tasks:
   priority: high
 - id: P15-005
   description: Link roster rows to feature/phase quick-view data.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -120,7 +120,7 @@ success_criteria:
   description: All tests green
   status: pending
 files_modified: []
-progress: 80
+progress: 100
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 15: Agent Roster Details
