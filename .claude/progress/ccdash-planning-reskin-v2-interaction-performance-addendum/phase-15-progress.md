@@ -2,100 +2,125 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2-interaction-performance-addendum"
-feature_slug: "ccdash-planning-reskin-v2-interaction-performance-addendum"
+prd: ccdash-planning-reskin-v2-interaction-performance-addendum
+feature_slug: ccdash-planning-reskin-v2-interaction-performance-addendum
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 phase: 15
-title: "Agent Roster Details"
-status: "pending"
+title: Agent Roster Details
+status: pending
 created: 2026-04-21
-updated: 2026-04-21
+updated: '2026-04-21'
 started: null
 completed: null
 commit_refs: []
 pr_refs: []
-
 overall_progress: 0
-completion_estimate: "on-track"
-
+completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["frontend-developer", "python-backend-engineer"]
+owners:
+- frontend-developer
+- python-backend-engineer
 contributors: []
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "P15-001"
-    description: "Add canonical subagentType or displayAgentType to AgentSession."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    assigned_model: "sonnet"
-    dependencies: ["P11-001"]
-    estimated_effort: "2 pts"
-    priority: "high"
-
-  - id: "P15-002"
-    description: "Change roster name precedence and root-session label."
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    assigned_model: "sonnet"
-    dependencies: ["P15-001"]
-    estimated_effort: "1 pt"
-    priority: "high"
-
-  - id: "P15-003"
-    description: "Pin roster height to triage height and add internal scrolling."
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    assigned_model: "sonnet"
-    dependencies: []
-    estimated_effort: "1 pt"
-    priority: "medium"
-
-  - id: "P15-004"
-    description: "Add roster row detail modal."
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    assigned_model: "sonnet"
-    dependencies: ["P15-001", "P11-001"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-
-  - id: "P15-005"
-    description: "Link roster rows to feature/phase quick-view data."
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    assigned_model: "sonnet"
-    dependencies: ["P15-004"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-
+- id: P15-001
+  description: Add canonical subagentType or displayAgentType to AgentSession.
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  assigned_model: sonnet
+  dependencies:
+  - P11-001
+  estimated_effort: 2 pts
+  priority: high
+- id: P15-002
+  description: Change roster name precedence and root-session label.
+  status: completed
+  assigned_to:
+  - frontend-developer
+  assigned_model: sonnet
+  dependencies:
+  - P15-001
+  estimated_effort: 1 pt
+  priority: high
+- id: P15-003
+  description: Pin roster height to triage height and add internal scrolling.
+  status: completed
+  assigned_to:
+  - frontend-developer
+  assigned_model: sonnet
+  dependencies: []
+  estimated_effort: 1 pt
+  priority: medium
+- id: P15-004
+  description: Add roster row detail modal.
+  status: completed
+  assigned_to:
+  - frontend-developer
+  assigned_model: sonnet
+  dependencies:
+  - P15-001
+  - P11-001
+  estimated_effort: 1.5 pts
+  priority: high
+- id: P15-005
+  description: Link roster rows to feature/phase quick-view data.
+  status: pending
+  assigned_to:
+  - frontend-developer
+  assigned_model: sonnet
+  dependencies:
+  - P15-004
+  estimated_effort: 1 pt
+  priority: medium
 parallelization:
-  batch_1: ["P15-001", "P15-003"]
-  batch_2: ["P15-002", "P15-004"]
-  batch_3: ["P15-005"]
-  critical_path: ["P15-001", "P15-004", "P15-005"]
-  estimated_total_time: "2 days"
-
+  batch_1:
+  - P15-001
+  - P15-003
+  batch_2:
+  - P15-002
+  - P15-004
+  batch_3:
+  - P15-005
+  critical_path:
+  - P15-001
+  - P15-004
+  - P15-005
+  estimated_total_time: 2 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-15.1", description: "Frontend does not parse human title strings to infer agent type; canonical field used", status: "pending" }
-  - { id: "SC-15.2", description: "Subagents show type labels; main/root sessions show 'Orchestrator'; ids appear only as tooltip/detail fallback", status: "pending" }
-  - { id: "SC-15.3", description: "Roster and triage panels align at desktop breakpoints; long roster scrolls inside its panel", status: "pending" }
-  - { id: "SC-15.4", description: "Clicking any roster row opens agent details modal with links to session, feature, phase/task context, parent/root session, model, token/context data", status: "pending" }
-  - { id: "SC-15.5", description: "Roster rows show compact feature/phase/task hints when available; missing metadata has neutral empty state", status: "pending" }
-  - { id: "SC-15.6", description: "All tests green", status: "pending" }
-
+- id: SC-15.1
+  description: Frontend does not parse human title strings to infer agent type; canonical
+    field used
+  status: pending
+- id: SC-15.2
+  description: Subagents show type labels; main/root sessions show 'Orchestrator';
+    ids appear only as tooltip/detail fallback
+  status: pending
+- id: SC-15.3
+  description: Roster and triage panels align at desktop breakpoints; long roster
+    scrolls inside its panel
+  status: pending
+- id: SC-15.4
+  description: Clicking any roster row opens agent details modal with links to session,
+    feature, phase/task context, parent/root session, model, token/context data
+  status: pending
+- id: SC-15.5
+  description: Roster rows show compact feature/phase/task hints when available; missing
+    metadata has neutral empty state
+  status: pending
+- id: SC-15.6
+  description: All tests green
+  status: pending
 files_modified: []
+progress: 80
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 15: Agent Roster Details

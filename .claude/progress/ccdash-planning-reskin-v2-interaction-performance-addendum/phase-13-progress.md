@@ -2,91 +2,114 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2-interaction-performance-addendum"
-feature_slug: "ccdash-planning-reskin-v2-interaction-performance-addendum"
+prd: ccdash-planning-reskin-v2-interaction-performance-addendum
+feature_slug: ccdash-planning-reskin-v2-interaction-performance-addendum
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 phase: 13
-title: "Metrics, Filters, and Density Wiring"
-status: "pending"
+title: Metrics, Filters, and Density Wiring
+status: completed
 created: 2026-04-21
-updated: 2026-04-21
+updated: '2026-04-21'
 started: null
 completed: null
 commit_refs: []
 pr_refs: []
-
 overall_progress: 0
-completion_estimate: "on-track"
-
+completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["ui-engineer-enhanced", "python-backend-engineer"]
+owners:
+- ui-engineer-enhanced
+- python-backend-engineer
 contributors: []
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "P13-001"
-    description: "Add summary fields for statusCounts, ctxPerPhase, and token telemetry availability."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    assigned_model: "sonnet"
-    dependencies: ["P12-001"]
-    estimated_effort: "2 pts"
-    priority: "high"
-
-  - id: "P13-002"
-    description: "Rework metric tiles into status buckets plus health signals."
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced"]
-    assigned_model: "sonnet"
-    dependencies: ["P13-001"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-
-  - id: "P13-003"
-    description: "Make each metric tile clickable and filter-reflective in route state."
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced"]
-    assigned_model: "sonnet"
-    dependencies: ["P13-002"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-
-  - id: "P13-004"
-    description: "Apply density variables across lists, rows, tracker tabs, graph rows, and roster."
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced"]
-    assigned_model: "sonnet"
-    dependencies: []
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-
+- id: P13-001
+  description: Add summary fields for statusCounts, ctxPerPhase, and token telemetry
+    availability.
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  assigned_model: sonnet
+  dependencies:
+  - P12-001
+  estimated_effort: 2 pts
+  priority: high
+- id: P13-002
+  description: Rework metric tiles into status buckets plus health signals.
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  assigned_model: sonnet
+  dependencies:
+  - P13-001
+  estimated_effort: 1.5 pts
+  priority: high
+- id: P13-003
+  description: Make each metric tile clickable and filter-reflective in route state.
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  assigned_model: sonnet
+  dependencies:
+  - P13-002
+  estimated_effort: 1 pt
+  priority: medium
+- id: P13-004
+  description: Apply density variables across lists, rows, tracker tabs, graph rows,
+    and roster.
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  assigned_model: sonnet
+  dependencies: []
+  estimated_effort: 1.5 pts
+  priority: medium
 parallelization:
-  batch_1: ["P13-001", "P13-004"]
-  batch_2: ["P13-002"]
-  batch_3: ["P13-003"]
-  critical_path: ["P13-001", "P13-002", "P13-003"]
-  estimated_total_time: "2 days"
-
+  batch_1:
+  - P13-001
+  - P13-004
+  batch_2:
+  - P13-002
+  batch_3:
+  - P13-003
+  critical_path:
+  - P13-001
+  - P13-002
+  - P13-003
+  estimated_total_time: 2 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-13.1", description: "UI consumes real statusCounts, ctxPerPhase, tokenTelemetry fields; no fabricated values remain", status: "pending" }
-  - { id: "SC-13.2", description: "Status buckets are mutually exclusive and add to total; health signals labeled as overlays/signals", status: "pending" }
-  - { id: "SC-13.3", description: "Clicking a count filters planning lists/graph; filter reflected in route state and clearable", status: "pending" }
-  - { id: "SC-13.4", description: "Comfortable vs compact density changes visible consistently across all major planning list/table surfaces", status: "pending" }
-  - { id: "SC-13.5", description: "Density covered by component tests", status: "pending" }
-  - { id: "SC-13.6", description: "All tests green", status: "pending" }
-
+- id: SC-13.1
+  description: UI consumes real statusCounts, ctxPerPhase, tokenTelemetry fields;
+    no fabricated values remain
+  status: pending
+- id: SC-13.2
+  description: Status buckets are mutually exclusive and add to total; health signals
+    labeled as overlays/signals
+  status: pending
+- id: SC-13.3
+  description: Clicking a count filters planning lists/graph; filter reflected in
+    route state and clearable
+  status: pending
+- id: SC-13.4
+  description: Comfortable vs compact density changes visible consistently across
+    all major planning list/table surfaces
+  status: pending
+- id: SC-13.5
+  description: Density covered by component tests
+  status: pending
+- id: SC-13.6
+  description: All tests green
+  status: pending
 files_modified: []
+progress: 100
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 13: Metrics, Filters, and Density Wiring

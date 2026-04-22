@@ -2,89 +2,110 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2-interaction-performance-addendum"
-feature_slug: "ccdash-planning-reskin-v2-interaction-performance-addendum"
+prd: ccdash-planning-reskin-v2-interaction-performance-addendum
+feature_slug: ccdash-planning-reskin-v2-interaction-performance-addendum
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 phase: 14
-title: "Tracker and Intake Side Panel"
-status: "pending"
+title: Tracker and Intake Side Panel
+status: pending
 created: 2026-04-21
-updated: 2026-04-21
+updated: '2026-04-21'
 started: null
 completed: null
 commit_refs: []
 pr_refs: []
-
 overall_progress: 0
-completion_estimate: "on-track"
-
+completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["ui-engineer-enhanced", "frontend-developer"]
+owners:
+- ui-engineer-enhanced
+- frontend-developer
 contributors: []
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "P14-001"
-    description: "Add PlanningQuickViewPanel for tracker/intake rows."
-    status: "pending"
-    assigned_to: ["ui-engineer-enhanced"]
-    assigned_model: "sonnet"
-    dependencies: ["P11-001", "P11-003"]
-    estimated_effort: "2 pts"
-    priority: "high"
-
-  - id: "P14-002"
-    description: "Resolve node row click target as feature-first when featureSlug exists, doc-first otherwise."
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    assigned_model: "sonnet"
-    dependencies: ["P14-001"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-
-  - id: "P14-003"
-    description: "Add promotion paths from quick view to full modal or nested planning page."
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    assigned_model: "sonnet"
-    dependencies: ["P14-001"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-
-  - id: "P14-004"
-    description: "Preserve tab/filter state across quick-view open/close."
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    assigned_model: "sonnet"
-    dependencies: ["P14-001"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-
+- id: P14-001
+  description: Add PlanningQuickViewPanel for tracker/intake rows.
+  status: completed
+  assigned_to:
+  - ui-engineer-enhanced
+  assigned_model: sonnet
+  dependencies:
+  - P11-001
+  - P11-003
+  estimated_effort: 2 pts
+  priority: high
+- id: P14-002
+  description: Resolve node row click target as feature-first when featureSlug exists,
+    doc-first otherwise.
+  status: completed
+  assigned_to:
+  - frontend-developer
+  assigned_model: sonnet
+  dependencies:
+  - P14-001
+  estimated_effort: 1.5 pts
+  priority: high
+- id: P14-003
+  description: Add promotion paths from quick view to full modal or nested planning
+    page.
+  status: completed
+  assigned_to:
+  - frontend-developer
+  assigned_model: sonnet
+  dependencies:
+  - P14-001
+  estimated_effort: 1 pt
+  priority: medium
+- id: P14-004
+  description: Preserve tab/filter state across quick-view open/close.
+  status: pending
+  assigned_to:
+  - frontend-developer
+  assigned_model: sonnet
+  dependencies:
+  - P14-001
+  estimated_effort: 1 pt
+  priority: medium
 parallelization:
-  batch_1: ["P14-001"]
-  batch_2: ["P14-002", "P14-003", "P14-004"]
-  critical_path: ["P14-001", "P14-002"]
-  estimated_total_time: "2 days"
-
+  batch_1:
+  - P14-001
+  batch_2:
+  - P14-002
+  - P14-003
+  - P14-004
+  critical_path:
+  - P14-001
+  - P14-002
+  estimated_total_time: 2 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-14.1", description: "Row click opens a right-side panel in /planning; focus is trapped and restorable", status: "pending" }
-  - { id: "SC-14.2", description: "Feature rows show feature quick view; standalone docs show document quick view/modal", status: "pending" }
-  - { id: "SC-14.3", description: "Quick view can open full feature modal, full document modal, or expanded nested planning page", status: "pending" }
-  - { id: "SC-14.4", description: "Closing a panel returns to the same tracker tab and scroll position", status: "pending" }
-  - { id: "SC-14.5", description: "All tests green", status: "pending" }
-
+- id: SC-14.1
+  description: Row click opens a right-side panel in /planning; focus is trapped and
+    restorable
+  status: pending
+- id: SC-14.2
+  description: Feature rows show feature quick view; standalone docs show document
+    quick view/modal
+  status: pending
+- id: SC-14.3
+  description: Quick view can open full feature modal, full document modal, or expanded
+    nested planning page
+  status: pending
+- id: SC-14.4
+  description: Closing a panel returns to the same tracker tab and scroll position
+  status: pending
+- id: SC-14.5
+  description: All tests green
+  status: pending
 files_modified: []
+progress: 75
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 14: Tracker and Intake Side Panel
