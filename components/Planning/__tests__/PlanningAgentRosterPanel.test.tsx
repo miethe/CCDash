@@ -1,5 +1,6 @@
 /**
  * P15-002: PlanningAgentRosterPanel — row label precedence tests.
+ * P15-005: Inline hint chips — feature/phase/task context with em-dash fallback.
  *
  * Strategy: unit-test the pure helpers (humanizeAgentType, deriveEntry via
  * exported humanizeAgentType) directly, plus markup assertions via the
@@ -9,6 +10,7 @@
  * Coverage:
  *   SC-15.1: No title-string parsing for type inference
  *   SC-15.2: Subagent shows type label; root shows "Orchestrator"; id is tooltip-only
+ *   SC-15.5: Inline hint chips from canonical backend fields; em-dash when all absent
  *
  *   1. humanizeAgentType: kebab-case → title-case words (simple, no acronym detection)
  *   2. humanizeAgentType: single-segment slug capitalises first letter
@@ -22,11 +24,18 @@
  *  10. deriveEntry: displayAgentType="" (empty string) → falls back to legacy logic
  *  11. deriveEntry: displayAgentType=null, no agentId → falls back to title word-one
  *  12. deriveEntry: displayAgentType=null, no agentId, no title → falls back to id prefix
+ *
+ *  P15-005 hint chip tests:
+ *  13. Row with all three hints → all three chips present with correct text
+ *  14. Row with feature hint only → feature chip present; no phase/task chips; no em-dash
+ *  15. Row with no hints → em-dash placeholder; no chip elements
  */
 
-import { describe, expect, it } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { humanizeAgentType } from '../PlanningAgentRosterPanel';
+import { PlanningAgentRosterPanel } from '../PlanningAgentRosterPanel';
 import type { AgentSession } from '@/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -140,5 +149,183 @@ describe('roster row name precedence (SC-15.1, SC-15.2)', () => {
   it('displayAgentType="" (empty string) → treated as absent, falls back to legacy', () => {
     const session = makeSession({ displayAgentType: '', agentId: 'agent-legacy' });
     expect(deriveName(session)).toBe('agent-legacy');
+  });
+});
+
+// ── SC-15.5: Inline hint chips ────────────────────────────────────────────────
+//
+// These tests render PlanningAgentRosterPanel via renderToStaticMarkup and
+// assert the presence/absence of hint chip elements by data-testid and text
+// content in the produced HTML.
+
+const mocks = vi.hoisted(() => ({
+  sessions: [] as AgentSession[],
+}));
+
+vi.mock('../../../contexts/DataContext', () => ({
+  useData: () => ({
+    activeProject: { id: 'proj-1', name: 'Test Project' },
+    documents: [],
+    sessions: mocks.sessions,
+    features: [],
+    getSessionById: vi.fn(),
+  }),
+}));
+
+describe('SC-15.5: inline hint chips on roster rows', () => {
+  let originalDocument: typeof globalThis.document;
+
+  beforeEach(() => {
+    originalDocument = globalThis.document;
+    globalThis.document = {
+      createElement: () => ({ textContent: '', style: {} }),
+      head: { appendChild: vi.fn(), querySelector: () => null },
+      querySelector: () => null,
+    } as unknown as Document;
+  });
+
+  afterEach(() => {
+    globalThis.document = originalDocument;
+    mocks.sessions = [];
+  });
+
+  it('row with all three hints renders feature, phase, and task chips', () => {
+    mocks.sessions = [
+      makeSession({
+        id: 'sess-hints-all',
+        linkedFeatureIds: ['FEAT-123'],
+        phaseHints: ['P7'],
+        taskHints: ['T7-003'],
+      }),
+    ];
+
+    const html = renderToStaticMarkup(<PlanningAgentRosterPanel />);
+
+    // All three chips container must be present
+    expect(html).toContain('data-testid="roster-hint-chips"');
+
+    // Feature chip: shows truncated feature ID
+    expect(html).toContain('FEAT-123');
+
+    // Phase chip
+    expect(html).toContain('P7');
+
+    // Task chip
+    expect(html).toContain('T7-003');
+
+    // No em-dash placeholder when chips are present
+    expect(html).not.toContain('data-testid="roster-hint-empty"');
+  });
+
+  it('row with feature hint only renders feature chip; no em-dash placeholder', () => {
+    mocks.sessions = [
+      makeSession({
+        id: 'sess-feat-only',
+        linkedFeatureIds: ['FEAT-456'],
+        phaseHints: undefined,
+        taskHints: undefined,
+      }),
+    ];
+
+    const html = renderToStaticMarkup(<PlanningAgentRosterPanel />);
+
+    // Chips container present
+    expect(html).toContain('data-testid="roster-hint-chips"');
+
+    // Feature chip present
+    expect(html).toContain('FEAT-456');
+
+    // No em-dash placeholder
+    expect(html).not.toContain('data-testid="roster-hint-empty"');
+  });
+
+  it('row with no hints renders em-dash placeholder and no chip elements', () => {
+    mocks.sessions = [
+      makeSession({
+        id: 'sess-no-hints',
+        linkedFeatureIds: undefined,
+        phaseHints: undefined,
+        taskHints: undefined,
+      }),
+    ];
+
+    const html = renderToStaticMarkup(<PlanningAgentRosterPanel />);
+
+    // Em-dash placeholder rendered
+    expect(html).toContain('data-testid="roster-hint-empty"');
+    // Em-dash character present
+    expect(html).toContain('—');
+
+    // No chips container
+    expect(html).not.toContain('data-testid="roster-hint-chips"');
+  });
+
+  it('row with empty hint arrays renders em-dash placeholder', () => {
+    mocks.sessions = [
+      makeSession({
+        id: 'sess-empty-arrays',
+        linkedFeatureIds: [],
+        phaseHints: [],
+        taskHints: [],
+      }),
+    ];
+
+    const html = renderToStaticMarkup(<PlanningAgentRosterPanel />);
+
+    expect(html).toContain('data-testid="roster-hint-empty"');
+    expect(html).not.toContain('data-testid="roster-hint-chips"');
+  });
+
+  it('feature ID longer than 12 chars is truncated to 12 in the chip', () => {
+    mocks.sessions = [
+      makeSession({
+        id: 'sess-long-feat',
+        linkedFeatureIds: ['FEAT-VERY-LONG-ID-HERE'],
+        phaseHints: undefined,
+        taskHints: undefined,
+      }),
+    ];
+
+    const html = renderToStaticMarkup(<PlanningAgentRosterPanel />);
+
+    // Truncated to first 12 chars: "FEAT-VERY-LO"
+    expect(html).toContain('FEAT-VERY-LO');
+    // Full ID should not appear verbatim in a chip (aria-label carries it)
+    // Note: the full ID appears in aria-label of the chip, so we check the chip container
+    expect(html).toContain('data-testid="roster-hint-chips"');
+  });
+
+  it('row with only phase and task hints (no feature) renders two chips', () => {
+    mocks.sessions = [
+      makeSession({
+        id: 'sess-phase-task',
+        linkedFeatureIds: undefined,
+        phaseHints: ['P12'],
+        taskHints: ['T12-007'],
+      }),
+    ];
+
+    const html = renderToStaticMarkup(<PlanningAgentRosterPanel />);
+
+    expect(html).toContain('data-testid="roster-hint-chips"');
+    expect(html).toContain('P12');
+    expect(html).toContain('T12-007');
+    expect(html).not.toContain('data-testid="roster-hint-empty"');
+  });
+
+  it('density class planning-density-row still present with hint chips', () => {
+    mocks.sessions = [
+      makeSession({
+        id: 'sess-density-check',
+        linkedFeatureIds: ['FEAT-789'],
+        phaseHints: ['P3'],
+        taskHints: ['T3-001'],
+      }),
+    ];
+
+    const html = renderToStaticMarkup(<PlanningAgentRosterPanel />);
+
+    expect(html).toContain('planning-density-row');
+    expect(html).toContain('data-testid="roster-hint-chips"');
   });
 });

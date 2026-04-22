@@ -10,11 +10,12 @@
  *   status === 'queued' (future-proof)           → queued
  *   completed / everything else                  → idle
  *
- * Columns: state dot | agent name + model | current task | since
+ * Columns: state dot | agent name + model | current task + hint chips | since
  *
  * P15-002: displayAgentType-first name precedence; humanizeAgentType exported.
  * P15-003: flex/overflow layout pinned; scroll container.
  * P15-004: row click opens AgentDetailModal.
+ * P15-005: inline hint chips (feature/phase/task) with neutral em-dash fallback.
  */
 
 import { useCallback, useMemo, useState } from 'react';
@@ -181,6 +182,114 @@ function injectGlowStyle() {
   _glowInjected = true;
 }
 
+// ── P15-005: Inline hint chip ──────────────────────────────────────────────────
+
+type HintTone = 'feature' | 'phase' | 'task';
+
+interface InlineHintChipProps {
+  label: string;
+  tone: HintTone;
+}
+
+const HINT_CHIP_STYLES: Record<HintTone, React.CSSProperties> = {
+  feature: {
+    background: 'color-mix(in oklab, var(--prd, #a78bfa) 14%, transparent)',
+    color: 'var(--prd, #a78bfa)',
+    border: '1px solid color-mix(in oklab, var(--prd, #a78bfa) 30%, transparent)',
+  },
+  phase: {
+    background: 'color-mix(in oklab, var(--info, #60a5fa) 14%, transparent)',
+    color: 'var(--info, #60a5fa)',
+    border: '1px solid color-mix(in oklab, var(--info, #60a5fa) 30%, transparent)',
+  },
+  task: {
+    background: 'color-mix(in oklab, var(--ok) 12%, transparent)',
+    color: 'var(--ok)',
+    border: '1px solid color-mix(in oklab, var(--ok) 28%, transparent)',
+  },
+};
+
+function InlineHintChip({ label, tone }: InlineHintChipProps) {
+  return (
+    <span
+      className="planning-mono inline-flex shrink-0 items-center rounded px-1.5 py-px"
+      style={{
+        fontSize: 9.5,
+        fontWeight: 500,
+        letterSpacing: '0.03em',
+        lineHeight: 1,
+        ...HINT_CHIP_STYLES[tone],
+      }}
+      aria-label={label}
+    >
+      {label}
+    </span>
+  );
+}
+
+/**
+ * P15-005: Inline hint chip row.
+ *
+ * Renders up to three chips (feature / phase / task) derived directly from
+ * canonical backend fields. When ALL three are absent, renders a subtle `—`
+ * placeholder to keep the hint area visually consistent.
+ *
+ * Convention chosen: each chip renders independently. A row with only a feature
+ * hint shows just that chip (no partial em-dash for missing phase/task — the
+ * em-dash is reserved for the "all absent" case only).
+ */
+function InlineHintChips({ session }: { session: AgentSession }) {
+  const featureId = session.linkedFeatureIds?.[0];
+  const phaseHint = session.phaseHints?.[0];
+  const taskHint = session.taskHints?.[0];
+
+  const hasAny = featureId != null || phaseHint != null || taskHint != null;
+
+  if (!hasAny) {
+    return (
+      <span
+        className="planning-mono"
+        style={{ fontSize: 10, color: 'var(--ink-4)', lineHeight: 1 }}
+        aria-label="No context hints"
+        data-testid="roster-hint-empty"
+      >
+        —
+      </span>
+    );
+  }
+
+  // Truncate feature ID to keep chip compact (max 12 chars)
+  const featureLabel = featureId != null
+    ? (featureId.length > 12 ? featureId.slice(0, 12) : featureId)
+    : null;
+
+  return (
+    <div
+      className="flex min-w-0 flex-wrap items-center gap-1"
+      data-testid="roster-hint-chips"
+    >
+      {featureLabel != null && (
+        <InlineHintChip
+          label={featureLabel}
+          tone="feature"
+        />
+      )}
+      {phaseHint != null && (
+        <InlineHintChip
+          label={phaseHint}
+          tone="phase"
+        />
+      )}
+      {taskHint != null && (
+        <InlineHintChip
+          label={taskHint}
+          tone="task"
+        />
+      )}
+    </div>
+  );
+}
+
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 function RosterRow({
@@ -257,13 +366,19 @@ function RosterRow({
         </div>
       </div>
 
-      {/* Current task */}
-      <div
-        className="planning-mono min-w-0 truncate text-[11px]"
-        style={{ color: 'var(--ink-2)' }}
-        title={entry.currentTask}
-      >
-        {entry.currentTask}
+      {/* Current task + P15-005 inline hint chips */}
+      <div className="min-w-0">
+        <div
+          className="planning-mono truncate text-[11px] leading-tight"
+          style={{ color: 'var(--ink-2)' }}
+          title={entry.currentTask}
+        >
+          {entry.currentTask}
+        </div>
+        {/* Hint chips rendered below task text within the same grid cell */}
+        <div className="mt-0.5">
+          <InlineHintChips session={entry.session} />
+        </div>
       </div>
 
       {/* Since */}
@@ -311,7 +426,7 @@ function RosterHeader() {
     >
       <span role="columnheader">State</span>
       <span role="columnheader">Agent / Model</span>
-      <span role="columnheader">Task</span>
+      <span role="columnheader">Task / Context</span>
       <span role="columnheader">Since</span>
     </div>
   );
