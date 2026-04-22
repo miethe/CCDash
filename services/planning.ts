@@ -19,8 +19,12 @@ import type {
   PlanningTokenUsageByModel,
   ProjectPlanningGraph,
   ProjectPlanningSummary,
+  PlanningStatusCounts,
+  PlanningCtxPerPhase,
+  PlanningTokenTelemetry,
 } from '../types';
 import type { AgentQueryEnvelope } from '../types';
+import type { PlanningStatusBucket } from './planningRoutes';
 
 const API_BASE = '/api/agent/planning';
 const DEFAULT_PROJECT_CACHE_KEY = '__default__';
@@ -379,6 +383,35 @@ interface WireFeatureSummaryItem {
   node_count: number;
 }
 
+interface WireStatusCounts {
+  shaping: number;
+  planned: number;
+  active: number;
+  blocked: number;
+  review: number;
+  completed: number;
+  deferred: number;
+  stale_or_mismatched: number;
+}
+
+interface WireCtxPerPhase {
+  context_count: number;
+  phase_count: number;
+  ratio: number | null;
+  source: 'backend' | 'unavailable';
+}
+
+interface WireTokenTelemetryEntry {
+  model_family: string;
+  total_tokens: number;
+}
+
+interface WireTokenTelemetry {
+  total_tokens: number | null;
+  by_model_family: WireTokenTelemetryEntry[];
+  source: 'session_attribution' | 'unavailable';
+}
+
 interface WireProjectPlanningSummary extends WireEnvelope {
   project_id: string;
   project_name: string;
@@ -393,6 +426,9 @@ interface WireProjectPlanningSummary extends WireEnvelope {
   blocked_feature_ids: string[];
   node_counts_by_type: WireNodeCountsByType;
   feature_summaries: WireFeatureSummaryItem[];
+  status_counts?: WireStatusCounts;
+  ctx_per_phase?: WireCtxPerPhase | null;
+  token_telemetry?: WireTokenTelemetry | null;
 }
 
 interface WireFeatureModelTokens {
@@ -701,6 +737,41 @@ function adaptPhaseTaskItem(wire: WirePhaseTaskItem): PhaseTaskItem {
   };
 }
 
+function adaptStatusCounts(wire: WireStatusCounts): PlanningStatusCounts {
+  return {
+    shaping: wire.shaping ?? 0,
+    planned: wire.planned ?? 0,
+    active: wire.active ?? 0,
+    blocked: wire.blocked ?? 0,
+    review: wire.review ?? 0,
+    completed: wire.completed ?? 0,
+    deferred: wire.deferred ?? 0,
+    staleOrMismatched: wire.stale_or_mismatched ?? 0,
+  };
+}
+
+function adaptCtxPerPhase(wire: WireCtxPerPhase | null | undefined): PlanningCtxPerPhase | null {
+  if (!wire) return null;
+  return {
+    contextCount: wire.context_count ?? 0,
+    phaseCount: wire.phase_count ?? 0,
+    ratio: wire.ratio ?? null,
+    source: wire.source ?? 'unavailable',
+  };
+}
+
+function adaptTokenTelemetry(wire: WireTokenTelemetry | null | undefined): PlanningTokenTelemetry | null {
+  if (!wire) return null;
+  return {
+    totalTokens: wire.total_tokens ?? null,
+    byModelFamily: (wire.by_model_family ?? []).map((e) => ({
+      modelFamily: e.model_family ?? '',
+      totalTokens: e.total_tokens ?? 0,
+    })),
+    source: wire.source ?? 'unavailable',
+  };
+}
+
 // ── Public API helpers ────────────────────────────────────────────────────────
 
 /**
@@ -733,6 +804,9 @@ export async function getProjectPlanningSummary(
       blockedFeatureIds: wire.blocked_feature_ids ?? [],
       nodeCountsByType: adaptNodeCountsByType(wire.node_counts_by_type ?? {} as WireNodeCountsByType),
       featureSummaries: (wire.feature_summaries ?? []).map(adaptFeatureSummaryItem),
+      ...(wire.status_counts !== undefined ? { statusCounts: adaptStatusCounts(wire.status_counts) } : {}),
+      ...(wire.ctx_per_phase !== undefined ? { ctxPerPhase: adaptCtxPerPhase(wire.ctx_per_phase) } : {}),
+      ...(wire.token_telemetry !== undefined ? { tokenTelemetry: adaptTokenTelemetry(wire.token_telemetry) } : {}),
     };
   }, options);
 }
@@ -877,4 +951,62 @@ export async function getPhaseOperations(
     dependencyResolution: wire.dependency_resolution ?? {},
     progressEvidence: wire.progress_evidence ?? [],
   };
+}
+
+// ── Status bucket derivation (P13-003) ───────────────────────────────────────
+
+/**
+ * Client-side mirror of the backend `_derive_status_bucket` function.
+ *
+ * Precedence (descending): blocked > review > active > planned > shaping >
+ *   completed > deferred > stale_or_mismatched.
+ */
+export function deriveStatusBucket(feature: FeatureSummaryItem): PlanningStatusBucket {
+  const eff = (feature.effectiveStatus ?? '').toLowerCase().trim();
+  const raw = (feature.rawStatus ?? '').toLowerCase().trim();
+
+  if (feature.hasBlockedPhases || eff === 'blocked' || raw === 'blocked') return 'blocked';
+  if (eff === 'in_review' || eff === 'in-review' || raw === 'in_review' || raw === 'in-review' || eff === 'review' || raw === 'review') return 'review';
+  if (eff === 'in_progress' || eff === 'in-progress' || raw === 'in_progress' || raw === 'in-progress') return 'active';
+  if (eff === 'approved' || eff === 'planned' || raw === 'approved' || raw === 'planned') return 'planned';
+  if (eff === 'draft' || eff === 'shaping' || eff === 'idea' || raw === 'draft' || raw === 'shaping' || raw === 'idea') return 'shaping';
+  if (eff === 'completed' || eff === 'done' || eff === 'merged' || eff === 'promoted' || raw === 'completed' || raw === 'done' || raw === 'merged') return 'completed';
+  if (eff === 'deferred' || eff === 'deprecated' || eff === 'superseded' || eff === 'future' || raw === 'deferred' || raw === 'deprecated' || raw === 'superseded') return 'deferred';
+
+  return 'stale_or_mismatched';
+}
+
+/** Returns true if a FeatureSummaryItem matches the given status bucket. */
+export function featureMatchesBucket(
+  feature: FeatureSummaryItem,
+  bucket: PlanningStatusBucket,
+): boolean {
+  return deriveStatusBucket(feature) === bucket;
+}
+
+/**
+ * Returns true if a FeatureSummaryItem matches the given signal filter.
+ *   blocked  → hasBlockedPhases or effectiveStatus contains 'blocked'
+ *   stale    → mismatchState contains 'stale', 'reversed', or 'unresolved'
+ *   mismatch → isMismatch
+ */
+export function featureMatchesSignal(
+  feature: FeatureSummaryItem,
+  signal: 'blocked' | 'stale' | 'mismatch',
+): boolean {
+  switch (signal) {
+    case 'blocked':
+      return (
+        feature.hasBlockedPhases ||
+        (feature.effectiveStatus ?? '').toLowerCase().includes('blocked')
+      );
+    case 'stale':
+      return (
+        (feature.mismatchState ?? '').toLowerCase().includes('stale') ||
+        (feature.mismatchState ?? '').toLowerCase().includes('reversed') ||
+        (feature.mismatchState ?? '').toLowerCase().includes('unresolved')
+      );
+    case 'mismatch':
+      return feature.isMismatch;
+  }
 }

@@ -101,3 +101,104 @@ export function planningFeatureDetailHref(featureId: string): string {
 export function planningArtifactsHref(type: string): string {
   return `/planning/artifacts/${encodeURIComponent(type)}`;
 }
+
+// ── P13-003: Planning filter params ───────────────────────────────────────────
+
+export type PlanningStatusBucket =
+  | 'blocked'
+  | 'review'
+  | 'active'
+  | 'planned'
+  | 'shaping'
+  | 'completed'
+  | 'deferred'
+  | 'stale_or_mismatched';
+
+export type PlanningSignal = 'blocked' | 'stale' | 'mismatch';
+
+export const PLANNING_STATUS_BUCKETS: PlanningStatusBucket[] = [
+  'blocked', 'review', 'active', 'planned', 'shaping',
+  'completed', 'deferred', 'stale_or_mismatched',
+];
+
+export const PLANNING_SIGNALS: PlanningSignal[] = ['blocked', 'stale', 'mismatch'];
+
+export function isPlanningStatusBucket(value: string): value is PlanningStatusBucket {
+  return PLANNING_STATUS_BUCKETS.includes(value as PlanningStatusBucket);
+}
+
+export function isPlanningSignal(value: string): value is PlanningSignal {
+  return PLANNING_SIGNALS.includes(value as PlanningSignal);
+}
+
+export interface PlanningFilterState {
+  statusBucket: PlanningStatusBucket | null;
+  signal: PlanningSignal | null;
+}
+
+export function resolvePlanningFilterState(searchParams: URLSearchParams): PlanningFilterState {
+  const rawBucket = searchParams.get('statusBucket');
+  const rawSignal = searchParams.get('signal');
+  return {
+    statusBucket: rawBucket && isPlanningStatusBucket(rawBucket) ? rawBucket : null,
+    signal: rawSignal && isPlanningSignal(rawSignal) ? rawSignal : null,
+  };
+}
+
+// ── P13-003: usePlanningFilter hook ───────────────────────────────────────────
+// Appended here to avoid an extra file; planningRoutes.ts is already a pure
+// barrel-style module. The hook is tree-shaken when not used.
+
+import { useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
+
+export function usePlanningFilter(): {
+  filter: PlanningFilterState;
+  setStatusBucket: (bucket: PlanningStatusBucket) => void;
+  setSignal: (signal: PlanningSignal) => void;
+  clearFilter: () => void;
+} {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filter = resolvePlanningFilterState(searchParams);
+
+  const setStatusBucket = useCallback(
+    (bucket: PlanningStatusBucket) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (next.get('statusBucket') === bucket) {
+          next.delete('statusBucket');
+        } else {
+          next.set('statusBucket', bucket);
+        }
+        return next;
+      });
+    },
+    [setSearchParams],
+  );
+
+  const setSignal = useCallback(
+    (signal: PlanningSignal) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (next.get('signal') === signal) {
+          next.delete('signal');
+        } else {
+          next.set('signal', signal);
+        }
+        return next;
+      });
+    },
+    [setSearchParams],
+  );
+
+  const clearFilter = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('statusBucket');
+      next.delete('signal');
+      return next;
+    });
+  }, [setSearchParams]);
+
+  return { filter, setStatusBucket, setSignal, clearFilter };
+}

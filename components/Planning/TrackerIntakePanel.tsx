@@ -86,6 +86,29 @@ function mismatchStateLabel(state: PlanningMismatchStateValue | string): string 
   }
 }
 
+
+// ── Row-click resolver ────────────────────────────────────────────────────────
+
+/**
+ * P14-002: Resolve which quick-view path to take when a tracker/intake node row
+ * is clicked.
+ *
+ * - Nodes with a `featureSlug` → feature quick view (open panel with feature content)
+ * - Nodes without `featureSlug` → document quick view / modal path
+ *
+ * Returns a discriminated union so callers can pattern-match on `kind`.
+ */
+export type NodeClickResolution =
+  | { kind: 'feature'; featureSlug: string; node: PlanningNode }
+  | { kind: 'document'; node: PlanningNode };
+
+export function resolveNodeClick(node: PlanningNode): NodeClickResolution {
+  if (node.featureSlug) {
+    return { kind: 'feature', featureSlug: node.featureSlug, node };
+  }
+  return { kind: 'document', node };
+}
+
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 function StatusChip({ label, variant = 'default' }: { label: string; variant?: 'default' | 'warn' | 'ok' | 'info' | 'danger' }) {
@@ -500,7 +523,7 @@ function NodeRow({
   const reason = node.mismatchState?.reason;
 
   const inner = (
-    <div className="rounded-lg border border-panel-border/60 bg-slate-800/40 px-3 py-2 space-y-1">
+    <div className="planning-density-row rounded-lg border border-panel-border/60 bg-slate-800/40 px-3 py-2 space-y-1">
       <div className="flex items-center gap-2">
         <div className="flex-1 min-w-0">
           <p className="truncate text-xs font-medium text-panel-foreground" title={node.title}>
@@ -594,28 +617,75 @@ export interface TrackerIntakePanelProps {
   projectId: string | null;
   summary: ProjectPlanningSummary;
   onSelectFeature?: (featureId: string) => void;
+  /**
+   * P13-003: When set, pre-selects the matching tracker tab:
+   *   'stale'   → 'stale' tab
+   *   'mismatch' → 'validation' tab
+   *   'blocked'  → 'validation' tab
+   */
+  activeSignal?: string | null;
+  /**
+   * P14-002: Called when a tracker/intake node row is clicked.
+   * The resolution (feature vs. document) is pre-computed by `resolveNodeClick`
+   * before this callback fires.
+   *
+   * - When the node has a `featureSlug` → `resolution.kind === 'feature'`
+   * - When the node is doc-only → `resolution.kind === 'document'`
+   *
+   * If omitted, the panel falls back to the internal `DocumentModal` path for
+   * doc-only nodes and does nothing for feature nodes.
+   */
+  onNodeQuickView?: (resolution: NodeClickResolution, triggerEl: HTMLElement | null) => void;
 }
 
 export function TrackerIntakePanel({
   projectId,
   summary,
   onSelectFeature,
+  activeSignal,
+  onNodeQuickView,
 }: TrackerIntakePanelProps) {
   const { documents } = useData();
   const [graphState, setGraphState] = useState<GraphFetchState>({ phase: 'idle' });
   const [activeTab, setActiveTab] = useState<TabId>('promotion');
+
+  // P13-003: Sync tab to activeSignal when it changes from outside.
+  // Only overrides if the signal maps to a known tab.
+  useEffect(() => {
+    if (!activeSignal) return;
+    if (activeSignal === 'stale') setActiveTab('stale');
+    else if (activeSignal === 'mismatch' || activeSignal === 'blocked') setActiveTab('validation');
+  }, [activeSignal]);
   const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
 
-  const handleNodeClick = useCallback((node: PlanningNode) => {
-    if (!node.path) return;
-    const doc =
-      documents.find(d => d.filePath === node.path) ||
-      documents.find(d => d.canonicalPath === node.path) ||
-      documents.find(d => node.path!.endsWith(d.filePath)) ||
-      documents.find(d => d.filePath.endsWith(node.path!)) ||
-      null;
-    if (doc) setSelectedDoc(doc);
-  }, [documents]);
+  /**
+   * P14-002: Row-click handler that branches on `featureSlug`.
+   *
+   * - Feature row → delegates to `onNodeQuickView` with kind='feature'
+   * - Doc-only row → delegates to `onNodeQuickView` with kind='document', or
+   *   falls back to internal DocumentModal state when `onNodeQuickView` is absent
+   */
+  const handleNodeClick = useCallback((node: PlanningNode, triggerEl: HTMLElement | null = null) => {
+    const resolution = resolveNodeClick(node);
+
+    if (onNodeQuickView) {
+      onNodeQuickView(resolution, triggerEl);
+      return;
+    }
+
+    // Fallback: doc-only path via internal modal (pre-P14-002 behaviour)
+    if (resolution.kind === 'document' && node.path) {
+      const doc =
+        documents.find(d => d.filePath === node.path) ||
+        documents.find(d => d.canonicalPath === node.path) ||
+        documents.find(d => node.path!.endsWith(d.filePath)) ||
+        documents.find(d => d.filePath.endsWith(node.path!)) ||
+        null;
+      if (doc) setSelectedDoc(doc);
+    }
+    // Feature-only path without onNodeQuickView: featureSlug chip already handles
+    // navigation so no additional action needed here.
+  }, [documents, onNodeQuickView]);
 
   const loadGraph = useCallback(async () => {
     if (!projectId) {
@@ -779,7 +849,7 @@ export function TrackerIntakePanel({
                   id={`tracker-tab-${tab.id}`}
                   onClick={() => setActiveTab(tab.id)}
                   className={[
-                    'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info',
+                    'planning-density-tab flex items-center gap-1.5 rounded-full font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info',
                     isActive
                       ? 'bg-info/15 text-info border border-info/30 shadow-sm'
                       : 'bg-slate-700/40 text-muted-foreground border border-transparent hover:bg-slate-700/60 hover:text-panel-foreground',

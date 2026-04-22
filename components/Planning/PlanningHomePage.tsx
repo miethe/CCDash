@@ -3,9 +3,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GitBranch, Inbox, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
-import type { Feature, FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
+import type { Feature, FeaturePlanningContext, FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
 import {
   getCachedProjectPlanningSummary,
+  getFeaturePlanningContext,
   getProjectPlanningSummary,
   PlanningApiError,
   prefetchFeaturePlanningContext,
@@ -17,8 +18,12 @@ import {
   removePlanningRouteFeatureModalSearch,
   resolvePlanningRouteFeatureModalState,
   setPlanningRouteFeatureModalSearch,
+  usePlanningFilter,
   type PlanningFeatureModalTab,
+  type PlanningStatusBucket,
+  type PlanningSignal,
 } from '../../services/planningRoutes';
+import { featureMatchesBucket, featureMatchesSignal } from '../../services/planning';
 import type { LiveConnectionStatus } from '../../services/live';
 import { ProjectBoardFeatureModal } from '../ProjectBoard';
 import { PlanningSummaryPanel } from './PlanningSummaryPanel';
@@ -26,7 +31,11 @@ import type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
 import { PlanningGraphPanel } from './PlanningGraphPanel';
 import { PlanningMetricsStrip } from './PlanningMetricsStrip';
 import { PlanningArtifactChipRow } from './PlanningArtifactChipRow';
-import { TrackerIntakePanel } from './TrackerIntakePanel';
+import { TrackerIntakePanel, type NodeClickResolution } from './TrackerIntakePanel';
+import {
+  PlanningQuickViewPanel,
+  usePlanningQuickView,
+} from './PlanningQuickViewPanel';
 import { PlanningDensityToggle } from './PlanningRouteLayout';
 import { PlanningTriagePanel } from './PlanningTriagePanel';
 import { PlanningAgentRosterPanel } from './PlanningAgentRosterPanel';
@@ -382,14 +391,14 @@ function PlanningFeatureRow({
       onMouseEnter={onPrefetch}
       onFocus={onPrefetch}
       data-testid={`planning-feature-row-${feature.featureId}`}
-      className="planning-row flex w-full items-start gap-2.5 rounded-lg border border-[color:var(--line-1)] bg-[color:var(--bg-2)] px-3 py-2.5 text-left transition-all hover:border-[color:var(--brand)] hover:bg-[color:var(--bg-3)] focus:outline-none"
+      className="planning-density-row planning-row flex w-full items-start gap-2.5 rounded-lg border border-[color:var(--line-1)] bg-[color:var(--bg-2)] px-3 py-2.5 text-left transition-all hover:border-[color:var(--brand)] hover:bg-[color:var(--bg-3)] focus:outline-none"
     >
       <span className="mt-0.5 shrink-0 text-[color:var(--brand)]">
         <PlanningNodeTypeIcon type="implementation_plan" size={13} />
       </span>
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-start justify-between gap-2">
-          <span className="truncate text-sm font-medium leading-snug text-[color:var(--ink-0)]">
+          <span className="truncate font-medium leading-snug text-[color:var(--ink-0)]" style={{ fontSize: 'var(--row-font)' }}>
             {feature.featureName}
           </span>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -403,7 +412,7 @@ function PlanningFeatureRow({
         {feature.isMismatch && (
           <MismatchBadge compact state={feature.mismatchState} reason="" />
         )}
-        <div className="flex items-center gap-2 text-[10px] text-[color:var(--ink-2)]">
+        <div className="flex items-center gap-2 text-[color:var(--ink-2)]" style={{ fontSize: 'var(--row-meta-font)' }}>
           <span className="planning-mono">{feature.featureId}</span>
           {feature.phaseCount > 0 && (
             <span>
@@ -441,14 +450,27 @@ export function ActivePlansColumn({
   features,
   onSelectFeature,
   onPrefetchFeature,
+  activeBucket,
+  activeSignal,
 }: {
   features: FeatureSummaryItem[];
   onSelectFeature: (featureId: string) => void;
   onPrefetchFeature?: (featureId: string) => void;
+  activeBucket?: PlanningStatusBucket | null;
+  activeSignal?: PlanningSignal | null;
 }) {
-  const active = features.filter(
+  // Base: in-progress features
+  const base = features.filter(
     (f) => f.effectiveStatus === 'in_progress' || f.effectiveStatus === 'in-progress',
   );
+  // P13-003: Apply route filter if set
+  const active = (activeBucket || activeSignal)
+    ? base.filter((f) => {
+        if (activeBucket && !featureMatchesBucket(f, activeBucket)) return false;
+        if (activeSignal && !featureMatchesSignal(f, activeSignal)) return false;
+        return true;
+      })
+    : base;
 
   return (
     <Panel
@@ -488,14 +510,27 @@ export function PlannedFeaturesColumn({
   features,
   onSelectFeature,
   onPrefetchFeature,
+  activeBucket,
+  activeSignal,
 }: {
   features: FeatureSummaryItem[];
   onSelectFeature: (featureId: string) => void;
   onPrefetchFeature?: (featureId: string) => void;
+  activeBucket?: PlanningStatusBucket | null;
+  activeSignal?: PlanningSignal | null;
 }) {
-  const planned = features.filter(
+  // Base: draft or approved features
+  const base = features.filter(
     (f) => f.effectiveStatus === 'draft' || f.effectiveStatus === 'approved',
   );
+  // P13-003: Apply route filter if set
+  const planned = (activeBucket || activeSignal)
+    ? base.filter((f) => {
+        if (activeBucket && !featureMatchesBucket(f, activeBucket)) return false;
+        if (activeSignal && !featureMatchesSignal(f, activeSignal)) return false;
+        return true;
+      })
+    : base;
 
   return (
     <Panel
@@ -526,6 +561,210 @@ export function PlannedFeaturesColumn({
   );
 }
 
+// ── P14-002: Quick view content components ───────────────────────────────────
+
+/**
+ * Rendered inside PlanningQuickViewPanel when the clicked row has a featureSlug.
+ * Loads FeaturePlanningContext and renders a lightweight summary —
+ * reusing the same data already fetched/cached by prefetchFeaturePlanningContext.
+ */
+function FeatureQuickViewContent({
+  featureSlug,
+  projectId,
+}: {
+  featureSlug: string;
+  projectId: string | null;
+}) {
+  const [ctx, setCtx] = useState<FeaturePlanningContext | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    getFeaturePlanningContext(featureSlug, { projectId: projectId ?? undefined })
+      .then((data) => {
+        setCtx(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Failed to load feature context.');
+        setLoading(false);
+      });
+  }, [featureSlug, projectId]);
+
+  if (loading) {
+    return (
+      <div className="animate-pulse space-y-3">
+        <div className="h-4 rounded bg-slate-700/40 w-3/5" />
+        <div className="h-3 rounded bg-slate-700/30 w-4/5" />
+        <div className="h-3 rounded bg-slate-700/30 w-2/5" />
+        <div className="h-px bg-slate-700/30 my-3" />
+        <div className="space-y-2">
+          <div className="h-8 rounded bg-slate-700/30" />
+          <div className="h-8 rounded bg-slate-700/30" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <p className="text-xs text-danger">{error}</p>
+    );
+  }
+
+  if (!ctx) return null;
+
+  const statusLabel = ctx.effectiveStatus || ctx.rawStatus || 'unknown';
+  const mismatch = ctx.mismatchState && ctx.mismatchState !== 'aligned' ? ctx.mismatchState : null;
+
+  return (
+    <div className="space-y-4 text-sm">
+      {/* Feature identity */}
+      <div>
+        <p className="text-xs text-muted-foreground/60 mb-1 uppercase tracking-wide font-semibold">Feature</p>
+        <p className="font-medium text-panel-foreground truncate">{ctx.featureName || ctx.featureId}</p>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-700/60 text-slate-300">
+            {statusLabel}
+          </span>
+          {mismatch && (
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-600/20 text-amber-400">
+              {mismatch}
+            </span>
+          )}
+          {ctx.readyToPromote && (
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-emerald-600/20 text-emerald-400">
+              ready to promote
+            </span>
+          )}
+          {ctx.isStale && (
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-rose-600/20 text-rose-400">
+              stale
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Phases */}
+      {ctx.phases && ctx.phases.length > 0 && (
+        <div>
+          <p className="text-xs text-muted-foreground/60 mb-1.5 uppercase tracking-wide font-semibold">
+            Phases ({ctx.phases.length})
+          </p>
+          <div className="space-y-1">
+            {ctx.phases.slice(0, 6).map((ph) => (
+              <div
+                key={ph.phaseToken || String(ph.phaseNumber)}
+                className="flex items-center gap-2 rounded border border-panel-border/40 bg-slate-800/40 px-2.5 py-1.5"
+              >
+                <span className="planning-mono text-[10px] text-muted-foreground/60 shrink-0 tabular-nums">
+                  P{ph.phaseNumber}
+                </span>
+                <span className="flex-1 min-w-0 truncate text-xs text-panel-foreground">
+                  {ph.phaseTitle || ph.phaseToken || `Phase ${ph.phaseNumber}`}
+                </span>
+                <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-700/60 text-slate-300 shrink-0">
+                  {ph.effectiveStatus || ph.rawStatus || 'unknown'}
+                </span>
+              </div>
+            ))}
+            {ctx.phases.length > 6 && (
+              <p className="text-[10px] text-muted-foreground/50 pl-1">
+                +{ctx.phases.length - 6} more phases
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Artifact refs */}
+      {((ctx.specs?.length ?? 0) + (ctx.prds?.length ?? 0) + (ctx.plans?.length ?? 0)) > 0 && (
+        <div>
+          <p className="text-xs text-muted-foreground/60 mb-1.5 uppercase tracking-wide font-semibold">
+            Artifacts
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {ctx.specs?.map((ref) => (
+              <span key={ref.artifactId} className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-700/40 text-slate-300">
+                spec
+              </span>
+            ))}
+            {ctx.prds?.map((ref) => (
+              <span key={ref.artifactId} className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-700/40 text-slate-300">
+                prd
+              </span>
+            ))}
+            {ctx.plans?.map((ref) => (
+              <span key={ref.artifactId} className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-700/40 text-slate-300">
+                plan
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Open questions */}
+      {ctx.openQuestions && ctx.openQuestions.length > 0 && (
+        <div>
+          <p className="text-xs text-muted-foreground/60 mb-1.5 uppercase tracking-wide font-semibold">
+            Open Questions ({ctx.openQuestions.length})
+          </p>
+          <ul className="space-y-1">
+            {ctx.openQuestions.slice(0, 3).map((q, i) => (
+              <li key={i} className="text-xs text-muted-foreground truncate" title={q.question}>
+                <span className="mr-1 text-muted-foreground/40">·</span>
+                {q.question}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Rendered inside PlanningQuickViewPanel when the clicked row is doc-only
+ * (no featureSlug). Shows a minimal doc summary while the DocumentModal is
+ * opened by the parent for full content viewing.
+ */
+function DocQuickViewContent({
+  node,
+}: {
+  node: import('../../types').PlanningNode;
+}) {
+  return (
+    <div className="space-y-3 text-sm">
+      <div>
+        <p className="text-xs text-muted-foreground/60 mb-1 uppercase tracking-wide font-semibold">Document</p>
+        <p className="font-medium text-panel-foreground">{node.title || node.type}</p>
+        {node.path && (
+          <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground/50" title={node.path}>
+            {node.path.length > 72 ? `…${node.path.slice(-69)}` : node.path}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {node.rawStatus && (
+          <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-700/60 text-slate-300">
+            {node.rawStatus}
+          </span>
+        )}
+        {node.effectiveStatus && node.effectiveStatus !== node.rawStatus && (
+          <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-600/20 text-amber-400">
+            {node.effectiveStatus}
+          </span>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground/60 italic">
+        Open full document modal for content and linked artifacts.
+      </p>
+    </div>
+  );
+}
+
 // ── Page shell (ready state) ──────────────────────────────────────────────────
 
 function PlanningShell({
@@ -535,6 +774,11 @@ function PlanningShell({
   onPrefetchFeature,
   onDrillDown,
   onRefresh,
+  onNodeQuickView,
+  activeStatusBucket,
+  activeSignal,
+  onStatusBucketClick,
+  onSignalClick,
 }: {
   summary: ProjectPlanningSummary;
   liveStatus: LiveConnectionStatus;
@@ -542,6 +786,16 @@ function PlanningShell({
   onPrefetchFeature?: (featureId: string) => void;
   onDrillDown: (type: ArtifactDrillDownType) => void;
   onRefresh?: () => void;
+  /** P14-002: Row-click handler for tracker/intake panel rows. */
+  onNodeQuickView?: (resolution: NodeClickResolution, triggerEl: HTMLElement | null) => void;
+  /** P13-003: Active status bucket filter from URL. */
+  activeStatusBucket?: PlanningStatusBucket | null;
+  /** P13-003: Active health signal filter from URL. */
+  activeSignal?: PlanningSignal | null;
+  /** P13-003: Called when a status bucket tile is clicked. */
+  onStatusBucketClick?: (bucket: PlanningStatusBucket) => void;
+  /** P13-003: Called when a health signal pill is clicked. */
+  onSignalClick?: (signal: PlanningSignal) => void;
 }) {
   return (
     <div className="max-w-screen-2xl space-y-6 px-1 py-2">
@@ -573,8 +827,14 @@ function PlanningShell({
         <HeroHeader summary={summary} />
       </Panel>
 
-      {/* T2-002: Metrics strip — 6-tile feature health counts */}
-      <PlanningMetricsStrip summary={summary} />
+      {/* T2-002 / P13-003: Metrics strip — clickable status bucket + signal filters */}
+      <PlanningMetricsStrip
+        summary={summary}
+        activeStatusBucket={activeStatusBucket}
+        activeSignal={activeSignal}
+        onStatusBucketClick={onStatusBucketClick}
+        onSignalClick={onSignalClick}
+      />
 
       {/* T2-003: Artifact composition chip row — 8 artifact types with counts */}
       <Panel className="px-5 py-3" data-testid="planning-artifact-chip-row-section">
@@ -614,11 +874,15 @@ function PlanningShell({
           features={summary.featureSummaries}
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
+          activeBucket={activeStatusBucket}
+          activeSignal={activeSignal}
         />
         <PlannedFeaturesColumn
           features={summary.featureSummaries}
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
+          activeBucket={activeStatusBucket}
+          activeSignal={activeSignal}
         />
       </div>
 
@@ -628,6 +892,8 @@ function PlanningShell({
           projectId={summary.projectId ?? null}
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
+          activeStatusBucket={activeStatusBucket}
+          activeSignal={activeSignal}
         />
       </Panel>
       <Panel data-testid="planning-tracker-section" className="p-5">
@@ -635,6 +901,8 @@ function PlanningShell({
           projectId={summary.projectId ?? null}
           summary={summary}
           onSelectFeature={onSelectFeature}
+          onNodeQuickView={onNodeQuickView}
+          activeSignal={activeSignal}
         />
       </Panel>
     </div>
@@ -659,6 +927,9 @@ export default function PlanningHomePage() {
     () => resolvePlanningRouteFeatureModalState(searchParams),
     [searchParams],
   );
+
+  // P13-003: Filter state from URL search params
+  const { filter, setStatusBucket, setSignal } = usePlanningFilter();
 
   // Check capability flag on mount. Defaults to true; silently falls back to
   // true if the capabilities endpoint is unreachable so existing deploys are
@@ -735,6 +1006,25 @@ export default function PlanningHomePage() {
     return resolvePlanningModalFeature(selectedFeatureModal.featureId, features, fetchState.summary);
   }, [features, fetchState, selectedFeatureModal]);
 
+  // P14-002: Quick view panel state — hosted here so PlanningShell can pass
+  // the handler down to TrackerIntakePanel without owning the panel itself.
+  const quickView = usePlanningQuickView();
+  // Stores the last node that triggered the quick view, so we can render the
+  // correct content variant (feature vs. doc) inside the panel.
+  const [quickViewNode, setQuickViewNode] = useState<import('../../types').PlanningNode | null>(null);
+
+  const handleNodeQuickView = useCallback(
+    (resolution: NodeClickResolution, triggerEl: HTMLElement | null) => {
+      setQuickViewNode(resolution.node);
+      const title =
+        resolution.kind === 'feature'
+          ? resolution.featureSlug
+          : resolution.node.title || resolution.node.type;
+      quickView.openPanel(title, triggerEl);
+    },
+    [quickView],
+  );
+
   // Render
   if (!planningEnabled) {
     return (
@@ -788,6 +1078,11 @@ export default function PlanningHomePage() {
           navigate(planningArtifactsHref(type))
         }
         onRefresh={() => void loadSummary()}
+        onNodeQuickView={handleNodeQuickView}
+        activeStatusBucket={filter.statusBucket}
+        activeSignal={filter.signal}
+        onStatusBucketClick={setStatusBucket}
+        onSignalClick={setSignal}
       />
       {selectedFeature && selectedFeatureModal ? (
         <ProjectBoardFeatureModal
@@ -796,6 +1091,22 @@ export default function PlanningHomePage() {
           onClose={closeFeatureModal}
         />
       ) : null}
+      {/* P14-002: Tracker/intake row quick view panel */}
+      <PlanningQuickViewPanel
+        open={quickView.open}
+        onClose={quickView.closePanel}
+        title={quickView.title}
+      >
+        {quickViewNode &&
+          (quickViewNode.featureSlug ? (
+            <FeatureQuickViewContent
+              featureSlug={quickViewNode.featureSlug}
+              projectId={activeProject.id ?? null}
+            />
+          ) : (
+            <DocQuickViewContent node={quickViewNode} />
+          ))}
+      </PlanningQuickViewPanel>
     </>
   );
 }

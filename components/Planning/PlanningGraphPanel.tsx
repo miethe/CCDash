@@ -1392,6 +1392,8 @@ export interface PlanningGraphPanelProps {
   projectId: string | null;
   onSelectFeature?: (featureId: string) => void;
   onPrefetchFeature?: (featureId: string) => void;
+  activeStatusBucket?: import('../../services/planningRoutes').PlanningStatusBucket | null;
+  activeSignal?: import('../../services/planningRoutes').PlanningSignal | null;
 }
 
 type GraphFetchState =
