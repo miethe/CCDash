@@ -1065,14 +1065,45 @@ class PlanningQueryService:
             *[row.get("updated_at") or row.get("updatedAt") for row in feature_rows]
         )
 
-        # ── New aggregate fields ──────────────────────────────────────────────
-        status_counts = _build_status_counts(projected)
-        total_phase_count = sum(len(f.phases) for f in projected)
-        ctx_per_phase = _build_ctx_per_phase(
-            context_count=node_type_counter.get("context", 0),
-            phase_count=total_phase_count,
-        )
-        token_telemetry = _build_token_telemetry(projected)
+        # ── New aggregate fields (P13-001: status buckets + ctx ratio + token telemetry) ──
+        with otel.start_span(
+            "planning.service.summary.aggregates",
+            {
+                "project_id": project.id,
+                "feature_count": len(projected),
+                "phase_count": sum(len(f.phases) for f in projected),
+                "token_telemetry_available": any(
+                    getattr(f, "tokenUsageByModel", None) is not None for f in projected
+                ),
+            },
+        ):
+            status_counts = _build_status_counts(projected)
+            total_phase_count = sum(len(f.phases) for f in projected)
+            ctx_per_phase = _build_ctx_per_phase(
+                context_count=node_type_counter.get("context", 0),
+                phase_count=total_phase_count,
+            )
+            token_telemetry = _build_token_telemetry(projected)
+
+        # ── Feature summary shaping (P12-001/P12-002: active-first + terminal filter + limit) ──
+        with otel.start_span(
+            "planning.service.summary.shape_summaries",
+            {
+                "project_id": project.id,
+                "active_first": active_first,
+                "include_terminal": include_terminal,
+                "limit": limit if limit is not None else -1,
+                "input_count": len(feature_summaries),
+            },
+        ) as shape_span:
+            shaped_summaries = _shape_feature_summaries(
+                feature_summaries,
+                active_first=active_first,
+                include_terminal=include_terminal,
+                limit=limit,
+            )
+            if shape_span is not None:
+                shape_span.set_attribute("output_count", len(shaped_summaries))
 
         return ProjectPlanningSummaryDTO(
             status="partial" if partial else "ok",
@@ -1089,12 +1120,7 @@ class PlanningQueryService:
             reversal_feature_ids=sorted(set(reversal_ids)),
             blocked_feature_ids=sorted(set(blocked_ids)),
             node_counts_by_type=node_counts,
-            feature_summaries=_shape_feature_summaries(
-                feature_summaries,
-                active_first=active_first,
-                include_terminal=include_terminal,
-                limit=limit,
-            ),
+            feature_summaries=shaped_summaries,
             status_counts=status_counts,
             ctx_per_phase=ctx_per_phase,
             token_telemetry=token_telemetry,

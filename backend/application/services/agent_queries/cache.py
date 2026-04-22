@@ -101,21 +101,35 @@ async def get_data_version_fingerprint(
     The exact fingerprint format is an implementation detail and may change
     between releases.
     """
+    from backend.observability import otel  # noqa: PLC0415 — lazy import avoids circular dep at module load
+
     db = ports.storage.db
-    try:
-        parts = [
-            await _query_table_marker(db, spec, project_id)
-            for spec in _FINGERPRINT_TABLES
-        ]
-        return "|".join(parts)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "get_data_version_fingerprint: could not read freshness markers "
-            "(project_id=%r): %s",
-            project_id,
-            exc,
-        )
-        return None
+    with otel.start_span(
+        "planning.cache.fingerprint",
+        {
+            "project_id": project_id or "",
+            "table_count": len(_FINGERPRINT_TABLES),
+        },
+    ) as fp_span:
+        try:
+            parts = [
+                await _query_table_marker(db, spec, project_id)
+                for spec in _FINGERPRINT_TABLES
+            ]
+            fingerprint = "|".join(parts)
+            if fp_span is not None:
+                fp_span.set_attribute("success", True)
+            return fingerprint
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "get_data_version_fingerprint: could not read freshness markers "
+                "(project_id=%r): %s",
+                project_id,
+                exc,
+            )
+            if fp_span is not None:
+                fp_span.set_attribute("success", False)
+            return None
 
 
 _FINGERPRINT_TABLES: tuple[dict[str, Any], ...] = (

@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 7
-completed_tasks: 4
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -100,7 +100,7 @@ tasks:
   priority: high
 - id: P16-007
   description: Add OTEL spans on new planning query params and cache fingerprint paths.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -157,7 +157,7 @@ success_criteria:
   description: Full test suite green
   status: pending
 files_modified: []
-progress: 57
+progress: 71
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 16: Verification and Performance Gates
