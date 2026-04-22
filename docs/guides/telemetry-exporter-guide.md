@@ -82,8 +82,8 @@ Prometheus support exists at the backend observability layer, but the exporter d
 
 ## Code References
 
-- `/Users/miethe/dev/homelab/development/CCDash/backend/config.py`
-- `/Users/miethe/dev/homelab/development/CCDash/backend/routers/telemetry.py`
-- `/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/telemetry_exporter.py`
-- `/Users/miethe/dev/homelab/development/CCDash/backend/services/telemetry_transformer.py`
-- `/Users/miethe/dev/homelab/development/CCDash/backend/observability/otel.py`
+- `backend/config.py`
+- `backend/routers/telemetry.py`
+- `backend/services/integrations/telemetry_exporter.py`
+- `backend/services/telemetry_transformer.py`
+- `backend/observability/otel.py`

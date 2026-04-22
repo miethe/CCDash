@@ -1,6 +1,6 @@
 # Data-Domain Schema Layout
 
-This guide is the Phase 3 companion to the ownership matrix and now carries the Phase 4 identity/access and audit/security boundaries as an in-progress enterprise-only contract. [backend/data_domain_layout.py](/Users/miethe/dev/homelab/development/CCDash/backend/data_domain_layout.py) is the code-owned source of truth for schema groups, ownership-primitive placement, and repository ownership behavior.
+This guide is the Phase 3 companion to the ownership matrix and now carries the Phase 4 identity/access and audit/security boundaries as an in-progress enterprise-only contract. [backend/data_domain_layout.py](../../backend/data_domain_layout.py) is the code-owned source of truth for schema groups, ownership-primitive placement, and repository ownership behavior.
 
 ## Boundary Ownership Placement
 

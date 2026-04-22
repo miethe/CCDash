@@ -109,7 +109,7 @@ Checks:
 
 ## Code References
 
-- `/Users/miethe/dev/homelab/development/CCDash/backend/routers/telemetry.py`
-- `/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/telemetry_exporter.py`
-- `/Users/miethe/dev/homelab/development/CCDash/backend/services/telemetry_transformer.py`
-- `/Users/miethe/dev/homelab/development/CCDash/backend/db/repositories/telemetry_queue.py`
+- `backend/routers/telemetry.py`
+- `backend/services/integrations/telemetry_exporter.py`
+- `backend/services/telemetry_transformer.py`
+- `backend/db/repositories/telemetry_queue.py`

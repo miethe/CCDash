@@ -145,12 +145,12 @@ fresh bootstrap plus re-ingest/rebuild.
 If you are rolling out enterprise transcript intelligence after Postgres setup,
 use the runbook:
 
-- [enterprise-session-intelligence-runbook.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/enterprise-session-intelligence-runbook.md)
+- [enterprise-session-intelligence-runbook.md](enterprise-session-intelligence-runbook.md)
 
 ## 6. Best references
 
-- Full setup and env reference: [setup-user-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/setup-user-guide.md)
-- Storage profile contract: [storage-profiles-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/storage-profiles-guide.md)
-- Data-platform rollout and handoff: [data-platform-rollout-and-handoff.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-platform-rollout-and-handoff.md)
-- Query-cache tuning: [query-cache-tuning-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/query-cache-tuning-guide.md)
-- Performance tracker: [performance-and-reliability-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/meta_plans/performance-and-reliability-v1.md)
+- Full setup and env reference: [setup.md](setup.md)
+- Storage profile contract: [storage-profiles-guide.md](storage-profiles-guide.md)
+- Data-platform rollout and handoff: [data-platform-rollout-and-handoff.md](data-platform-rollout-and-handoff.md)
+- Query-cache tuning: [query-cache-tuning-guide.md](query-cache-tuning-guide.md)
+- Performance tracker: [performance-and-reliability-v1.md](../project_plans/meta_plans/performance-and-reliability-v1.md)

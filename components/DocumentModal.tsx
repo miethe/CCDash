@@ -24,6 +24,7 @@ import { getFeatureStatusStyle } from './featureStatus';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { updateDocument as saveDocument } from '../services/documents';
 import { resolveContentViewerFrontmatter } from '../lib/contentViewer';
+import { planningFeatureDetailHref, planningFeatureModalHref } from '../services/planningRoutes';
 
 export const getFileContent = (doc: PlanDocument): string => {
    if (doc.content) return doc.content;
@@ -118,6 +119,8 @@ interface DocumentModalProps {
    onBack?: () => void;
    backLabel?: string;
    zIndexClassName?: string;
+   onOpenFeature?: (featureId: string) => void;
+   featureDetailHref?: (featureId: string) => string;
 }
 
 const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanDocument => ({
@@ -271,6 +274,8 @@ export const DocumentModal = ({
    onBack,
    backLabel = 'Back',
    zIndexClassName = 'z-50',
+   onOpenFeature,
+   featureDetailHref = planningFeatureDetailHref,
 }: DocumentModalProps) => {
    const navigate = useNavigate();
    const { sessions, features, refreshDocuments } = useData();
@@ -460,6 +465,14 @@ export const DocumentModal = ({
       return linkedFeatures.filter(feature => blockedIds.has(feature.id.toLowerCase()));
    }, [doc.blockedBy, doc.metadata?.blockedBy, doc.frontmatter.blockedBy, linkedFeatures]);
    const linkedTasks = links?.tasks || [];
+   const openFeature = React.useCallback((featureId: string) => {
+      onClose();
+      if (onOpenFeature) {
+         onOpenFeature(featureId);
+         return;
+      }
+      navigate(planningFeatureModalHref(featureId));
+   }, [navigate, onClose, onOpenFeature]);
    const linkedSessions = React.useMemo(() => {
       if (links?.sessions && links.sessions.length > 0) return links.sessions;
       const fallbackIds = doc.frontmatter.linkedSessions || [];
@@ -558,7 +571,7 @@ export const DocumentModal = ({
                               <button
                                  key={feature.id}
                                  type="button"
-                                 onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(feature.id)}`); }}
+                                 onClick={() => openFeature(feature.id)}
                                  className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${style.badge}`}
                                  title={`Open Feature ${feature.id} (${style.label})`}
                               >
@@ -573,7 +586,7 @@ export const DocumentModal = ({
                         )}
                         {primaryExecutionFeature && (
                            <Link
-                              to={`/planning/features/${encodeURIComponent(primaryExecutionFeature.id)}`}
+                              to={featureDetailHref(primaryExecutionFeature.id)}
                               onClick={onClose}
                               className="text-[10px] text-indigo-400/70 hover:text-indigo-300 border border-indigo-500/20 hover:border-indigo-500/50 rounded-full px-2 py-0.5 transition-colors"
                               title="View in planning graph"
@@ -750,7 +763,7 @@ export const DocumentModal = ({
                                  return (
                                     <button
                                        key={feature.id}
-                                       onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(feature.id)}`); }}
+                                       onClick={() => openFeature(feature.id)}
                                        className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${style.badge}`}
                                     >
                                        {feature.id}
@@ -768,7 +781,7 @@ export const DocumentModal = ({
                                        return (
                                           <button
                                              key={`blocked-by-${feature.id}`}
-                                             onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(feature.id)}`); }}
+                                             onClick={() => openFeature(feature.id)}
                                              className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${style.badge}`}
                                           >
                                              {feature.id}
@@ -793,8 +806,7 @@ export const DocumentModal = ({
                                        <button
                                           onClick={() => {
                                              if (!evidence.dependencyFeatureId) return;
-                                             onClose();
-                                             navigate(`/board?feature=${encodeURIComponent(evidence.dependencyFeatureId)}`);
+                                             openFeature(evidence.dependencyFeatureId);
                                           }}
                                           className="font-mono text-indigo-300 hover:text-indigo-200 text-left truncate"
                                        >

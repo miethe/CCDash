@@ -190,10 +190,63 @@ _CREATE_FEATURES = """
     )
 """
 
+_CREATE_FEATURE_PHASES = """
+    CREATE TABLE IF NOT EXISTS feature_phases (
+        id TEXT PRIMARY KEY,
+        feature_id TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        title TEXT DEFAULT '',
+        status TEXT DEFAULT 'backlog',
+        progress INTEGER DEFAULT 0,
+        total_tasks INTEGER DEFAULT 0,
+        completed_tasks INTEGER DEFAULT 0
+    )
+"""
+
+_CREATE_DOCUMENTS = """
+    CREATE TABLE IF NOT EXISTS documents (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
+        doc_type TEXT DEFAULT '',
+        updated_at TEXT DEFAULT '',
+        last_modified TEXT DEFAULT ''
+    )
+"""
+
+_CREATE_ENTITY_LINKS = """
+    CREATE TABLE IF NOT EXISTS entity_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        link_type TEXT DEFAULT 'related',
+        created_at TEXT NOT NULL
+    )
+"""
+
+_CREATE_PLANNING_WORKTREE_CONTEXTS = """
+    CREATE TABLE IF NOT EXISTS planning_worktree_contexts (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        feature_id TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+"""
+
 
 async def _setup_schema(db: aiosqlite.Connection) -> None:
     await db.execute(_CREATE_SESSIONS)
     await db.execute(_CREATE_FEATURES)
+    await db.execute(_CREATE_FEATURE_PHASES)
+    await db.execute(_CREATE_DOCUMENTS)
+    await db.execute(_CREATE_ENTITY_LINKS)
+    await db.execute(_CREATE_PLANNING_WORKTREE_CONTEXTS)
     await db.commit()
 
 

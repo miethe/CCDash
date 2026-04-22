@@ -34,6 +34,7 @@ import type {
   PhaseContextItem,
 } from '../../types';
 import { getFeaturePlanningContext, PlanningApiError, resolvePlanningOpenQuestion } from '../../services/planning';
+import { planningRouteFeatureModalHref } from '../../services/planningRoutes';
 import { featurePlanningTopic } from '../../services/live/topics';
 import { useLiveInvalidation } from '../../services/live/useLiveInvalidation';
 import type { LiveConnectionStatus } from '../../services/live';
@@ -1900,6 +1901,10 @@ export function PlanningNodeDetail() {
           doc={selectedDoc}
           onClose={() => setSelectedDoc(null)}
           onBack={() => setSelectedDoc(null)}
+          onOpenFeature={(featureId) => {
+            setSelectedDoc(null);
+            navigate(planningRouteFeatureModalHref(featureId));
+          }}
           backLabel="Planning Detail"
         />
       )}

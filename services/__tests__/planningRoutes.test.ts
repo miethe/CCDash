@@ -3,6 +3,7 @@
  *
  * Tests all three helpers exported from services/planningRoutes.ts:
  *   - planningFeatureModalHref
+ *   - planningRouteFeatureModalHref
  *   - planningFeatureDetailHref
  *   - planningArtifactsHref
  *
@@ -23,6 +24,10 @@ import {
   planningArtifactsHref,
   planningFeatureDetailHref,
   planningFeatureModalHref,
+  planningRouteFeatureModalHref,
+  removePlanningRouteFeatureModalSearch,
+  resolvePlanningRouteFeatureModalState,
+  setPlanningRouteFeatureModalSearch,
   type PlanningFeatureModalTab,
 } from '../planningRoutes';
 
@@ -76,6 +81,79 @@ describe('planningFeatureModalHref', () => {
   it('passes empty featureId through without crashing', () => {
     const href = planningFeatureModalHref('');
     expect(href).toBe('/board?feature=&tab=overview');
+  });
+});
+
+describe('planningRouteFeatureModalHref', () => {
+  it('keeps feature modal links under /planning', () => {
+    expect(planningRouteFeatureModalHref('feat-1')).toBe(
+      '/planning?feature=feat-1&modal=feature&tab=overview',
+    );
+  });
+
+  it('accepts an explicit tab', () => {
+    expect(planningRouteFeatureModalHref('feat-1', 'docs')).toBe(
+      '/planning?feature=feat-1&modal=feature&tab=docs',
+    );
+  });
+
+  it('URL-encodes featureId', () => {
+    expect(planningRouteFeatureModalHref('ns/feat 1')).toBe(
+      '/planning?feature=ns%2Ffeat%201&modal=feature&tab=overview',
+    );
+  });
+});
+
+describe('resolvePlanningRouteFeatureModalState', () => {
+  it('parses a planning feature modal deep link', () => {
+    expect(
+      resolvePlanningRouteFeatureModalState(
+        new URLSearchParams('feature=feat-1&modal=feature&tab=docs'),
+      ),
+    ).toEqual({ featureId: 'feat-1', tab: 'docs' });
+  });
+
+  it('defaults invalid or missing tabs to overview', () => {
+    expect(
+      resolvePlanningRouteFeatureModalState(
+        new URLSearchParams('feature=feat-1&modal=feature&tab=bogus'),
+      ),
+    ).toEqual({ featureId: 'feat-1', tab: 'overview' });
+  });
+
+  it('does not resolve without modal=feature and feature', () => {
+    expect(resolvePlanningRouteFeatureModalState(new URLSearchParams('feature=feat-1'))).toBeNull();
+    expect(resolvePlanningRouteFeatureModalState(new URLSearchParams('modal=feature'))).toBeNull();
+  });
+});
+
+describe('removePlanningRouteFeatureModalSearch', () => {
+  it('removes modal params while preserving unrelated planning search params', () => {
+    expect(
+      removePlanningRouteFeatureModalSearch(
+        new URLSearchParams('feature=feat-1&modal=feature&tab=docs&density=compact'),
+      ),
+    ).toBe('?density=compact');
+  });
+
+  it('returns an empty search string when only modal params were present', () => {
+    expect(
+      removePlanningRouteFeatureModalSearch(
+        new URLSearchParams('feature=feat-1&modal=feature&tab=docs'),
+      ),
+    ).toBe('');
+  });
+});
+
+describe('setPlanningRouteFeatureModalSearch', () => {
+  it('sets modal params while preserving unrelated planning search params', () => {
+    expect(
+      setPlanningRouteFeatureModalSearch(
+        new URLSearchParams('density=compact'),
+        'feat-1',
+        'docs',
+      ),
+    ).toBe('?density=compact&feature=feat-1&modal=feature&tab=docs');
   });
 });
 

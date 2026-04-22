@@ -132,8 +132,8 @@ These seams are now considered stable for downstream implementation plans:
 - Hosted API runtimes stay stateless. Worker-owned ingestion is optional and explicit, and health now reports whether sync is merely supported or actually provisioned.
 - Shared Postgres remains valid only behind an explicit schema or tenant boundary. No follow-on plan may couple CCDash tables directly to external app schemas.
 
-See [docs/guides/data-platform-rollout-and-handoff.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-platform-rollout-and-handoff.md) for the Phase 6 rollout summary, operator validation contract, and downstream plan links.
-See [docs/guides/session-intelligence-rollout-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/session-intelligence-rollout-guide.md) for the Phase 7 checkpointed backfill workflow, runtime validation fields, failure modes, and rollback expectations for canonical transcript intelligence.
+See [docs/guides/data-platform-rollout-and-handoff.md](data-platform-rollout-and-handoff.md) for the Phase 6 rollout summary, operator validation contract, and downstream plan links.
+See [docs/guides/session-intelligence-rollout-guide.md](session-intelligence-rollout-guide.md) for the Phase 7 checkpointed backfill workflow, runtime validation fields, failure modes, and rollback expectations for canonical transcript intelligence.
 
 ## Domain Ownership Matrix
 
@@ -164,7 +164,7 @@ The post-completion Phase 3 delta now also marks each persisted concern as `scop
 - The current directly ownable enterprise roots are `alert_configs`, `sessions`, `documents`, `tasks`, and `features`.
 - Child rows such as transcript messages, document refs, feature phases, correlations, and operational/snapshot derivatives inherit ownership from the governing canonical entity or scope instead of storing direct ownership primitives.
 - Membership, role-binding, scope-identifier, and audit rows remain scope-governed and do not become directly ownable content objects.
-- Use [docs/guides/data-domain-ownership-matrix.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-ownership-matrix.md) for concern-level posture and [docs/guides/data-domain-schema-layout.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-schema-layout.md) for boundary/repository placement.
+- Use [docs/guides/data-domain-ownership-matrix.md](data-domain-ownership-matrix.md) for concern-level posture and [docs/guides/data-domain-schema-layout.md](data-domain-schema-layout.md) for boundary/repository placement.
 
 ## Ownership Readiness
 

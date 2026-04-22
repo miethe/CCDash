@@ -284,6 +284,12 @@ export interface AgentSession {
   gitBranch?: string;
   dates?: EntityDates;
   timeline?: TimelineEvent[];
+  // P15-001: Agent classification & planning correlation
+  subagentType?: string | null;
+  displayAgentType?: string | null;
+  linkedFeatureIds?: string[];
+  phaseHints?: string[];
+  taskHints?: string[];
 }
 
 export type SessionUsageTokenFamily =
@@ -3057,6 +3063,35 @@ export interface FeatureSummaryItem {
   nodeCount: number;
 }
 
+export interface PlanningStatusCounts {
+  shaping: number;
+  planned: number;
+  active: number;
+  blocked: number;
+  review: number;
+  completed: number;
+  deferred: number;
+  staleOrMismatched: number;
+}
+
+export interface PlanningCtxPerPhase {
+  contextCount: number;
+  phaseCount: number;
+  ratio: number | null;
+  source: 'backend' | 'unavailable';
+}
+
+export interface PlanningTokenTelemetryEntry {
+  modelFamily: string;
+  totalTokens: number;
+}
+
+export interface PlanningTokenTelemetry {
+  totalTokens: number | null;
+  byModelFamily: PlanningTokenTelemetryEntry[];
+  source: 'session_attribution' | 'unavailable';
+}
+
 /** Project-level planning health summary (PCP-201 query 1). */
 export interface ProjectPlanningSummary extends AgentQueryEnvelope {
   projectId: string;
@@ -3072,6 +3107,9 @@ export interface ProjectPlanningSummary extends AgentQueryEnvelope {
   blockedFeatureIds: string[];
   nodeCountsByType: PlanningNodeCountsByType;
   featureSummaries: FeatureSummaryItem[];
+  statusCounts?: PlanningStatusCounts;
+  ctxPerPhase?: PlanningCtxPerPhase | null;
+  tokenTelemetry?: PlanningTokenTelemetry | null;
 }
 
 /** Aggregated planning graph for a project or feature seed (PCP-201 query 2). */

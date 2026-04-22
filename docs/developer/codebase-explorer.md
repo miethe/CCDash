@@ -1,0 +1,134 @@
+# Codebase Explorer Developer Reference
+
+Last updated: 2026-03-05
+
+This document describes the Codebase Explorer implementation, APIs, data rules, and performance behavior.
+
+## Scope
+
+Implemented in:
+
+- `backend/services/codebase_explorer.py`
+- `backend/routers/codebase.py`
+- `components/CodebaseExplorer.tsx`
+- `components/SessionInspector.tsx`
+
+Route wiring:
+
+- `App.tsx` (`/codebase`)
+- `components/Layout.tsx` (sidebar nav)
+
+## Session Inspector changes
+
+Session detail is split into separate tabs:
+
+1. `Activity`: chronological merged line items from logs, file actions, and artifacts.
+2. `Files`: one row per file with multi-action chips (`Read/Create/Update/Delete`) and aggregate counts.
+
+Transcript deep-links that previously targeted files now target `Activity` with `sourceLogId` highlighting.
+
+Additional transcript/artifact behavior now relevant to explorer/session cross-navigation:
+
+1. Transcript mapping system supports typed mapped event cards (`command`, `artifact`, `action`) with platform-aware mapping rules.
+2. Session artifacts include richer runtime types (`agent`, `task`, `hook`, `test_run`, `skill`, `command`) and keep `sourceLogId` + `sourceToolName` for traceability.
+3. Sub-thread naming prefers captured `subagent_type` metadata when available, improving consistency between:
+   - transcript `Open Thread` actions
+   - Session `Artifacts > Agents`
+   - top-level Session `Agents` tab
+
+## API surface
+
+### `GET /api/codebase/tree`
+
+Query:
+
+- `prefix`
+- `depth`
+- `include_untouched`
+- `search`
+
+Returns folder/file tree nodes with touch metadata and aggregates.
+
+### `GET /api/codebase/files`
+
+Query:
+
+- `prefix`
+- `search`
+- `include_untouched`
+- `action`
+- `feature_id`
+- `sort_by`
+- `sort_order`
+- `offset`
+- `limit`
+
+Returns paginated file summaries.
+
+### `GET /api/codebase/files/{file_path:path}`
+
+Query:
+
+- `activity_limit`
+
+Returns file detail including:
+
+- action rollups
+- related sessions
+- feature involvement
+- linked documents
+- recent file activity entries
+
+## Data rules
+
+Codebase universe:
+
+- all files under active project root (`activeProject.path`)
+- excludes from root `.gitignore`
+- built-in excludes: `.git/`, `node_modules/`, `dist/`, `coverage/`, `.venv/`
+
+Feature involvement scoring:
+
+- action weights:
+  - `create=1.00`
+  - `update=0.80`
+  - `delete=0.70`
+  - `read=0.40`
+- base score per session-file: `entity_link_confidence * max_action_weight`
+- direct path signals in `entity_links.metadata_json.signals` can raise score
+- involvement levels:
+  - `primary >= 0.75`
+  - `supporting 0.50-0.74`
+  - `peripheral < 0.50`
+
+## Path safety
+
+- All requested file paths are normalized and checked against project root.
+- Traversal/out-of-root paths are rejected with `400`.
+
+## Caching and performance
+
+In-memory cache is 30s TTL per project and mode:
+
+- `touched` snapshot (default for most requests): no full filesystem scan.
+- `full` snapshot (used when `include_untouched=true`): includes untouched files via filesystem walk.
+
+This reduces latency for common explorer interactions and avoids unnecessary full scans.
+
+Scanner hardening:
+
+- Missing/inaccessible entries (including dangling symlinks) are skipped instead of crashing.
+
+## Tests
+
+- `backend/tests/test_codebase_router.py`
+
+Covers:
+
+- tree listing
+- untouched toggle
+- `.gitignore` + built-in excludes
+- traversal rejection
+- detail aggregation correctness
+- involvement thresholds
+- dangling symlink scan stability

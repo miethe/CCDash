@@ -3,7 +3,7 @@ schema_version: 2
 doc_type: implementation_plan
 status: in-progress
 created: 2026-04-20
-updated: '2026-04-20'
+updated: '2026-04-21'
 feature_slug: ccdash-planning-reskin-v2
 feature_version: v2
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
@@ -19,6 +19,7 @@ architecture_summary: Phase 0 extracts OKLCH tokens and implements primitives; P
   8-9 address a11y/perf/testing; Phase 10 handles documentation finalization. Total
   10 phases, ~8-10 weeks.
 related_documents:
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 - docs/project_plans/designs/ccdash-planning/README.md
 - docs/project_plans/designs/ccdash-planning/project/Planning Deck.html
 - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
@@ -153,6 +154,8 @@ Canonical orchestration table. Keep synced with detailed phase breakdowns below.
 | 9 | Testing: unit, integration, component | 8 pts | frontend-developer, testing specialist | sonnet | Vitest coverage, component tests, OQ write-back integration tests |
 | 10 | Documentation finalization | 4 pts | changelog-generator, documentation-writer, ai-artifacts-engineer | haiku (sonnet for skill updates) | CHANGELOG, README, context files, design specs for deferred items |
 | **Total** | — | **73 pts** | — | — | — |
+
+**Follow-Up Addendum**: Phases 11–17 (34–40 story points) cover interaction refinements, modal navigation, metric wiring, side-panel enhancements, and roster detail interactions. See `docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md`.
 
 ---
 

@@ -8,7 +8,7 @@
  *
  * Filter tabs: All / Blocked / Mismatches / Stale / Ready-to-promote
  * Row anatomy: 3px severity bar · kind badge · feature slug · title · action button + chevron
- * Title click → navigate to planningFeatureModalHref (existing modal route)
+ * Title click → opens the route-local planning feature modal.
  * Empty state: green check + "Nothing to triage"
  *
  * Action button behaviour (T3-002):
@@ -23,7 +23,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Loader2 } from 'lucide-react';
 
 import type { ProjectPlanningSummary } from '../../types';
-import { planningFeatureModalHref } from '../../services/planningRoutes';
+import { planningRouteFeatureModalHref } from '../../services/planningRoutes';
 import { Panel, Btn, BtnGhost, Dot } from './primitives';
 
 // ── Toast (scoped to this panel) ──────────────────────────────────────────────
@@ -356,11 +356,13 @@ function TriageActionBtn({
 function TriageRow({
   item,
   onSelectFeature,
+  onPrefetchFeature,
   onToast,
   onRefresh,
 }: {
   item: TriageItem;
   onSelectFeature: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
   onToast: (message: string) => void;
   onRefresh?: () => void;
 }) {
@@ -422,6 +424,8 @@ function TriageRow({
         <button
           type="button"
           onClick={() => onSelectFeature(item.featureId)}
+          onMouseEnter={() => onPrefetchFeature?.(item.featureId)}
+          onFocus={() => onPrefetchFeature?.(item.featureId)}
           aria-describedby={`triage-reason-${item.id}`}
           style={{
             background: 'none',
@@ -464,6 +468,8 @@ function TriageRow({
           size="xs"
           aria-label={`Open ${item.title}`}
           onClick={() => onSelectFeature(item.featureId)}
+          onMouseEnter={() => onPrefetchFeature?.(item.featureId)}
+          onFocus={() => onPrefetchFeature?.(item.featureId)}
         >
           <ChevronRight size={12} />
         </BtnGhost>
@@ -506,6 +512,7 @@ function TriageEmptyState() {
 interface PlanningTriagePanelProps {
   summary: ProjectPlanningSummary;
   onSelectFeature?: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
   /** Called after a triage action button is clicked to trigger a planning summary refresh. */
   onRefresh?: () => void;
 }
@@ -513,6 +520,7 @@ interface PlanningTriagePanelProps {
 export function PlanningTriagePanel({
   summary,
   onSelectFeature,
+  onPrefetchFeature,
   onRefresh,
 }: PlanningTriagePanelProps) {
   const navigate = useNavigate();
@@ -524,7 +532,7 @@ export function PlanningTriagePanel({
   const handleSelectFeature = useMemo(
     () =>
       onSelectFeature ??
-      ((featureId: string) => navigate(planningFeatureModalHref(featureId))),
+      ((featureId: string) => navigate(planningRouteFeatureModalHref(featureId))),
     [onSelectFeature, navigate],
   );
 
@@ -597,6 +605,7 @@ export function PlanningTriagePanel({
                     key={item.id}
                     item={item}
                     onSelectFeature={handleSelectFeature}
+                    onPrefetchFeature={onPrefetchFeature}
                     onToast={pushToast}
                     onRefresh={onRefresh}
                   />

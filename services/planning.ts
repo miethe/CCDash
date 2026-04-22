@@ -19,10 +19,57 @@ import type {
   PlanningTokenUsageByModel,
   ProjectPlanningGraph,
   ProjectPlanningSummary,
+  PlanningStatusCounts,
+  PlanningCtxPerPhase,
+  PlanningTokenTelemetry,
 } from '../types';
 import type { AgentQueryEnvelope } from '../types';
+import type { PlanningStatusBucket } from './planningRoutes';
 
 const API_BASE = '/api/agent/planning';
+const DEFAULT_PROJECT_CACHE_KEY = '__default__';
+
+type PlanningBrowserCachePayloadType = 'summary' | 'facets' | 'list';
+
+interface PlanningBrowserCacheEntry<T> {
+  value: T;
+  inFlight?: Promise<T>;
+}
+
+interface PlanningBrowserFreshnessBucket {
+  payloads: Map<PlanningBrowserCachePayloadType, PlanningBrowserCacheEntry<unknown>>;
+}
+
+interface PlanningBrowserProjectCache {
+  latestFreshness: string | null;
+  freshnessBuckets: Map<string, PlanningBrowserFreshnessBucket>;
+}
+
+export interface ProjectPlanningSummaryCacheOptions {
+  forceRefresh?: boolean;
+  onRevalidated?: (summary: ProjectPlanningSummary) => void;
+}
+
+export const PLANNING_BROWSER_CACHE_LIMITS = {
+  projects: 8,
+  freshnessKeysPerProject: 3,
+  payloadTypesPerFreshness: 3,
+  featureContexts: 24,
+} as const;
+
+const PLANNING_BROWSER_CACHE = new Map<string, PlanningBrowserProjectCache>();
+const PLANNING_FEATURE_CONTEXT_CACHE = new Map<string, PlanningBrowserCacheEntry<FeaturePlanningContext>>();
+const PENDING_CACHE_FRESHNESS = '__pending__';
+
+export interface PlanningBrowserCacheSnapshot {
+  projectsCached: number;
+  entries: Array<{
+    projectKey: string;
+    latestFreshness: string | null;
+    freshnessKeys: string[];
+    payloadTypes: PlanningBrowserCachePayloadType[];
+  }>;
+}
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
@@ -51,6 +98,234 @@ async function planningFetch<T>(path: string, params?: URLSearchParams): Promise
     );
   }
   return res.json() as Promise<T>;
+}
+
+function projectCacheKey(projectId?: string): string {
+  const trimmed = projectId?.trim();
+  return trimmed || DEFAULT_PROJECT_CACHE_KEY;
+}
+
+function featureContextCacheKey(featureId: string, projectId?: string): string {
+  return JSON.stringify([projectCacheKey(projectId), featureId]);
+}
+
+function touchMapKey<K, V>(map: Map<K, V>, key: K): void {
+  const value = map.get(key);
+  if (value === undefined) return;
+  map.delete(key);
+  map.set(key, value);
+}
+
+function trimMapToLimit<K, V>(map: Map<K, V>, limit: number): void {
+  while (map.size > limit) {
+    const oldestKey = map.keys().next().value as K | undefined;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+function getProjectCache(projectKey: string): PlanningBrowserProjectCache {
+  const existing = PLANNING_BROWSER_CACHE.get(projectKey);
+  if (existing) {
+    touchMapKey(PLANNING_BROWSER_CACHE, projectKey);
+    return existing;
+  }
+  const created: PlanningBrowserProjectCache = {
+    latestFreshness: null,
+    freshnessBuckets: new Map<string, PlanningBrowserFreshnessBucket>(),
+  };
+  PLANNING_BROWSER_CACHE.set(projectKey, created);
+  trimMapToLimit(PLANNING_BROWSER_CACHE, PLANNING_BROWSER_CACHE_LIMITS.projects);
+  return created;
+}
+
+function getFreshnessBucket(projectCache: PlanningBrowserProjectCache, freshness: string): PlanningBrowserFreshnessBucket {
+  const existing = projectCache.freshnessBuckets.get(freshness);
+  if (existing) {
+    touchMapKey(projectCache.freshnessBuckets, freshness);
+    return existing;
+  }
+  const created: PlanningBrowserFreshnessBucket = {
+    payloads: new Map<PlanningBrowserCachePayloadType, PlanningBrowserCacheEntry<unknown>>(),
+  };
+  projectCache.freshnessBuckets.set(freshness, created);
+  trimMapToLimit(projectCache.freshnessBuckets, PLANNING_BROWSER_CACHE_LIMITS.freshnessKeysPerProject);
+  return created;
+}
+
+function findLatestCacheEntry<T>(
+  projectCache: PlanningBrowserProjectCache,
+  payloadType: PlanningBrowserCachePayloadType,
+): PlanningBrowserCacheEntry<T> | null {
+  const latestFreshness = projectCache.latestFreshness;
+  if (!latestFreshness) return null;
+  const bucket = projectCache.freshnessBuckets.get(latestFreshness);
+  const entry = bucket?.payloads.get(payloadType);
+  if (!entry) return null;
+  touchMapKey(projectCache.freshnessBuckets, latestFreshness);
+  touchMapKey(bucket.payloads, payloadType);
+  return entry as PlanningBrowserCacheEntry<T>;
+}
+
+function storeCacheEntry<T>(
+  projectKey: string,
+  payloadType: PlanningBrowserCachePayloadType,
+  value: T,
+): PlanningBrowserCacheEntry<T> {
+  const projectCache = getProjectCache(projectKey);
+  const freshness = (value as AgentQueryEnvelope).dataFreshness || 'unknown';
+  const bucket = getFreshnessBucket(projectCache, freshness);
+  const entry: PlanningBrowserCacheEntry<T> = { value };
+  bucket.payloads.set(payloadType, entry as PlanningBrowserCacheEntry<unknown>);
+  touchMapKey(bucket.payloads, payloadType);
+  trimMapToLimit(bucket.payloads, PLANNING_BROWSER_CACHE_LIMITS.payloadTypesPerFreshness);
+  projectCache.latestFreshness = freshness;
+  touchMapKey(projectCache.freshnessBuckets, freshness);
+  touchMapKey(PLANNING_BROWSER_CACHE, projectKey);
+  trimMapToLimit(PLANNING_BROWSER_CACHE, PLANNING_BROWSER_CACHE_LIMITS.projects);
+  return entry;
+}
+
+function cacheProjectPlanningSummary(
+  projectId: string | undefined,
+  loader: () => Promise<ProjectPlanningSummary>,
+  options: ProjectPlanningSummaryCacheOptions = {},
+): Promise<ProjectPlanningSummary> {
+  const key = projectCacheKey(projectId);
+  const projectCache = getProjectCache(key);
+  const existing = findLatestCacheEntry<ProjectPlanningSummary>(projectCache, 'summary');
+
+  if (options.forceRefresh) {
+    return loader().then((value) => {
+      storeCacheEntry(key, 'summary', value);
+      return value;
+    });
+  }
+
+  if (existing?.value) {
+    if (!existing.inFlight) {
+      const pending = loader()
+        .then((value) => {
+          storeCacheEntry(key, 'summary', value);
+          options.onRevalidated?.(value);
+          return value;
+        })
+        .catch(() => existing.value)
+        .finally(() => {
+          existing.inFlight = undefined;
+        });
+      existing.inFlight = pending;
+    }
+    return Promise.resolve(existing.value);
+  }
+
+  if (existing?.inFlight) return existing.inFlight;
+
+  let pending: Promise<ProjectPlanningSummary>;
+  pending = loader()
+    .then((value) => {
+      storeCacheEntry(key, 'summary', value);
+      return value;
+    })
+    .catch((error) => {
+      const latestProjectCache = PLANNING_BROWSER_CACHE.get(key);
+      const bucket = latestProjectCache?.freshnessBuckets.get(PENDING_CACHE_FRESHNESS);
+      const pendingEntry = bucket?.payloads.get('summary');
+      if (pendingEntry?.inFlight === pending) bucket?.payloads.delete('summary');
+      if (latestProjectCache?.latestFreshness === PENDING_CACHE_FRESHNESS) latestProjectCache.latestFreshness = null;
+      throw error;
+    });
+
+  const bucket = getFreshnessBucket(projectCache, PENDING_CACHE_FRESHNESS);
+  bucket.payloads.set('summary', { value: undefined, inFlight: pending } as unknown as PlanningBrowserCacheEntry<unknown>);
+  projectCache.latestFreshness = PENDING_CACHE_FRESHNESS;
+  touchMapKey(projectCache.freshnessBuckets, PENDING_CACHE_FRESHNESS);
+  touchMapKey(PLANNING_BROWSER_CACHE, key);
+  return pending;
+}
+
+export function clearPlanningBrowserCache(projectId?: string): void {
+  if (projectId?.trim()) {
+    const key = projectCacheKey(projectId);
+    PLANNING_BROWSER_CACHE.delete(key);
+    for (const cacheKey of Array.from(PLANNING_FEATURE_CONTEXT_CACHE.keys())) {
+      const [cachedProjectKey] = JSON.parse(cacheKey) as [string, string];
+      if (cachedProjectKey === key) PLANNING_FEATURE_CONTEXT_CACHE.delete(cacheKey);
+    }
+    return;
+  }
+  PLANNING_BROWSER_CACHE.clear();
+  PLANNING_FEATURE_CONTEXT_CACHE.clear();
+}
+
+export function getCachedProjectPlanningSummary(projectId?: string): ProjectPlanningSummary | null {
+  const cache = PLANNING_BROWSER_CACHE.get(projectCacheKey(projectId));
+  if (!cache) return null;
+  return findLatestCacheEntry<ProjectPlanningSummary>(cache, 'summary')?.value ?? null;
+}
+
+export function getPlanningBrowserCacheSnapshot(): PlanningBrowserCacheSnapshot {
+  return {
+    projectsCached: PLANNING_BROWSER_CACHE.size,
+    entries: Array.from(PLANNING_BROWSER_CACHE.entries()).map(([projectKey, cache]) => ({
+      projectKey,
+      latestFreshness: cache.latestFreshness,
+      freshnessKeys: Array.from(cache.freshnessBuckets.keys()),
+      payloadTypes: Array.from(new Set(
+        Array.from(cache.freshnessBuckets.values()).flatMap((bucket) => Array.from(bucket.payloads.keys())),
+      )),
+    })),
+  };
+}
+
+async function fetchFeaturePlanningContext(
+  featureId: string,
+  opts?: { projectId?: string },
+): Promise<FeaturePlanningContext> {
+  const params = new URLSearchParams();
+  if (opts?.projectId) params.set('project_id', opts.projectId);
+
+  const wire = await planningFetch<WireFeaturePlanningContext>(
+    `/features/${encodeURIComponent(featureId)}`,
+    params.toString() ? params : undefined,
+  );
+
+  // Sentinel: status="error" + empty feature_name means entity not found.
+  guardEnvelopeError(wire, `Feature '${featureId}' not found.`, !wire.feature_name);
+
+  const rawGraph = wire.graph ?? {};
+  return {
+    ...adaptEnvelope(wire),
+    featureId: wire.feature_id ?? featureId,
+    featureName: wire.feature_name ?? '',
+    rawStatus: wire.raw_status ?? '',
+    effectiveStatus: wire.effective_status ?? '',
+    mismatchState: wire.mismatch_state ?? 'unknown',
+    planningStatus: wire.planning_status ?? {},
+    graph: {
+      nodes: castNodes((rawGraph.nodes as Record<string, unknown>[] | undefined) ?? []),
+      edges: castEdges((rawGraph.edges as Record<string, unknown>[] | undefined) ?? []),
+      phaseBatches: castPhaseBatches((rawGraph.phase_batches as Record<string, unknown>[] | undefined) ?? []),
+    },
+    phases: (wire.phases ?? []).map(adaptPhaseContextItem),
+    blockedBatchIds: wire.blocked_batch_ids ?? [],
+    linkedArtifactRefs: wire.linked_artifact_refs ?? [],
+    specs: (wire.specs ?? []).map(adaptPlanningArtifactRef),
+    prds: (wire.prds ?? []).map(adaptPlanningArtifactRef),
+    plans: (wire.plans ?? []).map(adaptPlanningArtifactRef),
+    ctxs: (wire.ctxs ?? []).map(adaptPlanningArtifactRef),
+    reports: (wire.reports ?? []).map(adaptPlanningArtifactRef),
+    spikes: (wire.spikes ?? []).map(adaptPlanningSpikeItem),
+    openQuestions: (wire.open_questions ?? []).map(adaptPlanningOpenQuestionItem),
+    readyToPromote: wire.ready_to_promote ?? false,
+    isStale: wire.is_stale ?? false,
+    totalTokens: wire.total_tokens ?? 0,
+    tokenUsageByModel: adaptPlanningTokenUsageByModel(wire.token_usage_by_model),
+    category: wire.category,
+    slug: wire.slug,
+    complexity: wire.complexity,
+    tags: wire.tags,
+  };
 }
 
 async function planningWriteFetch<T>(
@@ -108,6 +383,35 @@ interface WireFeatureSummaryItem {
   node_count: number;
 }
 
+interface WireStatusCounts {
+  shaping: number;
+  planned: number;
+  active: number;
+  blocked: number;
+  review: number;
+  completed: number;
+  deferred: number;
+  stale_or_mismatched: number;
+}
+
+interface WireCtxPerPhase {
+  context_count: number;
+  phase_count: number;
+  ratio: number | null;
+  source: 'backend' | 'unavailable';
+}
+
+interface WireTokenTelemetryEntry {
+  model_family: string;
+  total_tokens: number;
+}
+
+interface WireTokenTelemetry {
+  total_tokens: number | null;
+  by_model_family: WireTokenTelemetryEntry[];
+  source: 'session_attribution' | 'unavailable';
+}
+
 interface WireProjectPlanningSummary extends WireEnvelope {
   project_id: string;
   project_name: string;
@@ -122,6 +426,9 @@ interface WireProjectPlanningSummary extends WireEnvelope {
   blocked_feature_ids: string[];
   node_counts_by_type: WireNodeCountsByType;
   feature_summaries: WireFeatureSummaryItem[];
+  status_counts?: WireStatusCounts;
+  ctx_per_phase?: WireCtxPerPhase | null;
+  token_telemetry?: WireTokenTelemetry | null;
 }
 
 interface WireFeatureModelTokens {
@@ -430,6 +737,41 @@ function adaptPhaseTaskItem(wire: WirePhaseTaskItem): PhaseTaskItem {
   };
 }
 
+function adaptStatusCounts(wire: WireStatusCounts): PlanningStatusCounts {
+  return {
+    shaping: wire.shaping ?? 0,
+    planned: wire.planned ?? 0,
+    active: wire.active ?? 0,
+    blocked: wire.blocked ?? 0,
+    review: wire.review ?? 0,
+    completed: wire.completed ?? 0,
+    deferred: wire.deferred ?? 0,
+    staleOrMismatched: wire.stale_or_mismatched ?? 0,
+  };
+}
+
+function adaptCtxPerPhase(wire: WireCtxPerPhase | null | undefined): PlanningCtxPerPhase | null {
+  if (!wire) return null;
+  return {
+    contextCount: wire.context_count ?? 0,
+    phaseCount: wire.phase_count ?? 0,
+    ratio: wire.ratio ?? null,
+    source: wire.source ?? 'unavailable',
+  };
+}
+
+function adaptTokenTelemetry(wire: WireTokenTelemetry | null | undefined): PlanningTokenTelemetry | null {
+  if (!wire) return null;
+  return {
+    totalTokens: wire.total_tokens ?? null,
+    byModelFamily: (wire.by_model_family ?? []).map((e) => ({
+      modelFamily: e.model_family ?? '',
+      totalTokens: e.total_tokens ?? 0,
+    })),
+    source: wire.source ?? 'unavailable',
+  };
+}
+
 // ── Public API helpers ────────────────────────────────────────────────────────
 
 /**
@@ -437,28 +779,36 @@ function adaptPhaseTaskItem(wire: WirePhaseTaskItem): PhaseTaskItem {
  *
  * Mirrors: GET /api/agent/planning/summary
  */
-export async function getProjectPlanningSummary(projectId?: string): Promise<ProjectPlanningSummary> {
-  const params = new URLSearchParams();
-  if (projectId) params.set('project_id', projectId);
+export async function getProjectPlanningSummary(
+  projectId?: string,
+  options: ProjectPlanningSummaryCacheOptions = {},
+): Promise<ProjectPlanningSummary> {
+  return cacheProjectPlanningSummary(projectId, async () => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project_id', projectId);
 
-  const wire = await planningFetch<WireProjectPlanningSummary>('/summary', params.toString() ? params : undefined);
+    const wire = await planningFetch<WireProjectPlanningSummary>('/summary', params.toString() ? params : undefined);
 
-  return {
-    ...adaptEnvelope(wire),
-    projectId: wire.project_id ?? '',
-    projectName: wire.project_name ?? '',
-    totalFeatureCount: wire.total_feature_count ?? 0,
-    activeFeatureCount: wire.active_feature_count ?? 0,
-    staleFeatureCount: wire.stale_feature_count ?? 0,
-    blockedFeatureCount: wire.blocked_feature_count ?? 0,
-    mismatchCount: wire.mismatch_count ?? 0,
-    reversalCount: wire.reversal_count ?? 0,
-    staleFeatureIds: wire.stale_feature_ids ?? [],
-    reversalFeatureIds: wire.reversal_feature_ids ?? [],
-    blockedFeatureIds: wire.blocked_feature_ids ?? [],
-    nodeCountsByType: adaptNodeCountsByType(wire.node_counts_by_type ?? {} as WireNodeCountsByType),
-    featureSummaries: (wire.feature_summaries ?? []).map(adaptFeatureSummaryItem),
-  };
+    return {
+      ...adaptEnvelope(wire),
+      projectId: wire.project_id ?? '',
+      projectName: wire.project_name ?? '',
+      totalFeatureCount: wire.total_feature_count ?? 0,
+      activeFeatureCount: wire.active_feature_count ?? 0,
+      staleFeatureCount: wire.stale_feature_count ?? 0,
+      blockedFeatureCount: wire.blocked_feature_count ?? 0,
+      mismatchCount: wire.mismatch_count ?? 0,
+      reversalCount: wire.reversal_count ?? 0,
+      staleFeatureIds: wire.stale_feature_ids ?? [],
+      reversalFeatureIds: wire.reversal_feature_ids ?? [],
+      blockedFeatureIds: wire.blocked_feature_ids ?? [],
+      nodeCountsByType: adaptNodeCountsByType(wire.node_counts_by_type ?? {} as WireNodeCountsByType),
+      featureSummaries: (wire.feature_summaries ?? []).map(adaptFeatureSummaryItem),
+      ...(wire.status_counts !== undefined ? { statusCounts: adaptStatusCounts(wire.status_counts) } : {}),
+      ...(wire.ctx_per_phase !== undefined ? { ctxPerPhase: adaptCtxPerPhase(wire.ctx_per_phase) } : {}),
+      ...(wire.token_telemetry !== undefined ? { tokenTelemetry: adaptTokenTelemetry(wire.token_telemetry) } : {}),
+    };
+  }, options);
 }
 
 /**
@@ -502,52 +852,43 @@ export async function getProjectPlanningGraph(opts?: {
  */
 export async function getFeaturePlanningContext(
   featureId: string,
-  opts?: { projectId?: string },
+  opts?: { projectId?: string; forceRefresh?: boolean },
 ): Promise<FeaturePlanningContext> {
-  const params = new URLSearchParams();
-  if (opts?.projectId) params.set('project_id', opts.projectId);
+  const cacheKey = featureContextCacheKey(featureId, opts?.projectId);
+  const existing = PLANNING_FEATURE_CONTEXT_CACHE.get(cacheKey);
+  if (!opts?.forceRefresh && existing?.value) {
+    touchMapKey(PLANNING_FEATURE_CONTEXT_CACHE, cacheKey);
+    return existing.value;
+  }
+  if (!opts?.forceRefresh && existing?.inFlight) return existing.inFlight;
 
-  const wire = await planningFetch<WireFeaturePlanningContext>(
-    `/features/${encodeURIComponent(featureId)}`,
-    params.toString() ? params : undefined,
-  );
+  const pending = fetchFeaturePlanningContext(featureId, opts)
+    .then((value) => {
+      PLANNING_FEATURE_CONTEXT_CACHE.set(cacheKey, { value });
+      touchMapKey(PLANNING_FEATURE_CONTEXT_CACHE, cacheKey);
+      trimMapToLimit(PLANNING_FEATURE_CONTEXT_CACHE, PLANNING_BROWSER_CACHE_LIMITS.featureContexts);
+      return value;
+    })
+    .catch((error) => {
+      const latest = PLANNING_FEATURE_CONTEXT_CACHE.get(cacheKey);
+      if (latest?.inFlight === pending && !latest.value) PLANNING_FEATURE_CONTEXT_CACHE.delete(cacheKey);
+      throw error;
+    });
 
-  // Sentinel: status="error" + empty feature_name means entity not found.
-  guardEnvelopeError(wire, `Feature '${featureId}' not found.`, !wire.feature_name);
+  PLANNING_FEATURE_CONTEXT_CACHE.set(cacheKey, {
+    value: existing?.value as FeaturePlanningContext,
+    inFlight: pending,
+  });
+  touchMapKey(PLANNING_FEATURE_CONTEXT_CACHE, cacheKey);
+  trimMapToLimit(PLANNING_FEATURE_CONTEXT_CACHE, PLANNING_BROWSER_CACHE_LIMITS.featureContexts);
+  return pending;
+}
 
-  const rawGraph = wire.graph ?? {};
-  return {
-    ...adaptEnvelope(wire),
-    featureId: wire.feature_id ?? featureId,
-    featureName: wire.feature_name ?? '',
-    rawStatus: wire.raw_status ?? '',
-    effectiveStatus: wire.effective_status ?? '',
-    mismatchState: wire.mismatch_state ?? 'unknown',
-    planningStatus: wire.planning_status ?? {},
-    graph: {
-      nodes: castNodes((rawGraph.nodes as Record<string, unknown>[] | undefined) ?? []),
-      edges: castEdges((rawGraph.edges as Record<string, unknown>[] | undefined) ?? []),
-      phaseBatches: castPhaseBatches((rawGraph.phase_batches as Record<string, unknown>[] | undefined) ?? []),
-    },
-    phases: (wire.phases ?? []).map(adaptPhaseContextItem),
-    blockedBatchIds: wire.blocked_batch_ids ?? [],
-    linkedArtifactRefs: wire.linked_artifact_refs ?? [],
-    specs: (wire.specs ?? []).map(adaptPlanningArtifactRef),
-    prds: (wire.prds ?? []).map(adaptPlanningArtifactRef),
-    plans: (wire.plans ?? []).map(adaptPlanningArtifactRef),
-    ctxs: (wire.ctxs ?? []).map(adaptPlanningArtifactRef),
-    reports: (wire.reports ?? []).map(adaptPlanningArtifactRef),
-    spikes: (wire.spikes ?? []).map(adaptPlanningSpikeItem),
-    openQuestions: (wire.open_questions ?? []).map(adaptPlanningOpenQuestionItem),
-    readyToPromote: wire.ready_to_promote ?? false,
-    isStale: wire.is_stale ?? false,
-    totalTokens: wire.total_tokens ?? 0,
-    tokenUsageByModel: adaptPlanningTokenUsageByModel(wire.token_usage_by_model),
-    category: wire.category,
-    slug: wire.slug,
-    complexity: wire.complexity,
-    tags: wire.tags,
-  };
+export function prefetchFeaturePlanningContext(
+  featureId: string,
+  opts?: { projectId?: string },
+): Promise<FeaturePlanningContext | null> {
+  return getFeaturePlanningContext(featureId, opts).catch(() => null);
 }
 
 /**
@@ -610,4 +951,62 @@ export async function getPhaseOperations(
     dependencyResolution: wire.dependency_resolution ?? {},
     progressEvidence: wire.progress_evidence ?? [],
   };
+}
+
+// ── Status bucket derivation (P13-003) ───────────────────────────────────────
+
+/**
+ * Client-side mirror of the backend `_derive_status_bucket` function.
+ *
+ * Precedence (descending): blocked > review > active > planned > shaping >
+ *   completed > deferred > stale_or_mismatched.
+ */
+export function deriveStatusBucket(feature: FeatureSummaryItem): PlanningStatusBucket {
+  const eff = (feature.effectiveStatus ?? '').toLowerCase().trim();
+  const raw = (feature.rawStatus ?? '').toLowerCase().trim();
+
+  if (feature.hasBlockedPhases || eff === 'blocked' || raw === 'blocked') return 'blocked';
+  if (eff === 'in_review' || eff === 'in-review' || raw === 'in_review' || raw === 'in-review' || eff === 'review' || raw === 'review') return 'review';
+  if (eff === 'in_progress' || eff === 'in-progress' || raw === 'in_progress' || raw === 'in-progress') return 'active';
+  if (eff === 'approved' || eff === 'planned' || raw === 'approved' || raw === 'planned') return 'planned';
+  if (eff === 'draft' || eff === 'shaping' || eff === 'idea' || raw === 'draft' || raw === 'shaping' || raw === 'idea') return 'shaping';
+  if (eff === 'completed' || eff === 'done' || eff === 'merged' || eff === 'promoted' || raw === 'completed' || raw === 'done' || raw === 'merged') return 'completed';
+  if (eff === 'deferred' || eff === 'deprecated' || eff === 'superseded' || eff === 'future' || raw === 'deferred' || raw === 'deprecated' || raw === 'superseded') return 'deferred';
+
+  return 'stale_or_mismatched';
+}
+
+/** Returns true if a FeatureSummaryItem matches the given status bucket. */
+export function featureMatchesBucket(
+  feature: FeatureSummaryItem,
+  bucket: PlanningStatusBucket,
+): boolean {
+  return deriveStatusBucket(feature) === bucket;
+}
+
+/**
+ * Returns true if a FeatureSummaryItem matches the given signal filter.
+ *   blocked  → hasBlockedPhases or effectiveStatus contains 'blocked'
+ *   stale    → mismatchState contains 'stale', 'reversed', or 'unresolved'
+ *   mismatch → isMismatch
+ */
+export function featureMatchesSignal(
+  feature: FeatureSummaryItem,
+  signal: 'blocked' | 'stale' | 'mismatch',
+): boolean {
+  switch (signal) {
+    case 'blocked':
+      return (
+        feature.hasBlockedPhases ||
+        (feature.effectiveStatus ?? '').toLowerCase().includes('blocked')
+      );
+    case 'stale':
+      return (
+        (feature.mismatchState ?? '').toLowerCase().includes('stale') ||
+        (feature.mismatchState ?? '').toLowerCase().includes('reversed') ||
+        (feature.mismatchState ?? '').toLowerCase().includes('unresolved')
+      );
+    case 'mismatch':
+      return feature.isMismatch;
+  }
 }

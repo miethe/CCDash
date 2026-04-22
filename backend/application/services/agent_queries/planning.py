@@ -50,9 +50,13 @@ from .models import (
     PhaseOperationsDTO,
     PhaseTaskItem,
     PlanningArtifactRef,
+    PlanningCtxPerPhase,
     PlanningNodeCountsByType,
     PlanningOpenQuestionItem,
     PlanningSpikeItem,
+    PlanningStatusCounts,
+    PlanningTokenTelemetry,
+    PlanningTokenTelemetryEntry,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     TokenUsageByModel,
@@ -69,6 +73,23 @@ _PROMOTION_READY_STATUSES = {
     "mature",
 }
 _TERMINAL_FEATURE_STATUSES = {"done", "deferred", "completed"}
+_TERMINAL_SUMMARY_STATUSES = {
+    "done",
+    "completed",
+    "closed",
+    "deferred",
+    "superseded",
+}
+_ACTIVE_FIRST_STATUS_RANK = {
+    "active": 0,
+    "in-progress": 0,
+    "in_progress": 0,
+    "planned": 1,
+    "blocked": 2,
+    "review": 3,
+    "draft": 4,
+    "approved": 5,
+}
 _OQ_ID_PREFIX = re.compile(r"^(oq[-_\s]*\d+)\s*[:\-]\s*(.+)$", re.IGNORECASE)
 _OQ_OVERLAY_LOCK = asyncio.Lock()
 _OQ_OVERLAY: dict[str, dict[str, PlanningOpenQuestionItem]] = {}
@@ -407,6 +428,42 @@ def _is_mismatch(ps: PlanningEffectiveStatus | None) -> bool:
     return bool(ps.mismatchState.isMismatch)
 
 
+def _summary_status_token(item: FeatureSummaryItem) -> str:
+    return str(item.effective_status or item.raw_status or "").strip().lower()
+
+
+def _is_terminal_summary_item(item: FeatureSummaryItem) -> bool:
+    return _summary_status_token(item).replace("_", "-") in _TERMINAL_SUMMARY_STATUSES
+
+
+def _summary_sort_key(item: FeatureSummaryItem) -> tuple[int, str, str]:
+    token = _summary_status_token(item)
+    normalized = token.replace("_", "-")
+    rank = _ACTIVE_FIRST_STATUS_RANK.get(token)
+    if rank is None:
+        rank = _ACTIVE_FIRST_STATUS_RANK.get(normalized)
+    if rank is None:
+        rank = 50 if normalized in _TERMINAL_SUMMARY_STATUSES else 20
+    return rank, str(item.feature_name or "").lower(), str(item.feature_id or "").lower()
+
+
+def _shape_feature_summaries(
+    items: list[FeatureSummaryItem],
+    *,
+    active_first: bool,
+    include_terminal: bool,
+    limit: int | None,
+) -> list[FeatureSummaryItem]:
+    shaped = list(items)
+    if not include_terminal:
+        shaped = [item for item in shaped if not _is_terminal_summary_item(item)]
+    if active_first:
+        shaped = sorted(shaped, key=_summary_sort_key)
+    if limit is not None:
+        shaped = shaped[: max(1, int(limit))]
+    return shaped
+
+
 def _batch_dict(batch: Any) -> dict[str, Any]:
     """Serialise a PlanningPhaseBatch to a plain dict."""
     if hasattr(batch, "model_dump"):
@@ -439,6 +496,114 @@ def _load_doc_rows_for_feature(
             )
         ) == fk
     ]
+
+
+_LIGHTWEIGHT_DOC_TYPE_TO_NODE_TYPE = {
+    "design_doc": "design_spec",
+    "spec": "design_spec",
+    "design_spec": "design_spec",
+    "implementation_plan": "implementation_plan",
+    "phase_plan": "implementation_plan",
+    "prd": "prd",
+    "progress": "progress",
+    "report": "report",
+}
+
+
+def _lightweight_node_type_for_doc(
+    *,
+    doc_type: str,
+    file_path: str,
+    primary_role: str = "",
+) -> str | None:
+    """Classify planning artifact rows without building a full feature graph."""
+    role_token = str(primary_role or "").strip().lower()
+    path_token = str(file_path or "").strip().lower()
+    raw_doc_type = str(doc_type or "").strip().lower()
+    if raw_doc_type == "tracker" or "tracker" in role_token or "tracker" in path_token:
+        return "tracker"
+    if raw_doc_type in {"context", "ctx"} or "context" in role_token or "context" in path_token:
+        return "context"
+
+    classified = str(
+        classify_doc_type(file_path, {"doc_type": doc_type})
+        or raw_doc_type
+    ).strip().lower()
+    return _LIGHTWEIGHT_DOC_TYPE_TO_NODE_TYPE.get(classified)
+
+
+def _doc_identity(*, doc_id: str, file_path: str, title: str = "") -> str:
+    return str(file_path or doc_id or title or "").strip().lower()
+
+
+def _linked_document_node_entries(
+    linked_docs: list[Any],
+) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for raw_doc in linked_docs or []:
+        doc = (
+            LinkedDocument.model_validate(raw_doc)
+            if isinstance(raw_doc, dict)
+            else raw_doc
+        )
+        if not isinstance(doc, LinkedDocument):
+            continue
+        node_type = _lightweight_node_type_for_doc(
+            doc_type=str(getattr(doc, "docType", "") or ""),
+            file_path=str(getattr(doc, "filePath", "") or ""),
+            primary_role=str(getattr(doc, "primaryDocRole", "") or ""),
+        )
+        if node_type is None:
+            continue
+        identity = _doc_identity(
+            doc_id=str(getattr(doc, "id", "") or ""),
+            file_path=str(getattr(doc, "filePath", "") or ""),
+            title=str(getattr(doc, "title", "") or ""),
+        )
+        if identity:
+            entries.append((identity, node_type))
+    return entries
+
+
+def _doc_row_node_entries(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for row in rows:
+        node_type = _lightweight_node_type_for_doc(
+            doc_type=str(row.get("doc_type") or ""),
+            file_path=str(row.get("file_path") or row.get("filePath") or ""),
+            primary_role=str(
+                row.get("primary_doc_role")
+                or row.get("primaryDocRole")
+                or ""
+            ),
+        )
+        if node_type is None:
+            continue
+        identity = _doc_identity(
+            doc_id=str(row.get("id") or row.get("document_id") or ""),
+            file_path=str(row.get("file_path") or row.get("filePath") or ""),
+            title=str(row.get("title") or ""),
+        )
+        if identity:
+            entries.append((identity, node_type))
+    return entries
+
+
+def _count_lightweight_planning_nodes(
+    feature: Feature,
+    current_doc_rows: list[dict[str, Any]],
+) -> tuple[Counter[str], int]:
+    """Return planning artifact counts for summary payloads only.
+
+    Full graph node/edge construction remains available through graph/detail
+    endpoints; summary only needs artifact facets and a small per-feature count.
+    """
+    nodes_by_identity: dict[str, str] = {}
+    for identity, node_type in _linked_document_node_entries(feature.linkedDocs):
+        nodes_by_identity.setdefault(identity, node_type)
+    for identity, node_type in _doc_row_node_entries(current_doc_rows):
+        nodes_by_identity.setdefault(identity, node_type)
+    return Counter(nodes_by_identity.values()), len(nodes_by_identity)
 
 
 async def _load_all_features(
@@ -483,9 +648,17 @@ def _summary_params(
     ports: CorePorts,
     *,
     project_id_override: str | None = None,
+    active_first: bool = True,
+    include_terminal: bool = False,
+    limit: int | None = 100,
     **_: Any,
 ) -> dict[str, Any]:
-    return {"project_id_override": project_id_override}
+    return {
+        "project_id_override": project_id_override,
+        "active_first": active_first,
+        "include_terminal": include_terminal,
+        "limit": limit,
+    }
 
 
 def _graph_params(
@@ -534,6 +707,114 @@ def _phase_ops_params(
     }
 
 
+# ── Status bucket helpers ────────────────────────────────────────────────────
+
+def _derive_status_bucket(feature: Feature) -> str:
+    """Map a feature to exactly one status bucket.
+
+    Precedence: blocked > review > active > planned > shaping > completed > deferred > stale_or_mismatched.
+    """
+    ps = feature.planningStatus
+    eff = (_effective_status(ps) or str(feature.status or "")).strip().lower()
+    raw = (_raw_status(ps) or str(feature.status or "")).strip().lower()
+    ms = _mismatch_state(ps)
+
+    if eff == "blocked" or ms == "blocked":
+        return "blocked"
+    if eff in {"review", "in-review"}:
+        return "review"
+    if eff in {"active", "in-progress", "in_progress"}:
+        return "active"
+    if raw in {"planned", "draft", "approved"} or eff in {"planned", "draft", "approved"}:
+        return "planned"
+    if raw in {"shaping", "backlog"} or eff in {"shaping", "backlog"}:
+        return "shaping"
+    if raw in {"done", "completed"} or eff in {"done", "completed"}:
+        return "completed"
+    if raw in {"deferred"} or eff in {"deferred"}:
+        return "deferred"
+    if ms not in {"aligned", "unknown", ""}:
+        return "stale_or_mismatched"
+    return "shaping"
+
+
+def _build_status_counts(features: list[Feature]) -> PlanningStatusCounts:
+    """Iterate features, derive bucket for each, increment counts."""
+    counts: dict[str, int] = {
+        "shaping": 0,
+        "planned": 0,
+        "active": 0,
+        "blocked": 0,
+        "review": 0,
+        "completed": 0,
+        "deferred": 0,
+        "stale_or_mismatched": 0,
+    }
+    for feature in features:
+        bucket = _derive_status_bucket(feature)
+        counts[bucket] = counts.get(bucket, 0) + 1
+    return PlanningStatusCounts(**counts)
+
+
+def _build_ctx_per_phase(
+    context_count: int,
+    phase_count: int,
+) -> PlanningCtxPerPhase:
+    """Return ctx-per-phase ratio; unavailable when phase_count is 0."""
+    if phase_count == 0:
+        return PlanningCtxPerPhase(
+            context_count=context_count,
+            phase_count=0,
+            ratio=None,
+            source="unavailable",
+        )
+    return PlanningCtxPerPhase(
+        context_count=context_count,
+        phase_count=phase_count,
+        ratio=round(context_count / phase_count, 3),
+        source="backend",
+    )
+
+
+def _build_token_telemetry(features: list[Feature]) -> PlanningTokenTelemetry:
+    """Aggregate token telemetry from feature records; unavailable if no data found."""
+    family_totals: dict[str, int] = {}
+    grand_total = 0
+    for feature in features:
+        ps = feature.planningStatus
+        # token_usage_by_model may not be available on Feature — guard defensively
+        usage = getattr(feature, "tokenUsageByModel", None)
+        if usage is None:
+            continue
+        payload = usage if isinstance(usage, dict) else (usage.model_dump() if hasattr(usage, "model_dump") else {})
+        for family, tokens in payload.items():
+            if family == "total":
+                continue
+            try:
+                t = int(tokens or 0)
+            except (TypeError, ValueError):
+                continue
+            if t:
+                family_totals[family] = family_totals.get(family, 0) + t
+                grand_total += t
+
+    if not family_totals:
+        return PlanningTokenTelemetry(
+            total_tokens=None,
+            by_model_family=[],
+            source="unavailable",
+        )
+    entries = [
+        PlanningTokenTelemetryEntry(model_family=family, total_tokens=total)
+        for family, total in sorted(family_totals.items())
+    ]
+    return PlanningTokenTelemetry(
+        total_tokens=grand_total,
+        by_model_family=entries,
+        source="session_attribution",
+    )
+
+
 # ── Service class ────────────────────────────────────────────────────────────
 
 
@@ -559,12 +840,16 @@ class PlanningQueryService:
         ports: CorePorts,
         *,
         project_id_override: str | None = None,
+        active_first: bool = True,
+        include_terminal: bool = False,
+        limit: int | None = 100,
     ) -> ProjectPlanningSummaryDTO:
         """Return project-level planning health counts and feature summaries.
 
         Loads all features, applies planning projection, and aggregates:
         active vs stale counts, blocked/mismatch counts, reversal lists, and
-        node-type distribution across all feature planning graphs.
+        lightweight artifact facets. Full graph payloads are deferred to the
+        graph/detail endpoints.
         """
         scope = resolve_project_scope(context, ports, project_id_override)
         if scope is None:
@@ -632,29 +917,12 @@ class PlanningQueryService:
             }:
                 stale_ids.append(feature.id)
 
-            # Count node types from each feature's graph.
             current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature.id)
-            linked_docs = [
-                LinkedDocument.model_validate(d)
-                for d in (feature.linkedDocs or [])
-                if isinstance(d, dict)
-            ] + [
-                LinkedDocument(
-                    id=str(row.get("id") or ""),
-                    title=str(row.get("title") or ""),
-                    filePath=str(row.get("file_path") or ""),
-                    docType=str(row.get("doc_type") or ""),
-                )
-                for row in current_doc_rows
-            ]
-            try:
-                graph = build_planning_graph(feature, linked_docs, None)
-                for node in graph.nodes:
-                    node_type_counter[str(node.type)] += 1
-                node_count = len(graph.nodes)
-            except Exception:
-                node_count = 0
-                partial = True
+            feature_node_counts, node_count = _count_lightweight_planning_nodes(
+                feature,
+                current_doc_rows,
+            )
+            node_type_counter.update(feature_node_counts)
 
             blocked_phases = [
                 p
@@ -797,6 +1065,46 @@ class PlanningQueryService:
             *[row.get("updated_at") or row.get("updatedAt") for row in feature_rows]
         )
 
+        # ── New aggregate fields (P13-001: status buckets + ctx ratio + token telemetry) ──
+        with otel.start_span(
+            "planning.service.summary.aggregates",
+            {
+                "project_id": project.id,
+                "feature_count": len(projected),
+                "phase_count": sum(len(f.phases) for f in projected),
+                "token_telemetry_available": any(
+                    getattr(f, "tokenUsageByModel", None) is not None for f in projected
+                ),
+            },
+        ):
+            status_counts = _build_status_counts(projected)
+            total_phase_count = sum(len(f.phases) for f in projected)
+            ctx_per_phase = _build_ctx_per_phase(
+                context_count=node_type_counter.get("context", 0),
+                phase_count=total_phase_count,
+            )
+            token_telemetry = _build_token_telemetry(projected)
+
+        # ── Feature summary shaping (P12-001/P12-002: active-first + terminal filter + limit) ──
+        with otel.start_span(
+            "planning.service.summary.shape_summaries",
+            {
+                "project_id": project.id,
+                "active_first": active_first,
+                "include_terminal": include_terminal,
+                "limit": limit if limit is not None else -1,
+                "input_count": len(feature_summaries),
+            },
+        ) as shape_span:
+            shaped_summaries = _shape_feature_summaries(
+                feature_summaries,
+                active_first=active_first,
+                include_terminal=include_terminal,
+                limit=limit,
+            )
+            if shape_span is not None:
+                shape_span.set_attribute("output_count", len(shaped_summaries))
+
         return ProjectPlanningSummaryDTO(
             status="partial" if partial else "ok",
             project_id=project.id,
@@ -812,7 +1120,10 @@ class PlanningQueryService:
             reversal_feature_ids=sorted(set(reversal_ids)),
             blocked_feature_ids=sorted(set(blocked_ids)),
             node_counts_by_type=node_counts,
-            feature_summaries=feature_summaries,
+            feature_summaries=shaped_summaries,
+            status_counts=status_counts,
+            ctx_per_phase=ctx_per_phase,
+            token_telemetry=token_telemetry,
             data_freshness=data_freshness,
             source_refs=collect_source_refs(project.id, [f.id for f in projected]),
         )

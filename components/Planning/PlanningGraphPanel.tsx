@@ -454,10 +454,11 @@ interface FeatureCellProps {
   nodes: PlanningNode[];
   selected: boolean;
   onSelectFeature?: (slug: string) => void;
+  onPrefetchFeature?: (slug: string) => void;
 }
 
 /** Feature identity cell — leftmost column */
-function FeatureCell({ slug, nodes, selected, onSelectFeature }: FeatureCellProps) {
+function FeatureCell({ slug, nodes, selected, onSelectFeature, onPrefetchFeature }: FeatureCellProps) {
   const category = deriveCategory(slug, nodes);
   const complexity = deriveComplexity(nodes);
   const mismatch = hasMismatch(nodes);
@@ -473,6 +474,8 @@ function FeatureCell({ slug, nodes, selected, onSelectFeature }: FeatureCellProp
   return (
     <div
       onClick={() => onSelectFeature?.(slug)}
+      onMouseEnter={() => onPrefetchFeature?.(slug)}
+      onFocus={() => onPrefetchFeature?.(slug)}
       role="rowheader"
       aria-label={`${title}, ${category}, ${complexity} complexity, ${effectiveStatus}${mismatch ? ', frontmatter mismatch' : ''}${stale ? ', stale status' : ''}`}
       tabIndex={0}
@@ -1060,11 +1063,12 @@ interface GraphRowProps {
   rollup: FeatureTokenRollup | undefined;
   selected: boolean;
   onSelectFeature?: (slug: string) => void;
+  onPrefetchFeature?: (slug: string) => void;
   onNodeClick?: (node: PlanningNode) => void;
 }
 
 /** Single feature row in the graph grid */
-function GraphRow({ slug, nodes, rollup, selected, onSelectFeature, onNodeClick }: GraphRowProps) {
+function GraphRow({ slug, nodes, rollup, selected, onSelectFeature, onPrefetchFeature, onNodeClick }: GraphRowProps) {
   return (
     <div
       role="row"
@@ -1087,6 +1091,7 @@ function GraphRow({ slug, nodes, rollup, selected, onSelectFeature, onNodeClick 
         nodes={nodes}
         selected={selected}
         onSelectFeature={onSelectFeature}
+        onPrefetchFeature={onPrefetchFeature}
       />
 
       {LANES.map(lane => (
@@ -1386,6 +1391,9 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
 export interface PlanningGraphPanelProps {
   projectId: string | null;
   onSelectFeature?: (featureId: string) => void;
+  onPrefetchFeature?: (featureId: string) => void;
+  activeStatusBucket?: import('../../services/planningRoutes').PlanningStatusBucket | null;
+  activeSignal?: import('../../services/planningRoutes').PlanningSignal | null;
 }
 
 type GraphFetchState =
@@ -1394,7 +1402,7 @@ type GraphFetchState =
   | { phase: 'error'; message: string }
   | { phase: 'ready'; graph: ProjectPlanningGraph };
 
-export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraphPanelProps) {
+export function PlanningGraphPanel({ projectId, onSelectFeature, onPrefetchFeature }: PlanningGraphPanelProps) {
   const { documents } = useData();
   const [state, setState] = useState<GraphFetchState>({ phase: 'idle' });
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -1579,6 +1587,7 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
                     rollup={graph.featureTokenRollups?.[slug]}
                     selected={selectedSlug === slug}
                     onSelectFeature={handleSelectFeature}
+                    onPrefetchFeature={onPrefetchFeature}
                     onNodeClick={handleNodeClick}
                   />
                 ))}
@@ -1597,6 +1606,10 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
           doc={selectedDoc}
           onClose={() => setSelectedDoc(null)}
           onBack={() => setSelectedDoc(null)}
+          onOpenFeature={(featureId) => {
+            setSelectedDoc(null);
+            onSelectFeature?.(featureId);
+          }}
           backLabel="Planning Graph"
         />
       )}

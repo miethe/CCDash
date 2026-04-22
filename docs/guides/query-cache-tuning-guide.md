@@ -106,9 +106,9 @@ No cache-specific dashboard is included; correlate hit/miss rates with query lat
 
 ## Related Documentation
 
-- `/Users/miethe/dev/homelab/development/CCDash/CLAUDE.md` — Runtime profiles, worker runtime, config patterns.
-- `/Users/miethe/dev/homelab/development/CCDash/docs/guides/cli-timeout-debugging.md` — Query timeout tuning.
-- `/Users/miethe/dev/homelab/development/CCDash/docs/guides/agent-query-surfaces-guide.md` — Query service architecture.
+- `CLAUDE.md` — Runtime profiles, worker runtime, config patterns.
+- `docs/guides/cli-timeout-debugging.md` — Query timeout tuning.
+- `docs/guides/agent-query-surfaces-guide.md` — Query service architecture.
 
 ## Code References
 

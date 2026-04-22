@@ -168,11 +168,11 @@ The following assumptions are now fixed and should not be reopened by downstream
 
 Use these implementation plans as the next execution anchors:
 
-- [docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-sso-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-sso-v1.md)
-- [docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md)
+- [docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-sso-v1.md](../project_plans/implementation_plans/enhancements/shared-auth-rbac-sso-v1.md)
+- [docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md](../project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md)
 
 Supporting storage-contract references:
 
-- [docs/guides/storage-profiles-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/storage-profiles-guide.md)
-- [docs/guides/data-domain-ownership-matrix.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-ownership-matrix.md)
-- [docs/guides/data-domain-schema-layout.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-schema-layout.md)
+- [docs/guides/storage-profiles-guide.md](storage-profiles-guide.md)
+- [docs/guides/data-domain-ownership-matrix.md](data-domain-ownership-matrix.md)
+- [docs/guides/data-domain-schema-layout.md](data-domain-schema-layout.md)
