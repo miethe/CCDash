@@ -2,89 +2,109 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2-interaction-performance-addendum"
-feature_slug: "ccdash-planning-reskin-v2-interaction-performance-addendum"
+prd: ccdash-planning-reskin-v2-interaction-performance-addendum
+feature_slug: ccdash-planning-reskin-v2-interaction-performance-addendum
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 phase: 17
-title: "Documentation Finalization"
-status: "pending"
-created: 2026-04-21
-updated: 2026-04-21
+title: Documentation Finalization
+status: pending
+created: '2026-04-21'
+updated: '2026-04-22'
 started: null
 completed: null
 commit_refs: []
 pr_refs: []
-
 overall_progress: 0
-completion_estimate: "on-track"
-
+completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["changelog-generator", "documentation-writer"]
+owners:
+- changelog-generator
+- documentation-writer
 contributors: []
-
 model_usage:
-  primary: "haiku"
+  primary: haiku
   external: []
-
 tasks:
-  - id: "P17-001"
-    description: "CHANGELOG [Unreleased] entry for modal-first navigation, active-first loading, metric/filter wiring, quick-view panels, roster detail interactions."
-    status: "pending"
-    assigned_to: ["changelog-generator"]
-    assigned_model: "haiku"
-    dependencies: ["P16-001", "P16-002", "P16-003", "P16-004"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-
-  - id: "P17-002"
-    description: "Update parent plan references — Phase Summary table and related_documents."
-    status: "pending"
-    assigned_to: ["documentation-writer"]
-    assigned_model: "haiku"
-    dependencies: ["P16-001"]
-    estimated_effort: "0.5 pts"
-    priority: "low"
-
-  - id: "P17-003"
-    description: "Author feature guide at .claude/worknotes/ccdash-planning-reskin-v2-interaction-performance-addendum/feature-guide.md."
-    status: "pending"
-    assigned_to: ["documentation-writer"]
-    assigned_model: "haiku"
-    dependencies: ["P16-001"]
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-
-  - id: "P17-004"
-    description: "Add context and CLAUDE.md pointers if new agent-facing interaction or caching patterns were introduced."
-    status: "pending"
-    assigned_to: ["documentation-writer"]
-    assigned_model: "haiku"
-    dependencies: ["P17-003"]
-    estimated_effort: "0.5 pts"
-    priority: "low"
-
+- id: P17-001
+  description: CHANGELOG [Unreleased] entry for modal-first navigation, active-first
+    loading, metric/filter wiring, quick-view panels, roster detail interactions.
+  status: completed
+  assigned_to:
+  - changelog-generator
+  assigned_model: haiku
+  dependencies:
+  - P16-001
+  - P16-002
+  - P16-003
+  - P16-004
+  estimated_effort: 1 pt
+  priority: medium
+- id: P17-002
+  description: Update parent plan references — Phase Summary table and related_documents.
+  status: completed
+  assigned_to:
+  - documentation-writer
+  assigned_model: haiku
+  dependencies:
+  - P16-001
+  estimated_effort: 0.5 pts
+  priority: low
+- id: P17-003
+  description: Author feature guide at .claude/worknotes/ccdash-planning-reskin-v2-interaction-performance-addendum/feature-guide.md.
+  status: completed
+  assigned_to:
+  - documentation-writer
+  assigned_model: haiku
+  dependencies:
+  - P16-001
+  estimated_effort: 1.5 pts
+  priority: medium
+- id: P17-004
+  description: Add context and CLAUDE.md pointers if new agent-facing interaction
+    or caching patterns were introduced.
+  status: pending
+  assigned_to:
+  - documentation-writer
+  assigned_model: haiku
+  dependencies:
+  - P17-003
+  estimated_effort: 0.5 pts
+  priority: low
 parallelization:
-  batch_1: ["P17-001", "P17-002", "P17-003"]
-  batch_2: ["P17-004"]
-  critical_path: ["P17-003", "P17-004"]
-  estimated_total_time: "1 day"
-
+  batch_1:
+  - P17-001
+  - P17-002
+  - P17-003
+  batch_2:
+  - P17-004
+  critical_path:
+  - P17-003
+  - P17-004
+  estimated_total_time: 1 day
 blockers: []
-
 success_criteria:
-  - { id: "SC-17.1", description: "CHANGELOG [Unreleased] entry complete and linked to PR", status: "pending" }
-  - { id: "SC-17.2", description: "Parent plan updated with addendum reference", status: "pending" }
-  - { id: "SC-17.3", description: "Feature guide complete with all new surfaces documented", status: "pending" }
-  - { id: "SC-17.4", description: "Context files updated if new agent-facing patterns introduced", status: "pending" }
-  - { id: "SC-17.5", description: "Documentation merged to main", status: "pending" }
-
+- id: SC-17.1
+  description: CHANGELOG [Unreleased] entry complete and linked to PR
+  status: pending
+- id: SC-17.2
+  description: Parent plan updated with addendum reference
+  status: pending
+- id: SC-17.3
+  description: Feature guide complete with all new surfaces documented
+  status: pending
+- id: SC-17.4
+  description: Context files updated if new agent-facing patterns introduced
+  status: pending
+- id: SC-17.5
+  description: Documentation merged to main
+  status: pending
 files_modified: []
+progress: 75
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 17: Documentation Finalization

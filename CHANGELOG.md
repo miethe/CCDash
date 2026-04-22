@@ -6,6 +6,8 @@
 
 - Containerized deployment infrastructure: unified backend Dockerfile, hardened frontend image, `compose.yaml` with `local`, `enterprise`, and `postgres` profiles, rootless Podman support, and single-command deployment via `docker compose` or `podman-compose`.
 - CCDash Planning Reskin v2 documentation finalization: updated the root README and planning control-plane guide, added a planning context pointer in the design-handoff bundle, and authored deferred-item design specs for DEFER-01, DEFER-02, DEFER-03, DEFER-04, DEFER-06, DEFER-07, DEFER-08, DEFER-09, and DEFER-10 under `docs/project_plans/design-specs/`.
+- CCDash Planning Reskin v2 interaction and performance addendum: modal-first navigation (clicks open panels/modals instead of routing; explicit board affordance preserved), active-first cached loading with stale-while-revalidate and bounded LRU in `services/planning.ts`, real statusCounts wiring on metric tiles with active-first filtering, PlanningQuickViewPanel for side-panel triage/tracker interactions, AgentDetailModal with agent naming precedence and keyboard/a11y handling, and roster hint chips with tab/filter state persistence.
+- Planning summary backend enhancements: `GET /api/planning/summary` now exposes `statusCounts`, `ctx_per_phase`, and `token_telemetry` with document-driven cache invalidation; agent session canonical fields (`subagentType`, `displayAgentType`) are now available in session payloads; OpenTelemetry spans instrumented on planning summary and cache fingerprint paths.
 
 ## 2026-04-15
 

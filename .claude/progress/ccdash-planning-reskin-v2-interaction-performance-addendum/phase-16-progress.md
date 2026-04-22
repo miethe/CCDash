@@ -9,7 +9,7 @@ plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-r
 phase: 16
 title: Verification and Performance Gates
 status: completed
-created: 2026-04-21
+created: '2026-04-21'
 updated: '2026-04-22'
 started: null
 completed: null
