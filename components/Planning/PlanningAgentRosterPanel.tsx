@@ -93,6 +93,9 @@ function deriveName(session: AgentSession): string {
   if (session.displayAgentType != null && session.displayAgentType !== '') {
     return humanizeAgentType(session.displayAgentType);
   }
+  if (session.threadKind === 'root' || (session.parentSessionId == null && session.agentId == null)) {
+    return 'Orchestrator';
+  }
   return (
     (session.agentId ?? undefined) ??
     session.title?.split(' ')[0] ??
@@ -468,11 +471,11 @@ export function PlanningAgentRosterPanel({ className }: PlanningAgentRosterPanel
 
   return (
     <>
-      <Panel className={cn('flex flex-col p-5', className)} data-testid="planning-agent-roster">
+      <Panel className={cn('flex min-h-0 flex-col p-5 xl:h-[480px]', className)} data-testid="planning-agent-roster">
         {/* Header */}
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex shrink-0 items-center justify-between">
           <h2
-            className="planning-serif text-sm font-semibold"
+            className="text-sm font-semibold"
             style={{ color: 'var(--ink-0)' }}
           >
             Agent Roster
@@ -492,20 +495,22 @@ export function PlanningAgentRosterPanel({ className }: PlanningAgentRosterPanel
         </div>
 
         {/* Table */}
-        <div className="flex-1" role="table" aria-label="Live agent roster">
+        <div className="min-h-0 flex-1 overflow-hidden" role="table" aria-label="Live agent roster">
           {entries.length === 0 ? (
             <RosterEmpty />
           ) : (
-            <div className="space-y-0.5" role="rowgroup">
+            <div className="flex h-full min-h-0 flex-col space-y-0.5" role="rowgroup">
               <RosterHeader />
-              {entries.map((entry) => (
-                <RosterRow
-                  key={entry.id}
-                  entry={entry}
-                  onPrefetchSession={(sessionId) => void getSessionById(sessionId)}
-                  onClick={handleRowClick}
-                />
-              ))}
+              <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1">
+                {entries.map((entry) => (
+                  <RosterRow
+                    key={entry.id}
+                    entry={entry}
+                    onPrefetchSession={(sessionId) => void getSessionById(sessionId)}
+                    onClick={handleRowClick}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>

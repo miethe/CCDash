@@ -121,13 +121,20 @@ if (typeof document !== 'undefined' && !document.getElementById('graph-panel-sty
 }
 
 import type {
+  FeatureSummaryItem,
   FeatureTokenRollup,
   PlanDocument,
   PlanningNode,
   PlanningNodeType,
   ProjectPlanningGraph,
 } from '../../types';
-import { getProjectPlanningGraph, PlanningApiError } from '../../services/planning';
+import {
+  featureMatchesBucket,
+  featureMatchesSignal,
+  getProjectPlanningGraph,
+  PlanningApiError,
+} from '../../services/planning';
+import type { PlanningSignal, PlanningStatusBucket } from '../../services/planningRoutes';
 import { useData } from '../../contexts/DataContext';
 import { DocumentModal } from '../DocumentModal';
 import { BtnGhost, Chip, DocChip, StatusPill } from './primitives';
@@ -344,6 +351,42 @@ function deriveEffectiveStatus(nodes: PlanningNode[]): string {
     if (nodes.some(n => n.effectiveStatus === p || n.rawStatus === p)) return p;
   }
   return nodes[0]?.rawStatus ?? 'unknown';
+}
+
+function graphNodesToFeatureSummary(slug: string, nodes: PlanningNode[]): FeatureSummaryItem {
+  const effectiveStatus = deriveEffectiveStatus(nodes);
+  const rawStatus = nodes.find((node) => node.rawStatus)?.rawStatus ?? effectiveStatus;
+  const blockedCount = nodes.filter((node) => {
+    const raw = (node.rawStatus ?? '').toLowerCase();
+    const effective = (node.effectiveStatus ?? '').toLowerCase();
+    return raw.includes('blocked') || effective.includes('blocked');
+  }).length;
+
+  return {
+    featureId: slug,
+    featureName: nodes.find((node) => node.title)?.title ?? slug,
+    rawStatus,
+    effectiveStatus,
+    isMismatch: hasMismatch(nodes),
+    mismatchState: isStale(nodes) ? 'stale' : hasMismatch(nodes) ? 'mismatch' : 'aligned',
+    hasBlockedPhases: blockedCount > 0,
+    phaseCount: nodes.length,
+    blockedPhaseCount: blockedCount,
+    nodeCount: nodes.length,
+  };
+}
+
+function graphFeatureMatchesFilter(
+  slug: string,
+  nodes: PlanningNode[],
+  activeStatusBucket: PlanningStatusBucket | null,
+  activeSignal: PlanningSignal | null,
+): boolean {
+  if (!activeStatusBucket && !activeSignal) return true;
+  const summary = graphNodesToFeatureSummary(slug, nodes);
+  if (activeStatusBucket && !featureMatchesBucket(summary, activeStatusBucket)) return false;
+  if (activeSignal && !featureMatchesSignal(summary, activeSignal)) return false;
+  return true;
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -1402,7 +1445,13 @@ type GraphFetchState =
   | { phase: 'error'; message: string }
   | { phase: 'ready'; graph: ProjectPlanningGraph };
 
-export function PlanningGraphPanel({ projectId, onSelectFeature, onPrefetchFeature }: PlanningGraphPanelProps) {
+export function PlanningGraphPanel({
+  projectId,
+  onSelectFeature,
+  onPrefetchFeature,
+  activeStatusBucket = null,
+  activeSignal = null,
+}: PlanningGraphPanelProps) {
   const { documents } = useData();
   const [state, setState] = useState<GraphFetchState>({ phase: 'idle' });
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -1482,6 +1531,14 @@ export function PlanningGraphPanel({ projectId, onSelectFeature, onPrefetchFeatu
         const cat = deriveCategory(slug, nodes);
         return categoryToBucket(cat) === activeFilter;
       });
+  const visibleSlugs = filteredSlugs.filter((slug) =>
+    graphFeatureMatchesFilter(
+      slug,
+      bySlug.get(slug) ?? [],
+      activeStatusBucket,
+      activeSignal,
+    ),
+  );
 
   const totalWidth = FEATURE_COL_W + LANES.length * LANE_W + TOTALS_COL_W;
 
@@ -1532,7 +1589,7 @@ export function PlanningGraphPanel({ projectId, onSelectFeature, onPrefetchFeatu
           activeFilter={activeFilter}
           onFilterChange={setActiveFilter}
           onNewFeature={handleNewFeature}
-          visibleCount={filteredSlugs.length}
+          visibleCount={visibleSlugs.length}
           totalCount={allSlugs.length}
         />
 
@@ -1542,7 +1599,7 @@ export function PlanningGraphPanel({ projectId, onSelectFeature, onPrefetchFeatu
           role="table"
           aria-label="Planning feature artifact graph"
           aria-colcount={LANES.length + 2}
-          aria-rowcount={filteredSlugs.length + 1}
+          aria-rowcount={visibleSlugs.length + 1}
           style={{ overflow: 'hidden', padding: 0 }}
         >
           {/* Sticky header */}
@@ -1553,7 +1610,7 @@ export function PlanningGraphPanel({ projectId, onSelectFeature, onPrefetchFeatu
             ref={scrollRef}
             style={{ overflow: 'auto', maxHeight: '72vh' }}
           >
-            {filteredSlugs.length === 0 ? (
+            {visibleSlugs.length === 0 ? (
               <FilterEmptyState filter={activeFilter} />
             ) : (
               <div style={{ position: 'relative', width: totalWidth, minWidth: '100%' }}>
@@ -1564,7 +1621,7 @@ export function PlanningGraphPanel({ projectId, onSelectFeature, onPrefetchFeatu
                   laneW={LANE_W}
                   totalWidth={totalWidth}
                   rowHeights={54}
-                  features={filteredSlugs.map((slug): EdgeLayerFeature => {
+                  features={visibleSlugs.map((slug): EdgeLayerFeature => {
                     const nodes = bySlug.get(slug) ?? [];
                     const presence: Record<string, boolean> = {};
                     for (const lane of LANES) {
@@ -1579,7 +1636,7 @@ export function PlanningGraphPanel({ projectId, onSelectFeature, onPrefetchFeatu
                 />
 
                 {/* Feature rows — filtered */}
-                {filteredSlugs.map(slug => (
+                {visibleSlugs.map(slug => (
                   <GraphRow
                     key={slug}
                     slug={slug}

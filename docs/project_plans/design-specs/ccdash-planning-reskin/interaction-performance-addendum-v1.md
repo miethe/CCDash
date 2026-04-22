@@ -1,0 +1,14 @@
+Let's plan some enhancements to our planning page, following the ccdash-planning-reskin-v2 effort. 
+
+1. Almost none of the links on the page should direct the user away from that page, at least not initially. Instead, it should first open a modal/dialog, or navigate to a nested page, with links/expand/etc directing the page elsewhere in the app. For example, clicking a feature should open the modal for that feature directly on the page, rather than navigating to the feature board and opening it there. The various '/artifacts/' pages seem to do this well.
+2. Currently, loading the planning page is very slow, as it seems to load all features and documents each time, even if the user was just there. There must be a better way to cache these details, both generally and for the browser state, without over ballooning the browser memory. We could also perhaps WHAT we're loading and when, prioritizing active, planned, or otherwise in-progress features vs already done/closed. 
+3. Several parts of the page seem to not be wired in correctly yet. The token tracker and ctx/phase aren't showing any data. The Comfortable selector doesn't do anything. The Feature status numbers don't add up to the Total, and each should be clickable to perhaps filter the page to just features with that status. 
+
+For Tracker and Intake:
+1. Clicking a row doesn't open the side-panel view of that feature as was in the designs; it currently just opens the same feature modal on the feature board page. This must be fixed. We can still determine if side panel or modal would fit the data more appropriately.
+
+For the Agent Roster:
+1. the list should be vertically scrollable, with the vertical height pinned to the same as the Triage Inbox. We could have optional expand buttons on all these sections to open as a modal or similar to show all details.
+2. The StateAgent name seems to be the ID of the agent, with the task sometimes being the type of agent. We should have the agent ID listed, perhaps on hover, but should be trying to display the agent type per the linked session and/or the subagent definition used to instantiate that agent session. This should always be available as metadata from the subagent field. If for some reason not available, only then should it show ID as fallback. Even main threads should have a set standard name like Orchestrator or something.
+3. Every agent row in the roster should be clickable. This should open a modal displaying the details about that agent, with links to the session and other related details. We don't need to recreate too much here, rather just pulling from existing components and such in the app where feasible.
+4. We should be linking the roster to features, phases, etc with key, quick-view details in the roster list, and the remaining details in the modal.

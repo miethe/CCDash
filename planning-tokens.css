@@ -83,11 +83,15 @@
 
 .planning-route.planning-density-compact {
   --row-h: 34px;
+  --row-font: 12px;
+  --row-meta-font: 10px;
   --gap: 10px;
 }
 
 .planning-route.planning-density-comfortable {
   --row-h: 44px;
+  --row-font: 12.5px;
+  --row-meta-font: 10.5px;
   --gap: 16px;
 }
 

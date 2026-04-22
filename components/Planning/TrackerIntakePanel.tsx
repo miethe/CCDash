@@ -20,7 +20,13 @@ import type {
   ProjectPlanningGraph,
   ProjectPlanningSummary,
 } from '../../types';
-import { getProjectPlanningGraph, PlanningApiError } from '../../services/planning';
+import {
+  featureMatchesBucket,
+  featureMatchesSignal,
+  getProjectPlanningGraph,
+  PlanningApiError,
+} from '../../services/planning';
+import type { PlanningSignal, PlanningStatusBucket } from '../../services/planningRoutes';
 import { useData } from '../../contexts/DataContext';
 import { DocumentModal } from '../DocumentModal';
 
@@ -57,6 +63,34 @@ function isDerivedFromProgress(node: PlanningNode): boolean {
 function isOpenTrackerOrContext(node: PlanningNode): boolean {
   if (node.type !== 'tracker' && node.type !== 'context') return false;
   return !DONE_STATUSES.has((node.effectiveStatus ?? '').trim().toLowerCase());
+}
+
+function nodeToFeatureSummary(node: PlanningNode): FeatureSummaryItem {
+  const rawStatus = node.rawStatus ?? node.effectiveStatus ?? '';
+  const effectiveStatus = node.effectiveStatus ?? node.rawStatus ?? '';
+  const blocked = rawStatus.toLowerCase().includes('blocked') || effectiveStatus.toLowerCase().includes('blocked');
+  return {
+    featureId: node.featureSlug || node.id,
+    featureName: node.title || node.featureSlug || node.id,
+    rawStatus,
+    effectiveStatus,
+    isMismatch: Boolean(node.mismatchState?.isMismatch),
+    mismatchState: node.mismatchState?.state ?? 'aligned',
+    hasBlockedPhases: blocked,
+    phaseCount: 1,
+    blockedPhaseCount: blocked ? 1 : 0,
+    nodeCount: 1,
+  };
+}
+
+function matchesPlanningFilter(
+  item: FeatureSummaryItem,
+  activeStatusBucket: PlanningStatusBucket | null,
+  activeSignal: PlanningSignal | null,
+): boolean {
+  if (activeStatusBucket && !featureMatchesBucket(item, activeStatusBucket)) return false;
+  if (activeSignal && !featureMatchesSignal(item, activeSignal)) return false;
+  return true;
 }
 
 function nodeTypeLabel(type: PlanningNodeType): string {
@@ -623,7 +657,8 @@ export interface TrackerIntakePanelProps {
    *   'mismatch' → 'validation' tab
    *   'blocked'  → 'validation' tab
    */
-  activeSignal?: string | null;
+  activeStatusBucket?: PlanningStatusBucket | null;
+  activeSignal?: PlanningSignal | null;
   /**
    * P14-002: Called when a tracker/intake node row is clicked.
    * The resolution (feature vs. document) is pre-computed by `resolveNodeClick`
@@ -642,6 +677,7 @@ export function TrackerIntakePanel({
   projectId,
   summary,
   onSelectFeature,
+  activeStatusBucket = null,
   activeSignal,
   onNodeQuickView,
 }: TrackerIntakePanelProps) {
@@ -721,6 +757,7 @@ export function TrackerIntakePanel({
     const promotionItems: PromotionNode[] = [];
     for (const node of nodes) {
       if (node.type !== 'design_spec') continue;
+      if (!matchesPlanningFilter(nodeToFeatureSummary(node), activeStatusBucket, activeSignal ?? null)) continue;
       if (isPromotionReady(node)) {
         promotionItems.push({ node, bucket: 'ready' });
       } else if (isDerivedFromProgress(node)) {
@@ -735,6 +772,7 @@ export function TrackerIntakePanel({
           (n.type === 'design_spec' || n.type === 'prd') &&
           (n.mismatchState?.state === 'stale' || n.mismatchState?.state === 'unresolved'),
       )
+      .filter((node) => matchesPlanningFilter(nodeToFeatureSummary(node), activeStatusBucket, activeSignal ?? null))
       .map((node) => ({ type: 'node' as const, node }));
 
     // Also include feature-level stale entries that don't overlap with node-level
@@ -745,7 +783,8 @@ export function TrackerIntakePanel({
       .filter(
         (fs) =>
           staleFeatureSlugs.has(fs.featureId) &&
-          !staleNodeFeatureSlugs.has(fs.featureId),
+          !staleNodeFeatureSlugs.has(fs.featureId) &&
+          matchesPlanningFilter(fs, activeStatusBucket, activeSignal ?? null),
       )
       .map((fs) => {
         // Create a synthetic PlanningNode-like for uniform rendering
@@ -772,6 +811,7 @@ export function TrackerIntakePanel({
     // Tab C — Trackers (open tracker/context nodes, sorted by updatedAt desc)
     const trackerNodes = nodes
       .filter(isOpenTrackerOrContext)
+      .filter((node) => matchesPlanningFilter(nodeToFeatureSummary(node), activeStatusBucket, activeSignal ?? null))
       .sort((a, b) => {
         const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
         const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
@@ -779,11 +819,14 @@ export function TrackerIntakePanel({
       });
 
     // Tab D — Validation Warnings
-    const mismatchedFeatures = (summary.featureSummaries ?? []).filter((f) => f.isMismatch);
-    const reversedFeatures = (summary.featureSummaries ?? []).filter(
+    const filteredFeatureSummaries = (summary.featureSummaries ?? []).filter((feature) =>
+      matchesPlanningFilter(feature, activeStatusBucket, activeSignal ?? null),
+    );
+    const mismatchedFeatures = filteredFeatureSummaries.filter((f) => f.isMismatch);
+    const reversedFeatures = filteredFeatureSummaries.filter(
       (f) => f.mismatchState === 'reversed',
     );
-    const blockedFeatures = (summary.featureSummaries ?? []).filter((f) => f.hasBlockedPhases);
+    const blockedFeatures = filteredFeatureSummaries.filter((f) => f.hasBlockedPhases);
 
     return {
       promotionItems,
@@ -799,7 +842,7 @@ export function TrackerIntakePanel({
         validation: mismatchedFeatures.length + reversedFeatures.length + blockedFeatures.length,
       },
     };
-  }, [graphState, summary]);
+  }, [activeSignal, activeStatusBucket, graphState, summary]);
 
   const isLoading = graphState.phase === 'idle' || graphState.phase === 'loading';
 

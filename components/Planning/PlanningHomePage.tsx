@@ -478,7 +478,7 @@ export function ActivePlansColumn({
       className="space-y-3 p-5"
     >
       <div className="flex items-center justify-between">
-        <h2 className="planning-serif text-sm font-semibold text-[color:var(--ink-0)]">Active Plans</h2>
+        <h2 className="text-sm font-semibold text-[color:var(--ink-0)]">Active Plans</h2>
         <span className="rounded-full px-2 py-0.5 text-[11px] font-medium text-[color:var(--brand)]" style={{ background: 'color-mix(in oklab, var(--brand) 16%, transparent)' }}>
           {active.length}
         </span>
@@ -538,7 +538,7 @@ export function PlannedFeaturesColumn({
       className="space-y-3 p-5"
     >
       <div className="flex items-center justify-between">
-        <h2 className="planning-serif text-sm font-semibold text-[color:var(--ink-0)]">Planned Features</h2>
+        <h2 className="text-sm font-semibold text-[color:var(--ink-0)]">Planned Features</h2>
         <span className="rounded-full px-2 py-0.5 text-[11px] font-medium text-[color:var(--ink-2)]" style={{ background: 'color-mix(in oklab, var(--ink-2) 14%, transparent)' }}>
           {planned.length}
         </span>
@@ -862,6 +862,8 @@ function PlanningShell({
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
           onDrillDown={onDrillDown}
+          activeStatusBucket={activeStatusBucket}
+          activeSignal={activeSignal}
         />
       </div>
 
@@ -902,6 +904,7 @@ function PlanningShell({
           summary={summary}
           onSelectFeature={onSelectFeature}
           onNodeQuickView={onNodeQuickView}
+          activeStatusBucket={activeStatusBucket}
           activeSignal={activeSignal}
         />
       </Panel>

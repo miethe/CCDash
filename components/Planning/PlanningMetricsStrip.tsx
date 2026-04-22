@@ -16,6 +16,23 @@ function formatRatio(ratio: number | null): string {
   return ratio.toFixed(1);
 }
 
+function fallbackStatusCounts(summary: ProjectPlanningSummary) {
+  return {
+    shaping: 0,
+    planned: 0,
+    active: summary.activeFeatureCount,
+    blocked: summary.blockedFeatureCount,
+    review: 0,
+    completed: summary.featureSummaries.filter((feature) =>
+      ['completed', 'done'].includes((feature.effectiveStatus ?? '').toLowerCase()),
+    ).length,
+    deferred: summary.featureSummaries.filter((feature) =>
+      ['deferred', 'superseded'].includes((feature.effectiveStatus ?? '').toLowerCase()),
+    ).length,
+    staleOrMismatched: Math.max(summary.staleFeatureCount, summary.mismatchCount),
+  };
+}
+
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 interface SignalChipProps {
@@ -94,7 +111,7 @@ export function PlanningMetricsStrip({
   onStatusBucketClick,
   onSignalClick,
 }: PlanningMetricsStripProps) {
-  const sc = summary.statusCounts;
+  const sc = summary.statusCounts ?? fallbackStatusCounts(summary);
   const ctx = summary.ctxPerPhase;
   const tok = summary.tokenTelemetry;
 

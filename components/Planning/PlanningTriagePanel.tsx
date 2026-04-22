@@ -556,6 +556,7 @@ export function PlanningTriagePanel({
     <>
       <Panel
         data-testid="planning-triage-panel"
+        className="flex min-h-0 flex-col xl:h-[480px]"
         style={{ overflow: 'hidden', padding: 0 }}
       >
         {/* Panel heading */}
@@ -590,7 +591,7 @@ export function PlanningTriagePanel({
         <TabStrip tabs={tabs} active={activeFilter} onChange={setActiveFilter} />
 
         {/* Row list */}
-        <div style={{ maxHeight: 380, overflow: 'auto' }}>
+        <div className="min-h-0 flex-1 overflow-auto">
           {filtered.length === 0 ? (
             <TriageEmptyState />
           ) : (

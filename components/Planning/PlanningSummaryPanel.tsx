@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { Ban, ChevronRight, Clock, FileText, GitMerge, Layers } from 'lucide-react';
 
 import type { FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
+import { featureMatchesBucket, featureMatchesSignal } from '../../services/planning';
+import type { PlanningSignal, PlanningStatusBucket } from '../../services/planningRoutes';
 import type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
 import {
   ArtifactChip,
@@ -16,6 +18,8 @@ export interface PlanningSummaryPanelProps {
   onSelectFeature?: (featureId: string) => void;
   onPrefetchFeature?: (featureId: string) => void;
   onDrillDown?: (type: ArtifactDrillDownType) => void;
+  activeStatusBucket?: PlanningStatusBucket | null;
+  activeSignal?: PlanningSignal | null;
 }
 
 interface FeatureRowProps {
@@ -142,6 +146,8 @@ export function PlanningSummaryPanel({
   onSelectFeature,
   onPrefetchFeature,
   onDrillDown,
+  activeStatusBucket = null,
+  activeSignal = null,
 }: PlanningSummaryPanelProps) {
   if (summary.featureSummaries.length === 0) {
     return (
@@ -175,6 +181,14 @@ export function PlanningSummaryPanel({
   }
 
   const mismatchItems = Array.from(mismatchSet.values());
+  const applyActiveFilter = (items: FeatureSummaryItem[]): FeatureSummaryItem[] => {
+    if (!activeStatusBucket && !activeSignal) return items;
+    return items.filter((item) => {
+      if (activeStatusBucket && !featureMatchesBucket(item, activeStatusBucket)) return false;
+      if (activeSignal && !featureMatchesSignal(item, activeSignal)) return false;
+      return true;
+    });
+  };
 
   const artifactEntries: { label: string; count: number; drillDownType?: ArtifactDrillDownType }[] = [
     { label: 'PRDs', count: summary.nodeCountsByType.prd, drillDownType: 'prds' },
@@ -236,7 +250,7 @@ export function PlanningSummaryPanel({
         <AttentionColumn
           title="Stale Features"
           icon={<Clock size={14} />}
-          items={staleItems}
+          items={applyActiveFilter(staleItems)}
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
           accent="var(--warn)"
@@ -244,7 +258,7 @@ export function PlanningSummaryPanel({
         <AttentionColumn
           title="Blocked Features"
           icon={<Ban size={14} />}
-          items={blockedItems}
+          items={applyActiveFilter(blockedItems)}
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
           accent="var(--err)"
@@ -252,7 +266,7 @@ export function PlanningSummaryPanel({
         <AttentionColumn
           title="Mismatched / Reversed"
           icon={<GitMerge size={14} />}
-          items={mismatchItems}
+          items={applyActiveFilter(mismatchItems)}
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
           accent="var(--mag)"
