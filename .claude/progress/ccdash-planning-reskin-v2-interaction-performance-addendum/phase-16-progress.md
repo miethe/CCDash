@@ -2,118 +2,162 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "ccdash-planning-reskin-v2-interaction-performance-addendum"
-feature_slug: "ccdash-planning-reskin-v2-interaction-performance-addendum"
+prd: ccdash-planning-reskin-v2-interaction-performance-addendum
+feature_slug: ccdash-planning-reskin-v2-interaction-performance-addendum
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
 phase: 16
-title: "Verification and Performance Gates"
-status: "pending"
+title: Verification and Performance Gates
+status: pending
 created: 2026-04-21
-updated: 2026-04-21
+updated: '2026-04-21'
 started: null
 completed: null
 commit_refs: []
 pr_refs: []
-
 overall_progress: 0
-completion_estimate: "on-track"
-
+completion_estimate: on-track
 total_tasks: 7
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
-owners: ["testing-specialist", "react-performance-optimizer", "web-accessibility-checker"]
+owners:
+- testing-specialist
+- react-performance-optimizer
+- web-accessibility-checker
 contributors: []
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "P16-001"
-    description: "Add frontend tests for modal-first navigation."
-    status: "pending"
-    assigned_to: ["testing-specialist"]
-    assigned_model: "sonnet"
-    dependencies: ["P11-002", "P11-003"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-
-  - id: "P16-002"
-    description: "Add cache and lazy-load tests."
-    status: "pending"
-    assigned_to: ["testing-specialist"]
-    assigned_model: "sonnet"
-    dependencies: ["P12-004", "P12-005"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-
-  - id: "P16-003"
-    description: "Add backend tests for planning summary fields and cache invalidation."
-    status: "pending"
-    assigned_to: ["testing-specialist"]
-    assigned_model: "sonnet"
-    dependencies: ["P13-001", "P12-003"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-
-  - id: "P16-004"
-    description: "Add roster and tracker interaction tests."
-    status: "pending"
-    assigned_to: ["testing-specialist"]
-    assigned_model: "sonnet"
-    dependencies: ["P14-001", "P15-004"]
-    estimated_effort: "1 pt"
-    priority: "high"
-
-  - id: "P16-005"
-    description: "Measure load budgets."
-    status: "pending"
-    assigned_to: ["react-performance-optimizer"]
-    assigned_model: "sonnet"
-    dependencies: ["P12-004", "P12-005"]
-    estimated_effort: "1.5 pts"
-    priority: "high"
-
-  - id: "P16-006"
-    description: "A11y regression for new modal/panel surfaces."
-    status: "pending"
-    assigned_to: ["web-accessibility-checker"]
-    assigned_model: "sonnet"
-    dependencies: ["P14-001", "P15-004", "P11-003"]
-    estimated_effort: "1 pt"
-    priority: "high"
-
-  - id: "P16-007"
-    description: "Add OTEL spans on new planning query params and cache fingerprint paths."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    assigned_model: "sonnet"
-    dependencies: ["P12-001", "P12-002", "P12-003", "P15-001"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-
+- id: P16-001
+  description: Add frontend tests for modal-first navigation.
+  status: completed
+  assigned_to:
+  - testing-specialist
+  assigned_model: sonnet
+  dependencies:
+  - P11-002
+  - P11-003
+  estimated_effort: 1.5 pts
+  priority: high
+- id: P16-002
+  description: Add cache and lazy-load tests.
+  status: completed
+  assigned_to:
+  - testing-specialist
+  assigned_model: sonnet
+  dependencies:
+  - P12-004
+  - P12-005
+  estimated_effort: 1.5 pts
+  priority: high
+- id: P16-003
+  description: Add backend tests for planning summary fields and cache invalidation.
+  status: pending
+  assigned_to:
+  - testing-specialist
+  assigned_model: sonnet
+  dependencies:
+  - P13-001
+  - P12-003
+  estimated_effort: 1.5 pts
+  priority: high
+- id: P16-004
+  description: Add roster and tracker interaction tests.
+  status: completed
+  assigned_to:
+  - testing-specialist
+  assigned_model: sonnet
+  dependencies:
+  - P14-001
+  - P15-004
+  estimated_effort: 1 pt
+  priority: high
+- id: P16-005
+  description: Measure load budgets.
+  status: pending
+  assigned_to:
+  - react-performance-optimizer
+  assigned_model: sonnet
+  dependencies:
+  - P12-004
+  - P12-005
+  estimated_effort: 1.5 pts
+  priority: high
+- id: P16-006
+  description: A11y regression for new modal/panel surfaces.
+  status: pending
+  assigned_to:
+  - web-accessibility-checker
+  assigned_model: sonnet
+  dependencies:
+  - P14-001
+  - P15-004
+  - P11-003
+  estimated_effort: 1 pt
+  priority: high
+- id: P16-007
+  description: Add OTEL spans on new planning query params and cache fingerprint paths.
+  status: pending
+  assigned_to:
+  - python-backend-engineer
+  assigned_model: sonnet
+  dependencies:
+  - P12-001
+  - P12-002
+  - P12-003
+  - P15-001
+  estimated_effort: 1 pt
+  priority: medium
 parallelization:
-  batch_1: ["P16-001", "P16-002", "P16-003", "P16-004", "P16-005", "P16-006", "P16-007"]
-  critical_path: ["P16-003", "P16-005"]
-  estimated_total_time: "2 days"
-
+  batch_1:
+  - P16-001
+  - P16-002
+  - P16-003
+  - P16-004
+  - P16-005
+  - P16-006
+  - P16-007
+  critical_path:
+  - P16-003
+  - P16-005
+  estimated_total_time: 2 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-16.1", description: "Tests assert planning clicks do not navigate to /board unless explicit board link clicked", status: "pending" }
-  - { id: "SC-16.2", description: "Tests cover warm render, stale revalidation, bounded cache eviction, and detail-only-on-open behavior", status: "pending" }
-  - { id: "SC-16.3", description: "Tests cover statusCounts, ctx/phase fields, token availability, active-first filtering, and document-driven invalidation", status: "pending" }
-  - { id: "SC-16.4", description: "Tests cover side panel, row modal, agent naming precedence, and scroll-height behavior", status: "pending" }
-  - { id: "SC-16.5", description: "Warm planning return renders summary in under 250ms (component-level timing); cold local p95 under 2s for summary shell before graph hydration", status: "pending" }
-  - { id: "SC-16.6", description: "Focus trap on PlanningQuickViewPanel, agent detail modal, route-local feature modal; ARIA roles correct; keyboard-close on all three", status: "pending" }
-  - { id: "SC-16.7", description: "OTEL spans on P12-001, P12-002, P12-003, P15-001 service methods", status: "pending" }
-  - { id: "SC-16.8", description: "Full test suite green", status: "pending" }
-
+- id: SC-16.1
+  description: Tests assert planning clicks do not navigate to /board unless explicit
+    board link clicked
+  status: pending
+- id: SC-16.2
+  description: Tests cover warm render, stale revalidation, bounded cache eviction,
+    and detail-only-on-open behavior
+  status: pending
+- id: SC-16.3
+  description: Tests cover statusCounts, ctx/phase fields, token availability, active-first
+    filtering, and document-driven invalidation
+  status: pending
+- id: SC-16.4
+  description: Tests cover side panel, row modal, agent naming precedence, and scroll-height
+    behavior
+  status: pending
+- id: SC-16.5
+  description: Warm planning return renders summary in under 250ms (component-level
+    timing); cold local p95 under 2s for summary shell before graph hydration
+  status: pending
+- id: SC-16.6
+  description: Focus trap on PlanningQuickViewPanel, agent detail modal, route-local
+    feature modal; ARIA roles correct; keyboard-close on all three
+  status: pending
+- id: SC-16.7
+  description: OTEL spans on P12-001, P12-002, P12-003, P15-001 service methods
+  status: pending
+- id: SC-16.8
+  description: Full test suite green
+  status: pending
 files_modified: []
+progress: 42
 ---
 
 # ccdash-planning-reskin-v2-interaction-performance-addendum - Phase 16: Verification and Performance Gates
