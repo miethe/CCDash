@@ -50,9 +50,13 @@ from .models import (
     PhaseOperationsDTO,
     PhaseTaskItem,
     PlanningArtifactRef,
+    PlanningCtxPerPhase,
     PlanningNodeCountsByType,
     PlanningOpenQuestionItem,
     PlanningSpikeItem,
+    PlanningStatusCounts,
+    PlanningTokenTelemetry,
+    PlanningTokenTelemetryEntry,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     TokenUsageByModel,
@@ -703,6 +707,114 @@ def _phase_ops_params(
     }
 
 
+# ── Status bucket helpers ────────────────────────────────────────────────────
+
+def _derive_status_bucket(feature: Feature) -> str:
+    """Map a feature to exactly one status bucket.
+
+    Precedence: blocked > review > active > planned > shaping > completed > deferred > stale_or_mismatched.
+    """
+    ps = feature.planningStatus
+    eff = (_effective_status(ps) or str(feature.status or "")).strip().lower()
+    raw = (_raw_status(ps) or str(feature.status or "")).strip().lower()
+    ms = _mismatch_state(ps)
+
+    if eff == "blocked" or ms == "blocked":
+        return "blocked"
+    if eff in {"review", "in-review"}:
+        return "review"
+    if eff in {"active", "in-progress", "in_progress"}:
+        return "active"
+    if raw in {"planned", "draft", "approved"} or eff in {"planned", "draft", "approved"}:
+        return "planned"
+    if raw in {"shaping", "backlog"} or eff in {"shaping", "backlog"}:
+        return "shaping"
+    if raw in {"done", "completed"} or eff in {"done", "completed"}:
+        return "completed"
+    if raw in {"deferred"} or eff in {"deferred"}:
+        return "deferred"
+    if ms not in {"aligned", "unknown", ""}:
+        return "stale_or_mismatched"
+    return "shaping"
+
+
+def _build_status_counts(features: list[Feature]) -> PlanningStatusCounts:
+    """Iterate features, derive bucket for each, increment counts."""
+    counts: dict[str, int] = {
+        "shaping": 0,
+        "planned": 0,
+        "active": 0,
+        "blocked": 0,
+        "review": 0,
+        "completed": 0,
+        "deferred": 0,
+        "stale_or_mismatched": 0,
+    }
+    for feature in features:
+        bucket = _derive_status_bucket(feature)
+        counts[bucket] = counts.get(bucket, 0) + 1
+    return PlanningStatusCounts(**counts)
+
+
+def _build_ctx_per_phase(
+    context_count: int,
+    phase_count: int,
+) -> PlanningCtxPerPhase:
+    """Return ctx-per-phase ratio; unavailable when phase_count is 0."""
+    if phase_count == 0:
+        return PlanningCtxPerPhase(
+            context_count=context_count,
+            phase_count=0,
+            ratio=None,
+            source="unavailable",
+        )
+    return PlanningCtxPerPhase(
+        context_count=context_count,
+        phase_count=phase_count,
+        ratio=round(context_count / phase_count, 3),
+        source="backend",
+    )
+
+
+def _build_token_telemetry(features: list[Feature]) -> PlanningTokenTelemetry:
+    """Aggregate token telemetry from feature records; unavailable if no data found."""
+    family_totals: dict[str, int] = {}
+    grand_total = 0
+    for feature in features:
+        ps = feature.planningStatus
+        # token_usage_by_model may not be available on Feature — guard defensively
+        usage = getattr(feature, "tokenUsageByModel", None)
+        if usage is None:
+            continue
+        payload = usage if isinstance(usage, dict) else (usage.model_dump() if hasattr(usage, "model_dump") else {})
+        for family, tokens in payload.items():
+            if family == "total":
+                continue
+            try:
+                t = int(tokens or 0)
+            except (TypeError, ValueError):
+                continue
+            if t:
+                family_totals[family] = family_totals.get(family, 0) + t
+                grand_total += t
+
+    if not family_totals:
+        return PlanningTokenTelemetry(
+            total_tokens=None,
+            by_model_family=[],
+            source="unavailable",
+        )
+    entries = [
+        PlanningTokenTelemetryEntry(model_family=family, total_tokens=total)
+        for family, total in sorted(family_totals.items())
+    ]
+    return PlanningTokenTelemetry(
+        total_tokens=grand_total,
+        by_model_family=entries,
+        source="session_attribution",
+    )
+
+
 # ── Service class ────────────────────────────────────────────────────────────
 
 
@@ -953,6 +1065,15 @@ class PlanningQueryService:
             *[row.get("updated_at") or row.get("updatedAt") for row in feature_rows]
         )
 
+        # ── New aggregate fields ──────────────────────────────────────────────
+        status_counts = _build_status_counts(projected)
+        total_phase_count = sum(len(f.phases) for f in projected)
+        ctx_per_phase = _build_ctx_per_phase(
+            context_count=node_type_counter.get("context", 0),
+            phase_count=total_phase_count,
+        )
+        token_telemetry = _build_token_telemetry(projected)
+
         return ProjectPlanningSummaryDTO(
             status="partial" if partial else "ok",
             project_id=project.id,
@@ -974,6 +1095,9 @@ class PlanningQueryService:
                 include_terminal=include_terminal,
                 limit=limit,
             ),
+            status_counts=status_counts,
+            ctx_per_phase=ctx_per_phase,
+            token_telemetry=token_telemetry,
             data_freshness=data_freshness,
             source_refs=collect_source_refs(project.id, [f.id for f in projected]),
         )

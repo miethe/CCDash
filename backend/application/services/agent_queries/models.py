@@ -263,6 +263,43 @@ class AARReportDTO(AgentQueryEnvelope):
 # to avoid circular imports at module load time.
 
 
+class PlanningStatusCounts(BaseModel):
+    """Mutually exclusive bucket counts across all features in a project."""
+
+    shaping: int = 0
+    planned: int = 0
+    active: int = 0
+    blocked: int = 0
+    review: int = 0
+    completed: int = 0
+    deferred: int = 0
+    stale_or_mismatched: int = 0
+
+
+class PlanningCtxPerPhase(BaseModel):
+    """Context-document-to-phase ratio for the project."""
+
+    context_count: int = 0
+    phase_count: int = 0
+    ratio: float | None = None
+    source: Literal["backend", "unavailable"] = "unavailable"
+
+
+class PlanningTokenTelemetryEntry(BaseModel):
+    """Per-model-family token rollup entry."""
+
+    model_family: str
+    total_tokens: int
+
+
+class PlanningTokenTelemetry(BaseModel):
+    """Project-level token telemetry aggregated from session attribution."""
+
+    total_tokens: int | None = None
+    by_model_family: list[PlanningTokenTelemetryEntry] = Field(default_factory=list)
+    source: Literal["session_attribution", "unavailable"] = "unavailable"
+
+
 class FeatureSummaryItem(BaseModel):
     """Lightweight per-feature summary used in project-level planning views."""
 
@@ -322,6 +359,9 @@ class ProjectPlanningSummaryDTO(AgentQueryEnvelope):
         default_factory=PlanningNodeCountsByType
     )
     feature_summaries: list[FeatureSummaryItem] = Field(default_factory=list)
+    status_counts: PlanningStatusCounts | None = None
+    ctx_per_phase: PlanningCtxPerPhase | None = None
+    token_telemetry: PlanningTokenTelemetry | None = None
 
 
 class ProjectPlanningGraphDTO(AgentQueryEnvelope):

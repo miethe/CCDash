@@ -318,6 +318,20 @@ def _subagent_type_from_logs(
     return ""
 
 
+def _derive_display_agent_type(subagent_type: str, is_root: bool) -> str | None:
+    """Return a human-readable agent type label for the session.
+
+    - If subagent_type is set, return it verbatim.
+    - Else if the session is root/main, return "Orchestrator".
+    - Otherwise return None.
+    """
+    if subagent_type:
+        return subagent_type
+    if is_root:
+        return "Orchestrator"
+    return None
+
+
 def _is_primary_session_link(
     strategy: str,
     confidence: float,
@@ -628,6 +642,8 @@ async def list_sessions(
                     )
                     parent_logs_cache[parent_session_id] = parent_logs
                 subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=session_id)
+        is_root_session = session_type_value != "subagent"
+        display_agent_type = _derive_display_agent_type(subagent_type, is_root_session)
         thread_kind_value = _normalize_thread_kind(s)
         conversation_family_id_value = (
             str(s.get("conversation_family_id") or "").strip()
@@ -709,11 +725,16 @@ async def list_sessions(
             logs=[],
             sessionMetadata=session_metadata,
             thinkingLevel=str(s.get("thinking_level") or ""),
+            subagentType=subagent_type or None,
+            displayAgentType=display_agent_type,
+            linkedFeatureIds=None,
+            phaseHints=None,
+            taskHints=None,
             sessionForensics=_safe_json(s.get("session_forensics_json")),
             dates=_session_dates_payload(s),
             timeline=[event for event in _safe_json_list(s.get("timeline_json")) if isinstance(event, dict)],
         ))
-        
+
     return PaginatedResponse(
         items=results,
         total=total_count,
@@ -887,6 +908,8 @@ async def get_session(
                 core_ports,
             )
             subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=str(s.get("id") or ""))
+    is_root_session = session_type_value != "subagent"
+    display_agent_type = _derive_display_agent_type(subagent_type, is_root_session)
     session_title = _derive_session_title(
         session_metadata,
         latest_summary,
@@ -927,6 +950,36 @@ async def get_session(
         session_id=session_id,
     )
         
+    # Derive linkedFeatureIds from entity-links repo (detail only — too costly for list).
+    linked_feature_ids: list[str] | None = None
+    try:
+        link_repo = core_ports.storage.entity_links()
+        entity_links_rows = await link_repo.get_links_for("session", session_id, "related")
+        fids: list[str] = []
+        for _link in entity_links_rows:
+            if _link.get("source_type") == "feature" and _link.get("target_type") == "session" and _link.get("target_id") == session_id:
+                fid = str(_link.get("source_id") or "").strip()
+                if fid and fid not in fids:
+                    fids.append(fid)
+        linked_feature_ids = fids or None
+    except Exception:
+        linked_feature_ids = None
+
+    # phaseHints: relatedPhases from session_metadata (already computed).
+    _phase_hints: list[str] | None = None
+    if isinstance(session_metadata, dict):
+        _raw_phases = session_metadata.get("relatedPhases")
+        if isinstance(_raw_phases, list):
+            _phase_hints = [str(v).strip() for v in _raw_phases if str(v).strip()] or None
+
+    # taskHints: derive from session_forensics if available.
+    _task_hints: list[str] | None = None
+    _forensics = _safe_json(s.get("session_forensics_json"))
+    if isinstance(_forensics, dict):
+        _raw_tasks = _forensics.get("taskHints") or _forensics.get("task_hints")
+        if isinstance(_raw_tasks, list):
+            _task_hints = [str(v).strip() for v in _raw_tasks if str(v).strip()] or None
+
     # Tools
     tool_usage = []
     for t in tools:
@@ -1021,6 +1074,11 @@ async def get_session(
         logs=normalized_session_logs,
         sessionMetadata=session_metadata,
         thinkingLevel=str(s.get("thinking_level") or ""),
+        subagentType=subagent_type or None,
+        displayAgentType=display_agent_type,
+        linkedFeatureIds=linked_feature_ids,
+        phaseHints=_phase_hints,
+        taskHints=_task_hints,
         sessionForensics=_safe_json(s.get("session_forensics_json")),
         forks=fork_summaries,
         sessionRelationships=session_relationships,

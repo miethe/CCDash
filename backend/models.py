@@ -227,6 +227,11 @@ class AgentSession(BaseModel):
     logs: list[SessionLog] = Field(default_factory=list)
     sessionMetadata: Optional[SessionMetadata] = None
     thinkingLevel: str = ""
+    subagentType: Optional[str] = None
+    displayAgentType: Optional[str] = None
+    linkedFeatureIds: Optional[list[str]] = None
+    phaseHints: Optional[list[str]] = None
+    taskHints: Optional[list[str]] = None
     sessionForensics: dict[str, Any] = Field(default_factory=dict)
     forks: list[dict[str, Any]] = Field(default_factory=list)
     sessionRelationships: list[dict[str, Any]] = Field(default_factory=list)

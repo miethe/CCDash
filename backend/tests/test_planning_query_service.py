@@ -1298,5 +1298,157 @@ class OrphanDocSynthesisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.planned_feature_count, 2)
 
 
+class StatusBucketPrecedenceTests(unittest.IsolatedAsyncioTestCase):
+    """_derive_status_bucket precedence: blocked > review > active > planned > shaping > completed > deferred > stale_or_mismatched."""
+
+    def setUp(self):
+        clear_cache()
+
+    def _make_feature_with_status(self, status: str) -> "Feature":
+        from backend.models import Feature
+        return Feature(
+            id="feat-x",
+            name="Test Feature",
+            status=status,
+            totalTasks=0,
+            completedTasks=0,
+            category="enhancement",
+            tags=[],
+            updatedAt="2026-04-21T10:00:00+00:00",
+            linkedDocs=[],
+            phases=[],
+            relatedFeatures=[],
+        )
+
+    async def test_blocked_active_feature_lands_in_blocked(self) -> None:
+        """A feature whose effective_status is 'blocked' lands in the blocked bucket regardless of raw status."""
+        from backend.application.services.agent_queries.planning import _derive_status_bucket
+        from backend.models import Feature, PlanningEffectiveStatus, PlanningMismatchState
+
+        feature = self._make_feature_with_status("active")
+        # Inject planning status with effective=blocked
+        feature.planningStatus = PlanningEffectiveStatus(
+            rawStatus="active",
+            effectiveStatus="blocked",
+            mismatchState=PlanningMismatchState(state="blocked", isMismatch=True),
+        )
+        self.assertEqual(_derive_status_bucket(feature), "blocked")
+
+    async def test_active_without_blocked_lands_in_active(self) -> None:
+        from backend.application.services.agent_queries.planning import _derive_status_bucket
+        feature = self._make_feature_with_status("in-progress")
+        self.assertEqual(_derive_status_bucket(feature), "active")
+
+    async def test_planned_status(self) -> None:
+        from backend.application.services.agent_queries.planning import _derive_status_bucket
+        feature = self._make_feature_with_status("planned")
+        self.assertEqual(_derive_status_bucket(feature), "planned")
+
+    async def test_completed_status(self) -> None:
+        from backend.application.services.agent_queries.planning import _derive_status_bucket
+        feature = self._make_feature_with_status("completed")
+        self.assertEqual(_derive_status_bucket(feature), "completed")
+
+    async def test_deferred_status(self) -> None:
+        from backend.application.services.agent_queries.planning import _derive_status_bucket
+        feature = self._make_feature_with_status("deferred")
+        self.assertEqual(_derive_status_bucket(feature), "deferred")
+
+    async def test_status_counts_sum_equals_feature_count(self) -> None:
+        """Sum of all status buckets must equal the number of features."""
+        from backend.application.services.agent_queries.planning import _build_status_counts
+        features = [
+            self._make_feature_with_status(s)
+            for s in ["active", "in-progress", "blocked", "planned", "draft", "done", "deferred", "backlog"]
+        ]
+        counts = _build_status_counts(features)
+        total = sum([
+            counts.shaping, counts.planned, counts.active, counts.blocked,
+            counts.review, counts.completed, counts.deferred, counts.stale_or_mismatched,
+        ])
+        self.assertEqual(total, len(features))
+
+
+class CtxPerPhaseTests(unittest.TestCase):
+    """_build_ctx_per_phase returns unavailable when phase_count == 0."""
+
+    def test_unavailable_when_phase_count_zero(self) -> None:
+        from backend.application.services.agent_queries.planning import _build_ctx_per_phase
+        result = _build_ctx_per_phase(context_count=5, phase_count=0)
+        self.assertEqual(result.source, "unavailable")
+        self.assertIsNone(result.ratio)
+        self.assertEqual(result.context_count, 5)
+        self.assertEqual(result.phase_count, 0)
+
+    def test_ratio_computed_when_phase_count_positive(self) -> None:
+        from backend.application.services.agent_queries.planning import _build_ctx_per_phase
+        result = _build_ctx_per_phase(context_count=6, phase_count=3)
+        self.assertEqual(result.source, "backend")
+        self.assertAlmostEqual(result.ratio, 2.0)
+
+    def test_zero_context_with_phases(self) -> None:
+        from backend.application.services.agent_queries.planning import _build_ctx_per_phase
+        result = _build_ctx_per_phase(context_count=0, phase_count=4)
+        self.assertEqual(result.source, "backend")
+        self.assertAlmostEqual(result.ratio, 0.0)
+
+
+class TokenTelemetryTests(unittest.TestCase):
+    """_build_token_telemetry returns unavailable when no session roll-up is present."""
+
+    def _bare_feature(self) -> "Feature":
+        from backend.models import Feature
+        return Feature(
+            id="feat-t",
+            name="Token Feature",
+            status="active",
+            totalTasks=0,
+            completedTasks=0,
+            category="enhancement",
+            tags=[],
+            updatedAt="2026-04-21T10:00:00+00:00",
+            linkedDocs=[],
+            phases=[],
+            relatedFeatures=[],
+        )
+
+    def test_unavailable_when_no_token_data(self) -> None:
+        from backend.application.services.agent_queries.planning import _build_token_telemetry
+        features = [self._bare_feature()]
+        result = _build_token_telemetry(features)
+        self.assertEqual(result.source, "unavailable")
+        self.assertIsNone(result.total_tokens)
+        self.assertEqual(result.by_model_family, [])
+
+    def test_unavailable_for_empty_list(self) -> None:
+        from backend.application.services.agent_queries.planning import _build_token_telemetry
+        result = _build_token_telemetry([])
+        self.assertEqual(result.source, "unavailable")
+
+
+class DisplayAgentTypeTests(unittest.TestCase):
+    """_derive_display_agent_type returns Orchestrator for root, subagent_type when detected."""
+
+    def test_root_session_returns_orchestrator(self) -> None:
+        from backend.routers.api import _derive_display_agent_type
+        result = _derive_display_agent_type("", is_root=True)
+        self.assertEqual(result, "Orchestrator")
+
+    def test_subagent_type_returned_when_present(self) -> None:
+        from backend.routers.api import _derive_display_agent_type
+        result = _derive_display_agent_type("Python Backend Engineer", is_root=False)
+        self.assertEqual(result, "Python Backend Engineer")
+
+    def test_subagent_type_overrides_root(self) -> None:
+        from backend.routers.api import _derive_display_agent_type
+        result = _derive_display_agent_type("Frontend Engineer", is_root=True)
+        self.assertEqual(result, "Frontend Engineer")
+
+    def test_non_root_no_subagent_returns_none(self) -> None:
+        from backend.routers.api import _derive_display_agent_type
+        result = _derive_display_agent_type("", is_root=False)
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
