@@ -421,21 +421,24 @@ class LinkedSessionQuery(BaseModel):
     """
 
     feature_id: str
-    root_session_id: Optional[str] = Field(
-        None, description="Restrict to sessions within the family of this root session"
-    )
+    root_session_id: Annotated[
+        Optional[str],
+        Field(description="Restrict to sessions within the family of this root session"),
+    ] = None
     thread_expansion: ThreadExpansionMode = ThreadExpansionMode.NONE
 
     sort_by: Literal["started_at", "updated_at"] = "started_at"
     sort_direction: SortDirection = SortDirection.DESC
 
-    limit: int = Field(20, ge=1, le=50)
-    offset: int = Field(0, ge=0)
-    cursor: Optional[str] = Field(
-        None,
-        description="Opaque cursor for cursor-based pagination (Phase 2); "
-        "when provided, offset is ignored.",
-    )
+    limit: Annotated[int, Field(ge=1, le=50)] = 20
+    offset: Annotated[int, Field(ge=0)] = 0
+    cursor: Annotated[
+        Optional[str],
+        Field(
+            description="Opaque cursor for cursor-based pagination (Phase 2); "
+            "when provided, offset is ignored.",
+        ),
+    ] = None
 
 
 # ---------------------------------------------------------------------------
