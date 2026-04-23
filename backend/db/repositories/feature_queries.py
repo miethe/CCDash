@@ -230,16 +230,51 @@ class FeatureListPage(BaseModel):
 # Phase summary bulk query
 # ---------------------------------------------------------------------------
 
+_PHASE_SUMMARY_ID_CAP = 500
+
+
 class PhaseSummaryBulkQuery(BaseModel):
     """Options for ``list_phase_summaries_for_features`` (P1-003).
 
     ``feature_ids`` is the bounded set returned by a single ``FeatureListPage``
-    (max 200, matching the list hard-cap).
+    (max 200, matching the list hard-cap).  A hard defensive cap of 500 is
+    enforced here so callers receive a clear ValueError rather than a silent
+    slow query.
     """
 
     feature_ids: list[str] = Field(..., min_length=1)
     include_progress: bool = True
     include_counts: bool = True
+
+    @field_validator("feature_ids")
+    @classmethod
+    def _cap_feature_ids(cls, v: list[str]) -> list[str]:
+        if len(v) > _PHASE_SUMMARY_ID_CAP:
+            raise ValueError(
+                f"feature_ids exceeds the maximum batch size of {_PHASE_SUMMARY_ID_CAP}. "
+                f"Received {len(v)} IDs."
+            )
+        return v
+
+
+class PhaseSummary(BaseModel):
+    """Lightweight per-phase aggregate returned by ``list_phase_summaries_for_features``.
+
+    ``order_index`` is derived from the ``phase`` string column (cast to int
+    where possible; falls back to None).  ``total_tasks`` / ``completed_tasks``
+    default to 0 regardless of ``include_counts`` — callers should treat 0 as
+    "not computed" when ``include_counts=False``.  ``progress`` is None unless
+    ``include_progress=True``.
+    """
+
+    feature_id: str
+    phase_id: str
+    name: str
+    status: Optional[str] = None
+    order_index: Optional[int] = None
+    total_tasks: int = 0
+    completed_tasks: int = 0
+    progress: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------

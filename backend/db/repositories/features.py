@@ -12,6 +12,8 @@ from backend.db.repositories.feature_queries import (
     FeatureListPage,
     FeatureListQuery,
     FeatureSortKey,
+    PhaseSummary,
+    PhaseSummaryBulkQuery,
 )
 
 
@@ -351,6 +353,91 @@ class SqliteFeatureRepository:
             (feature_id,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+    async def list_phase_summaries_for_features(
+        self,
+        project_id: str,
+        query: PhaseSummaryBulkQuery,
+    ) -> dict[str, list[PhaseSummary]]:
+        """Return phase summaries for all requested features in a single query.
+
+        Result is keyed by feature_id.  Features with no phases map to ``[]``.
+        Features not belonging to ``project_id`` are excluded and also map to
+        ``[]`` (their key is still present in the returned dict).
+
+        SQL strategy
+        ------------
+        * Base: ``SELECT ... FROM feature_phases fp JOIN features f ON ...``
+          filtered to the requested feature_ids and project_id.
+        * When ``include_counts=True`` (the default): task counts are read
+          directly from the ``total_tasks`` / ``completed_tasks`` columns that
+          are already maintained on the ``feature_phases`` table — no extra join
+          is needed.
+        * When ``include_progress=True``: ``progress`` is derived as
+          ``completed_tasks / total_tasks`` with a zero-guard.
+        """
+        feature_ids = query.feature_ids
+
+        # Defensive cap (belt-and-suspenders; Pydantic validator also enforces this)
+        if len(feature_ids) > 500:
+            raise ValueError(
+                f"feature_ids exceeds the maximum batch size of 500. "
+                f"Received {len(feature_ids)} IDs."
+            )
+
+        # Pre-populate result dict so missing features get [] rather than absent keys
+        result: dict[str, list[PhaseSummary]] = {fid: [] for fid in feature_ids}
+
+        placeholders = ",".join("?" for _ in feature_ids)
+        sql = (
+            "SELECT fp.id, fp.feature_id, fp.title, fp.status, fp.phase,"
+            " fp.total_tasks, fp.completed_tasks, fp.progress AS stored_progress"
+            " FROM feature_phases fp"
+            " JOIN features f ON fp.feature_id = f.id"
+            f" WHERE fp.feature_id IN ({placeholders})"
+            " AND f.project_id = ?"
+            " ORDER BY fp.feature_id, fp.phase"
+        )
+        params: list[Any] = list(feature_ids) + [project_id]
+
+        async with self.db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+
+        for row in rows:
+            r = dict(row)
+            feature_id = r["feature_id"]
+
+            total = int(r.get("total_tasks") or 0)
+            completed = int(r.get("completed_tasks") or 0)
+
+            # order_index: try to parse the phase string as an int
+            try:
+                order_index: int | None = int(r["phase"])
+            except (ValueError, TypeError):
+                order_index = None
+
+            # progress: use stored value when include_progress is True, but
+            # recalculate from task counts for consistency with include_counts
+            progress: float | None = None
+            if query.include_progress:
+                if query.include_counts and total > 0:
+                    progress = round(completed / total, 4)
+                elif r.get("stored_progress") is not None:
+                    progress = float(r["stored_progress"])
+
+            summary = PhaseSummary(
+                feature_id=feature_id,
+                phase_id=r["id"],
+                name=r.get("title") or "",
+                status=r.get("status"),
+                order_index=order_index,
+                total_tasks=total if query.include_counts else 0,
+                completed_tasks=completed if query.include_counts else 0,
+                progress=progress,
+            )
+            result[feature_id].append(summary)
+
+        return result
 
     async def delete(self, feature_id: str) -> None:
         await self.db.execute("DELETE FROM features WHERE id = ?", (feature_id,))

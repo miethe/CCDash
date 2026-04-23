@@ -12,6 +12,8 @@ from backend.db.repositories.feature_queries import (
     FeatureListPage,
     FeatureListQuery,
     FeatureSortKey,
+    PhaseSummary,
+    PhaseSummaryBulkQuery,
 )
 
 
@@ -328,6 +330,82 @@ class PostgresFeatureRepository:
             feature_id,
         )
         return [dict(r) for r in rows]
+
+    async def list_phase_summaries_for_features(
+        self,
+        project_id: str,
+        query: PhaseSummaryBulkQuery,
+    ) -> dict[str, list[PhaseSummary]]:
+        """Return phase summaries for all requested features in a single query.
+
+        Result is keyed by feature_id.  Features with no phases map to ``[]``.
+        Features not belonging to ``project_id`` are excluded and also map to
+        ``[]`` (their key is still present in the returned dict).
+
+        Uses asyncpg ``$N`` positional placeholders.  Task counts are read
+        directly from the ``total_tasks`` / ``completed_tasks`` columns on the
+        ``feature_phases`` table — no extra aggregation join is needed.
+        """
+        feature_ids = query.feature_ids
+
+        # Defensive cap (belt-and-suspenders; Pydantic validator also enforces this)
+        if len(feature_ids) > 500:
+            raise ValueError(
+                f"feature_ids exceeds the maximum batch size of 500. "
+                f"Received {len(feature_ids)} IDs."
+            )
+
+        # Pre-populate result dict so missing features get [] rather than absent keys
+        result: dict[str, list[PhaseSummary]] = {fid: [] for fid in feature_ids}
+
+        # Build $1..$N placeholders for the IN-list, then $N+1 for project_id
+        id_placeholders = ", ".join(f"${i + 1}" for i in range(len(feature_ids)))
+        project_ph = f"${len(feature_ids) + 1}"
+
+        sql = (
+            "SELECT fp.id, fp.feature_id, fp.title, fp.status, fp.phase,"
+            " fp.total_tasks, fp.completed_tasks, fp.progress AS stored_progress"
+            " FROM feature_phases fp"
+            " JOIN features f ON fp.feature_id = f.id"
+            f" WHERE fp.feature_id IN ({id_placeholders})"
+            f" AND f.project_id = {project_ph}"
+            " ORDER BY fp.feature_id, fp.phase"
+        )
+
+        db_rows = await self.db.fetch(sql, *feature_ids, project_id)
+
+        for row in db_rows:
+            r = dict(row)
+            feature_id = r["feature_id"]
+
+            total = int(r.get("total_tasks") or 0)
+            completed = int(r.get("completed_tasks") or 0)
+
+            try:
+                order_index: int | None = int(r["phase"])
+            except (ValueError, TypeError):
+                order_index = None
+
+            progress: float | None = None
+            if query.include_progress:
+                if query.include_counts and total > 0:
+                    progress = round(completed / total, 4)
+                elif r.get("stored_progress") is not None:
+                    progress = float(r["stored_progress"])
+
+            summary = PhaseSummary(
+                feature_id=feature_id,
+                phase_id=r["id"],
+                name=r.get("title") or "",
+                status=r.get("status"),
+                order_index=order_index,
+                total_tasks=total if query.include_counts else 0,
+                completed_tasks=completed if query.include_counts else 0,
+                progress=progress,
+            )
+            result[feature_id].append(summary)
+
+        return result
 
     async def delete(self, feature_id: str) -> None:
         await self.db.execute("DELETE FROM features WHERE id = $1", feature_id)
