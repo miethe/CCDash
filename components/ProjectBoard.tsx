@@ -50,6 +50,7 @@ import {
   planningFeatureModalHref,
   type PlanningFeatureModalTab,
 } from '../services/planningRoutes';
+import { invalidateFeatureSurface } from '../services/featureSurfaceCache';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -4363,7 +4364,6 @@ const StatusColumn = ({
   status,
   features,
   featureSessionSummaries,
-  loadingFeatureSessionSummaries,
   onFeatureClick,
   onFeatureDocsClick,
   onStatusChange,
@@ -4379,7 +4379,6 @@ const StatusColumn = ({
   status: string;
   features: Feature[];
   featureSessionSummaries: Record<string, FeatureSessionSummary>;
-  loadingFeatureSessionSummaries: Set<string>;
   onFeatureClick: (f: Feature) => void;
   onFeatureDocsClick: (f: Feature) => void;
   onStatusChange: (featureId: string, newStatus: string) => void;
@@ -4422,7 +4421,7 @@ const StatusColumn = ({
             key={f.id}
             feature={f}
             sessionSummary={featureSessionSummaries[f.id]}
-            sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
+            sessionSummaryLoading={false /* P3-005: rollups will supply live loading state */}
             onClick={() => onFeatureClick(f)}
             onOpenDocs={() => onFeatureDocsClick(f)}
             onStatusChange={(newStatus) => onStatusChange(f.id, newStatus)}
@@ -4463,7 +4462,6 @@ export const ProjectBoard: React.FC = () => {
   const [draggedFeatureId, setDraggedFeatureId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
   const [featureSessionSummaries, setFeatureSessionSummaries] = useState<Record<string, FeatureSessionSummary>>({});
-  const [loadingFeatureSessionSummaries, setLoadingFeatureSessionSummaries] = useState<Set<string>>(new Set());
 
   // Auto-select feature from URL search params
   useEffect(() => {
@@ -4605,39 +4603,13 @@ export const ProjectBoard: React.FC = () => {
     updatedTo,
   ]);
 
+  const activeProjectId = activeProject?.id;
   const handleStatusChange = useCallback(async (featureId: string, newStatus: string) => {
     const feature = apiFeatures.find(f => f.id === featureId);
     if (!feature || feature.status === newStatus) return;
     await updateFeatureStatus(featureId, newStatus);
-  }, [apiFeatures, updateFeatureStatus]);
-
-  const loadFeatureSessionSummary = useCallback(async (featureId: string) => {
-    if (!featureId || featureSessionSummaries[featureId] || loadingFeatureSessionSummaries.has(featureId)) return;
-
-    setLoadingFeatureSessionSummaries(prev => {
-      if (prev.has(featureId)) return prev;
-      const next = new Set(prev);
-      next.add(featureId);
-      return next;
-    });
-
-    try {
-      const res = await fetch(`/api/features/${encodeURIComponent(featureId)}/linked-sessions`);
-      if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
-      const data = await res.json();
-      const sessions = Array.isArray(data) ? (data as FeatureSessionLink[]) : [];
-      const summary = buildFeatureSessionSummary(sessions);
-      setFeatureSessionSummaries(prev => ({ ...prev, [featureId]: summary }));
-    } catch {
-      setFeatureSessionSummaries(prev => ({ ...prev, [featureId]: buildFeatureSessionSummary([]) }));
-    } finally {
-      setLoadingFeatureSessionSummaries(prev => {
-        const next = new Set(prev);
-        next.delete(featureId);
-        return next;
-      });
-    }
-  }, [featureSessionSummaries, loadingFeatureSessionSummaries]);
+    invalidateFeatureSurface({ projectId: activeProjectId, featureIds: [featureId] });
+  }, [apiFeatures, updateFeatureStatus, activeProjectId]);
 
   const handleCardDragStart = useCallback((featureId: string) => {
     setDraggedFeatureId(featureId);
@@ -4663,12 +4635,6 @@ export const ProjectBoard: React.FC = () => {
     if (!featureId) return;
     await handleStatusChange(featureId, newStatus);
   }, [handleStatusChange]);
-
-  useEffect(() => {
-    filteredFeatures.forEach(feature => {
-      void loadFeatureSessionSummary(feature.id);
-    });
-  }, [filteredFeatures, loadFeatureSessionSummary]);
 
   // Keep selected feature in sync with API data
   useEffect(() => {
@@ -5056,7 +5022,6 @@ export const ProjectBoard: React.FC = () => {
               status="backlog"
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'backlog')}
               featureSessionSummaries={featureSessionSummaries}
-              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
               onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
@@ -5073,7 +5038,6 @@ export const ProjectBoard: React.FC = () => {
               status="in-progress"
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'in-progress')}
               featureSessionSummaries={featureSessionSummaries}
-              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
               onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
@@ -5090,7 +5054,6 @@ export const ProjectBoard: React.FC = () => {
               status="review"
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'review')}
               featureSessionSummaries={featureSessionSummaries}
-              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
               onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
@@ -5107,7 +5070,6 @@ export const ProjectBoard: React.FC = () => {
               status="done"
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'done')}
               featureSessionSummaries={featureSessionSummaries}
-              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
               onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
@@ -5127,7 +5089,7 @@ export const ProjectBoard: React.FC = () => {
                 key={f.id}
                 feature={f}
                 sessionSummary={featureSessionSummaries[f.id]}
-                sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
+                sessionSummaryLoading={false /* P3-005: rollups will supply live loading state */}
                 onClick={() => openFeatureModal(f, 'overview')}
                 onOpenDocs={() => openFeatureModal(f, 'docs')}
                 onStatusChange={(newStatus) => handleStatusChange(f.id, newStatus)}
