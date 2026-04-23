@@ -1,0 +1,50 @@
+"""Feature-surface DTOs and application services."""
+
+from .dtos import (
+    DTOFreshness,
+    FeatureCardDTO,
+    FeatureCardPageDTO,
+    FeatureDependencySummaryDTO,
+    FeatureDocumentCoverageDTO,
+    FeatureDocumentSummaryDTO,
+    FeatureFamilyPositionDTO,
+    FeatureModalOverviewDTO,
+    FeatureModalSectionDTO,
+    FeatureModalSectionItemDTO,
+    FeatureQualitySignalsDTO,
+    FeatureRollupBucketDTO,
+    FeatureRollupDTO,
+    FeatureRollupFreshnessDTO,
+    FeatureSurfacePrecision,
+    LinkedFeatureSessionDTO,
+    LinkedFeatureSessionPageDTO,
+    LinkedFeatureSessionTaskDTO,
+    LinkedSessionEnrichmentDTO,
+)
+from .list_rollup_service import FeatureSurfaceListRollupService
+from .modal_service import FeatureModalDetailService, ModalSectionResult
+
+__all__ = [
+    "DTOFreshness",
+    "FeatureCardDTO",
+    "FeatureCardPageDTO",
+    "FeatureDependencySummaryDTO",
+    "FeatureDocumentCoverageDTO",
+    "FeatureDocumentSummaryDTO",
+    "FeatureFamilyPositionDTO",
+    "FeatureModalDetailService",
+    "FeatureModalOverviewDTO",
+    "FeatureModalSectionDTO",
+    "FeatureModalSectionItemDTO",
+    "FeatureQualitySignalsDTO",
+    "FeatureRollupBucketDTO",
+    "FeatureRollupDTO",
+    "FeatureRollupFreshnessDTO",
+    "FeatureSurfaceListRollupService",
+    "FeatureSurfacePrecision",
+    "LinkedFeatureSessionDTO",
+    "LinkedFeatureSessionPageDTO",
+    "LinkedFeatureSessionTaskDTO",
+    "LinkedSessionEnrichmentDTO",
+    "ModalSectionResult",
+]
