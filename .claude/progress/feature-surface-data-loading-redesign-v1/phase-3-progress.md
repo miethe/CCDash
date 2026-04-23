@@ -9,7 +9,7 @@ plan_ref: docs/project_plans/implementation_plans/refactors/feature-surface-data
 phase_plan_ref: docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1/phase-3-frontend-board.md
 phase: 3
 title: Frontend Data Layer and Board Migration
-status: in_progress
+status: review
 created: '2026-04-23'
 updated: '2026-04-23'
 started: '2026-04-23'
@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 7
-completed_tasks: 1
+completed_tasks: 7
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -49,10 +49,13 @@ tasks:
   evidence:
   - commit: aa46d0b
   - test: services/__tests__/featureSurface.test.ts
+  - commit: aa46d0b
+  verified_by:
+  - P3-007
 - id: P3-002
   description: Feature Surface Hook - Implement useFeatureSurface for query state,
     list/rollup loading, cache keys, errors, invalidation.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -60,10 +63,18 @@ tasks:
   estimated_effort: 3 pts
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T21:30Z
+  completed: 2026-04-23T22:00Z
+  evidence:
+  - commit: a54aab2
+  - test: services/__tests__/useFeatureSurface.test.ts
+  - commit: a54aab2
+  verified_by:
+  - P3-007
 - id: P3-003
   description: Server-Backed Filters - Move board search/filter/sort query state into
     API parameters while preserving draft/apply UX.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   dependencies:
@@ -71,10 +82,17 @@ tasks:
   estimated_effort: 2 pts
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T22:00Z
+  completed: 2026-04-23T22:25Z
+  evidence:
+  - commit: c76fff2
+  - test: components/__tests__/ProjectBoardFilters.test.tsx
+  verified_by:
+  - P3-007
 - id: P3-004
   description: Remove Eager Linked-Session Summary Loop - Delete filteredFeatures.forEach(loadFeatureSessionSummary)
     pattern.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -82,10 +100,18 @@ tasks:
   estimated_effort: 2 pts
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T22:30Z
+  completed: 2026-04-23T22:50Z
+  evidence:
+  - commit: d91ad38
+  - test: components/__tests__/ProjectBoardEagerLoop.test.tsx
+  - commit: d91ad38
+  verified_by:
+  - P3-007
 - id: P3-005
   description: Card Metric Mapping - Render card metrics from FeatureCardDTO plus
     FeatureRollupDTO.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   dependencies:
@@ -93,10 +119,19 @@ tasks:
   estimated_effort: 2 pts
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T22:50Z
+  completed: 2026-04-23T23:20Z
+  evidence:
+  - commit: pending
+  - commit: 1ae7ae7
+  - test: components/__tests__/ProjectBoardCardMetrics.test.tsx
+  - commit: 1ae7ae7
+  verified_by:
+  - P3-007
 - id: P3-006
   description: Cache and Invalidation - Bounded cache keyed by project/query/page/featureIds/freshness
     token.
-  status: pending
+  status: completed
   assigned_to:
   - react-performance-optimizer
   dependencies:
@@ -104,10 +139,17 @@ tasks:
   estimated_effort: 1 pt
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T22:00Z
+  completed: 2026-04-23T22:28Z
+  evidence:
+  - commit: c76fff2
+  - test: services/__tests__/featureSurfaceCache.test.ts
+  verified_by:
+  - P3-007
 - id: P3-007
   description: Board Tests - Tests proving bounded calls, query params, filter behavior,
     rollup rendering, no legacy summary fan-out.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -115,6 +157,14 @@ tasks:
   estimated_effort: 1 pt
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T23:20Z
+  completed: 2026-04-23T23:40Z
+  evidence:
+  - commit: 8a866a5
+  - test: components/__tests__/ProjectBoardPhase3Regression.test.tsx
+  - commit: 8a866a5
+  verified_by:
+  - P3-007
 parallelization:
   batch_1:
   - P3-001
@@ -128,7 +178,7 @@ parallelization:
   - P3-005
   batch_5:
   - P3-007
-progress: 14
+progress: 100
 ---
 
 # Phase 3 Progress — Frontend Data Layer and Board Migration
