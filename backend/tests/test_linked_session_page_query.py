@@ -175,7 +175,11 @@ async def _seed_fixture(db: aiosqlite.Connection) -> dict[str, Any]:
 class TestLinkedSessionPageQuery(unittest.TestCase):
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
 
     async def _make_db(self) -> tuple[aiosqlite.Connection, SqliteFeatureSessionRepository, dict]:
         db = await aiosqlite.connect(":memory:")

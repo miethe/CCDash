@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 7
-completed_tasks: 5
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -124,7 +124,7 @@ tasks:
   description: Index Review - Add/validate indexes for feature filters, entity link
     lookups, session project/root ordering, document/task feature filters, test health
     joins. Capture query plans for SQLite and Postgres.
-  status: pending
+  status: completed
   assigned_to:
   - data-layer-expert
   dependencies:
@@ -132,6 +132,13 @@ tasks:
   estimated_effort: 1 pt
   priority: medium
   assigned_model: sonnet
+  started: 2026-04-23T04:05Z
+  completed: 2026-04-23T04:40Z
+  evidence:
+  - test: backend/tests/test_phase_1_indexes.py
+  - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-1/index-review.md
+  verified_by:
+  - phase-1-orchestrator
 - id: P1-007
   description: Repository Tests - SQLite and Postgres-parity tests for filters, sorts,
     totals, rollups, linked-session pagination. Regression-proof against in-memory
@@ -158,7 +165,7 @@ parallelization:
   - P1-006
   batch_6:
   - P1-007
-progress: 71
+progress: 85
 ---
 
 # Phase 1 Progress — Repository and Query Foundation
