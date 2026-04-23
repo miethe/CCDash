@@ -8,7 +8,7 @@ prd_ref: docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign
 plan_ref: docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1.md
 phase: 1
 title: Repository and Query Foundation
-status: pending
+status: in_progress
 created: '2026-04-23'
 updated: '2026-04-23'
 started: '2026-04-23'
@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 7
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -53,7 +53,7 @@ tasks:
 - id: P1-002
   description: Feature List Query - Implement storage-backed list_feature_cards /
     count_feature_cards with filtering, search, sort, totals for SQLite and Postgres.
-  status: pending
+  status: completed
   assigned_to:
   - data-layer-expert
   dependencies:
@@ -61,6 +61,12 @@ tasks:
   estimated_effort: 3 pts
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T01:35Z
+  completed: 2026-04-23T02:10Z
+  evidence:
+  - test: backend/tests/test_feature_list_query.py
+  verified_by:
+  - phase-1-orchestrator
 - id: P1-003
   description: Feature Phase Summary Bulk Query - list_phase_summaries_for_features
     bulk query eliminating per-feature get_phases N+1.
@@ -134,7 +140,7 @@ parallelization:
   - P1-006
   batch_6:
   - P1-007
-progress: 14
+progress: 28
 ---
 
 # Phase 1 Progress — Repository and Query Foundation

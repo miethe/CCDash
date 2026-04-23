@@ -3,7 +3,161 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import Any
+
 import asyncpg
+
+from backend.db.repositories.feature_queries import (
+    DateRange,
+    FeatureListPage,
+    FeatureListQuery,
+    FeatureSortKey,
+)
+
+
+# ---------------------------------------------------------------------------
+# Sort key → SQL column mapping (Postgres path)
+# ---------------------------------------------------------------------------
+
+_SORT_COLUMN_PG: dict[FeatureSortKey, str] = {
+    FeatureSortKey.UPDATED_DATE: "updated_at",
+    FeatureSortKey.COMPLETED_AT: "completed_at",
+    FeatureSortKey.CREATED_AT: "created_at",
+    FeatureSortKey.NAME: "LOWER(name)",
+    FeatureSortKey.PROGRESS: (
+        "CASE WHEN total_tasks > 0"
+        " THEN CAST(completed_tasks AS DOUBLE PRECISION) / total_tasks"
+        " ELSE 0.0 END"
+    ),
+    FeatureSortKey.TASK_COUNT: "total_tasks",
+    # TODO P2: replace fallback with real latest_activity_at column when rollup join lands
+    FeatureSortKey.LATEST_ACTIVITY: "updated_at",
+    # TODO P2: replace fallback with session_count from rollup join in Phase 2
+    FeatureSortKey.SESSION_COUNT: "updated_at",
+}
+
+
+def _build_feature_list_where_clause_pg(
+    project_id: str,
+    query: FeatureListQuery,
+) -> tuple[str, list[Any]]:
+    """Build the WHERE clause and parameter list for Postgres feature queries.
+
+    Returns a ``(sql_fragment, params)`` tuple using ``$N`` positional placeholders.
+    """
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    def _p(value: Any) -> str:
+        """Append ``value`` to params and return its ``$N`` placeholder."""
+        params.append(value)
+        return f"${len(params)}"
+
+    conditions.append(f"project_id = {_p(project_id)}")
+
+    # ── text search ─────────────────────────────────────────────────────────
+    if query.q:
+        pattern = f"%{query.q}%"
+        ph = _p(pattern)
+        conditions.append(f"(id ILIKE {ph} OR name ILIKE {ph})")
+
+    # ── status IN-list ───────────────────────────────────────────────────────
+    if query.status:
+        phs = [_p(s) for s in query.status]
+        conditions.append(f"status IN ({','.join(phs)})")
+
+    # ── stage: same column as status (board stage is client-derived)
+    # TODO P2: if a dedicated board_stage column is added, replace this.
+    if query.stage:
+        phs = [_p(s) for s in query.stage]
+        conditions.append(f"status IN ({','.join(phs)})")
+
+    # ── category (case-insensitive) ──────────────────────────────────────────
+    if query.category:
+        phs = [_p(c.lower()) for c in query.category]
+        conditions.append(f"LOWER(category) IN ({','.join(phs)})")
+
+    # ── tags: jsonb containment (@>) — at least one match ───────────────────
+    # TODO P2: add GIN index on data_json::jsonb; use jsonb_path_exists for precision.
+    if query.tags:
+        tag_parts: list[str] = []
+        for tag in query.tags:
+            ph = _p(json.dumps([tag]))
+            tag_parts.append(f"data_json::jsonb -> 'tags' @> {ph}::jsonb")
+        conditions.append(f"({' OR '.join(tag_parts)})")
+
+    # ── has_deferred ─────────────────────────────────────────────────────────
+    # TODO P2: add a `deferred_tasks` indexed column; JSON extraction is expensive.
+    if query.has_deferred is True:
+        conditions.append(
+            "COALESCE((data_json::jsonb->>'deferredTasks')::integer, 0) > 0"
+        )
+    elif query.has_deferred is False:
+        conditions.append(
+            "COALESCE((data_json::jsonb->>'deferredTasks')::integer, 0) = 0"
+        )
+
+    # ── completed date range ─────────────────────────────────────────────────
+    _add_date_range_pg(conditions, _p, "completed_at", query.completed)
+
+    # ── updated date range ───────────────────────────────────────────────────
+    _add_date_range_pg(conditions, _p, "updated_at", query.updated)
+
+    # ── planned date range (JSON extraction) ────────────────────────────────
+    # TODO P2: add `planned_at` indexed column; use jsonb extraction for now.
+    if query.planned:
+        _add_date_range_pg(
+            conditions, _p,
+            "data_json::jsonb->>'plannedAt'",
+            query.planned,
+        )
+
+    # ── started date range (JSON extraction) ────────────────────────────────
+    # TODO P2: add `started_at` indexed column.
+    if query.started:
+        _add_date_range_pg(
+            conditions, _p,
+            "data_json::jsonb->>'startedAt'",
+            query.started,
+        )
+
+    # ── numeric ranges ───────────────────────────────────────────────────────
+    _progress_expr = (
+        "CASE WHEN total_tasks > 0"
+        " THEN CAST(completed_tasks AS DOUBLE PRECISION) / total_tasks"
+        " ELSE 0.0 END"
+    )
+    if query.progress_min is not None:
+        conditions.append(f"{_progress_expr} >= {_p(query.progress_min)}")
+    if query.progress_max is not None:
+        conditions.append(f"{_progress_expr} <= {_p(query.progress_max)}")
+    if query.task_count_min is not None:
+        conditions.append(f"COALESCE(total_tasks, 0) >= {_p(query.task_count_min)}")
+    if query.task_count_max is not None:
+        conditions.append(f"COALESCE(total_tasks, 0) <= {_p(query.task_count_max)}")
+
+    return "WHERE " + " AND ".join(conditions), params
+
+
+def _add_date_range_pg(
+    conditions: list[str],
+    _p: Any,
+    col: str,
+    dr: DateRange | None,
+) -> None:
+    if dr is None:
+        return
+    if dr.from_date:
+        conditions.append(f"{col} >= {_p(dr.from_date)}")
+    if dr.to_date:
+        conditions.append(f"{col} <= {_p(dr.to_date)}")
+
+
+def _build_order_clause_pg(query: FeatureListQuery) -> str:
+    col = _SORT_COLUMN_PG.get(query.sort_by, "updated_at")
+    direction = query.effective_sort_direction.value.upper()
+    return f"ORDER BY {col} {direction}, id ASC"
+
 
 class PostgresFeatureRepository:
     """PostgreSQL-backed feature storage."""
@@ -177,6 +331,54 @@ class PostgresFeatureRepository:
 
     async def delete(self, feature_id: str) -> None:
         await self.db.execute("DELETE FROM features WHERE id = $1", feature_id)
+
+    async def list_feature_cards(
+        self,
+        project_id: str,
+        query: FeatureListQuery,
+    ) -> FeatureListPage:
+        """Return a paginated, fully-filtered list of feature card dicts.
+
+        Uses a single query with ``COUNT(*) OVER ()`` window function to avoid
+        a separate count round-trip.
+        """
+        where_sql, params = _build_feature_list_where_clause_pg(project_id, query)
+        order_sql = _build_order_clause_pg(query)
+
+        # Add LIMIT/OFFSET as the next positional params
+        params.append(query.limit)
+        limit_ph = f"${len(params)}"
+        params.append(query.offset)
+        offset_ph = f"${len(params)}"
+
+        sql = (
+            f"SELECT *, COUNT(*) OVER () AS _total_count"
+            f" FROM features {where_sql}"
+            f" {order_sql}"
+            f" LIMIT {limit_ph} OFFSET {offset_ph}"
+        )
+        db_rows = await self.db.fetch(sql, *params)
+        total = int(db_rows[0]["_total_count"]) if db_rows else 0
+        rows = [{k: v for k, v in dict(r).items() if k != "_total_count"} for r in db_rows]
+        return FeatureListPage(
+            rows=rows,
+            total=total,
+            offset=query.offset,
+            limit=query.limit,
+        )
+
+    async def count_feature_cards(
+        self,
+        project_id: str,
+        query: FeatureListQuery,
+    ) -> int:
+        """Return post-filter, pre-pagination count for ``query``."""
+        where_sql, params = _build_feature_list_where_clause_pg(project_id, query)
+        value = await self.db.fetchval(
+            f"SELECT COUNT(*) FROM features {where_sql}",
+            *params,
+        )
+        return int(value or 0)
 
     async def get_project_stats(self, project_id: str) -> dict:
         query = """
