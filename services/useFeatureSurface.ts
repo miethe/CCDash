@@ -144,51 +144,13 @@ export const DEFAULT_FEATURE_SURFACE_QUERY: FeatureSurfaceQuery = {
   include: [],
 };
 
-// ── Tiny inline LRU (max 20 entries) ─────────────────────────────────────────
-// TODO(P3-006): Replace with the bounded SWR + LRU cache policy that owns
-// TTL, stale-while-revalidate, and live-topic invalidation wiring.
+// ── Default cache (P3-006) ────────────────────────────────────────────────────
+// The bounded SWR + LRU adapter lives in services/featureSurfaceCache.ts.
+// It provides two tiers: list pages (max 50) and rollups (max 100, 30 s TTL).
+// Hook instances that do not inject a custom adapter share the module singleton.
+import { defaultFeatureSurfaceCache } from './featureSurfaceCache';
 
-const DEFAULT_LRU_MAX = 20;
-
-class TinyLRU implements FeatureSurfaceCacheAdapter {
-  private _max: number;
-  private _map: Map<string, CacheEntry>;
-
-  constructor(max = DEFAULT_LRU_MAX) {
-    this._max = max;
-    this._map = new Map();
-  }
-
-  get(key: string): CacheEntry | undefined {
-    const entry = this._map.get(key);
-    if (!entry) return undefined;
-    // Move to end (most recently used)
-    this._map.delete(key);
-    this._map.set(key, entry);
-    return entry;
-  }
-
-  set(key: string, entry: CacheEntry): void {
-    if (this._map.has(key)) this._map.delete(key);
-    this._map.set(key, entry);
-    if (this._map.size > this._max) {
-      // Evict the oldest (first) entry
-      this._map.delete(this._map.keys().next().value!);
-    }
-  }
-
-  delete(key: string): void {
-    this._map.delete(key);
-  }
-
-  clear(): void {
-    this._map.clear();
-  }
-}
-
-// Module-level default cache shared across hook instances.
-// P3-006 can inject a replacement via the cacheAdapter option.
-const _defaultCache = new TinyLRU(DEFAULT_LRU_MAX);
+const _defaultCache = defaultFeatureSurfaceCache;
 
 // ── Query → cache key ─────────────────────────────────────────────────────────
 

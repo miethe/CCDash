@@ -3,6 +3,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
+import { useFeatureSurface } from '../services/useFeatureSurface';
 import {
   ExecutionGateStateValue,
   Feature,
@@ -4442,8 +4443,19 @@ const StatusColumn = ({
 
 // ── Main Component ─────────────────────────────────────────────────
 
+// ── Sort mapping: board sort options → hook sortBy param ─────────────────────
+// The board uses 'date' | 'progress' | 'tasks'; the hook/API uses string keys.
+function boardSortToApiSort(sort: 'date' | 'progress' | 'tasks'): string {
+  switch (sort) {
+    case 'progress': return 'progress_pct';
+    case 'tasks': return 'total_tasks';
+    case 'date':
+    default: return 'updated_at';
+  }
+}
+
 export const ProjectBoard: React.FC = () => {
-  const { features: apiFeatures, updateFeatureStatus } = useData();
+  const { features: apiFeatures, activeProject, updateFeatureStatus } = useData();
   const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
@@ -4501,6 +4513,26 @@ export const ProjectBoard: React.FC = () => {
     general: true,
     dates: true,
     sort: true,
+  });
+
+  // ── P3-003: Server-backed filters via useFeatureSurface ──────────────────────
+  // The hook runs in parallel with the existing apiFeatures list (from useData).
+  // Rendering continues from filteredFeatures (apiFeatures-derived) this phase;
+  // P3-005 will swap cards to use hook.cards once FeatureCardDTO is mapped.
+  // The hook's setQuery is called on Apply so the server sees the same filters
+  // the UI applies locally.  totals from the hook surface the server-side count
+  // in the header (prefixed with "~" when the hook is still loading).
+  const { setQuery: setSurfaceQuery, totals: surfaceTotals, listState: surfaceListState } = useFeatureSurface({
+    initialQuery: {
+      projectId: activeProject?.id,
+      search: '',
+      status: [],
+      stage: [],
+      tags: [],
+      sortBy: 'updated_at',
+      sortDirection: 'desc',
+    },
+    noCache: false,
   });
 
   // Derive unique categories
@@ -4704,6 +4736,32 @@ export const ProjectBoard: React.FC = () => {
     setCompletedTo(draftCompletedTo);
     setUpdatedFrom(draftUpdatedFrom);
     setUpdatedTo(draftUpdatedTo);
+
+    // P3-003: Push applied filters into the server-backed hook (one request per apply).
+    // Draft state above stays local; only the applied values reach the API.
+    setSurfaceQuery({
+      projectId: activeProject?.id,
+      search: draftSearchQuery,
+      // status and stage: the board's statusFilter is a board-stage string (backlog /
+      // in-progress / review / done) rather than a raw API status value.  Pass it as
+      // a stage filter so the backend can narrow by board stage; category maps to
+      // the hook's category field.  Reset to page 1 on every filter change.
+      stage: draftStatusFilter !== 'all' ? [draftStatusFilter] : [],
+      status: [],
+      tags: [],
+      category: draftCategoryFilter !== 'all' ? draftCategoryFilter : undefined,
+      sortBy: boardSortToApiSort(draftSortBy),
+      sortDirection: 'desc',
+      plannedFrom: draftPlannedFrom || undefined,
+      plannedTo: draftPlannedTo || undefined,
+      startedFrom: draftStartedFrom || undefined,
+      startedTo: draftStartedTo || undefined,
+      completedFrom: draftCompletedFrom || undefined,
+      completedTo: draftCompletedTo || undefined,
+      updatedFrom: draftUpdatedFrom || undefined,
+      updatedTo: draftUpdatedTo || undefined,
+      page: 1,
+    });
   };
   const clearSidebarFilters = () => {
     setDraftSearchQuery('');
@@ -4731,6 +4789,27 @@ export const ProjectBoard: React.FC = () => {
     setCompletedTo('');
     setUpdatedFrom('');
     setUpdatedTo('');
+
+    // P3-003: Reset hook query to cleared state (page 1, no filters).
+    setSurfaceQuery({
+      projectId: activeProject?.id,
+      search: '',
+      stage: [],
+      status: [],
+      tags: [],
+      category: undefined,
+      sortBy: 'updated_at',
+      sortDirection: 'desc',
+      plannedFrom: undefined,
+      plannedTo: undefined,
+      startedFrom: undefined,
+      startedTo: undefined,
+      completedFrom: undefined,
+      completedTo: undefined,
+      updatedFrom: undefined,
+      updatedTo: undefined,
+      page: 1,
+    });
   };
 
   return (
@@ -4937,7 +5016,15 @@ export const ProjectBoard: React.FC = () => {
         <div>
           <h2 className="text-2xl font-bold text-panel-foreground">Feature Board</h2>
           <p className="text-muted-foreground text-sm">
-            {filteredFeatures.length} features · Synced from project plans &amp; progress files
+            {filteredFeatures.length} features
+            {/* P3-003: surface server-side total from hook when available */}
+            {surfaceListState === 'success' && surfaceTotals.total !== filteredFeatures.length && (
+              <span className="ml-1 text-muted-foreground/60">(server: {surfaceTotals.total})</span>
+            )}
+            {surfaceListState === 'loading' && (
+              <span className="ml-1 text-muted-foreground/60">(loading…)</span>
+            )}
+            {' '}· Synced from project plans &amp; progress files
           </p>
         </div>
         <div className="flex gap-3">
