@@ -17,7 +17,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 8
-completed_tasks: 4
+completed_tasks: 7
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -86,7 +86,7 @@ tasks:
   - test: backend/tests/test_feature_surface_modal_service.py
 - id: P2-005
   description: v1 Feature List Endpoint - Extend GET /api/v1/features or add compatible query mode for card DTOs with backend filters, sort, and totals.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -94,9 +94,13 @@ tasks:
   estimated_effort: 2 pts
   priority: high
   assigned_model: sonnet
+  completed: 2026-04-23T16:38Z
+  evidence:
+  - test: backend/tests/test_client_v1_contract.py
+  - test: backend/tests/test_client_v1_feature_surface.py
 - id: P2-006
   description: v1 Rollup Endpoint - Add POST /api/v1/features/rollups with bounded IDs and field selection.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -104,9 +108,12 @@ tasks:
   estimated_effort: 1 pt
   priority: high
   assigned_model: sonnet
+  completed: 2026-04-23T16:38Z
+  evidence:
+  - test: backend/tests/test_client_v1_feature_surface.py
 - id: P2-007
   description: v1 Modal Endpoints - Add or extend endpoints for overview, section includes, paginated sessions, and activity.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -114,6 +121,9 @@ tasks:
   estimated_effort: 1 pt
   priority: high
   assigned_model: sonnet
+  completed: 2026-04-23T16:38Z
+  evidence:
+  - test: backend/tests/test_client_v1_feature_surface.py
 - id: P2-008
   description: API Observability - Instrument latency, result count, payload size estimate, cache status, and error categorization.
   status: pending
@@ -136,7 +146,7 @@ parallelization:
   - P2-007
   batch_3:
   - P2-008
-progress: 50
+progress: 88
 ---
 
 # Phase 2 Progress — Service and API Contracts
@@ -161,3 +171,10 @@ Commit at the end of each batch. Keep work split across DTO/service files first,
 - Added bounded list/rollup service over Phase 1 repository methods.
 - Added section-oriented modal detail service with source-paged session loading.
 - Validation: `backend/.venv/bin/python -m pytest backend/tests/test_feature_surface_dtos.py backend/tests/test_feature_surface_list_rollup_service.py backend/tests/test_feature_surface_modal_service.py -q`
+
+## Batch 2 Complete
+
+- Added Phase 2 shared/public v1 feature-surface contracts to `ccdash_contracts`.
+- Added `view=cards` plus `include=card/cards` compatibility mode on `GET /api/v1/features`.
+- Added `POST /api/v1/features/rollups`, modal overview/section endpoints, and a richer linked-session page route while preserving legacy default responses.
+- Validation: `backend/.venv/bin/python -m pytest backend/tests/test_client_v1_contract.py backend/tests/test_client_v1_feature_surface.py -q`
