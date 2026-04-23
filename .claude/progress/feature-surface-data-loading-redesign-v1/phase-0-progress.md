@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 6
-completed_tasks: 1
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -53,7 +53,7 @@ tasks:
   description: 'Filter/Sort/Search Inventory - query matrix for text search, status/stage,
     category, date ranges, progress, tasks, dependency state, quality signals, completed
     grouping. Output: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/query-matrix.md'
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   dependencies:
@@ -61,11 +61,15 @@ tasks:
   estimated_effort: 1 pt
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T00:15Z
+  completed: 2026-04-23T00:20Z
+  evidence:
+  - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/query-matrix.md
 - id: P0-003
   description: 'Rollup Contract Draft - FeatureRollupDTO fields (session counts, primary
     roots, subthreads, token/cost totals, latest activity, model/provider summary,
     task/doc/test metrics, freshness, precision). Output: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/rollup-dto-draft.md'
-  status: pending
+  status: completed
   assigned_to:
   - lead-architect
   dependencies:
@@ -73,11 +77,15 @@ tasks:
   estimated_effort: 2 pts
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T00:15Z
+  completed: 2026-04-23T00:20Z
+  evidence:
+  - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/rollup-dto-draft.md
 - id: P0-004
   description: 'Modal Section Contract Draft - per-tab source endpoint, cache key,
     loading state, failure mode for overview/phases/docs/relations/sessions/test status/history.
     Output: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/modal-section-contracts.md'
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -85,6 +93,10 @@ tasks:
   estimated_effort: 1 pt
   priority: high
   assigned_model: sonnet
+  started: 2026-04-23T00:15Z
+  completed: 2026-04-23T00:20Z
+  evidence:
+  - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/modal-section-contracts.md
 - id: P0-005
   description: 'Performance Budgets - request count, payload size, latency, cache
     budgets for board and modal with measurable assertions. Output: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/performance-budgets.md'
@@ -139,7 +151,7 @@ success_criteria:
 - id: SC-0.5
   description: Parity fixture plan supports old-vs-new and performance tests
   status: pending
-progress: 16
+progress: 66
 ---
 
 # Phase 0 Progress: Inventory, Contracts, Guardrails
