@@ -3,6 +3,7 @@ import types
 import unittest
 from unittest.mock import patch
 
+from backend.models import LinkedDocument
 from backend.routers import features as features_router
 from backend.session_mappings import default_session_mappings
 
@@ -172,6 +173,66 @@ class _FakeSessionRepo:
 
 
 class FeatureLinkedSessionsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_feature_returns_synthetic_feature_for_design_spec_only_item(self) -> None:
+        class _MissingFeatureRepo:
+            async def get_by_id(self, feature_id):
+                return None
+
+        design_doc = LinkedDocument(
+            id="doc-design",
+            title="Design Only",
+            filePath="docs/project_plans/design-specs/design-only.md",
+            docType="design_spec",
+        )
+        project = types.SimpleNamespace(id="project-1")
+
+        with (
+            patch.object(features_router.connection, "get_connection", return_value=object()),
+            patch.object(features_router.project_manager, "get_active_project", return_value=project),
+            patch.object(features_router, "get_feature_repository", return_value=_MissingFeatureRepo()),
+            patch.object(features_router, "load_execution_documents", return_value=[design_doc]),
+        ):
+            response = await features_router.get_feature("design-only")
+
+        self.assertEqual(response.id, "design-only")
+        self.assertEqual(response.name, "Design Only")
+        self.assertEqual(len(response.linkedDocs), 1)
+        self.assertEqual(response.linkedDocs[0].docType, "design_spec")
+        self.assertEqual(response.documentCoverage.countsByType.get("design_spec"), 1)
+
+    async def test_linked_sessions_allows_design_spec_only_item_with_document_evidence(self) -> None:
+        class _MissingFeatureRepo:
+            async def get_by_id(self, feature_id):
+                return None
+
+            async def get_phases(self, feature_id):
+                return []
+
+        design_doc = LinkedDocument(
+            id="doc-design",
+            title="Design Only",
+            filePath="docs/project_plans/design-specs/design-only.md",
+            docType="design_spec",
+        )
+        project = types.SimpleNamespace(id="project-1")
+        link_repo = _FakeLinkRepo()
+        session_repo = _FakeSessionRepo()
+
+        with (
+            patch.object(features_router.connection, "get_connection", return_value=object()),
+            patch.object(features_router.project_manager, "get_active_project", return_value=project),
+            patch.object(features_router, "get_feature_repository", return_value=_MissingFeatureRepo()),
+            patch.object(features_router, "get_entity_link_repository", return_value=link_repo),
+            patch.object(features_router, "get_session_repository", return_value=session_repo),
+            patch.object(features_router, "get_task_repository", return_value=_FakeTaskRepo()),
+            patch.object(features_router, "load_session_mappings", return_value=default_session_mappings()),
+            patch.object(features_router, "load_execution_documents", return_value=[design_doc]),
+        ):
+            response = await features_router.get_feature_linked_sessions("feat-1")
+
+        self.assertEqual(len(response), 1)
+        self.assertEqual(response[0].sessionId, "S-1")
+
     async def test_linked_sessions_include_session_metadata(self) -> None:
         feature_repo = _FakeFeatureRepo()
         link_repo = _FakeLinkRepo()

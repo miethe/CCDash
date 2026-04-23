@@ -23,6 +23,9 @@ import { DocumentModal } from './DocumentModal';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { FeatureModalTestStatus } from './TestVisualizer/FeatureModalTestStatus';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { Surface } from './ui/surface';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, CheckCircle2, Circle, CircleDashed, Layers, Box,
@@ -211,6 +214,7 @@ interface GitCommitAggregate {
 
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
+type SessionViewMode = 'list' | 'grid';
 export type FeatureModalTab = PlanningFeatureModalTab;
 
 interface CoreSessionGroupDefinition {
@@ -1191,6 +1195,209 @@ const StatusDropdown = ({
   );
 };
 
+const featureValue = (value?: string | number | null): string => {
+  if (value === null || value === undefined || value === '') return '-';
+  return String(value);
+};
+
+const FeatureMetricTile = ({
+  label,
+  value,
+  detail,
+  icon: Icon,
+  accentClassName = 'text-panel-foreground',
+}: {
+  label: string;
+  value: React.ReactNode;
+  detail?: React.ReactNode;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  accentClassName?: string;
+}) => (
+  <Surface tone="elevated" padding="sm" className="min-h-[104px] overflow-hidden">
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</div>
+        <div className={`mt-2 text-2xl font-semibold leading-none ${accentClassName}`}>{value}</div>
+      </div>
+      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-panel-border bg-surface-overlay/80 text-muted-foreground">
+        <Icon size={15} />
+      </span>
+    </div>
+    {detail ? <div className="mt-2 text-[11px] leading-4 text-muted-foreground">{detail}</div> : null}
+  </Surface>
+);
+
+const FeatureModalSection = ({
+  title,
+  description,
+  icon: Icon,
+  children,
+  className = '',
+  headerRight,
+}: {
+  title: string;
+  description?: React.ReactNode;
+  icon?: React.ComponentType<{ size?: number; className?: string }>;
+  children: React.ReactNode;
+  className?: string;
+  headerRight?: React.ReactNode;
+}) => (
+  <Surface tone="panel" padding="md" className={className}>
+    <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-start gap-3">
+        {Icon ? (
+          <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-panel-border bg-surface-muted text-muted-foreground">
+            <Icon size={15} />
+          </span>
+        ) : null}
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-panel-foreground">{title}</h3>
+          {description ? <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p> : null}
+        </div>
+      </div>
+      {headerRight ? <div className="shrink-0">{headerRight}</div> : null}
+    </div>
+    {children}
+  </Surface>
+);
+
+const FeatureField = ({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value?: React.ReactNode;
+  mono?: boolean;
+}) => (
+  <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2">
+    <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</div>
+    <div className={`mt-1 min-h-[18px] text-sm text-panel-foreground ${mono ? 'font-mono text-xs' : ''}`}>
+      {value || '-'}
+    </div>
+  </div>
+);
+
+const getDocTypeTone = (docType: string): string => {
+  switch ((docType || '').toLowerCase()) {
+    case 'prd':
+      return 'border-purple-500/30 bg-purple-500/10 text-purple-400';
+    case 'implementation_plan':
+      return 'border-info-border bg-info/10 text-info';
+    case 'phase_plan':
+      return 'border-warning-border bg-warning/10 text-warning';
+    case 'progress':
+      return 'border-success-border bg-success/10 text-success';
+    case 'report':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500';
+    case 'spec':
+      return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-500';
+    default:
+      return 'border-panel-border bg-surface-muted text-muted-foreground';
+  }
+};
+
+const getDocGroupIcon = (groupId: DocGroupId): React.ComponentType<{ size?: number; className?: string }> => {
+  switch (groupId) {
+    case 'initialPlanning': return Search;
+    case 'prd': return ClipboardList;
+    case 'plans': return Layers;
+    case 'progress': return Terminal;
+    case 'context': return FileText;
+    default: return FileText;
+  }
+};
+
+const getDocPhaseLabel = (doc: LinkedDocument): string => {
+  const phase = getDocPhaseNumber(doc);
+  return phase === null ? 'Unassigned progress' : `Phase ${phase}`;
+};
+
+const groupDocsByPhaseLabel = (docs: LinkedDocument[]): Array<{ label: string; docs: LinkedDocument[] }> => {
+  const buckets = new Map<string, LinkedDocument[]>();
+  docs.forEach(doc => {
+    const label = getDocPhaseLabel(doc);
+    buckets.set(label, [...(buckets.get(label) || []), doc]);
+  });
+  return Array.from(buckets.entries())
+    .map(([label, rows]) => ({ label, docs: rows }))
+    .sort((a, b) => {
+      const aPhase = parsePhaseNumber(a.label, false) ?? Number.POSITIVE_INFINITY;
+      const bPhase = parsePhaseNumber(b.label, false) ?? Number.POSITIVE_INFINITY;
+      if (aPhase !== bPhase) return aPhase - bPhase;
+      return a.label.localeCompare(b.label);
+    });
+};
+
+const FeatureDocCard = ({
+  doc,
+  primary,
+  compact = false,
+  onClick,
+}: {
+  doc: LinkedDocument;
+  primary: boolean;
+  compact?: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`group flex h-full w-full flex-col rounded-lg border border-panel-border bg-surface-overlay/70 text-left transition-all hover:border-info-border hover:bg-surface-muted/70 ${compact ? 'p-3' : 'p-4'}`}
+  >
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-start gap-2">
+        <span className={`mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${getDocTypeTone(doc.docType)}`}>
+          <DocTypeIcon docType={doc.docType} />
+        </span>
+        <div className="min-w-0">
+          <div className="line-clamp-2 text-sm font-semibold leading-5 text-panel-foreground group-hover:text-info">
+            {doc.title}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${getDocTypeTone(doc.docType)}`}>
+              <DocTypeBadge docType={doc.docType} />
+            </span>
+            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${primary
+              ? 'border-success-border bg-success/10 text-success'
+              : 'border-panel-border bg-surface-muted text-muted-foreground'
+              }`}>
+              {primary ? 'Primary' : 'Supporting'}
+            </span>
+          </div>
+        </div>
+      </div>
+      <ExternalLink size={13} className="shrink-0 text-muted-foreground transition-colors group-hover:text-info" />
+    </div>
+    <div className="mt-3 flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground">
+      <FolderOpen size={12} className="shrink-0" />
+      <span className="truncate font-mono">{doc.filePath}</span>
+    </div>
+    <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
+      {doc.featureFamily && (
+        <span className="rounded-full border border-panel-border bg-panel px-2 py-0.5 text-foreground">
+          {doc.featureFamily}
+        </span>
+      )}
+      {typeof doc.sequenceOrder === 'number' && (
+        <span className="rounded-full border border-info-border bg-info/10 px-2 py-0.5 text-info">
+          Seq {doc.sequenceOrder}
+        </span>
+      )}
+      {(doc.blockedBy || []).map(featureId => (
+        <span key={`${doc.id}-blocked-${featureId}`} className="rounded-full border border-danger-border bg-danger/10 px-2 py-0.5 text-danger">
+          Blocked by {featureId}
+        </span>
+      ))}
+      {(doc.prdRef || '').trim() && (
+        <span className="rounded-full border border-panel-border bg-panel px-2 py-0.5 text-muted-foreground">
+          PRD <span className="font-mono text-foreground">{doc.prdRef}</span>
+        </span>
+      )}
+    </div>
+  </button>
+);
+
 // ── Task Source Dialog ─────────────────────────────────────────────
 
 const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () => void }) => {
@@ -1292,6 +1499,7 @@ export const ProjectBoardFeatureModal = ({
   );
   const [gitHistoryCommitFilter, setGitHistoryCommitFilter] = useState<string>('');
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
+  const [sessionViewMode, setSessionViewMode] = useState<SessionViewMode>('list');
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
   const [featureTestHealth, setFeatureTestHealth] = useState<FeatureTestHealth | null>(null);
   const featureDetailRequestIdRef = useRef(0);
@@ -2183,9 +2391,19 @@ export const ProjectBoardFeatureModal = ({
     })).filter(group => group.docs.length > 0);
   }, [linkedDocs]);
 
+  const docsByGroup = useMemo(() => {
+    const byGroup = new Map<DocGroupId, LinkedDocument[]>();
+    groupedDocs.forEach(group => byGroup.set(group.id, group.docs));
+    return byGroup;
+  }, [groupedDocs]);
+
   const orderedLinkedDocs = useMemo(
     () => groupedDocs.flatMap(group => group.docs),
     [groupedDocs]
+  );
+  const docTypeCounts = useMemo(
+    () => buildLinkedDocTypeCounts(linkedDocs),
+    [linkedDocs]
   );
   const primaryDocIds = useMemo(() => {
     const ids = new Set<string>();
@@ -2201,6 +2419,13 @@ export const ProjectBoardFeatureModal = ({
     (primary?.progressDocs || []).forEach(pushDoc);
     return ids;
   }, [activeFeature.primaryDocuments]);
+  const progressDocPhaseBuckets = useMemo(
+    () => groupDocsByPhaseLabel(docsByGroup.get('progress') || []),
+    [docsByGroup]
+  );
+  const isPrimaryDoc = useCallback((doc: LinkedDocument) => (
+    primaryDocIds.has(doc.id) || primaryDocIds.has(normalizePath(doc.filePath))
+  ), [primaryDocIds]);
   const blockedByRelations = useMemo(
     () => (activeFeature.linkedFeatures || []).filter(relation => (relation.type || '').toLowerCase() === 'blocked_by'),
     [activeFeature.linkedFeatures]
@@ -2241,6 +2466,20 @@ export const ProjectBoardFeatureModal = ({
     }
     return base;
   }, [activeFeature, featureTestHealth?.totalTests, linkedDocs.length, linkedSessions.length, phases.length]);
+  const modalTitleId = `feature-modal-title-${activeFeature.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+  const renderDocGrid = (docs: LinkedDocument[], compact = false) => (
+    <div className={`grid grid-cols-1 gap-3 ${compact ? 'lg:grid-cols-2' : 'md:grid-cols-2 xl:grid-cols-3'}`}>
+      {docs.map(doc => (
+        <FeatureDocCard
+          key={doc.id}
+          doc={doc}
+          primary={isPrimaryDoc(doc)}
+          compact={compact}
+          onClick={() => handleDocClick(doc)}
+        />
+      ))}
+    </div>
+  );
 
   const renderSessionCard = (
     session: FeatureSessionLink,
@@ -2460,208 +2699,388 @@ export const ProjectBoardFeatureModal = ({
     );
   };
 
+  const renderCompactSessionCard = (
+    session: FeatureSessionLink,
+    threadToggle?: {
+      expanded: boolean;
+      childCount: number;
+      onToggle: () => void;
+    }
+  ) => {
+    const openSession = () => {
+      onClose();
+      navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`);
+    };
+    const displayTitle = deriveSessionCardTitle(session.sessionId, (session.title || '').trim(), session.sessionMetadata || null);
+    const workflow = (session.workflowType || session.sessionType || '').trim() || 'Related';
+    const threadLabel = isSubthreadSession(session) ? 'Sub-thread' : 'Main thread';
+    const phaseNumbers = getSessionPhaseNumbers(session);
+    const metrics = resolveTokenMetrics(session, {
+      hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, linkedSessions),
+    });
+    const primaryCommit = session.gitCommitHash || session.gitCommitHashes?.[0] || session.commitHashes?.[0];
+    const modelBadges = (session.modelsUsed && session.modelsUsed.length > 0)
+      ? session.modelsUsed.map(modelInfo => ({
+        raw: modelInfo.raw,
+        displayName: modelInfo.modelDisplayName,
+        provider: modelInfo.modelProvider,
+        family: modelInfo.modelFamily,
+        version: modelInfo.modelVersion,
+      }))
+      : [{
+        raw: session.model,
+        displayName: session.modelDisplayName,
+        provider: session.modelProvider,
+        family: session.modelFamily,
+        version: session.modelVersion,
+      }];
+
+    return (
+      <SessionCard
+        sessionId={session.sessionId}
+        title={displayTitle}
+        status={session.status}
+        startedAt={session.startedAt}
+        endedAt={session.endedAt}
+        updatedAt={session.updatedAt}
+        dates={{
+          startedAt: session.startedAt ? { value: session.startedAt, confidence: 'high' } : undefined,
+          completedAt: session.endedAt ? { value: session.endedAt, confidence: 'high' } : undefined,
+          updatedAt: session.updatedAt ? { value: session.updatedAt, confidence: 'medium' } : undefined,
+        }}
+        model={{
+          raw: session.model,
+          displayName: session.modelDisplayName,
+          provider: session.modelProvider,
+          family: session.modelFamily,
+          version: session.modelVersion,
+        }}
+        models={modelBadges}
+        metadata={session.sessionMetadata || null}
+        threadToggle={threadToggle ? {
+          ...threadToggle,
+          label: 'Sub-Threads',
+        } : undefined}
+        onClick={openSession}
+        className="h-full rounded-lg p-3 hover:border-info-border"
+        infoBadges={(
+          <div className="flex flex-wrap items-center gap-1">
+            <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isPrimarySession(session)
+              ? 'border-success-border bg-success/10 text-success'
+              : 'border-panel-border bg-panel text-muted-foreground'
+              }`}>
+              {isPrimarySession(session) ? 'Primary' : 'Related'}
+            </span>
+            <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isSubthreadSession(session)
+              ? 'border-warning-border bg-warning/10 text-warning'
+              : 'border-info-border bg-info/10 text-info'
+              }`}>
+              {threadLabel}
+            </span>
+            <span className="rounded border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-400">
+              {workflow}
+            </span>
+          </div>
+        )}
+        headerRight={(
+          <div className="text-right">
+            <div className="font-mono text-xs font-semibold text-success">${resolveDisplayCost(session).toFixed(2)}</div>
+          </div>
+        )}
+      >
+        <div className="grid grid-cols-3 gap-2 border-t border-panel-border/70 pt-3 text-[11px]">
+          <div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Confidence</div>
+            <div className="mt-1 font-mono text-panel-foreground">{Math.round(session.confidence * 100)}%</div>
+          </div>
+          <div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Workload</div>
+            <div className="mt-1 font-mono text-info">{formatTokenCount(metrics.workloadTokens)}</div>
+          </div>
+          <div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Duration</div>
+            <div className="mt-1 font-mono text-muted-foreground">{Math.round((session.durationSeconds || 0) / 60)}m</div>
+          </div>
+        </div>
+        {(phaseNumbers.length > 0 || primaryCommit) && (
+          <div className="mt-3 flex flex-wrap gap-1.5 text-[10px]">
+            {phaseNumbers.slice(0, 3).map(phase => (
+              <span key={`${session.sessionId}-phase-${phase}`} className="rounded-full border border-panel-border bg-panel px-2 py-0.5 text-foreground">
+                Phase {phase}
+              </span>
+            ))}
+            {primaryCommit ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-panel px-2 py-0.5 font-mono text-muted-foreground">
+                <GitCommit size={10} />
+                {toShortCommitHash(primaryCommit)}
+              </span>
+            ) : null}
+          </div>
+        )}
+      </SessionCard>
+    );
+  };
+
+  const renderSessionGridNode = (node: FeatureSessionTreeNode, depth = 0): React.ReactNode => {
+    const hasChildren = node.children.length > 0;
+    const isExpanded = expandedSubthreadsBySessionId.has(node.session.sessionId);
+    return (
+      <div key={`grid-${node.session.sessionId}`} className="space-y-3">
+        {renderCompactSessionCard(node.session, hasChildren ? {
+          expanded: isExpanded,
+          childCount: countThreadNodes(node.children),
+          onToggle: () => toggleSubthreads(node.session.sessionId),
+        } : undefined)}
+        {hasChildren && isExpanded && (
+          <div className={`grid grid-cols-1 gap-3 ${depth > 0 ? 'pl-3' : ''} md:grid-cols-2 xl:grid-cols-3`}>
+            {node.children.map(child => renderSessionGridNode(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderSessionGrid = (roots: FeatureSessionTreeNode[]) => (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {roots.map(node => renderSessionGridNode(node))}
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-overlay/90 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
-      <div className="bg-panel border border-panel-border rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface-overlay/90 p-3 backdrop-blur-sm animate-in fade-in duration-200 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={modalTitleId}
+        className="flex h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-panel-border bg-panel text-panel-foreground shadow-[var(--viewer-shell-shadow)]"
+        onClick={e => e.stopPropagation()}
+      >
 
         {/* Header */}
-        <div className="p-6 border-b border-panel-border bg-panel">
-          <div className="flex justify-between items-start">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-2">
-                <span className="font-mono text-xs text-muted-foreground bg-surface-muted px-2 py-0.5 rounded border border-panel-border truncate max-w-[200px]">{feature.id}</span>
+        <div className="border-b border-panel-border bg-surface-overlay/95 px-4 py-4 sm:px-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Badge tone="muted" mono className="max-w-full truncate rounded-md px-2 py-1 text-[11px]">
+                  {feature.id}
+                </Badge>
                 <StatusDropdown status={activeFeature.status} onStatusChange={handleFeatureStatusChange} />
-                {updatingStatus && <RefreshCw size={14} className="text-indigo-400 animate-spin" />}
+                {updatingStatus && <RefreshCw size={14} className="text-info animate-spin" />}
                 {activeFeature.category && (
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-surface-muted text-muted-foreground">
+                  <Badge tone="outline" className="uppercase tracking-wide">
                     {activeFeature.category}
-                  </span>
+                  </Badge>
                 )}
                 {featureDeferredTasks > 0 && (
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300">
-                    Done With Deferrals
-                  </span>
+                  <Badge tone="warning" className="uppercase tracking-wide">
+                    Done with deferrals
+                  </Badge>
                 )}
               </div>
-              <h2 className="text-xl font-bold text-panel-foreground truncate">{activeFeature.name}</h2>
-              <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
-                <span>{pct}% complete</span>
-                <span>{featureCompletedTasks}/{activeFeature.totalTasks} tasks</span>
-                {featureDeferredTasks > 0 && (
-                  <span className="text-amber-300">{featureDeferredTasks} deferred</span>
-                )}
-                {primaryFeatureDate.value && (
-                  <span className="flex items-center gap-1">
-                    <Calendar size={12} />
-                    {primaryFeatureDate.label}: {new Date(primaryFeatureDate.value).toLocaleDateString()}
-                    {primaryFeatureDate.confidence ? ` (${primaryFeatureDate.confidence})` : ''}
-                  </span>
-                )}
+              <h2 id={modalTitleId} className="text-balance text-2xl font-semibold leading-tight text-panel-foreground">
+                {activeFeature.name}
+              </h2>
+              <div className="mt-3 grid gap-3 text-xs text-muted-foreground sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={activeFeature.totalTasks} />
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-medium text-panel-foreground">{pct}% complete</span>
+                  <span>{featureCompletedTasks}/{activeFeature.totalTasks} tasks</span>
+                  {featureDeferredTasks > 0 && (
+                    <span className="text-warning">{featureDeferredTasks} deferred</span>
+                  )}
+                  {primaryFeatureDate.value && (
+                    <span className="inline-flex items-center gap-1">
+                      <Calendar size={12} />
+                      {primaryFeatureDate.label}: {new Date(primaryFeatureDate.value).toLocaleDateString()}
+                      {primaryFeatureDate.confidence ? ` (${primaryFeatureDate.confidence})` : ''}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-            <div className="ml-4 flex items-center gap-2">
-              <button
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
                 onClick={handleBeginWork}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-indigo-500/40 bg-indigo-500/20 text-indigo-100 text-xs font-semibold hover:bg-indigo-500/30"
+                className="border border-info-border bg-info/10 text-info shadow-sm hover:bg-info/20"
               >
                 <Play size={14} />
                 Begin Work
-              </button>
-              <button
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="panel"
                 onClick={() => {
                   navigate(planningFeatureDetailHref(feature.id));
                   onClose();
                 }}
                 title="Open full planning detail"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-panel-border bg-surface-elevated text-muted-foreground text-xs font-medium hover:text-panel-foreground hover:bg-slate-700/30 transition-colors"
               >
                 <ExternalLink size={13} />
                 Expand
-              </button>
-              <button onClick={onClose} className="text-muted-foreground hover:text-panel-foreground transition-colors p-1 hover:bg-surface-muted rounded">
-                <X size={24} />
-              </button>
+              </Button>
+              <Button type="button" size="icon" variant="ghost" onClick={onClose} aria-label="Close feature modal">
+                <X size={18} />
+              </Button>
             </div>
-          </div>
-          <div className="mt-3">
-            <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={activeFeature.totalTasks} />
           </div>
         </div>
 
         {/* Tab Nav */}
-        <div className="px-6 border-b border-panel-border bg-panel/60 flex gap-6">
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id
-                ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-panel-border'
-                }`}
-            >
-              <tab.icon size={16} />
-              {tab.label}
-            </button>
-          ))}
+        <div className="border-b border-panel-border bg-panel px-3 py-2 sm:px-6">
+          <div className="flex gap-1 overflow-x-auto rounded-lg border border-panel-border bg-surface-muted/70 p-1">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${activeTab === tab.id
+                  ? 'bg-panel text-panel-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-hover/70 hover:text-foreground'
+                  }`}
+              >
+                <tab.icon size={15} />
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 bg-surface-overlay/60">
+        <div className="flex-1 overflow-y-auto bg-surface-muted/45 p-4 sm:p-6">
 
           {/* Overview Tab */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
               {/* Stats Grid */}
-              <div className="grid grid-cols-4 gap-4">
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <div className="text-muted-foreground text-xs mb-1">Total Tasks</div>
-                  <div className="text-panel-foreground font-bold text-2xl">{activeFeature.totalTasks}</div>
-                </div>
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <div className="text-muted-foreground text-xs mb-1">Completed</div>
-                  <div className="text-emerald-400 font-bold text-2xl">{featureDoneTasks}</div>
-                  {featureDeferredTasks > 0 && (
-                    <div className="text-[11px] mt-1 text-amber-300">{featureDeferredTasks} deferred</div>
-                  )}
-                </div>
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <div className="text-muted-foreground text-xs mb-1">Phases</div>
-                  <div className="text-indigo-400 font-bold text-2xl">{phases.length}</div>
-                </div>
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <div className="text-muted-foreground text-xs mb-1">Documents</div>
-                  <div className="text-purple-400 font-bold text-2xl">{linkedDocs.length}</div>
-                </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <FeatureMetricTile
+                  label="Total Tasks"
+                  value={activeFeature.totalTasks}
+                  detail={`${pct}% overall progress`}
+                  icon={ClipboardList}
+                />
+                <FeatureMetricTile
+                  label="Completed"
+                  value={featureDoneTasks}
+                  detail={featureDeferredTasks > 0 ? `${featureDeferredTasks} deferred count as complete` : 'No deferred completion caveats'}
+                  icon={CheckCircle2}
+                  accentClassName="text-success"
+                />
+                <FeatureMetricTile
+                  label="Phases"
+                  value={phases.length}
+                  detail={`${filteredPhases.length} visible with current filters`}
+                  icon={Layers}
+                  accentClassName="text-info"
+                />
+                <FeatureMetricTile
+                  label="Documents"
+                  value={linkedDocs.length}
+                  detail={`${groupedDocs.length} document groups`}
+                  icon={FileText}
+                  accentClassName="text-warning"
+                />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <h3 className="text-sm font-semibold text-panel-foreground mb-2">Delivery Metadata</h3>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="text-muted-foreground">Priority <span className="text-panel-foreground ml-1">{activeFeature.priority || '-'}</span></div>
-                    <div className="text-muted-foreground">Risk <span className="text-panel-foreground ml-1">{activeFeature.riskLevel || '-'}</span></div>
-                    <div className="text-muted-foreground">Complexity <span className="text-panel-foreground ml-1">{activeFeature.complexity || '-'}</span></div>
-                    <div className="text-muted-foreground">Track <span className="text-panel-foreground ml-1">{activeFeature.track || '-'}</span></div>
-                    <div className="text-muted-foreground">Family <span className="text-panel-foreground ml-1 font-mono">{activeFeature.featureFamily || '-'}</span></div>
-                    <div className="text-muted-foreground">Target <span className="text-panel-foreground ml-1">{activeFeature.targetRelease || '-'}</span></div>
-                    <div className="text-muted-foreground">Milestone <span className="text-panel-foreground ml-1">{activeFeature.milestone || '-'}</span></div>
-                    <div className="text-muted-foreground">Readiness <span className="text-panel-foreground ml-1">{activeFeature.executionReadiness || '-'}</span></div>
-                    <div className="text-muted-foreground">Coverage <span className="text-panel-foreground ml-1">{getFeatureCoverageSummary(activeFeature)}</span></div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+                <FeatureModalSection
+                  title="Delivery Metadata"
+                  description="Planning attributes that explain priority, ownership, release fit, and execution readiness."
+                  icon={LayoutGrid}
+                >
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    <FeatureField label="Priority" value={featureValue(activeFeature.priority)} />
+                    <FeatureField label="Risk" value={featureValue(activeFeature.riskLevel)} />
+                    <FeatureField label="Complexity" value={featureValue(activeFeature.complexity)} />
+                    <FeatureField label="Track" value={featureValue(activeFeature.track)} />
+                    <FeatureField label="Family" value={featureValue(activeFeature.featureFamily)} mono />
+                    <FeatureField label="Target" value={featureValue(activeFeature.targetRelease)} />
+                    <FeatureField label="Milestone" value={featureValue(activeFeature.milestone)} />
+                    <FeatureField label="Readiness" value={featureValue(activeFeature.executionReadiness)} />
+                    <FeatureField label="Coverage" value={getFeatureCoverageSummary(activeFeature)} />
                   </div>
-                </div>
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <h3 className="text-sm font-semibold text-panel-foreground mb-2">Quality Signals</h3>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="text-muted-foreground">Blockers <span className="text-panel-foreground ml-1">{activeFeature.qualitySignals?.blockerCount ?? 0}</span></div>
-                    <div className="text-muted-foreground">At Risk <span className="text-panel-foreground ml-1">{activeFeature.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
-                    <div className="text-muted-foreground">Blocked By <span className="text-panel-foreground ml-1">{blockedByRelations.length}</span></div>
-                    <div className="text-muted-foreground">Test Impact <span className="text-panel-foreground ml-1">{activeFeature.testImpact || activeFeature.qualitySignals?.testImpact || '-'}</span></div>
-                    <div className="text-muted-foreground">Relations <span className="text-panel-foreground ml-1">{getFeatureLinkedFeatureCount(activeFeature)}</span></div>
+                </FeatureModalSection>
+                <FeatureModalSection
+                  title="Quality Signals"
+                  description="Risk and integrity signals that deserve attention before execution."
+                  icon={BarChart3}
+                >
+                  <div className="grid grid-cols-2 gap-2">
+                    <FeatureField label="Blockers" value={activeFeature.qualitySignals?.blockerCount ?? 0} />
+                    <FeatureField label="At Risk" value={activeFeature.qualitySignals?.atRiskTaskCount ?? 0} />
+                    <FeatureField label="Blocked By" value={blockedByRelations.length} />
+                    <FeatureField label="Test Impact" value={featureValue(activeFeature.testImpact || activeFeature.qualitySignals?.testImpact)} />
+                    <FeatureField label="Relations" value={getFeatureLinkedFeatureCount(activeFeature)} />
                   </div>
                   {(activeFeature.qualitySignals?.integritySignalRefs || []).length > 0 && (
-                    <div className="mt-2 text-[11px] text-muted-foreground">
-                      Integrity refs: {(activeFeature.qualitySignals?.integritySignalRefs || []).join(', ')}
+                    <div className="mt-3 rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-[11px] text-muted-foreground">
+                      <span className="font-semibold text-panel-foreground">Integrity refs:</span> {(activeFeature.qualitySignals?.integritySignalRefs || []).join(', ')}
                     </div>
                   )}
-                </div>
+                </FeatureModalSection>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <h3 className="text-sm font-semibold text-panel-foreground">Execution Gate</h3>
-                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${getExecutionGateStyle(executionGate?.state)}`}>
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                <FeatureModalSection
+                  title="Execution Gate"
+                  description={executionGate?.reason || dependencyState?.blockingReason || 'No gate reason available.'}
+                  icon={Play}
+                  headerRight={(
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${getExecutionGateStyle(executionGate?.state)}`}>
                       {getExecutionGateLabel(executionGate?.state)}
                     </span>
+                  )}
+                >
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-1">
+                    <FeatureField label="Ready" value={executionGate?.isReady ? 'Yes' : 'No'} />
+                    <FeatureField label="Waiting on family" value={executionGate?.waitingOnFamilyPredecessor ? 'Yes' : 'No'} />
+                    <FeatureField label="Next item" value={familyPosition?.nextItemLabel || nextFamilyItem?.featureName || '-'} mono />
                   </div>
-                  <div className="space-y-2 text-xs">
-                    <div className="text-muted-foreground">
-                      Reason <span className="text-panel-foreground ml-1">{executionGate?.reason || dependencyState?.blockingReason || '-'}</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      Ready <span className="text-panel-foreground ml-1">{executionGate?.isReady ? 'yes' : 'no'}</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      Waiting on family <span className="text-panel-foreground ml-1">{executionGate?.waitingOnFamilyPredecessor ? 'yes' : 'no'}</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      Next item <span className="text-panel-foreground ml-1 font-mono">{familyPosition?.nextItemLabel || nextFamilyItem?.featureName || '-'}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <h3 className="text-sm font-semibold text-panel-foreground">Family Position</h3>
-                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-200">
+                </FeatureModalSection>
+                <FeatureModalSection
+                  title="Family Position"
+                  description="Where this feature sits in its execution family."
+                  icon={Link2}
+                  headerRight={(
+                    <Badge tone="outline" mono className="max-w-[160px] truncate rounded-md border-info-border bg-info/10 text-info uppercase">
                       {familySummary?.featureFamily || activeFeature.featureFamily || '-'}
-                    </span>
+                    </Badge>
+                  )}
+                >
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                    <FeatureField label="Position" value={getFamilyPositionLabel(familyPosition)} />
+                    <FeatureField label="Sequenced" value={familySummary?.sequencedItems ?? familyPosition?.sequencedItems ?? 0} />
+                    <FeatureField label="Unsequenced" value={familySummary?.unsequencedItems ?? familyPosition?.unsequencedItems ?? 0} />
+                    <FeatureField label="Next feature" value={familySummary?.nextRecommendedFeatureId || nextFamilyItem?.featureId || '-'} mono />
                   </div>
-                  <div className="space-y-2 text-xs">
-                    <div className="text-muted-foreground">
-                      Position <span className="text-panel-foreground ml-1">{getFamilyPositionLabel(familyPosition)}</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      Sequenced <span className="text-panel-foreground ml-1">{familySummary?.sequencedItems ?? familyPosition?.sequencedItems ?? 0}</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      Unsequenced <span className="text-panel-foreground ml-1">{familySummary?.unsequencedItems ?? familyPosition?.unsequencedItems ?? 0}</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      Next feature <span className="text-panel-foreground ml-1 font-mono">{familySummary?.nextRecommendedFeatureId || nextFamilyItem?.featureId || '-'}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <h3 className="text-sm font-semibold text-panel-foreground">Blocker Evidence</h3>
-                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-200">
+                </FeatureModalSection>
+                <FeatureModalSection
+                  title="Blocker Evidence"
+                  description="Dependency evidence attached to this feature."
+                  icon={Filter}
+                  headerRight={(
+                    <Badge
+                      tone="outline"
+                      mono
+                      className={blockingEvidence.length > 0
+                        ? 'border-danger-border bg-danger/10 text-danger'
+                        : 'border-success-border bg-success/10 text-success'
+                      }
+                    >
                       {blockingEvidence.length}
-                    </span>
-                  </div>
+                    </Badge>
+                  )}
+                >
                   {blockingEvidence.length > 0 ? (
                     <div className="space-y-2">
                       {blockingEvidence.slice(0, 3).map(evidence => (
-                        <div key={evidence.dependencyFeatureId} className="rounded border border-panel-border bg-surface-overlay px-3 py-2 text-[11px]">
+                        <div key={evidence.dependencyFeatureId} className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-2 text-[11px]">
                           <div className="flex items-center justify-between gap-2">
                             <span className="font-mono text-foreground truncate">{getDependencyEvidenceLabel(evidence)}</span>
                             <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${evidence.state === 'complete'
@@ -2690,51 +3109,48 @@ export const ProjectBoardFeatureModal = ({
                   ) : (
                     <p className="text-xs text-muted-foreground italic">No blocker evidence is attached.</p>
                   )}
-                </div>
+                </FeatureModalSection>
               </div>
 
-              <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                <h3 className="text-sm font-semibold text-panel-foreground mb-3">Date Signals</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              <FeatureModalSection title="Date Signals" icon={Calendar}>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {[
                     { label: 'Planned', value: getFeatureDateValue(activeFeature, 'plannedAt') },
                     { label: 'Started', value: getFeatureDateValue(activeFeature, 'startedAt') },
                     { label: 'Completed', value: getFeatureDateValue(activeFeature, 'completedAt') },
                     { label: 'Updated', value: getFeatureDateValue(activeFeature, 'updatedAt') },
                   ].map(item => (
-                    <div key={item.label} className="p-2 rounded border border-panel-border bg-surface-overlay">
-                      <div className="text-muted-foreground uppercase">{item.label}</div>
-                      <div className="text-panel-foreground mt-1">
+                    <div key={item.label} className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 text-xs">
+                      <div className="font-bold uppercase tracking-wider text-muted-foreground">{item.label}</div>
+                      <div className="mt-1 text-sm text-panel-foreground">
                         {item.value.value ? new Date(item.value.value).toLocaleDateString() : '-'}
                         {item.value.confidence ? ` (${item.value.confidence})` : ''}
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
+              </FeatureModalSection>
 
               {(blockedByRelations.length > 0 || sequenceDocs.length > 0) && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                    <h3 className="text-sm font-semibold text-panel-foreground mb-3">Hard Dependencies</h3>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <FeatureModalSection title="Hard Dependencies" icon={Link2}>
                     <div className="flex flex-wrap gap-2">
                       {blockedByRelations.map((relation, index) => (
                         <button
                           key={`${relation.feature}-${index}`}
                           onClick={() => { onClose(); navigate(planningFeatureModalHref(relation.feature)); }}
-                          className="text-[10px] font-semibold rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200"
+                          className="rounded-full border border-danger-border bg-danger/10 px-2 py-1 text-[10px] font-semibold text-danger"
                         >
                           {relation.feature}
                         </button>
                       ))}
                       {blockedByRelations.length === 0 && <span className="text-xs text-muted-foreground italic">No hard feature dependencies captured.</span>}
                     </div>
-                  </div>
-                  <div className="bg-panel border border-panel-border p-4 rounded-lg">
-                    <h3 className="text-sm font-semibold text-panel-foreground mb-3">Family Sequence</h3>
-                    <div className="space-y-2 text-xs">
-                      <div className="text-muted-foreground">Family <span className="text-panel-foreground ml-1 font-mono">{activeFeature.featureFamily || '-'}</span></div>
-                      <div className="text-muted-foreground">Sequenced docs <span className="text-panel-foreground ml-1">{sequenceDocs.length}</span></div>
+                  </FeatureModalSection>
+                  <FeatureModalSection title="Family Sequence" icon={Layers}>
+                    <div className="grid grid-cols-2 gap-2">
+                      <FeatureField label="Family" value={activeFeature.featureFamily || '-'} mono />
+                      <FeatureField label="Sequenced docs" value={sequenceDocs.length} />
                     </div>
                     {sequenceDocs.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -2742,64 +3158,61 @@ export const ProjectBoardFeatureModal = ({
                           <button
                             key={`seq-doc-${doc.id}`}
                             onClick={() => handleDocClick(doc)}
-                            className="rounded-full border border-panel-border bg-surface-overlay px-2 py-1 text-[10px] text-foreground hover:border-indigo-500/40"
+                            className="rounded-full border border-panel-border bg-surface-overlay px-2 py-1 text-[10px] text-foreground hover:border-info-border"
                           >
                             #{doc.sequenceOrder} {doc.title}
                           </button>
                         ))}
                       </div>
                     )}
-                  </div>
+                  </FeatureModalSection>
                 </div>
               )}
 
               {/* Linked Documents — clickable */}
               {linkedDocs.length > 0 && (
-                <div>
-                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Linked Documents</h3>
+                <FeatureModalSection title="Linked Documents" icon={FileText}>
                   <div className="space-y-2">
                     {orderedLinkedDocs.map(doc => (
                       <button
                         key={doc.id}
                         onClick={() => handleDocClick(doc)}
-                        className="w-full flex items-center gap-3 bg-panel border border-panel-border rounded-lg p-3 hover:border-indigo-500/50 hover:bg-surface-muted/60 transition-all text-left group"
+                        className="group flex w-full items-center gap-3 rounded-lg border border-panel-border bg-surface-overlay/70 p-3 text-left transition-all hover:border-info-border hover:bg-surface-muted/70"
                       >
                         <DocTypeIcon docType={doc.docType} />
-                        <span className="text-sm text-foreground flex-1 truncate group-hover:text-indigo-400 transition-colors">{doc.title}</span>
+                        <span className="flex-1 truncate text-sm text-foreground transition-colors group-hover:text-info">{doc.title}</span>
                         <DocTypeBadge docType={doc.docType} />
-                        <ExternalLink size={12} className="text-muted-foreground group-hover:text-indigo-400 transition-colors" />
+                        <ExternalLink size={12} className="text-muted-foreground transition-colors group-hover:text-info" />
                       </button>
                     ))}
                   </div>
-                </div>
+                </FeatureModalSection>
               )}
 
               {/* Related Features */}
               {activeFeature.relatedFeatures.length > 0 && (
-                <div>
-                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Related Features</h3>
+                <FeatureModalSection title="Related Features" icon={Link2}>
                   <div className="flex flex-wrap gap-2">
                     {activeFeature.relatedFeatures.map(rel => (
-                      <span key={rel} className="text-xs bg-surface-muted text-indigo-400 px-2 py-1 rounded border border-panel-border">
+                      <span key={rel} className="rounded border border-panel-border bg-surface-muted px-2 py-1 text-xs text-info">
                         {rel}
                       </span>
                     ))}
                   </div>
-                </div>
+                </FeatureModalSection>
               )}
 
               {/* Tags */}
               {activeFeature.tags.length > 0 && (
-                <div>
-                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Tags</h3>
+                <FeatureModalSection title="Tags" icon={Tag}>
                   <div className="flex flex-wrap gap-2">
                     {activeFeature.tags.map(tag => (
-                      <span key={tag} className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-1 rounded-full border border-panel-border flex items-center gap-1">
+                      <span key={tag} className="flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] text-muted-foreground">
                         <Tag size={10} />{tag}
                       </span>
                     ))}
                   </div>
-                </div>
+                </FeatureModalSection>
               )}
             </div>
           )}
@@ -3056,30 +3469,47 @@ export const ProjectBoardFeatureModal = ({
 
           {/* Documents Tab — clickable */}
           {activeTab === 'docs' && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="bg-panel border border-panel-border rounded-lg p-4">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Family Position</div>
-                  <div className="text-sm text-panel-foreground font-medium">{getFamilyPositionLabel(familyPosition)}</div>
-                  <div className="mt-2 text-[11px] text-muted-foreground">
-                    {familySummary?.featureFamily || activeFeature.featureFamily || 'No family assigned'}
-                  </div>
-                </div>
-                <div className="bg-panel border border-panel-border rounded-lg p-4">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Next Item</div>
-                  <div className="text-sm text-panel-foreground font-medium font-mono">{familySummary?.nextRecommendedFeatureId || nextFamilyItem?.featureId || '-'}</div>
-                  <div className="mt-2 text-[11px] text-muted-foreground">
-                    {familyPosition?.nextItemLabel || nextFamilyItem?.featureName || 'No next item resolved'}
-                  </div>
-                </div>
-                <div className="bg-panel border border-panel-border rounded-lg p-4">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Execution Gate</div>
-                  <div className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${getExecutionGateStyle(executionGate?.state)}`}>
-                    {getExecutionGateLabel(executionGate?.state)}
-                  </div>
-                  <div className="mt-2 text-[11px] text-muted-foreground">{executionGate?.reason || dependencyState?.blockingReason || 'No gate reason available'}</div>
-                </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <FeatureMetricTile
+                  label="Document Groups"
+                  value={groupedDocs.length}
+                  detail={`${linkedDocs.length} linked documents`}
+                  icon={FileText}
+                />
+                <FeatureMetricTile
+                  label="Family Position"
+                  value={getFamilyPositionLabel(familyPosition)}
+                  detail={familySummary?.featureFamily || activeFeature.featureFamily || 'No family assigned'}
+                  icon={Link2}
+                  accentClassName="text-info"
+                />
+                <FeatureMetricTile
+                  label="Execution Gate"
+                  value={getExecutionGateLabel(executionGate?.state)}
+                  detail={executionGate?.reason || dependencyState?.blockingReason || 'No gate reason available'}
+                  icon={Play}
+                  accentClassName="text-warning"
+                />
               </div>
+
+              {docTypeCounts.length > 0 && (
+                <Surface tone="panel" padding="sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Types</span>
+                    {docTypeCounts.map(row => (
+                      <span
+                        key={`doc-type-count-${row.docType}`}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold uppercase ${getDocTypeTone(row.docType)}`}
+                      >
+                        <DocTypeIcon docType={row.docType} />
+                        {getDocTypeLabel(row.docType)}
+                        <span className="font-mono">{row.count}</span>
+                      </span>
+                    ))}
+                  </div>
+                </Surface>
+              )}
 
               {linkedDocs.length === 0 && (
                 <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
@@ -3087,80 +3517,88 @@ export const ProjectBoardFeatureModal = ({
                   <p>No documents linked to this feature.</p>
                 </div>
               )}
-              {groupedDocs.map(group => (
-                <div key={group.id} className="space-y-2">
-                  <button
-                    onClick={() => toggleDocGroup(group.id)}
-                    className="w-full flex items-center justify-between bg-panel border border-panel-border rounded-lg px-3 py-2 text-left hover:border-panel-border transition-colors"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-foreground">
-                        {docGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                        {group.label}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-1">{group.description}</p>
-                    </div>
-                    <span className="text-[11px] text-muted-foreground">{group.docs.length}</span>
-                  </button>
 
-                  {docGroupExpanded[group.id] && (
-                    <div className="space-y-3">
-                      {group.docs.map(doc => (
-                        <button
-                          key={doc.id}
-                          onClick={() => handleDocClick(doc)}
-                          className="w-full bg-panel border border-panel-border rounded-lg p-4 hover:border-indigo-500/50 hover:bg-surface-muted/60 transition-all text-left group"
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <DocTypeIcon docType={doc.docType} />
-                              <span className="text-sm font-medium text-panel-foreground group-hover:text-indigo-400 transition-colors">{doc.title}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${primaryDocIds.has(doc.id) || primaryDocIds.has(normalizePath(doc.filePath))
-                                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                                : 'bg-surface-muted text-muted-foreground border-panel-border'
-                                }`}>
-                                {primaryDocIds.has(doc.id) || primaryDocIds.has(normalizePath(doc.filePath)) ? 'Primary' : 'Supporting'}
-                              </span>
-                              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                                <DocTypeBadge docType={doc.docType} />
-                              </span>
-                              <ExternalLink size={12} className="text-muted-foreground group-hover:text-indigo-400 transition-colors" />
-                            </div>
-                          </div>
-                          <div className="text-xs text-muted-foreground font-mono truncate flex items-center gap-1.5">
-                            <FolderOpen size={12} />
-                            {doc.filePath}
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-                            {doc.featureFamily && (
-                              <span className="rounded-full border border-panel-border bg-surface-overlay px-2 py-0.5 text-foreground">
-                                {doc.featureFamily}
-                              </span>
-                            )}
-                            {typeof doc.sequenceOrder === 'number' && (
-                              <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-indigo-200">
-                                Seq {doc.sequenceOrder}
-                              </span>
-                            )}
-                            {(doc.blockedBy || []).map(featureId => (
-                              <span key={`${doc.id}-blocked-${featureId}`} className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200">
-                                Blocked by {featureId}
-                              </span>
-                            ))}
-                          </div>
-                          {(doc.prdRef || '').trim() && (
-                            <div className="mt-2 text-[11px] text-muted-foreground">
-                              PRD Ref: <span className="font-mono text-foreground">{doc.prdRef}</span>
+              {DOC_GROUPS.filter(group => group.id !== 'progress').map(group => {
+                const docs = docsByGroup.get(group.id) || [];
+                if (docs.length === 0) return null;
+                const Icon = getDocGroupIcon(group.id);
+                const implementationPlans = group.id === 'plans'
+                  ? docs.filter(doc => (doc.docType || '').toLowerCase() === 'implementation_plan')
+                  : [];
+                const phasePlans = group.id === 'plans'
+                  ? docs.filter(doc => (doc.docType || '').toLowerCase() === 'phase_plan')
+                  : [];
+                return (
+                  <FeatureModalSection
+                    key={group.id}
+                    title={group.label}
+                    description={group.description}
+                    icon={Icon}
+                    headerRight={(
+                      <button
+                        type="button"
+                        onClick={() => toggleDocGroup(group.id)}
+                        className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-panel-foreground"
+                      >
+                        {docGroupExpanded[group.id] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        {docs.length}
+                      </button>
+                    )}
+                  >
+                    {docGroupExpanded[group.id] && (
+                      group.id === 'plans' ? (
+                        <div className="space-y-4">
+                          {implementationPlans.length > 0 && (
+                            <div>
+                              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Implementation Plans</div>
+                              {renderDocGrid(implementationPlans)}
                             </div>
                           )}
-                        </button>
+                          {phasePlans.length > 0 && (
+                            <div>
+                              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Phase Plans</div>
+                              {renderDocGrid(phasePlans)}
+                            </div>
+                          )}
+                          {implementationPlans.length === 0 && phasePlans.length === 0 && renderDocGrid(docs)}
+                        </div>
+                      ) : renderDocGrid(docs)
+                    )}
+                  </FeatureModalSection>
+                );
+              })}
+
+              {(docsByGroup.get('progress') || []).length > 0 && (
+                <FeatureModalSection
+                  title="Progress Files"
+                  description="Execution and phase progress files, grouped under their detected phase when available."
+                  icon={Terminal}
+                  headerRight={(
+                    <button
+                      type="button"
+                      onClick={() => toggleDocGroup('progress')}
+                      className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-panel-foreground"
+                    >
+                      {docGroupExpanded.progress ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      {(docsByGroup.get('progress') || []).length}
+                    </button>
+                  )}
+                >
+                  {docGroupExpanded.progress && (
+                    <div className="space-y-4">
+                      {progressDocPhaseBuckets.map(bucket => (
+                        <div key={`progress-${bucket.label}`} className="rounded-lg border border-panel-border bg-surface-muted/55 p-3">
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-panel-foreground">{bucket.label}</div>
+                            <span className="font-mono text-[10px] text-muted-foreground">{bucket.docs.length}</span>
+                          </div>
+                          {renderDocGrid(bucket.docs, true)}
+                        </div>
                       ))}
                     </div>
                   )}
-                </div>
-              ))}
+                </FeatureModalSection>
+              )}
             </div>
           )}
           {activeTab === 'relations' && (
@@ -3282,7 +3720,7 @@ export const ProjectBoardFeatureModal = ({
           )}
           {/* Sessions Tab */}
           {activeTab === 'sessions' && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {linkedSessions.length === 0 && (
                 <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
                   <Terminal size={32} className="mx-auto mb-3 opacity-50" />
@@ -3292,72 +3730,130 @@ export const ProjectBoardFeatureModal = ({
               )}
               {linkedSessions.length > 0 && (
                 <>
-                  <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Core Focus Sessions</div>
-                      <div className="text-[11px] text-emerald-200/80">
-                        {primarySessionCount}
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <FeatureMetricTile
+                      label="Linked Sessions"
+                      value={linkedSessions.length}
+                      detail={`${primarySessionCount} primary focus sessions`}
+                      icon={Terminal}
+                    />
+                    <FeatureMetricTile
+                      label="Sub-Threads"
+                      value={linkedSessions.filter(isSubthreadSession).length}
+                      detail={`${secondarySessionCount} secondary linkages`}
+                      icon={GitBranch}
+                      accentClassName="text-warning"
+                    />
+                    <FeatureMetricTile
+                      label="Observed Workload"
+                      value={formatTokenCount(linkedSessions.reduce((sum, session) => (
+                        sum + resolveTokenMetrics(session, {
+                          hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, linkedSessions),
+                        }).workloadTokens
+                      ), 0))}
+                      detail={`${linkedSessions.filter(isPrimarySession).length} primary roots`}
+                      icon={BarChart3}
+                      accentClassName="text-info"
+                    />
+                  </div>
+
+                  <Surface tone="panel" padding="sm">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wider text-panel-foreground">Session Evidence</div>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          Grid uses compact shared session cards; list keeps the full detailed session cards.
+                        </p>
+                      </div>
+                      <div className="inline-flex w-fit rounded-lg border border-panel-border bg-surface-muted/70 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setSessionViewMode('grid')}
+                          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${sessionViewMode === 'grid'
+                            ? 'bg-panel text-panel-foreground shadow-sm'
+                            : 'text-muted-foreground hover:bg-hover/70 hover:text-foreground'
+                            }`}
+                        >
+                          <LayoutGrid size={14} />
+                          Grid
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSessionViewMode('list')}
+                          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${sessionViewMode === 'list'
+                            ? 'bg-panel text-panel-foreground shadow-sm'
+                            : 'text-muted-foreground hover:bg-hover/70 hover:text-foreground'
+                            }`}
+                        >
+                          <List size={14} />
+                          List
+                        </button>
                       </div>
                     </div>
-                    <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary execution/planning sessions for this feature.</p>
-                  </div>
+                  </Surface>
 
                   {coreSessionGroups.map(group => (
-                    <div key={group.id} className="space-y-2">
-                      <button
-                        onClick={() => toggleCoreSessionGroup(group.id)}
-                        className="w-full flex items-center justify-between bg-panel border border-panel-border rounded-lg px-3 py-2 text-left hover:border-panel-border transition-colors"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-foreground">
-                            {coreSessionGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                            {group.label}
-                          </div>
-                          <p className="text-[11px] text-muted-foreground mt-1">{group.description}</p>
-                        </div>
-                        <span className="text-[11px] text-muted-foreground">{group.totalSessions}</span>
-                      </button>
-
-                      {coreSessionGroupExpanded[group.id] && (
-                        <div className="space-y-3">
-                          {group.roots.length === 0 && (
-                            <div className="text-xs text-muted-foreground italic px-1">
-                              No sessions currently in this group.
-                            </div>
-                          )}
-                          <AnimatePresence initial={false}>
-                            {group.roots.map(node => renderSessionTreeNode(node))}
-                          </AnimatePresence>
-                        </div>
+                    <FeatureModalSection
+                      key={group.id}
+                      title={group.label}
+                      description={group.description}
+                      icon={group.id === 'plan' ? Search : group.id === 'execution' ? Play : Terminal}
+                      headerRight={(
+                        <button
+                          type="button"
+                          onClick={() => toggleCoreSessionGroup(group.id)}
+                          className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-panel-foreground"
+                        >
+                          {coreSessionGroupExpanded[group.id] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                          {group.totalSessions}
+                        </button>
                       )}
-                    </div>
+                    >
+                      {coreSessionGroupExpanded[group.id] && (
+                        group.roots.length === 0 ? (
+                          <div className="text-xs text-muted-foreground italic">No sessions currently in this group.</div>
+                        ) : sessionViewMode === 'grid' ? (
+                          renderSessionGrid(group.roots)
+                        ) : (
+                          <div className="space-y-3">
+                            <AnimatePresence initial={false}>
+                              {group.roots.map(node => renderSessionTreeNode(node))}
+                            </AnimatePresence>
+                          </div>
+                        )
+                      )}
+                    </FeatureModalSection>
                   ))}
 
-                  <div className="space-y-2 pt-2">
-                    <button
-                      onClick={() => setShowSecondarySessions(prev => !prev)}
-                      className="w-full flex items-center justify-between bg-panel border border-panel-border rounded-lg px-3 py-2 text-left hover:border-panel-border transition-colors"
-                    >
-                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        {showSecondarySessions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                        Secondary Linkages
-                      </div>
-                      <span className="text-[11px] text-muted-foreground">{secondarySessionCount}</span>
-                    </button>
-
-                    {showSecondarySessions && (
-                      <div className="space-y-3">
-                        {secondarySessionRoots.length === 0 && (
-                          <div className="text-xs text-muted-foreground italic px-1">
-                            No secondary linked sessions.
-                          </div>
-                        )}
-                        <AnimatePresence initial={false}>
-                          {secondarySessionRoots.map(node => renderSessionTreeNode(node))}
-                        </AnimatePresence>
-                      </div>
+                  <FeatureModalSection
+                    title="Secondary Linkages"
+                    description="Related sessions that are useful evidence but not primary planning or execution roots."
+                    icon={Link2}
+                    headerRight={(
+                      <button
+                        type="button"
+                        onClick={() => setShowSecondarySessions(prev => !prev)}
+                        className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-panel-foreground"
+                      >
+                        {showSecondarySessions ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        {secondarySessionCount}
+                      </button>
                     )}
-                  </div>
+                  >
+                    {showSecondarySessions && (
+                      secondarySessionRoots.length === 0 ? (
+                        <div className="text-xs text-muted-foreground italic">No secondary linked sessions.</div>
+                      ) : sessionViewMode === 'grid' ? (
+                        renderSessionGrid(secondarySessionRoots)
+                      ) : (
+                        <div className="space-y-3">
+                          <AnimatePresence initial={false}>
+                            {secondarySessionRoots.map(node => renderSessionTreeNode(node))}
+                          </AnimatePresence>
+                        </div>
+                      )
+                    )}
+                  </FeatureModalSection>
                 </>
               )}
             </div>

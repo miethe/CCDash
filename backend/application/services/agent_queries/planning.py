@@ -285,7 +285,7 @@ def _build_artifact_buckets(
             reports.append(artifact)
         elif doc_type in {"context", "tracker"}:
             ctxs.append(artifact)
-        elif doc_type in {"design_doc", "spec"}:
+        elif doc_type in {"design_doc", "spec", "design_spec"}:
             specs.append(artifact)
 
     return specs, prds, plans, ctxs, reports, spikes
@@ -496,6 +496,38 @@ def _load_doc_rows_for_feature(
             )
         ) == fk
     ]
+
+
+def _linked_doc_from_row(row: dict[str, Any]) -> LinkedDocument:
+    file_path = str(row.get("file_path") or row.get("filePath") or "")
+    slug = file_path.rsplit("/", 1)[-1].removesuffix(".md") if file_path else ""
+    return LinkedDocument(
+        id=str(row.get("id") or ""),
+        title=str(row.get("title") or file_path or "Untitled"),
+        filePath=file_path,
+        docType=str(row.get("doc_type") or row.get("docType") or "spec"),
+        category=str(row.get("category") or ""),
+        slug=str(row.get("slug") or slug),
+        canonicalSlug=str(
+            row.get("canonical_slug")
+            or row.get("canonicalSlug")
+            or row.get("feature_slug_canonical")
+            or ""
+        ),
+    )
+
+
+def _synthetic_feature_from_doc_rows(feature_id: str, rows: list[dict[str, Any]]) -> Feature:
+    seed = rows[0] if rows else {}
+    return Feature(
+        id=feature_id,
+        name=str(seed.get("title") or feature_id),
+        status=str(seed.get("status") or "backlog"),
+        category="planning",
+        linkedDocs=[_linked_doc_from_row(row) for row in rows],
+        phases=[],
+        relatedFeatures=[],
+    )
 
 
 _LIGHTWEIGHT_DOC_TYPE_TO_NODE_TYPE = {
@@ -1283,14 +1315,6 @@ class PlanningQueryService:
         project = scope.project
         partial = False
 
-        feature_row = await ports.storage.features().get_by_id(feature_id)
-        if feature_row is None:
-            return FeaturePlanningContextDTO(
-                status="error",
-                feature_id=feature_id,
-                source_refs=[feature_id],
-            )
-
         try:
             _rows, _features, feature_index = await _load_all_features(
                 ports, project.id
@@ -1305,11 +1329,24 @@ class PlanningQueryService:
         except Exception:
             partial = True
 
-        feature = feature_from_row(feature_row)
-        feature_payload = _safe_json_dict(feature_row.get("data_json"))
+        feature_row = await ports.storage.features().get_by_id(feature_id)
         current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature_id)
-        dep_state = feature_dependency_state(feature, doc_rows, feature_index)
-        apply_planning_projection(feature, current_doc_rows, dep_state)
+        if feature_row is None and not current_doc_rows:
+            return FeaturePlanningContextDTO(
+                status="error",
+                feature_id=feature_id,
+                source_refs=[feature_id],
+            )
+
+        if feature_row is None:
+            feature = _synthetic_feature_from_doc_rows(feature_id, current_doc_rows)
+            feature_payload = {}
+            partial = True
+        else:
+            feature = feature_from_row(feature_row)
+            feature_payload = _safe_json_dict(feature_row.get("data_json"))
+            dep_state = feature_dependency_state(feature, doc_rows, feature_index)
+            apply_planning_projection(feature, current_doc_rows, dep_state)
 
         linked_docs: list[LinkedDocument] = []
         try:
@@ -1412,7 +1449,7 @@ class PlanningQueryService:
         artifact_refs = [node.path for node in graph.nodes if node.path]
 
         data_freshness = derive_data_freshness(
-            feature_row.get("updated_at") or feature_row.get("updatedAt"),
+            (feature_row or {}).get("updated_at") or (feature_row or {}).get("updatedAt"),
             *[row.get("updated_at") or row.get("updatedAt") for row in current_doc_rows],
         )
 

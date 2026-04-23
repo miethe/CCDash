@@ -282,6 +282,75 @@ def _normalize_primary_documents(raw: Any) -> dict[str, Any]:
     }
 
 
+def _primary_documents_from_linked_docs(docs: list[LinkedDocument]) -> dict[str, Any]:
+    prd_docs = [doc for doc in docs if doc.docType == "prd"]
+    impl_docs = [doc for doc in docs if doc.docType == "implementation_plan"]
+    phase_docs = [doc for doc in docs if doc.docType == "phase_plan"]
+    progress_docs = [doc for doc in docs if doc.docType == "progress"]
+    primary_keys = {
+        (doc.filePath or doc.id or doc.title).strip().lower()
+        for doc in [
+            prd_docs[0] if prd_docs else None,
+            impl_docs[0] if impl_docs else None,
+            *phase_docs,
+            *progress_docs,
+        ]
+        if doc is not None
+    }
+    return {
+        "prd": prd_docs[0] if prd_docs else None,
+        "implementationPlan": impl_docs[0] if impl_docs else None,
+        "phasePlans": phase_docs,
+        "progressDocs": progress_docs,
+        "supportingDocs": [
+            doc
+            for doc in docs
+            if (doc.filePath or doc.id or doc.title).strip().lower() not in primary_keys
+        ],
+    }
+
+
+def _synthetic_feature_from_documents(feature_id: str, docs: list[LinkedDocument]) -> Feature:
+    seed = docs[0] if docs else None
+    linked_features: list[dict[str, Any]] = []
+    seen_features: set[tuple[str, str, str]] = set()
+    for doc in docs:
+        for ref in doc.linkedFeatures or []:
+            feature_ref = str(ref.feature or "").strip()
+            if not feature_ref:
+                continue
+            relation_type = str(ref.type or "").strip()
+            source = str(ref.source or "").strip()
+            key = (feature_ref.lower(), relation_type.lower(), source.lower())
+            if key in seen_features:
+                continue
+            seen_features.add(key)
+            linked_features.append(ref.model_dump())
+
+    counts_by_type: dict[str, int] = {}
+    for doc in docs:
+        doc_type = str(doc.docType or "document")
+        counts_by_type[doc_type] = counts_by_type.get(doc_type, 0) + 1
+
+    return Feature(
+        id=feature_id,
+        name=str(seed.title if seed else feature_id) or feature_id,
+        status="backlog",
+        category="planning",
+        linkedDocs=docs,
+        linkedFeatures=_normalize_linked_feature_refs(linked_features),
+        primaryDocuments=_primary_documents_from_linked_docs(docs),
+        documentCoverage={
+            "present": sorted(counts_by_type.keys()),
+            "missing": [],
+            "countsByType": counts_by_type,
+            "coverageScore": 1.0 if docs else 0.0,
+        },
+        phases=[],
+        relatedFeatures=sorted({item["feature"] for item in linked_features if item.get("feature")}),
+    )
+
+
 def _normalize_document_coverage(raw: Any) -> dict[str, Any]:
     payload = raw if isinstance(raw, dict) else {}
     counts_raw = payload.get("countsByType")
@@ -1090,7 +1159,13 @@ async def get_feature(feature_id: str, include_tasks: bool = True):
     
     f = await repo.get_by_id(feature_id)
     if not f:
-        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
+        active_project = project_manager.get_active_project()
+        if not active_project:
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
+        docs = await load_execution_documents(db, active_project.id, feature_id)
+        if not docs:
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
+        return _synthetic_feature_from_documents(feature_id, docs)
         
     data = _safe_json(f.get("data_json"))
 
@@ -1228,7 +1303,11 @@ async def get_feature_linked_sessions(feature_id: str):
     feature_repo = get_feature_repository(db)
     feature = await feature_repo.get_by_id(feature_id)
     if not feature:
-        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
+        if not active_project:
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
+        docs = await load_execution_documents(db, active_project.id, feature_id)
+        if not docs:
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
 
     link_repo = get_entity_link_repository(db)
     session_repo = get_session_repository(db)

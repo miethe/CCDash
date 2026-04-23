@@ -614,6 +614,38 @@ class FeaturePlanningContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.phases), 1)
         self.assertIn(result.status, {"ok", "partial"})
 
+    async def test_design_spec_only_context_returns_document_evidence(self) -> None:
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        doc_rows = [
+            _doc_row(
+                did="doc-design",
+                title="Design Spec",
+                doc_type="design_spec",
+                file_path="docs/project_plans/design-specs/design-only.md",
+                feature_slug="design-only",
+            )
+        ]
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=doc_rows),
+            list_paginated=AsyncMock(return_value=doc_rows),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        with _PATCH_LOAD_DOCS:
+            result = await PlanningQueryService().get_feature_planning_context(
+                _context(), ports, feature_id="design-only"
+            )
+
+        self.assertEqual(result.feature_id, "design-only")
+        self.assertEqual(result.feature_name, "Design Spec")
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(len(result.specs), 1)
+        self.assertEqual(result.specs[0].file_path, "docs/project_plans/design-specs/design-only.md")
+        self.assertIn("docs/project_plans/design-specs/design-only.md", result.linked_artifact_refs)
+
     async def test_reversed_feature_exposes_mismatch(self) -> None:
         """Raw=done but phase status is in-progress (non-terminal) -> reversed mismatch.
 
