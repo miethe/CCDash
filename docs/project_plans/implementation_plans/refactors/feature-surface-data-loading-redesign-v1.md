@@ -1,14 +1,23 @@
 ---
-title: "Feature Surface Data Loading Redesign - Implementation Plan"
-description: "Phased implementation plan for bounded feature board loading, aggregate rollups, lazy modal data, repository-backed filtering, and cache discipline."
-audience: [ai-agents, developers]
-tags: [implementation, refactor, performance, features, sessions, api-contracts]
+title: Feature Surface Data Loading Redesign - Implementation Plan
+description: Phased implementation plan for bounded feature board loading, aggregate
+  rollups, lazy modal data, repository-backed filtering, and cache discipline.
+audience:
+- ai-agents
+- developers
+tags:
+- implementation
+- refactor
+- performance
+- features
+- sessions
+- api-contracts
 created: 2026-04-22
-updated: 2026-04-22
-category: "product-planning"
-status: draft
+updated: '2026-04-23'
+category: product-planning
+status: in-progress
 related:
-  - /docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
+- /docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
 ---
 
 # Implementation Plan: Feature Surface Data Loading Redesign
