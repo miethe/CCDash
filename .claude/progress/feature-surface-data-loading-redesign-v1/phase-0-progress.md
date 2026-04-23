@@ -8,17 +8,17 @@ prd_ref: docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign
 plan_ref: docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1.md
 phase: 0
 title: Inventory, Contracts, Guardrails
-status: pending
-created: 2026-04-23
+status: completed
+created: '2026-04-23'
 updated: '2026-04-23'
 started: '2026-04-23'
-completed: null
+completed: 2026-04-23T00:30Z
 commit_refs: []
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 6
-completed_tasks: 4
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -49,6 +49,8 @@ tasks:
   completed: 2026-04-23T00:10Z
   evidence:
   - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/field-inventory.md
+  verified_by:
+  - phase-0-orchestrator
 - id: P0-002
   description: 'Filter/Sort/Search Inventory - query matrix for text search, status/stage,
     category, date ranges, progress, tasks, dependency state, quality signals, completed
@@ -65,6 +67,8 @@ tasks:
   completed: 2026-04-23T00:20Z
   evidence:
   - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/query-matrix.md
+  verified_by:
+  - phase-0-orchestrator
 - id: P0-003
   description: 'Rollup Contract Draft - FeatureRollupDTO fields (session counts, primary
     roots, subthreads, token/cost totals, latest activity, model/provider summary,
@@ -81,6 +85,8 @@ tasks:
   completed: 2026-04-23T00:20Z
   evidence:
   - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/rollup-dto-draft.md
+  verified_by:
+  - phase-0-orchestrator
 - id: P0-004
   description: 'Modal Section Contract Draft - per-tab source endpoint, cache key,
     loading state, failure mode for overview/phases/docs/relations/sessions/test status/history.
@@ -97,10 +103,12 @@ tasks:
   completed: 2026-04-23T00:20Z
   evidence:
   - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/modal-section-contracts.md
+  verified_by:
+  - phase-0-orchestrator
 - id: P0-005
   description: 'Performance Budgets - request count, payload size, latency, cache
     budgets for board and modal with measurable assertions. Output: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/performance-budgets.md'
-  status: pending
+  status: completed
   assigned_to:
   - react-performance-optimizer
   dependencies:
@@ -108,10 +116,16 @@ tasks:
   estimated_effort: 1 pt
   priority: medium
   assigned_model: sonnet
+  started: 2026-04-23T00:25Z
+  completed: 2026-04-23T00:30Z
+  evidence:
+  - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/performance-budgets.md
+  verified_by:
+  - phase-0-orchestrator
 - id: P0-006
   description: 'Parity Fixture Plan - small/medium/large project fixtures with linked
     sessions, subthreads, docs, tests, mixed statuses. Output: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/parity-fixture-plan.md'
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   dependencies:
@@ -119,6 +133,12 @@ tasks:
   estimated_effort: 1 pt
   priority: medium
   assigned_model: sonnet
+  started: 2026-04-23T00:25Z
+  completed: 2026-04-23T00:30Z
+  evidence:
+  - file: .claude/worknotes/feature-surface-data-loading-redesign-v1/phase-0/parity-fixture-plan.md
+  verified_by:
+  - phase-0-orchestrator
 parallelization:
   batch_1:
   - P0-001
@@ -151,7 +171,7 @@ success_criteria:
 - id: SC-0.5
   description: Parity fixture plan supports old-vs-new and performance tests
   status: pending
-progress: 66
+progress: 100
 ---
 
 # Phase 0 Progress: Inventory, Contracts, Guardrails
