@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from typing import Any, Literal
 
 from fastapi import HTTPException
@@ -77,6 +78,7 @@ _SUPPORTED_LIST_INCLUDES = {"phase_summary"}
 _SUPPORTED_MODAL_SECTION_INCLUDES: dict[str, frozenset[str]] = {
     section: frozenset() for section in _SUPPORTED_MODAL_SECTIONS if section != "overview"
 }
+_FEATURE_SURFACE_OBSERVABILITY_EVENT = "Feature surface v1 request observed"
 
 
 class _CamelModel(BaseModel):
@@ -125,6 +127,62 @@ def _instance_id() -> str:
     from backend import config as _cfg
 
     return getattr(_cfg, "INSTANCE_ID", "") or "ccdash-local"
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_jsonable(item) for item in value]
+    return value
+
+
+def _payload_size_estimate(value: Any) -> int:
+    try:
+        encoded = json.dumps(_to_jsonable(value), separators=(",", ":"), default=str)
+    except Exception:
+        return 0
+    return len(encoded.encode("utf-8"))
+
+
+def _classify_observability_error(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        return "validation_error"
+    if isinstance(exc, HTTPException):
+        if exc.status_code == 404:
+            return "not_found"
+        if 400 <= exc.status_code < 500:
+            return "client_error"
+        return "server_error"
+    if isinstance(exc, ValueError):
+        return "bad_request"
+    return "unexpected_error"
+
+
+def _emit_feature_surface_observation(
+    operation: str,
+    *,
+    started_at: float,
+    result_count: int,
+    payload: Any,
+    cache_status: str,
+    error_category: str = "none",
+    **fields: Any,
+) -> None:
+    logger.info(
+        _FEATURE_SURFACE_OBSERVABILITY_EVENT,
+        extra={
+            "operation": operation,
+            "latency_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
+            "result_count": max(0, int(result_count)),
+            "payload_size_estimate": _payload_size_estimate(payload),
+            "cache_status": str(cache_status or "unknown"),
+            "error_category": error_category,
+            **{key: value for key, value in fields.items() if value is not None},
+        },
+    )
 
 
 async def _resolve_app_request(
@@ -638,66 +696,106 @@ async def list_features_v1(
     sort_direction: SortDirection | None = None,
     include: list[str] | None = None,
 ) -> ClientV1PaginatedEnvelope[FeatureSummaryDTO] | ClientV1Envelope[FeatureCardPageResponseDTO]:
+    started_at = time.perf_counter()
     effective_limit = _clamp_limit(limit)
     effective_offset = max(0, offset)
 
-    requested_include = list(dict.fromkeys(include or []))
-    requested_include = [
-        token
-        for item in requested_include
-        for token in str(item).split(",")
-        if str(token).strip()
-    ]
-    if view == "card":
-        view = "cards"
-    if view == "summary" and any(item in {"card", "cards"} for item in requested_include):
-        view = "cards"
-        include = [item for item in requested_include if item not in {"card", "cards"}]
+    try:
+        requested_include = list(dict.fromkeys(include or []))
+        requested_include = [
+            token
+            for item in requested_include
+            for token in str(item).split(",")
+            if str(token).strip()
+        ]
+        if view == "card":
+            view = "cards"
+        if view == "summary" and any(item in {"card", "cards"} for item in requested_include):
+            view = "cards"
+            include = [item for item in requested_include if item not in {"card", "cards"}]
 
-    _validate_view(view)
+        _validate_view(view)
+    except Exception as exc:
+        _emit_feature_surface_observation(
+            "feature_list",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(exc),
+            view=view,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        raise
 
     if view == "summary":
-        app_request = await _resolve_app_request(request_context, core_ports)
-        feature_repo = app_request.ports.storage.features()
-
-        project_id: str | None = None
         try:
-            scope = app_request.ports.workspace_registry.resolve_scope()
-            _, project_scope = scope
-            if project_scope is not None:
-                project_id = project_scope.project_id
-        except Exception:
-            logger.debug("Could not resolve project scope for list_features_v1")
+            app_request = await _resolve_app_request(request_context, core_ports)
+            feature_repo = app_request.ports.storage.features()
 
-        keyword = q.strip() if q else None
-        rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit, keyword=keyword)
-        total = await feature_repo.count(project_id, keyword=keyword)
+            project_id: str | None = None
+            try:
+                scope = app_request.ports.workspace_registry.resolve_scope()
+                _, project_scope = scope
+                if project_scope is not None:
+                    project_id = project_scope.project_id
+            except Exception:
+                logger.debug("Could not resolve project scope for list_features_v1")
 
-        if status:
-            status_lower = {s.lower() for s in status}
-            rows = [r for r in rows if str(r.get("status", "")).lower() in status_lower]
-        if category:
-            category_lower = category.lower()
-            rows = [r for r in rows if str(r.get("category", "")).lower() == category_lower]
+            keyword = q.strip() if q else None
+            rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit, keyword=keyword)
+            total = await feature_repo.count(project_id, keyword=keyword)
 
-        items = [_row_to_feature_summary(row) for row in rows]
-        has_more = (effective_offset + len(items)) < total
-        truncated = len(items) >= effective_limit and has_more
+            if status:
+                status_lower = {s.lower() for s in status}
+                rows = [r for r in rows if str(r.get("status", "")).lower() in status_lower]
+            if category:
+                category_lower = category.lower()
+                rows = [r for r in rows if str(r.get("category", "")).lower() == category_lower]
 
-        return ClientV1PaginatedEnvelope(
-            data=items,
-            meta=build_client_v1_paginated_meta(
-                instance_id=_instance_id(),
-                total=total,
-                offset=effective_offset,
+            items = [_row_to_feature_summary(row) for row in rows]
+            has_more = (effective_offset + len(items)) < total
+            truncated = len(items) >= effective_limit and has_more
+
+            envelope = ClientV1PaginatedEnvelope(
+                data=items,
+                meta=build_client_v1_paginated_meta(
+                    instance_id=_instance_id(),
+                    total=total,
+                    offset=effective_offset,
+                    limit=effective_limit,
+                    has_more=has_more,
+                    truncated=truncated,
+                ),
+            )
+            _emit_feature_surface_observation(
+                "feature_list",
+                started_at=started_at,
+                result_count=len(items),
+                payload=envelope.data,
+                cache_status="unknown",
+                view="summary",
                 limit=effective_limit,
-                has_more=has_more,
-                truncated=truncated,
-            ),
-        )
+                offset=effective_offset,
+            )
+            return envelope
+        except Exception as exc:
+            _emit_feature_surface_observation(
+                "feature_list",
+                started_at=started_at,
+                result_count=0,
+                payload=None,
+                cache_status="unknown",
+                error_category=_classify_observability_error(exc),
+                view="summary",
+                limit=effective_limit,
+                offset=effective_offset,
+            )
+            raise
 
-    resolved_include = _validate_list_includes(include)
     try:
+        resolved_include = _validate_list_includes(include)
         feature_query = FeatureListQuery(
             q=q.strip() if q else None,
             status=status or [],
@@ -718,60 +816,105 @@ async def list_features_v1(
             offset=effective_offset,
             limit=effective_limit,
         )
-    except ValidationError as exc:
-        raise _translate_validation_error(exc) from exc
-
-    app_request = await _resolve_app_request(request_context, core_ports)
-    try:
+        app_request = await _resolve_app_request(request_context, core_ports)
         page = await _feature_surface_list_rollup_service.list_feature_cards(
             app_request.context,
             app_request.ports,
             feature_query,
             include=resolved_include,
         )
+        filter_payload = {
+            "q": feature_query.q,
+            "status": feature_query.status,
+            "stage": feature_query.stage,
+            "category": feature_query.category,
+            "tags": feature_query.tags,
+            "hasDeferred": feature_query.has_deferred,
+            "planned": feature_query.planned.model_dump(exclude_none=True) if feature_query.planned else None,
+            "started": feature_query.started.model_dump(exclude_none=True) if feature_query.started else None,
+            "completed": feature_query.completed.model_dump(exclude_none=True) if feature_query.completed else None,
+            "updated": feature_query.updated.model_dump(exclude_none=True) if feature_query.updated else None,
+            "progressMin": feature_query.progress_min,
+            "progressMax": feature_query.progress_max,
+            "taskCountMin": feature_query.task_count_min,
+            "taskCountMax": feature_query.task_count_max,
+        }
+        dto = FeatureCardPageResponseDTO(
+            items=[_build_card_dto(row.model_dump(mode="python"), precision=page.sort.precision) for row in page.rows],
+            total=page.total,
+            offset=page.offset,
+            limit=page.limit,
+            has_more=page.has_more,
+            query_hash=_query_hash(
+                {
+                    "filters": filter_payload,
+                    "sort": page.sort.model_dump(mode="json"),
+                    "include": resolved_include,
+                    "offset": page.offset,
+                    "limit": page.limit,
+                }
+            ),
+            precision="exact" if page.sort.precision == "exact" else "partial",
+            includes=resolved_include,
+            filters={k: v for k, v in filter_payload.items() if v not in (None, [], {})},
+            sort=page.sort.model_dump(mode="json"),
+        )
+        envelope = ClientV1Envelope(
+            data=dto,
+            meta=build_client_v1_meta(instance_id=_instance_id()),
+        )
+        _emit_feature_surface_observation(
+            "feature_list",
+            started_at=started_at,
+            result_count=len(dto.items),
+            payload=envelope.data,
+            cache_status="unknown",
+            view="cards",
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        return envelope
+    except ValidationError as exc:
+        translated = _translate_validation_error(exc)
+        _emit_feature_surface_observation(
+            "feature_list",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(translated),
+            view=view,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        raise translated from exc
     except ValueError as exc:
-        raise _bad_request(str(exc)) from exc
-
-    filter_payload = {
-        "q": feature_query.q,
-        "status": feature_query.status,
-        "stage": feature_query.stage,
-        "category": feature_query.category,
-        "tags": feature_query.tags,
-        "hasDeferred": feature_query.has_deferred,
-        "planned": feature_query.planned.model_dump(exclude_none=True) if feature_query.planned else None,
-        "started": feature_query.started.model_dump(exclude_none=True) if feature_query.started else None,
-        "completed": feature_query.completed.model_dump(exclude_none=True) if feature_query.completed else None,
-        "updated": feature_query.updated.model_dump(exclude_none=True) if feature_query.updated else None,
-        "progressMin": feature_query.progress_min,
-        "progressMax": feature_query.progress_max,
-        "taskCountMin": feature_query.task_count_min,
-        "taskCountMax": feature_query.task_count_max,
-    }
-    dto = FeatureCardPageResponseDTO(
-        items=[_build_card_dto(row.model_dump(mode="python"), precision=page.sort.precision) for row in page.rows],
-        total=page.total,
-        offset=page.offset,
-        limit=page.limit,
-        has_more=page.has_more,
-        query_hash=_query_hash(
-            {
-                "filters": filter_payload,
-                "sort": page.sort.model_dump(mode="json"),
-                "include": resolved_include,
-                "offset": page.offset,
-                "limit": page.limit,
-            }
-        ),
-        precision="exact" if page.sort.precision == "exact" else "partial",
-        includes=resolved_include,
-        filters={k: v for k, v in filter_payload.items() if v not in (None, [], {})},
-        sort=page.sort.model_dump(mode="json"),
-    )
-    return ClientV1Envelope(
-        data=dto,
-        meta=build_client_v1_meta(instance_id=_instance_id()),
-    )
+        translated = _bad_request(str(exc))
+        _emit_feature_surface_observation(
+            "feature_list",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(translated),
+            view=view,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        raise translated from exc
+    except Exception as exc:
+        _emit_feature_surface_observation(
+            "feature_list",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(exc),
+            view=view,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        raise
 
 
 async def get_feature_detail_v1(
@@ -797,52 +940,78 @@ async def get_feature_sessions_v1(
     *,
     bypass_cache: bool = False,
 ) -> ClientV1Envelope[FeatureSessionsDTO]:
+    started_at = time.perf_counter()
     effective_limit = _clamp_limit(limit)
     effective_offset = max(0, offset)
-    app_request = await _resolve_app_request(request_context, core_ports)
-    remaining = effective_limit
-    next_offset = effective_offset
-    total = 0
-    rows: list[dict[str, Any]] = []
+    try:
+        app_request = await _resolve_app_request(request_context, core_ports)
+        remaining = effective_limit
+        next_offset = effective_offset
+        total = 0
+        rows: list[dict[str, Any]] = []
 
-    while remaining > 0:
-        chunk_limit = min(remaining, 50)
-        section = await _feature_modal_detail_service.get_sessions(
-            app_request.context,
-            app_request.ports,
-            feature_id,
-            limit=chunk_limit,
-            offset=next_offset,
-            thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
+        while remaining > 0:
+            chunk_limit = min(remaining, 50)
+            section = await _feature_modal_detail_service.get_sessions(
+                app_request.context,
+                app_request.ports,
+                feature_id,
+                limit=chunk_limit,
+                offset=next_offset,
+                thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
+            )
+            if section.status == "not_found":
+                raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
+
+            chunk_rows = section.data.get("rows") if isinstance(section.data.get("rows"), list) else []
+            total = int(section.data.get("total") or total)
+            rows.extend(row for row in chunk_rows if isinstance(row, dict))
+            if not section.data.get("has_more") or not chunk_rows:
+                break
+            remaining -= len(chunk_rows)
+            next_offset += len(chunk_rows)
+
+        feature_slug = feature_id
+        if not bypass_cache:
+            try:
+                _, feature_slug = await _get_forensics(feature_id, request_context, core_ports, bypass_cache=False)
+            except HTTPException:
+                logger.debug("Feature forensics unavailable for feature sessions slug lookup", exc_info=True)
+
+        dto = FeatureSessionsDTO(
+            feature_id=feature_id,
+            feature_slug=feature_slug,
+            sessions=[_session_row_to_session_ref(row, feature_id) for row in rows],
+            total=total,
         )
-        if section.status == "not_found":
-            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
-
-        chunk_rows = section.data.get("rows") if isinstance(section.data.get("rows"), list) else []
-        total = int(section.data.get("total") or total)
-        rows.extend(row for row in chunk_rows if isinstance(row, dict))
-        if not section.data.get("has_more") or not chunk_rows:
-            break
-        remaining -= len(chunk_rows)
-        next_offset += len(chunk_rows)
-
-    feature_slug = feature_id
-    if not bypass_cache:
-        try:
-            _, feature_slug = await _get_forensics(feature_id, request_context, core_ports, bypass_cache=False)
-        except HTTPException:
-            logger.debug("Feature forensics unavailable for feature sessions slug lookup", exc_info=True)
-
-    dto = FeatureSessionsDTO(
-        feature_id=feature_id,
-        feature_slug=feature_slug,
-        sessions=[_session_row_to_session_ref(row, feature_id) for row in rows],
-        total=total,
-    )
-    return ClientV1Envelope(
-        data=dto,
-        meta=build_client_v1_meta(instance_id=_instance_id()),
-    )
+        envelope = ClientV1Envelope(
+            data=dto,
+            meta=build_client_v1_meta(instance_id=_instance_id()),
+        )
+        _emit_feature_surface_observation(
+            "feature_sessions_compat",
+            started_at=started_at,
+            result_count=len(dto.sessions),
+            payload=envelope.data,
+            cache_status="bypass" if bypass_cache else "unknown",
+            feature_id=feature_id,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        return envelope
+    except Exception as exc:
+        _emit_feature_surface_observation(
+            "feature_sessions_compat",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="bypass" if bypass_cache else "unknown",
+            error_category=_classify_observability_error(exc),
+            feature_id=feature_id,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        raise
 
 
 async def get_feature_documents_v1(
@@ -868,8 +1037,9 @@ async def post_feature_rollups_v1(
     request_context: RequestContext,
     core_ports: CorePorts,
 ) -> ClientV1Envelope[FeatureRollupResponseDTO]:
-    app_request = await _resolve_app_request(request_context, core_ports)
+    started_at = time.perf_counter()
     try:
+        app_request = await _resolve_app_request(request_context, core_ports)
         query = _feature_surface_list_rollup_service.build_rollup_query(
             feature_ids=payload.feature_ids,
             fields=payload.fields,
@@ -882,36 +1052,75 @@ async def post_feature_rollups_v1(
             app_request.ports,
             query,
         )
+        dto = FeatureRollupResponseDTO(
+            rollups={
+                feature_id: _build_rollup_dto(feature_id, rollup)
+                for feature_id, rollup in batch.rollups.items()
+            },
+            missing=list(batch.missing),
+            errors={
+                str(feature_id): FeatureRollupErrorDTO(
+                    code=str(error.get("code") or ""),
+                    message=str(error.get("message") or ""),
+                    detail={
+                        k: v
+                        for k, v in error.items()
+                        if k not in {"code", "message"}
+                    },
+                )
+                for feature_id, error in batch.errors.items()
+            },
+            generated_at=str(batch.generated_at or ""),
+            cache_version=str(batch.cache_version or ""),
+        )
+        envelope = ClientV1Envelope(
+            data=dto,
+            meta=build_client_v1_meta(instance_id=_instance_id()),
+        )
+        _emit_feature_surface_observation(
+            "feature_rollups",
+            started_at=started_at,
+            result_count=len(dto.rollups),
+            payload=envelope.data,
+            cache_status="available" if dto.cache_version else "unknown",
+            requested_feature_count=len(payload.feature_ids),
+        )
+        return envelope
     except ValidationError as exc:
-        raise _translate_validation_error(exc) from exc
+        translated = _translate_validation_error(exc)
+        _emit_feature_surface_observation(
+            "feature_rollups",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(translated),
+            requested_feature_count=len(payload.feature_ids),
+        )
+        raise translated from exc
     except ValueError as exc:
-        raise _bad_request(str(exc)) from exc
-
-    dto = FeatureRollupResponseDTO(
-        rollups={
-            feature_id: _build_rollup_dto(feature_id, rollup)
-            for feature_id, rollup in batch.rollups.items()
-        },
-        missing=list(batch.missing),
-        errors={
-            str(feature_id): FeatureRollupErrorDTO(
-                code=str(error.get("code") or ""),
-                message=str(error.get("message") or ""),
-                detail={
-                    k: v
-                    for k, v in error.items()
-                    if k not in {"code", "message"}
-                },
-            )
-            for feature_id, error in batch.errors.items()
-        },
-        generated_at=str(batch.generated_at or ""),
-        cache_version=str(batch.cache_version or ""),
-    )
-    return ClientV1Envelope(
-        data=dto,
-        meta=build_client_v1_meta(instance_id=_instance_id()),
-    )
+        translated = _bad_request(str(exc))
+        _emit_feature_surface_observation(
+            "feature_rollups",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(translated),
+            requested_feature_count=len(payload.feature_ids),
+        )
+        raise translated from exc
+    except Exception as exc:
+        _emit_feature_surface_observation(
+            "feature_rollups",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(exc),
+            requested_feature_count=len(payload.feature_ids),
+        )
+        raise
 
 
 async def get_feature_modal_overview_v1(
@@ -919,53 +1128,78 @@ async def get_feature_modal_overview_v1(
     request_context: RequestContext,
     core_ports: CorePorts,
 ) -> ClientV1Envelope[FeatureModalOverviewDTO]:
-    app_request = await _resolve_app_request(request_context, core_ports)
-    overview = await _feature_modal_detail_service.get_overview(
-        app_request.context,
-        app_request.ports,
-        feature_id,
-    )
-    if overview.status == "not_found":
-        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
-
-    feature_row = await app_request.ports.storage.features().get_by_id(feature_id)
-    card = _build_card_dto(dict(feature_row or {}))
-
-    rollup = None
+    started_at = time.perf_counter()
     try:
-        rollup_query = _feature_surface_list_rollup_service.build_rollup_query(
-            feature_ids=[feature_id],
-            fields=[
-                "session_counts",
-                "token_cost_totals",
-                "model_provider_summary",
-                "latest_activity",
-                "doc_metrics",
-            ],
-            include_freshness=True,
-        )
-        rollup_batch = await _feature_surface_list_rollup_service.get_feature_rollups(
+        app_request = await _resolve_app_request(request_context, core_ports)
+        overview = await _feature_modal_detail_service.get_overview(
             app_request.context,
             app_request.ports,
-            rollup_query,
+            feature_id,
         )
-        entry = rollup_batch.rollups.get(feature_id)
-        if entry is not None:
-            rollup = _build_rollup_dto(feature_id, entry)
-    except Exception:
-        logger.debug("Feature modal overview rollup fetch failed", exc_info=True)
+        if overview.status == "not_found":
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
 
-    dto = FeatureModalOverviewDTO(
-        feature_id=feature_id,
-        card=card,
-        rollup=rollup,
-        description=str(overview.data.get("description") or ""),
-        precision="eventually_consistent" if rollup is not None else "exact",
-    )
-    return ClientV1Envelope(
-        data=dto,
-        meta=build_client_v1_meta(instance_id=_instance_id()),
-    )
+        feature_row = await app_request.ports.storage.features().get_by_id(feature_id)
+        card = _build_card_dto(dict(feature_row or {}))
+
+        rollup = None
+        rollup_cache_status = "unknown"
+        try:
+            rollup_query = _feature_surface_list_rollup_service.build_rollup_query(
+                feature_ids=[feature_id],
+                fields=[
+                    "session_counts",
+                    "token_cost_totals",
+                    "model_provider_summary",
+                    "latest_activity",
+                    "doc_metrics",
+                ],
+                include_freshness=True,
+            )
+            rollup_batch = await _feature_surface_list_rollup_service.get_feature_rollups(
+                app_request.context,
+                app_request.ports,
+                rollup_query,
+            )
+            entry = rollup_batch.rollups.get(feature_id)
+            if entry is not None:
+                rollup = _build_rollup_dto(feature_id, entry)
+            if getattr(rollup_batch, "cache_version", ""):
+                rollup_cache_status = "available"
+        except Exception:
+            logger.debug("Feature modal overview rollup fetch failed", exc_info=True)
+
+        dto = FeatureModalOverviewDTO(
+            feature_id=feature_id,
+            card=card,
+            rollup=rollup,
+            description=str(overview.data.get("description") or ""),
+            precision="eventually_consistent" if rollup is not None else "exact",
+        )
+        envelope = ClientV1Envelope(
+            data=dto,
+            meta=build_client_v1_meta(instance_id=_instance_id()),
+        )
+        _emit_feature_surface_observation(
+            "feature_modal_overview",
+            started_at=started_at,
+            result_count=1,
+            payload=envelope.data,
+            cache_status=rollup_cache_status,
+            feature_id=feature_id,
+        )
+        return envelope
+    except Exception as exc:
+        _emit_feature_surface_observation(
+            "feature_modal_overview",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(exc),
+            feature_id=feature_id,
+        )
+        raise
 
 
 async def get_feature_modal_section_v1(
@@ -978,74 +1212,103 @@ async def get_feature_modal_section_v1(
     limit: int = 20,
     offset: int = 0,
 ) -> ClientV1Envelope[FeatureModalSectionDTO]:
-    section = _validate_modal_section(section)
-    resolved_include = _validate_modal_includes(section, include)
-    effective_limit = max(1, min(limit, 50 if section == "sessions" else _MAX_LIMIT))
-    effective_offset = max(0, offset)
-    app_request = await _resolve_app_request(request_context, core_ports)
+    started_at = time.perf_counter()
+    try:
+        section = _validate_modal_section(section)
+        resolved_include = _validate_modal_includes(section, include)
+        effective_limit = max(1, min(limit, 50 if section == "sessions" else _MAX_LIMIT))
+        effective_offset = max(0, offset)
+        app_request = await _resolve_app_request(request_context, core_ports)
 
-    if section == "overview":
-        raise _bad_request("Use GET /api/v1/features/{feature_id}/modal for overview.")
+        if section == "overview":
+            raise _bad_request("Use GET /api/v1/features/{feature_id}/modal for overview.")
 
-    if section == "phases":
-        result = await _feature_modal_detail_service.get_phases_tasks(
-            app_request.context,
-            app_request.ports,
+        if section == "phases":
+            result = await _feature_modal_detail_service.get_phases_tasks(
+                app_request.context,
+                app_request.ports,
+                feature_id,
+            )
+        elif section == "documents":
+            result = await _feature_modal_detail_service.get_docs(
+                app_request.context,
+                app_request.ports,
+                feature_id,
+            )
+        elif section == "relations":
+            results = await _feature_modal_detail_service.get_sections(
+                app_request.context,
+                app_request.ports,
+                feature_id,
+                sections=["relations"],
+            )
+            result = results["relations"]
+        elif section == "sessions":
+            result = await _feature_modal_detail_service.get_sessions(
+                app_request.context,
+                app_request.ports,
+                feature_id,
+                limit=effective_limit,
+                offset=effective_offset,
+                thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
+            )
+        elif section == "test_status":
+            result = await _feature_modal_detail_service.get_test_status(
+                app_request.context,
+                app_request.ports,
+                feature_id,
+            )
+        else:
+            result = await _feature_modal_detail_service.get_activity(
+                app_request.context,
+                app_request.ports,
+                feature_id,
+                limit=effective_limit,
+                offset=effective_offset,
+            )
+
+        if result.status == "not_found":
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
+
+        dto = _section_result_to_dto(
             feature_id,
-        )
-    elif section == "documents":
-        result = await _feature_modal_detail_service.get_docs(
-            app_request.context,
-            app_request.ports,
-            feature_id,
-        )
-    elif section == "relations":
-        results = await _feature_modal_detail_service.get_sections(
-            app_request.context,
-            app_request.ports,
-            feature_id,
-            sections=["relations"],
-        )
-        result = results["relations"]
-    elif section == "sessions":
-        result = await _feature_modal_detail_service.get_sessions(
-            app_request.context,
-            app_request.ports,
-            feature_id,
+            section,
+            result,
+            includes=resolved_include,
             limit=effective_limit,
             offset=effective_offset,
-            thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
         )
-    elif section == "test_status":
-        result = await _feature_modal_detail_service.get_test_status(
-            app_request.context,
-            app_request.ports,
-            feature_id,
+        envelope = ClientV1Envelope(
+            data=dto,
+            meta=build_client_v1_meta(instance_id=_instance_id()),
         )
-    else:
-        result = await _feature_modal_detail_service.get_activity(
-            app_request.context,
-            app_request.ports,
-            feature_id,
+        _emit_feature_surface_observation(
+            "feature_modal_section",
+            started_at=started_at,
+            result_count=len(dto.items),
+            payload=envelope.data,
+            cache_status="unknown",
+            feature_id=feature_id,
+            section=section,
             limit=effective_limit,
             offset=effective_offset,
         )
-
-    if result.status == "not_found":
-        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
-
-    dto = _section_result_to_dto(
-        feature_id,
-        section,
-        result,
-        includes=resolved_include,
-        limit=effective_limit,
-        offset=effective_offset,
-    )
-    return ClientV1Envelope(
-        data=dto,
-        meta=build_client_v1_meta(instance_id=_instance_id()),
-    )
+        return envelope
+    except Exception as exc:
+        normalized_section = section if section in _SUPPORTED_MODAL_SECTIONS else str(section or "")
+        _emit_feature_surface_observation(
+            "feature_modal_section",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(exc),
+            feature_id=feature_id,
+            section=normalized_section,
+            limit=limit,
+            offset=offset,
+        )
+        raise
 
 
 async def get_feature_linked_session_page_v1(
@@ -1056,37 +1319,63 @@ async def get_feature_linked_session_page_v1(
     limit: int = 20,
     offset: int = 0,
 ) -> ClientV1Envelope[LinkedFeatureSessionPageDTO]:
+    started_at = time.perf_counter()
     effective_limit = max(1, min(limit, 50))
     effective_offset = max(0, offset)
-    app_request = await _resolve_app_request(request_context, core_ports)
-    result = await _feature_modal_detail_service.get_sessions(
-        app_request.context,
-        app_request.ports,
-        feature_id,
-        limit=effective_limit,
-        offset=effective_offset,
-        thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
-    )
-    if result.status == "not_found":
-        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
+    try:
+        app_request = await _resolve_app_request(request_context, core_ports)
+        result = await _feature_modal_detail_service.get_sessions(
+            app_request.context,
+            app_request.ports,
+            feature_id,
+            limit=effective_limit,
+            offset=effective_offset,
+            thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
+        )
+        if result.status == "not_found":
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
 
-    rows = result.data.get("rows") if isinstance(result.data.get("rows"), list) else []
-    dto = LinkedFeatureSessionPageDTO(
-        items=[_session_row_to_linked_dto(row) for row in rows if isinstance(row, dict)],
-        total=int(result.data.get("total") or 0),
-        offset=int(result.data.get("offset") or effective_offset),
-        limit=int(result.data.get("limit") or effective_limit),
-        has_more=bool(result.data.get("has_more")),
-        enrichment=LinkedSessionEnrichmentDTO(
-            includes=[],
-            logs_read=False,
-            command_count_included=False,
-            task_refs_included=False,
-            thread_children_included=False,
-        ),
-        precision="eventually_consistent",
-    )
-    return ClientV1Envelope(
-        data=dto,
-        meta=build_client_v1_meta(instance_id=_instance_id()),
-    )
+        rows = result.data.get("rows") if isinstance(result.data.get("rows"), list) else []
+        dto = LinkedFeatureSessionPageDTO(
+            items=[_session_row_to_linked_dto(row) for row in rows if isinstance(row, dict)],
+            total=int(result.data.get("total") or 0),
+            offset=int(result.data.get("offset") or effective_offset),
+            limit=int(result.data.get("limit") or effective_limit),
+            has_more=bool(result.data.get("has_more")),
+            enrichment=LinkedSessionEnrichmentDTO(
+                includes=[],
+                logs_read=False,
+                command_count_included=False,
+                task_refs_included=False,
+                thread_children_included=False,
+            ),
+            precision="eventually_consistent",
+        )
+        envelope = ClientV1Envelope(
+            data=dto,
+            meta=build_client_v1_meta(instance_id=_instance_id()),
+        )
+        _emit_feature_surface_observation(
+            "feature_linked_session_page",
+            started_at=started_at,
+            result_count=len(dto.items),
+            payload=envelope.data,
+            cache_status="unknown",
+            feature_id=feature_id,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        return envelope
+    except Exception as exc:
+        _emit_feature_surface_observation(
+            "feature_linked_session_page",
+            started_at=started_at,
+            result_count=0,
+            payload=None,
+            cache_status="unknown",
+            error_category=_classify_observability_error(exc),
+            feature_id=feature_id,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+        raise

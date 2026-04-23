@@ -17,7 +17,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 8
-completed_tasks: 7
+completed_tasks: 8
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -126,7 +126,7 @@ tasks:
   - test: backend/tests/test_client_v1_feature_surface.py
 - id: P2-008
   description: API Observability - Instrument latency, result count, payload size estimate, cache status, and error categorization.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   dependencies:
@@ -134,6 +134,9 @@ tasks:
   estimated_effort: 1 pt
   priority: medium
   assigned_model: sonnet
+  completed: 2026-04-23T20:50Z
+  evidence:
+  - test: backend/tests/test_client_v1_feature_surface.py
 parallelization:
   batch_1:
   - P2-001
@@ -146,7 +149,7 @@ parallelization:
   - P2-007
   batch_3:
   - P2-008
-progress: 88
+progress: 100
 ---
 
 # Phase 2 Progress — Service and API Contracts
@@ -178,3 +181,15 @@ Commit at the end of each batch. Keep work split across DTO/service files first,
 - Added `view=cards` plus `include=card/cards` compatibility mode on `GET /api/v1/features`.
 - Added `POST /api/v1/features/rollups`, modal overview/section endpoints, and a richer linked-session page route while preserving legacy default responses.
 - Validation: `backend/.venv/bin/python -m pytest backend/tests/test_client_v1_contract.py backend/tests/test_client_v1_feature_surface.py -q`
+
+## Batch 3 Complete
+
+- Added structured feature-surface observability events for list, rollups, compatibility sessions, linked-session page, modal overview, and modal section calls.
+- Event fields include latency, result count, payload size estimate, cache status, and error categorization.
+- Validation: `backend/.venv/bin/python -m pytest backend/tests/test_feature_surface_dtos.py backend/tests/test_feature_surface_list_rollup_service.py backend/tests/test_feature_surface_modal_service.py backend/tests/test_client_v1_contract.py backend/tests/test_client_v1_feature_surface.py -q`
+
+## Validation Notes
+
+- Backend phase slice is green: 54 tests passed, 2 skipped.
+- Targeted `py_compile` checks passed for the touched backend/router/contract files.
+- `ruff` and `mypy` are not installed in `backend/.venv`, so Phase 2 remains `in_progress` in the tracker pending those optional quality gates or an explicit override.

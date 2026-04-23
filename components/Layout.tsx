@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow, GitBranch } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Settings, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow, GitBranch } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { cn } from '../lib/utils';
@@ -7,6 +7,8 @@ import { ProjectSelector } from './ProjectSelector';
 
 // Brand color for the Planning nav item active ring (matches planning-tokens.css --brand)
 const PLANNING_BRAND = 'oklch(75% 0.14 195)';
+const SIDEBAR_LOGO_SRC = '/branding/ccdash-logo-primary.png';
+const SIDEBAR_ICON_SRC = '/branding/ccdash-app-icon.png';
 
 const NavItem = ({
   to,
@@ -74,9 +76,20 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         )}
       >
         <div className="flex items-center justify-between overflow-hidden border-b border-sidebar-border p-6">
-          <div className="flex shrink-0 items-center gap-2 text-info">
-            <Box size={24} className="fill-info/15" />
-            {!isCollapsed && <h1 className="text-xl font-bold tracking-tight text-sidebar-foreground">CCDash</h1>}
+          <div className="flex min-w-0 shrink-0 items-center">
+            {isCollapsed ? (
+              <img
+                src={SIDEBAR_ICON_SRC}
+                alt="CCDash"
+                className="h-9 w-9 shrink-0 object-contain"
+              />
+            ) : (
+              <img
+                src={SIDEBAR_LOGO_SRC}
+                alt="CCDash"
+                className="h-10 w-auto max-w-[180px] object-contain"
+              />
+            )}
           </div>
         </div>
 
