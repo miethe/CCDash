@@ -385,14 +385,16 @@ describe('P3-003 — ProjectBoard hook initialisation', () => {
     );
   });
 
-  it('server total from hook appears in rendered output when total differs from local count', () => {
-    // Hook returns total: 42; local features list is empty (0).
-    // The "(server: 42)" indicator should appear in the markup.
+  it('P3-005: header shows filteredTotal from hook as authoritative count', () => {
+    // Hook returns filteredTotal: 17; the header now renders that directly as
+    // the authoritative count (no legacy "server: N" suffix).
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/board']}>
         <ProjectBoard />
       </MemoryRouter>,
     );
-    expect(html).toContain('server: 42');
+    // filteredTotal (17) should appear; legacy "server: 42" pattern is gone.
+    expect(html).toContain('17 features');
+    expect(html).not.toContain('server: 42');
   });
 });

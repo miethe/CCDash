@@ -275,7 +275,10 @@ describe('P3-004 — Source-level proof: eager loop removed', () => {
     expect(source).toContain('invalidateFeatureSurface({ projectId: activeProjectId, featureIds: [featureId] })');
   });
 
-  it('featureSessionSummaries state declaration preserved (for P3-005 consumers)', () => {
-    expect(source).toContain('featureSessionSummaries, setFeatureSessionSummaries');
+  it('featureSessionSummaries state fully removed (P3-005: rollup data path in place)', () => {
+    // P3-005: the state is gone; session data now comes from FeatureRollupDTO
+    // via rollupToSessionSummary() imported from featureCardAdapters.ts.
+    expect(source).not.toContain('featureSessionSummaries, setFeatureSessionSummaries');
+    expect(source).toContain('rollupToSessionSummary');
   });
 });

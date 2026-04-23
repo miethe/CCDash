@@ -51,6 +51,12 @@ import {
   type PlanningFeatureModalTab,
 } from '../services/planningRoutes';
 import { invalidateFeatureSurface } from '../services/featureSurfaceCache';
+import {
+  cardDTOBoardStage,
+  cardDTOToFeature,
+  rollupToSessionSummary,
+} from './featureCardAdapters';
+import type { FeatureCardDTO } from '../services/featureSurface';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -508,63 +514,6 @@ const buildSessionThreadForest = (sessions: FeatureSessionLink[]): FeatureSessio
   return roots;
 };
 
-const sessionTypeBucketLabel = (session: FeatureSessionLink): string => {
-  const workflow = (session.workflowType || '').trim();
-  if (workflow) return workflow;
-  const metadataLabel = (session.sessionMetadata?.sessionTypeLabel || '').trim();
-  if (metadataLabel) return metadataLabel;
-  const sessionType = (session.sessionType || '').trim();
-  if (sessionType) return sessionType === 'subagent' ? 'Sub-thread' : sessionType;
-  return 'Other';
-};
-
-const buildFeatureSessionSummary = (sessions: FeatureSessionLink[]): FeatureSessionSummary => {
-  const typeCounts = new Map<string, number>();
-  const idSet = new Set(sessions.map(session => session.sessionId));
-  let mainThreads = 0;
-  let subThreads = 0;
-  let unresolvedSubThreads = 0;
-  let workloadTokens = 0;
-  let modelIOTokens = 0;
-  let cacheInputTokens = 0;
-
-  sessions.forEach(session => {
-    const typeLabel = sessionTypeBucketLabel(session);
-    typeCounts.set(typeLabel, (typeCounts.get(typeLabel) || 0) + 1);
-    const resolvedTokens = resolveTokenMetrics(session, {
-      hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, sessions),
-    });
-    workloadTokens += resolvedTokens.workloadTokens;
-    modelIOTokens += resolvedTokens.modelIOTokens;
-    cacheInputTokens += resolvedTokens.cacheInputTokens;
-
-    if (isSubthreadSession(session)) {
-      subThreads += 1;
-      const parentId = session.parentSessionId || '';
-      const rootId = session.rootSessionId || '';
-      const hasKnownMain = (!!parentId && idSet.has(parentId)) || (!!rootId && rootId !== session.sessionId && idSet.has(rootId));
-      if (!hasKnownMain) unresolvedSubThreads += 1;
-    } else {
-      mainThreads += 1;
-    }
-  });
-
-  const byType = Array.from(typeCounts.entries())
-    .map(([type, count]) => ({ type, count }))
-    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
-
-  return {
-    total: sessions.length,
-    mainThreads,
-    subThreads,
-    unresolvedSubThreads,
-    workloadTokens,
-    modelIOTokens,
-    cacheInputTokens,
-    byType,
-  };
-};
-
 const getDocumentClassificationText = (doc: LinkedDocument): string =>
   [doc.docType || '', doc.title || '', doc.filePath || '', doc.category || ''].join(' ').toLowerCase();
 
@@ -838,15 +787,6 @@ const toEpoch = (value?: string): number => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
-const inDateRange = (value: string, from?: string, to?: string): boolean => {
-  if (!from && !to) return true;
-  const target = toEpoch(value);
-  if (!target) return false;
-  const fromEpoch = from ? toEpoch(from) : 0;
-  const toEpochValue = to ? toEpoch(to) + 86_399_000 : Number.POSITIVE_INFINITY;
-  return target >= fromEpoch && target <= toEpochValue;
-};
-
 const getFeatureDateValue = (
   feature: Feature,
   key: 'plannedAt' | 'startedAt' | 'completedAt' | 'updatedAt' | 'lastActivityAt',
@@ -1076,50 +1016,6 @@ const DocTypeIcon = ({ docType }: { docType: string }) => {
 
 const DocTypeBadge = ({ docType }: { docType: string }) => {
   return <span className="text-[9px] uppercase font-bold">{getDocTypeLabel(docType)}</span>;
-};
-
-const LinkedDocsSummaryBadge = ({
-  docs,
-  onClick,
-  compact = false,
-}: {
-  docs: LinkedDocument[];
-  onClick: () => void;
-  compact?: boolean;
-}) => {
-  if (docs.length === 0) return null;
-  const typeCounts = buildLinkedDocTypeCounts(docs);
-  return (
-    <button
-      type="button"
-      draggable={false}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-      className="relative group/doc-badge inline-flex items-center gap-1 rounded-md border border-panel-border bg-panel/85 px-2 py-1 text-[10px] font-semibold text-foreground hover:border-indigo-500/60 hover:text-indigo-200 transition-colors"
-      title="Open linked documents"
-    >
-      <FileText size={compact ? 10 : 11} />
-      <span className="uppercase tracking-wide">Docs</span>
-      <span className="font-mono">{docs.length}</span>
-
-      <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[180px] rounded-lg border border-panel-border bg-surface-overlay/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/doc-badge:opacity-100 group-hover/doc-badge:translate-y-0">
-        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Linked Documents</div>
-        <div className="space-y-1">
-          {typeCounts.map(row => (
-            <div key={row.docType} className="flex items-center justify-between gap-3 text-[11px] text-foreground">
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <DocTypeIcon docType={row.docType} />
-                <span className="truncate">{getDocTypeLabel(row.docType)}</span>
-              </span>
-              <span className="font-mono text-muted-foreground">{row.count}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </button>
-  );
 };
 
 const FeatureDateStack = ({ feature }: { feature: Feature }) => {
@@ -4065,6 +3961,41 @@ export const ProjectBoardFeatureModal = ({
 
 // ── Feature Card ───────────────────────────────────────────────────
 
+/**
+ * Lightweight linked-doc count badge driven from rollup data.
+ * Shows a neutral '—' while rollup is still loading (count === null).
+ */
+const RollupLinkedDocsBadge = ({
+  count,
+  loading,
+  onClick,
+  compact = false,
+}: {
+  count: number | null;
+  loading: boolean;
+  onClick: () => void;
+  compact?: boolean;
+}) => {
+  if (!loading && count === null) return null;
+  if (!loading && count === 0) return null;
+  return (
+    <button
+      type="button"
+      draggable={false}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className="relative inline-flex items-center gap-1 rounded-md border border-panel-border bg-panel/85 px-2 py-1 text-[10px] font-semibold text-foreground hover:border-indigo-500/60 hover:text-indigo-200 transition-colors"
+      title="Open linked documents"
+    >
+      <FileText size={compact ? 10 : 11} />
+      <span className="uppercase tracking-wide">Docs</span>
+      <span className="font-mono">{loading && count === null ? '—' : count}</span>
+    </button>
+  );
+};
+
 const FeatureSessionIndicator = ({
   summary,
   loading,
@@ -4138,9 +4069,9 @@ const FeatureSessionIndicator = ({
 };
 
 const FeatureCard = ({
-  feature,
-  sessionSummary,
-  sessionSummaryLoading,
+  card,
+  rollup,
+  rollupLoading,
   onClick,
   onOpenDocs,
   onStatusChange,
@@ -4148,9 +4079,9 @@ const FeatureCard = ({
   onDragEnd,
   isDragging,
 }: {
-  feature: Feature;
-  sessionSummary?: FeatureSessionSummary;
-  sessionSummaryLoading: boolean;
+  card: FeatureCardDTO;
+  rollup?: import('../services/featureSurface').FeatureRollupDTO;
+  rollupLoading: boolean;
   onClick: () => void;
   onOpenDocs: () => void;
   onStatusChange: (newStatus: string) => void;
@@ -4158,6 +4089,10 @@ const FeatureCard = ({
   onDragEnd: () => void;
   isDragging: boolean;
 }) => {
+  // Convert DTO to a minimal Feature for helper functions and sub-components.
+  const feature = cardDTOToFeature(card);
+  const sessionSummary = rollupToSessionSummary(rollup);
+  const sessionSummaryLoading = rollupLoading && !rollup;
   const featureDeferredTasks = getFeatureDeferredCount(feature);
   const featureCompletedTasks = getFeatureCompletedCount(feature);
   const featureHasDeferred = hasDeferredCaveat(feature);
@@ -4222,20 +4157,20 @@ const FeatureCard = ({
         <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
-      {/* Linked doc summary */}
+      {/* Linked doc summary — count from rollup when available */}
       <div className="flex flex-wrap gap-1.5 mb-3">
-        <LinkedDocsSummaryBadge docs={feature.linkedDocs} onClick={onOpenDocs} compact />
-        {feature.phases.length > 0 && (
+        <RollupLinkedDocsBadge count={rollup?.linkedDocCount ?? null} loading={sessionSummaryLoading} onClick={onOpenDocs} compact />
+        {card.phaseCount > 0 && (
           <span className="text-[9px] flex items-center gap-1 bg-surface-muted text-muted-foreground px-1.5 py-0.5 rounded border border-panel-border">
-            {feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}
+            {card.phaseCount} phase{card.phaseCount !== 1 ? 's' : ''}
           </span>
         )}
       </div>
       <div className="flex flex-wrap gap-1.5 mb-3 text-[9px]">
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.priority || 'priority n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.executionReadiness || 'readiness n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{card.priority || 'priority n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">readiness n/a</span>
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{getFeatureCoverageSummary(feature)}</span>
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {getFeatureLinkedFeatureCount(feature)}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {card.relatedFeatureCount}</span>
       </div>
 
       {/* Footer */}
@@ -4259,20 +4194,23 @@ const FeatureCard = ({
 // ── List View Card ─────────────────────────────────────────────────
 
 const FeatureListCard = ({
-  feature,
-  sessionSummary,
-  sessionSummaryLoading,
+  card,
+  rollup,
+  rollupLoading,
   onClick,
   onOpenDocs,
   onStatusChange,
 }: {
-  feature: Feature;
-  sessionSummary?: FeatureSessionSummary;
-  sessionSummaryLoading: boolean;
+  card: FeatureCardDTO;
+  rollup?: import('../services/featureSurface').FeatureRollupDTO;
+  rollupLoading: boolean;
   onClick: () => void;
   onOpenDocs: () => void;
   onStatusChange: (newStatus: string) => void;
 }) => {
+  const feature = cardDTOToFeature(card);
+  const sessionSummary = rollupToSessionSummary(rollup);
+  const sessionSummaryLoading = rollupLoading && !rollup;
   const featureDeferredTasks = getFeatureDeferredCount(feature);
   const featureCompletedTasks = getFeatureCompletedCount(feature);
   const featureHasDeferred = hasDeferredCaveat(feature);
@@ -4285,42 +4223,17 @@ const FeatureListCard = ({
       <div className="flex justify-between items-start mb-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-1">
-            <span className="font-mono text-xs text-muted-foreground border border-panel-border px-1.5 py-0.5 rounded truncate max-w-[200px]">{feature.id}</span>
+            <span className="font-mono text-xs text-muted-foreground border border-panel-border px-1.5 py-0.5 rounded truncate max-w-[200px]">{card.id}</span>
             <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
-            <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
-            {feature.planningStatus && (
-              <EffectiveStatusChips
-                rawStatus={feature.planningStatus.rawStatus}
-                effectiveStatus={feature.planningStatus.effectiveStatus}
-                isMismatch={Boolean(feature.planningStatus.mismatchState?.isMismatch)}
-                provenance={feature.planningStatus.provenance}
-              />
-            )}
-            {feature.planningStatus?.mismatchState?.isMismatch && (
-              <MismatchBadge
-                compact
-                state={feature.planningStatus.mismatchState.state}
-                reason={feature.planningStatus.mismatchState.reason}
-              />
-            )}
-            {feature.planningStatus && (
-              <Link
-                to={planningFeatureDetailHref(feature.id)}
-                onClick={e => e.stopPropagation()}
-                className="inline-flex items-center gap-1 text-[10px] text-indigo-400/70 hover:text-indigo-300"
-                title="View in planning graph"
-              >
-                <PlanningNodeTypeIcon type="implementation_plan" size={10} className="text-indigo-400/70" />
-              </Link>
-            )}
-            {feature.category && (
-              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-surface-muted text-muted-foreground capitalize">{feature.category}</span>
+            <StatusDropdown status={card.status} onStatusChange={onStatusChange} size="xs" />
+            {card.category && (
+              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-surface-muted text-muted-foreground capitalize">{card.category}</span>
             )}
           </div>
-          <h3 className="font-bold text-panel-foreground text-lg group-hover:text-indigo-400 transition-colors truncate">{feature.name}</h3>
+          <h3 className="font-bold text-panel-foreground text-lg group-hover:text-indigo-400 transition-colors truncate">{card.name}</h3>
         </div>
         <div className="text-right ml-4 flex-shrink-0">
-          <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{feature.totalTasks}</div>
+          <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{card.totalTasks}</div>
         </div>
       </div>
       {featureHasDeferred && (
@@ -4332,25 +4245,25 @@ const FeatureListCard = ({
       )}
 
       <div className="mb-3">
-        <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
+        <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={card.totalTasks} />
       </div>
 
       <div className="mb-3">
         <FeatureDateStack feature={feature} />
       </div>
       <div className="mb-3 flex flex-wrap gap-1.5 text-[10px]">
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.priority || 'priority n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.executionReadiness || 'readiness n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{card.priority || 'priority n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">readiness n/a</span>
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{getFeatureCoverageSummary(feature)}</span>
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {getFeatureLinkedFeatureCount(feature)}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {card.relatedFeatureCount}</span>
       </div>
 
       <div className="pt-3 border-t border-panel-border flex items-center justify-between">
         <div className="flex gap-2">
-          <LinkedDocsSummaryBadge docs={feature.linkedDocs} onClick={onOpenDocs} />
+          <RollupLinkedDocsBadge count={rollup?.linkedDocCount ?? null} loading={sessionSummaryLoading} onClick={onOpenDocs} />
         </div>
-        {feature.phases.length > 0 && (
-          <span className="text-xs text-muted-foreground">{feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}</span>
+        {card.phaseCount > 0 && (
+          <span className="text-xs text-muted-foreground">{card.phaseCount} phase{card.phaseCount !== 1 ? 's' : ''}</span>
         )}
       </div>
     </div>
@@ -4362,10 +4275,11 @@ const FeatureListCard = ({
 const StatusColumn = ({
   title,
   status,
-  features,
-  featureSessionSummaries,
-  onFeatureClick,
-  onFeatureDocsClick,
+  cards,
+  rollups,
+  rollupLoading,
+  onCardClick,
+  onCardDocsClick,
   onStatusChange,
   onCardDragStart,
   onCardDragEnd,
@@ -4377,10 +4291,11 @@ const StatusColumn = ({
 }: {
   title: string;
   status: string;
-  features: Feature[];
-  featureSessionSummaries: Record<string, FeatureSessionSummary>;
-  onFeatureClick: (f: Feature) => void;
-  onFeatureDocsClick: (f: Feature) => void;
+  cards: FeatureCardDTO[];
+  rollups: Map<string, import('../services/featureSurface').FeatureRollupDTO>;
+  rollupLoading: boolean;
+  onCardClick: (cardId: string) => void;
+  onCardDocsClick: (cardId: string) => void;
   onStatusChange: (featureId: string, newStatus: string) => void;
   onCardDragStart: (featureId: string) => void;
   onCardDragEnd: () => void;
@@ -4399,7 +4314,7 @@ const StatusColumn = ({
           <span className={`w-2 h-2 rounded-full ${style.dot}`} />
           {title}
         </h3>
-        <span className="text-muted-foreground text-xs font-mono bg-panel px-2 py-1 rounded">{features.length}</span>
+        <span className="text-muted-foreground text-xs font-mono bg-panel px-2 py-1 rounded">{cards.length}</span>
       </div>
 
       <div
@@ -4416,21 +4331,21 @@ const StatusColumn = ({
         }}
         className={`flex flex-col gap-3 min-h-[200px] rounded-lg bg-panel/40 p-2 border overflow-y-auto max-h-[calc(100vh-280px)] transition-colors ${isDropTarget ? 'border-indigo-500/60 bg-indigo-500/5' : 'border-panel-border/40'}`}
       >
-        {features.map(f => (
+        {cards.map(c => (
           <FeatureCard
-            key={f.id}
-            feature={f}
-            sessionSummary={featureSessionSummaries[f.id]}
-            sessionSummaryLoading={false /* P3-005: rollups will supply live loading state */}
-            onClick={() => onFeatureClick(f)}
-            onOpenDocs={() => onFeatureDocsClick(f)}
-            onStatusChange={(newStatus) => onStatusChange(f.id, newStatus)}
+            key={c.id}
+            card={c}
+            rollup={rollups.get(c.id)}
+            rollupLoading={rollupLoading}
+            onClick={() => onCardClick(c.id)}
+            onOpenDocs={() => onCardDocsClick(c.id)}
+            onStatusChange={(newStatus) => onStatusChange(c.id, newStatus)}
             onDragStart={onCardDragStart}
             onDragEnd={onCardDragEnd}
-            isDragging={draggedFeatureId === f.id}
+            isDragging={draggedFeatureId === c.id}
           />
         ))}
-        {features.length === 0 && (
+        {cards.length === 0 && (
           <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-panel-border rounded-lg p-4">
             No features
           </div>
@@ -4461,7 +4376,8 @@ export const ProjectBoard: React.FC = () => {
   const [selectedFeatureTab, setSelectedFeatureTab] = useState<FeatureModalTab>('overview');
   const [draggedFeatureId, setDraggedFeatureId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
-  const [featureSessionSummaries, setFeatureSessionSummaries] = useState<Record<string, FeatureSessionSummary>>({});
+  // P3-005: featureSessionSummaries removed — session data now comes from
+  // FeatureRollupDTO via rollupToSessionSummary() in the render path.
 
   // Auto-select feature from URL search params
   useEffect(() => {
@@ -4513,14 +4429,22 @@ export const ProjectBoard: React.FC = () => {
     sort: true,
   });
 
-  // ── P3-003: Server-backed filters via useFeatureSurface ──────────────────────
-  // The hook runs in parallel with the existing apiFeatures list (from useData).
-  // Rendering continues from filteredFeatures (apiFeatures-derived) this phase;
-  // P3-005 will swap cards to use hook.cards once FeatureCardDTO is mapped.
-  // The hook's setQuery is called on Apply so the server sees the same filters
-  // the UI applies locally.  totals from the hook surface the server-side count
-  // in the header (prefixed with "~" when the hook is still loading).
-  const { setQuery: setSurfaceQuery, totals: surfaceTotals, listState: surfaceListState } = useFeatureSurface({
+  // ── P3-005: Board data from useFeatureSurface (cards + rollups) ──────────────
+  // Cards come from the batched list endpoint; rollups from the batched rollup
+  // endpoint.  apiFeatures (from useData) is kept only for:
+  //   1. Modal data path — openFeatureModalById resolves Feature from apiFeatures
+  //   2. handleStatusChange status-check guard (falls back to apiFeatures.find)
+  //   3. selectedFeature sync useEffect
+  //   4. Category dropdown derivation (falls back before surfaceCards available)
+  // The board and list render exclusively from hook.cards + hook.rollups.
+  const {
+    setQuery: setSurfaceQuery,
+    totals: surfaceTotals,
+    listState: surfaceListState,
+    rollupState: surfaceRollupState,
+    cards: surfaceCards,
+    rollups: surfaceRollups,
+  } = useFeatureSurface({
     initialQuery: {
       projectId: activeProject?.id,
       search: '',
@@ -4533,83 +4457,29 @@ export const ProjectBoard: React.FC = () => {
     noCache: false,
   });
 
-  // Derive unique categories
+  // Derive unique categories from surfaceCards (v1 source) when available,
+  // falling back to apiFeatures so the dropdown is populated even before the
+  // first list response arrives.
   const categories = useMemo(() => {
-    const cats = new Set(apiFeatures.map(f => f.category).filter(Boolean));
+    const source = surfaceCards.length > 0 ? surfaceCards : apiFeatures;
+    const cats = new Set(source.map((f: { category?: string | null }) => f.category).filter(Boolean));
     return Array.from(cats).sort();
-  }, [apiFeatures]);
+  }, [surfaceCards, apiFeatures]);
 
-  const filteredFeatures = useMemo(() => {
-    let result = apiFeatures;
-
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(f =>
-        f.name.toLowerCase().includes(q) ||
-        f.id.toLowerCase().includes(q) ||
-        f.tags.some(t => t.toLowerCase().includes(q))
-      );
-    }
-
-    if (statusFilter !== 'all') {
-      if (statusFilter === 'deferred') {
-        result = result.filter(f => hasDeferredCaveat(f));
-      } else {
-        result = result.filter(f => getFeatureBoardStage(f) === statusFilter);
-      }
-    }
-
-    if (categoryFilter !== 'all') {
-      result = result.filter(f => f.category === categoryFilter);
-    }
-
-    result = result.filter(feature => {
-      const planned = getFeatureDateValue(feature, 'plannedAt').value;
-      const started = getFeatureDateValue(feature, 'startedAt').value;
-      const completed = getFeatureDateValue(feature, 'completedAt').value;
-      const updated = getFeatureDateValue(feature, 'updatedAt').value;
-      if (!inDateRange(planned, plannedFrom || undefined, plannedTo || undefined)) return false;
-      if (!inDateRange(started, startedFrom || undefined, startedTo || undefined)) return false;
-      if (!inDateRange(updated, updatedFrom || undefined, updatedTo || undefined)) return false;
-      if ((completedFrom || completedTo) && !inDateRange(completed, completedFrom || undefined, completedTo || undefined)) {
-        return false;
-      }
-      return true;
-    });
-
-    return result.sort((a, b) => {
-      if (sortBy === 'progress') {
-        const pctA = a.totalTasks > 0 ? getFeatureCompletedCount(a) / a.totalTasks : 0;
-        const pctB = b.totalTasks > 0 ? getFeatureCompletedCount(b) / b.totalTasks : 0;
-        return pctB - pctA;
-      }
-      if (sortBy === 'tasks') return b.totalTasks - a.totalTasks;
-      // date sort (default)
-      return toEpoch(getFeatureDateValue(b, 'updatedAt').value) - toEpoch(getFeatureDateValue(a, 'updatedAt').value);
-    });
-  }, [
-    apiFeatures,
-    searchQuery,
-    statusFilter,
-    categoryFilter,
-    sortBy,
-    plannedFrom,
-    plannedTo,
-    startedFrom,
-    startedTo,
-    completedFrom,
-    completedTo,
-    updatedFrom,
-    updatedTo,
-  ]);
+  // P3-005: filteredFeatures (apiFeatures-derived local filter) removed.
+  // Filtering/sorting is now delegated to the server via setSurfaceQuery (applied
+  // on sidebar Apply).  The board and list render from surfaceCards directly.
 
   const activeProjectId = activeProject?.id;
   const handleStatusChange = useCallback(async (featureId: string, newStatus: string) => {
-    const feature = apiFeatures.find(f => f.id === featureId);
-    if (!feature || feature.status === newStatus) return;
+    // Check current status from surfaceCards (v1 source) first; fall back to apiFeatures.
+    const card = surfaceCards.find(c => c.id === featureId);
+    const legacyFeature = apiFeatures.find(f => f.id === featureId);
+    const currentStatus = card?.status ?? legacyFeature?.status;
+    if (currentStatus === undefined || currentStatus === newStatus) return;
     await updateFeatureStatus(featureId, newStatus);
     invalidateFeatureSurface({ projectId: activeProjectId, featureIds: [featureId] });
-  }, [apiFeatures, updateFeatureStatus, activeProjectId]);
+  }, [surfaceCards, apiFeatures, updateFeatureStatus, activeProjectId]);
 
   const handleCardDragStart = useCallback((featureId: string) => {
     setDraggedFeatureId(featureId);
@@ -4654,6 +4524,16 @@ export const ProjectBoard: React.FC = () => {
     setSelectedFeatureTab(initialTab);
     setSelectedFeature(feature);
   }, []);
+
+  /** Opens the feature modal by card ID — resolves the full Feature from apiFeatures. */
+  const openFeatureModalById = useCallback((featureId: string, initialTab: FeatureModalTab = 'overview') => {
+    const featureBase = getFeatureBaseSlug(featureId);
+    const feature = apiFeatures.find(f => f.id === featureId)
+      || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase);
+    if (feature) {
+      openFeatureModal(feature, initialTab);
+    }
+  }, [apiFeatures, openFeatureModal]);
 
   const hasPendingFilterChanges = (
     draftSearchQuery !== searchQuery
@@ -4982,13 +4862,11 @@ export const ProjectBoard: React.FC = () => {
         <div>
           <h2 className="text-2xl font-bold text-panel-foreground">Feature Board</h2>
           <p className="text-muted-foreground text-sm">
-            {filteredFeatures.length} features
-            {/* P3-003: surface server-side total from hook when available */}
-            {surfaceListState === 'success' && surfaceTotals.total !== filteredFeatures.length && (
-              <span className="ml-1 text-muted-foreground/60">(server: {surfaceTotals.total})</span>
-            )}
-            {surfaceListState === 'loading' && (
-              <span className="ml-1 text-muted-foreground/60">(loading…)</span>
+            {/* P3-005: authoritative count from hook totals (filteredTotal when filtered, else total) */}
+            {surfaceListState === 'loading' ? (
+              <span className="text-muted-foreground/60">Loading…</span>
+            ) : (
+              <span>{surfaceTotals.filteredTotal ?? surfaceTotals.total} features</span>
             )}
             {' '}· Synced from project plans &amp; progress files
           </p>
@@ -5013,17 +4891,18 @@ export const ProjectBoard: React.FC = () => {
         </div>
       </div>
 
-      {/* Content Area */}
+      {/* Content Area — P3-005: renders from surfaceCards + surfaceRollups */}
       <div className="flex-1 overflow-x-auto">
         {viewMode === 'board' ? (
           <div className="flex gap-6 min-w-[1200px] h-full pb-4">
             <StatusColumn
               title="Backlog"
               status="backlog"
-              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'backlog')}
-              featureSessionSummaries={featureSessionSummaries}
-              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
-              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
+              cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'backlog')}
+              rollups={surfaceRollups}
+              rollupLoading={surfaceRollupState === 'loading'}
+              onCardClick={(id) => openFeatureModalById(id, 'overview')}
+              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -5036,10 +4915,11 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="In Progress"
               status="in-progress"
-              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'in-progress')}
-              featureSessionSummaries={featureSessionSummaries}
-              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
-              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
+              cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'in-progress')}
+              rollups={surfaceRollups}
+              rollupLoading={surfaceRollupState === 'loading'}
+              onCardClick={(id) => openFeatureModalById(id, 'overview')}
+              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -5052,10 +4932,11 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="Review"
               status="review"
-              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'review')}
-              featureSessionSummaries={featureSessionSummaries}
-              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
-              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
+              cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'review')}
+              rollups={surfaceRollups}
+              rollupLoading={surfaceRollupState === 'loading'}
+              onCardClick={(id) => openFeatureModalById(id, 'overview')}
+              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -5068,10 +4949,11 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="Done"
               status="done"
-              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'done')}
-              featureSessionSummaries={featureSessionSummaries}
-              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
-              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
+              cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'done')}
+              rollups={surfaceRollups}
+              rollupLoading={surfaceRollupState === 'loading'}
+              onCardClick={(id) => openFeatureModalById(id, 'overview')}
+              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -5084,20 +4966,25 @@ export const ProjectBoard: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-6">
-            {filteredFeatures.map(f => (
+            {surfaceCards.map(c => (
               <FeatureListCard
-                key={f.id}
-                feature={f}
-                sessionSummary={featureSessionSummaries[f.id]}
-                sessionSummaryLoading={false /* P3-005: rollups will supply live loading state */}
-                onClick={() => openFeatureModal(f, 'overview')}
-                onOpenDocs={() => openFeatureModal(f, 'docs')}
-                onStatusChange={(newStatus) => handleStatusChange(f.id, newStatus)}
+                key={c.id}
+                card={c}
+                rollup={surfaceRollups.get(c.id)}
+                rollupLoading={surfaceRollupState === 'loading'}
+                onClick={() => openFeatureModalById(c.id, 'overview')}
+                onOpenDocs={() => openFeatureModalById(c.id, 'docs')}
+                onStatusChange={(newStatus) => handleStatusChange(c.id, newStatus)}
               />
             ))}
-            {filteredFeatures.length === 0 && (
+            {surfaceCards.length === 0 && surfaceListState !== 'loading' && (
               <div className="col-span-full py-12 text-center text-muted-foreground border border-dashed border-panel-border rounded-xl">
                 No features match your filters.
+              </div>
+            )}
+            {surfaceListState === 'loading' && surfaceCards.length === 0 && (
+              <div className="col-span-full py-12 text-center text-muted-foreground border border-dashed border-panel-border rounded-xl">
+                Loading features…
               </div>
             )}
           </div>
