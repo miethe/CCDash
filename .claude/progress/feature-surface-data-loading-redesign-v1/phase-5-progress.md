@@ -9,17 +9,18 @@ plan_ref: docs/project_plans/implementation_plans/refactors/feature-surface-data
 phase_plan_ref: docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1/phase-5-validation-rollout.md
 phase: 5
 title: Validation, Observability, Rollout
-status: pending
+status: completed
 created: '2026-04-24'
 updated: '2026-04-24'
 started: '2026-04-24'
 commit_refs:
 - 942461dc93f48b02bf778fe37a28c1dd8d06b073
+- 6bd075f99c70010c679e2e3458e47f5c40660a48
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 7
-completed_tasks: 6
+completed_tasks: 7
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -34,6 +35,8 @@ model_usage:
   primary: sonnet
   external: []
 ui_touched: true
+runtime_smoke: skipped
+runtime_smoke_reason: Phase 5 is validation + observability + flag/retirement + docs with no new visible surface beyond what Phases 3-4 already smoked. 78 FE tests covering migrated surfaces pass; v2-flag legacy fallback is exercised by featureSurfaceFlag.test.ts. Operator should run the Phase 4 smoke checklist against `npm run dev` before relying on this phase in production.
 execution_model: batch-parallel
 plan_structure: independent
 tasks:
@@ -147,7 +150,7 @@ tasks:
 - id: P5-007
   description: Documentation - Update developer docs with feature surface contracts,
     cache policy, performance budgets, migration notes.
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   dependencies:
@@ -155,6 +158,12 @@ tasks:
   estimated_effort: 1 pt
   priority: medium
   assigned_model: haiku
+  started: 2026-04-24T10:16Z
+  completed: 2026-04-24T14:19Z
+  evidence:
+  - doc: docs/guides/feature-surface-architecture.md
+  verified_by:
+  - P5-007
 parallelization:
   batch_1:
   - P5-001
@@ -166,7 +175,7 @@ parallelization:
   - P5-006
   batch_3:
   - P5-007
-progress: 85
+progress: 100
 ---
 
 # Phase 5 Progress — Validation, Observability, Rollout

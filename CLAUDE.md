@@ -141,6 +141,7 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Planning modal-first navigation**: Route helpers in `lib/planning-routes.ts` enforce planning-page-local modals for features/artifacts. See feature guide at `.claude/worknotes/ccdash-planning-reskin-v2-interaction-performance-addendum/feature-guide.md`.
 - **Planning browser cache (SWR + LRU)**: Active-first, bounded, stale-while-revalidate cache in `services/planning.ts`. Invalidates on session/doc/link changes. See feature guide for cache patterns.
 - **Planning summary payload**: Backend `statusCounts`, `ctxPerPhase`, `tokenTelemetry` fields on planning query responses. See implementation plan § Data Contracts.
+- **Feature surface architecture (v2)**: Layered list → rollup → modal-section contracts with two-tier browser cache and unified invalidation bus. See `docs/guides/feature-surface-architecture.md` for hooks, cache policy, performance budgets, and migration patterns.
 - **Runtime smoke gate**: For UI or frontend changes, start the dev server and perform a browser smoke check before marking a phase complete. If runtime is unavailable, Phase N cannot be marked `completed` without an explicit `runtime_smoke: skipped` field and reason; a clean unit-test pass is not a substitute.
 - **Resilience-by-default**: Every new optional backend field requires an explicit FE fallback AC. Missing is a contract state, not a bug.
 
