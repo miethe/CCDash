@@ -5,6 +5,7 @@ import {
   projectFeaturesTopic,
   useLiveInvalidation,
 } from '../services/live';
+import { isFeatureSurfaceV2Enabled } from '../services/featureSurfaceFlag';
 import { useDataClient } from './DataClientContext';
 import { useAppEntityData } from './AppEntityDataContext';
 import { useAppSession } from './AppSessionContext';
@@ -14,6 +15,15 @@ interface AppRuntimeContextValue {
   error: string | null;
   runtimeStatus: RuntimeStatus | null;
   refreshAll: () => Promise<void>;
+  /**
+   * G1-001: Whether the v2 feature surface is active.
+   * When true, AppRuntimeContext skips the global feature refresh polling cycle
+   * (refreshFeatures / 30s + 5s) so ProjectBoard's useFeatureSurface can own its
+   * own surface cache independently.  Legacy consumers (SessionInspector, Dashboard)
+   * that read features from AppEntityDataContext continue to receive updates via
+   * refreshAll() when they call it explicitly.
+   */
+  featureSurfaceV2Active: boolean;
 }
 
 const POLL_INTERVAL_MS = 30_000;
@@ -37,6 +47,13 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
   const refreshAllRef = useRef<() => Promise<void>>(async () => undefined);
   const refreshFeaturesRef = useRef(entity.refreshFeatures);
+
+  // G1-001: Derive v2 flag from current runtimeStatus.  When v2 is active the
+  // global feature polling cycle is suppressed — ProjectBoard manages its own
+  // surface cache via useFeatureSurface + useLiveInvalidation.
+  // refreshFeatures() itself remains available on AppEntityDataContext for any
+  // legacy consumer (SessionInspector, Dashboard) that calls it explicitly.
+  const featureSurfaceV2Active = isFeatureSurfaceV2Enabled(runtimeStatus);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -66,7 +83,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           session.refreshProjects(),
           client.getHealth().then(payload => setRuntimeStatus(normalizeRuntimeStatus(payload))),
         ];
-        if (!isTestsRoute) {
+        // G1-001: Skip legacy feature refresh when v2 surface is active.
+        // ProjectBoard drives its own surface cache; legacy consumers still get
+        // feature data from refreshAll when explicitly triggered.
+        if (!isTestsRoute && !featureSurfaceV2Active) {
           tasksToRun.push(entity.refreshFeatures());
         }
         await Promise.all(tasksToRun);
@@ -89,7 +109,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         refreshAllInFlightRef.current = null;
       }
     }
-  }, [client, entity, isTestsRoute, session]);
+  }, [client, entity, featureSurfaceV2Active, isTestsRoute, session]);
 
   useEffect(() => {
     refreshAllRef.current = refreshAll;
@@ -99,7 +119,15 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     refreshFeaturesRef.current = entity.refreshFeatures;
   }, [entity.refreshFeatures]);
 
-  const featureLiveEnabled = Boolean(!isTestsRoute && session.activeProject?.id && isFeatureLiveUpdatesEnabled());
+  // G1-001: When v2 surface is active, disable the global feature live
+  // subscription here — ProjectBoard subscribes to feature topics independently
+  // via its own useLiveInvalidation → useFeatureSurface.invalidate() chain.
+  const featureLiveEnabled = Boolean(
+    !isTestsRoute
+    && !featureSurfaceV2Active
+    && session.activeProject?.id
+    && isFeatureLiveUpdatesEnabled(),
+  );
   const featureLiveStatus = useLiveInvalidation({
     topics: featureLiveEnabled && session.activeProject?.id ? [projectFeaturesTopic(session.activeProject.id)] : [],
     enabled: featureLiveEnabled,
@@ -119,7 +147,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, []);
 
   useEffect(() => {
-    if (isTestsRoute) {
+    // G1-001: When v2 surface is active, skip the legacy 5s feature polling
+    // fallback.  ProjectBoard handles invalidation via useLiveInvalidation wired
+    // directly into its useFeatureSurface hook (G1-002).
+    if (isTestsRoute || featureSurfaceV2Active) {
       return undefined;
     }
     if (featureLiveEnabled && !['backoff', 'closed'].includes(featureLiveStatus)) {
@@ -129,7 +160,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       void refreshFeaturesRef.current();
     }, FEATURE_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [featureLiveEnabled, featureLiveStatus, isTestsRoute]);
+  }, [featureLiveEnabled, featureLiveStatus, featureSurfaceV2Active, isTestsRoute]);
 
   return (
     <AppRuntimeContext.Provider
@@ -138,6 +169,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         error,
         runtimeStatus,
         refreshAll,
+        featureSurfaceV2Active,
       }}
     >
       {children}

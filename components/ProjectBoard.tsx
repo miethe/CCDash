@@ -4803,6 +4803,7 @@ export const ProjectBoard: React.FC = () => {
     rollupState: surfaceRollupState,
     cards: surfaceCards,
     rollups: surfaceRollups,
+    invalidate: invalidateSurface,
   } = useFeatureSurface({
     initialQuery: {
       projectId: activeProject?.id,
@@ -4816,6 +4817,27 @@ export const ProjectBoard: React.FC = () => {
     noCache: false,
     // P5-005: flag frozen at mount; hook picks v2 or legacy path once.
     featureSurfaceV2Enabled: v2Enabled,
+  });
+
+  // G1-002: Wire live invalidation directly into the surface cache so that
+  // feature/session/task live events bypass the global provider refresh cycle.
+  // Topics: per-project features + per-project ops (covers session/task changes).
+  // Only subscribed when v2 is active and live updates are enabled — when v2 is
+  // disabled the global AppRuntimeContext subscription handles invalidation.
+  const boardLiveEnabled = Boolean(
+    v2Enabled
+    && activeProject?.id
+    && isFeatureLiveUpdatesEnabled(),
+  );
+  useLiveInvalidation({
+    topics: boardLiveEnabled && activeProject?.id
+      ? [projectFeaturesTopic(activeProject.id)]
+      : [],
+    enabled: boardLiveEnabled,
+    pauseWhenHidden: true,
+    onInvalidate: () => {
+      invalidateSurface('all');
+    },
   });
 
   // Derive unique categories from surfaceCards (v1 source) when available,
