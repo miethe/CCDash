@@ -34,7 +34,7 @@ import {
     sharedLiveConnectionManager,
     type LiveConnectionStatus,
 } from '../services/live';
-import { getLegacyFeatureDetail, getLegacyFeatureLinkedSessions } from '../services/featureSurface';
+import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../services/featureSurface';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -3113,7 +3113,10 @@ const SessionFeaturesView: React.FC<{
         return { primary, related };
     }, [linkedFeatures]);
     const [expandedMainThreadsByFeatureId, setExpandedMainThreadsByFeatureId] = useState<Set<string>>(new Set());
-    const [mainThreadSessionsByFeatureId, setMainThreadSessionsByFeatureId] = useState<Record<string, FeatureExecutionSessionLink[]>>({});
+    const [mainThreadSessionsByFeatureId, setMainThreadSessionsByFeatureId] = useState<Record<string, LinkedFeatureSessionDTO[]>>({});
+    // P4-007: per-feature pagination cursors for the paginated session client
+    const [mainThreadSessionsHasMoreByFeatureId, setMainThreadSessionsHasMoreByFeatureId] = useState<Record<string, boolean>>({});
+    const [mainThreadSessionsNextOffsetByFeatureId, setMainThreadSessionsNextOffsetByFeatureId] = useState<Record<string, number>>({});
     const [mainThreadSessionsLoadingByFeatureId, setMainThreadSessionsLoadingByFeatureId] = useState<Record<string, boolean>>({});
     const [pendingFeatureInput, setPendingFeatureInput] = useState('');
     const featureInputListId = useMemo(
@@ -3135,29 +3138,39 @@ const SessionFeaturesView: React.FC<{
         });
     }, [onAddRelatedFeature, pendingFeatureInput]);
 
-    const loadRelatedMainThreadSessions = useCallback(async (featureId: string) => {
+    // P4-007: replaced getLegacyFeatureLinkedSessions fan-out with paginated
+    // getFeatureLinkedSessionPage. Each feature's sessions are fetched on-demand
+    // when the user expands the "Related Main-Thread Sessions" accordion, not eagerly.
+    const loadRelatedMainThreadSessions = useCallback(async (featureId: string, append = false) => {
         if (!featureId) return;
-        if (mainThreadSessionsByFeatureId[featureId]) return;
+        if (!append && mainThreadSessionsByFeatureId[featureId]) return;
         if (mainThreadSessionsLoadingByFeatureId[featureId]) return;
 
+        const nextOffset = append ? (mainThreadSessionsNextOffsetByFeatureId[featureId] ?? 0) : 0;
         setMainThreadSessionsLoadingByFeatureId(prev => ({ ...prev, [featureId]: true }));
         try {
-            const data = await getLegacyFeatureLinkedSessions<FeatureExecutionSessionLink[]>(featureId);
-            const sessions = (Array.isArray(data) ? data : []) as FeatureExecutionSessionLink[];
+            const page = await getFeatureLinkedSessionPage(featureId, { limit: 20, offset: nextOffset });
             const normalizedCurrentId = currentSessionId.trim();
-            const mainThreads = sessions
+            const mainThreads = (page.items || [])
                 .filter(session => !session?.isSubthread)
-                .filter(session => String(session?.sessionId || '').trim() !== normalizedCurrentId)
-                .sort((a, b) => toEpoch(b?.startedAt || '') - toEpoch(a?.startedAt || ''));
+                .filter(session => String(session?.sessionId || '').trim() !== normalizedCurrentId);
 
-            setMainThreadSessionsByFeatureId(prev => ({ ...prev, [featureId]: mainThreads }));
+            setMainThreadSessionsByFeatureId(prev => ({
+                ...prev,
+                [featureId]: append ? [...(prev[featureId] || []), ...mainThreads] : mainThreads,
+            }));
+            setMainThreadSessionsHasMoreByFeatureId(prev => ({ ...prev, [featureId]: page.hasMore }));
+            setMainThreadSessionsNextOffsetByFeatureId(prev => ({
+                ...prev,
+                [featureId]: nextOffset + mainThreads.length,
+            }));
         } catch (error) {
             console.error(`Failed to load related main-thread sessions for feature ${featureId}:`, error);
-            setMainThreadSessionsByFeatureId(prev => ({ ...prev, [featureId]: [] }));
+            if (!append) setMainThreadSessionsByFeatureId(prev => ({ ...prev, [featureId]: [] }));
         } finally {
             setMainThreadSessionsLoadingByFeatureId(prev => ({ ...prev, [featureId]: false }));
         }
-    }, [currentSessionId, mainThreadSessionsByFeatureId, mainThreadSessionsLoadingByFeatureId]);
+    }, [currentSessionId, mainThreadSessionsByFeatureId, mainThreadSessionsLoadingByFeatureId, mainThreadSessionsNextOffsetByFeatureId]);
 
     const toggleRelatedMainThreadSessions = useCallback((featureId: string) => {
         const isExpanded = expandedMainThreadsByFeatureId.has(featureId);
@@ -3268,6 +3281,8 @@ const SessionFeaturesView: React.FC<{
         const isExpanded = expandedMainThreadsByFeatureId.has(feature.featureId);
         const mainThreads = mainThreadSessionsByFeatureId[feature.featureId] || [];
         const isLoadingMainThreads = Boolean(mainThreadSessionsLoadingByFeatureId[feature.featureId]);
+        // P4-007: pagination state for this feature's session page
+        const hasMoreMainThreads = Boolean(mainThreadSessionsHasMoreByFeatureId[feature.featureId]);
         return (
             <div key={feature.featureId} className="group/feature-link bg-panel border border-panel-border rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -3377,18 +3392,28 @@ const SessionFeaturesView: React.FC<{
                                 >
                                     <div className="flex items-center justify-between gap-2">
                                         <div className="truncate text-[11px] text-indigo-300 font-mono">{session.sessionId}</div>
-                                        <div className="text-[10px] text-muted-foreground">
-                                            {Math.round((session.confidence || 0) * 100)}%
-                                        </div>
                                     </div>
                                     <div className="truncate text-[11px] text-foreground mt-0.5">
                                         {session.title || session.sessionId}
                                     </div>
                                     <div className="text-[10px] text-muted-foreground mt-1">
-                                        {(session.workflowType || session.sessionType || 'session')} · {session.startedAt ? new Date(session.startedAt).toLocaleString() : 'Unknown start'}
+                                        {(session.workflowType || 'session')} · {session.startedAt ? new Date(session.startedAt).toLocaleString() : 'Unknown start'}
                                     </div>
                                 </button>
                             ))}
+                            {/* P4-007: load-more pagination control */}
+                            {!isLoadingMainThreads && hasMoreMainThreads && (
+                                <button
+                                    type="button"
+                                    onClick={() => void loadRelatedMainThreadSessions(feature.featureId, true)}
+                                    className="w-full rounded-md border border-dashed border-indigo-500/30 bg-surface-overlay/50 px-2.5 py-2 text-[11px] text-indigo-300 hover:bg-indigo-500/10 transition-colors"
+                                >
+                                    Load more sessions
+                                </button>
+                            )}
+                            {isLoadingMainThreads && mainThreads.length > 0 && (
+                                <div className="text-[11px] text-muted-foreground text-center py-1">Loading more...</div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -7508,7 +7533,16 @@ const SessionDetail: React.FC<{
         };
     }, [session.id]);
 
+    // P4-007: gate per-feature getLegacyFeatureDetail calls behind activeTab === 'features'.
+    // Previously this fired eagerly on every mount (one HTTP call per linked feature).
+    // Now it only fires when the features tab is open — demand-driven, not eager.
+    //
+    // TODO(P5-001): Replace getLegacyFeatureDetail fan-out entirely by extending
+    // FeatureCardDTO to include phase/task summaries (or a dedicated
+    // /api/v1/features/{id}/phases endpoint). Once available, drop this effect and
+    // derive taskHierarchy from FeatureCardDTO data fetched by useFeatureSurface.
     useEffect(() => {
+        if (activeTab !== 'features') return;
         let cancelled = false;
         const featureIds = Array.from(new Set(linkedFeatureLinks.map(link => link.featureId).filter(Boolean)));
 
@@ -7553,7 +7587,7 @@ const SessionDetail: React.FC<{
         return () => {
             cancelled = true;
         };
-    }, [linkedFeatureLinks]);
+    }, [activeTab, linkedFeatureLinks]);
 
     const availableFeatures = useMemo(
         () => [...features].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
