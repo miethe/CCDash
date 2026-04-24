@@ -1056,6 +1056,12 @@ export async function getLegacyFeatureDetail<T = unknown>(featureId: string): Pr
  *
  * The feature ID is percent-encoded so that IDs containing /, spaces, #, ?, and
  * & are transmitted correctly.
+ *
+ * @deprecated Use {@link getFeatureLinkedSessionPage} instead.
+ *   P5-006: All production call sites have been migrated. This export is retained
+ *   for test harnesses that directly exercise the legacy endpoint contract
+ *   (see components/__tests__/FeatureModalEncodedIds.test.tsx). It will be
+ *   removed when the legacy /api/features/{id}/linked-sessions route is retired.
  */
 export async function getLegacyFeatureLinkedSessions<T = unknown[]>(featureId: string): Promise<T> {
   return legacyFetch<T>(`/${encodeURIComponent(featureId)}/linked-sessions`);

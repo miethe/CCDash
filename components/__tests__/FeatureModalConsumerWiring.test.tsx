@@ -112,7 +112,8 @@ describe('P4-010 — useFeatureModalData hook wired in modal component', () => {
   });
 
   it('modalSections is instantiated via useFeatureModalData(feature.id)', () => {
-    expect(PROJECTBOARD_SRC).toContain('const modalSections = useFeatureModalData(feature.id)');
+    // P5-005: options object added for featureSurfaceV2Enabled flag wiring.
+    expect(PROJECTBOARD_SRC).toContain('useFeatureModalData(feature.id,');
   });
 
   it('TabStateView is imported and used in the modal', () => {

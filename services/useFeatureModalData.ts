@@ -35,6 +35,8 @@ import {
   getFeatureModalOverview,
   getFeatureModalSection,
   getFeatureLinkedSessionPage,
+  getLegacyFeatureDetail,
+  getLegacyFeatureLinkedSessions,
   type FeatureModalOverviewDTO,
   type FeatureModalSectionDTO,
   type LinkedFeatureSessionPageDTO,
@@ -299,6 +301,21 @@ export interface UseFeatureModalDataOptions {
   sectionParams?: FeatureModalSectionParams;
   /** Default params forwarded to the sessions endpoint. */
   sessionParams?: SessionPageParams;
+  /**
+   * P5-005: Feature-surface v2 rollout flag.
+   *
+   * When false the hook routes modal data through the legacy
+   * `getLegacyFeatureDetail` + `getLegacyFeatureLinkedSessions` path instead of
+   * the typed v2 section endpoints.  The overview section carries the raw legacy
+   * payload; other sections fall back to an empty-items DTO so tab renders
+   * degrade gracefully.
+   *
+   * The flag is frozen at mount time to prevent a re-mount loop.  Callers
+   * should read it once via `isFeatureSurfaceV2Enabled(runtimeStatus)`.
+   *
+   * Default: true.
+   */
+  featureSurfaceV2Enabled?: boolean;
 }
 
 // ── Return type ───────────────────────────────────────────────────────────────
@@ -351,7 +368,13 @@ export function useFeatureModalData(
     cacheAdapter,
     sectionParams = {},
     sessionParams = {},
+    featureSurfaceV2Enabled: featureSurfaceV2EnabledOption = true,
   } = options;
+
+  // P5-005: Freeze the flag at mount — subsequent re-renders must not change
+  // the data path mid-lifecycle (avoids a re-mount / stale-state loop).
+  const featureSurfaceV2EnabledRef = useRef(featureSurfaceV2EnabledOption);
+  const featureSurfaceV2Enabled = featureSurfaceV2EnabledRef.current;
 
   // When cacheAdapter is explicitly null, disable caching.
   const noCache = cacheAdapter === null;
@@ -471,7 +494,57 @@ export function useFeatureModalData(
       try {
         let data: ModalSectionData;
 
-        if (tab === 'overview') {
+        if (!featureSurfaceV2Enabled) {
+          // P5-005: v2 disabled — route through legacy endpoints.
+          // overview and sessions tabs are the only ones ProjectBoard actively
+          // fetches; other tabs produce a minimal empty DTO so they render
+          // gracefully without requiring separate legacy implementations.
+          if (tab === 'overview') {
+            // getLegacyFeatureDetail returns the raw Feature shape; cast to
+            // unknown so downstream components that accept FeatureModalOverviewDTO
+            // receive it — they will degrade gracefully on missing v2 fields.
+            const raw = await getLegacyFeatureDetail<unknown>(featureId);
+            data = raw as FeatureModalOverviewDTO;
+          } else if (tab === 'sessions') {
+            const raw = await getLegacyFeatureLinkedSessions<unknown[]>(featureId);
+            // Wrap the legacy flat array in the LinkedFeatureSessionPageDTO shape
+            // so consuming code (sessionPagination seed below) behaves correctly.
+            const items = Array.isArray(raw) ? raw : [];
+            data = {
+              items: items as LinkedFeatureSessionPageDTO['items'],
+              total: items.length,
+              offset: 0,
+              limit: items.length,
+              hasMore: false,
+              nextCursor: null,
+              enrichment: {
+                includes: [],
+                logsRead: false,
+                commandCountIncluded: false,
+                taskRefsIncluded: false,
+                threadChildrenIncluded: false,
+              },
+              precision: 'eventually_consistent' as const,
+              freshness: null,
+            } satisfies LinkedFeatureSessionPageDTO;
+          } else {
+            // Non-critical sections: produce an empty section DTO.
+            const sectionKey = TAB_TO_SECTION_KEY[tab as keyof typeof TAB_TO_SECTION_KEY];
+            data = {
+              featureId,
+              section: sectionKey ?? tab as FeatureModalSectionKey,
+              title: '',
+              items: [],
+              total: 0,
+              offset: 0,
+              limit: 0,
+              hasMore: false,
+              includes: [],
+              precision: 'eventually_consistent' as const,
+              freshness: null,
+            } satisfies FeatureModalSectionDTO;
+          }
+        } else if (tab === 'overview') {
           data = await getFeatureModalOverview(featureId);
         } else if (tab === 'sessions') {
           const p: LinkedSessionPageParams = {

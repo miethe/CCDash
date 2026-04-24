@@ -73,6 +73,8 @@ export interface RuntimeStatus {
   storageCanonicalStore: string;
   storageSchema: string;
   canonicalSessionStore: string;
+  /** Whether the v2 feature-surface data path is active. True by default. */
+  featureSurfaceV2Enabled: boolean;
 }
 
 function normalizeText(value: unknown, fallback: string): string {
@@ -243,5 +245,9 @@ export function normalizeRuntimeStatus(health: RuntimeHealthResponse): RuntimeSt
     storageCanonicalStore: normalizeText(health.storageCanonicalStore, 'unknown'),
     storageSchema: normalizeText(health.storageSchema, 'n/a'),
     canonicalSessionStore: normalizeText(health.canonicalSessionStore, 'unknown'),
+    // Default true: the v2 path is the happy path; false only when explicitly disabled.
+    featureSurfaceV2Enabled: typeof health.featureSurfaceV2Enabled === 'boolean'
+      ? health.featureSurfaceV2Enabled
+      : true,
   };
 }

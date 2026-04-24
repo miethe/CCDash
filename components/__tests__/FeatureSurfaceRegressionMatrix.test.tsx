@@ -194,6 +194,19 @@ vi.mock('../../services/geminiService', () => ({
   generateDashboardInsight: vi.fn().mockResolvedValue('Mock insight'),
 }));
 
+vi.mock('../../contexts/AppRuntimeContext', () => ({
+  useAppRuntime: () => ({
+    loading: false,
+    error: null,
+    runtimeStatus: null,
+    refreshAll: vi.fn(),
+  }),
+}));
+
+vi.mock('../../services/featureSurfaceFlag', () => ({
+  isFeatureSurfaceV2Enabled: vi.fn(() => false),
+}));
+
 vi.mock('../../services/featureSurface', () => ({
   getLegacyFeatureDetail: vi.fn().mockResolvedValue(null),
   getLegacyFeatureLinkedSessions: vi.fn().mockResolvedValue([]),
@@ -513,13 +526,24 @@ describe('P5-004 Matrix — ProjectBoard source: no eager linked-sessions call',
     expect(hasEagerLinkedSessionsInSource(src)).toBe(false);
   });
 
-  it('getLegacyFeatureLinkedSessions is gated behind activeTab === sessions', () => {
+  it('refreshLinkedSessions callback exists and is gated behind activeTab === sessions (P5-006: now uses v2 API)', () => {
+    // refreshLinkedSessions still exists but now calls getFeatureLinkedSessionPage
     const callbackIdx = src.indexOf('const refreshLinkedSessions = useCallback');
     expect(callbackIdx).toBeGreaterThan(-1);
 
     // The effect that calls refreshLinkedSessions must check activeTab
     const gateMarker = "activeTab === 'sessions' && !sessionsFetchedRef.current";
     expect(src).toContain(gateMarker);
+  });
+
+  it('P5-006: getLegacyFeatureLinkedSessions is NOT called in ProjectBoard production code', () => {
+    // After P5-006 migration, refreshLinkedSessions uses getFeatureLinkedSessionPage.
+    // The legacy call must be absent.
+    expect(hasLegacyLinkedSessionsCall(src)).toBe(false);
+  });
+
+  it('P5-006: getFeatureLinkedSessionPage is imported in ProjectBoard', () => {
+    expect(src).toContain('getFeatureLinkedSessionPage');
   });
 
   it('each refreshLinkedSessions() call site has a guard in surrounding context', () => {

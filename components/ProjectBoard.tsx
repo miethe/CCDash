@@ -62,9 +62,11 @@ import {
   rollupToSessionSummary,
 } from './featureCardAdapters';
 import type { FeatureCardDTO } from '../services/featureSurface';
-import { getLegacyFeatureDetail, getLegacyFeatureLinkedSessions, getFeatureTaskSource } from '../services/featureSurface';
+import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, getFeatureTaskSource } from '../services/featureSurface';
 import { useFeatureModalData, type ModalTabId } from '../services/useFeatureModalData';
 import { TabStateView } from './FeatureModal/TabStateView';
+import { isFeatureSurfaceV2Enabled } from '../services/featureSurfaceFlag';
+import { useAppRuntime } from '../contexts/AppRuntimeContext';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -1385,6 +1387,10 @@ export const ProjectBoardFeatureModal = ({
 }) => {
   const navigate = useNavigate();
   const { activeProject, updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
+  // P5-005: Read the v2 flag once at mount so both the modal section hook and
+  // the legacy refresh callbacks pick a consistent path for this modal instance.
+  const { runtimeStatus: modalRuntimeStatus } = useAppRuntime();
+  const modalV2Enabled = isFeatureSurfaceV2Enabled(modalRuntimeStatus);
   const [activeTab, setActiveTab] = useState<FeatureModalTab>(initialTab);
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -1417,7 +1423,8 @@ export const ProjectBoardFeatureModal = ({
   // `fullFeature` + `linkedSessionLinks` state above remain for compatibility with
   // existing sub-components; sections loaded here provide supplementary TabStateView
   // states without replacing the existing data flow in this task.
-  const modalSections = useFeatureModalData(feature.id);
+  // P5-005: Pass v2 flag so the hook picks legacy path when disabled.
+  const modalSections = useFeatureModalData(feature.id, { featureSurfaceV2Enabled: modalV2Enabled });
 
   const refreshFeatureDetail = useCallback(async () => {
     const requestId = ++featureDetailRequestIdRef.current;
@@ -1430,21 +1437,55 @@ export const ProjectBoardFeatureModal = ({
     }
   }, [feature.id]);
 
+  // P5-006: refreshLinkedSessions now uses the paginated v2 API (getFeatureLinkedSessionPage)
+  // instead of the retired legacy endpoint. The existing lazy gate (activeTab === 'sessions' &&
+  // !sessionsFetchedRef.current) is preserved unchanged.  We fetch the first page (limit 50)
+  // for the initial load; subsequent pages are pulled by the pagination accumulator in P4-004.
   const refreshLinkedSessions = useCallback(async () => {
     const requestId = ++linkedSessionsRequestIdRef.current;
     try {
-      const data = await getLegacyFeatureLinkedSessions<FeatureSessionLink[]>(feature.id);
+      const page = await getFeatureLinkedSessionPage(feature.id, { limit: 50, offset: 0 });
       if (requestId !== linkedSessionsRequestIdRef.current) return;
-      const rows = Array.isArray(data) ? (data as FeatureSessionLink[]) : [];
       const bestBySession = new Map<string, FeatureSessionLink>();
-      rows.forEach(row => {
-        const sessionId = String(row.sessionId || '').trim();
-        if (!sessionId) return;
+      for (const dto of page.items) {
+        const sessionId = String(dto.sessionId || '').trim();
+        if (!sessionId) continue;
+        const confidence = dto.isPrimaryLink ? 0.9 : 0.5;
         const existing = bestBySession.get(sessionId);
-        if (!existing || row.confidence > existing.confidence) {
-          bestBySession.set(sessionId, row);
+        if (!existing || confidence > existing.confidence) {
+          bestBySession.set(sessionId, {
+            sessionId: dto.sessionId,
+            title: dto.title,
+            confidence,
+            reasons: dto.reasons ?? [],
+            commands: dto.commands ?? [],
+            commitHashes: [],
+            status: dto.status,
+            model: dto.model,
+            modelProvider: dto.modelProvider,
+            modelFamily: dto.modelFamily,
+            startedAt: dto.startedAt,
+            endedAt: dto.endedAt,
+            updatedAt: dto.updatedAt,
+            totalCost: dto.totalCost,
+            observedTokens: dto.observedTokens,
+            durationSeconds: 0,
+            parentSessionId: dto.parentSessionId ?? null,
+            rootSessionId: dto.rootSessionId,
+            isSubthread: dto.isSubthread,
+            isPrimaryLink: dto.isPrimaryLink,
+            workflowType: dto.workflowType,
+            relatedPhases: [],
+            relatedTasks: (dto.relatedTasks ?? []).map(t => ({
+              taskId: t.taskId,
+              taskTitle: t.taskTitle,
+              phaseId: t.phaseId,
+              phase: t.phase,
+              matchedBy: t.matchedBy,
+            })),
+          });
         }
-      });
+      }
       setLinkedSessionLinks(Array.from(bestBySession.values()));
     } catch {
       // Keep previous linked sessions on transient failures.
@@ -1488,9 +1529,9 @@ export const ProjectBoardFeatureModal = ({
 
   // P4-004: Adapt LinkedFeatureSessionDTO items from the paginated accumulator
   // into FeatureSessionLink and merge into linkedSessionLinks when new pages load.
-  // Only items not already present (by sessionId) are appended; the existing
-  // first-page load from refreshLinkedSessions (legacy API) remains authoritative
-  // for richly-populated items.
+  // Only items not already present (by sessionId) are appended; the first-page
+  // load via refreshLinkedSessions (P5-006: now v2 getFeatureLinkedSessionPage)
+  // remains authoritative for the initial result set.
   const prevAccumulatedCountRef = useRef(0);
   useEffect(() => {
     const { accumulatedItems } = modalSections.sessionPagination;
@@ -4685,6 +4726,9 @@ function boardSortToApiSort(sort: 'date' | 'progress' | 'tasks'): string {
 
 export const ProjectBoard: React.FC = () => {
   const { features: apiFeatures, activeProject, updateFeatureStatus } = useData();
+  // P5-005: Read the v2 flag once at mount so the hook picks a path and keeps it.
+  const { runtimeStatus } = useAppRuntime();
+  const v2Enabled = isFeatureSurfaceV2Enabled(runtimeStatus);
   const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
@@ -4770,6 +4814,8 @@ export const ProjectBoard: React.FC = () => {
       sortDirection: 'desc',
     },
     noCache: false,
+    // P5-005: flag frozen at mount; hook picks v2 or legacy path once.
+    featureSurfaceV2Enabled: v2Enabled,
   });
 
   // Derive unique categories from surfaceCards (v1 source) when available,

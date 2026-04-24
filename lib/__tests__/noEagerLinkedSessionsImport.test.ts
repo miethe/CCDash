@@ -20,10 +20,8 @@
  *     permitted location.
  *
  * Allowlist rationale:
- *   - `services/featureSurface.ts` — definition + export site (both fns live here)
- *   - `components/ProjectBoard.tsx` — uses getLegacyFeatureLinkedSessions inside
- *     refreshLinkedSessions callback, gated behind activeTab check; retirement
- *     target for P5-006
+ *   - `services/featureSurface.ts` — definition + export site only; P5-006
+ *     completed: ProjectBoard.tsx migrated to getFeatureLinkedSessionPage
  *
  * Pattern inspired by themeFoundationGuardrails.test.ts and the other
  * architecture-guardrail tests under lib/__tests__/.
@@ -47,11 +45,14 @@ const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 /**
  * Production files allowed to import getLegacyFeatureLinkedSessions.
  * Each entry is a path relative to the repo root.
- * P5-006 will remove ProjectBoard.tsx from this list.
+ *
+ * P5-006 (completed): ProjectBoard.tsx migrated to getFeatureLinkedSessionPage.
+ * Only the definition site itself remains — it is the export location, not a
+ * production consumer.  The set is intentionally kept for future allowance if
+ * any new justified legacy consumer needs to be documented.
  */
 const ALLOWED_LEGACY_IMPORTERS = new Set([
-  'services/featureSurface.ts',         // definition site — exports the function
-  'components/ProjectBoard.tsx',         // gated behind activeTab === 'sessions'; P5-006 retirement target
+  'services/featureSurface.ts',         // definition site — exports the deprecated symbol
 ]);
 
 /**
@@ -273,44 +274,47 @@ function detectClassBViolations(files: string[]): Violation[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CLASS C detector — allowlisted files must keep their gates
+// CLASS C detector — zero production callers (P5-006 completed)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Verify that ProjectBoard.tsx (on the allowlist) still has the required
- * lazy-sessions gate.  If the gate marker disappears, the call is now eager.
+ * P5-006 (completed): ProjectBoard.tsx has been migrated to getFeatureLinkedSessionPage.
+ * The CLASS C gate check is replaced with a hard assertion that no production file
+ * imports getLegacyFeatureLinkedSessions outside the definition site.
+ *
+ * This function is retained as a named entry point so the test suite structure
+ * is unchanged (CLASS A / B / C labelling). It now verifies the zero-importer
+ * invariant rather than the lazy-sessions gate.
  */
 function detectGateMissing(): Violation[] {
+  // Collect all production importers except the definition site itself.
   const violations: Violation[] = [];
 
-  const boardPath = resolve(ROOT, 'components/ProjectBoard.tsx');
-  let boardSrc: string;
-  try {
-    boardSrc = readSource(boardPath);
-  } catch {
-    violations.push({
-      file: 'components/ProjectBoard.tsx',
-      lineNo: 0,
-      text: '(file not found)',
-      reason:
-        'ProjectBoard.tsx is on the ALLOWED_LEGACY_IMPORTERS allowlist but the file was not found. ' +
-        'Remove it from the allowlist if it has been deleted or renamed.',
-    });
-    return violations;
-  }
+  for (const absPath of productionFiles) {
+    const relPath = relative(ROOT, absPath);
+    // The definition site is allowed — it exports the symbol.
+    if (relPath === 'services/featureSurface.ts') continue;
 
-  // The gate: refreshLinkedSessions must only fire when activeTab === 'sessions'
-  const hasGate = boardSrc.includes("activeTab === 'sessions' && !sessionsFetchedRef.current");
-  if (!hasGate) {
-    violations.push({
-      file: 'components/ProjectBoard.tsx',
-      lineNo: 0,
-      text: '(gate marker absent)',
-      reason:
-        "ProjectBoard.tsx getLegacyFeatureLinkedSessions call requires the guard " +
-        "`activeTab === 'sessions' && !sessionsFetchedRef.current`. " +
-        'The marker was not found — the call may now be eager. Retire via P5-006.',
-    });
+    const source = readSource(absPath);
+    const lines = source.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes('getLegacyFeatureLinkedSessions')) continue;
+      // Must be an import statement, not a comment or test description string.
+      if (!(line.includes('import') || line.includes('from'))) continue;
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue;
+
+      violations.push({
+        file: relPath,
+        lineNo: i + 1,
+        text: trimmed.slice(0, 120),
+        reason:
+          'P5-006 completed: no production file may import getLegacyFeatureLinkedSessions. ' +
+          'Use getFeatureLinkedSessionPage instead.',
+      });
+    }
   }
 
   return violations;
@@ -352,11 +356,11 @@ describe('Architecture guardrail: no eager linked-sessions imports (P5-004)', ()
     ).toHaveLength(0);
   });
 
-  it('CLASS C — ProjectBoard.tsx lazy-sessions gate is still in place', () => {
+  it('CLASS C — zero production files import getLegacyFeatureLinkedSessions (P5-006 hard gate)', () => {
     const violations = detectGateMissing();
     expect(
       violations,
-      `Lazy-sessions gate missing:\n\n${formatViolations(violations)}\n`,
+      `Unapproved getLegacyFeatureLinkedSessions production importer found after P5-006 retirement:\n\n${formatViolations(violations)}\n`,
     ).toHaveLength(0);
   });
 

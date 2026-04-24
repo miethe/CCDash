@@ -13,12 +13,13 @@ status: pending
 created: '2026-04-24'
 updated: '2026-04-24'
 started: '2026-04-24'
-commit_refs: []
+commit_refs:
+- 942461dc93f48b02bf778fe37a28c1dd8d06b073
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 7
-completed_tasks: 4
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -109,7 +110,7 @@ tasks:
 - id: P5-005
   description: Feature Flag Rollout - Flag-controlled switch and rollback plan for
     board and modal migration; v2 enable/disable without code changes.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   dependencies:
@@ -117,10 +118,18 @@ tasks:
   estimated_effort: 1 pt
   priority: high
   assigned_model: sonnet
+  started: 2026-04-24T10:05Z
+  completed: 2026-04-24T14:16Z
+  evidence:
+  - test: backend/tests/test_feature_surface_v2_flag.py
+  - test: services/__tests__/featureSurfaceFlag.test.ts
+  - doc: docs/guides/feature-surface-v2-rollback.md
+  verified_by:
+  - P5-005
 - id: P5-006
   description: Legacy Path Inventory & Retirement - Grep remaining eager /api/features/{id}/linked-sessions
     callers; migrate or document as intentional legacy; zero undocumented callers.
-  status: pending
+  status: completed
   assigned_to:
   - lead-architect
   dependencies:
@@ -128,6 +137,13 @@ tasks:
   estimated_effort: 2 pts
   priority: high
   assigned_model: sonnet
+  started: 2026-04-24T10:05Z
+  completed: 2026-04-24T14:16Z
+  evidence:
+  - test: lib/__tests__/noEagerLinkedSessionsImport.test.ts
+  - test: components/__tests__/FeatureSurfaceRegressionMatrix.test.tsx
+  verified_by:
+  - P5-006
 - id: P5-007
   description: Documentation - Update developer docs with feature surface contracts,
     cache policy, performance budgets, migration notes.
@@ -150,7 +166,7 @@ parallelization:
   - P5-006
   batch_3:
   - P5-007
-progress: 57
+progress: 85
 ---
 
 # Phase 5 Progress — Validation, Observability, Rollout

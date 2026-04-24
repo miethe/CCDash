@@ -42,6 +42,8 @@ export interface RuntimeHealthResponse {
   storageCanonicalStore?: string;
   storageSchema?: string;
   canonicalSessionStore?: string;
+  /** Feature-surface v2 data path rollout toggle. Defaults to true when absent. */
+  featureSurfaceV2Enabled?: boolean;
 }
 
 export interface RuntimeProbeReasonResponse {
