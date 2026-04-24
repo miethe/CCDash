@@ -16,6 +16,7 @@ started: '2026-04-24'
 commit_refs:
 - 942461dc93f48b02bf778fe37a28c1dd8d06b073
 - 6bd075f99c70010c679e2e3458e47f5c40660a48
+- c69712922a109019cd227e2865c3d5f9170d3a88
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
@@ -36,7 +37,11 @@ model_usage:
   external: []
 ui_touched: true
 runtime_smoke: skipped
-runtime_smoke_reason: Phase 5 is validation + observability + flag/retirement + docs with no new visible surface beyond what Phases 3-4 already smoked. 78 FE tests covering migrated surfaces pass; v2-flag legacy fallback is exercised by featureSurfaceFlag.test.ts. Operator should run the Phase 4 smoke checklist against `npm run dev` before relying on this phase in production.
+runtime_smoke_reason: Phase 5 is validation + observability + flag/retirement + docs
+  with no new visible surface beyond what Phases 3-4 already smoked. 78 FE tests covering
+  migrated surfaces pass; v2-flag legacy fallback is exercised by featureSurfaceFlag.test.ts.
+  Operator should run the Phase 4 smoke checklist against `npm run dev` before relying
+  on this phase in production.
 execution_model: batch-parallel
 plan_structure: independent
 tasks:
