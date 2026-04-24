@@ -26,6 +26,7 @@ import type {
 import type { AgentQueryEnvelope } from '../types';
 import type { PlanningStatusBucket } from './planningRoutes';
 import { subscribeToFeatureWrites } from './featureCacheBus';
+import { emitCacheTelemetry } from './telemetry';
 
 const API_BASE = '/api/agent/planning';
 const DEFAULT_PROJECT_CACHE_KEY = '__default__';
@@ -154,15 +155,31 @@ function getFreshnessBucket(projectCache: PlanningBrowserProjectCache, freshness
   return created;
 }
 
+function _planningKeyBucket(
+  payloadType: PlanningBrowserCachePayloadType,
+): 'summary' | 'facets' | 'list' | 'other' {
+  if (payloadType === 'summary') return 'summary';
+  if (payloadType === 'facets') return 'facets';
+  if (payloadType === 'list') return 'list';
+  return 'other';
+}
+
 function findLatestCacheEntry<T>(
   projectCache: PlanningBrowserProjectCache,
   payloadType: PlanningBrowserCachePayloadType,
 ): PlanningBrowserCacheEntry<T> | null {
   const latestFreshness = projectCache.latestFreshness;
-  if (!latestFreshness) return null;
+  if (!latestFreshness) {
+    emitCacheTelemetry({ cache: 'planning', event: 'miss', keyBucket: _planningKeyBucket(payloadType) });
+    return null;
+  }
   const bucket = projectCache.freshnessBuckets.get(latestFreshness);
   const entry = bucket?.payloads.get(payloadType);
-  if (!entry) return null;
+  if (!entry) {
+    emitCacheTelemetry({ cache: 'planning', event: 'miss', keyBucket: _planningKeyBucket(payloadType) });
+    return null;
+  }
+  emitCacheTelemetry({ cache: 'planning', event: 'hit', keyBucket: _planningKeyBucket(payloadType) });
   touchMapKey(projectCache.freshnessBuckets, latestFreshness);
   touchMapKey(bucket.payloads, payloadType);
   return entry as PlanningBrowserCacheEntry<T>;
@@ -184,6 +201,7 @@ function storeCacheEntry<T>(
   touchMapKey(projectCache.freshnessBuckets, freshness);
   touchMapKey(PLANNING_BROWSER_CACHE, projectKey);
   trimMapToLimit(PLANNING_BROWSER_CACHE, PLANNING_BROWSER_CACHE_LIMITS.projects);
+  emitCacheTelemetry({ cache: 'planning', event: 'set', keyBucket: _planningKeyBucket(payloadType) });
   return entry;
 }
 

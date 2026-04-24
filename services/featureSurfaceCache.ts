@@ -24,6 +24,7 @@
 
 import type { CacheEntry, FeatureSurfaceCacheAdapter } from './useFeatureSurface';
 import { subscribeToFeatureWrites } from './featureCacheBus';
+import { emitCacheTelemetry } from './telemetry';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -143,11 +144,18 @@ export class FeatureSurfaceCache implements FeatureSurfaceCacheAdapter {
   // ── FeatureSurfaceCacheAdapter (list tier) ──────────────────────────────────
 
   get(key: string): CacheEntry | undefined {
-    return this._listCache.get(key);
+    const entry = this._listCache.get(key);
+    emitCacheTelemetry({
+      cache: 'featureSurface',
+      event: entry !== undefined ? 'hit' : 'miss',
+      keyBucket: 'list',
+    });
+    return entry;
   }
 
   set(key: string, entry: CacheEntry): void {
     this._listCache.set(key, entry);
+    emitCacheTelemetry({ cache: 'featureSurface', event: 'set', keyBucket: 'list' });
   }
 
   delete(key: string): void {
@@ -176,12 +184,19 @@ export class FeatureSurfaceCache implements FeatureSurfaceCacheAdapter {
 
   getRollup(key: string): RollupCacheEntry | undefined {
     const entry = this._rollupCache.get(key);
+    const isStale = entry !== undefined && Date.now() - entry.timestamp > this._rollupTtlMs;
+    emitCacheTelemetry({
+      cache: 'featureSurface',
+      event: entry === undefined ? 'miss' : isStale ? 'stale' : 'hit',
+      keyBucket: 'rollup',
+    });
     if (!entry) return undefined;
     return entry;
   }
 
   setRollup(key: string, entry: RollupCacheEntry): void {
     this._rollupCache.set(key, entry);
+    emitCacheTelemetry({ cache: 'featureSurface', event: 'set', keyBucket: 'rollup' });
   }
 
   isRollupStale(key: string): boolean {
