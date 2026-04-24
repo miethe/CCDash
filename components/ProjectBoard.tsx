@@ -63,7 +63,7 @@ import {
 } from './featureCardAdapters';
 import type { FeatureCardDTO } from '../services/featureSurface';
 import { getLegacyFeatureDetail, getLegacyFeatureLinkedSessions, getFeatureTaskSource } from '../services/featureSurface';
-import { useFeatureModalData } from '../services/useFeatureModalData';
+import { useFeatureModalData, type ModalTabId } from '../services/useFeatureModalData';
 import { TabStateView } from './FeatureModal/TabStateView';
 
 interface FeatureSessionLink {
@@ -1465,6 +1465,8 @@ export const ProjectBoardFeatureModal = ({
     setViewingDoc(null);
     // P4-003: Reset session fetch guard so Sessions tab re-fetches for the new feature.
     sessionsFetchedRef.current = false;
+    // P4-004: Reset pagination accumulator pointer on feature change.
+    prevAccumulatedCountRef.current = 0;
     refreshFeatureDetail();
     // NOTE: linked sessions are NOT fetched here (P4-003).
     // They are loaded lazily on first Sessions tab activation.
@@ -1483,6 +1485,63 @@ export const ProjectBoardFeatureModal = ({
       void refreshLinkedSessions();
     }
   }, [activeTab, refreshLinkedSessions]);
+
+  // P4-004: Adapt LinkedFeatureSessionDTO items from the paginated accumulator
+  // into FeatureSessionLink and merge into linkedSessionLinks when new pages load.
+  // Only items not already present (by sessionId) are appended; the existing
+  // first-page load from refreshLinkedSessions (legacy API) remains authoritative
+  // for richly-populated items.
+  const prevAccumulatedCountRef = useRef(0);
+  useEffect(() => {
+    const { accumulatedItems } = modalSections.sessionPagination;
+    if (accumulatedItems.length <= prevAccumulatedCountRef.current) {
+      // No net new items; also handle reset (accumulator cleared on feature change).
+      prevAccumulatedCountRef.current = accumulatedItems.length;
+      return;
+    }
+    const newItems = accumulatedItems.slice(prevAccumulatedCountRef.current);
+    prevAccumulatedCountRef.current = accumulatedItems.length;
+
+    setLinkedSessionLinks(prev => {
+      const existingIds = new Set(prev.map(s => s.sessionId));
+      const toAppend: FeatureSessionLink[] = newItems
+        .filter(dto => !existingIds.has(dto.sessionId))
+        .map(dto => ({
+          sessionId: dto.sessionId,
+          title: dto.title,
+          confidence: dto.isPrimaryLink ? 0.9 : 0.5,
+          reasons: dto.reasons ?? [],
+          commands: dto.commands ?? [],
+          commitHashes: [],
+          status: dto.status,
+          model: dto.model,
+          modelProvider: dto.modelProvider,
+          modelFamily: dto.modelFamily,
+          startedAt: dto.startedAt,
+          endedAt: dto.endedAt,
+          updatedAt: dto.updatedAt,
+          totalCost: dto.totalCost,
+          observedTokens: dto.observedTokens,
+          durationSeconds: 0,
+          parentSessionId: dto.parentSessionId ?? null,
+          rootSessionId: dto.rootSessionId,
+          isSubthread: dto.isSubthread,
+          isPrimaryLink: dto.isPrimaryLink,
+          workflowType: dto.workflowType,
+          relatedPhases: [],
+          relatedTasks: (dto.relatedTasks ?? []).map(t => ({
+            taskId: t.taskId,
+            taskTitle: t.taskTitle,
+            phaseId: t.phaseId,
+            phase: t.phase,
+            matchedBy: t.matchedBy,
+          })),
+        }));
+      if (toAppend.length === 0) return prev;
+      return [...prev, ...toAppend];
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalSections.sessionPagination.accumulatedItems]);
 
   // P4-010: Trigger useFeatureModalData section loads on tab activation.
   // Overview loads on mount; each other tab loads when first activated.
@@ -1536,19 +1595,102 @@ export const ProjectBoardFeatureModal = ({
     }
   }, [activeTab, featureTestHealth]);
 
+  // ── P4-006: Live-refresh policy ───────────────────────────────────────────────
+  //
+  // Overview shell is ALWAYS refreshed (it is the open-cost; always considered
+  // "active" for refresh purposes).
+  //
+  // For every other section on a live-invalidation event OR a polling tick:
+  //
+  //   ACTIVE tab  →  call the legacy refresh function immediately.  The user is
+  //                  looking at this data; stale results are visible.
+  //
+  //   INACTIVE tab, section.status === 'success' | 'stale'
+  //               →  call markStale(section) ONLY.  Do NOT fetch.  The section
+  //                  will re-fetch automatically on next tab activation via the
+  //                  existing tab-activation useEffect (P4-010).
+  //
+  //   INACTIVE tab, section.status === 'idle' | 'loading' | 'error'
+  //               →  do NOTHING.  'idle' was never loaded; 'loading' is already
+  //                  in-flight; 'error' waits for user-driven retry.  Pre-fetching
+  //                  unloaded heavy sections on behalf of background refresh is
+  //                  exactly what P4-006 prohibits.
+  //
+  // The heavy sections subject to this policy are:
+  //   phases, sessions, docs, relations, history, test-status
+  // (overview is always refreshed; sessions also uses the legacy sessionsFetchedRef guard)
+  //
+  // "ACTIVE" is defined as: the section whose tab is currently open in the modal.
+  // A section may be loaded (status === 'success') but inactive if the user has
+  // navigated away from its tab.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Applies the P4-006 live-refresh policy for a single non-overview section.
+   * Returns a Promise<void> so it can be composed in Promise.all / setInterval.
+   *
+   * @param section   - The ModalTabId of the section to evaluate.
+   * @param refreshFn - The legacy async refresh to call when the section is active.
+   */
+  const applyLiveRefreshPolicy = useCallback(
+    (
+      section: Exclude<ModalTabId, 'overview'>,
+      refreshFn: () => Promise<void>,
+    ): Promise<void> => {
+      const isActive = activeTab === section;
+      const sectionStatus = modalSections[section].status;
+
+      if (isActive) {
+        // Active tab: fetch immediately so the user sees fresh data.
+        return refreshFn();
+      }
+
+      // Inactive tab: only promote loaded sections to stale; never pre-fetch.
+      if (sectionStatus === 'success' || sectionStatus === 'stale') {
+        modalSections.markStale(section);
+      }
+      // 'idle' | 'loading' | 'error' → no-op
+      return Promise.resolve();
+    },
+    [activeTab, modalSections],
+  );
+
   const featureLiveEnabled = Boolean(activeProject?.id && isFeatureLiveUpdatesEnabled());
   const featureLiveStatus = useLiveInvalidation({
     topics: featureLiveEnabled && activeProject?.id ? [featureTopic(feature.id), projectFeaturesTopic(activeProject.id)] : [],
     enabled: featureLiveEnabled,
     pauseWhenHidden: true,
     onInvalidate: async () => {
+      // Overview shell always refreshes (open-cost; always "active").
+      // Heavy sections follow the P4-006 policy via applyLiveRefreshPolicy.
       await Promise.all([
         refreshFeatureDetail(),
-        // P4-003: only refresh sessions if they have been loaded at least once.
-        (sessionsFetchedRef.current && (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history'))
-          ? refreshLinkedSessions()
-          : Promise.resolve(),
-        activeTab === 'test-status' ? refreshFeatureTestHealth() : Promise.resolve(),
+        applyLiveRefreshPolicy(
+          'phases',
+          () => Promise.resolve(), // phases currently wired through refreshFeatureDetail; no dedicated legacy fn
+        ),
+        // P4-003 / P4-006: sessions — guard both the legacy fetch ref AND the
+        // section status so we never fetch sessions that were never loaded.
+        applyLiveRefreshPolicy(
+          'sessions',
+          () => sessionsFetchedRef.current ? refreshLinkedSessions() : Promise.resolve(),
+        ),
+        applyLiveRefreshPolicy(
+          'docs',
+          () => Promise.resolve(), // docs currently wired through refreshFeatureDetail; no dedicated legacy fn
+        ),
+        applyLiveRefreshPolicy(
+          'relations',
+          () => Promise.resolve(), // relations currently wired through refreshFeatureDetail; no dedicated legacy fn
+        ),
+        applyLiveRefreshPolicy(
+          'history',
+          () => Promise.resolve(), // history currently wired through refreshFeatureDetail; no dedicated legacy fn
+        ),
+        applyLiveRefreshPolicy(
+          'test-status',
+          () => refreshFeatureTestHealth(),
+        ),
       ]);
     },
   });
@@ -1558,17 +1700,24 @@ export const ProjectBoardFeatureModal = ({
       return undefined;
     }
     const interval = setInterval(() => {
+      // Overview shell always refreshes (open-cost; always "active").
       void refreshFeatureDetail();
-      // P4-003: only poll sessions if they have been loaded at least once.
-      if (sessionsFetchedRef.current && (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history')) {
-        void refreshLinkedSessions();
-      }
-      if (activeTab === 'test-status') {
-        void refreshFeatureTestHealth();
-      }
+
+      // Heavy sections follow the P4-006 policy via applyLiveRefreshPolicy.
+      // P4-003 / P4-006: sessions — guard both the legacy fetch ref AND the
+      // section status so we never fetch sessions that were never loaded.
+      void applyLiveRefreshPolicy(
+        'sessions',
+        () => sessionsFetchedRef.current ? refreshLinkedSessions() : Promise.resolve(),
+      );
+      void applyLiveRefreshPolicy('phases', () => Promise.resolve());
+      void applyLiveRefreshPolicy('docs', () => Promise.resolve());
+      void applyLiveRefreshPolicy('relations', () => Promise.resolve());
+      void applyLiveRefreshPolicy('history', () => Promise.resolve());
+      void applyLiveRefreshPolicy('test-status', () => refreshFeatureTestHealth());
     }, FEATURE_MODAL_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [activeTab, featureLiveEnabled, featureLiveStatus, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
+  }, [activeTab, applyLiveRefreshPolicy, featureLiveEnabled, featureLiveStatus, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
 
   const togglePhase = (phaseKey: string) => {
     setExpandedPhases(prev => {
@@ -2416,7 +2565,13 @@ export const ProjectBoardFeatureModal = ({
       { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
       { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
       { id: 'relations', label: `Relations (${getFeatureLinkedFeatureCount(activeFeature)})`, icon: Link2 },
-      { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
+      {
+        id: 'sessions',
+        // P4-004: prefer server-reported total (from rollup/page) over materialized count.
+        // Falls back to the local list length while first page is loading.
+        label: `Sessions (${modalSections.sessionPagination.serverTotal > 0 ? modalSections.sessionPagination.serverTotal : linkedSessions.length})`,
+        icon: Terminal,
+      },
       { id: 'history', label: 'Git History', icon: Calendar },
     ];
     if ((featureTestHealth?.totalTests || 0) > 0) {
@@ -3812,6 +3967,12 @@ export const ProjectBoardFeatureModal = ({
                             <AnimatePresence initial={false}>
                               {group.roots.map(node => renderSessionTreeNode(node))}
                             </AnimatePresence>
+                            {/* P4-004: partial-tree indicator when more pages are available */}
+                            {modalSections.sessionPagination.hasMore && (
+                              <p className="text-[11px] text-muted-foreground italic pl-1">
+                                More sessions may appear in this group — load more below.
+                              </p>
+                            )}
                           </div>
                         )
                       )}
@@ -3847,6 +4008,47 @@ export const ProjectBoardFeatureModal = ({
                       )
                     )}
                   </FeatureModalSection>
+
+                  {/* P4-004: Load-more pagination control */}
+                  {(() => {
+                    const { hasMore, isLoadingMore, serverTotal } = modalSections.sessionPagination;
+                    const notYetLoaded = serverTotal > 0 ? serverTotal - linkedSessions.length : 0;
+                    if (!hasMore && notYetLoaded <= 0) return null;
+                    return (
+                      <div className="flex flex-col items-center gap-2 pt-2 pb-1">
+                        {notYetLoaded > 0 && !hasMore && (
+                          <p className="text-[11px] text-muted-foreground">
+                            {notYetLoaded} more session{notYetLoaded !== 1 ? 's' : ''} not yet loaded
+                          </p>
+                        )}
+                        {hasMore && (
+                          <button
+                            type="button"
+                            disabled={isLoadingMore}
+                            onClick={() => { void modalSections.loadMoreSessions(); }}
+                            className="inline-flex items-center gap-2 rounded-lg border border-panel-border bg-surface-muted px-4 py-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {isLoadingMore ? (
+                              <>
+                                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                Loading…
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown size={13} />
+                                Load more sessions
+                                {notYetLoaded > 0 && (
+                                  <span className="rounded-full bg-panel px-1.5 py-0.5 text-[10px] font-bold text-panel-foreground">
+                                    {notYetLoaded}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>

@@ -320,20 +320,32 @@ describe('P4-003 — Source-level: tab-activation guard introduced', () => {
 });
 
 describe('P4-003 — Source-level: live-invalidation and polling guards updated', () => {
-  it('live invalidation onInvalidate checks sessionsFetchedRef.current before refreshLinkedSessions', () => {
-    const marker = '        // P4-003: only refresh sessions if they have been loaded at least once.';
+  // P4-006 replaced the inline P4-003 ternary guard with the applyLiveRefreshPolicy
+  // helper.  The guard comment moved into the applyLiveRefreshPolicy call-site block;
+  // we now verify the guard exists there rather than at the inline ternary location.
+
+  it('live invalidation onInvalidate sessions call guards sessionsFetchedRef.current via applyLiveRefreshPolicy', () => {
+    // The P4-003 / P4-006 combined comment lives at the applyLiveRefreshPolicy
+    // call-site for sessions inside onInvalidate.
+    // Use whitespace-neutral substring to match regardless of indentation.
+    const marker = '// P4-003 / P4-006: sessions — guard both the legacy fetch ref AND the';
     const idx = SOURCE.indexOf(marker);
     expect(idx).toBeGreaterThan(-1);
-    const snippet = SOURCE.slice(idx, idx + 300);
+    const snippet = SOURCE.slice(idx, idx + 400);
     expect(snippet).toContain('sessionsFetchedRef.current');
     expect(snippet).toContain('refreshLinkedSessions()');
   });
 
-  it('polling interval checks sessionsFetchedRef.current before refreshLinkedSessions', () => {
-    const marker = '      // P4-003: only poll sessions if they have been loaded at least once.';
-    const idx = SOURCE.indexOf(marker);
-    expect(idx).toBeGreaterThan(-1);
-    const snippet = SOURCE.slice(idx, idx + 300);
+  it('polling interval sessions call guards sessionsFetchedRef.current via applyLiveRefreshPolicy', () => {
+    // The polling setInterval body uses applyLiveRefreshPolicy for sessions with the
+    // same sessionsFetchedRef guard.  Find the second occurrence of the combined
+    // P4-003/P4-006 comment (one in onInvalidate, one in the polling body).
+    const marker = '// P4-003 / P4-006: sessions — guard both the legacy fetch ref AND the';
+    const firstIdx = SOURCE.indexOf(marker);
+    expect(firstIdx).toBeGreaterThan(-1);
+    const secondIdx = SOURCE.indexOf(marker, firstIdx + 1);
+    expect(secondIdx).toBeGreaterThan(firstIdx);
+    const snippet = SOURCE.slice(secondIdx, secondIdx + 400);
     expect(snippet).toContain('sessionsFetchedRef.current');
     expect(snippet).toContain('refreshLinkedSessions()');
   });

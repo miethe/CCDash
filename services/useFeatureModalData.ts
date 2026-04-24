@@ -29,7 +29,7 @@
 //   markStale(section?) — transition loaded section(s) to 'stale'
 //   invalidateAll()     — clear cache entries for all sections of this feature
 
-import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import {
   getFeatureModalOverview,
@@ -92,6 +92,26 @@ export interface SectionHandle extends SectionState {
   retry: () => void;
   /** Evict this section's cache entry and reset to idle. */
   invalidate: () => void;
+}
+
+// ── Session pagination accumulator state ─────────────────────────────────────
+// Separate from the per-section SectionState because pagination accumulates
+// across multiple fetch calls (append semantics vs. replace semantics).
+// The sessions SectionHandle carries the first-page data; this supplementary
+// state tracks the full accumulated list and paging cursor.
+
+export interface SessionPaginationState {
+  /** All accumulated session items across pages fetched so far. */
+  accumulatedItems: import('./featureSurface').LinkedFeatureSessionDTO[];
+  /** Total server-reported count (from the most recent page response). */
+  serverTotal: number;
+  /** Whether more pages are available. */
+  hasMore: boolean;
+  /** Whether a load-more fetch is currently in flight. */
+  isLoadingMore: boolean;
+  /** Cursor / offset to pass to the next page fetch. */
+  nextCursor: string | null;
+  nextOffset: number;
 }
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
@@ -305,6 +325,20 @@ export type ModalSectionStore = {
    * state to idle.  Causes next load() call per section to re-fetch.
    */
   invalidateAll: () => void;
+
+  // ── P4-004: Session pagination ───────────────────────────────────────────
+  /**
+   * Accumulated session pagination state across all pages loaded so far.
+   * `sessions.data` still holds the first-page DTO for backwards compatibility;
+   * use `sessionPagination.accumulatedItems` for the full list.
+   */
+  sessionPagination: SessionPaginationState;
+
+  /**
+   * Fetch the next page of linked sessions and append to `sessionPagination.accumulatedItems`.
+   * No-op if `hasMore` is false or `isLoadingMore` is true.
+   */
+  loadMoreSessions: () => Promise<void>;
 };
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -337,6 +371,23 @@ export function useFeatureModalData(
   // One AbortController per section; replaced on every new load() call.
   const abortControllers = useRef<Partial<Record<ModalTabId, AbortController>>>({});
 
+  // ── P4-004: Session pagination accumulator ────────────────────────────────
+  const INITIAL_SESSION_PAGINATION: SessionPaginationState = {
+    accumulatedItems: [],
+    serverTotal: 0,
+    hasMore: false,
+    isLoadingMore: false,
+    nextCursor: null,
+    nextOffset: 0,
+  };
+
+  const [sessionPagination, setSessionPagination] = useState<SessionPaginationState>(
+    () => ({ ...INITIAL_SESSION_PAGINATION }),
+  );
+
+  // AbortController dedicated to load-more fetches (separate from fetchSection's registry).
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
+
   // ── Reset on featureId change ──────────────────────────────────────────────
   const prevFeatureIdRef = useRef<string | null | undefined>(featureId);
   useEffect(() => {
@@ -349,12 +400,18 @@ export function useFeatureModalData(
     }
     abortControllers.current = {};
 
+    // Abort any in-flight load-more.
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = null;
+
     // Bump all counters so any late-arriving responses are ignored.
     for (const tab of ALL_TABS) {
       requestCounters.current[tab]++;
     }
 
     dispatch({ type: 'RESET_ALL' });
+    setSessionPagination({ ...INITIAL_SESSION_PAGINATION });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [featureId]);
 
   // ── Abort in-flight on unmount ─────────────────────────────────────────────
@@ -363,6 +420,7 @@ export function useFeatureModalData(
       for (const ctrl of Object.values(abortControllers.current)) {
         ctrl?.abort();
       }
+      loadMoreAbortRef.current?.abort();
     };
   }, []);
 
@@ -437,6 +495,18 @@ export function useFeatureModalData(
           }
           if (!cacheOnly) {
             dispatch({ type: 'LOAD_SUCCESS', tab, requestId: reqId, data });
+            // P4-004: seed the session pagination accumulator from the first page.
+            if (tab === 'sessions') {
+              const page = data as LinkedFeatureSessionPageDTO;
+              setSessionPagination({
+                accumulatedItems: page.items,
+                serverTotal: page.total,
+                hasMore: page.hasMore,
+                isLoadingMore: false,
+                nextCursor: page.nextCursor,
+                nextOffset: page.offset + page.items.length,
+              });
+            }
           }
         } else if (cacheOnly && !noCache && cache) {
           // prefetch: even if another request is in flight, populate cache
@@ -493,6 +563,44 @@ export function useFeatureModalData(
     [state, featureId, fetchSection, cache, sessionParams, sectionParams],
   );
 
+  // ── P4-004: loadMoreSessions ──────────────────────────────────────────────
+
+  const loadMoreSessions = useCallback(async (): Promise<void> => {
+    if (!featureId) return;
+    if (!sessionPagination.hasMore || sessionPagination.isLoadingMore) return;
+
+    // Abort any previous load-more in flight.
+    loadMoreAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    loadMoreAbortRef.current = ctrl;
+
+    setSessionPagination(prev => ({ ...prev, isLoadingMore: true }));
+
+    try {
+      const p: LinkedSessionPageParams = {
+        limit: sessionParams.limit,
+        offset: sessionPagination.nextOffset,
+      };
+      const page = await getFeatureLinkedSessionPage(featureId, p);
+
+      if (ctrl.signal.aborted) return;
+
+      setSessionPagination(prev => ({
+        accumulatedItems: [...prev.accumulatedItems, ...page.items],
+        serverTotal: page.total,
+        hasMore: page.hasMore,
+        isLoadingMore: false,
+        nextCursor: page.nextCursor,
+        nextOffset: prev.nextOffset + page.items.length,
+      }));
+    } catch (err) {
+      if (ctrl.signal.aborted) return;
+      setSessionPagination(prev => ({ ...prev, isLoadingMore: false }));
+    }
+  // sessionPagination intentionally spread into deps via hasMore/isLoadingMore/nextOffset
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [featureId, sessionPagination.hasMore, sessionPagination.isLoadingMore, sessionPagination.nextOffset, sessionParams.limit]);
+
   // ── Top-level helpers ─────────────────────────────────────────────────────
 
   const prefetch = useCallback(
@@ -534,5 +642,7 @@ export function useFeatureModalData(
     prefetch,
     markStale,
     invalidateAll,
+    sessionPagination,
+    loadMoreSessions,
   };
 }

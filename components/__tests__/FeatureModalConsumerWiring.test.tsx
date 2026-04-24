@@ -105,7 +105,10 @@ describe('P4-010 — No raw /api/features/ interpolations in any components/ fil
 
 describe('P4-010 — useFeatureModalData hook wired in modal component', () => {
   it('ProjectBoard.tsx imports useFeatureModalData', () => {
-    expect(PROJECTBOARD_SRC).toContain("import { useFeatureModalData } from '../services/useFeatureModalData'");
+    // P4-006 added ModalTabId to the named imports; check for the hook import
+    // regardless of any additional named exports brought in alongside it.
+    expect(PROJECTBOARD_SRC).toContain("useFeatureModalData");
+    expect(PROJECTBOARD_SRC).toContain("from '../services/useFeatureModalData'");
   });
 
   it('modalSections is instantiated via useFeatureModalData(feature.id)', () => {
