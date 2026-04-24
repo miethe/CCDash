@@ -34,6 +34,7 @@ import {
     sharedLiveConnectionManager,
     type LiveConnectionStatus,
 } from '../services/live';
+import { getLegacyFeatureDetail, getLegacyFeatureLinkedSessions } from '../services/featureSurface';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -3141,9 +3142,7 @@ const SessionFeaturesView: React.FC<{
 
         setMainThreadSessionsLoadingByFeatureId(prev => ({ ...prev, [featureId]: true }));
         try {
-            const res = await fetch(`/api/features/${encodeURIComponent(featureId)}/linked-sessions`);
-            if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
-            const data = await res.json();
+            const data = await getLegacyFeatureLinkedSessions<FeatureExecutionSessionLink[]>(featureId);
             const sessions = (Array.isArray(data) ? data : []) as FeatureExecutionSessionLink[];
             const normalizedCurrentId = currentSessionId.trim();
             const mainThreads = sessions
@@ -7527,10 +7526,8 @@ const SessionDetail: React.FC<{
                 const entries = await Promise.all(
                     featureIds.map(async featureId => {
                         try {
-                            const res = await fetch(`/api/features/${encodeURIComponent(featureId)}`);
-                            if (!res.ok) return null;
-                            const data = await res.json();
-                            return [featureId, data as Feature] as const;
+                            const data = await getLegacyFeatureDetail<Feature>(featureId);
+                            return [featureId, data] as const;
                         } catch {
                             return null;
                         }

@@ -1019,3 +1019,44 @@ export async function getFeatureLinkedSessionPage(
     freshness: adaptDTOFreshness(wire.freshness),
   };
 }
+
+// ── Legacy v0 feature helpers (encoded IDs) ─────────────────────────────────
+// These thin wrappers replace inline fetch() calls scattered across components.
+// They call the /api/features/ legacy endpoints (not /api/v1/) and return the
+// raw wire shapes those endpoints emit.  The important guarantee is that the
+// feature ID is always encoded before being interpolated into the URL, so IDs
+// containing /, spaces, #, ?, and & are handled correctly.
+
+const API_LEGACY_FEATURES_BASE = '/api/features';
+
+async function legacyFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_LEGACY_FEATURES_BASE}${path}`, init);
+  if (!res.ok) {
+    throw new FeatureSurfaceApiError(
+      `Legacy feature API error: ${res.status} ${res.statusText} for ${API_LEGACY_FEATURES_BASE}${path}`,
+      res.status,
+    );
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
+ * Fetch a single feature by ID from the legacy /api/features/{featureId} endpoint.
+ *
+ * The feature ID is percent-encoded so that IDs containing /, spaces, #, ?, and
+ * & are transmitted correctly.
+ */
+export async function getLegacyFeatureDetail<T = unknown>(featureId: string): Promise<T> {
+  return legacyFetch<T>(`/${encodeURIComponent(featureId)}`);
+}
+
+/**
+ * Fetch the linked-sessions list for a feature from the legacy
+ * /api/features/{featureId}/linked-sessions endpoint.
+ *
+ * The feature ID is percent-encoded so that IDs containing /, spaces, #, ?, and
+ * & are transmitted correctly.
+ */
+export async function getLegacyFeatureLinkedSessions<T = unknown[]>(featureId: string): Promise<T> {
+  return legacyFetch<T>(`/${encodeURIComponent(featureId)}/linked-sessions`);
+}

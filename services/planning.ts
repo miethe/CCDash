@@ -25,6 +25,7 @@ import type {
 } from '../types';
 import type { AgentQueryEnvelope } from '../types';
 import type { PlanningStatusBucket } from './planningRoutes';
+import { subscribeToFeatureWrites } from './featureCacheBus';
 
 const API_BASE = '/api/agent/planning';
 const DEFAULT_PROJECT_CACHE_KEY = '__default__';
@@ -257,6 +258,19 @@ export function clearPlanningBrowserCache(projectId?: string): void {
   PLANNING_BROWSER_CACHE.clear();
   PLANNING_FEATURE_CONTEXT_CACHE.clear();
 }
+
+// ── Cross-cache invalidation bus subscription (P4-011) ───────────────────────
+// Subscribes the planning browser cache to the shared feature-write event bus.
+// Feature status changes, phase progressions, renames, and task updates
+// published via publishFeatureWriteEvent() will automatically evict the
+// planning summary/facets/list entries for the affected project.
+// See: docs/project_plans/design-specs/feature-surface-planning-cache-coordination.md
+
+subscribeToFeatureWrites((event) => {
+  // Delegate to clearPlanningBrowserCache which handles both the project-level
+  // Map and the PLANNING_FEATURE_CONTEXT_CACHE in one call.
+  clearPlanningBrowserCache(event.projectId);
+});
 
 export function getCachedProjectPlanningSummary(projectId?: string): ProjectPlanningSummary | null {
   const cache = PLANNING_BROWSER_CACHE.get(projectCacheKey(projectId));

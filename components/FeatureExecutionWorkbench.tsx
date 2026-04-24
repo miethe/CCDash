@@ -58,6 +58,7 @@ import {
   trackExecutionEvent,
 } from '../services/execution';
 import { getFeaturePlanningContext, PlanningApiError } from '../services/planning';
+import { getLegacyFeatureDetail } from '../services/featureSurface';
 import { isStackRecommendationsEnabled, isWorkflowAnalyticsEnabled } from '../services/agenticIntelligence';
 import { listTestRuns } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
@@ -1160,14 +1161,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
     let cancelled = false;
     setFullFeatureLoading(true);
-    fetch(`/api/features/${encodeURIComponent(featureId)}`)
-      .then(res => {
-        if (!res.ok) throw new Error(`Failed to load feature detail (${res.status})`);
-        return res.json();
-      })
+    getLegacyFeatureDetail<Feature>(featureId)
       .then(payload => {
         if (cancelled) return;
-        setFullFeature(payload as Feature);
+        setFullFeature(payload);
       })
       .catch(() => {
         if (cancelled) return;

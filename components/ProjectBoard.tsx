@@ -51,12 +51,18 @@ import {
   type PlanningFeatureModalTab,
 } from '../services/planningRoutes';
 import { invalidateFeatureSurface } from '../services/featureSurfaceCache';
+// P4-011: publish feature-write events so BOTH caches are invalidated via the
+// featureCacheBus.  The explicit invalidateFeatureSurface() call below is kept
+// as a belt-and-suspenders guard for React state reset; the bus handles the
+// planning cache.  See feature-surface-planning-cache-coordination.md
+import { publishFeatureWriteEvent } from '../services/featureCacheBus';
 import {
   cardDTOBoardStage,
   cardDTOToFeature,
   rollupToSessionSummary,
 } from './featureCardAdapters';
 import type { FeatureCardDTO } from '../services/featureSurface';
+import { getLegacyFeatureDetail, getLegacyFeatureLinkedSessions } from '../services/featureSurface';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -1406,11 +1412,9 @@ export const ProjectBoardFeatureModal = ({
   const refreshFeatureDetail = useCallback(async () => {
     const requestId = ++featureDetailRequestIdRef.current;
     try {
-      const res = await fetch(`/api/features/${feature.id}`);
-      if (!res.ok) throw new Error(`Failed to load feature detail (${res.status})`);
-      const data = await res.json();
+      const data = await getLegacyFeatureDetail<Feature>(feature.id);
       if (requestId !== featureDetailRequestIdRef.current) return;
-      setFullFeature(normalizeFeatureForModal(data as Feature));
+      setFullFeature(normalizeFeatureForModal(data));
     } catch {
       // Keep existing detail snapshot on transient failures.
     }
@@ -1419,9 +1423,7 @@ export const ProjectBoardFeatureModal = ({
   const refreshLinkedSessions = useCallback(async () => {
     const requestId = ++linkedSessionsRequestIdRef.current;
     try {
-      const res = await fetch(`/api/features/${feature.id}/linked-sessions`);
-      if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
-      const data = await res.json();
+      const data = await getLegacyFeatureLinkedSessions<FeatureSessionLink[]>(feature.id);
       if (requestId !== linkedSessionsRequestIdRef.current) return;
       const rows = Array.isArray(data) ? (data as FeatureSessionLink[]) : [];
       const bestBySession = new Map<string, FeatureSessionLink>();
@@ -1566,6 +1568,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updateFeatureStatus(feature.id, newStatus);
+      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
+      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'status' });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -1611,6 +1615,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updatePhaseStatus(feature.id, phaseId, newStatus);
+      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
+      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'phase' });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -1644,6 +1650,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updateTaskStatus(feature.id, phaseId, taskId, newStatus, previousTaskStatus);
+      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
+      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'task' });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -4478,6 +4486,9 @@ export const ProjectBoard: React.FC = () => {
     const currentStatus = card?.status ?? legacyFeature?.status;
     if (currentStatus === undefined || currentStatus === newStatus) return;
     await updateFeatureStatus(featureId, newStatus);
+    // P4-011: publish to the cross-cache bus (invalidates planning + surface caches).
+    publishFeatureWriteEvent({ projectId: activeProjectId, featureIds: [featureId], kind: 'status' });
+    // Belt-and-suspenders: also call the surface helper directly for React state reset.
     invalidateFeatureSurface({ projectId: activeProjectId, featureIds: [featureId] });
   }, [surfaceCards, apiFeatures, updateFeatureStatus, activeProjectId]);
 

@@ -1,14 +1,23 @@
 import React from 'react';
-import { ArrowRight, ExternalLink, FileText, Link2 } from 'lucide-react';
+import { ArrowRight, ExternalLink, FileText, Link2, ShieldAlert } from 'lucide-react';
 
 import { FeatureDependencyState } from '../types';
+import type { FeatureCardDTO } from '../services/featureSurface';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Surface } from './ui/surface';
 import { DependencyStateBadge } from './DependencyStateBadge';
 
 type BlockingFeatureListProps = {
+  /** Full dependency state from legacy/modal fetch path — provides per-blocker detail. */
   dependencyState?: FeatureDependencyState | null;
+  /**
+   * P4-009: Optional FeatureCardDTO from the unified feature surface path.
+   * When provided and `dependencyState` is absent, the component renders a
+   * summary view derived from `card.qualitySignals` and `card.dependencyState`
+   * (no per-feature fan-out required).
+   */
+  featureCard?: FeatureCardDTO | null;
   onOpenFeature?: (featureId: string) => void;
   onOpenDocument?: (documentId: string) => void;
   className?: string;
@@ -33,6 +42,7 @@ const chipClassByState = (state: string): string => {
 
 export const BlockingFeatureList: React.FC<BlockingFeatureListProps> = ({
   dependencyState,
+  featureCard,
   onOpenFeature,
   onOpenDocument,
   className,
@@ -40,6 +50,62 @@ export const BlockingFeatureList: React.FC<BlockingFeatureListProps> = ({
 }) => {
   const blockers = resolveBlockerDependencies(dependencyState);
   const hasBlockers = blockers.length > 0;
+
+  // P4-009: card-summary path — no per-feature fetch, derives display from
+  // FeatureCardDTO.qualitySignals + FeatureCardDTO.dependencyState (surface rollup).
+  // Only activates when dependencyState is absent but featureCard is present.
+  const cardSummaryActive = !dependencyState && featureCard != null;
+  const cardBlockerCount = featureCard?.qualitySignals?.blockerCount ?? 0;
+  const cardHasBlocking = featureCard?.qualitySignals?.hasBlockingSignals ?? false;
+  const cardDepState = featureCard?.dependencyState;
+  const cardIsBlocked =
+    cardDepState?.state === 'blocked' || cardDepState?.state === 'blocked_unknown';
+
+  if (cardSummaryActive) {
+    return (
+      <Surface tone="panel" padding="md" className={cn('space-y-3', className)}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">{title}</p>
+            <p className="mt-1 text-sm text-panel-foreground">
+              {cardHasBlocking || cardIsBlocked
+                ? 'This feature has blocking signals. Open the feature detail to inspect per-blocker evidence.'
+                : 'No unresolved blockers are recorded for this feature.'}
+            </p>
+          </div>
+          {(cardHasBlocking || cardIsBlocked) && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-danger-border bg-danger/10 px-2.5 py-0.5 text-xs font-semibold text-danger-foreground">
+              <ShieldAlert size={12} />
+              {cardBlockerCount > 0 ? `${cardBlockerCount} blocker${cardBlockerCount !== 1 ? 's' : ''}` : 'Blocked'}
+            </span>
+          )}
+        </div>
+        {cardDepState?.blockingReason && (
+          <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-sm text-panel-foreground">
+            {cardDepState.blockingReason}
+          </div>
+        )}
+        {(cardHasBlocking || cardIsBlocked) && featureCard.id && onOpenFeature && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenFeature(featureCard.id)}
+            className="h-8"
+          >
+            <ArrowRight size={14} />
+            Open feature
+          </Button>
+        )}
+        {!cardHasBlocking && !cardIsBlocked && (
+          <div className="flex items-center gap-2 rounded-lg border border-panel-border bg-surface-overlay/60 px-3 py-2 text-sm text-muted-foreground">
+            <ExternalLink size={14} className="shrink-0" />
+            The feature has no unresolved blocker records.
+          </div>
+        )}
+      </Surface>
+    );
+  }
 
   return (
     <Surface tone="panel" padding="md" className={cn('space-y-3', className)}>

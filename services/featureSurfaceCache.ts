@@ -15,11 +15,15 @@
 // the featureIds on the current page.  ProjectBoard must call it with
 // `invalidateFeatureSurface({ projectId, scope: 'all' })` on project switch.
 //
-// Status-write integration (P3-004/P3-005): call
+// Status-write integration (P3-004/P3-005 + P4-011): call
 //   invalidateFeatureSurface({ projectId, featureIds: [updatedId] })
 // from any mutation handler that changes feature status, phase, or task state.
+// As of P4-011 the featureCacheBus also drives this automatically so explicit
+// call sites that publishFeatureWriteEvent() do not need to call
+// invalidateFeatureSurface() separately.
 
 import type { CacheEntry, FeatureSurfaceCacheAdapter } from './useFeatureSurface';
+import { subscribeToFeatureWrites } from './featureCacheBus';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -298,6 +302,22 @@ export function invalidateFeatureSurface({
     );
   }
 }
+
+// ── Cross-cache invalidation bus subscription (P4-011) ───────────────────────
+// Subscribes this cache to the shared feature-write event bus.  Any call to
+// publishFeatureWriteEvent() (e.g. after updateFeatureStatus) will
+// automatically evict the relevant entries here — no additional call to
+// invalidateFeatureSurface() is needed at the write site.
+// See: docs/project_plans/design-specs/feature-surface-planning-cache-coordination.md
+
+subscribeToFeatureWrites((event) => {
+  // Route through the same helper that explicit call sites use so eviction
+  // logic stays in one place.
+  invalidateFeatureSurface({
+    projectId: event.projectId,
+    featureIds: event.featureIds?.length ? event.featureIds : undefined,
+  });
+});
 
 // ── React hook: live-topic wiring ─────────────────────────────────────────────
 //
