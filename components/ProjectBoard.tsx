@@ -62,7 +62,9 @@ import {
   rollupToSessionSummary,
 } from './featureCardAdapters';
 import type { FeatureCardDTO } from '../services/featureSurface';
-import { getLegacyFeatureDetail, getLegacyFeatureLinkedSessions } from '../services/featureSurface';
+import { getLegacyFeatureDetail, getLegacyFeatureLinkedSessions, getFeatureTaskSource } from '../services/featureSurface';
+import { useFeatureModalData } from '../services/useFeatureModalData';
+import { TabStateView } from './FeatureModal/TabStateView';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -1315,13 +1317,10 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
       setLoading(false);
       return;
     }
-    fetch(`/api/features/task-source?file=${encodeURIComponent(task.sourceFile)}`)
-      .then(r => {
-        if (!r.ok) throw new Error(`Failed to load (${r.status})`);
-        return r.json();
-      })
+    // P4-010: replaced raw /api/features/task-source fetch with typed client.
+    getFeatureTaskSource(task.sourceFile)
       .then(data => { setContent(data.content); setLoading(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
+      .catch(e => { setError((e as Error).message); setLoading(false); });
   }, [task.sourceFile]);
 
   return (
@@ -1408,6 +1407,17 @@ export const ProjectBoardFeatureModal = ({
   const [featureTestHealth, setFeatureTestHealth] = useState<FeatureTestHealth | null>(null);
   const featureDetailRequestIdRef = useRef(0);
   const linkedSessionsRequestIdRef = useRef(0);
+  // P4-003: tracks whether linked sessions have been fetched for the current
+  // feature.  Reset on feature change.  Prevents eager fetch on modal open.
+  const sessionsFetchedRef = useRef(false);
+
+  // P4-010: per-section hook for typed, lazy modal data loading.
+  // Each section (overview, phases, docs, relations, sessions, test-status,
+  // history) has independent status/error/retry lifecycle via useFeatureModalData.
+  // `fullFeature` + `linkedSessionLinks` state above remain for compatibility with
+  // existing sub-components; sections loaded here provide supplementary TabStateView
+  // states without replacing the existing data flow in this task.
+  const modalSections = useFeatureModalData(feature.id);
 
   const refreshFeatureDetail = useCallback(async () => {
     const requestId = ++featureDetailRequestIdRef.current;
@@ -1453,13 +1463,53 @@ export const ProjectBoardFeatureModal = ({
     setPhaseStatusFilter('all');
     setTaskStatusFilter('all');
     setViewingDoc(null);
+    // P4-003: Reset session fetch guard so Sessions tab re-fetches for the new feature.
+    sessionsFetchedRef.current = false;
     refreshFeatureDetail();
-    refreshLinkedSessions();
-  }, [feature.id, refreshFeatureDetail, refreshLinkedSessions]);
+    // NOTE: linked sessions are NOT fetched here (P4-003).
+    // They are loaded lazily on first Sessions tab activation.
+  }, [feature.id, refreshFeatureDetail]);
 
   useEffect(() => {
     setActiveTab(initialTab);
   }, [feature.id, initialTab]);
+
+  // P4-003: Lazy Sessions Tab — fetch linked sessions ONLY on first Sessions tab
+  // activation for this feature.  Subsequent switches to the sessions tab reuse
+  // the already-fetched data (cache guard via sessionsFetchedRef).
+  useEffect(() => {
+    if (activeTab === 'sessions' && !sessionsFetchedRef.current) {
+      sessionsFetchedRef.current = true;
+      void refreshLinkedSessions();
+    }
+  }, [activeTab, refreshLinkedSessions]);
+
+  // P4-010: Trigger useFeatureModalData section loads on tab activation.
+  // Overview loads on mount; each other tab loads when first activated.
+  // Sections that are already 'loading' or 'success'/'stale' are no-ops (handled
+  // inside the hook's load() guard).  The existing fullFeature / linkedSessionLinks
+  // state paths remain the authoritative data source for sub-components; these
+  // load() calls provide the TabStateView status signals for each tab.
+  useEffect(() => {
+    if (activeTab === 'overview') {
+      modalSections.overview.load();
+    } else if (activeTab === 'phases') {
+      modalSections.phases.load();
+    } else if (activeTab === 'docs') {
+      modalSections.docs.load();
+    } else if (activeTab === 'relations') {
+      modalSections.relations.load();
+    } else if (activeTab === 'sessions') {
+      modalSections.sessions.load();
+    } else if (activeTab === 'test-status') {
+      modalSections['test-status'].load();
+    } else if (activeTab === 'history') {
+      modalSections.history.load();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+  // Note: modalSections intentionally excluded from deps — the hook reference is
+  // stable per feature; including it would cause double-loads on every render.
 
   const refreshFeatureTestHealth = useCallback(async () => {
     if (!activeProject?.id) {
@@ -1494,7 +1544,8 @@ export const ProjectBoardFeatureModal = ({
     onInvalidate: async () => {
       await Promise.all([
         refreshFeatureDetail(),
-        (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history')
+        // P4-003: only refresh sessions if they have been loaded at least once.
+        (sessionsFetchedRef.current && (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history'))
           ? refreshLinkedSessions()
           : Promise.resolve(),
         activeTab === 'test-status' ? refreshFeatureTestHealth() : Promise.resolve(),
@@ -1508,7 +1559,8 @@ export const ProjectBoardFeatureModal = ({
     }
     const interval = setInterval(() => {
       void refreshFeatureDetail();
-      if (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history') {
+      // P4-003: only poll sessions if they have been loaded at least once.
+      if (sessionsFetchedRef.current && (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history')) {
         void refreshLinkedSessions();
       }
       if (activeTab === 'test-status') {
@@ -3125,6 +3177,14 @@ export const ProjectBoardFeatureModal = ({
 
           {/* Phases Tab */}
           {activeTab === 'phases' && (
+            <TabStateView
+              status={modalSections.phases.status}
+              error={modalSections.phases.error?.message}
+              onRetry={modalSections.phases.retry}
+              isEmpty={phases.length === 0 && modalSections.phases.status === 'success'}
+              emptyLabel="No phases tracked for this feature."
+              staleLabel="Refreshing phases…"
+            >
             <div className="space-y-3">
               {phases.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-panel-border bg-panel/70">
@@ -3371,10 +3431,19 @@ export const ProjectBoardFeatureModal = ({
                 );
               })}
             </div>
+            </TabStateView>
           )}
 
           {/* Documents Tab — clickable */}
           {activeTab === 'docs' && (
+            <TabStateView
+              status={modalSections.docs.status}
+              error={modalSections.docs.error?.message}
+              onRetry={modalSections.docs.retry}
+              isEmpty={linkedDocs.length === 0 && modalSections.docs.status === 'success'}
+              emptyLabel="No documents linked to this feature."
+              staleLabel="Refreshing documents…"
+            >
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <FeatureMetricTile
@@ -3506,8 +3575,17 @@ export const ProjectBoardFeatureModal = ({
                 </FeatureModalSection>
               )}
             </div>
+            </TabStateView>
           )}
           {activeTab === 'relations' && (
+            <TabStateView
+              status={modalSections.relations.status}
+              error={modalSections.relations.error?.message}
+              onRetry={modalSections.relations.retry}
+              isEmpty={(activeFeature.linkedFeatures || []).length === 0 && activeFeature.relatedFeatures.length === 0 && modalSections.relations.status === 'success'}
+              emptyLabel="No relations found for this feature."
+              staleLabel="Refreshing relations…"
+            >
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-panel border border-panel-border rounded-lg p-4">
@@ -3623,9 +3701,18 @@ export const ProjectBoardFeatureModal = ({
                 </div>
               </div>
             </div>
+            </TabStateView>
           )}
           {/* Sessions Tab */}
           {activeTab === 'sessions' && (
+            <TabStateView
+              status={modalSections.sessions.status}
+              error={modalSections.sessions.error?.message}
+              onRetry={modalSections.sessions.retry}
+              isEmpty={linkedSessions.length === 0 && modalSections.sessions.status === 'success'}
+              emptyLabel="No sessions linked to this feature."
+              staleLabel="Refreshing sessions…"
+            >
             <div className="space-y-4">
               {linkedSessions.length === 0 && (
                 <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
@@ -3763,8 +3850,16 @@ export const ProjectBoardFeatureModal = ({
                 </>
               )}
             </div>
+            </TabStateView>
           )}
           {activeTab === 'test-status' && featureTestHealth && (
+            <TabStateView
+              status={modalSections['test-status'].status}
+              error={modalSections['test-status'].error?.message}
+              onRetry={modalSections['test-status'].retry}
+              isEmpty={false}
+              staleLabel="Refreshing test status…"
+            >
             <FeatureModalTestStatus
               featureId={activeFeature.id}
               health={featureTestHealth}
@@ -3773,8 +3868,17 @@ export const ProjectBoardFeatureModal = ({
                 navigate(`/execution?feature=${encodeURIComponent(activeFeature.id)}&tab=test-status`);
               }}
             />
+            </TabStateView>
           )}
           {activeTab === 'history' && (
+            <TabStateView
+              status={modalSections.history.status}
+              error={modalSections.history.error?.message}
+              onRetry={modalSections.history.retry}
+              isEmpty={gitHistoryData.commits.length === 0 && gitHistoryData.pullRequests.length === 0 && modalSections.history.status === 'success'}
+              emptyLabel="No git history found for this feature."
+              staleLabel="Refreshing git history…"
+            >
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="bg-panel border border-panel-border rounded-lg p-3">
@@ -3948,6 +4052,7 @@ export const ProjectBoardFeatureModal = ({
                 </div>
               )}
             </div>
+            </TabStateView>
           )}
         </div>
 

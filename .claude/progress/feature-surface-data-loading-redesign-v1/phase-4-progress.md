@@ -11,14 +11,15 @@ phase: 4
 title: Modal Lazy Loading and Reliability
 status: in_progress
 created: '2026-04-23'
-updated: '2026-04-23'
+updated: '2026-04-24'
 started: '2026-04-23'
-commit_refs: []
+commit_refs:
+- 42dfe77
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 11
-completed_tasks: 0
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -37,7 +38,7 @@ tasks:
 - id: P4-001
   description: Encoded Modal Paths - Replace raw feature ID path interpolation in
     modal fetches with encoded API client methods.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -48,7 +49,7 @@ tasks:
 - id: P4-002
   description: Modal Data Hook - useFeatureModalData with per-section query state,
     cache keys, abort/request IDs, retries.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -128,7 +129,7 @@ tasks:
 - id: P4-009
   description: Dashboard / BlockingFeatureList Migration - Consume shared FeatureCardDTO
     path; retire bespoke fetches.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   dependencies:
@@ -151,7 +152,7 @@ tasks:
 - id: P4-011
   description: Planning Cache Coordination - Layered invalidation between services/planning.ts
     SWR+LRU and useFeatureSurface bounded cache; ADR-style note.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-architect
   - react-performance-optimizer
@@ -176,7 +177,7 @@ parallelization:
   batch_4:
   - P4-007
   - P4-008
-progress: 0
+progress: 36
 ---
 
 # Phase 4 Progress — Modal Lazy Loading and Reliability

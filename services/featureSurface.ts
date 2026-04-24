@@ -1060,3 +1060,22 @@ export async function getLegacyFeatureDetail<T = unknown>(featureId: string): Pr
 export async function getLegacyFeatureLinkedSessions<T = unknown[]>(featureId: string): Promise<T> {
   return legacyFetch<T>(`/${encodeURIComponent(featureId)}/linked-sessions`);
 }
+
+/**
+ * Fetch task source file content from /api/features/task-source.
+ *
+ * Uses the typed client (via legacyFetch base URL) to eliminate the raw
+ * fetch(`/api/features/task-source?file=...`) call in TaskSourceDialog.
+ * P4-010: last raw /api/features/ interpolation in components/ removed.
+ */
+export async function getFeatureTaskSource(sourceFile: string): Promise<{ content: string }> {
+  const params = new URLSearchParams({ file: sourceFile });
+  const res = await fetch(`${API_LEGACY_FEATURES_BASE}/task-source?${params.toString()}`);
+  if (!res.ok) {
+    throw new FeatureSurfaceApiError(
+      `Feature task-source error: ${res.status} ${res.statusText}`,
+      res.status,
+    );
+  }
+  return res.json() as Promise<{ content: string }>;
+}
