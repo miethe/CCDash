@@ -28,7 +28,7 @@ Move feature board loading from ad hoc component effects to a dedicated data lay
 | P3-001 | API Client Methods | Add typed client methods for feature card list, rollups, modal sections, and linked-session pages. | No new raw feature-surface `fetch` calls are added in components. | 2 pts | frontend-developer | P2-005 |
 | P3-002 | Feature Surface Hook | Implement `useFeatureSurface` or equivalent for query state, list loading, rollup loading, cache keys, errors, and invalidation. | Hook returns cards, rollups, facets/totals, loading states, and retry handlers. | 3 pts | frontend-developer | P3-001 |
 | P3-003 | Server-Backed Filters | Move board search/filter/sort query state into API parameters while preserving draft/apply filter UX. | UI behavior matches current filters; totals reflect backend query. | 2 pts | ui-engineer-enhanced | P3-002 |
-| P3-004 | Remove Eager Linked-Session Summary Loop | Delete or bypass the `filteredFeatures.forEach(loadFeatureSessionSummary)` pattern. | Initial board render issues no per-feature linked-session requests. | 2 pts | frontend-developer | P3-002 |
+| P3-004 | Remove Eager Linked-Session Summary Loop | Delete or bypass the `filteredFeatures.forEach(loadFeatureSessionSummary)` pattern on ProjectBoard only. | No per-feature linked-session fan-out on ProjectBoard initial render. Other surfaces (SessionInspector, Workbench, Dashboard) remain on legacy pattern until Phase 4 P4-007..P4-009. | 2 pts | frontend-developer | P3-002 |
 | P3-005 | Card Metric Mapping | Render all current card metrics from `FeatureCardDTO` plus `FeatureRollupDTO`. | Existing visual cards, list view, counts, badges, and progress displays remain populated. | 2 pts | ui-engineer-enhanced | P3-004 |
 | P3-006 | Cache and Invalidation | Add bounded cache policy keyed by project, query, page/window, feature IDs, and freshness token. | Reopening same board query avoids duplicate requests while sync/live invalidation refreshes stale data. | 1 pt | react-performance-optimizer | P3-002 |
 | P3-007 | Board Tests | Add tests proving bounded calls, correct query params, filter behavior, rollup rendering, and no legacy summary fan-out. | Tests fail if `/linked-sessions` is called for each feature on initial render. | 1 pt | frontend-developer | P3-006 |
@@ -60,6 +60,10 @@ Move feature board loading from ad hoc component effects to a dedicated data lay
 - Feature data loading should move to hooks/services.
 - Feature cards should accept card DTO + rollup DTO, not trigger network requests.
 - Status update handlers should optimistically update local cache and then reconcile with server response.
+
+## Scope & Deferrals
+
+**Phase 3 scope is limited to ProjectBoard.** Other surfaces consuming feature/linked-session data (SessionInspector, FeatureExecutionWorkbench, Dashboard/BlockingFeatureList, and planning modals) remain on legacy patterns until Phase 4. The legacy `/api/features/{id}/linked-sessions` route is retained for non-board callers; Phase 5 will inventory and migrate or document each. This phase does not guarantee that other surfaces remain silent on legacy routes; verification is a Phase 5 task.
 
 ## Quality Gates
 

@@ -13,7 +13,7 @@ related:
 
 # Phase 5: Validation, Observability, Rollout
 
-**Effort:** 9 pts
+**Effort:** 12 pts
 **Dependencies:** Phases 1-4
 **Assigned Subagent(s):** testing specialist, backend-architect, frontend-developer, documentation-writer
 
@@ -28,9 +28,9 @@ Prove the redesigned feature surface preserves behavior, improves performance, w
 | P5-001 | Legacy Parity Tests | Compare old full-detail-derived card/session metrics with new list + rollup metrics on fixtures. | All required metrics match or have documented precision differences. | 2 pts | testing specialist | P3-005 |
 | P5-002 | Performance Benchmarks | Add benchmarks for board load, rollup endpoint, linked-session page, and modal tab activation. | Benchmarks verify request count, payload, and latency budgets. | 2 pts | backend-architect | P4-004 |
 | P5-003 | Observability Dashboard Hooks | Add logs/metrics for feature list, rollup, modal section, linked-session page, frontend cache hit/miss, and payload size. | Operators can identify query/path regressions. | 1 pt | backend-architect | P2-008 |
-| P5-004 | Existing Surface Regression Suite | Run and update tests for ProjectBoard, PlanningHomePage, FeatureExecutionWorkbench, SessionInspector, client v1, and linked-session routes. | Existing workflows remain functional under v2. | 1 pt | frontend-developer | P4-006 |
+| P5-004 | Existing Surface Regression Suite | Run and update tests for ProjectBoard, SessionInspector, planning modals, FeatureExecutionWorkbench, Dashboard/BlockingFeatureList, and linked-session routes; verify no surface issues per-feature eager calls on initial render. | Existing workflows remain functional under v2; no surface issues per-feature linked-session call on initial render. | 2 pts | frontend-developer | P4-009 |
 | P5-005 | Feature Flag Rollout | Add flag-controlled switch and rollback plan for board and modal migration. | v2 can be enabled/disabled without code changes. | 1 pt | backend-architect | P5-001 |
-| P5-006 | Legacy Path Retirement Plan | Identify legacy calls safe to remove or reimplement via new services. | No production UI path depends on eager `/linked-sessions` summary loop. | 1 pt | lead-architect | P5-004 |
+| P5-006 | Legacy Path Inventory & Retirement | Grep for remaining `/api/features/{id}/linked-sessions` callers outside the board; migrate each or document as intentional legacy consumer; zero undocumented callers. | No production UI path depends on eager `/linked-sessions` summary loop; all callers either migrated or explicitly documented. | 2 pts | lead-architect | P5-004 |
 | P5-007 | Documentation | Update developer docs with feature surface contracts, cache policy, and performance budgets. | Future changes know which contract to use for card vs detail data. | 1 pt | documentation-writer | P5-006 |
 
 ## Benchmark Scenarios
