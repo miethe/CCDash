@@ -160,6 +160,7 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
                 "riskLevel": "medium",
                 "complexity": "moderate",
                 "executionReadiness": "ready",
+                "testImpact": "api contract tests",
                 "tags": ["phase-2", "contract"],
                 "deferredTasks": 1,
                 "phaseCount": 2,
@@ -300,6 +301,20 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
         self.assertIn("documentCoverage", first)
         self.assertIn("qualitySignals", first)
         self.assertIn("dependencyState", first)
+        self.assertEqual(first.get("priority"), "high")
+        self.assertEqual(first.get("riskLevel"), "medium")
+        self.assertEqual(first.get("complexity"), "moderate")
+        self.assertEqual(first.get("executionReadiness"), "ready")
+        self.assertEqual(first.get("testImpact"), "api contract tests")
+        self.assertEqual(first.get("planningStatus", {}).get("effectiveStatus"), "active")
+        self.assertEqual(first.get("deferredTasks"), 1)
+        self.assertEqual(first.get("phaseCount"), 2)
+        self.assertEqual(first.get("plannedAt"), "2026-04-21")
+        self.assertEqual(first.get("startedAt"), "2026-04-22")
+        self.assertEqual(first.get("relatedFeatureCount"), 1)
+        self.assertEqual(first.get("documentCoverage", {}).get("countsByType", {}).get("prd"), 1)
+        self.assertEqual(first.get("qualitySignals", {}).get("blockerCount"), 1)
+        self.assertEqual(first.get("dependencyState", {}).get("blockedByCount"), 1)
 
         pagination_fields = {"total", "offset", "limit", "hasMore"}
         self.assertTrue(
@@ -315,7 +330,11 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
         response = self._post_first_success(
             path,
             bodies=[
-                {"feature_ids": [self._FEATURE_ID], "fields": ["session_counts", "latest_activity"]},
+                {
+                    "feature_ids": [self._FEATURE_ID],
+                    "fields": ["session_counts", "latest_activity"],
+                    "include_inherited_threads": True,
+                },
                 {"featureIds": [self._FEATURE_ID], "fields": ["session_counts", "latest_activity"]},
                 {"featureIds": [self._FEATURE_ID], "includeFreshness": True},
             ],
@@ -339,6 +358,25 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
 
         self.assertIn("missing", data)
         self.assertIsInstance(data["missing"], list)
+
+    def test_feature_sessions_page_returns_linked_session_contract(self) -> None:
+        path = f"/api/v1/features/{self._FEATURE_ID}/sessions/page"
+        if "/api/v1/features/{feature_id}/sessions/page" not in self._openapi_paths():
+            self.skipTest("Feature linked-session page endpoint is not registered in this checkout")
+
+        response = self.client.get(path, params={"limit": 20, "offset": 0})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self._assert_base_envelope(body)
+
+        data = body["data"]
+        self.assertIsInstance(data, dict)
+        self.assertIn("items", data)
+        self.assertIsInstance(data["items"], list)
+        self.assertGreaterEqual(len(data["items"]), 1)
+        self.assertEqual(data["items"][0].get("sessionId"), self._SESSION_ID)
+        self.assertIn("total", data)
+        self.assertIn("hasMore", data)
 
     def test_feature_detail_overview_include_returns_lightweight_modal_contract(self) -> None:
         path = f"/api/v1/features/{self._FEATURE_ID}"

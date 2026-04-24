@@ -4500,6 +4500,11 @@ const FeatureCard = ({
       )}
 
       <h4 className="font-medium text-panel-foreground mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
+      {(card.descriptionPreview || card.summary) && (
+        <p className="mb-2 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+          {card.descriptionPreview || card.summary}
+        </p>
+      )}
       {featureHasDeferred && (
         <div className="mb-2">
           <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10">
@@ -4524,7 +4529,18 @@ const FeatureCard = ({
       </div>
       <div className="flex flex-wrap gap-1.5 mb-3 text-[9px]">
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{card.priority || 'priority n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">readiness n/a</span>
+        {card.riskLevel && (
+          <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">risk {card.riskLevel}</span>
+        )}
+        {card.complexity && (
+          <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">complexity {card.complexity}</span>
+        )}
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.executionReadiness || 'readiness n/a'}</span>
+        {(feature.qualitySignals?.blockerCount || 0) > 0 && (
+          <span className="px-1.5 py-0.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-200">
+            {feature.qualitySignals?.blockerCount} blocker{feature.qualitySignals?.blockerCount === 1 ? '' : 's'}
+          </span>
+        )}
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{getFeatureCoverageSummary(feature)}</span>
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {card.relatedFeatureCount}</span>
       </div>
@@ -4587,6 +4603,11 @@ const FeatureListCard = ({
             )}
           </div>
           <h3 className="font-bold text-panel-foreground text-lg group-hover:text-indigo-400 transition-colors truncate">{card.name}</h3>
+          {(card.descriptionPreview || card.summary) && (
+            <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
+              {card.descriptionPreview || card.summary}
+            </p>
+          )}
         </div>
         <div className="text-right ml-4 flex-shrink-0">
           <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{card.totalTasks}</div>
@@ -4609,7 +4630,18 @@ const FeatureListCard = ({
       </div>
       <div className="mb-3 flex flex-wrap gap-1.5 text-[10px]">
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{card.priority || 'priority n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">readiness n/a</span>
+        {card.riskLevel && (
+          <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">risk {card.riskLevel}</span>
+        )}
+        {card.complexity && (
+          <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">complexity {card.complexity}</span>
+        )}
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.executionReadiness || 'readiness n/a'}</span>
+        {(feature.qualitySignals?.blockerCount || 0) > 0 && (
+          <span className="px-1.5 py-0.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-200">
+            {feature.qualitySignals?.blockerCount} blocker{feature.qualitySignals?.blockerCount === 1 ? '' : 's'}
+          </span>
+        )}
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{getFeatureCoverageSummary(feature)}</span>
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {card.relatedFeatureCount}</span>
       </div>
@@ -4897,14 +4929,23 @@ export const ProjectBoard: React.FC = () => {
     if (selectedFeature) {
       const selectedBase = getFeatureBaseSlug(selectedFeature.id);
       const updated = apiFeatures.find(f => f.id === selectedFeature.id)
-        || apiFeatures.find(f => getFeatureBaseSlug(f.id) === selectedBase);
+        || apiFeatures.find(f => getFeatureBaseSlug(f.id) === selectedBase)
+        || surfaceCards.find(c => c.id === selectedFeature.id)
+        || surfaceCards.find(c => getFeatureBaseSlug(c.id) === selectedBase);
       if (updated) {
-        setSelectedFeature(updated);
+        const nextFeature = 'phaseCount' in updated ? cardDTOToFeature(updated) : updated;
+        if (
+          nextFeature.id !== selectedFeature.id
+          || nextFeature.status !== selectedFeature.status
+          || nextFeature.updatedAt !== selectedFeature.updatedAt
+        ) {
+          setSelectedFeature(nextFeature);
+        }
       } else if (apiFeatures.length > 0) {
         setSelectedFeature(null);
       }
     }
-  }, [apiFeatures, selectedFeature]);
+  }, [apiFeatures, selectedFeature, surfaceCards]);
 
   const openFeatureModal = useCallback((feature: Feature, initialTab: FeatureModalTab = 'overview') => {
     setSelectedFeatureTab(initialTab);
@@ -4915,11 +4956,13 @@ export const ProjectBoard: React.FC = () => {
   const openFeatureModalById = useCallback((featureId: string, initialTab: FeatureModalTab = 'overview') => {
     const featureBase = getFeatureBaseSlug(featureId);
     const feature = apiFeatures.find(f => f.id === featureId)
-      || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase);
+      || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase)
+      || surfaceCards.find(c => c.id === featureId)
+      || surfaceCards.find(c => getFeatureBaseSlug(c.id) === featureBase);
     if (feature) {
-      openFeatureModal(feature, initialTab);
+      openFeatureModal('phaseCount' in feature ? cardDTOToFeature(feature) : feature, initialTab);
     }
-  }, [apiFeatures, openFeatureModal]);
+  }, [apiFeatures, surfaceCards, openFeatureModal]);
 
   const hasPendingFilterChanges = (
     draftSearchQuery !== searchQuery

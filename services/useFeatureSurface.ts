@@ -249,13 +249,15 @@ export interface UseFeatureSurfaceOptions {
   featureSurfaceV2Enabled?: boolean;
 }
 
-// Default rollup fields: minimum set for card-metric display.
-// Covers: session badge (session_counts), cost badge (token_cost_totals),
-// last-active indicator (latest_activity).
+// Default rollup fields for board cards. These stay bounded to the current
+// feature page and avoid session logs, but include the aggregate groups the
+// card UI reads for session breakdowns and document-count badges.
 const DEFAULT_ROLLUP_FIELDS: FeatureRollupFieldKey[] = [
   'session_counts',
   'token_cost_totals',
   'latest_activity',
+  'model_provider_summary',
+  'doc_metrics',
 ];
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
