@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { trackContextAdded } from '@/services/planningTelemetry';
 import type { PromptContextSelection } from '@/types';
 
 // ── Context item shape ────────────────────────────────────────────────────────
@@ -390,10 +391,12 @@ export function PlanningPromptContextTray({
   );
 
   const handleAdd = useCallback(
-    (item: ContextTrayItem) => {
+    (item: ContextTrayItem, method: 'manual' | 'drag' = 'manual') => {
       // Deduplicate by id within same kind
       if (items.some((i) => i.id === item.id && i.kind === item.kind)) return;
-      updateItems([...items, item]);
+      const nextItems = [...items, item];
+      updateItems(nextItems);
+      trackContextAdded({ kind: item.kind, method, trayCountAfter: nextItems.length });
     },
     [items, updateItems],
   );
@@ -450,7 +453,7 @@ export function PlanningPromptContextTray({
       };
 
       // Add session chip (dedup handled inside handleAdd)
-      handleAdd(sessionItem);
+      handleAdd(sessionItem, 'drag');
       onExternalDrop?.(sessionItem);
 
       // Also add transcript chip if available
@@ -461,7 +464,7 @@ export function PlanningPromptContextTray({
           kind: 'transcript',
           subtitle: payload.sessionId,
         };
-        handleAdd(transcriptItem);
+        handleAdd(transcriptItem, 'drag');
         onExternalDrop?.(transcriptItem);
       }
     },

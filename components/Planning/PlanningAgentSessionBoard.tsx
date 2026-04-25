@@ -14,6 +14,13 @@ import type {
   SessionCorrelationEvidence,
 } from '@/types';
 import { getSessionBoard } from '@/services/planning';
+import {
+  trackBoardOpened,
+  trackGroupingChanged,
+  trackCardOpened,
+  trackTranscriptLinkClicked,
+  trackReducedMotionFallback,
+} from '@/services/planningTelemetry';
 import { planningRouteFeatureModalHref } from '@/services/planningRoutes';
 import { useData } from '@/contexts/DataContext';
 import { usePlanningRoute } from './PlanningRouteLayout';
@@ -292,6 +299,7 @@ function CardActionRow({ card }: { card: PlanningAgentSessionCard }) {
           className={ACTION_LINK_CLS}
           aria-label="View session transcript"
           title="View session transcript"
+          onClick={() => trackTranscriptLinkClicked({ source: 'card' })}
         >
           <FileText size={11} aria-hidden />
         </Link>
@@ -994,8 +1002,21 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     void load();
   }, [sessions, load]);
 
+  // ── Telemetry: board opened + reduced-motion detection ─────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    trackBoardOpened({ projectId: activeProject?.id ?? null, groupingMode: grouping });
+    const mq = typeof window !== 'undefined'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
+    if (mq?.matches) trackReducedMotionFallback();
+  // Run once on mount — intentionally omitting grouping/activeProject from deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleGroupingChange = useCallback(
     (mode: PlanningBoardGroupingMode) => {
+      trackGroupingChanged({ nextMode: mode, prevMode: grouping });
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -1007,7 +1028,8 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         { replace: true },
       );
     },
-    [setSearchParams],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setSearchParams, grouping],
   );
 
   const handleManualRefresh = useCallback(() => {
@@ -1077,8 +1099,24 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   }, []);
 
   const handleCardSelect = useCallback((sessionId: string) => {
-    setSelectedSessionId((prev) => (prev === sessionId ? null : sessionId));
-  }, []);
+    setSelectedSessionId((prev) => {
+      const isOpening = prev !== sessionId;
+      if (isOpening) {
+        const card = cardBySessionId.get(sessionId);
+        if (card) {
+          trackCardOpened({
+            sessionState: card.state,
+            hasFeatureCorrelation: Boolean(card.correlation?.featureId),
+            correlationConfidence: card.correlation?.confidence ?? null,
+            hasRelationships: card.relationships.length > 0,
+            relationshipCount: card.relationships.length,
+          });
+        }
+      }
+      return prev === sessionId ? null : sessionId;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardBySessionId]);
 
   const handlePrepareNextRun = useCallback(
     (card: PlanningAgentSessionCard) => {

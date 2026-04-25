@@ -61,6 +61,7 @@ import type {
   PromptContextSelection,
 } from '@/types';
 import { getNextRunPreview, postNextRunPreview, PlanningApiError } from '@/services/planning';
+import { trackPromptCopied } from '@/services/planningTelemetry';
 import {
   PlanningPromptContextTray,
   type ContextTrayItem,
@@ -175,10 +176,13 @@ function CopyButton({
   text,
   label,
   className,
+  onCopied,
 }: {
   text: string;
   label: string;
   className?: string;
+  /** Optional callback invoked after a successful copy. */
+  onCopied?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -186,9 +190,11 @@ function CopyButton({
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
+    onCopied?.();
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setCopied(false), 2000);
-  }, [text]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, onCopied]);
 
   useEffect(() => {
     return () => {
@@ -222,10 +228,13 @@ function CodeBlock({
   content,
   copyLabel,
   maxHeight = 160,
+  onCopied,
 }: {
   content: string;
   copyLabel: string;
   maxHeight?: number;
+  /** Forwarded to the internal CopyButton for telemetry instrumentation. */
+  onCopied?: () => void;
 }) {
   return (
     <div
@@ -234,7 +243,7 @@ function CodeBlock({
     >
       {/* Copy button — top-right corner */}
       <div className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <CopyButton text={content} label={copyLabel} />
+        <CopyButton text={content} label={copyLabel} onCopied={onCopied} />
       </div>
       <pre
         className="planning-mono overflow-x-auto overflow-y-auto p-3 text-[10px] leading-relaxed"
@@ -672,10 +681,17 @@ export function PlanningNextRunPreview({
 
   const handleCopyAllClick = useCallback(async () => {
     await handleCopyAll();
+    trackPromptCopied({
+      copyTarget: 'all',
+      featureId,
+      phaseNumber: phaseNumber ?? null,
+      contextRefCount: trayItems.length,
+    });
     setAllCopied(true);
     if (allCopyTimerRef.current) clearTimeout(allCopyTimerRef.current);
     allCopyTimerRef.current = setTimeout(() => setAllCopied(false), 2000);
-  }, [handleCopyAll]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleCopyAll, featureId, phaseNumber, trayItems.length]);
 
   useEffect(() => {
     return () => {
@@ -842,12 +858,31 @@ export function PlanningNextRunPreview({
                   />
                   <SectionLabel>Command</SectionLabel>
                 </div>
-                <CopyButton text={preview.command} label="Copy command" />
+                <CopyButton
+                  text={preview.command}
+                  label="Copy command"
+                  onCopied={() =>
+                    trackPromptCopied({
+                      copyTarget: 'command',
+                      featureId,
+                      phaseNumber: phaseNumber ?? null,
+                      contextRefCount: trayItems.length,
+                    })
+                  }
+                />
               </div>
               <CodeBlock
                 content={preview.command}
                 copyLabel="Copy command"
                 maxHeight={80}
+                onCopied={() =>
+                  trackPromptCopied({
+                    copyTarget: 'command',
+                    featureId,
+                    phaseNumber: phaseNumber ?? null,
+                    contextRefCount: trayItems.length,
+                  })
+                }
               />
 
               {/* Launch context strip — shown below the command block when context is available */}
@@ -877,12 +912,31 @@ export function PlanningNextRunPreview({
                   />
                   <SectionLabel>Prompt Skeleton</SectionLabel>
                 </div>
-                <CopyButton text={preview.promptSkeleton} label="Copy prompt" />
+                <CopyButton
+                  text={preview.promptSkeleton}
+                  label="Copy prompt"
+                  onCopied={() =>
+                    trackPromptCopied({
+                      copyTarget: 'prompt',
+                      featureId,
+                      phaseNumber: phaseNumber ?? null,
+                      contextRefCount: trayItems.length,
+                    })
+                  }
+                />
               </div>
               <CodeBlock
                 content={preview.promptSkeleton}
                 copyLabel="Copy prompt skeleton"
                 maxHeight={200}
+                onCopied={() =>
+                  trackPromptCopied({
+                    copyTarget: 'prompt',
+                    featureId,
+                    phaseNumber: phaseNumber ?? null,
+                    contextRefCount: trayItems.length,
+                  })
+                }
               />
             </section>
 
