@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertCircle, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AlertCircle, ExternalLink, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type {
@@ -24,6 +24,11 @@ import { Panel, Dot } from './primitives';
 
 /** How old (in ms) board data must be before the stale indicator appears. */
 const BOARD_STALE_TTL_MS = 60_000;
+
+/** Valid grouping modes that can be set via URL. */
+const VALID_GROUPING_MODES = new Set<PlanningBoardGroupingMode>([
+  'state', 'feature', 'phase', 'agent', 'model',
+]);
 
 // ── State dot colours and labels keyed by card state ──────────────────────────
 
@@ -94,12 +99,6 @@ const RELATION_LABEL: Record<BoardSessionRelationship['relationType'], string> =
 
 // ── Confidence tier styling ───────────────────────────────────────────────────
 
-/**
- * Visual config per confidence tier.
- * borderStyle: CSS border-style value for the left accent.
- * borderColor: CSS variable reference for the left border color.
- * bgMix: optional opacity/mix modifier for card background (undefined = default bg).
- */
 const CONFIDENCE_CONFIG = {
   high: {
     borderStyle: 'solid',
@@ -153,20 +152,11 @@ const EVIDENCE_CONFIDENCE_COLOR: Record<SessionCorrelationEvidence['confidence']
 
 // ── Evidence tooltip ──────────────────────────────────────────────────────────
 
-/**
- * CSS-only hover tooltip listing evidence items for a correlation.
- * Renders as a group container — the tooltip div is visible via CSS :hover
- * on the group container. No JavaScript state needed.
- *
- * Tooltip appears above the trigger (bottom-full) and is clamped to stay
- * inside card bounds via pointer-events and z-index.
- */
 function EvidenceTooltip({ evidence }: { evidence: SessionCorrelationEvidence[] }) {
   return (
     <div
       className="evidence-tooltip-panel"
       role="tooltip"
-      // Prevent the tooltip interaction from bubbling to card role="button"
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
@@ -193,20 +183,12 @@ function EvidenceTooltip({ evidence }: { evidence: SessionCorrelationEvidence[] 
 
 // ── Confidence indicator ──────────────────────────────────────────────────────
 
-/**
- * Small indicator shown in the card header row when a `correlation` is present.
- * For low/unknown confidence: shows a symbol badge + hover tooltip.
- * For high/medium: shows a subtle icon indicating an explicit/linked session.
- *
- * The outer `.evidence-tooltip-group` wrapper enables the CSS hover reveal.
- */
 function CorrelationIndicator({ correlation }: { correlation: SessionCorrelation }) {
   const cfg = CONFIDENCE_CONFIG[correlation.confidence];
   const isWeak = correlation.confidence === 'low' || correlation.confidence === 'unknown';
 
   return (
     <span className="evidence-tooltip-group" aria-label={cfg.badgeTitle}>
-      {/* The visible trigger element */}
       {cfg.indicatorIcon === 'link' ? (
         <Link2
           size={9}
@@ -228,11 +210,7 @@ function CorrelationIndicator({ correlation }: { correlation: SessionCorrelation
       ) : cfg.indicatorIcon === 'tilde' ? (
         <span
           className="planning-mono flex-shrink-0 font-bold leading-none"
-          style={{
-            fontSize: 9,
-            color: 'var(--warn)',
-            lineHeight: 1,
-          }}
+          style={{ fontSize: 9, color: 'var(--warn)', lineHeight: 1 }}
           aria-hidden
         >
           ~
@@ -246,7 +224,6 @@ function CorrelationIndicator({ correlation }: { correlation: SessionCorrelation
         />
       )}
 
-      {/* Tooltip — visible on group hover via CSS */}
       {(isWeak || correlation.evidence.length > 0) && (
         <EvidenceTooltip evidence={correlation.evidence} />
       )}
@@ -256,10 +233,6 @@ function CorrelationIndicator({ correlation }: { correlation: SessionCorrelation
 
 // ── Left border accent ────────────────────────────────────────────────────────
 
-/**
- * Derives inline style for the card's left border accent based on correlation confidence.
- * Returns undefined when there is no correlation (no accent).
- */
 function correlationLeftBorderStyle(
   correlation: SessionCorrelation | undefined,
 ): React.CSSProperties | undefined {
@@ -274,10 +247,6 @@ function correlationLeftBorderStyle(
 
 // ── Card action row ───────────────────────────────────────────────────────────
 
-/**
- * Shared CSS class string for compact icon-link buttons in the card action row.
- * Each link uses react-router-dom's `<Link>` for HashRouter-compatible navigation.
- */
 const ACTION_LINK_CLS = cn(
   'inline-flex items-center justify-center rounded p-[3px]',
   'text-[color:var(--ink-3)] transition-colors',
@@ -285,42 +254,22 @@ const ACTION_LINK_CLS = cn(
   'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
 );
 
-/**
- * Compact row of navigational icon-links rendered at the bottom of each
- * SessionCard. Links are only rendered when the relevant data is present;
- * missing data means the link is absent, not disabled.
- *
- * Clicks call `e.stopPropagation()` so they don't trigger the card's own
- * `role="button"` selection handler.
- *
- * Links (in order):
- *   1. Transcript  → /sessions?session=<sessionId>
- *   2. Feature     → /planning?feature=<featureId>&modal=feature (modal-first per planning-routes)
- *   3. Phase ops   → same planning modal, with phase + panel params appended
- *   4. Parent/root → /sessions?session=<ancestorSessionId>  (right-aligned)
- */
 function CardActionRow({ card }: { card: PlanningAgentSessionCard }) {
   const featureId = card.correlation?.featureId;
   const phaseNumber = card.correlation?.phaseNumber;
 
-  // Find the first parent or root relationship for the ancestor link.
   const ancestorRel = card.relationships.find(
     (rel) => rel.relationType === 'parent' || rel.relationType === 'root',
   );
 
-  // Phase operations: requires both featureId and phaseNumber. The panel is
-  // opened as an overlay within the planning page via query-param routing.
   const phaseOpsHref =
     featureId != null && phaseNumber != null
       ? `${planningRouteFeatureModalHref(featureId, 'overview')}&phase=${encodeURIComponent(phaseNumber)}&panel=phase-ops`
       : null;
 
-  // Bail out entirely if nothing will render — keeps cards compact when there
-  // is no navigable context attached to this session.
   const hasAnyLink = Boolean(card.sessionId || featureId || phaseOpsHref || ancestorRel);
   if (!hasAnyLink) return null;
 
-  // Prevent clicks/keyboard events from bubbling to the card's role="button".
   function stopProp(e: React.MouseEvent | React.KeyboardEvent) {
     e.stopPropagation();
   }
@@ -335,7 +284,6 @@ function CardActionRow({ card }: { card: PlanningAgentSessionCard }) {
       onClick={stopProp}
       onKeyDown={stopProp}
     >
-      {/* 1. Transcript — always present when sessionId exists */}
       {card.sessionId && (
         <Link
           to={`/sessions?session=${encodeURIComponent(card.sessionId)}`}
@@ -347,7 +295,6 @@ function CardActionRow({ card }: { card: PlanningAgentSessionCard }) {
         </Link>
       )}
 
-      {/* 2. Feature planning context — requires correlation.featureId */}
       {featureId && (
         <Link
           to={planningRouteFeatureModalHref(featureId, 'overview')}
@@ -359,7 +306,6 @@ function CardActionRow({ card }: { card: PlanningAgentSessionCard }) {
         </Link>
       )}
 
-      {/* 3. Phase operations — requires both featureId and phaseNumber */}
       {phaseOpsHref && (
         <Link
           to={phaseOpsHref}
@@ -371,10 +317,8 @@ function CardActionRow({ card }: { card: PlanningAgentSessionCard }) {
         </Link>
       )}
 
-      {/* Push ancestor link to the right */}
       <span className="flex-1" aria-hidden />
 
-      {/* 4. Parent / root session link */}
       {ancestorRel && (
         <Link
           to={`/sessions?session=${encodeURIComponent(ancestorRel.relatedSessionId)}`}
@@ -397,7 +341,6 @@ interface SessionCardProps {
   isHighlighted: boolean;
   isWeakHighlighted: boolean;
   isSelected: boolean;
-  /** The relationship badge to show on this card (sent from the hovered/selected card). */
   relationBadge?: BoardSessionRelationship['relationType'];
   onHover: (sessionId: string | null) => void;
   onSelect: (sessionId: string) => void;
@@ -415,7 +358,6 @@ function SessionCard({
 }: SessionCardProps) {
   const prevStateRef = useRef(card.state);
   const [liveMsg, setLiveMsg] = useState('');
-  // flashKey increments on each state change to restart the CSS animation via key prop.
   const [flashKey, setFlashKey] = useState(0);
   const [showFlash, setShowFlash] = useState(false);
 
@@ -448,7 +390,6 @@ function SessionCard({
   const latestMarker =
     card.activityMarkers.length > 0 ? card.activityMarkers[card.activityMarkers.length - 1] : null;
 
-  // Derive whether this card has a weak (inferred) correlation.
   const correlationConf = card.correlation?.confidence;
   const isInferred = correlationConf === 'low' || correlationConf === 'unknown';
   const leftBorderStyle = correlationLeftBorderStyle(card.correlation);
@@ -459,9 +400,7 @@ function SessionCard({
     STATE_LABEL[card.state],
     featureSlug ? `feature ${featureSlug}` : null,
     card.startedAt ? `started ${relativeTime(card.startedAt)}` : null,
-    card.correlation
-      ? `correlation confidence ${card.correlation.confidence}`
-      : null,
+    card.correlation ? `correlation confidence ${card.correlation.confidence}` : null,
     isSelected ? 'selected' : null,
     isHighlighted ? 'related session' : null,
   ]
@@ -483,7 +422,6 @@ function SessionCard({
 
   return (
     <div
-      // flashKey forces a remount of the animation class when state changes.
       key={showFlash ? flashKey : undefined}
       role="button"
       tabIndex={0}
@@ -498,32 +436,25 @@ function SessionCard({
         'relative rounded-[var(--radius-sm)] border',
         'cursor-pointer outline-none',
         'transition-[border-color,box-shadow,background-color,opacity] duration-200 motion-reduce:transition-none',
-        // Entry fade-in: cards animate in on mount; reduced-motion users get instant display.
         'planning-card-enter',
-        // State-transition flash: briefly highlights card border/bg when state changes.
         showFlash && 'planning-card-flash',
         compact ? 'px-2.5 py-2' : 'px-3 py-2.5',
-        // Inferred/unknown correlation: slightly muted background
         isInferred ? 'bg-[color:var(--bg-1)]' : 'bg-[color:var(--bg-2)]',
-        // Default (no highlight state)
         !isHighlighted && !isWeakHighlighted && !isSelected && [
           'border-[color:var(--line-1)]',
           'hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)]',
           'focus-visible:border-[color:var(--brand)] focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]/30',
         ],
-        // Selected — strongest ring
         isSelected && [
           'border-[color:var(--brand)]',
           'shadow-[0_0_0_2px_color-mix(in_oklab,var(--brand)_30%,transparent)]',
           'bg-[color:color-mix(in_oklab,var(--brand)_6%,var(--bg-2))]',
         ],
-        // Strong highlight (related, not selected)
         isHighlighted && !isSelected && [
           'border-[color:color-mix(in_oklab,var(--brand)_55%,var(--line-1))]',
           'shadow-[0_0_0_1px_color-mix(in_oklab,var(--brand)_20%,transparent)]',
           'bg-[color:color-mix(in_oklab,var(--brand)_4%,var(--bg-2))]',
         ],
-        // Weak highlight (low-confidence relationship)
         isWeakHighlighted && !isHighlighted && !isSelected && [
           'border-dashed border-[color:color-mix(in_oklab,var(--brand)_30%,var(--line-1))]',
         ],
@@ -537,7 +468,6 @@ function SessionCard({
           style={{
             background: dotColor,
             flexShrink: 0,
-            // Used by the planning-dot-live CSS animation for the ring color.
             '--dot-color': dotColor,
           } as React.CSSProperties}
           aria-label={card.state}
@@ -550,7 +480,6 @@ function SessionCard({
           {card.sessionId.length > 12 ? `…${card.sessionId.slice(-10)}` : card.sessionId}
         </span>
 
-        {/* Correlation confidence indicator — only when a correlation exists */}
         {card.correlation && (
           <CorrelationIndicator correlation={card.correlation} />
         )}
@@ -563,7 +492,7 @@ function SessionCard({
         </span>
       </div>
 
-      {/* Row 2: agent name (fixed slot — always rendered to avoid reflow) */}
+      {/* Row 2: agent name */}
       <div
         className={cn(
           'mt-1 truncate font-medium',
@@ -576,7 +505,7 @@ function SessionCard({
         {card.agentName ?? ''}
       </div>
 
-      {/* Row 3: model chip + feature badge (fixed slot) */}
+      {/* Row 3: model chip + feature badge */}
       <div
         className="mt-1.5 flex items-center gap-1 flex-wrap"
         style={{ minHeight: '1.25rem' }}
@@ -608,7 +537,7 @@ function SessionCard({
         )}
       </div>
 
-      {/* Row 4: phase / task hints (fixed slot) */}
+      {/* Row 4: phase / task hints */}
       <div
         className="mt-1 flex items-center gap-1 flex-wrap"
         style={{ minHeight: '1.125rem' }}
@@ -634,7 +563,7 @@ function SessionCard({
         )}
       </div>
 
-      {/* Row 5: token summary + time + activity marker (fixed slot) */}
+      {/* Row 5: token summary + time + activity marker */}
       <div
         className="mt-1.5 flex items-center gap-2 min-w-0"
         style={{ minHeight: '1rem' }}
@@ -672,12 +601,8 @@ function SessionCard({
         )}
       </div>
 
-      {/* Context window bar (fixed slot — rendered regardless, hidden when no data) */}
-      <div
-        className="mt-1.5"
-        style={{ minHeight: '3px' }}
-        aria-hidden="true"
-      >
+      {/* Context window bar */}
+      <div className="mt-1.5" style={{ minHeight: '3px' }} aria-hidden="true">
         {card.tokenSummary?.contextWindowPct != null && (
           <div
             className="h-[2px] w-full rounded-full overflow-hidden bg-[color:var(--bg-3)]"
@@ -699,10 +624,10 @@ function SessionCard({
         )}
       </div>
 
-      {/* Action row: navigational links (omitted entirely when no data is available) */}
+      {/* Action row */}
       <CardActionRow card={card} />
 
-      {/* Live state-transition region — fixed height, invisible when idle */}
+      {/* Live state-transition region */}
       <div
         aria-live="polite"
         aria-atomic="true"
@@ -712,7 +637,7 @@ function SessionCard({
         {liveMsg}
       </div>
 
-      {/* Relationship badge — appears on related cards when hovered/selected card has relationships */}
+      {/* Relationship badge */}
       {relationBadge && (
         <div
           className={cn(
@@ -741,12 +666,13 @@ interface BoardColumnProps {
   highlightedSessionIds: Set<string>;
   weakHighlightedSessionIds: Set<string>;
   selectedSessionId: string | null;
-  /** Maps session ID → relationship kind for badge display. */
   relationBadgeMap: Map<string, BoardSessionRelationship['relationType']>;
   onCardHover: (sessionId: string | null) => void;
   onCardSelect: (sessionId: string) => void;
   /** Whether this column's entity (feature/phase) is highlighted via a relationship. */
   isColumnHighlighted: boolean;
+  /** Whether this column is highlighted via the URL ?highlight= param. */
+  isUrlHighlighted: boolean;
 }
 
 function BoardColumn({
@@ -760,6 +686,7 @@ function BoardColumn({
   onCardHover,
   onCardSelect,
   isColumnHighlighted,
+  isUrlHighlighted,
 }: BoardColumnProps) {
   const lowerFilter = filterText.toLowerCase();
   const visible = filterText
@@ -770,15 +697,24 @@ function BoardColumn({
       )
     : group.cards;
 
+  // Feature-grouped columns get a clickable header link to the planning feature modal.
+  const featureHeaderHref =
+    group.groupType === 'feature'
+      ? planningRouteFeatureModalHref(group.groupKey, 'overview')
+      : null;
+
+  const isHighlighted = isColumnHighlighted || isUrlHighlighted;
+
   return (
     <div
       className={cn(
         'flex min-w-[220px] max-w-[280px] flex-shrink-0 flex-col',
         'rounded-[var(--radius)] border bg-[color:var(--bg-1)]',
         'transition-[border-color,box-shadow] duration-200 motion-reduce:transition-none',
-        isColumnHighlighted
+        isHighlighted
           ? 'border-[color:color-mix(in_oklab,var(--brand)_50%,var(--line-1))] shadow-[0_0_0_1px_color-mix(in_oklab,var(--brand)_15%,transparent)]'
           : 'border-[color:var(--line-1)]',
+        isUrlHighlighted && 'shadow-[0_0_0_2px_color-mix(in_oklab,var(--brand)_25%,transparent)]',
       )}
     >
       <div
@@ -786,14 +722,39 @@ function BoardColumn({
           'flex items-center justify-between border-b',
           'transition-[border-color,background-color] duration-200 motion-reduce:transition-none',
           compact ? 'px-3 py-1.5' : 'px-3 py-2',
-          isColumnHighlighted
+          isHighlighted
             ? 'border-[color:color-mix(in_oklab,var(--brand)_30%,var(--line-1))] bg-[color:color-mix(in_oklab,var(--brand)_5%,var(--bg-1))]'
             : 'border-[color:var(--line-1)]',
         )}
       >
-        <span className="truncate text-[11px] font-medium text-[color:var(--ink-1)]">
-          {group.groupLabel}
-        </span>
+        {/* Column title — clickable link when grouped by feature */}
+        {featureHeaderHref ? (
+          <Link
+            to={featureHeaderHref}
+            className={cn(
+              'group flex min-w-0 flex-1 items-center gap-1',
+              'truncate text-[11px] font-medium text-[color:var(--ink-1)]',
+              'rounded transition-colors',
+              'hover:text-[color:var(--brand)]',
+              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+            )}
+            aria-label={`Open feature ${group.groupLabel} in planning view`}
+            title={`View feature: ${group.groupLabel}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="truncate">{group.groupLabel}</span>
+            <ExternalLink
+              size={9}
+              aria-hidden
+              className="flex-shrink-0 opacity-0 transition-opacity group-hover:opacity-50"
+            />
+          </Link>
+        ) : (
+          <span className="truncate text-[11px] font-medium text-[color:var(--ink-1)]">
+            {group.groupLabel}
+          </span>
+        )}
+
         <span
           className={cn(
             'planning-mono ml-2 flex-shrink-0 rounded px-1.5 py-0.5 text-[10px]',
@@ -865,10 +826,6 @@ function BoardSkeleton() {
 
 // ── Stale indicator ───────────────────────────────────────────────────────────
 
-/**
- * Tiny muted timestamp shown when board data is older than BOARD_STALE_TTL_MS.
- * Ticks every 15 seconds so the relative label stays fresh without thrashing.
- */
 function StaleIndicator({ fetchedAt }: { fetchedAt: Date }) {
   const [, setTick] = useState(0);
 
@@ -891,6 +848,20 @@ function StaleIndicator({ fetchedAt }: { fetchedAt: Date }) {
   );
 }
 
+// ── URL state helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Reads the grouping mode from URL search params.
+ * Falls back to 'state' when absent or invalid.
+ */
+function readGroupingFromParams(params: URLSearchParams): PlanningBoardGroupingMode {
+  const raw = params.get('groupBy');
+  if (raw && VALID_GROUPING_MODES.has(raw as PlanningBoardGroupingMode)) {
+    return raw as PlanningBoardGroupingMode;
+  }
+  return 'state';
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 type FetchState =
@@ -908,22 +879,24 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   const { density } = usePlanningRoute();
   const compact = density === 'compact';
 
-  const [grouping, setGrouping] = useState<PlanningBoardGroupingMode>('state');
+  // ── URL-driven grouping + highlight ──────────────────────────────────────────
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Grouping is read from and written to the URL so the state is bookmarkable.
+  const grouping = readGroupingFromParams(searchParams);
+
+  // ?highlight=<featureId|groupKey> pre-selects a column when navigating from the feature lane.
+  const urlHighlightId = searchParams.get('highlight') ?? null;
+
   const [filterText, setFilterText] = useState('');
   const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
-  // Whether a background refresh is in-flight (distinct from the initial load).
   const [refreshing, setRefreshing] = useState(false);
-  // Timestamp of the last successful board fetch, for the stale indicator.
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
 
   // ── Relationship highlight state ────────────────────────────────────────────
-  /** Session ID currently hovered (or null). */
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
-  /** Session ID locked by click (persists until another click or Escape). */
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
-  // Track the sessions reference to detect upstream poll ticks without capturing
-  // the full array in closure state (avoids spurious re-renders on identity-stable arrays).
   const sessionsRef = useRef(sessions);
   const prevSessionsRef = useRef(sessions);
 
@@ -933,7 +906,6 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         setFetchState({ phase: 'idle' });
         return;
       }
-      // Background refresh: keep existing board visible, show spinner instead.
       const isBackgroundRefresh = fetchState.phase === 'ready' && !opts.forceRefresh;
       const isManualRefresh = fetchState.phase === 'ready' && opts.forceRefresh;
 
@@ -948,7 +920,6 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         setFetchState({ phase: 'ready', board });
         setFetchedAt(new Date());
       } catch (err) {
-        // On background refresh failure, preserve existing board — don't replace with error.
         if (isBackgroundRefresh || isManualRefresh) {
           console.warn('[PlanningAgentSessionBoard] Background refresh failed:', err);
         } else {
@@ -965,30 +936,35 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     [activeProject?.id, grouping],
   );
 
-  // Keep sessionsRef in sync so the effect below can read current without
-  // being listed as a dependency (avoids retriggering load on every render).
   useEffect(() => {
     sessionsRef.current = sessions;
   });
 
-  // Initial load and grouping/project change.
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Upstream poll tick: when the sessions array reference changes (AppRuntimeContext
-  // refreshes every 30 s), re-fetch the board without force so the SWR cache in
-  // getSessionBoard can deduplicate concurrent requests.
   useEffect(() => {
     if (prevSessionsRef.current === sessions) return;
     prevSessionsRef.current = sessions;
-    // Only trigger a background refresh once we've already loaded once.
     void load();
   }, [sessions, load]);
 
-  const handleGroupingChange = useCallback((mode: PlanningBoardGroupingMode) => {
-    setGrouping(mode);
-  }, []);
+  const handleGroupingChange = useCallback(
+    (mode: PlanningBoardGroupingMode) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('groupBy', mode);
+          // Clear highlight when user manually changes grouping — no longer meaningful.
+          next.delete('highlight');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const handleManualRefresh = useCallback(() => {
     void load({ forceRefresh: true });
@@ -996,10 +972,8 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
 
   // ── Relationship highlight derivation ────────────────────────────────────────
 
-  /** Selected takes priority over hovered for driving the highlight graph. */
   const activeSessionId = selectedSessionId ?? hoveredSessionId;
 
-  /** O(1) card lookup rebuilt only when board data changes. */
   const cardBySessionId = useMemo<Map<string, PlanningAgentSessionCard>>(() => {
     if (fetchState.phase !== 'ready') return new Map();
     const map = new Map<string, PlanningAgentSessionCard>();
@@ -1011,11 +985,6 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     return map;
   }, [fetchState]);
 
-  /**
-   * Derive highlight sets from the active card's relationships.
-   * BoardSessionRelationship has no numeric confidence — 'sibling' is treated
-   * as weak (dashed border), the rest as strong.
-   */
   const {
     highlightedSessionIds,
     weakHighlightedSessionIds,
@@ -1067,7 +1036,6 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     setSelectedSessionId((prev) => (prev === sessionId ? null : sessionId));
   }, []);
 
-  // Escape clears the persistent selection.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSelectedSessionId(null);
@@ -1076,7 +1044,6 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  /** Returns true when a column's entity key matches the active card's correlation. */
   const isGroupHighlighted = useCallback(
     (group: PlanningBoardGroup): boolean => {
       if (!activeSessionId) return false;
@@ -1085,6 +1052,15 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
       return false;
     },
     [activeSessionId, highlightedFeatureIds, highlightedPhaseKeys],
+  );
+
+  /** Returns true when the column's groupKey matches the URL ?highlight= param. */
+  const isGroupUrlHighlighted = useCallback(
+    (group: PlanningBoardGroup): boolean => {
+      if (!urlHighlightId) return false;
+      return group.groupKey === urlHighlightId;
+    },
+    [urlHighlightId],
   );
 
   const isInitialLoad = fetchState.phase === 'loading' || fetchState.phase === 'idle';
@@ -1101,12 +1077,10 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
           className="flex-1 min-w-0"
         />
 
-        {/* Stale indicator */}
         {fetchedAt && !refreshing && (
           <StaleIndicator fetchedAt={fetchedAt} />
         )}
 
-        {/* Manual refresh button */}
         <button
           type="button"
           onClick={handleManualRefresh}
@@ -1174,6 +1148,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
                 onCardHover={handleCardHover}
                 onCardSelect={handleCardSelect}
                 isColumnHighlighted={isGroupHighlighted(group)}
+                isUrlHighlighted={isGroupUrlHighlighted(group)}
               />
             ))}
           </div>

@@ -210,6 +210,11 @@ function LaneCard({ card, compact }: LaneCardProps) {
     .filter(Boolean)
     .join(', ');
 
+  // Transcript href — used on the session ID link in row 1.
+  const transcriptHref = card.sessionId
+    ? `/sessions?session=${encodeURIComponent(card.sessionId)}`
+    : null;
+
   return (
     <div
       className={cn(
@@ -223,7 +228,7 @@ function LaneCard({ card, compact }: LaneCardProps) {
       )}
       aria-label={ariaLabel}
     >
-      {/* Row 1: state dot + session ID truncated + time */}
+      {/* Row 1: state dot + session ID (transcript link) + time */}
       <div className="flex items-center gap-1 min-w-0">
         <Dot
           style={{
@@ -234,12 +239,30 @@ function LaneCard({ card, compact }: LaneCardProps) {
           aria-label={card.state}
           className={isActive ? 'planning-dot-live' : undefined}
         />
-        <span
-          className="planning-mono truncate text-[9.5px] text-[color:var(--ink-3)] flex-1 min-w-0"
-          title={card.sessionId}
-        >
-          {card.sessionId.length > 10 ? `…${card.sessionId.slice(-8)}` : card.sessionId}
-        </span>
+        {/* Session ID — clickable link to transcript when sessionId exists */}
+        {transcriptHref ? (
+          <Link
+            to={transcriptHref}
+            className={cn(
+              'planning-mono truncate text-[9.5px] text-[color:var(--ink-3)] flex-1 min-w-0',
+              'rounded transition-colors',
+              'hover:text-[color:var(--brand)] hover:underline underline-offset-2',
+              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+            )}
+            title={`View transcript: ${card.sessionId}`}
+            aria-label={`View session transcript: ${card.sessionId}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {card.sessionId.length > 10 ? `…${card.sessionId.slice(-8)}` : card.sessionId}
+          </Link>
+        ) : (
+          <span
+            className="planning-mono truncate text-[9.5px] text-[color:var(--ink-3)] flex-1 min-w-0"
+            title={card.sessionId}
+          >
+            {card.sessionId.length > 10 ? `…${card.sessionId.slice(-8)}` : card.sessionId}
+          </span>
+        )}
         {card.startedAt && (
           <span className="planning-mono flex-shrink-0 text-[8.5px] text-[color:var(--ink-4)] tabular-nums">
             {relativeTime(card.startedAt)}
@@ -559,8 +582,9 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
     (state) => (cardsByState.get(state)?.length ?? 0) > 0,
   );
 
-  // "View on Board" URL: main planning board filtered to this feature via grouping=feature.
-  const viewOnBoardHref = `/planning/board#feature=${encodeURIComponent(featureId)}`;
+  // "View on Board" URL: navigate to the planning home page with the board
+  // pre-grouped by feature and this feature's column highlighted.
+  const viewOnBoardHref = `/planning?groupBy=feature&highlight=${encodeURIComponent(featureId)}`;
 
   const isLoading = fetchState.phase === 'loading' || fetchState.phase === 'idle';
 
@@ -639,7 +663,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
           />
         </button>
 
-        {/* View on Board link */}
+        {/* View on Board link — navigates to the planning page with this feature's column highlighted */}
         <Link
           to={viewOnBoardHref}
           className={cn(
@@ -649,8 +673,8 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
             'transition-colors hover:border-[color:var(--brand)] hover:bg-[color:color-mix(in_oklab,var(--brand)_6%,var(--bg-1))] hover:text-[color:var(--brand)]',
             'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
           )}
-          aria-label="View all sessions on the agent session board"
-          title="View on Board"
+          aria-label="View all sessions on the agent session board, grouped by feature"
+          title="View on Board (grouped by feature)"
         >
           Board
           <ArrowUpRight size={10} aria-hidden />

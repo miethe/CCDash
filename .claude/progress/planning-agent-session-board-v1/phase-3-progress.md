@@ -25,7 +25,7 @@ tasks:
   title: Feature Agent Lane
   description: Render filtered cards for selected feature in node/detail or workbench
     context.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -39,7 +39,7 @@ tasks:
   title: Card Detail Reuse
   description: Reuse or extend AgentDetailModal so card selection shows lineage, features,
     phase/task hints, and token context.
-  status: pending
+  status: in_progress
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -51,7 +51,7 @@ tasks:
 - id: PASB-303
   title: Weak Link Presentation
   description: Add visible confidence/evidence presentation for inferred mappings.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -65,7 +65,7 @@ tasks:
   title: Cross-Surface Navigation
   description: Add deep links from board to feature planning context, phase operations,
     and session transcript.
-  status: pending
+  status: in_progress
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -100,8 +100,8 @@ parallelization:
   batch_3:
   - PASB-305
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 2
 in_progress_tasks: 2
 blocked_tasks: 0
-progress: 0
+progress: 40
 ---
