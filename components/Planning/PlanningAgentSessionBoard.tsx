@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, LayoutGrid, RefreshCw } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -7,6 +7,7 @@ import type {
   PlanningBoardGroup,
   PlanningAgentSessionCard,
   PlanningBoardGroupingMode,
+  SessionActivityMarker,
 } from '@/types';
 import { getSessionBoard } from '@/services/planning';
 import { useData } from '@/contexts/DataContext';
@@ -14,7 +15,12 @@ import { usePlanningRoute } from './PlanningRouteLayout';
 import { PlanningBoardToolbar } from './PlanningBoardToolbar';
 import { Panel, Dot } from './primitives';
 
-// ── State dot colours keyed by card state ─────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/** How old (in ms) board data must be before the stale indicator appears. */
+const BOARD_STALE_TTL_MS = 60_000;
+
+// ── State dot colours and labels keyed by card state ──────────────────────────
 
 const STATE_DOT_COLOR: Record<PlanningAgentSessionCard['state'], string> = {
   running: 'var(--ok)',
@@ -25,37 +31,266 @@ const STATE_DOT_COLOR: Record<PlanningAgentSessionCard['state'], string> = {
   unknown: 'var(--ink-4)',
 };
 
-// ── Placeholder card ──────────────────────────────────────────────────────────
+const STATE_LABEL: Record<PlanningAgentSessionCard['state'], string> = {
+  running: 'running',
+  thinking: 'thinking',
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  unknown: 'unknown',
+};
+
+// ── Relative time helper ──────────────────────────────────────────────────────
+
+function relativeTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const secs = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (secs < 5) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+/** Same as relativeTime but accepts a Date (used for local fetchedAt tracking). */
+function relativeDate(d: Date): string {
+  return relativeTime(d.toISOString());
+}
+
+// ── Compact token display ─────────────────────────────────────────────────────
+
+function fmtTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
+// ── Activity marker icon ──────────────────────────────────────────────────────
+
+const MARKER_SYMBOL: Record<SessionActivityMarker['markerType'], string> = {
+  tool_call: '⚡',
+  file_edit: '✎',
+  command: '$',
+  error: '✕',
+  completion: '✓',
+};
+
+// ── Rich session card ─────────────────────────────────────────────────────────
 
 function SessionCard({ card, compact }: { card: PlanningAgentSessionCard; compact: boolean }) {
+  const prevStateRef = useRef(card.state);
+  const [liveMsg, setLiveMsg] = useState('');
+
+  useEffect(() => {
+    if (prevStateRef.current !== card.state) {
+      setLiveMsg(`State changed to ${STATE_LABEL[card.state]}`);
+      prevStateRef.current = card.state;
+      const t = setTimeout(() => setLiveMsg(''), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [card.state]);
+
+  const dotColor = STATE_DOT_COLOR[card.state] ?? 'var(--ink-4)';
+  const isActive = card.state === 'running' || card.state === 'thinking';
+
+  const featureSlug = card.correlation?.featureId ?? card.correlation?.featureName;
+  const phaseHint =
+    card.correlation?.phaseNumber != null
+      ? card.correlation.phaseTitle
+        ? `P${card.correlation.phaseNumber}: ${card.correlation.phaseTitle}`
+        : `Phase ${card.correlation.phaseNumber}`
+      : null;
+  const taskHint = card.correlation?.taskId ?? card.correlation?.taskTitle ?? null;
+
+  const latestMarker =
+    card.activityMarkers.length > 0 ? card.activityMarkers[card.activityMarkers.length - 1] : null;
+
+  const ariaLabel = [
+    card.agentName ?? 'Agent',
+    card.model ? `model ${card.model}` : null,
+    STATE_LABEL[card.state],
+    featureSlug ? `feature ${featureSlug}` : null,
+    card.startedAt ? `started ${relativeTime(card.startedAt)}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
   return (
     <div
       className={cn(
         'rounded-[var(--radius-sm)] border border-[color:var(--line-1)]',
-        'bg-[color:var(--bg-2)] transition-colors hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)]',
-        compact ? 'px-3 py-2' : 'px-3 py-2.5',
+        'bg-[color:var(--bg-2)] transition-colors',
+        'hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)]',
+        compact ? 'px-2.5 py-2' : 'px-3 py-2.5',
       )}
+      aria-label={ariaLabel}
     >
-      <div className="flex items-center gap-2">
+      {/* Row 1: state dot + session ID + state label + time */}
+      <div className="flex items-center gap-1.5 min-w-0">
         <Dot
-          style={{ background: STATE_DOT_COLOR[card.state] ?? 'var(--ink-4)', flexShrink: 0 }}
+          style={{ background: dotColor, flexShrink: 0 }}
           aria-label={card.state}
+          className={isActive ? 'animate-pulse' : undefined}
         />
         <span
-          className="planning-mono truncate text-[10px] text-[color:var(--ink-2)]"
+          className="planning-mono truncate text-[10px] text-[color:var(--ink-3)] flex-1 min-w-0"
           title={card.sessionId}
         >
-          {card.sessionId}
+          {card.sessionId.length > 12 ? `…${card.sessionId.slice(-10)}` : card.sessionId}
+        </span>
+        <span
+          className="flex-shrink-0 text-[9px] text-[color:var(--ink-4)] tabular-nums"
+          aria-hidden="true"
+        >
+          {STATE_LABEL[card.state]}
         </span>
       </div>
-      {card.agentName && (
-        <p
-          className="mt-1 truncate text-[11px] text-[color:var(--ink-1)]"
-          title={card.agentName}
-        >
-          {card.agentName}
-        </p>
-      )}
+
+      {/* Row 2: agent name (fixed slot — always rendered to avoid reflow) */}
+      <div
+        className={cn(
+          'mt-1 truncate font-medium text-[color:var(--ink-1)]',
+          compact ? 'text-[11px]' : 'text-[12px]',
+        )}
+        style={{ minHeight: compact ? '1rem' : '1.125rem' }}
+        title={card.agentName}
+      >
+        {card.agentName ?? ''}
+      </div>
+
+      {/* Row 3: model chip + feature badge (fixed slot) */}
+      <div
+        className="mt-1.5 flex items-center gap-1 flex-wrap"
+        style={{ minHeight: '1.25rem' }}
+      >
+        {card.model && (
+          <span
+            className={cn(
+              'planning-mono inline-flex items-center rounded px-1.5 py-0.5',
+              'border border-[color:var(--line-2)] bg-[color:var(--bg-3)]',
+              'text-[9px] text-[color:var(--ink-3)] leading-none flex-shrink-0',
+            )}
+          >
+            {card.model}
+          </span>
+        )}
+        {featureSlug && (
+          <span
+            className={cn(
+              'inline-flex items-center rounded px-1.5 py-0.5',
+              'border border-[color:color-mix(in_oklab,var(--brand)_40%,var(--line-1))]',
+              'bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
+              'text-[9px] text-[color:var(--brand)] leading-none truncate max-w-[100px]',
+            )}
+            title={featureSlug}
+          >
+            {featureSlug}
+          </span>
+        )}
+      </div>
+
+      {/* Row 4: phase / task hints (fixed slot) */}
+      <div
+        className="mt-1 flex items-center gap-1 flex-wrap"
+        style={{ minHeight: '1.125rem' }}
+      >
+        {phaseHint && (
+          <span
+            className="text-[9px] text-[color:var(--ink-3)] truncate max-w-[120px]"
+            title={phaseHint}
+          >
+            {phaseHint}
+          </span>
+        )}
+        {taskHint && phaseHint && (
+          <span className="text-[9px] text-[color:var(--ink-4)]" aria-hidden>·</span>
+        )}
+        {taskHint && (
+          <span
+            className="text-[9px] text-[color:var(--ink-3)] truncate max-w-[100px]"
+            title={typeof taskHint === 'string' ? taskHint : undefined}
+          >
+            {taskHint}
+          </span>
+        )}
+      </div>
+
+      {/* Row 5: token summary + time + activity marker (fixed slot) */}
+      <div
+        className="mt-1.5 flex items-center gap-2 min-w-0"
+        style={{ minHeight: '1rem' }}
+      >
+        {card.tokenSummary ? (
+          <span
+            className="planning-mono text-[9px] text-[color:var(--ink-4)] flex-shrink-0"
+            title={`${card.tokenSummary.tokensIn} in / ${card.tokenSummary.tokensOut} out`}
+          >
+            {fmtTokens(card.tokenSummary.tokensIn)}↑{' '}
+            {fmtTokens(card.tokenSummary.tokensOut)}↓
+          </span>
+        ) : (
+          <span className="flex-shrink-0 text-[9px] text-transparent select-none" aria-hidden>
+            — —
+          </span>
+        )}
+
+        <span className="flex-1" />
+
+        {card.startedAt && (
+          <span className="planning-mono text-[9px] text-[color:var(--ink-4)] flex-shrink-0">
+            {relativeTime(card.startedAt)}
+          </span>
+        )}
+
+        {latestMarker && (
+          <span
+            className="flex-shrink-0 text-[10px] leading-none"
+            title={`${latestMarker.markerType}: ${latestMarker.label}`}
+            aria-label={latestMarker.label}
+          >
+            {MARKER_SYMBOL[latestMarker.markerType] ?? '·'}
+          </span>
+        )}
+      </div>
+
+      {/* Context window bar (fixed slot — rendered regardless, hidden when no data) */}
+      <div
+        className="mt-1.5"
+        style={{ minHeight: '3px' }}
+        aria-hidden="true"
+      >
+        {card.tokenSummary?.contextWindowPct != null && (
+          <div
+            className="h-[2px] w-full rounded-full overflow-hidden bg-[color:var(--bg-3)]"
+            title={`Context window: ${Math.round(card.tokenSummary.contextWindowPct * 100)}%`}
+          >
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.min(100, Math.round(card.tokenSummary.contextWindowPct * 100))}%`,
+                background:
+                  card.tokenSummary.contextWindowPct > 0.8
+                    ? 'var(--err)'
+                    : card.tokenSummary.contextWindowPct > 0.6
+                      ? 'var(--warn)'
+                      : 'var(--ok)',
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Live state-transition region — fixed height, invisible when idle */}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className="mt-0.5 text-[9px] text-[color:var(--ink-4)] truncate"
+        style={{ minHeight: '0.875rem' }}
+      >
+        {liveMsg}
+      </div>
     </div>
   );
 }
@@ -155,6 +390,34 @@ function BoardSkeleton() {
   );
 }
 
+// ── Stale indicator ───────────────────────────────────────────────────────────
+
+/**
+ * Tiny muted timestamp shown when board data is older than BOARD_STALE_TTL_MS.
+ * Ticks every 15 seconds so the relative label stays fresh without thrashing.
+ */
+function StaleIndicator({ fetchedAt }: { fetchedAt: Date }) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const age = Date.now() - fetchedAt.getTime();
+  if (age < BOARD_STALE_TTL_MS) return null;
+
+  return (
+    <span
+      className="planning-mono text-[9.5px] text-[color:var(--ink-4)] tabular-nums"
+      title={`Board data last fetched at ${fetchedAt.toLocaleTimeString()}`}
+      aria-label={`Board data is stale, last fetched ${relativeDate(fetchedAt)}`}
+    >
+      stale · {relativeDate(fetchedAt)}
+    </span>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 type FetchState =
@@ -168,13 +431,22 @@ export interface PlanningAgentSessionBoardProps {
 }
 
 export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoardProps) {
-  const { activeProject } = useData();
+  const { activeProject, sessions } = useData();
   const { density } = usePlanningRoute();
   const compact = density === 'compact';
 
   const [grouping, setGrouping] = useState<PlanningBoardGroupingMode>('state');
   const [filterText, setFilterText] = useState('');
   const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
+  // Whether a background refresh is in-flight (distinct from the initial load).
+  const [refreshing, setRefreshing] = useState(false);
+  // Timestamp of the last successful board fetch, for the stale indicator.
+  const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
+
+  // Track the sessions reference to detect upstream poll ticks without capturing
+  // the full array in closure state (avoids spurious re-renders on identity-stable arrays).
+  const sessionsRef = useRef(sessions);
+  const prevSessionsRef = useRef(sessions);
 
   const load = useCallback(
     async (opts: { forceRefresh?: boolean } = {}) => {
@@ -182,39 +454,110 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         setFetchState({ phase: 'idle' });
         return;
       }
-      setFetchState((prev) => (prev.phase === 'ready' ? prev : { phase: 'loading' }));
+      // Background refresh: keep existing board visible, show spinner instead.
+      const isBackgroundRefresh = fetchState.phase === 'ready' && !opts.forceRefresh;
+      const isManualRefresh = fetchState.phase === 'ready' && opts.forceRefresh;
+
+      if (isBackgroundRefresh || isManualRefresh) {
+        setRefreshing(true);
+      } else {
+        setFetchState((prev) => (prev.phase === 'ready' ? prev : { phase: 'loading' }));
+      }
+
       try {
         const board = await getSessionBoard(activeProject.id, grouping, opts);
         setFetchState({ phase: 'ready', board });
+        setFetchedAt(new Date());
       } catch (err) {
-        setFetchState({
-          phase: 'error',
-          message: err instanceof Error ? err.message : 'Failed to load session board.',
-        });
+        // On background refresh failure, preserve existing board — don't replace with error.
+        if (isBackgroundRefresh || isManualRefresh) {
+          console.warn('[PlanningAgentSessionBoard] Background refresh failed:', err);
+        } else {
+          setFetchState({
+            phase: 'error',
+            message: err instanceof Error ? err.message : 'Failed to load session board.',
+          });
+        }
+      } finally {
+        setRefreshing(false);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeProject?.id, grouping],
   );
 
+  // Keep sessionsRef in sync so the effect below can read current without
+  // being listed as a dependency (avoids retriggering load on every render).
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  });
+
+  // Initial load and grouping/project change.
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Upstream poll tick: when the sessions array reference changes (AppRuntimeContext
+  // refreshes every 30 s), re-fetch the board without force so the SWR cache in
+  // getSessionBoard can deduplicate concurrent requests.
+  useEffect(() => {
+    if (prevSessionsRef.current === sessions) return;
+    prevSessionsRef.current = sessions;
+    // Only trigger a background refresh once we've already loaded once.
+    void load();
+  }, [sessions, load]);
 
   const handleGroupingChange = useCallback((mode: PlanningBoardGroupingMode) => {
     setGrouping(mode);
   }, []);
 
+  const handleManualRefresh = useCallback(() => {
+    void load({ forceRefresh: true });
+  }, [load]);
+
+  const isInitialLoad = fetchState.phase === 'loading' || fetchState.phase === 'idle';
+
   return (
     <Panel className={cn('p-4', className)}>
-      <PlanningBoardToolbar
-        grouping={grouping}
-        onGroupingChange={handleGroupingChange}
-        filterText={filterText}
-        onFilterTextChange={setFilterText}
-        className="mb-3"
-      />
+      {/* Toolbar row with refresh button appended */}
+      <div className="flex items-center gap-2 mb-3">
+        <PlanningBoardToolbar
+          grouping={grouping}
+          onGroupingChange={handleGroupingChange}
+          filterText={filterText}
+          onFilterTextChange={setFilterText}
+          className="flex-1 min-w-0"
+        />
 
-      {fetchState.phase === 'loading' || fetchState.phase === 'idle' ? (
+        {/* Stale indicator */}
+        {fetchedAt && !refreshing && (
+          <StaleIndicator fetchedAt={fetchedAt} />
+        )}
+
+        {/* Manual refresh button */}
+        <button
+          type="button"
+          onClick={handleManualRefresh}
+          disabled={refreshing || isInitialLoad}
+          aria-label="Refresh session board"
+          title="Refresh session board"
+          className={cn(
+            'flex flex-shrink-0 items-center justify-center',
+            'rounded-[var(--radius-sm)] border border-[color:var(--line-1)]',
+            'bg-[color:var(--bg-1)] p-1.5 text-[color:var(--ink-3)]',
+            'transition-colors hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-2)] hover:text-[color:var(--ink-1)]',
+            'disabled:cursor-not-allowed disabled:opacity-40',
+          )}
+        >
+          <RefreshCw
+            size={12}
+            aria-hidden
+            className={refreshing ? 'animate-spin' : undefined}
+          />
+        </button>
+      </div>
+
+      {isInitialLoad ? (
         <BoardSkeleton />
       ) : fetchState.phase === 'error' ? (
         <div className="flex flex-col items-center gap-3 py-10">
@@ -243,6 +586,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
           className="overflow-x-auto pb-2"
           role="region"
           aria-label="Agent session board"
+          aria-busy={refreshing}
         >
           <div className="flex gap-3" style={{ width: 'max-content' }}>
             {fetchState.board.groups.map((group) => (

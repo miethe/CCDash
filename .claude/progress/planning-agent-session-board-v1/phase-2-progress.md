@@ -24,7 +24,7 @@ tasks:
 - id: PASB-201
   title: Board Shell
   description: Add grouped board layout with toolbar controls for grouping and filters.
-  status: in_progress
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -38,7 +38,7 @@ tasks:
   title: Session Card
   description: Implement card with agent, session, model, feature, phase/task, state,
     time, token/context summaries, activity marker, and fixed-size live regions.
-  status: pending
+  status: in_progress
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -65,7 +65,7 @@ tasks:
   title: Live Refresh Integration
   description: Reuse existing data/live/cache mechanisms so active session state refreshes
     predictably.
-  status: pending
+  status: in_progress
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -116,8 +116,8 @@ parallelization:
   - PASB-205
   - PASB-206
 total_tasks: 6
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 1
+in_progress_tasks: 2
 blocked_tasks: 0
-progress: 0
+progress: 16
 ---
