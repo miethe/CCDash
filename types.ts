@@ -3208,3 +3208,138 @@ export interface PhaseOperations extends AgentQueryEnvelope {
   dependencyResolution: Record<string, unknown>;
   progressEvidence: string[];
 }
+
+// ── Planning Agent Session Board ──────────────────────────────────────────────
+
+/** Evidence item explaining why a session was correlated to a planning artifact. */
+export interface SessionCorrelationEvidence {
+  /** How the correlation was detected: "explicit_link" | "phase_hint" | "task_hint" | "command_token" | "lineage" | "feature_ref" */
+  sourceType: string;
+  /** ID of the source artifact that produced this evidence, if applicable. */
+  sourceId?: string;
+  /** Human-readable label for the evidence source. */
+  sourceLabel: string;
+  /** Confidence tier of this evidence item. */
+  confidence: 'high' | 'medium' | 'low' | 'unknown';
+  /** Additional detail about how the evidence was derived. */
+  detail?: string;
+}
+
+/** Planning-artifact correlation for a single agent session. */
+export interface SessionCorrelation {
+  featureId?: string;
+  featureName?: string;
+  phaseNumber?: number;
+  phaseTitle?: string;
+  batchId?: string;
+  taskId?: string;
+  taskTitle?: string;
+  /** Aggregate confidence across all evidence items. */
+  confidence: 'high' | 'medium' | 'low' | 'unknown';
+  evidence: SessionCorrelationEvidence[];
+}
+
+/** A directed relationship from one session to another in a session tree. */
+export interface BoardSessionRelationship {
+  relatedSessionId: string;
+  relationType: 'parent' | 'root' | 'sibling' | 'child';
+  agentName?: string;
+  state?: string;
+}
+
+/** A notable moment in a session timeline rendered as a board card marker. */
+export interface SessionActivityMarker {
+  markerType: 'tool_call' | 'file_edit' | 'command' | 'error' | 'completion';
+  label: string;
+  timestamp?: string;
+  detail?: string;
+}
+
+/** Summarised token usage for a single session. */
+export interface SessionTokenSummary {
+  tokensIn: number;
+  tokensOut: number;
+  totalTokens: number;
+  /** Fraction of the model context window consumed (0–1). */
+  contextWindowPct?: number;
+  model?: string;
+}
+
+/** A single card on the Planning Agent Session Board representing one agent session. */
+export interface PlanningAgentSessionCard {
+  sessionId: string;
+  agentName?: string;
+  agentType?: string;
+  state: 'running' | 'thinking' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+  model?: string;
+  /** Best-effort correlation to a planning feature / phase / task. */
+  correlation?: SessionCorrelation;
+  /** Deep-link to the session transcript view. */
+  transcriptHref?: string;
+  /** Deep-link to the planning page for the correlated feature. */
+  planningHref?: string;
+  /** Deep-link to the correlated phase detail. */
+  phaseHref?: string;
+  parentSessionId?: string;
+  rootSessionId?: string;
+  startedAt?: string;
+  lastActivityAt?: string;
+  durationSeconds?: number;
+  tokenSummary?: SessionTokenSummary;
+  relationships: BoardSessionRelationship[];
+  activityMarkers: SessionActivityMarker[];
+}
+
+/** A column of cards on the Planning Agent Session Board, keyed by the active grouping. */
+export interface PlanningBoardGroup {
+  groupKey: string;
+  groupLabel: string;
+  groupType: 'state' | 'feature' | 'phase' | 'agent' | 'model';
+  cards: PlanningAgentSessionCard[];
+  cardCount: number;
+}
+
+/** The dimension by which board cards are grouped into columns. */
+export type PlanningBoardGroupingMode = 'state' | 'feature' | 'phase' | 'agent' | 'model';
+
+/** Top-level board payload returned by the agent-session-board query. */
+export interface PlanningAgentSessionBoard {
+  projectId: string;
+  /** When set, the board is scoped to sessions correlated to this feature. */
+  featureId?: string;
+  grouping: PlanningBoardGroupingMode;
+  groups: PlanningBoardGroup[];
+  totalCardCount: number;
+  activeCount: number;
+  completedCount: number;
+  /** ISO-8601 timestamp of the oldest data row contributing to this board. */
+  dataFreshness?: string;
+  /** ISO-8601 timestamp when this payload was assembled by the backend. */
+  generatedAt?: string;
+}
+
+/** A reference to a context artifact (session, phase, task, etc.) used in next-run scaffolding. */
+export interface NextRunContextRef {
+  refType: 'session' | 'phase' | 'task' | 'artifact' | 'transcript';
+  refId: string;
+  refLabel: string;
+  refPath?: string;
+}
+
+/** Scaffolded preview of the command and context that would be used to continue planning work. */
+export interface PlanningNextRunPreview {
+  featureId: string;
+  featureName?: string;
+  phaseNumber?: number;
+  /** CLI command that would launch the next planning session. */
+  command: string;
+  /** Template prompt with placeholders showing what context would be injected. */
+  promptSkeleton: string;
+  contextRefs: NextRunContextRef[];
+  /** Advisory warnings about missing context, stale data, or blocked predecessors. */
+  warnings: string[];
+  /** ISO-8601 timestamp of the oldest data row used to build this preview. */
+  dataFreshness?: string;
+  /** ISO-8601 timestamp when this payload was assembled by the backend. */
+  generatedAt?: string;
+}
