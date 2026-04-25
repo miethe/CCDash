@@ -1,17 +1,28 @@
 /**
  * PASB-403: PlanningNextRunPreview
+ * PASB-404: Launch Sheet Alignment
  *
  * Displays a scaffolded CLI command + prompt skeleton for the next planning
  * run of a feature. Fetches from the backend next-run-preview endpoint and
  * presents two copyable code sections plus context reference chips and
  * advisory warnings.
  *
+ * This component is COPY/PREVIEW ONLY. It intentionally has no "Launch" or
+ * "Execute" buttons. To launch a batch, use PlanningLaunchSheet via the
+ * "Open Launch Sheet" affordance below the command section.
+ *
  * Props:
- *   featureId       — required; the feature to preview
- *   phaseNumber     — optional; scopes the preview to a specific phase
- *   selectedCards   — optional; when supplied, triggers the POST variant of the
- *                     endpoint so selected sessions inform the skeleton
- *   onClose         — optional; called when the user dismisses the panel
+ *   featureId           — required; the feature to preview
+ *   phaseNumber         — optional; scopes the preview to a specific phase
+ *   selectedCards       — optional; when supplied, triggers the POST variant of
+ *                         the endpoint so selected sessions inform the skeleton
+ *   onClose             — optional; called when the user dismisses the panel
+ *   onOpenLaunchSheet   — optional; called when the user requests to open the
+ *                         Launch Sheet for actual execution
+ *   recommendedProvider — optional; provider label shown in the launch context
+ *                         strip (use the display label, e.g. "Claude Code")
+ *   recommendedModel    — optional; model name shown in the launch context strip
+ *   recommendedWorktree — optional; worktree path shown in the launch context strip
  *
  * Accessibility:
  *   - role="region" + aria-label, not role="dialog"
@@ -34,6 +45,11 @@ import {
   Layers,
   RefreshCw,
   ClipboardList,
+  ExternalLink,
+  Eye,
+  Cpu,
+  GitBranch,
+  Server,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -285,6 +301,147 @@ function ErrorState({
   );
 }
 
+// ── Launch context strip ──────────────────────────────────────────────────────
+//
+// Mirrors the label/styling conventions used in PlanningLaunchSheet:
+//   - Provider: display label (e.g. "Claude Code") not raw provider string
+//   - Model: raw model string, same as the launch sheet model select option text
+//   - Worktree: "branch · path" format matching the worktree select option text
+//
+// All three fields are optional — if none are provided the strip is omitted.
+
+interface LaunchContextStripProps {
+  provider?: string;
+  model?: string;
+  worktreeBranch?: string;
+  worktreePath?: string;
+  onOpenLaunchSheet?: () => void;
+}
+
+function LaunchContextStrip({
+  provider,
+  model,
+  worktreeBranch,
+  worktreePath,
+  onOpenLaunchSheet,
+}: LaunchContextStripProps) {
+  const hasAnyMeta = provider || model || worktreeBranch || worktreePath;
+  if (!hasAnyMeta && !onOpenLaunchSheet) return null;
+
+  return (
+    <div
+      className="rounded border px-3 py-2.5 space-y-2"
+      style={{
+        borderColor: 'color-mix(in oklab, var(--brand) 18%, var(--line-1))',
+        background: 'color-mix(in oklab, var(--brand) 4%, var(--bg-0, var(--bg-1)))',
+      }}
+    >
+      {/* Meta row — only render when we have at least one value */}
+      {hasAnyMeta && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          {provider && (
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Server
+                size={9}
+                style={{ color: 'var(--ink-4)', flexShrink: 0 }}
+                aria-hidden
+              />
+              <span
+                className="planning-mono text-[9.5px] uppercase tracking-wide"
+                style={{ color: 'var(--ink-4)' }}
+              >
+                Provider
+              </span>
+              {/* Label formatting matches PlanningLaunchSheet: p.label || p.provider */}
+              <span
+                className="planning-mono text-[9.5px] font-medium truncate"
+                style={{ color: 'var(--ink-2)' }}
+              >
+                {provider}
+              </span>
+            </div>
+          )}
+          {model && (
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Cpu
+                size={9}
+                style={{ color: 'var(--ink-4)', flexShrink: 0 }}
+                aria-hidden
+              />
+              <span
+                className="planning-mono text-[9.5px] uppercase tracking-wide"
+                style={{ color: 'var(--ink-4)' }}
+              >
+                Model
+              </span>
+              <span
+                className="planning-mono text-[9.5px] font-medium truncate"
+                style={{ color: 'var(--ink-2)' }}
+              >
+                {model}
+              </span>
+            </div>
+          )}
+          {(worktreeBranch || worktreePath) && (
+            <div className="flex items-center gap-1.5 min-w-0">
+              <GitBranch
+                size={9}
+                style={{ color: 'var(--ink-4)', flexShrink: 0 }}
+                aria-hidden
+              />
+              <span
+                className="planning-mono text-[9.5px] uppercase tracking-wide"
+                style={{ color: 'var(--ink-4)' }}
+              >
+                Worktree
+              </span>
+              {/* Format mirrors PlanningLaunchSheet worktree select: "branch · path" */}
+              <span
+                className="planning-mono text-[9.5px] font-medium truncate"
+                style={{ color: 'var(--ink-2)' }}
+              >
+                {[worktreeBranch, worktreePath].filter(Boolean).join(' · ')}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Open Launch Sheet affordance */}
+      {onOpenLaunchSheet && (
+        <div className="flex items-center justify-between gap-2">
+          <span
+            className="planning-mono text-[9px]"
+            style={{ color: 'var(--ink-4)' }}
+          >
+            Configure provider, model, and worktree before launching.
+          </span>
+          <button
+            type="button"
+            onClick={onOpenLaunchSheet}
+            className={cn(
+              'inline-flex items-center gap-1 shrink-0',
+              'rounded-[var(--radius-sm)] border px-2 py-1',
+              'planning-mono text-[9px] font-medium transition-all duration-150',
+              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+            )}
+            style={{
+              borderColor: 'color-mix(in oklab, var(--brand) 35%, var(--line-1))',
+              color: 'var(--brand)',
+              background: 'color-mix(in oklab, var(--brand) 8%, transparent)',
+            }}
+            aria-label="Open Launch Sheet to configure and execute this batch"
+            data-testid="next-run-open-launch-sheet-btn"
+          >
+            <ExternalLink size={8} aria-hidden />
+            Open Launch Sheet
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 export interface PlanningNextRunPreviewProps {
@@ -293,6 +450,33 @@ export interface PlanningNextRunPreviewProps {
   selectedCards?: PlanningAgentSessionCard[];
   onClose?: () => void;
   className?: string;
+  /**
+   * Called when the user clicks "Open Launch Sheet". Wire this up to open
+   * PlanningLaunchSheet for actual execution. If omitted, the affordance
+   * link is not rendered.
+   */
+  onOpenLaunchSheet?: () => void;
+  /**
+   * Recommended provider display label to show in the launch context strip.
+   * Use the human-readable label (e.g. "Claude Code"), matching PlanningLaunchSheet's
+   * `p.label || p.provider` convention.
+   */
+  recommendedProvider?: string;
+  /**
+   * Recommended model name to show in the launch context strip.
+   * Raw model string — same text as the model select option in PlanningLaunchSheet.
+   */
+  recommendedModel?: string;
+  /**
+   * Recommended worktree branch for the launch context strip.
+   * Combined with recommendedWorktreePath as "branch · path" — matching
+   * PlanningLaunchSheet's worktree select option format.
+   */
+  recommendedWorktreeBranch?: string;
+  /**
+   * Recommended worktree path for the launch context strip.
+   */
+  recommendedWorktreePath?: string;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -303,6 +487,11 @@ export function PlanningNextRunPreview({
   selectedCards,
   onClose,
   className,
+  onOpenLaunchSheet,
+  recommendedProvider,
+  recommendedModel,
+  recommendedWorktreeBranch,
+  recommendedWorktreePath,
 }: PlanningNextRunPreviewProps): JSX.Element {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const [preview, setPreview] = useState<PlanningNextRunPreviewType | null>(null);
@@ -380,6 +569,14 @@ export function PlanningNextRunPreview({
   const phaseLabel =
     preview?.phaseNumber != null ? ` · Phase ${preview.phaseNumber}` : '';
 
+  // Determine whether to render the launch context strip.
+  const hasLaunchContext =
+    recommendedProvider ||
+    recommendedModel ||
+    recommendedWorktreeBranch ||
+    recommendedWorktreePath ||
+    onOpenLaunchSheet;
+
   return (
     <aside
       className={cn(
@@ -410,12 +607,28 @@ export function PlanningNextRunPreview({
             aria-hidden
           />
           <div className="min-w-0">
-            <p
-              className="truncate text-[12.5px] font-semibold leading-snug"
-              style={{ color: 'var(--ink-0)' }}
-            >
-              Next-Run Preview
-            </p>
+            <div className="flex items-center gap-2">
+              <p
+                className="truncate text-[12.5px] font-semibold leading-snug"
+                style={{ color: 'var(--ink-0)' }}
+              >
+                Next-Run Preview
+              </p>
+              {/* Preview Only badge — always visible so users understand this is not an execution path */}
+              <span
+                className="planning-mono inline-flex items-center gap-1 shrink-0 rounded px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-wide leading-none"
+                style={{
+                  color: 'var(--ink-3)',
+                  background: 'color-mix(in oklab, var(--ink-4) 12%, transparent)',
+                  border: '1px solid color-mix(in oklab, var(--ink-4) 20%, transparent)',
+                }}
+                aria-label="Preview only — no execution"
+                title="This panel generates commands for copy/paste only. Use the Launch Sheet to execute."
+              >
+                <Eye size={7} aria-hidden />
+                Preview Only
+              </span>
+            </div>
             <p
               className="planning-mono mt-0.5 truncate text-[9.5px]"
               style={{ color: 'var(--ink-4)' }}
@@ -498,6 +711,19 @@ export function PlanningNextRunPreview({
                 copyLabel="Copy command"
                 maxHeight={80}
               />
+
+              {/* Launch context strip — shown below the command block when context is available */}
+              {hasLaunchContext && (
+                <div className="mt-2.5">
+                  <LaunchContextStrip
+                    provider={recommendedProvider}
+                    model={recommendedModel}
+                    worktreeBranch={recommendedWorktreeBranch}
+                    worktreePath={recommendedWorktreePath}
+                    onOpenLaunchSheet={onOpenLaunchSheet}
+                  />
+                </div>
+              )}
             </section>
 
             <Divider />
@@ -586,31 +812,43 @@ export function PlanningNextRunPreview({
         )}
       </div>
 
-      {/* ── Footer: freshness metadata ──────────────────────────────────── */}
-      {preview?.dataFreshness && (
-        <div
-          className="flex items-center justify-between gap-3 px-4 py-2"
-          style={{
-            borderTop: '1px solid var(--line-1, #2d3347)',
-            background: 'var(--bg-0, var(--bg-1))',
-          }}
-        >
-          <span
-            className="planning-mono text-[9px] tabular-nums"
-            style={{ color: 'var(--ink-4)' }}
-          >
-            Data freshness: {preview.dataFreshness}
-          </span>
-          {preview.generatedAt && (
+      {/* ── Footer ──────────────────────────────────────────────────────── */}
+      <div
+        className="px-4 py-2 space-y-0"
+        style={{
+          borderTop: '1px solid var(--line-1, #2d3347)',
+          background: 'var(--bg-0, var(--bg-1))',
+        }}
+      >
+        {/* Freshness metadata row — only when available */}
+        {preview?.dataFreshness && (
+          <div className="flex items-center justify-between gap-3 pb-1.5">
             <span
               className="planning-mono text-[9px] tabular-nums"
               style={{ color: 'var(--ink-4)' }}
             >
-              Generated {new Date(preview.generatedAt).toLocaleTimeString()}
+              Data freshness: {preview.dataFreshness}
             </span>
-          )}
-        </div>
-      )}
+            {preview.generatedAt && (
+              <span
+                className="planning-mono text-[9px] tabular-nums"
+                style={{ color: 'var(--ink-4)' }}
+              >
+                Generated {new Date(preview.generatedAt).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Disclaimer — always rendered so the copy-only contract is always visible */}
+        <p
+          className="planning-mono text-[9px] leading-relaxed"
+          style={{ color: 'var(--ink-4)' }}
+          data-testid="next-run-disclaimer"
+        >
+          This preview generates commands for copy/paste only. To execute, use the Launch Sheet.
+        </p>
+      </div>
     </aside>
   );
 }
