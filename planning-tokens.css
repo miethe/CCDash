@@ -209,6 +209,7 @@
 
 .planning-route .planning-dot-live {
   animation: session-dot-pulse 2s ease-in-out infinite;
+  will-change: opacity, box-shadow;
 }
 
 /* Reduced-motion: replace pulse with a static double-ring indicator */
@@ -342,6 +343,7 @@
   bottom: calc(100% + 5px);
   left: 50%;
   transform: translateX(-50%);
+  will-change: opacity;
   /* Clamp so the panel doesn't overflow the card column */
   min-width: 148px;
   max-width: 210px;

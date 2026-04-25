@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertCircle, ClipboardList, ExternalLink, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
 
@@ -358,7 +358,7 @@ interface SessionCardProps {
   isDraggable?: boolean;
 }
 
-function SessionCard({
+const SessionCard = memo(function SessionCard({
   card,
   compact,
   isHighlighted,
@@ -697,7 +697,7 @@ function SessionCard({
       )}
     </div>
   );
-}
+});
 
 // ── Board column ──────────────────────────────────────────────────────────────
 
@@ -719,7 +719,7 @@ interface BoardColumnProps {
   isDraggable?: boolean;
 }
 
-function BoardColumn({
+const BoardColumn = memo(function BoardColumn({
   group,
   filterText,
   compact,
@@ -840,7 +840,7 @@ function BoardColumn({
       </div>
     </div>
   );
-}
+});
 
 // ── Loading skeleton ──────────────────────────────────────────────────────────
 
@@ -935,6 +935,14 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   const urlHighlightId = searchParams.get('highlight') ?? null;
 
   const [filterText, setFilterText] = useState('');
+  // Debounce the filter so that BoardColumn only re-renders after the user
+  // stops typing (150 ms). The input itself stays responsive via filterText.
+  const [debouncedFilterText, setDebouncedFilterText] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedFilterText(filterText), 150);
+    return () => clearTimeout(t);
+  }, [filterText]);
+
   const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
   const [refreshing, setRefreshing] = useState(false);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
@@ -1306,7 +1314,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
               <BoardColumn
                 key={group.groupKey}
                 group={group}
-                filterText={filterText}
+                filterText={debouncedFilterText}
                 compact={compact}
                 highlightedSessionIds={highlightedSessionIds}
                 weakHighlightedSessionIds={weakHighlightedSessionIds}

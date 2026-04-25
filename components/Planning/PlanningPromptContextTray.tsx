@@ -370,6 +370,15 @@ export function PlanningPromptContextTray({
   const isControlled = controlledItems !== undefined;
   const items = isControlled ? controlledItems : internalItems;
 
+  // Keep a stable ref to the latest items so callbacks don't need items in
+  // their dependency arrays (avoids recreating handlers on every chip change).
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  // Keep a stable ref to onSelectionChange to avoid stale-closure captures.
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
+
   // Drop zone visual state
   const [isDragOver, setIsDragOver] = useState(false);
   // Track drag-enter depth to handle nested element transitions correctly
@@ -378,27 +387,29 @@ export function PlanningPromptContextTray({
   const updateItems = useCallback(
     (next: ContextTrayItem[]) => {
       if (!isControlled) setInternalItems(next);
-      onSelectionChange?.(buildSelection(next), next);
+      onSelectionChangeRef.current?.(buildSelection(next), next);
     },
-    [isControlled, onSelectionChange],
+    // isControlled is intentionally the only dep — onSelectionChange is read via ref
+    [isControlled],
   );
 
   const handleRemove = useCallback(
     (id: string) => {
-      updateItems(items.filter((item) => item.id !== id));
+      updateItems(itemsRef.current.filter((item) => item.id !== id));
     },
-    [items, updateItems],
+    [updateItems],
   );
 
   const handleAdd = useCallback(
     (item: ContextTrayItem, method: 'manual' | 'drag' = 'manual') => {
+      const current = itemsRef.current;
       // Deduplicate by id within same kind
-      if (items.some((i) => i.id === item.id && i.kind === item.kind)) return;
-      const nextItems = [...items, item];
+      if (current.some((i) => i.id === item.id && i.kind === item.kind)) return;
+      const nextItems = [...current, item];
       updateItems(nextItems);
       trackContextAdded({ kind: item.kind, method, trayCountAfter: nextItems.length });
     },
-    [items, updateItems],
+    [updateItems],
   );
 
   const handleClearAll = useCallback(() => {
