@@ -6,7 +6,7 @@ prd: planning-agent-session-board-v1
 feature_slug: planning-agent-session-board-v1
 phase: 5
 phase_title: Tests, Telemetry, Performance, and Rollout
-status: in_progress
+status: pending
 created: '2026-04-25'
 updated: '2026-04-25'
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
@@ -24,7 +24,7 @@ tasks:
 - id: PASB-501
   title: Backend Tests
   description: Cover board query, correlation confidence, and prompt preview composition.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -37,7 +37,7 @@ tasks:
   title: Frontend Tests
   description: Cover board grouping, card links, relationship highlighting, feature
     lane, reduced-motion behavior, and copy preview actions.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -52,7 +52,7 @@ tasks:
   description: Add events for board opened, grouping changed, card opened, transcript
     link clicked, context added, prompt copied, and reduced-motion fallback used where
     available.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -97,6 +97,11 @@ parallelization:
   batch_2:
   - PASB-504
   - PASB-505
+total_tasks: 5
+completed_tasks: 3
+in_progress_tasks: 0
+blocked_tasks: 0
+progress: 60
 ---
 
 # Phase 5: Tests, Telemetry, Performance, and Rollout

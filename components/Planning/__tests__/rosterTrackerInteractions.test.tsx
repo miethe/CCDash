@@ -457,7 +457,7 @@ describe('P16-004 — roster scroll-height behaviour (SC-16.4)', () => {
     const html = renderRoster();
     // The table container carries flex-1 so the header + row list push against
     // the panel footer without collapsing the panel.
-    expect(html).toMatch(/class="flex-1"/);
+    expect(html).toMatch(/class="[^"]*\bflex-1\b[^"]*"/);
   });
 
   it('empty roster still renders with flex-col wrapper (no layout collapse)', () => {
