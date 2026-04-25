@@ -73,6 +73,28 @@ Plan-driven launch dialog for multi-agent work:
 - Execution policy validation
 - Launch confirmation and tracking
 
+### PlanningAgentSessionBoard
+Kanban-style board for active and recent agent sessions:
+- Card-based layout with sessions grouped by state, feature, phase, agent, or model
+- Session cards display agent name, model, session state, correlation confidence, token usage, and activity markers
+- Drill-down to session details via card click
+
+### PlanningAgentSessionDetailPanel
+Selected-card sidebar with comprehensive session context:
+- Lineage tree showing feature and phase relationships
+- Feature correlation with evidence scores
+- Evidence list of linked documents, tasks, and sessions
+- Token context bar with input/output/cache breakdown
+- Activity timeline with key milestones
+- Quick actions for drill-down and launch prep
+
+### PlanningNextRunPreview
+Copy/preview-only panel for generating CLI commands and prompt skeletons:
+- Integrates `PlanningPromptContextTray` for managing session/artifact/phase context references
+- Generates template CLI commands with feature/phase context
+- Supports copying prompt skeletons to clipboard
+- Non-interactive preview mode; execution goes through `PlanningLaunchSheet`
+
 ## Backend APIs
 
 All planning and launch endpoints follow the app-request pattern: resolve the request context, check feature flags, delegate to the transport-neutral service, and return structured DTOs.
@@ -86,6 +108,10 @@ All planning and launch endpoints follow the app-request pattern: resolve the re
 **`GET /api/agent/planning/features/{feature_id}`** — One feature's planning subgraph, status provenance, per-phase context, and evidence for raw vs. effective status divergence.
 
 **`GET /api/agent/planning/features/{feature_id}/phases/{phase_number}`** — Operational detail for a single phase: batch readiness, task state, dependency evidence, and launch readiness.
+
+**`GET /api/agent/planning/session-board`** — Aggregated agent session board across the project. Supports grouping by state, feature, phase, agent, or model. Returns session cards with correlation confidence, token metrics, and activity markers. Gated by `CCDASH_PLANNING_CONTROL_PLANE_ENABLED`.
+
+**`GET /api/agent/planning/next-run-preview/{feature_id}`** — Preview panel for the next run of a feature. Generates CLI command templates and prompt skeletons with session/artifact/phase context. Copy-only; execution through launch sheet. Gated by `CCDASH_NEXT_RUN_PREVIEW_ENABLED` (default true).
 
 ### Launch Endpoints
 
