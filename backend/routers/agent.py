@@ -15,6 +15,7 @@ from backend.application.services.agent_queries import (
     FeaturePlanningContextDTO,
     PhaseOperationsDTO,
     PlanningAgentSessionBoardDTO,
+    PlanningNextRunPreviewDTO,
     PlanningQueryService,
     PlanningSessionQueryService,
     ProjectPlanningGraphDTO,
@@ -40,6 +41,18 @@ def _require_planning_enabled() -> None:
                 "error": "planning_disabled",
                 "message": "Planning control plane is disabled.",
                 "hint": "Set CCDASH_PLANNING_CONTROL_PLANE_ENABLED=true to enable.",
+            },
+        )
+
+
+def _require_next_run_preview_enabled() -> None:
+    if not config.CCDASH_NEXT_RUN_PREVIEW_ENABLED:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "next_run_preview_disabled",
+                "message": "Next-run preview feature is disabled.",
+                "hint": "Set CCDASH_NEXT_RUN_PREVIEW_ENABLED=true to enable.",
             },
         )
 
@@ -356,6 +369,52 @@ async def get_planning_session_board_for_feature(
             project_id=project_id,
             feature_id=feature_id,
             grouping=grouping,
+        )
+        if result.status == "error":
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
+        return result
+
+
+# ── Next-run preview (PASB-401) ───────────────────────────────────────────────
+
+
+@agent_router.get(
+    "/planning/next-run-preview/{feature_id}",
+    response_model=PlanningNextRunPreviewDTO,
+    dependencies=[Depends(_require_planning_enabled), Depends(_require_next_run_preview_enabled)],
+)
+async def get_planning_next_run_preview(
+    feature_id: str = Path(..., description="Feature id to generate the next-run preview for."),
+    phase_number: int | None = Query(default=None, description="Optional phase number to scope the preview to."),
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningNextRunPreviewDTO:
+    """Return a next-run CLI command and prompt skeleton for the given feature/phase.
+
+    The response includes a copyable ``command`` string and a ``prompt_skeleton``
+    template with ``{{placeholder}}`` tokens showing what context would be
+    injected.  ``warnings`` surfaces missing context, stale data, or blocked
+    predecessors that may affect run quality.
+
+    Full prompt composition is implemented in PASB-402.  The stub response
+    returned here is immediately usable and the contract is stable.
+    """
+    with otel.start_span(
+        "planning.next_run_preview",
+        {"feature_id": feature_id, "project_id": project_id or "", "phase_number": str(phase_number or "")},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_query_service.get_next_run_preview(
+            app_request.context,
+            app_request.ports,
+            feature_id=feature_id,
+            phase_number=phase_number,
+            project_id_override=project_id,
         )
         if result.status == "error":
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")

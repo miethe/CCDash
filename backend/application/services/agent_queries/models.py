@@ -600,6 +600,21 @@ class NextRunContextRef(BaseModel):
     ref_path: str | None = None
 
 
+class PromptContextSelection(BaseModel):
+    """User's selected context items for prompt composition (PASB-401).
+
+    Carries the explicit selections the caller wants injected into the rendered
+    prompt skeleton.  All fields default to empty so callers can omit any
+    dimension they don't need.
+    """
+
+    session_ids: list[str] = Field(default_factory=list)
+    phase_refs: list[str] = Field(default_factory=list)
+    task_refs: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    transcript_refs: list[str] = Field(default_factory=list)
+
+
 class PlanningNextRunPreviewDTO(AgentQueryEnvelope):
     """Next-run prompt preview for a feature or phase.
 

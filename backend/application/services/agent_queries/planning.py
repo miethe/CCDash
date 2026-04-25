@@ -17,7 +17,7 @@ import logging
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
@@ -45,12 +45,14 @@ from .feature_forensics import FeatureForensicsQueryService
 from .models import (
     FeaturePlanningContextDTO,
     FeatureSummaryItem,
+    NextRunContextRef,
     OpenQuestionResolutionDTO,
     PhaseContextItem,
     PhaseOperationsDTO,
     PhaseTaskItem,
     PlanningArtifactRef,
     PlanningCtxPerPhase,
+    PlanningNextRunPreviewDTO,
     PlanningNodeCountsByType,
     PlanningOpenQuestionItem,
     PlanningSpikeItem,
@@ -59,6 +61,7 @@ from .models import (
     PlanningTokenTelemetryEntry,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
+    PromptContextSelection,
     TokenUsageByModel,
 )
 
@@ -1754,4 +1757,65 @@ class PlanningQueryService:
             progress_evidence=progress_evidence,
             data_freshness=data_freshness,
             source_refs=collect_source_refs(feature_id, [str(phase_number)]),
+        )
+
+    # ── Query 5: Next-run preview (PASB-401) ─────────────────────────────────
+
+    async def get_next_run_preview(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        feature_id: str,
+        phase_number: Optional[int] = None,
+        context_selection: Optional[PromptContextSelection] = None,
+        project_id_override: Optional[str] = None,
+    ) -> PlanningNextRunPreviewDTO:
+        """Generate a next-run CLI command and prompt preview for the given feature/phase.
+
+        Returns a ``PlanningNextRunPreviewDTO`` containing a copyable CLI command
+        string and a prompt skeleton with ``{{placeholder}}`` tokens for context
+        that will be injected by the caller.
+
+        Full composition logic (context gathering, token budget estimation,
+        phase-specific prompt rendering) is implemented in PASB-402.  This stub
+        resolves the feature name and emits a minimal but valid response so the
+        endpoint contract is immediately testable.
+        """
+        scope = resolve_project_scope(context, ports, project_id_override)
+        if scope is None:
+            return PlanningNextRunPreviewDTO(
+                status="error",
+                feature_id=feature_id,
+                warnings=["Project scope could not be resolved."],
+                source_refs=[feature_id],
+            )
+
+        feature_row = await ports.storage.features().get_by_id(feature_id)
+        feature_name: Optional[str] = None
+        if feature_row is not None:
+            feature_name = str(feature_row.get("name") or feature_row.get("title") or "")
+            feature_name = feature_name or None
+
+        # Build a basic /dev:execute-phase command.
+        phase_arg = f" --phase {phase_number}" if phase_number is not None else ""
+        command = f"/dev:execute-phase {feature_id}{phase_arg}"
+
+        data_freshness = derive_data_freshness([])
+
+        return PlanningNextRunPreviewDTO(
+            status="ok",
+            feature_id=feature_id,
+            feature_name=feature_name,
+            phase_number=phase_number,
+            command=command,
+            prompt_skeleton=(
+                "# Next-run prompt for {{feature_id}}\n\n"
+                "{{context}}\n\n"
+                "<!-- TODO: Full prompt composition will be available after PASB-402 -->"
+            ),
+            context_refs=[],
+            warnings=["Full prompt composition not yet available (PASB-402 pending)."],
+            data_freshness=data_freshness,
+            source_refs=collect_source_refs(feature_id, [str(phase_number)] if phase_number is not None else []),
         )
