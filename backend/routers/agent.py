@@ -14,7 +14,9 @@ from backend.application.services.agent_queries import (
     FeatureForensicsQueryService,
     FeaturePlanningContextDTO,
     PhaseOperationsDTO,
+    PlanningAgentSessionBoardDTO,
     PlanningQueryService,
+    PlanningSessionQueryService,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     ProjectStatusDTO,
@@ -48,6 +50,8 @@ workflow_diagnostics_query_service = WorkflowDiagnosticsQueryService()
 reporting_query_service = ReportingQueryService()
 # PCP-202: planning query surface — one singleton for the whole process lifetime.
 planning_query_service = PlanningQueryService()
+# PASB-102: planning session board query surface.
+planning_session_query_service = PlanningSessionQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -278,4 +282,81 @@ async def get_phase_operations(
                 else f"Feature '{feature_id}' not found."
             )
             raise HTTPException(status_code=404, detail=detail)
+        return result
+
+
+# ── Planning session board endpoints (PASB-103) ──────────────────────────────
+# Project-wide and feature-scoped Kanban board of agent sessions correlated to
+# planning entities.  Both handlers are thin: resolve the app request, delegate
+# to the PlanningSessionQueryService singleton, and return the DTO unchanged.
+# status="error" from the service means the project scope could not be resolved;
+# we surface that as a 404 rather than a 500 so REST clients get the right code.
+
+
+@agent_router.get(
+    "/planning/session-board",
+    response_model=PlanningAgentSessionBoardDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_session_board(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    grouping: str = Query(
+        default="state",
+        description="Board grouping mode: one of 'state', 'feature', 'phase', 'agent', 'model'.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningAgentSessionBoardDTO:
+    """Return a project-wide Kanban board of agent sessions correlated to planning entities."""
+    with otel.start_span("planning.session_board", {"project_id": project_id or "", "grouping": grouping}):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_session_query_service.get_session_board(
+            app_request.context,
+            app_request.ports,
+            project_id=project_id,
+            grouping=grouping,
+        )
+        if result.status == "error":
+            raise HTTPException(status_code=404, detail="Project scope could not be resolved.")
+        return result
+
+
+@agent_router.get(
+    "/planning/session-board/{feature_id}",
+    response_model=PlanningAgentSessionBoardDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_session_board_for_feature(
+    feature_id: str = Path(..., description="Feature id to scope the session board to."),
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    grouping: str = Query(
+        default="state",
+        description="Board grouping mode: one of 'state', 'feature', 'phase', 'agent', 'model'.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningAgentSessionBoardDTO:
+    """Return a feature-scoped Kanban board of agent sessions correlated to planning entities."""
+    with otel.start_span(
+        "planning.session_board_feature",
+        {"feature_id": feature_id, "project_id": project_id or "", "grouping": grouping},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_session_query_service.get_session_board(
+            app_request.context,
+            app_request.ports,
+            project_id=project_id,
+            feature_id=feature_id,
+            grouping=grouping,
+        )
+        if result.status == "error":
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
         return result

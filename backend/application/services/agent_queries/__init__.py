@@ -53,6 +53,10 @@ from backend.application.services.agent_queries.feature_forensics import Feature
 from backend.application.services.agent_queries.planning import PlanningQueryService
 from backend.application.services.agent_queries.project_status import ProjectStatusQueryService
 from backend.application.services.agent_queries.reporting import ReportingQueryService
+from backend.application.services.agent_queries.planning_sessions import (
+    PlanningAgentSessionBoardDTO,
+    PlanningSessionQueryService,
+)
 from backend.application.services.agent_queries.workflow_intelligence import WorkflowDiagnosticsQueryService
 
 __all__ = [
@@ -107,4 +111,7 @@ __all__ = [
     "ProjectPlanningSummaryDTO",
     "ProjectPlanningGraphDTO",
     "TokenUsageByModel",
+    # Planning session board (PASB-103)
+    "PlanningAgentSessionBoardDTO",
+    "PlanningSessionQueryService",
 ]
