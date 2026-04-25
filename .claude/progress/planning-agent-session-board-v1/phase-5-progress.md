@@ -6,7 +6,7 @@ prd: planning-agent-session-board-v1
 feature_slug: planning-agent-session-board-v1
 phase: 5
 phase_title: Tests, Telemetry, Performance, and Rollout
-status: pending
+status: in_progress
 created: '2026-04-25'
 updated: '2026-04-25'
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
@@ -35,7 +35,8 @@ tasks:
   estimate: 2 pts
 - id: PASB-502
   title: Frontend Tests
-  description: Cover board grouping, card links, relationship highlighting, feature lane, reduced-motion behavior, and copy preview actions.
+  description: Cover board grouping, card links, relationship highlighting, feature
+    lane, reduced-motion behavior, and copy preview actions.
   status: pending
   assigned_to:
   - frontend-developer
@@ -48,7 +49,9 @@ tasks:
   estimate: 3 pts
 - id: PASB-503
   title: Telemetry
-  description: Add events for board opened, grouping changed, card opened, transcript link clicked, context added, prompt copied, and reduced-motion fallback used where available.
+  description: Add events for board opened, grouping changed, card opened, transcript
+    link clicked, context added, prompt copied, and reduced-motion fallback used where
+    available.
   status: pending
   assigned_to:
   - frontend-developer
@@ -69,11 +72,13 @@ tasks:
   dependencies:
   - PASB-205
   acceptance_criteria:
-  - Board remains responsive with hundreds of cards and animation does not cause obvious layout thrash.
+  - Board remains responsive with hundreds of cards and animation does not cause obvious
+    layout thrash.
   estimate: 1 pt
 - id: PASB-505
   title: Rollout Validation
-  description: Run build, focused planning tests, backend planning tests, and manual route QA.
+  description: Run build, focused planning tests, backend planning tests, and manual
+    route QA.
   status: pending
   assigned_to:
   - task-completion-validator

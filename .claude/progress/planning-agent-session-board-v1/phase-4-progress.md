@@ -6,7 +6,7 @@ prd: planning-agent-session-board-v1
 feature_slug: planning-agent-session-board-v1
 phase: 4
 phase_title: Next-Run Prompt Preview and Context Composer
-status: pending
+status: completed
 created: '2026-04-25'
 updated: '2026-04-25'
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
@@ -93,7 +93,7 @@ tasks:
   title: Optional Drag-to-Compose
   description: Add drag-to-compose only if click and keyboard alternatives are implemented
     first.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -114,10 +114,10 @@ parallelization:
   batch_4:
   - PASB-406
 total_tasks: 6
-completed_tasks: 5
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 83
+progress: 100
 ---
 
 # Phase 4: Next-Run Prompt Preview and Context Composer
