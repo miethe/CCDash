@@ -1,18 +1,19 @@
 /**
- * PASB-302: PlanningAgentSessionDetailPanel
+ * PASB-302 / PASB-305: PlanningAgentSessionDetailPanel
  *
  * An inline side/below-panel that appears when a card is selected on the
  * Planning Agent Session Board. Reuses content patterns from AgentDetailModal
  * without the modal overlay semantics — board interaction remains live.
  *
  * Sections:
- *   1. Session header — agent name, model, state dot, session ID
+ *   1. Session header — agent name, model, state dot, freshness badge, session ID
  *   2. Lineage tree  — parent → current → children from card.relationships
  *   3. Feature correlation — featureName, phase, task, batch from card.correlation
  *   4. Evidence list — sourceType, sourceLabel, confidence from card.correlation?.evidence
+ *                      expandable detail per item (PASB-305)
  *   5. Token context — tokensIn/Out + context window bar from card.tokenSummary
- *   6. Activity timeline — chronological markers with icons from card.activityMarkers
- *   7. Quick actions — transcript + feature planning links (CardActionRow patterns)
+ *   6. Activity timeline — grouped+summarised markers with expandable detail (PASB-305)
+ *   7. Quick actions — transcript + feature planning links + "Add to prompt context" (PASB-305)
  *   8. Close button that calls onClose (deselects card)
  *
  * Accessibility:
@@ -22,7 +23,7 @@
  *   - Keyboard navigation stays within the board — no focus trap
  */
 
-import { useEffect, useRef, type JSX } from 'react';
+import { useEffect, useRef, useState, useCallback, type JSX } from 'react';
 import { Link } from 'react-router-dom';
 import {
   X,
@@ -41,6 +42,10 @@ import {
   HelpCircle,
   Link2,
   BarChart2,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -72,6 +77,15 @@ function relativeTime(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+/** Freshness tier for the transcript badge. */
+function getFreshness(iso: string | undefined): 'live' | 'recent' | 'idle' {
+  if (!iso) return 'idle';
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return 'live';
+  if (secs < 300) return 'recent';
+  return 'idle';
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -122,6 +136,15 @@ const MARKER_COLOR: Record<SessionActivityMarker['markerType'], string> = {
   command: 'var(--ink-3)',
   error: 'var(--err)',
   completion: 'var(--ok)',
+};
+
+/** Human-readable group label for the activity summary. */
+const MARKER_GROUP_LABEL: Record<SessionActivityMarker['markerType'], string> = {
+  tool_call: 'tool call',
+  file_edit: 'file edit',
+  command: 'command',
+  error: 'error',
+  completion: 'completion',
 };
 
 const RELATION_LABEL: Record<BoardSessionRelationship['relationType'], string> = {
@@ -183,6 +206,62 @@ function ConfidencePill({ confidence }: { confidence: SessionCorrelationEvidence
   );
 }
 
+// ── Freshness badge ───────────────────────────────────────────────────────────
+
+const FRESHNESS_STYLES = {
+  live: {
+    color: 'var(--ok)',
+    bg: 'color-mix(in oklab, var(--ok) 12%, transparent)',
+    label: 'Live',
+    dot: true,
+  },
+  recent: {
+    color: 'var(--warn)',
+    bg: 'color-mix(in oklab, var(--warn) 12%, transparent)',
+    label: 'Recent',
+    dot: false,
+  },
+  idle: {
+    color: 'var(--ink-4)',
+    bg: 'color-mix(in oklab, var(--ink-4) 8%, transparent)',
+    label: 'Idle',
+    dot: false,
+  },
+} as const;
+
+function FreshnessBadge({
+  lastActivityAt,
+}: {
+  lastActivityAt: string | undefined;
+}) {
+  const tier = getFreshness(lastActivityAt);
+  const s = FRESHNESS_STYLES[tier];
+  const relTime = lastActivityAt && tier === 'idle' ? relativeTime(lastActivityAt) : null;
+
+  return (
+    <span
+      className="planning-mono inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-medium leading-none"
+      style={{ color: s.color, background: s.bg }}
+      aria-label={`Transcript freshness: ${s.label}${relTime ? ` (${relTime})` : ''}`}
+      data-testid="detail-panel-freshness-badge"
+    >
+      {s.dot && (
+        <span
+          className="inline-block h-[5px] w-[5px] rounded-full"
+          style={{ background: s.color, animation: 'planning-pulse 1.8s ease-in-out infinite' }}
+          aria-hidden
+        />
+      )}
+      {s.label}
+      {relTime && (
+        <span style={{ color: 'var(--ink-4)' }} aria-hidden>
+          &nbsp;·&nbsp;{relTime}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ── Context window bar ────────────────────────────────────────────────────────
 
 function ContextWindowBar({ pct }: { pct: number }) {
@@ -218,6 +297,340 @@ function ContextWindowBar({ pct }: { pct: number }) {
         />
       </div>
     </div>
+  );
+}
+
+// ── Expandable evidence item ──────────────────────────────────────────────────
+
+function EvidenceItem({ ev }: { ev: SessionCorrelationEvidence }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetail = Boolean(ev.detail);
+
+  return (
+    <li
+      className={cn(
+        'rounded border bg-[color:var(--bg-2)]',
+        'border-[color:var(--line-1)]',
+      )}
+    >
+      <div
+        className={cn(
+          'flex items-center gap-2 px-2 py-1',
+          hasDetail && 'cursor-pointer',
+        )}
+        onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
+        role={hasDetail ? 'button' : undefined}
+        aria-expanded={hasDetail ? expanded : undefined}
+        tabIndex={hasDetail ? 0 : undefined}
+        onKeyDown={
+          hasDetail
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setExpanded((v) => !v);
+                }
+              }
+            : undefined
+        }
+      >
+        {/* Source type icon */}
+        {ev.sourceType === 'explicit_link' ? (
+          <Link2 size={9} style={{ color: 'var(--ok)', flexShrink: 0 }} aria-hidden />
+        ) : ev.sourceType === 'lineage' ? (
+          <GitBranch
+            size={9}
+            style={{ color: 'var(--info, #60a5fa)', flexShrink: 0 }}
+            aria-hidden
+          />
+        ) : (
+          <HelpCircle
+            size={9}
+            style={{ color: 'var(--ink-4)', flexShrink: 0 }}
+            aria-hidden
+          />
+        )}
+        <span
+          className="planning-mono flex-1 truncate text-[10px]"
+          style={{ color: 'var(--ink-2)' }}
+          title={ev.sourceLabel}
+        >
+          {ev.sourceLabel}
+        </span>
+        <span
+          className="planning-mono flex-shrink-0 text-[9px]"
+          style={{ color: 'var(--ink-4)' }}
+        >
+          {ev.sourceType}
+        </span>
+        <ConfidencePill confidence={ev.confidence} />
+        {hasDetail && (
+          <span style={{ color: 'var(--ink-4)', flexShrink: 0 }}>
+            {expanded ? <ChevronDown size={9} aria-hidden /> : <ChevronRight size={9} aria-hidden />}
+          </span>
+        )}
+      </div>
+      {hasDetail && expanded && (
+        <div
+          className="planning-mono border-t px-2 py-1.5 text-[9.5px] leading-relaxed"
+          style={{
+            borderColor: 'var(--line-1)',
+            color: 'var(--ink-3)',
+            fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}
+        >
+          {ev.detail}
+        </div>
+      )}
+    </li>
+  );
+}
+
+// ── Activity marker item ──────────────────────────────────────────────────────
+
+/**
+ * Determines if a timestamp is within the "fresh" threshold (60 seconds).
+ */
+function isMarkerFresh(timestamp: string | undefined): boolean {
+  if (!timestamp) return false;
+  return Date.now() - new Date(timestamp).getTime() < 60_000;
+}
+
+function ActivityMarkerItem({
+  marker,
+  isLatest,
+}: {
+  marker: SessionActivityMarker;
+  isLatest: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetail = Boolean(marker.detail);
+  const fresh = isLatest && isMarkerFresh(marker.timestamp);
+  const color = MARKER_COLOR[marker.markerType];
+
+  // Technical marker types get mono-font truncation
+  const isTechnical =
+    marker.markerType === 'tool_call' ||
+    marker.markerType === 'file_edit' ||
+    marker.markerType === 'command';
+
+  return (
+    <li className="relative flex items-start gap-2 pb-2 last:pb-0">
+      {/* Timeline dot */}
+      <span
+        className="absolute -left-[5px] top-[3px] flex h-[9px] w-[9px] items-center justify-center rounded-full border"
+        style={{
+          background: 'var(--bg-1)',
+          borderColor: color,
+          color,
+        }}
+        aria-hidden
+      >
+        <span style={{ transform: 'scale(0.7)', display: 'flex' }}>
+          {MARKER_ICON[marker.markerType]}
+        </span>
+      </span>
+
+      {/* Content */}
+      <div className="min-w-0 flex-1">
+        <div
+          className={cn('flex items-center gap-2', hasDetail && 'cursor-pointer')}
+          onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
+          role={hasDetail ? 'button' : undefined}
+          aria-expanded={hasDetail ? expanded : undefined}
+          tabIndex={hasDetail ? 0 : undefined}
+          onKeyDown={
+            hasDetail
+              ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setExpanded((v) => !v);
+                  }
+                }
+              : undefined
+          }
+        >
+          <span
+            className={cn(
+              'flex-1 truncate text-[10px] font-medium',
+              isTechnical && 'font-mono',
+            )}
+            style={{ color: 'var(--ink-2)', fontFamily: isTechnical ? 'var(--font-mono, ui-monospace, monospace)' : undefined }}
+            title={marker.label}
+          >
+            {marker.label}
+          </span>
+
+          <div className="flex flex-shrink-0 items-center gap-1.5">
+            {/* Fresh indicator on the latest marker */}
+            {fresh && (
+              <span
+                className="planning-mono inline-flex items-center gap-1 rounded px-1 py-0.5 text-[8.5px] font-medium leading-none"
+                style={{
+                  color: 'var(--ok)',
+                  background: 'color-mix(in oklab, var(--ok) 10%, transparent)',
+                }}
+                aria-label="Fresh — activity within last 60 seconds"
+              >
+                <span
+                  className="inline-block h-[4px] w-[4px] rounded-full"
+                  style={{
+                    background: 'var(--ok)',
+                    animation: 'planning-pulse 1.8s ease-in-out infinite',
+                  }}
+                  aria-hidden
+                />
+                fresh
+              </span>
+            )}
+
+            {marker.timestamp && (
+              <span
+                className="planning-mono text-[9px] tabular-nums"
+                style={{ color: 'var(--ink-4)' }}
+              >
+                {relativeTime(marker.timestamp)}
+              </span>
+            )}
+
+            {hasDetail && (
+              <span style={{ color: 'var(--ink-4)' }}>
+                {expanded ? (
+                  <ChevronDown size={9} aria-hidden />
+                ) : (
+                  <ChevronRight size={9} aria-hidden />
+                )}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Expandable detail */}
+        {hasDetail && expanded && (
+          <pre
+            className="planning-mono mt-1 overflow-x-auto rounded border px-2 py-1.5 text-[9px] leading-relaxed"
+            style={{
+              borderColor: 'var(--line-1)',
+              background: 'var(--bg-0, var(--bg-2))',
+              color: 'var(--ink-3)',
+              fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+            }}
+          >
+            {marker.detail}
+          </pre>
+        )}
+      </div>
+    </li>
+  );
+}
+
+// ── Activity summary pill row ─────────────────────────────────────────────────
+
+function ActivitySummary({
+  markers,
+}: {
+  markers: SessionActivityMarker[];
+}) {
+  const counts = markers.reduce<Partial<Record<SessionActivityMarker['markerType'], number>>>(
+    (acc, m) => {
+      acc[m.markerType] = (acc[m.markerType] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
+
+  const entries = Object.entries(counts) as [SessionActivityMarker['markerType'], number][];
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="mb-2 flex flex-wrap gap-1" aria-label="Activity summary" role="list">
+      {entries.map(([type, count]) => (
+        <span
+          key={type}
+          className="planning-mono inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium leading-none"
+          style={{
+            color: MARKER_COLOR[type],
+            background: `color-mix(in oklab, ${MARKER_COLOR[type]} 10%, transparent)`,
+          }}
+          role="listitem"
+          aria-label={`${count} ${MARKER_GROUP_LABEL[type]}${count === 1 ? '' : 's'}`}
+        >
+          <span style={{ transform: 'scale(0.85)', display: 'flex' }}>
+            {MARKER_ICON[type]}
+          </span>
+          {count} {MARKER_GROUP_LABEL[type]}{count !== 1 ? 's' : ''}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ── "Add to prompt context" button ────────────────────────────────────────────
+
+function buildPromptContextRef(card: PlanningAgentSessionCard): string {
+  const agentPart = card.agentName ? `agent: ${card.agentName}` : null;
+  const featurePart = card.correlation?.featureName
+    ? `feature: ${card.correlation.featureName}`
+    : card.correlation?.featureId
+      ? `feature: ${card.correlation.featureId}`
+      : null;
+  const phasePart =
+    card.correlation?.phaseNumber != null ? `phase: P${card.correlation.phaseNumber}` : null;
+
+  const parts = [agentPart, featurePart, phasePart].filter(Boolean).join(', ');
+  return `Session ${card.sessionId}${parts ? ` (${parts})` : ''}`;
+}
+
+function AddToPromptContextButton({ card }: { card: PlanningAgentSessionCard }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(async () => {
+    const ref = buildPromptContextRef(card);
+    await navigator.clipboard.writeText(ref);
+    setCopied(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopied(false), 2000);
+  }, [card]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={cn(
+        'inline-flex w-full items-center justify-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-2',
+        'border transition-all duration-150',
+        copied
+          ? 'border-[color:color-mix(in_oklab,var(--ok)_50%,var(--line-1))] bg-[color:color-mix(in_oklab,var(--ok)_8%,transparent)] text-[color:var(--ok)]'
+          : 'border-[color:var(--line-1)] bg-[color:var(--bg-2)] text-[color:var(--ink-2)] hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)] hover:text-[color:var(--ink-1)]',
+        'planning-mono text-[10px]',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+      )}
+      aria-label="Copy session reference to clipboard for use in prompt context"
+      data-testid="detail-panel-add-context-btn"
+    >
+      {copied ? (
+        <>
+          <Check size={11} aria-hidden />
+          Copied!
+        </>
+      ) : (
+        <>
+          <Copy size={11} aria-hidden />
+          Add to prompt context
+        </>
+      )}
+    </button>
   );
 }
 
@@ -275,6 +688,8 @@ export function PlanningAgentSessionDetailPanel({
     if (!a.timestamp || !b.timestamp) return 0;
     return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
   });
+
+  const latestMarkerIndex = sortedMarkers.length - 1;
 
   return (
     <aside
@@ -346,6 +761,8 @@ export function PlanningAgentSessionDetailPanel({
                   </span>
                 </>
               )}
+              {/* Freshness badge — visible without scrolling */}
+              <FreshnessBadge lastActivityAt={card.lastActivityAt} />
             </div>
             <p
               className="planning-mono mt-1 truncate text-[9.5px]"
@@ -636,7 +1053,7 @@ export function PlanningAgentSessionDetailPanel({
 
           <Divider />
 
-          {/* 3. Evidence ─────────────────────────────────────────────────── */}
+          {/* 3. Evidence — expandable detail per item ───────────────────── */}
           <section className="px-4 py-3">
             <SectionLabel>Evidence</SectionLabel>
             {!card.correlation || card.correlation.evidence.length === 0 ? (
@@ -648,44 +1065,7 @@ export function PlanningAgentSessionDetailPanel({
                 data-testid="detail-panel-evidence"
               >
                 {card.correlation.evidence.map((ev, i) => (
-                  <li
-                    key={i}
-                    className={cn(
-                      'flex items-center gap-2 rounded px-2 py-1',
-                      'border border-[color:var(--line-1)] bg-[color:var(--bg-2)]',
-                    )}
-                  >
-                    {/* Source type icon approximation */}
-                    {ev.sourceType === 'explicit_link' ? (
-                      <Link2 size={9} style={{ color: 'var(--ok)', flexShrink: 0 }} aria-hidden />
-                    ) : ev.sourceType === 'lineage' ? (
-                      <GitBranch
-                        size={9}
-                        style={{ color: 'var(--info, #60a5fa)', flexShrink: 0 }}
-                        aria-hidden
-                      />
-                    ) : (
-                      <HelpCircle
-                        size={9}
-                        style={{ color: 'var(--ink-4)', flexShrink: 0 }}
-                        aria-hidden
-                      />
-                    )}
-                    <span
-                      className="planning-mono flex-1 truncate text-[10px]"
-                      style={{ color: 'var(--ink-2)' }}
-                      title={ev.detail ?? ev.sourceLabel}
-                    >
-                      {ev.sourceLabel}
-                    </span>
-                    <span
-                      className="planning-mono flex-shrink-0 text-[9px]"
-                      style={{ color: 'var(--ink-4)' }}
-                    >
-                      {ev.sourceType}
-                    </span>
-                    <ConfidencePill confidence={ev.confidence} />
-                  </li>
+                  <EvidenceItem key={i} ev={ev} />
                 ))}
               </ul>
             )}
@@ -758,71 +1138,34 @@ export function PlanningAgentSessionDetailPanel({
 
           <Divider />
 
-          {/* 5. Activity timeline ────────────────────────────────────────── */}
+          {/* 5. Activity timeline — grouped summary + expandable detail ──── */}
           <section className="px-4 py-3">
             <SectionLabel>Activity Timeline</SectionLabel>
             {sortedMarkers.length === 0 ? (
               <EmptyHint label="No activity markers" />
             ) : (
-              <ol
-                className="relative space-y-0 pl-3"
-                aria-label="Activity timeline"
-                data-testid="detail-panel-activity"
-                style={{
-                  borderLeft: '1px solid var(--line-1)',
-                }}
-              >
-                {sortedMarkers.map((marker, i) => (
-                  <li
-                    key={i}
-                    className="relative flex items-start gap-2 pb-2 last:pb-0"
-                  >
-                    {/* Timeline dot */}
-                    <span
-                      className="absolute -left-[5px] top-[3px] flex h-[9px] w-[9px] items-center justify-center rounded-full border"
-                      style={{
-                        background: 'var(--bg-1)',
-                        borderColor: MARKER_COLOR[marker.markerType],
-                        color: MARKER_COLOR[marker.markerType],
-                      }}
-                      aria-hidden
-                    >
-                      <span style={{ transform: 'scale(0.7)', display: 'flex' }}>
-                        {MARKER_ICON[marker.markerType]}
-                      </span>
-                    </span>
+              <>
+                {/* Count summary row */}
+                <ActivitySummary markers={sortedMarkers} />
 
-                    {/* Content */}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span
-                          className="planning-mono truncate text-[10px] font-medium"
-                          style={{ color: 'var(--ink-2)' }}
-                          title={marker.detail ?? marker.label}
-                        >
-                          {marker.label}
-                        </span>
-                        {marker.timestamp && (
-                          <span
-                            className="planning-mono flex-shrink-0 text-[9px] tabular-nums"
-                            style={{ color: 'var(--ink-4)' }}
-                          >
-                            {relativeTime(marker.timestamp)}
-                          </span>
-                        )}
-                      </div>
-                      {marker.detail && (
-                        <p
-                          className="planning-mono mt-0.5 line-clamp-2 text-[9.5px]"
-                          style={{ color: 'var(--ink-4)' }}
-                        >
-                          {marker.detail}
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ol>
+                {/* Chronological marker list */}
+                <ol
+                  className="relative space-y-0 pl-3"
+                  aria-label="Activity timeline"
+                  data-testid="detail-panel-activity"
+                  style={{
+                    borderLeft: '1px solid var(--line-1)',
+                  }}
+                >
+                  {sortedMarkers.map((marker, i) => (
+                    <ActivityMarkerItem
+                      key={i}
+                      marker={marker}
+                      isLatest={i === latestMarkerIndex}
+                    />
+                  ))}
+                </ol>
+              </>
             )}
           </section>
 
@@ -831,66 +1174,72 @@ export function PlanningAgentSessionDetailPanel({
           {/* 6. Quick actions ────────────────────────────────────────────── */}
           <section className="px-4 py-3">
             <SectionLabel>Quick Actions</SectionLabel>
-            <div className="flex flex-wrap gap-1.5">
-              {transcriptHref && (
-                <Link
-                  to={transcriptHref}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5',
-                    'border border-[color:var(--line-1)] bg-[color:var(--bg-2)]',
-                    'planning-mono text-[10px] text-[color:var(--ink-2)]',
-                    'transition-colors hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)] hover:text-[color:var(--ink-1)]',
-                    'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
-                  )}
-                  aria-label="View session transcript"
-                  data-testid="detail-panel-transcript-link"
-                >
-                  <FileText size={11} aria-hidden />
-                  Transcript
-                </Link>
-              )}
+            <div className="space-y-1.5">
+              {/* Navigation links row */}
+              <div className="flex flex-wrap gap-1.5">
+                {transcriptHref && (
+                  <Link
+                    to={transcriptHref}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5',
+                      'border border-[color:var(--line-1)] bg-[color:var(--bg-2)]',
+                      'planning-mono text-[10px] text-[color:var(--ink-2)]',
+                      'transition-colors hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)] hover:text-[color:var(--ink-1)]',
+                      'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+                    )}
+                    aria-label="View session transcript"
+                    data-testid="detail-panel-transcript-link"
+                  >
+                    <FileText size={11} aria-hidden />
+                    Transcript
+                  </Link>
+                )}
 
-              {featureModalHref && (
-                <Link
-                  to={featureModalHref}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5',
-                    'border border-[color:color-mix(in_oklab,var(--brand)_40%,var(--line-1))]',
-                    'bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
-                    'planning-mono text-[10px] text-[color:var(--brand)]',
-                    'transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_14%,transparent)]',
-                    'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
-                  )}
-                  aria-label={`Open feature${card.correlation?.featureName ? ` ${card.correlation.featureName}` : ''} in planning view`}
-                  data-testid="detail-panel-feature-plan-link"
-                >
-                  <Layers size={11} aria-hidden />
-                  Feature Plan
-                </Link>
-              )}
+                {featureModalHref && (
+                  <Link
+                    to={featureModalHref}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5',
+                      'border border-[color:color-mix(in_oklab,var(--brand)_40%,var(--line-1))]',
+                      'bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
+                      'planning-mono text-[10px] text-[color:var(--brand)]',
+                      'transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_14%,transparent)]',
+                      'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+                    )}
+                    aria-label={`Open feature${card.correlation?.featureName ? ` ${card.correlation.featureName}` : ''} in planning view`}
+                    data-testid="detail-panel-feature-plan-link"
+                  >
+                    <Layers size={11} aria-hidden />
+                    Feature Plan
+                  </Link>
+                )}
 
-              {phaseOpsHref && (
-                <Link
-                  to={phaseOpsHref}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5',
-                    'border border-[color:var(--line-1)] bg-[color:var(--bg-2)]',
-                    'planning-mono text-[10px] text-[color:var(--ink-2)]',
-                    'transition-colors hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)] hover:text-[color:var(--ink-1)]',
-                    'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
-                  )}
-                  aria-label={`Open phase ${phaseNumber} operations panel`}
-                  data-testid="detail-panel-phase-ops-link"
-                >
-                  <Settings2 size={11} aria-hidden />
-                  Phase Ops
-                </Link>
-              )}
+                {phaseOpsHref && (
+                  <Link
+                    to={phaseOpsHref}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5',
+                      'border border-[color:var(--line-1)] bg-[color:var(--bg-2)]',
+                      'planning-mono text-[10px] text-[color:var(--ink-2)]',
+                      'transition-colors hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)] hover:text-[color:var(--ink-1)]',
+                      'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+                    )}
+                    aria-label={`Open phase ${phaseNumber} operations panel`}
+                    data-testid="detail-panel-phase-ops-link"
+                  >
+                    <Settings2 size={11} aria-hidden />
+                    Phase Ops
+                  </Link>
+                )}
 
-              {/* Fallback when there are no actions */}
-              {!transcriptHref && !featureModalHref && !phaseOpsHref && (
-                <EmptyHint label="No actions available" />
-              )}
+                {/* Fallback when there are no nav actions */}
+                {!transcriptHref && !featureModalHref && !phaseOpsHref && (
+                  <EmptyHint label="No actions available" />
+                )}
+              </div>
+
+              {/* "Add to prompt context" — full-width, always present */}
+              <AddToPromptContextButton card={card} />
             </div>
           </section>
         </div>

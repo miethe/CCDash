@@ -39,7 +39,7 @@ tasks:
   title: Card Detail Reuse
   description: Reuse or extend AgentDetailModal so card selection shows lineage, features,
     phase/task hints, and token context.
-  status: in_progress
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -65,7 +65,7 @@ tasks:
   title: Cross-Surface Navigation
   description: Add deep links from board to feature planning context, phase operations,
     and session transcript.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -78,7 +78,7 @@ tasks:
   title: Activity Detail Panel
   description: Add a selected-card panel with latest activity markers, transcript
     freshness, command/tool markers, evidence, lineage, and token/context summary.
-  status: pending
+  status: in_progress
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -100,8 +100,8 @@ parallelization:
   batch_3:
   - PASB-305
 total_tasks: 5
-completed_tasks: 2
-in_progress_tasks: 2
+completed_tasks: 4
+in_progress_tasks: 1
 blocked_tasks: 0
-progress: 40
+progress: 80
 ---
