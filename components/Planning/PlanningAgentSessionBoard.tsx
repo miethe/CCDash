@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, FileText, GitBranch, LayoutGrid, Layers, RefreshCw, Settings2 } from 'lucide-react';
+import { AlertCircle, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type {
@@ -10,6 +10,8 @@ import type {
   PlanningBoardGroupingMode,
   SessionActivityMarker,
   BoardSessionRelationship,
+  SessionCorrelation,
+  SessionCorrelationEvidence,
 } from '@/types';
 import { getSessionBoard } from '@/services/planning';
 import { planningRouteFeatureModalHref } from '@/services/planningRoutes';
@@ -89,6 +91,186 @@ const RELATION_LABEL: Record<BoardSessionRelationship['relationType'], string> =
   sibling: 'sibling',
   child: 'child',
 };
+
+// ── Confidence tier styling ───────────────────────────────────────────────────
+
+/**
+ * Visual config per confidence tier.
+ * borderStyle: CSS border-style value for the left accent.
+ * borderColor: CSS variable reference for the left border color.
+ * bgMix: optional opacity/mix modifier for card background (undefined = default bg).
+ */
+const CONFIDENCE_CONFIG = {
+  high: {
+    borderStyle: 'solid',
+    borderColor: 'var(--brand)',
+    badgeSymbol: null,
+    badgeTitle: 'Explicitly linked',
+    indicatorIcon: 'link' as const,
+    dimCard: false,
+  },
+  medium: {
+    borderStyle: 'solid',
+    borderColor: 'color-mix(in oklab, var(--brand) 55%, var(--ink-3))',
+    badgeSymbol: null,
+    badgeTitle: 'Linked (medium confidence)',
+    indicatorIcon: 'dot' as const,
+    dimCard: false,
+  },
+  low: {
+    borderStyle: 'dashed',
+    borderColor: 'var(--warn)',
+    badgeSymbol: '~',
+    badgeTitle: 'Inferred link (low confidence)',
+    indicatorIcon: 'tilde' as const,
+    dimCard: true,
+  },
+  unknown: {
+    borderStyle: 'dotted',
+    borderColor: 'var(--ink-3)',
+    badgeSymbol: '?',
+    badgeTitle: 'Correlation confidence unknown',
+    indicatorIcon: 'question' as const,
+    dimCard: true,
+  },
+} as const;
+
+// ── Evidence confidence labels ────────────────────────────────────────────────
+
+const EVIDENCE_CONFIDENCE_LABEL: Record<SessionCorrelationEvidence['confidence'], string> = {
+  high: 'high',
+  medium: 'med',
+  low: 'low',
+  unknown: '?',
+};
+
+const EVIDENCE_CONFIDENCE_COLOR: Record<SessionCorrelationEvidence['confidence'], string> = {
+  high: 'var(--ok)',
+  medium: 'var(--brand)',
+  low: 'var(--warn)',
+  unknown: 'var(--ink-3)',
+};
+
+// ── Evidence tooltip ──────────────────────────────────────────────────────────
+
+/**
+ * CSS-only hover tooltip listing evidence items for a correlation.
+ * Renders as a group container — the tooltip div is visible via CSS :hover
+ * on the group container. No JavaScript state needed.
+ *
+ * Tooltip appears above the trigger (bottom-full) and is clamped to stay
+ * inside card bounds via pointer-events and z-index.
+ */
+function EvidenceTooltip({ evidence }: { evidence: SessionCorrelationEvidence[] }) {
+  return (
+    <div
+      className="evidence-tooltip-panel"
+      role="tooltip"
+      // Prevent the tooltip interaction from bubbling to card role="button"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      {evidence.length === 0 ? (
+        <span className="evidence-tooltip-empty">No correlation evidence</span>
+      ) : (
+        <ul className="evidence-tooltip-list" aria-label="Correlation evidence">
+          {evidence.map((ev, i) => (
+            <li key={i} className="evidence-tooltip-item">
+              <span className="evidence-tooltip-label">{ev.sourceLabel}</span>
+              <span
+                className="evidence-tooltip-conf"
+                style={{ color: EVIDENCE_CONFIDENCE_COLOR[ev.confidence] }}
+              >
+                {EVIDENCE_CONFIDENCE_LABEL[ev.confidence]}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ── Confidence indicator ──────────────────────────────────────────────────────
+
+/**
+ * Small indicator shown in the card header row when a `correlation` is present.
+ * For low/unknown confidence: shows a symbol badge + hover tooltip.
+ * For high/medium: shows a subtle icon indicating an explicit/linked session.
+ *
+ * The outer `.evidence-tooltip-group` wrapper enables the CSS hover reveal.
+ */
+function CorrelationIndicator({ correlation }: { correlation: SessionCorrelation }) {
+  const cfg = CONFIDENCE_CONFIG[correlation.confidence];
+  const isWeak = correlation.confidence === 'low' || correlation.confidence === 'unknown';
+
+  return (
+    <span className="evidence-tooltip-group" aria-label={cfg.badgeTitle}>
+      {/* The visible trigger element */}
+      {cfg.indicatorIcon === 'link' ? (
+        <Link2
+          size={9}
+          className="flex-shrink-0"
+          style={{ color: 'var(--brand)', opacity: 0.7 }}
+          aria-hidden
+        />
+      ) : cfg.indicatorIcon === 'dot' ? (
+        <span
+          className="inline-block rounded-full flex-shrink-0"
+          style={{
+            width: 5,
+            height: 5,
+            background: 'color-mix(in oklab, var(--brand) 55%, var(--ink-3))',
+            opacity: 0.8,
+          }}
+          aria-hidden
+        />
+      ) : cfg.indicatorIcon === 'tilde' ? (
+        <span
+          className="planning-mono flex-shrink-0 font-bold leading-none"
+          style={{
+            fontSize: 9,
+            color: 'var(--warn)',
+            lineHeight: 1,
+          }}
+          aria-hidden
+        >
+          ~
+        </span>
+      ) : (
+        <HelpCircle
+          size={9}
+          className="flex-shrink-0"
+          style={{ color: 'var(--ink-3)' }}
+          aria-hidden
+        />
+      )}
+
+      {/* Tooltip — visible on group hover via CSS */}
+      {(isWeak || correlation.evidence.length > 0) && (
+        <EvidenceTooltip evidence={correlation.evidence} />
+      )}
+    </span>
+  );
+}
+
+// ── Left border accent ────────────────────────────────────────────────────────
+
+/**
+ * Derives inline style for the card's left border accent based on correlation confidence.
+ * Returns undefined when there is no correlation (no accent).
+ */
+function correlationLeftBorderStyle(
+  correlation: SessionCorrelation | undefined,
+): React.CSSProperties | undefined {
+  if (!correlation) return undefined;
+  const cfg = CONFIDENCE_CONFIG[correlation.confidence];
+  return {
+    borderLeftWidth: 2,
+    borderLeftStyle: cfg.borderStyle as React.CSSProperties['borderLeftStyle'],
+    borderLeftColor: cfg.borderColor,
+  };
+}
 
 // ── Card action row ───────────────────────────────────────────────────────────
 
@@ -266,12 +448,20 @@ function SessionCard({
   const latestMarker =
     card.activityMarkers.length > 0 ? card.activityMarkers[card.activityMarkers.length - 1] : null;
 
+  // Derive whether this card has a weak (inferred) correlation.
+  const correlationConf = card.correlation?.confidence;
+  const isInferred = correlationConf === 'low' || correlationConf === 'unknown';
+  const leftBorderStyle = correlationLeftBorderStyle(card.correlation);
+
   const ariaLabel = [
     card.agentName ?? 'Agent',
     card.model ? `model ${card.model}` : null,
     STATE_LABEL[card.state],
     featureSlug ? `feature ${featureSlug}` : null,
     card.startedAt ? `started ${relativeTime(card.startedAt)}` : null,
+    card.correlation
+      ? `correlation confidence ${card.correlation.confidence}`
+      : null,
     isSelected ? 'selected' : null,
     isHighlighted ? 'related session' : null,
   ]
@@ -303,15 +493,18 @@ function SessionCard({
       onMouseLeave={handleMouseLeave}
       onFocus={handleMouseEnter}
       onBlur={handleMouseLeave}
+      style={leftBorderStyle}
       className={cn(
         'relative rounded-[var(--radius-sm)] border',
-        'bg-[color:var(--bg-2)] cursor-pointer outline-none',
-        'transition-[border-color,box-shadow,background-color] duration-200 motion-reduce:transition-none',
+        'cursor-pointer outline-none',
+        'transition-[border-color,box-shadow,background-color,opacity] duration-200 motion-reduce:transition-none',
         // Entry fade-in: cards animate in on mount; reduced-motion users get instant display.
         'planning-card-enter',
         // State-transition flash: briefly highlights card border/bg when state changes.
         showFlash && 'planning-card-flash',
         compact ? 'px-2.5 py-2' : 'px-3 py-2.5',
+        // Inferred/unknown correlation: slightly muted background
+        isInferred ? 'bg-[color:var(--bg-1)]' : 'bg-[color:var(--bg-2)]',
         // Default (no highlight state)
         !isHighlighted && !isWeakHighlighted && !isSelected && [
           'border-[color:var(--line-1)]',
@@ -338,7 +531,7 @@ function SessionCard({
       aria-label={ariaLabel}
       aria-pressed={isSelected}
     >
-      {/* Row 1: state dot + session ID + state label + time */}
+      {/* Row 1: state dot + session ID + state label + correlation indicator + time */}
       <div className="flex items-center gap-1.5 min-w-0">
         <Dot
           style={{
@@ -356,6 +549,12 @@ function SessionCard({
         >
           {card.sessionId.length > 12 ? `…${card.sessionId.slice(-10)}` : card.sessionId}
         </span>
+
+        {/* Correlation confidence indicator — only when a correlation exists */}
+        {card.correlation && (
+          <CorrelationIndicator correlation={card.correlation} />
+        )}
+
         <span
           className="flex-shrink-0 text-[9px] text-[color:var(--ink-4)] tabular-nums"
           aria-hidden="true"
@@ -367,7 +566,8 @@ function SessionCard({
       {/* Row 2: agent name (fixed slot — always rendered to avoid reflow) */}
       <div
         className={cn(
-          'mt-1 truncate font-medium text-[color:var(--ink-1)]',
+          'mt-1 truncate font-medium',
+          isInferred ? 'text-[color:var(--ink-2)]' : 'text-[color:var(--ink-1)]',
           compact ? 'text-[11px]' : 'text-[12px]',
         )}
         style={{ minHeight: compact ? '1rem' : '1.125rem' }}
@@ -399,6 +599,7 @@ function SessionCard({
               'border border-[color:color-mix(in_oklab,var(--brand)_40%,var(--line-1))]',
               'bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
               'text-[9px] text-[color:var(--brand)] leading-none truncate max-w-[100px]',
+              isInferred && 'opacity-75',
             )}
             title={featureSlug}
           >

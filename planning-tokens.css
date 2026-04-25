@@ -315,6 +315,131 @@
   outline-offset: 2px;
 }
 
+/* ── Evidence tooltip: CSS-only hover reveal ─────────────────────────────────
+ *
+ * Structure:
+ *   .evidence-tooltip-group   (relative, inline-flex — the trigger wrapper)
+ *     <indicator icon/symbol>
+ *     .evidence-tooltip-panel (absolute, hidden by default, shown on group:hover)
+ *
+ * The panel floats above the trigger, pinned to the left edge of the card
+ * row via a negative left offset. z-index 50 keeps it above sibling cards.
+ * A pointer-events guard prevents the panel from accidentally closing itself.
+ */
+
+.planning-route .evidence-tooltip-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+
+.planning-route .evidence-tooltip-panel {
+  /* Hidden by default */
+  display: none;
+  position: absolute;
+  /* Float above and to the left of the indicator, aligned with left card edge */
+  bottom: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  /* Clamp so the panel doesn't overflow the card column */
+  min-width: 148px;
+  max-width: 210px;
+  z-index: 50;
+  pointer-events: none;
+  /* Visual chrome */
+  background: var(--bg-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  box-shadow:
+    0 4px 12px color-mix(in oklab, #000 40%, transparent),
+    0 1px 3px color-mix(in oklab, #000 30%, transparent);
+  /* Subtle entry — opacity only, no transform, to stay accessible */
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+/* Show on hover of the group */
+.planning-route .evidence-tooltip-group:hover .evidence-tooltip-panel {
+  display: block;
+  opacity: 1;
+}
+
+/* Tiny arrow pointing downward */
+.planning-route .evidence-tooltip-panel::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--line-2);
+}
+
+/* Arrow fill (inner layer) */
+.planning-route .evidence-tooltip-panel::before {
+  content: '';
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--bg-4);
+  z-index: 1;
+}
+
+.planning-route .evidence-tooltip-empty {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.planning-route .evidence-tooltip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.planning-route .evidence-tooltip-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.planning-route .evidence-tooltip-label {
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.planning-route .evidence-tooltip-conf {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+/* Reduced-motion: skip tooltip transition */
+@media (prefers-reduced-motion: reduce) {
+  .planning-route .evidence-tooltip-panel {
+    transition: none !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .planning-route *,
   .planning-route *::before,
