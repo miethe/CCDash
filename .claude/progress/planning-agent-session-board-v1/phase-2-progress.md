@@ -6,14 +6,14 @@ prd: planning-agent-session-board-v1
 feature_slug: planning-agent-session-board-v1
 phase: 2
 phase_title: Rich Board UI and Card Components
-status: in_progress
+status: completed
 created: '2026-04-25'
 updated: '2026-04-25'
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/planning-agent-session-board-v1.md
 commit_refs: []
 pr_refs: []
-overall_progress: 0
+overall_progress: 100
 completion_estimate: '2026-04-28'
 ui_touched: true
 owners:
@@ -52,7 +52,7 @@ tasks:
   title: Planning Links
   description: Add card actions for transcript, feature planning context, phase operations,
     and parent/root session.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -79,7 +79,7 @@ tasks:
   title: Motion and Reduced Motion
   description: Add subtle live-state animation, animated state transitions, and reduced-motion
     fallbacks.
-  status: in_progress
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -93,7 +93,7 @@ tasks:
   title: Relationship Highlighting
   description: Highlight parent/root/sibling sessions and linked planning entities
     on hover, focus, and selection.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -116,8 +116,8 @@ parallelization:
   - PASB-205
   - PASB-206
 total_tasks: 6
-completed_tasks: 3
-in_progress_tasks: 3
+completed_tasks: 6
+in_progress_tasks: 0
 blocked_tasks: 0
-progress: 50
+progress: 100
 ---
