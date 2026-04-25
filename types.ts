@@ -3326,6 +3326,15 @@ export interface NextRunContextRef {
   refPath?: string;
 }
 
+/** Context selection payload for the POST next-run-preview endpoint. */
+export interface PromptContextSelection {
+  sessionIds: string[];
+  phaseRefs: string[];
+  taskRefs: string[];
+  artifactRefs: string[];
+  transcriptRefs: string[];
+}
+
 /** Scaffolded preview of the command and context that would be used to continue planning work. */
 export interface PlanningNextRunPreview {
   featureId: string;

@@ -31,6 +31,9 @@ import type {
   BoardSessionRelationship,
   SessionActivityMarker,
   SessionTokenSummary,
+  NextRunContextRef,
+  PlanningNextRunPreview,
+  PromptContextSelection,
 } from '../types';
 import type { AgentQueryEnvelope } from '../types';
 import type { PlanningStatusBucket } from './planningRoutes';
@@ -1358,4 +1361,122 @@ export function featureMatchesSignal(
     case 'mismatch':
       return feature.isMismatch;
   }
+}
+
+// ── Next-run preview wire shapes ──────────────────────────────────────────────
+
+interface WireNextRunContextRef {
+  ref_type: string;
+  ref_id: string;
+  ref_label: string;
+  ref_path?: string;
+}
+
+interface WirePlanningNextRunPreview {
+  status: string;
+  feature_id: string;
+  feature_name?: string;
+  phase_number?: number;
+  command: string;
+  prompt_skeleton: string;
+  context_refs: WireNextRunContextRef[];
+  warnings: string[];
+  data_freshness?: string;
+  generated_at?: string;
+}
+
+// ── Next-run preview adapters ─────────────────────────────────────────────────
+
+function adaptNextRunContextRef(wire: WireNextRunContextRef): NextRunContextRef {
+  return {
+    refType: (wire.ref_type ?? 'session') as NextRunContextRef['refType'],
+    refId: wire.ref_id ?? '',
+    refLabel: wire.ref_label ?? '',
+    refPath: wire.ref_path,
+  };
+}
+
+function adaptPlanningNextRunPreview(wire: WirePlanningNextRunPreview): PlanningNextRunPreview {
+  return {
+    featureId: wire.feature_id ?? '',
+    featureName: wire.feature_name,
+    phaseNumber: wire.phase_number,
+    command: wire.command ?? '',
+    promptSkeleton: wire.prompt_skeleton ?? '',
+    contextRefs: (wire.context_refs ?? []).map(adaptNextRunContextRef),
+    warnings: wire.warnings ?? [],
+    dataFreshness: wire.data_freshness,
+    generatedAt: wire.generated_at,
+  };
+}
+
+// ── Next-run preview public API ───────────────────────────────────────────────
+
+/**
+ * Fetch a scaffolded next-run command + prompt preview for a feature.
+ *
+ * Preview data is request-specific and not cached — each call reflects
+ * the current state of the feature and any selected context.
+ *
+ * Mirrors: GET /api/agent/planning/next-run-preview/{featureId}
+ */
+export async function getNextRunPreview(
+  featureId: string,
+  phaseNumber?: number,
+  projectId?: string,
+): Promise<PlanningNextRunPreview> {
+  const params = new URLSearchParams();
+  if (phaseNumber != null) params.set('phase_number', String(phaseNumber));
+  if (projectId) params.set('project_id', projectId);
+
+  const wire = await planningFetch<WirePlanningNextRunPreview>(
+    `/next-run-preview/${encodeURIComponent(featureId)}`,
+    params.toString() ? params : undefined,
+  );
+
+  return adaptPlanningNextRunPreview(wire);
+}
+
+/**
+ * Fetch a scaffolded next-run preview with an explicit context selection.
+ *
+ * Use this variant when the user has curated which sessions, phases, tasks,
+ * artifacts, and transcripts should be included in the prompt skeleton.
+ *
+ * Mirrors: POST /api/agent/planning/next-run-preview/{featureId}
+ */
+export async function postNextRunPreview(
+  featureId: string,
+  contextSelection: PromptContextSelection,
+  phaseNumber?: number,
+  projectId?: string,
+): Promise<PlanningNextRunPreview> {
+  const params = new URLSearchParams();
+  if (phaseNumber != null) params.set('phase_number', String(phaseNumber));
+  if (projectId) params.set('project_id', projectId);
+
+  const qs = params.toString();
+  const url = `${API_BASE}/next-run-preview/${encodeURIComponent(featureId)}${qs ? `?${qs}` : ''}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_ids: contextSelection.sessionIds,
+      phase_refs: contextSelection.phaseRefs,
+      task_refs: contextSelection.taskRefs,
+      artifact_refs: contextSelection.artifactRefs,
+      transcript_refs: contextSelection.transcriptRefs,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new PlanningApiError(
+      `Planning API error: ${res.status} ${res.statusText} for ${url}`,
+      res.status,
+    );
+  }
+
+  const wire = (await res.json()) as WirePlanningNextRunPreview;
+  return adaptPlanningNextRunPreview(wire);
 }

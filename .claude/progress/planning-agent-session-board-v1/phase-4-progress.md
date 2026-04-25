@@ -40,7 +40,7 @@ tasks:
   title: Prompt Composer
   description: Implement deterministic prompt composer from feature, phase, batch/task,
     selected sessions, and artifact refs.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -114,10 +114,10 @@ parallelization:
   batch_4:
   - PASB-406
 total_tasks: 6
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 16
+progress: 33
 ---
 
 # Phase 4: Next-Run Prompt Preview and Context Composer
