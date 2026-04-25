@@ -50,6 +50,7 @@ import {
   Cpu,
   GitBranch,
   Server,
+  Loader2,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -60,22 +61,51 @@ import type {
   PromptContextSelection,
 } from '@/types';
 import { getNextRunPreview, postNextRunPreview, PlanningApiError } from '@/services/planning';
+import {
+  PlanningPromptContextTray,
+  type ContextTrayItem,
+} from './PlanningPromptContextTray';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function buildContextSelectionFromCards(
-  cards: PlanningAgentSessionCard[],
+/** Derive the initial tray item list from a set of selected cards. */
+function buildTrayItemsFromCards(cards: PlanningAgentSessionCard[]): ContextTrayItem[] {
+  const items: ContextTrayItem[] = [];
+  for (const card of cards) {
+    items.push({
+      id: card.sessionId,
+      label: card.agentName ?? card.sessionId.slice(-10),
+      kind: 'session',
+      subtitle: card.correlation?.featureName ?? card.correlation?.featureId,
+    });
+    if (card.transcriptHref) {
+      items.push({
+        id: card.transcriptHref,
+        label: `transcript:${card.sessionId.slice(-8)}`,
+        kind: 'transcript',
+        subtitle: card.sessionId,
+      });
+    }
+  }
+  return items;
+}
+
+/** Convert tray items to a PromptContextSelection for the POST endpoint. */
+function buildContextSelectionFromTrayItems(
+  items: ContextTrayItem[],
 ): PromptContextSelection {
+  const byKind = (kind: ContextTrayItem['kind']) =>
+    items.filter((i) => i.kind === kind).map((i) => i.id);
   return {
-    sessionIds: cards.map((c) => c.sessionId),
-    phaseRefs: [],
-    taskRefs: [],
-    artifactRefs: [],
-    transcriptRefs: cards
-      .filter((c) => Boolean(c.transcriptHref))
-      .map((c) => c.transcriptHref as string),
+    sessionIds: byKind('session'),
+    phaseRefs: byKind('phase'),
+    taskRefs: byKind('task'),
+    artifactRefs: byKind('artifact'),
+    transcriptRefs: byKind('transcript'),
   };
 }
+
+const TRAY_DEBOUNCE_MS = 300;
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
@@ -496,28 +526,53 @@ export function PlanningNextRunPreview({
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const [preview, setPreview] = useState<PlanningNextRunPreviewType | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refetching, setRefetching] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [fetchKey, setFetchKey] = useState(0);
+
+  // Context tray state — seeded from selectedCards on first render / when cards change.
+  const [trayItems, setTrayItems] = useState<ContextTrayItem[]>(() =>
+    selectedCards && selectedCards.length > 0 ? buildTrayItemsFromCards(selectedCards) : [],
+  );
+
+  // When selectedCards changes (e.g. user selects a different card on the board),
+  // rebuild the tray items to match.
+  const prevSelectedCardsRef = useRef<PlanningAgentSessionCard[] | undefined>(selectedCards);
+  useEffect(() => {
+    if (prevSelectedCardsRef.current === selectedCards) return;
+    prevSelectedCardsRef.current = selectedCards;
+    setTrayItems(
+      selectedCards && selectedCards.length > 0 ? buildTrayItemsFromCards(selectedCards) : [],
+    );
+  }, [selectedCards]);
+
+  // Pending context selection — written by tray callback, consumed by debounced fetch.
+  const pendingSelectionRef = useRef<PromptContextSelection | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Move initial focus to close button when panel mounts.
   useEffect(() => {
     closeBtnRef.current?.focus();
   }, [featureId]);
 
-  // Fetch preview — uses POST when selected cards are provided.
+  // Primary fetch effect — runs on mount, featureId/phaseNumber change, or manual retry.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setRefetching(false);
 
-    const doFetch =
-      selectedCards && selectedCards.length > 0
-        ? postNextRunPreview(
-            featureId,
-            buildContextSelectionFromCards(selectedCards),
-            phaseNumber,
-          )
-        : getNextRunPreview(featureId, phaseNumber);
+    // Use the current tray items (not raw selectedCards) for the initial fetch.
+    const currentItems = trayItems;
+    const hasItems = currentItems.length > 0;
+
+    const doFetch = hasItems
+      ? postNextRunPreview(
+          featureId,
+          buildContextSelectionFromTrayItems(currentItems),
+          phaseNumber,
+        )
+      : getNextRunPreview(featureId, phaseNumber);
 
     doFetch
       .then((data) => {
@@ -536,7 +591,58 @@ export function PlanningNextRunPreview({
     return () => {
       cancelled = true;
     };
-  }, [featureId, phaseNumber, selectedCards, fetchKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [featureId, phaseNumber, fetchKey]);
+
+  // Debounced re-fetch when tray selection changes.
+  const triggerDebouncedRefetch = useCallback(
+    (selection: PromptContextSelection) => {
+      pendingSelectionRef.current = selection;
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = setTimeout(() => {
+        const sel = pendingSelectionRef.current;
+        if (!sel) return;
+        setRefetching(true);
+        const hasItems =
+          sel.sessionIds.length > 0 ||
+          sel.phaseRefs.length > 0 ||
+          sel.taskRefs.length > 0 ||
+          sel.artifactRefs.length > 0 ||
+          sel.transcriptRefs.length > 0;
+
+        const doFetch = hasItems
+          ? postNextRunPreview(featureId, sel, phaseNumber)
+          : getNextRunPreview(featureId, phaseNumber);
+
+        doFetch
+          .then((data) => {
+            setPreview(data);
+            setError(null);
+          })
+          .catch((err: Error) => {
+            setError(err);
+          })
+          .finally(() => {
+            setRefetching(false);
+          });
+      }, TRAY_DEBOUNCE_MS);
+    },
+    [featureId, phaseNumber],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, []);
+
+  const handleTraySelectionChange = useCallback(
+    (selection: PromptContextSelection, items: ContextTrayItem[]) => {
+      setTrayItems(items);
+      triggerDebouncedRefetch(selection);
+    },
+    [triggerDebouncedRefetch],
+  );
 
   const handleRetry = useCallback(() => {
     setFetchKey((k) => k + 1);
@@ -690,6 +796,26 @@ export function PlanningNextRunPreview({
           <ErrorState error={error} onRetry={handleRetry} />
         )}
 
+        {/* Subtle re-fetch indicator — shown while debounced tray refetch is in flight */}
+        {refetching && !loading && (
+          <div
+            className="flex items-center gap-1.5 px-4 py-1.5"
+            style={{ borderBottom: '1px solid var(--line-1)' }}
+            aria-live="polite"
+            aria-label="Refreshing preview with updated context"
+          >
+            <Loader2
+              size={9}
+              className="animate-spin"
+              style={{ color: 'var(--brand)' }}
+              aria-hidden
+            />
+            <span className="planning-mono text-[9px]" style={{ color: 'var(--ink-4)' }}>
+              Refreshing preview…
+            </span>
+          </div>
+        )}
+
         {!loading && !error && preview && (
           <div className="space-y-0">
 
@@ -748,7 +874,24 @@ export function PlanningNextRunPreview({
               />
             </section>
 
-            {/* 3. Context references ───────────────────────────────────── */}
+            {/* 3. Context tray ─────────────────────────────────────────── */}
+            <Divider />
+            <section className="px-4 py-3" aria-label="Context for next run">
+              <div className="mb-2">
+                <p
+                  className="planning-mono text-[9.5px] uppercase tracking-widest"
+                  style={{ color: 'var(--ink-4)' }}
+                >
+                  Context for Next Run
+                </p>
+              </div>
+              <PlanningPromptContextTray
+                items={trayItems}
+                onSelectionChange={handleTraySelectionChange}
+              />
+            </section>
+
+            {/* 4. Context references ───────────────────────────────────── */}
             {preview.contextRefs.length > 0 && (
               <>
                 <Divider />
@@ -769,7 +912,7 @@ export function PlanningNextRunPreview({
               </>
             )}
 
-            {/* 4. Warnings ─────────────────────────────────────────────── */}
+            {/* 5. Warnings ─────────────────────────────────────────────── */}
             {preview.warnings.length > 0 && (
               <>
                 <Divider />

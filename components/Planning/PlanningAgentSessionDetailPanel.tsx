@@ -46,6 +46,7 @@ import {
   ChevronRight,
   Copy,
   Check,
+  ClipboardList,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -639,6 +640,11 @@ function AddToPromptContextButton({ card }: { card: PlanningAgentSessionCard }) 
 export interface PlanningAgentSessionDetailPanelProps {
   card: PlanningAgentSessionCard;
   onClose: () => void;
+  /**
+   * Called when the user clicks "Prepare Next Run". Only visible when
+   * card.correlation?.featureId is present.
+   */
+  onPrepareNextRun?: (card: PlanningAgentSessionCard) => void;
   className?: string;
 }
 
@@ -647,6 +653,7 @@ export interface PlanningAgentSessionDetailPanelProps {
 export function PlanningAgentSessionDetailPanel({
   card,
   onClose,
+  onPrepareNextRun,
   className,
 }: PlanningAgentSessionDetailPanelProps): JSX.Element {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
@@ -1240,6 +1247,28 @@ export function PlanningAgentSessionDetailPanel({
 
               {/* "Add to prompt context" — full-width, always present */}
               <AddToPromptContextButton card={card} />
+
+              {/* "Prepare Next Run" — only when feature correlation exists */}
+              {featureId && onPrepareNextRun && (
+                <button
+                  type="button"
+                  onClick={() => onPrepareNextRun(card)}
+                  className={cn(
+                    'inline-flex w-full items-center justify-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-2',
+                    'border border-[color:color-mix(in_oklab,var(--brand)_40%,var(--line-1))]',
+                    'bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
+                    'text-[color:var(--brand)]',
+                    'transition-all duration-150 hover:bg-[color:color-mix(in_oklab,var(--brand)_14%,transparent)]',
+                    'planning-mono text-[10px]',
+                    'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+                  )}
+                  aria-label="Open next-run preview for this session's feature"
+                  data-testid="detail-panel-prepare-next-run-btn"
+                >
+                  <ClipboardList size={11} aria-hidden />
+                  Prepare Next Run
+                </button>
+              )}
             </div>
           </section>
         </div>

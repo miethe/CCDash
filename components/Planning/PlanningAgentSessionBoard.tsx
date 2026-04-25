@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle, ExternalLink, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
+import { AlertCircle, ClipboardList, ExternalLink, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type {
@@ -18,6 +18,8 @@ import { planningRouteFeatureModalHref } from '@/services/planningRoutes';
 import { useData } from '@/contexts/DataContext';
 import { usePlanningRoute } from './PlanningRouteLayout';
 import { PlanningBoardToolbar } from './PlanningBoardToolbar';
+import { PlanningAgentSessionDetailPanel } from './PlanningAgentSessionDetailPanel';
+import { PlanningNextRunPreview } from './PlanningNextRunPreview';
 import { Panel, Dot } from './primitives';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -897,6 +899,12 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
+  // ── Next-run preview state ────────────────────────────────────────────────
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewFeatureId, setPreviewFeatureId] = useState<string | null>(null);
+  const [previewPhaseNumber, setPreviewPhaseNumber] = useState<number | undefined>(undefined);
+  const [previewCards, setPreviewCards] = useState<PlanningAgentSessionCard[]>([]);
+
   const sessionsRef = useRef(sessions);
   const prevSessionsRef = useRef(sessions);
 
@@ -1036,6 +1044,22 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     setSelectedSessionId((prev) => (prev === sessionId ? null : sessionId));
   }, []);
 
+  const handlePrepareNextRun = useCallback(
+    (card: PlanningAgentSessionCard) => {
+      const fid = card.correlation?.featureId;
+      if (!fid) return;
+      setPreviewFeatureId(fid);
+      setPreviewPhaseNumber(card.correlation?.phaseNumber ?? undefined);
+      setPreviewCards([card]);
+      setShowPreview(true);
+    },
+    [],
+  );
+
+  const handleClosePreview = useCallback(() => {
+    setShowPreview(false);
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSelectedSessionId(null);
@@ -1065,6 +1089,12 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
 
   const isInitialLoad = fetchState.phase === 'loading' || fetchState.phase === 'idle';
 
+  // Derive the currently selected card for the detail panel.
+  const selectedCard = selectedSessionId ? cardBySessionId.get(selectedSessionId) ?? null : null;
+
+  // "Prepare Next Run" is enabled when the selected card has a feature correlation.
+  const canPrepareNextRun = Boolean(selectedCard?.correlation?.featureId);
+
   return (
     <Panel className={cn('p-4', className)}>
       {/* Toolbar row with refresh button appended */}
@@ -1080,6 +1110,46 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         {fetchedAt && !refreshing && (
           <StaleIndicator fetchedAt={fetchedAt} />
         )}
+
+        {/* Prepare Next Run toolbar button */}
+        <button
+          type="button"
+          onClick={() => {
+            if (selectedCard?.correlation?.featureId) {
+              handlePrepareNextRun(selectedCard);
+            }
+          }}
+          disabled={!canPrepareNextRun}
+          aria-label="Prepare next run for selected session's feature"
+          title={
+            canPrepareNextRun
+              ? 'Prepare next run for selected session'
+              : 'Select a session with a feature correlation to prepare the next run'
+          }
+          className={cn(
+            'inline-flex flex-shrink-0 items-center gap-1.5',
+            'rounded-[var(--radius-sm)] border px-2.5 py-1.5',
+            'planning-mono text-[10px] font-medium transition-all duration-150',
+            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+            canPrepareNextRun
+              ? [
+                  'border-[color:color-mix(in_oklab,var(--brand)_40%,var(--line-1))]',
+                  'bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
+                  'text-[color:var(--brand)]',
+                  'hover:bg-[color:color-mix(in_oklab,var(--brand)_14%,transparent)]',
+                ]
+              : [
+                  'border-[color:var(--line-1)]',
+                  'bg-[color:var(--bg-1)]',
+                  'text-[color:var(--ink-4)]',
+                  'cursor-not-allowed opacity-50',
+                ],
+          )}
+          data-testid="board-toolbar-prepare-next-run-btn"
+        >
+          <ClipboardList size={11} aria-hidden />
+          Prepare Next Run
+        </button>
 
         <button
           type="button"
@@ -1102,6 +1172,29 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
           />
         </button>
       </div>
+
+      {/* ── Detail panel for selected card ─────────────────────────────── */}
+      {selectedCard && (
+        <div className="mb-3">
+          <PlanningAgentSessionDetailPanel
+            card={selectedCard}
+            onClose={() => setSelectedSessionId(null)}
+            onPrepareNextRun={handlePrepareNextRun}
+          />
+        </div>
+      )}
+
+      {/* ── Next-run preview panel ──────────────────────────────────────── */}
+      {showPreview && previewFeatureId && (
+        <div className="mb-3">
+          <PlanningNextRunPreview
+            featureId={previewFeatureId}
+            phaseNumber={previewPhaseNumber}
+            selectedCards={previewCards}
+            onClose={handleClosePreview}
+          />
+        </div>
+      )}
 
       {isInitialLoad ? (
         <BoardSkeleton />
