@@ -644,6 +644,18 @@ export function PlanningNextRunPreview({
     [triggerDebouncedRefetch],
   );
 
+  // Handle items dropped onto the tray from external drag sources (e.g. session board cards).
+  // The tray's onSelectionChange fires first with the updated list; this callback receives
+  // the individual dropped item and can be used for supplemental side-effects if needed.
+  // State is already updated via onSelectionChange, so no additional state mutation needed here.
+  const handleExternalDrop = useCallback(
+    (_item: ContextTrayItem) => {
+      // No supplemental action needed — onSelectionChange already keeps trayItems in sync.
+      // This callback exists as an extension point for future callers.
+    },
+    [],
+  );
+
   const handleRetry = useCallback(() => {
     setFetchKey((k) => k + 1);
   }, []);
@@ -888,6 +900,7 @@ export function PlanningNextRunPreview({
               <PlanningPromptContextTray
                 items={trayItems}
                 onSelectionChange={handleTraySelectionChange}
+                onExternalDrop={handleExternalDrop}
               />
             </section>
 

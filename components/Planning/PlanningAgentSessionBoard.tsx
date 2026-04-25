@@ -346,6 +346,8 @@ interface SessionCardProps {
   relationBadge?: BoardSessionRelationship['relationType'];
   onHover: (sessionId: string | null) => void;
   onSelect: (sessionId: string) => void;
+  /** When true the card is draggable (preview panel is open). */
+  isDraggable?: boolean;
 }
 
 function SessionCard({
@@ -357,6 +359,7 @@ function SessionCard({
   relationBadge,
   onHover,
   onSelect,
+  isDraggable = false,
 }: SessionCardProps) {
   const prevStateRef = useRef(card.state);
   const [liveMsg, setLiveMsg] = useState('');
@@ -422,17 +425,44 @@ function SessionCard({
     [card.sessionId, onSelect],
   );
 
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDragStart = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!isDraggable) return;
+      setIsDragging(true);
+      e.dataTransfer.setData(
+        'application/x-ccdash-session-card',
+        JSON.stringify({
+          sessionId: card.sessionId,
+          agentName: card.agentName,
+          transcriptHref: card.transcriptHref,
+          correlation: card.correlation,
+        }),
+      );
+      e.dataTransfer.effectAllowed = 'copy';
+    },
+    [isDraggable, card.sessionId, card.agentName, card.transcriptHref, card.correlation],
+  );
+
+  const handleDragEnd = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
   return (
     <div
       key={showFlash ? flashKey : undefined}
       role="button"
       tabIndex={0}
+      draggable={isDraggable}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onFocus={handleMouseEnter}
       onBlur={handleMouseLeave}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
       style={leftBorderStyle}
       className={cn(
         'relative rounded-[var(--radius-sm)] border',
@@ -440,6 +470,8 @@ function SessionCard({
         'transition-[border-color,box-shadow,background-color,opacity] duration-200 motion-reduce:transition-none',
         'planning-card-enter',
         showFlash && 'planning-card-flash',
+        isDragging && 'opacity-50 cursor-grabbing',
+        isDraggable && !isDragging && 'cursor-grab',
         compact ? 'px-2.5 py-2' : 'px-3 py-2.5',
         isInferred ? 'bg-[color:var(--bg-1)]' : 'bg-[color:var(--bg-2)]',
         !isHighlighted && !isWeakHighlighted && !isSelected && [
@@ -675,6 +707,8 @@ interface BoardColumnProps {
   isColumnHighlighted: boolean;
   /** Whether this column is highlighted via the URL ?highlight= param. */
   isUrlHighlighted: boolean;
+  /** When true, cards in this column are draggable (preview panel is open). */
+  isDraggable?: boolean;
 }
 
 function BoardColumn({
@@ -689,6 +723,7 @@ function BoardColumn({
   onCardSelect,
   isColumnHighlighted,
   isUrlHighlighted,
+  isDraggable = false,
 }: BoardColumnProps) {
   const lowerFilter = filterText.toLowerCase();
   const visible = filterText
@@ -790,6 +825,7 @@ function BoardColumn({
               relationBadge={relationBadgeMap.get(card.sessionId)}
               onHover={onCardHover}
               onSelect={onCardSelect}
+              isDraggable={isDraggable}
             />
           ))
         )}
@@ -1242,6 +1278,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
                 onCardSelect={handleCardSelect}
                 isColumnHighlighted={isGroupHighlighted(group)}
                 isUrlHighlighted={isGroupUrlHighlighted(group)}
+                isDraggable={showPreview}
               />
             ))}
           </div>

@@ -53,7 +53,7 @@ tasks:
   title: Preview Panel UI
   description: Add UI for selecting prior sessions/context refs and rendering command
     plus prompt skeleton.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -67,7 +67,7 @@ tasks:
   title: Launch Sheet Alignment
   description: Where provider/model/worktree choices are shown, reuse existing launch
     preparation labels and constraints.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -80,7 +80,7 @@ tasks:
   title: Context Tray Interactions
   description: Add explicit controls to add/remove session cards, phase refs, artifact
     refs, and transcript refs from the prompt context tray.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -114,10 +114,10 @@ parallelization:
   batch_4:
   - PASB-406
 total_tasks: 6
-completed_tasks: 2
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 33
+progress: 83
 ---
 
 # Phase 4: Next-Run Prompt Preview and Context Composer

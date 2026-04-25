@@ -16,7 +16,7 @@
  *   handled separately (PASB-404). Import and compose with PlanningNextRunPreview.
  */
 
-import { useState, useCallback, useRef, useId, type JSX, type KeyboardEvent } from 'react';
+import { useState, useCallback, useRef, useId, type JSX, type KeyboardEvent, type DragEvent } from 'react';
 import {
   GitCommit,
   Layers,
@@ -332,21 +332,47 @@ export interface PlanningPromptContextTrayProps {
   onSelectionChange?: (selection: PromptContextSelection, items: ContextTrayItem[]) => void;
   /** Optional pre-seed: items to initialize the uncontrolled state with. */
   defaultItems?: ContextTrayItem[];
+  /**
+   * Called when a session card is dropped onto the tray from an external
+   * drag source (e.g. PlanningAgentSessionBoard). The parent may use this
+   * to update its own trayItems state if operating in controlled mode.
+   */
+  onExternalDrop?: (item: ContextTrayItem) => void;
   className?: string;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+// ── Session card drag payload shape (mirrors PlanningAgentSessionBoard.tsx) ─────
+
+interface SessionCardDragPayload {
+  sessionId: string;
+  agentName: string | null;
+  transcriptHref?: string | null;
+  correlation?: {
+    featureId?: string;
+    featureName?: string;
+    phaseNumber?: number;
+    taskId?: string;
+  } | null;
+}
+
 export function PlanningPromptContextTray({
   items: controlledItems,
   onSelectionChange,
   defaultItems = [],
+  onExternalDrop,
   className,
 }: PlanningPromptContextTrayProps): JSX.Element {
   const [internalItems, setInternalItems] = useState<ContextTrayItem[]>(defaultItems);
 
   const isControlled = controlledItems !== undefined;
   const items = isControlled ? controlledItems : internalItems;
+
+  // Drop zone visual state
+  const [isDragOver, setIsDragOver] = useState(false);
+  // Track drag-enter depth to handle nested element transitions correctly
+  const dragDepthRef = useRef(0);
 
   const updateItems = useCallback(
     (next: ContextTrayItem[]) => {
@@ -376,16 +402,94 @@ export function PlanningPromptContextTray({
     updateItems([]);
   }, [updateItems]);
 
+  // ── Drag-and-drop handlers ────────────────────────────────────────────────
+
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer.types.includes('application/x-ccdash-session-card')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }, []);
+
+  const handleDragEnter = useCallback((e: DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer.types.includes('application/x-ccdash-session-card')) {
+      dragDepthRef.current += 1;
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((_e: DragEvent<HTMLDivElement>) => {
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      dragDepthRef.current = 0;
+      setIsDragOver(false);
+
+      const raw = e.dataTransfer.getData('application/x-ccdash-session-card');
+      if (!raw) return;
+
+      let payload: SessionCardDragPayload;
+      try {
+        payload = JSON.parse(raw) as SessionCardDragPayload;
+      } catch {
+        return;
+      }
+
+      const sessionItem: ContextTrayItem = {
+        id: payload.sessionId,
+        label: payload.agentName ?? payload.sessionId.slice(-10),
+        kind: 'session',
+        subtitle: payload.correlation?.featureName ?? payload.correlation?.featureId,
+      };
+
+      // Add session chip (dedup handled inside handleAdd)
+      handleAdd(sessionItem);
+      onExternalDrop?.(sessionItem);
+
+      // Also add transcript chip if available
+      if (payload.transcriptHref) {
+        const transcriptItem: ContextTrayItem = {
+          id: payload.transcriptHref,
+          label: `transcript:${payload.sessionId.slice(-8)}`,
+          kind: 'transcript',
+          subtitle: payload.sessionId,
+        };
+        handleAdd(transcriptItem);
+        onExternalDrop?.(transcriptItem);
+      }
+    },
+    [handleAdd, onExternalDrop],
+  );
+
   const totalCount = items.length;
 
   return (
     <div
       className={cn(
         'rounded-[var(--radius)] border bg-[color:var(--bg-1)]',
-        'border-[color:var(--line-1)]',
+        'transition-[border-color,box-shadow,background-color] duration-150',
+        isDragOver
+          ? [
+              'border-[color:var(--brand)]',
+              'shadow-[0_0_0_2px_color-mix(in_oklab,var(--brand)_25%,transparent),inset_0_0_12px_color-mix(in_oklab,var(--brand)_6%,transparent)]',
+              'bg-[color:color-mix(in_oklab,var(--brand)_3%,var(--bg-1))]',
+            ]
+          : 'border-[color:var(--line-1)]',
         className,
       )}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       data-testid="prompt-context-tray"
+      aria-label="Context tray — drop session cards here to add them"
     >
       {/* ── Tray header ───────────────────────────────────────────────── */}
       <div
@@ -450,8 +554,28 @@ export function PlanningPromptContextTray({
         ))}
       </div>
 
+      {/* ── Drop zone hint ────────────────────────────────────────────── */}
+      {isDragOver && (
+        <div
+          className="mx-3 mb-3 rounded border-2 border-dashed flex items-center justify-center py-3"
+          style={{
+            borderColor: 'var(--brand)',
+            background: 'color-mix(in oklab, var(--brand) 8%, transparent)',
+          }}
+          aria-live="polite"
+          aria-label="Drop to add session to context"
+        >
+          <span
+            className="planning-mono text-[9.5px] font-medium"
+            style={{ color: 'var(--brand)' }}
+          >
+            Drop to add session context
+          </span>
+        </div>
+      )}
+
       {/* ── Footer hint ───────────────────────────────────────────────── */}
-      {totalCount === 0 && (
+      {totalCount === 0 && !isDragOver && (
         <div
           className="px-3 pb-2.5"
         >
@@ -460,7 +584,7 @@ export function PlanningPromptContextTray({
             style={{ color: 'var(--ink-4)' }}
           >
             Add sessions, phases, tasks, or artifacts to refine the prompt context.
-            Changes trigger a live preview refresh.
+            Changes trigger a live preview refresh. You can also drag session cards from the board.
           </p>
         </div>
       )}
