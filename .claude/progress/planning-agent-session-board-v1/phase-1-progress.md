@@ -6,7 +6,7 @@ prd: planning-agent-session-board-v1
 feature_slug: planning-agent-session-board-v1
 phase: 1
 phase_title: Correlation Contract and Query Foundation
-status: pending
+status: completed
 created: 2026-04-25
 updated: '2026-04-25'
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
@@ -39,7 +39,7 @@ tasks:
   title: Session Correlation Service
   description: Build correlation logic using linked feature ids, phase hints, task
     hints, lineage, command tokens, and planning refs.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -53,7 +53,7 @@ tasks:
   title: Board Query Endpoint
   description: Expose project and feature-scoped board responses with grouping metadata,
     relationship metadata, and lightweight activity markers.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -67,7 +67,7 @@ tasks:
   title: Frontend Service Adapter
   description: Add services/planning.ts helpers that adapt backend snake_case to frontend
     camelCase.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -86,10 +86,10 @@ parallelization:
   batch_4:
   - PASB-104
 total_tasks: 4
-completed_tasks: 1
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 25
+progress: 100
 ---
 
 # Phase 1: Correlation Contract and Query Foundation

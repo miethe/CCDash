@@ -55,10 +55,14 @@ tags:
 prd: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
 related:
-- docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
-- docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
-- docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
-- components/Planning/PlanningAgentRosterPanel.tsx
+  - docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
+  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
+  - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
+  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/agent-session-board.png
+  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/feature-agent-lane.png
+  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/session-detail-panel.png
+  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/prompt-context-composer.png
+  - components/Planning/PlanningAgentRosterPanel.tsx
 - components/Planning/AgentDetailModal.tsx
 - components/Planning/PlanningLaunchSheet.tsx
 - components/Planning/primitives/PhaseOperationsPanel.tsx
@@ -78,6 +82,17 @@ linked_sessions: []
 ## Objective
 
 Deliver a planning-native agent/session board that shows active and recent sessions as rich interactive cards tied to features, phases, batches, tasks, transcripts, lineage, and next-run prompt previews. V1 is read/prepare-first: it generates copyable CLI command and prompt context, supports live board interactions, and does not need to execute commands in-app.
+
+## Visual Guidance
+
+Use these generated wireframes as implementation references. They are directional; preserve CCDash's existing component system, spacing primitives, and accessibility behavior where the generated image conflicts with the codebase.
+
+| Screen | Wireframe | Implementation Focus |
+|--------|-----------|----------------------|
+| Planning Agent Board | [agent-session-board.png](./wireframes/planning-agent-session-board-v1/agent-session-board.png) | Phase 2 board shell, grouped columns, card density, live-state indicators, relationship layer, and state/feature/phase grouping controls. |
+| Feature Agent Lane | [feature-agent-lane.png](./wireframes/planning-agent-session-board-v1/feature-agent-lane.png) | Phase 3 feature-scoped lane, phase/task mapping, confidence labels, and phase operations adjacency. |
+| Session Detail Panel | [session-detail-panel.png](./wireframes/planning-agent-session-board-v1/session-detail-panel.png) | Phase 3 selected-card panel with activity markers, evidence, transcript freshness, lineage, context usage, and add-to-context action. |
+| Prompt Context Composer | [prompt-context-composer.png](./wireframes/planning-agent-session-board-v1/prompt-context-composer.png) | Phase 4 prompt context tray, session/artifact chips, command preview, prompt preview, copy actions, and preview-only boundary. |
 
 ## Current Baseline
 
