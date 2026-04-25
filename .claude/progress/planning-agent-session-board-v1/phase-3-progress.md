@@ -6,14 +6,14 @@ prd: planning-agent-session-board-v1
 feature_slug: planning-agent-session-board-v1
 phase: 3
 phase_title: Feature Drill-Down and Detail Integration
-status: in_progress
+status: completed
 created: '2026-04-25'
 updated: '2026-04-25'
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/planning-agent-session-board-v1.md
 commit_refs: []
 pr_refs: []
-overall_progress: 0
+overall_progress: 100
 completion_estimate: '2026-04-29'
 ui_touched: true
 owners:
@@ -78,7 +78,7 @@ tasks:
   title: Activity Detail Panel
   description: Add a selected-card panel with latest activity markers, transcript
     freshness, command/tool markers, evidence, lineage, and token/context summary.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -100,8 +100,8 @@ parallelization:
   batch_3:
   - PASB-305
 total_tasks: 5
-completed_tasks: 4
-in_progress_tasks: 1
+completed_tasks: 5
+in_progress_tasks: 0
 blocked_tasks: 0
-progress: 80
+progress: 100
 ---
