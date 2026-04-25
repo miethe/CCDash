@@ -195,6 +195,89 @@
   display: inline-block;
 }
 
+/* Live-state dot: gentle breathing pulse for running/thinking cards */
+@keyframes session-dot-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 var(--dot-color, currentColor);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--dot-color, currentColor) 25%, transparent);
+  }
+}
+
+.planning-route .planning-dot-live {
+  animation: session-dot-pulse 2s ease-in-out infinite;
+}
+
+/* Reduced-motion: replace pulse with a static double-ring indicator */
+@media (prefers-reduced-motion: reduce) {
+  .planning-route .planning-dot-live {
+    animation: none !important;
+    box-shadow: 0 0 0 1.5px var(--bg-2), 0 0 0 3px var(--dot-color, currentColor);
+    opacity: 1 !important;
+  }
+}
+
+/* State-transition flash: briefly highlights the card border when state changes */
+@keyframes session-card-flash {
+  0% {
+    border-color: color-mix(in oklab, var(--brand) 70%, var(--line-1));
+    background-color: color-mix(in oklab, var(--brand) 6%, var(--bg-2));
+  }
+  100% {
+    border-color: var(--line-1);
+    background-color: var(--bg-2);
+  }
+}
+
+.planning-route .planning-card-flash {
+  animation: session-card-flash 300ms ease-out forwards;
+}
+
+/* Reduced-motion: skip card flash entirely */
+@media (prefers-reduced-motion: reduce) {
+  .planning-route .planning-card-flash {
+    animation: none !important;
+  }
+}
+
+/* Card entry fade-in: subtle opacity ramp for newly-appearing cards */
+@keyframes session-card-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.planning-route .planning-card-enter {
+  animation: session-card-enter 200ms ease-out both;
+}
+
+/* Reduced-motion: skip entry fade */
+@media (prefers-reduced-motion: reduce) {
+  .planning-route .planning-card-enter {
+    animation: none !important;
+  }
+}
+
+/* Board refresh opacity dimming */
+.planning-route .planning-board-refreshing {
+  opacity: 0.82;
+  transition: opacity 150ms ease;
+}
+
+/* Reduced-motion: skip the opacity transition (keep the opacity reduction,
+   just make it instant so it still communicates "loading" without motion) */
+@media (prefers-reduced-motion: reduce) {
+  .planning-route .planning-board-refreshing {
+    transition: none !important;
+  }
+}
+
 .planning-route .planning-pill {
   display: inline-flex;
   align-items: center;

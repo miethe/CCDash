@@ -38,7 +38,7 @@ tasks:
   title: Session Card
   description: Implement card with agent, session, model, feature, phase/task, state,
     time, token/context summaries, activity marker, and fixed-size live regions.
-  status: in_progress
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -52,7 +52,7 @@ tasks:
   title: Planning Links
   description: Add card actions for transcript, feature planning context, phase operations,
     and parent/root session.
-  status: pending
+  status: in_progress
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -65,7 +65,7 @@ tasks:
   title: Live Refresh Integration
   description: Reuse existing data/live/cache mechanisms so active session state refreshes
     predictably.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   assigned_model: sonnet
@@ -79,7 +79,7 @@ tasks:
   title: Motion and Reduced Motion
   description: Add subtle live-state animation, animated state transitions, and reduced-motion
     fallbacks.
-  status: pending
+  status: in_progress
   assigned_to:
   - ui-engineer-enhanced
   assigned_model: sonnet
@@ -93,7 +93,7 @@ tasks:
   title: Relationship Highlighting
   description: Highlight parent/root/sibling sessions and linked planning entities
     on hover, focus, and selection.
-  status: pending
+  status: in_progress
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -116,8 +116,8 @@ parallelization:
   - PASB-205
   - PASB-206
 total_tasks: 6
-completed_tasks: 1
-in_progress_tasks: 2
+completed_tasks: 3
+in_progress_tasks: 3
 blocked_tasks: 0
-progress: 16
+progress: 50
 ---

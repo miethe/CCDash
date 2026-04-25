@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, LayoutGrid, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { AlertCircle, FileText, GitBranch, LayoutGrid, Layers, RefreshCw, Settings2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type {
@@ -8,8 +9,10 @@ import type {
   PlanningAgentSessionCard,
   PlanningBoardGroupingMode,
   SessionActivityMarker,
+  BoardSessionRelationship,
 } from '@/types';
 import { getSessionBoard } from '@/services/planning';
+import { planningRouteFeatureModalHref } from '@/services/planningRoutes';
 import { useData } from '@/contexts/DataContext';
 import { usePlanningRoute } from './PlanningRouteLayout';
 import { PlanningBoardToolbar } from './PlanningBoardToolbar';
@@ -77,17 +80,173 @@ const MARKER_SYMBOL: Record<SessionActivityMarker['markerType'], string> = {
   completion: '✓',
 };
 
+// ── Relationship kind labels ──────────────────────────────────────────────────
+
+/** Human-readable label for each relationship kind. */
+const RELATION_LABEL: Record<BoardSessionRelationship['relationType'], string> = {
+  parent: 'parent',
+  root: 'root',
+  sibling: 'sibling',
+  child: 'child',
+};
+
+// ── Card action row ───────────────────────────────────────────────────────────
+
+/**
+ * Shared CSS class string for compact icon-link buttons in the card action row.
+ * Each link uses react-router-dom's `<Link>` for HashRouter-compatible navigation.
+ */
+const ACTION_LINK_CLS = cn(
+  'inline-flex items-center justify-center rounded p-[3px]',
+  'text-[color:var(--ink-3)] transition-colors',
+  'hover:bg-[color:var(--bg-3)] hover:text-[color:var(--ink-1)]',
+  'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+);
+
+/**
+ * Compact row of navigational icon-links rendered at the bottom of each
+ * SessionCard. Links are only rendered when the relevant data is present;
+ * missing data means the link is absent, not disabled.
+ *
+ * Clicks call `e.stopPropagation()` so they don't trigger the card's own
+ * `role="button"` selection handler.
+ *
+ * Links (in order):
+ *   1. Transcript  → /sessions?session=<sessionId>
+ *   2. Feature     → /planning?feature=<featureId>&modal=feature (modal-first per planning-routes)
+ *   3. Phase ops   → same planning modal, with phase + panel params appended
+ *   4. Parent/root → /sessions?session=<ancestorSessionId>  (right-aligned)
+ */
+function CardActionRow({ card }: { card: PlanningAgentSessionCard }) {
+  const featureId = card.correlation?.featureId;
+  const phaseNumber = card.correlation?.phaseNumber;
+
+  // Find the first parent or root relationship for the ancestor link.
+  const ancestorRel = card.relationships.find(
+    (rel) => rel.relationType === 'parent' || rel.relationType === 'root',
+  );
+
+  // Phase operations: requires both featureId and phaseNumber. The panel is
+  // opened as an overlay within the planning page via query-param routing.
+  const phaseOpsHref =
+    featureId != null && phaseNumber != null
+      ? `${planningRouteFeatureModalHref(featureId, 'overview')}&phase=${encodeURIComponent(phaseNumber)}&panel=phase-ops`
+      : null;
+
+  // Bail out entirely if nothing will render — keeps cards compact when there
+  // is no navigable context attached to this session.
+  const hasAnyLink = Boolean(card.sessionId || featureId || phaseOpsHref || ancestorRel);
+  if (!hasAnyLink) return null;
+
+  // Prevent clicks/keyboard events from bubbling to the card's role="button".
+  function stopProp(e: React.MouseEvent | React.KeyboardEvent) {
+    e.stopPropagation();
+  }
+
+  return (
+    <div
+      className={cn(
+        'mt-1.5 flex items-center gap-0.5',
+        'border-t border-[color:var(--line-1)] pt-1.5',
+      )}
+      aria-label="Session navigation links"
+      onClick={stopProp}
+      onKeyDown={stopProp}
+    >
+      {/* 1. Transcript — always present when sessionId exists */}
+      {card.sessionId && (
+        <Link
+          to={`/sessions?session=${encodeURIComponent(card.sessionId)}`}
+          className={ACTION_LINK_CLS}
+          aria-label="View session transcript"
+          title="View session transcript"
+        >
+          <FileText size={11} aria-hidden />
+        </Link>
+      )}
+
+      {/* 2. Feature planning context — requires correlation.featureId */}
+      {featureId && (
+        <Link
+          to={planningRouteFeatureModalHref(featureId, 'overview')}
+          className={ACTION_LINK_CLS}
+          aria-label={`Open feature${card.correlation?.featureName ? ` ${card.correlation.featureName}` : ''} in planning view`}
+          title={`Feature: ${card.correlation?.featureName ?? featureId}`}
+        >
+          <Layers size={11} aria-hidden />
+        </Link>
+      )}
+
+      {/* 3. Phase operations — requires both featureId and phaseNumber */}
+      {phaseOpsHref && (
+        <Link
+          to={phaseOpsHref}
+          className={ACTION_LINK_CLS}
+          aria-label={`Open phase ${phaseNumber} operations panel`}
+          title={`Phase ${phaseNumber} operations`}
+        >
+          <Settings2 size={11} aria-hidden />
+        </Link>
+      )}
+
+      {/* Push ancestor link to the right */}
+      <span className="flex-1" aria-hidden />
+
+      {/* 4. Parent / root session link */}
+      {ancestorRel && (
+        <Link
+          to={`/sessions?session=${encodeURIComponent(ancestorRel.relatedSessionId)}`}
+          className={ACTION_LINK_CLS}
+          aria-label={`View ${ancestorRel.relationType} session${ancestorRel.agentName ? ` (${ancestorRel.agentName})` : ''}`}
+          title={`${ancestorRel.relationType === 'root' ? 'Root' : 'Parent'} session: ${ancestorRel.relatedSessionId}${ancestorRel.agentName ? ` — ${ancestorRel.agentName}` : ''}`}
+        >
+          <GitBranch size={11} aria-hidden />
+        </Link>
+      )}
+    </div>
+  );
+}
+
 // ── Rich session card ─────────────────────────────────────────────────────────
 
-function SessionCard({ card, compact }: { card: PlanningAgentSessionCard; compact: boolean }) {
+interface SessionCardProps {
+  card: PlanningAgentSessionCard;
+  compact: boolean;
+  isHighlighted: boolean;
+  isWeakHighlighted: boolean;
+  isSelected: boolean;
+  /** The relationship badge to show on this card (sent from the hovered/selected card). */
+  relationBadge?: BoardSessionRelationship['relationType'];
+  onHover: (sessionId: string | null) => void;
+  onSelect: (sessionId: string) => void;
+}
+
+function SessionCard({
+  card,
+  compact,
+  isHighlighted,
+  isWeakHighlighted,
+  isSelected,
+  relationBadge,
+  onHover,
+  onSelect,
+}: SessionCardProps) {
   const prevStateRef = useRef(card.state);
   const [liveMsg, setLiveMsg] = useState('');
+  // flashKey increments on each state change to restart the CSS animation via key prop.
+  const [flashKey, setFlashKey] = useState(0);
+  const [showFlash, setShowFlash] = useState(false);
 
   useEffect(() => {
     if (prevStateRef.current !== card.state) {
       setLiveMsg(`State changed to ${STATE_LABEL[card.state]}`);
       prevStateRef.current = card.state;
-      const t = setTimeout(() => setLiveMsg(''), 4000);
+      setFlashKey((k) => k + 1);
+      setShowFlash(true);
+      const t = setTimeout(() => {
+        setLiveMsg('');
+        setShowFlash(false);
+      }, 4000);
       return () => clearTimeout(t);
     }
   }, [card.state]);
@@ -113,26 +272,83 @@ function SessionCard({ card, compact }: { card: PlanningAgentSessionCard; compac
     STATE_LABEL[card.state],
     featureSlug ? `feature ${featureSlug}` : null,
     card.startedAt ? `started ${relativeTime(card.startedAt)}` : null,
+    isSelected ? 'selected' : null,
+    isHighlighted ? 'related session' : null,
   ]
     .filter(Boolean)
     .join(', ');
 
+  const handleMouseEnter = useCallback(() => onHover(card.sessionId), [card.sessionId, onHover]);
+  const handleMouseLeave = useCallback(() => onHover(null), [onHover]);
+  const handleClick = useCallback(() => onSelect(card.sessionId), [card.sessionId, onSelect]);
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onSelect(card.sessionId);
+      }
+    },
+    [card.sessionId, onSelect],
+  );
+
   return (
     <div
+      // flashKey forces a remount of the animation class when state changes.
+      key={showFlash ? flashKey : undefined}
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onFocus={handleMouseEnter}
+      onBlur={handleMouseLeave}
       className={cn(
-        'rounded-[var(--radius-sm)] border border-[color:var(--line-1)]',
-        'bg-[color:var(--bg-2)] transition-colors',
-        'hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)]',
+        'relative rounded-[var(--radius-sm)] border',
+        'bg-[color:var(--bg-2)] cursor-pointer outline-none',
+        'transition-[border-color,box-shadow,background-color] duration-200 motion-reduce:transition-none',
+        // Entry fade-in: cards animate in on mount; reduced-motion users get instant display.
+        'planning-card-enter',
+        // State-transition flash: briefly highlights card border/bg when state changes.
+        showFlash && 'planning-card-flash',
         compact ? 'px-2.5 py-2' : 'px-3 py-2.5',
+        // Default (no highlight state)
+        !isHighlighted && !isWeakHighlighted && !isSelected && [
+          'border-[color:var(--line-1)]',
+          'hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)]',
+          'focus-visible:border-[color:var(--brand)] focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]/30',
+        ],
+        // Selected — strongest ring
+        isSelected && [
+          'border-[color:var(--brand)]',
+          'shadow-[0_0_0_2px_color-mix(in_oklab,var(--brand)_30%,transparent)]',
+          'bg-[color:color-mix(in_oklab,var(--brand)_6%,var(--bg-2))]',
+        ],
+        // Strong highlight (related, not selected)
+        isHighlighted && !isSelected && [
+          'border-[color:color-mix(in_oklab,var(--brand)_55%,var(--line-1))]',
+          'shadow-[0_0_0_1px_color-mix(in_oklab,var(--brand)_20%,transparent)]',
+          'bg-[color:color-mix(in_oklab,var(--brand)_4%,var(--bg-2))]',
+        ],
+        // Weak highlight (low-confidence relationship)
+        isWeakHighlighted && !isHighlighted && !isSelected && [
+          'border-dashed border-[color:color-mix(in_oklab,var(--brand)_30%,var(--line-1))]',
+        ],
       )}
       aria-label={ariaLabel}
+      aria-pressed={isSelected}
     >
       {/* Row 1: state dot + session ID + state label + time */}
       <div className="flex items-center gap-1.5 min-w-0">
         <Dot
-          style={{ background: dotColor, flexShrink: 0 }}
+          style={{
+            background: dotColor,
+            flexShrink: 0,
+            // Used by the planning-dot-live CSS animation for the ring color.
+            '--dot-color': dotColor,
+          } as React.CSSProperties}
           aria-label={card.state}
-          className={isActive ? 'animate-pulse' : undefined}
+          className={isActive ? 'planning-dot-live' : undefined}
         />
         <span
           className="planning-mono truncate text-[10px] text-[color:var(--ink-3)] flex-1 min-w-0"
@@ -282,6 +498,9 @@ function SessionCard({ card, compact }: { card: PlanningAgentSessionCard; compac
         )}
       </div>
 
+      {/* Action row: navigational links (omitted entirely when no data is available) */}
+      <CardActionRow card={card} />
+
       {/* Live state-transition region — fixed height, invisible when idle */}
       <div
         aria-live="polite"
@@ -291,21 +510,56 @@ function SessionCard({ card, compact }: { card: PlanningAgentSessionCard; compac
       >
         {liveMsg}
       </div>
+
+      {/* Relationship badge — appears on related cards when hovered/selected card has relationships */}
+      {relationBadge && (
+        <div
+          className={cn(
+            'absolute top-1.5 right-1.5',
+            'inline-flex items-center rounded px-1 py-0.5',
+            'border border-[color:color-mix(in_oklab,var(--brand)_40%,var(--line-1))]',
+            'bg-[color:color-mix(in_oklab,var(--brand)_12%,var(--bg-2))]',
+            'text-[8px] leading-none text-[color:var(--brand)] font-medium',
+            'transition-opacity duration-200 motion-reduce:transition-none',
+          )}
+          aria-label={`Relationship: ${RELATION_LABEL[relationBadge]}`}
+        >
+          {RELATION_LABEL[relationBadge]}
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Board column ──────────────────────────────────────────────────────────────
 
+interface BoardColumnProps {
+  group: PlanningBoardGroup;
+  filterText: string;
+  compact: boolean;
+  highlightedSessionIds: Set<string>;
+  weakHighlightedSessionIds: Set<string>;
+  selectedSessionId: string | null;
+  /** Maps session ID → relationship kind for badge display. */
+  relationBadgeMap: Map<string, BoardSessionRelationship['relationType']>;
+  onCardHover: (sessionId: string | null) => void;
+  onCardSelect: (sessionId: string) => void;
+  /** Whether this column's entity (feature/phase) is highlighted via a relationship. */
+  isColumnHighlighted: boolean;
+}
+
 function BoardColumn({
   group,
   filterText,
   compact,
-}: {
-  group: PlanningBoardGroup;
-  filterText: string;
-  compact: boolean;
-}) {
+  highlightedSessionIds,
+  weakHighlightedSessionIds,
+  selectedSessionId,
+  relationBadgeMap,
+  onCardHover,
+  onCardSelect,
+  isColumnHighlighted,
+}: BoardColumnProps) {
   const lowerFilter = filterText.toLowerCase();
   const visible = filterText
     ? group.cards.filter(
@@ -319,13 +573,21 @@ function BoardColumn({
     <div
       className={cn(
         'flex min-w-[220px] max-w-[280px] flex-shrink-0 flex-col',
-        'rounded-[var(--radius)] border border-[color:var(--line-1)] bg-[color:var(--bg-1)]',
+        'rounded-[var(--radius)] border bg-[color:var(--bg-1)]',
+        'transition-[border-color,box-shadow] duration-200 motion-reduce:transition-none',
+        isColumnHighlighted
+          ? 'border-[color:color-mix(in_oklab,var(--brand)_50%,var(--line-1))] shadow-[0_0_0_1px_color-mix(in_oklab,var(--brand)_15%,transparent)]'
+          : 'border-[color:var(--line-1)]',
       )}
     >
       <div
         className={cn(
-          'flex items-center justify-between border-b border-[color:var(--line-1)]',
+          'flex items-center justify-between border-b',
+          'transition-[border-color,background-color] duration-200 motion-reduce:transition-none',
           compact ? 'px-3 py-1.5' : 'px-3 py-2',
+          isColumnHighlighted
+            ? 'border-[color:color-mix(in_oklab,var(--brand)_30%,var(--line-1))] bg-[color:color-mix(in_oklab,var(--brand)_5%,var(--bg-1))]'
+            : 'border-[color:var(--line-1)]',
         )}
       >
         <span className="truncate text-[11px] font-medium text-[color:var(--ink-1)]">
@@ -354,7 +616,17 @@ function BoardColumn({
           </p>
         ) : (
           visible.map((card) => (
-            <SessionCard key={card.sessionId} card={card} compact={compact} />
+            <SessionCard
+              key={card.sessionId}
+              card={card}
+              compact={compact}
+              isHighlighted={highlightedSessionIds.has(card.sessionId)}
+              isWeakHighlighted={weakHighlightedSessionIds.has(card.sessionId)}
+              isSelected={selectedSessionId === card.sessionId}
+              relationBadge={relationBadgeMap.get(card.sessionId)}
+              onHover={onCardHover}
+              onSelect={onCardSelect}
+            />
           ))
         )}
       </div>
@@ -443,6 +715,12 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   // Timestamp of the last successful board fetch, for the stale indicator.
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
 
+  // ── Relationship highlight state ────────────────────────────────────────────
+  /** Session ID currently hovered (or null). */
+  const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
+  /** Session ID locked by click (persists until another click or Escape). */
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
   // Track the sessions reference to detect upstream poll ticks without capturing
   // the full array in closure state (avoids spurious re-renders on identity-stable arrays).
   const sessionsRef = useRef(sessions);
@@ -515,6 +793,99 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     void load({ forceRefresh: true });
   }, [load]);
 
+  // ── Relationship highlight derivation ────────────────────────────────────────
+
+  /** Selected takes priority over hovered for driving the highlight graph. */
+  const activeSessionId = selectedSessionId ?? hoveredSessionId;
+
+  /** O(1) card lookup rebuilt only when board data changes. */
+  const cardBySessionId = useMemo<Map<string, PlanningAgentSessionCard>>(() => {
+    if (fetchState.phase !== 'ready') return new Map();
+    const map = new Map<string, PlanningAgentSessionCard>();
+    for (const group of fetchState.board.groups) {
+      for (const card of group.cards) {
+        map.set(card.sessionId, card);
+      }
+    }
+    return map;
+  }, [fetchState]);
+
+  /**
+   * Derive highlight sets from the active card's relationships.
+   * BoardSessionRelationship has no numeric confidence — 'sibling' is treated
+   * as weak (dashed border), the rest as strong.
+   */
+  const {
+    highlightedSessionIds,
+    weakHighlightedSessionIds,
+    relationBadgeMap,
+    highlightedFeatureIds,
+    highlightedPhaseKeys,
+  } = useMemo(() => {
+    const highlighted = new Set<string>();
+    const weakHighlighted = new Set<string>();
+    const badgeMap = new Map<string, BoardSessionRelationship['relationType']>();
+    const featureIds = new Set<string>();
+    const phaseKeys = new Set<string>();
+
+    const activeCard = activeSessionId ? cardBySessionId.get(activeSessionId) : undefined;
+    if (activeCard) {
+      for (const rel of activeCard.relationships) {
+        const isWeak = rel.relationType === 'sibling';
+        if (isWeak) {
+          weakHighlighted.add(rel.relatedSessionId);
+        } else {
+          highlighted.add(rel.relatedSessionId);
+        }
+        if (!badgeMap.has(rel.relatedSessionId)) {
+          badgeMap.set(rel.relatedSessionId, rel.relationType);
+        }
+      }
+      if (activeCard.correlation?.featureId) {
+        featureIds.add(activeCard.correlation.featureId);
+      }
+      if (activeCard.correlation?.phaseNumber != null) {
+        phaseKeys.add(String(activeCard.correlation.phaseNumber));
+      }
+    }
+
+    return {
+      highlightedSessionIds: highlighted,
+      weakHighlightedSessionIds: weakHighlighted,
+      relationBadgeMap: badgeMap,
+      highlightedFeatureIds: featureIds,
+      highlightedPhaseKeys: phaseKeys,
+    };
+  }, [activeSessionId, cardBySessionId]);
+
+  const handleCardHover = useCallback((sessionId: string | null) => {
+    setHoveredSessionId(sessionId);
+  }, []);
+
+  const handleCardSelect = useCallback((sessionId: string) => {
+    setSelectedSessionId((prev) => (prev === sessionId ? null : sessionId));
+  }, []);
+
+  // Escape clears the persistent selection.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedSessionId(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  /** Returns true when a column's entity key matches the active card's correlation. */
+  const isGroupHighlighted = useCallback(
+    (group: PlanningBoardGroup): boolean => {
+      if (!activeSessionId) return false;
+      if (group.groupType === 'feature' && highlightedFeatureIds.has(group.groupKey)) return true;
+      if (group.groupType === 'phase' && highlightedPhaseKeys.has(group.groupKey)) return true;
+      return false;
+    },
+    [activeSessionId, highlightedFeatureIds, highlightedPhaseKeys],
+  );
+
   const isInitialLoad = fetchState.phase === 'loading' || fetchState.phase === 'idle';
 
   return (
@@ -583,7 +954,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         </div>
       ) : (
         <div
-          className="overflow-x-auto pb-2"
+          className={cn('overflow-x-auto pb-2', refreshing && 'planning-board-refreshing')}
           role="region"
           aria-label="Agent session board"
           aria-busy={refreshing}
@@ -595,6 +966,13 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
                 group={group}
                 filterText={filterText}
                 compact={compact}
+                highlightedSessionIds={highlightedSessionIds}
+                weakHighlightedSessionIds={weakHighlightedSessionIds}
+                selectedSessionId={selectedSessionId}
+                relationBadgeMap={relationBadgeMap}
+                onCardHover={handleCardHover}
+                onCardSelect={handleCardSelect}
+                isColumnHighlighted={isGroupHighlighted(group)}
               />
             ))}
           </div>
