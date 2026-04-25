@@ -7,7 +7,7 @@ feature_slug: planning-agent-session-board-v1
 phase: 1
 phase_title: Correlation Contract and Query Foundation
 status: completed
-created: 2026-04-25
+created: '2026-04-25'
 updated: '2026-04-25'
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/planning-agent-session-board-v1.md
