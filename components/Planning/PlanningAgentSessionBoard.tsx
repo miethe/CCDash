@@ -28,6 +28,7 @@ import { PlanningBoardToolbar } from './PlanningBoardToolbar';
 import { PlanningAgentSessionDetailPanel } from './PlanningAgentSessionDetailPanel';
 import { PlanningNextRunPreview } from './PlanningNextRunPreview';
 import { Panel, Dot } from './primitives';
+import type { StateFilter } from './PlanningBoardToolbar';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -908,6 +909,245 @@ function readGroupingFromParams(params: URLSearchParams): PlanningBoardGroupingM
   return 'state';
 }
 
+/** Valid state filter values that can be set via URL. */
+const VALID_STATE_FILTERS = new Set<StateFilter>(['all', 'active', 'recent']);
+
+/**
+ * Reads the state filter from URL search params.
+ * Falls back to 'all' when absent or invalid.
+ */
+function readStateFilterFromParams(params: URLSearchParams): StateFilter {
+  const raw = params.get('stateFilter');
+  if (raw && VALID_STATE_FILTERS.has(raw as StateFilter)) {
+    return raw as StateFilter;
+  }
+  return 'all';
+}
+
+/** Ten minutes in milliseconds — used for the 'recent' filter. */
+const RECENT_FILTER_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Applies the state filter to a flat array of cards, returning only those
+ * that match the selected filter criterion.
+ */
+function applyStateFilter(
+  cards: PlanningAgentSessionCard[],
+  filter: StateFilter,
+): PlanningAgentSessionCard[] {
+  if (filter === 'all') return cards;
+  if (filter === 'active') {
+    return cards.filter((c) => c.state === 'running' || c.state === 'thinking');
+  }
+  // 'recent': completed/idle/done within the last 10 minutes
+  const cutoff = Date.now() - RECENT_FILTER_WINDOW_MS;
+  return cards.filter((c) => {
+    if (c.lastActivityAt) {
+      const t = new Date(c.lastActivityAt).getTime();
+      if (!Number.isNaN(t)) return t >= cutoff;
+    }
+    return false;
+  });
+}
+
+// ── Right-rail summary sidebar ────────────────────────────────────────────────
+
+interface BoardRightRailSidebarProps {
+  groups: PlanningBoardGroup[];
+  onSessionSelect: (id: string) => void;
+}
+
+function BoardRightRailSidebar({ groups, onSessionSelect }: BoardRightRailSidebarProps) {
+  // Collect all cards across all groups
+  const allCards = groups.flatMap((g) => g.cards);
+
+  // ── Agenda summary: counts bucketed by state ────────────────────────────────
+  const stateCounts = useMemo(() => {
+    const counts = new Map<PlanningAgentSessionCard['state'], number>();
+    for (const card of allCards) {
+      counts.set(card.state, (counts.get(card.state) ?? 0) + 1);
+    }
+    return counts;
+  }, [allCards]);
+
+  const STATE_ORDER: PlanningAgentSessionCard['state'][] = [
+    'running', 'thinking', 'completed', 'failed', 'cancelled', 'unknown',
+  ];
+
+  // ── Context envelope: aggregate token usage for active sessions ─────────────
+  const { usedTokens, totalTokens } = useMemo(() => {
+    let used = 0;
+    let total = 0;
+    for (const card of allCards) {
+      if (card.state !== 'running' && card.state !== 'thinking') continue;
+      if (!card.tokenSummary) continue;
+      used += card.tokenSummary.totalTokens;
+      // Derive window from contextWindowPct if available
+      if (card.tokenSummary.contextWindowPct && card.tokenSummary.contextWindowPct > 0) {
+        total += Math.round(card.tokenSummary.totalTokens / card.tokenSummary.contextWindowPct);
+      }
+    }
+    return { usedTokens: used, totalTokens: total };
+  }, [allCards]);
+
+  const contextPct = totalTokens > 0 ? Math.min(100, Math.round((usedTokens / totalTokens) * 100)) : 0;
+
+  // ── Active agents list ──────────────────────────────────────────────────────
+  const activeCards = useMemo(
+    () => allCards.filter((c) => c.state === 'running' || c.state === 'thinking'),
+    [allCards],
+  );
+
+  return (
+    <div className="w-[260px] flex-shrink-0 hidden lg:flex flex-col gap-3">
+      {/* Agenda Summary */}
+      <Panel className="p-3">
+        <p
+          className="planning-mono mb-2 text-[9.5px] font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--ink-3)' }}
+        >
+          Agenda Summary
+        </p>
+        <div className="flex flex-col gap-1">
+          {STATE_ORDER.map((state) => {
+            const count = stateCounts.get(state) ?? 0;
+            if (count === 0) return null;
+            return (
+              <div key={state} className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Dot
+                    tone={STATE_DOT_COLOR[state]}
+                    style={{ width: 6, height: 6, flexShrink: 0 }}
+                    aria-hidden
+                  />
+                  <span
+                    className="planning-mono text-[10.5px] capitalize"
+                    style={{ color: 'var(--ink-2)' }}
+                  >
+                    {state}
+                  </span>
+                </span>
+                <span
+                  className="planning-mono text-[10.5px] tabular-nums"
+                  style={{ color: 'var(--ink-1)' }}
+                >
+                  {count}
+                </span>
+              </div>
+            );
+          })}
+          {allCards.length === 0 && (
+            <p className="text-[10.5px]" style={{ color: 'var(--ink-4)' }}>
+              No sessions
+            </p>
+          )}
+        </div>
+      </Panel>
+
+      {/* Context Envelope */}
+      <Panel className="p-3">
+        <p
+          className="planning-mono mb-2 text-[9.5px] font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--ink-3)' }}
+        >
+          Context Envelope
+        </p>
+        {totalTokens > 0 ? (
+          <div className="flex flex-col gap-1.5">
+            <div
+              className="h-1.5 w-full overflow-hidden rounded-full"
+              style={{ background: 'var(--bg-3)' }}
+              role="meter"
+              aria-valuenow={contextPct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`Active sessions using ${contextPct}% of aggregate context window`}
+            >
+              <div
+                className="h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
+                style={{
+                  width: `${contextPct}%`,
+                  background: contextPct > 80
+                    ? 'var(--err)'
+                    : contextPct > 60
+                    ? 'var(--warn)'
+                    : 'var(--brand)',
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="planning-mono text-[10px]" style={{ color: 'var(--ink-3)' }}>
+                {fmtTokens(usedTokens)} / {fmtTokens(totalTokens)}
+              </span>
+              <span className="planning-mono text-[10px] tabular-nums" style={{ color: 'var(--ink-2)' }}>
+                {contextPct}%
+              </span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[10.5px]" style={{ color: 'var(--ink-4)' }}>
+            No active context
+          </p>
+        )}
+      </Panel>
+
+      {/* Active Agents */}
+      <Panel className="p-3">
+        <p
+          className="planning-mono mb-2 text-[9.5px] font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--ink-3)' }}
+        >
+          Active Agents
+        </p>
+        {activeCards.length === 0 ? (
+          <p className="text-[10.5px]" style={{ color: 'var(--ink-4)' }}>
+            No active agents
+          </p>
+        ) : (
+          <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto">
+            {activeCards.map((card) => (
+              <button
+                key={card.sessionId}
+                type="button"
+                onClick={() => onSessionSelect(card.sessionId)}
+                className={cn(
+                  'flex w-full items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1.5 text-left',
+                  'transition-colors duration-150 motion-reduce:transition-none',
+                  'hover:bg-[color:var(--bg-3)]',
+                  'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+                )}
+                aria-label={`Select session${card.agentName ? ` for ${card.agentName}` : ''}`}
+              >
+                <Dot
+                  tone={STATE_DOT_COLOR[card.state]}
+                  style={{ width: 6, height: 6, flexShrink: 0 }}
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1">
+                  <p
+                    className="planning-mono truncate text-[10.5px]"
+                    style={{ color: 'var(--ink-1)' }}
+                  >
+                    {card.agentName ?? card.sessionId}
+                  </p>
+                  {card.model && (
+                    <p
+                      className="planning-mono truncate text-[9.5px]"
+                      style={{ color: 'var(--ink-4)' }}
+                    >
+                      {card.model}
+                    </p>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 type FetchState =
@@ -930,6 +1170,9 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
 
   // Grouping is read from and written to the URL so the state is bookmarkable.
   const grouping = readGroupingFromParams(searchParams);
+
+  // State filter is read from and written to the URL so it is bookmarkable.
+  const stateFilter = readStateFilterFromParams(searchParams);
 
   // ?highlight=<featureId|groupKey> pre-selects a column when navigating from the feature lane.
   const urlHighlightId = searchParams.get('highlight') ?? null;
@@ -1038,6 +1281,24 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [setSearchParams, grouping],
+  );
+
+  const handleStateFilterChange = useCallback(
+    (filter: StateFilter) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (filter === 'all') {
+            next.delete('stateFilter');
+          } else {
+            next.set('stateFilter', filter);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
   );
 
   const handleManualRefresh = useCallback(() => {
@@ -1177,6 +1438,18 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   // "Prepare Next Run" is enabled when the selected card has a feature correlation.
   const canPrepareNextRun = Boolean(selectedCard?.correlation?.featureId);
 
+  // Apply state filter BEFORE grouping display — groups with zero cards after filtering are removed.
+  const filteredGroups = useMemo<PlanningBoardGroup[]>(() => {
+    if (fetchState.phase !== 'ready') return [];
+    if (stateFilter === 'all') return fetchState.board.groups;
+    return fetchState.board.groups
+      .map((group) => ({
+        ...group,
+        cards: applyStateFilter(group.cards, stateFilter),
+      }))
+      .filter((group) => group.cards.length > 0);
+  }, [fetchState, stateFilter]);
+
   return (
     <Panel className={cn('p-4', className)}>
       {/* Toolbar row with refresh button appended */}
@@ -1186,6 +1459,8 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
           onGroupingChange={handleGroupingChange}
           filterText={filterText}
           onFilterTextChange={setFilterText}
+          stateFilter={stateFilter}
+          onStateFilterChange={handleStateFilterChange}
           className="flex-1 min-w-0"
         />
 
@@ -1255,17 +1530,6 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         </button>
       </div>
 
-      {/* ── Detail panel for selected card ─────────────────────────────── */}
-      {selectedCard && (
-        <div className="mb-3">
-          <PlanningAgentSessionDetailPanel
-            card={selectedCard}
-            onClose={() => setSelectedSessionId(null)}
-            onPrepareNextRun={handlePrepareNextRun}
-          />
-        </div>
-      )}
-
       {/* ── Next-run preview panel ──────────────────────────────────────── */}
       {showPreview && previewFeatureId && (
         <div className="mb-3">
@@ -1303,31 +1567,62 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
           <p className="text-[12px] text-[color:var(--ink-3)]">No active agent sessions</p>
         </div>
       ) : (
-        <div
-          className={cn('overflow-x-auto pb-2', refreshing && 'planning-board-refreshing')}
-          role="region"
-          aria-label="Agent session board"
-          aria-busy={refreshing}
-        >
-          <div className="flex gap-3" style={{ width: 'max-content' }}>
-            {fetchState.board.groups.map((group) => (
-              <BoardColumn
-                key={group.groupKey}
-                group={group}
-                filterText={debouncedFilterText}
-                compact={compact}
-                highlightedSessionIds={highlightedSessionIds}
-                weakHighlightedSessionIds={weakHighlightedSessionIds}
-                selectedSessionId={selectedSessionId}
-                relationBadgeMap={relationBadgeMap}
-                onCardHover={handleCardHover}
-                onCardSelect={handleCardSelect}
-                isColumnHighlighted={isGroupHighlighted(group)}
-                isUrlHighlighted={isGroupUrlHighlighted(group)}
-                isDraggable={showPreview}
-              />
-            ))}
+        <div className="flex gap-3 items-start">
+          {/* ── Columns area ─────────────────────────────────────────────── */}
+          <div className="flex-1 min-w-0">
+            {filteredGroups.length === 0 && stateFilter !== 'all' ? (
+              <div className="flex flex-col items-center gap-3 py-10">
+                <LayoutGrid size={22} style={{ color: 'var(--ink-4)' }} aria-hidden />
+                <p className="text-[12px] text-[color:var(--ink-3)]">
+                  No sessions match this filter
+                </p>
+              </div>
+            ) : (
+              <div
+                className={cn('overflow-x-auto pb-2', refreshing && 'planning-board-refreshing')}
+                role="region"
+                aria-label="Agent session board"
+                aria-busy={refreshing}
+              >
+                <div className="flex gap-3" style={{ width: 'max-content' }}>
+                  {filteredGroups.map((group) => (
+                    <BoardColumn
+                      key={group.groupKey}
+                      group={group}
+                      filterText={debouncedFilterText}
+                      compact={compact}
+                      highlightedSessionIds={highlightedSessionIds}
+                      weakHighlightedSessionIds={weakHighlightedSessionIds}
+                      selectedSessionId={selectedSessionId}
+                      relationBadgeMap={relationBadgeMap}
+                      onCardHover={handleCardHover}
+                      onCardSelect={handleCardSelect}
+                      isColumnHighlighted={isGroupHighlighted(group)}
+                      isUrlHighlighted={isGroupUrlHighlighted(group)}
+                      isDraggable={showPreview}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* ── Right-rail summary sidebar ────────────────────────────────── */}
+          <BoardRightRailSidebar
+            groups={fetchState.board.groups}
+            onSessionSelect={(id) => setSelectedSessionId(id)}
+          />
+
+          {/* ── Detail panel for selected card (third column when open) ───── */}
+          {selectedCard && (
+            <div className="w-[320px] flex-shrink-0 hidden lg:block">
+              <PlanningAgentSessionDetailPanel
+                card={selectedCard}
+                onClose={() => setSelectedSessionId(null)}
+                onPrepareNextRun={handlePrepareNextRun}
+              />
+            </div>
+          )}
         </div>
       )}
     </Panel>

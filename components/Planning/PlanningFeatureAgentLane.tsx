@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import type {
   PlanningAgentSessionBoard,
   PlanningAgentSessionCard,
+  PlanningBoardGroupingMode,
   SessionActivityMarker,
 } from '@/types';
 import { getFeatureSessionBoard } from '@/services/planning';
@@ -81,6 +82,50 @@ function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
+}
+
+// ── Group-By Toggle ───────────────────────────────────────────────────────────
+
+interface GroupByToggleProps {
+  value: 'phase' | 'state';
+  onChange: (mode: 'phase' | 'state') => void;
+  compact: boolean;
+}
+
+function GroupByToggle({ value, onChange, compact }: GroupByToggleProps) {
+  return (
+    <div
+      role="group"
+      aria-label="Group sessions by"
+      className={cn(
+        'inline-flex items-center rounded-[var(--radius-sm)]',
+        'border border-[color:var(--line-1)] bg-[color:var(--bg-1)]',
+        'overflow-hidden flex-shrink-0',
+      )}
+    >
+      {(['phase', 'state'] as const).map((mode) => {
+        const active = value === mode;
+        return (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(mode)}
+            className={cn(
+              'planning-mono px-2 leading-none transition-colors',
+              compact ? 'py-[3px] text-[9px]' : 'py-1 text-[9.5px]',
+              active
+                ? 'bg-[color:var(--bg-3)] text-[color:var(--ink-1)] font-semibold'
+                : 'text-[color:var(--ink-3)] hover:bg-[color:var(--bg-2)] hover:text-[color:var(--ink-2)]',
+              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[color:var(--brand)]',
+            )}
+          >
+            {mode === 'phase' ? 'Phase' : 'State'}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // ── Mini action row ───────────────────────────────────────────────────────────
@@ -446,6 +491,88 @@ function LaneColumn({ state, cards, compact }: LaneColumnProps) {
   );
 }
 
+// ── Phase row ─────────────────────────────────────────────────────────────────
+
+interface PhaseRowProps {
+  groupKey: string;
+  groupLabel: string;
+  cards: PlanningAgentSessionCard[];
+  compact: boolean;
+}
+
+function PhaseRow({ groupKey, groupLabel, cards, compact }: PhaseRowProps) {
+  const hasActive = cards.some((c) => c.state === 'running' || c.state === 'thinking');
+
+  // Derive a readable phase header: prefer groupLabel, fall back to groupKey.
+  const header = groupLabel && groupLabel !== groupKey ? groupLabel : groupKey;
+
+  return (
+    <div
+      className={cn(
+        'rounded-[var(--radius)] border border-[color:var(--line-1)] bg-[color:var(--bg-1)]',
+        compact ? 'mb-2' : 'mb-2.5',
+      )}
+      aria-label={`${header}: ${cards.length} session${cards.length !== 1 ? 's' : ''}`}
+    >
+      {/* Phase header bar */}
+      <div
+        className={cn(
+          'flex items-center gap-2 border-b border-[color:var(--line-1)]',
+          compact ? 'px-2.5 py-1.5' : 'px-3 py-2',
+        )}
+        style={{
+          background: 'color-mix(in oklab, var(--brand) 4%, var(--bg-1))',
+          borderTop: '2px solid var(--brand)',
+          borderRadius: 'var(--radius) var(--radius) 0 0',
+        }}
+      >
+        <span
+          className="planning-caps text-[9.5px] font-semibold text-[color:var(--brand)] truncate flex-1 min-w-0"
+          title={header}
+        >
+          {header}
+        </span>
+
+        {/* Live dot — visible if any card in this phase is running/thinking */}
+        {hasActive && (
+          <Dot
+            className="planning-dot-live flex-shrink-0 motion-reduce:transition-none"
+            style={{
+              background: 'var(--ok)',
+              '--dot-color': 'var(--ok)',
+            } as React.CSSProperties}
+            aria-label="Active session in this phase"
+          />
+        )}
+
+        {/* Count badge */}
+        <span
+          className={cn(
+            'planning-mono flex-shrink-0 rounded px-1.5 py-[2px] text-[9px] tabular-nums',
+            'border border-[color:var(--line-2)] bg-[color:var(--bg-3)] text-[color:var(--ink-2)]',
+          )}
+        >
+          {cards.length}
+        </span>
+      </div>
+
+      {/* Cards: flex-wrap horizontal row */}
+      <div
+        className={cn(
+          'flex flex-wrap',
+          compact ? 'gap-1.5 p-2' : 'gap-2 p-2.5',
+        )}
+      >
+        {cards.map((card) => (
+          <div key={card.sessionId} className="w-[168px] flex-shrink-0">
+            <LaneCard card={card} compact={compact} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Lane skeleton ─────────────────────────────────────────────────────────────
 
 function LaneSkeleton() {
@@ -489,7 +616,7 @@ export interface PlanningFeatureAgentLaneProps {
 
 /**
  * A compact horizontal lane showing agent sessions correlated to a specific feature.
- * Grouped by session state (running → thinking → completed → failed).
+ * Defaults to phase-grouped rows (wireframe-fidelity); can be toggled to state columns.
  * Designed to sit within the feature detail drawer (PlanningNodeDetail).
  */
 export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatureAgentLaneProps) {
@@ -497,6 +624,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
   const { density } = usePlanningRoute();
   const compact = density === 'compact';
 
+  const [groupByMode, setGroupByMode] = useState<'phase' | 'state'>('phase');
   const [fetchState, setFetchState] = useState<LaneFetchState>({ phase: 'idle' });
   const [refreshing, setRefreshing] = useState(false);
 
@@ -520,7 +648,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
         const board = await getFeatureSessionBoard(
           featureId,
           activeProject?.id,
-          'state',
+          groupByMode as PlanningBoardGroupingMode,
           opts,
         );
         setFetchState({ phase: 'ready', board });
@@ -538,10 +666,10 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [featureId, activeProject?.id],
+    [featureId, activeProject?.id, groupByMode],
   );
 
-  // Initial load and featureId change.
+  // Initial load and featureId/groupByMode change.
   useEffect(() => {
     void load();
   }, [load]);
@@ -563,9 +691,17 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
   const totalCount = board?.totalCardCount ?? 0;
   const activeCount = board?.activeCount ?? 0;
 
-  // Build a card map per state for the ordered columns.
+  // ── Phase-mode derived data ─────────────────────────────────────────────────
+
+  // Non-empty groups for phase mode — preserves backend ordering.
+  const nonEmptyPhaseGroups = board
+    ? board.groups.filter((g) => g.cards.length > 0)
+    : [];
+
+  // ── State-mode derived data ─────────────────────────────────────────────────
+
   const cardsByState = new Map<PlanningAgentSessionCard['state'], PlanningAgentSessionCard[]>();
-  if (board) {
+  if (board && groupByMode === 'state') {
     for (const group of board.groups) {
       const state = group.groupKey as PlanningAgentSessionCard['state'];
       if (!cardsByState.has(state)) {
@@ -582,11 +718,21 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
     (state) => (cardsByState.get(state)?.length ?? 0) > 0,
   );
 
-  // "View on Board" URL: navigate to the planning home page with the board
-  // pre-grouped by feature and this feature's column highlighted.
-  const viewOnBoardHref = `/planning?groupBy=feature&highlight=${encodeURIComponent(featureId)}`;
+  // "View on Board" URL: include groupBy=phase when in phase mode,
+  // groupBy=feature when in state mode (matches the board's URL convention).
+  const viewOnBoardHref =
+    groupByMode === 'phase'
+      ? `/planning?groupBy=phase&highlight=${encodeURIComponent(featureId)}`
+      : `/planning?groupBy=feature&highlight=${encodeURIComponent(featureId)}`;
 
   const isLoading = fetchState.phase === 'loading' || fetchState.phase === 'idle';
+
+  // ── Empty-state check — depends on mode ────────────────────────────────────
+
+  const isEmpty =
+    groupByMode === 'phase'
+      ? nonEmptyPhaseGroups.length === 0
+      : activeColumns.length === 0;
 
   // ── Header label ────────────────────────────────────────────────────────────
 
@@ -634,6 +780,13 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
           )}
         </h2>
 
+        {/* Group-by toggle */}
+        <GroupByToggle
+          value={groupByMode}
+          onChange={setGroupByMode}
+          compact={compact}
+        />
+
         {/* Stale/refresh */}
         {fetchState.phase === 'ready' && (
           <span className="planning-mono text-[9px] text-[color:var(--ink-4)]" aria-live="polite">
@@ -663,7 +816,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
           />
         </button>
 
-        {/* View on Board link — navigates to the planning page with this feature's column highlighted */}
+        {/* View on Board link */}
         <Link
           to={viewOnBoardHref}
           className={cn(
@@ -674,7 +827,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
             'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
           )}
           aria-label="View all sessions on the agent session board, grouped by feature"
-          title="View on Board (grouped by feature)"
+          title={groupByMode === 'phase' ? 'View on Board (grouped by phase)' : 'View on Board (grouped by feature)'}
         >
           Board
           <ArrowUpRight size={10} aria-hidden />
@@ -701,7 +854,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
               Retry
             </button>
           </div>
-        ) : activeColumns.length === 0 ? (
+        ) : isEmpty ? (
           /* Empty state */
           <div
             className={cn(
@@ -715,6 +868,24 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
             <p className="text-[11px] text-[color:var(--ink-3)]">
               No sessions linked to this feature
             </p>
+          </div>
+        ) : groupByMode === 'phase' ? (
+          /* Phase rows */
+          <div
+            className={cn(refreshing && 'planning-board-refreshing')}
+            role="region"
+            aria-label={`Agent session lane: ${totalCount} sessions`}
+            aria-busy={refreshing}
+          >
+            {nonEmptyPhaseGroups.map((group) => (
+              <PhaseRow
+                key={group.groupKey}
+                groupKey={group.groupKey}
+                groupLabel={group.groupLabel}
+                cards={group.cards}
+                compact={compact}
+              />
+            ))}
           </div>
         ) : (
           /* Horizontal state columns */

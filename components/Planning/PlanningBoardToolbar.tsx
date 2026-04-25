@@ -5,6 +5,18 @@ import type { PlanningBoardGroupingMode } from '@/types';
 import { usePlanningRoute } from './PlanningRouteLayout';
 import { BtnGhost } from './primitives';
 
+// ── State filter type ─────────────────────────────────────────────────────────
+
+export type StateFilter = 'all' | 'active' | 'recent';
+
+const STATE_FILTER_OPTIONS: { value: StateFilter; label: string; title: string }[] = [
+  { value: 'all', label: 'All', title: 'Show all sessions' },
+  { value: 'active', label: 'Active', title: 'Show only running or thinking sessions' },
+  { value: 'recent', label: 'Recent', title: 'Show sessions active in the last 10 minutes' },
+];
+
+// ── Grouping options ──────────────────────────────────────────────────────────
+
 const GROUPING_OPTIONS: { value: PlanningBoardGroupingMode; label: string }[] = [
   { value: 'state', label: 'State' },
   { value: 'feature', label: 'Feature' },
@@ -18,6 +30,8 @@ export interface PlanningBoardToolbarProps {
   onGroupingChange: (mode: PlanningBoardGroupingMode) => void;
   filterText: string;
   onFilterTextChange: (value: string) => void;
+  stateFilter: StateFilter;
+  onStateFilterChange: (f: StateFilter) => void;
   className?: string;
 }
 
@@ -26,6 +40,8 @@ export function PlanningBoardToolbar({
   onGroupingChange,
   filterText,
   onFilterTextChange,
+  stateFilter,
+  onStateFilterChange,
   className,
 }: PlanningBoardToolbarProps) {
   const { density } = usePlanningRoute();
@@ -38,6 +54,7 @@ export function PlanningBoardToolbar({
         className,
       )}
     >
+      {/* Grouping chips */}
       <div
         className="planning-chip planning-mono border-[color:var(--line-1)] bg-[color:var(--bg-1)] p-1 text-[10.5px]"
         role="group"
@@ -61,6 +78,32 @@ export function PlanningBoardToolbar({
         ))}
       </div>
 
+      {/* State filter chips */}
+      <div
+        className="planning-chip planning-mono border-[color:var(--line-1)] bg-[color:var(--bg-1)] p-1 text-[10.5px]"
+        role="group"
+        aria-label="Filter sessions by state"
+      >
+        {STATE_FILTER_OPTIONS.map(({ value, label, title }) => (
+          <BtnGhost
+            key={value}
+            type="button"
+            size="xs"
+            aria-pressed={stateFilter === value}
+            title={title}
+            onClick={() => onStateFilterChange(value)}
+            className={cn(
+              'min-w-[52px] justify-center px-2.5',
+              stateFilter === value &&
+                'border-[color:var(--line-2)] bg-[color:var(--bg-3)] text-[color:var(--ink-0)]',
+            )}
+          >
+            {label}
+          </BtnGhost>
+        ))}
+      </div>
+
+      {/* Search input */}
       <div className="relative flex-1 min-w-[180px] max-w-[320px]">
         <Search
           size={12}

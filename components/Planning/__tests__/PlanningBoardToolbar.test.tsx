@@ -21,6 +21,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PlanningBoardToolbar } from '../PlanningBoardToolbar';
+import type { StateFilter } from '../PlanningBoardToolbar';
 import type { PlanningBoardGroupingMode } from '@/types';
 
 // ── Mock usePlanningRoute ─────────────────────────────────────────────────────
@@ -48,6 +49,8 @@ interface ToolbarProps {
   filterText?: string;
   onGroupingChange?: (mode: PlanningBoardGroupingMode) => void;
   onFilterTextChange?: (value: string) => void;
+  stateFilter?: StateFilter;
+  onStateFilterChange?: (f: StateFilter) => void;
 }
 
 function renderToolbar(props: ToolbarProps = {}): string {
@@ -56,6 +59,8 @@ function renderToolbar(props: ToolbarProps = {}): string {
     filterText = '',
     onGroupingChange = vi.fn(),
     onFilterTextChange = vi.fn(),
+    stateFilter = 'all',
+    onStateFilterChange = vi.fn(),
   } = props;
 
   return renderToStaticMarkup(
@@ -65,6 +70,8 @@ function renderToolbar(props: ToolbarProps = {}): string {
         onGroupingChange={onGroupingChange}
         filterText={filterText}
         onFilterTextChange={onFilterTextChange}
+        stateFilter={stateFilter}
+        onStateFilterChange={onStateFilterChange}
       />
     </MemoryRouter>,
   );
@@ -130,16 +137,16 @@ describe('PlanningBoardToolbar — aria-pressed for grouping selection', () => {
       expect(html).toContain('aria-pressed="true"');
     });
 
-    it(`non-active buttons have aria-pressed="false" when grouping="${active}"`, () => {
+    it(`non-active grouping buttons have aria-pressed="false" when grouping="${active}"`, () => {
       const html = renderToolbar({ grouping: active });
       const nonActive = GROUPINGS.filter((g) => g !== active);
       for (const g of nonActive) {
         // Each non-active button should appear in the markup
         expect(html).toContain(`>${LABELS[g]}</`);
       }
-      // Only 1 aria-pressed="true" (for the grouping button)
+      // 2 aria-pressed="true": one grouping chip + one state filter chip (default 'all')
       const trueMatches = html.match(/aria-pressed="true"/g) ?? [];
-      expect(trueMatches.length).toBe(1);
+      expect(trueMatches.length).toBe(2);
     });
   }
 });

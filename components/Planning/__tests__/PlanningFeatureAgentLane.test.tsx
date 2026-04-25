@@ -6,13 +6,14 @@
  *      (aria-busy=true, aria-label="Loading agent sessions").
  *   2. Lane header renders "Agent Sessions" heading.
  *   3. Refresh button renders with aria-label.
- *   4. "View on Board" link renders and includes groupBy=feature and featureId highlight.
- *   5. View on Board link href structure.
+ *   4. "View on Board" link renders and includes featureId highlight.
+ *   5. View on Board href defaults to groupBy=phase (phase mode is the default).
  *   6. Empty state: renders "No sessions linked" aria-label when no groups.
  *   7. Error state: renders error message + retry button.
  *   8. Reduced-motion: motion-reduce:transition-none present on animated card elements.
  *   9. Lane skeleton renders animate-pulse blocks.
  *  10. Component is exported as a function component.
+ *  11. GroupByToggle: both Phase and State buttons render with aria-pressed.
  *
  * Strategy: renderToStaticMarkup — consistent with the Planning test suite.
  * Initial render is always the loading skeleton because the component relies on
@@ -107,12 +108,34 @@ describe('PlanningFeatureAgentLane — lane header', () => {
   });
 });
 
+// ── Tests: GroupByToggle ──────────────────────────────────────────────────────
+
+describe('PlanningFeatureAgentLane — GroupByToggle', () => {
+  it('renders a group-by toggle with role="group"', () => {
+    const html = renderLane();
+    expect(html).toContain('role="group"');
+  });
+
+  it('renders the Phase button with aria-pressed', () => {
+    const html = renderLane();
+    // aria-pressed="true" on Phase (default), aria-pressed="false" on State
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('aria-pressed="false"');
+  });
+
+  it('renders both Phase and State labels in the toggle', () => {
+    const html = renderLane();
+    expect(html).toContain('>Phase<');
+    expect(html).toContain('>State<');
+  });
+});
+
 // ── Tests: viewOnBoardHref ────────────────────────────────────────────────────
 
 describe('PlanningFeatureAgentLane — viewOnBoardHref', () => {
-  it('View on Board href includes groupBy=feature', () => {
+  it('View on Board href defaults to groupBy=phase (phase mode is the default)', () => {
     const html = renderLane('FEAT-XYZ');
-    expect(html).toContain('groupBy=feature');
+    expect(html).toContain('groupBy=phase');
   });
 
   it('View on Board href includes the feature ID as highlight param', () => {
@@ -180,30 +203,43 @@ describe('PlanningFeatureAgentLane — component export', () => {
 // ── Tests: URL derivation logic (pure) ───────────────────────────────────────
 
 describe('PlanningFeatureAgentLane — viewOnBoardHref derivation logic', () => {
-  function deriveViewOnBoardHref(featureId: string): string {
-    return `/planning?groupBy=feature&highlight=${encodeURIComponent(featureId)}`;
+  function deriveViewOnBoardHref(featureId: string, mode: 'phase' | 'state' = 'phase'): string {
+    return mode === 'phase'
+      ? `/planning?groupBy=phase&highlight=${encodeURIComponent(featureId)}`
+      : `/planning?groupBy=feature&highlight=${encodeURIComponent(featureId)}`;
   }
 
-  it('derives correct href for standard feature ID', () => {
+  it('derives correct href for standard feature ID in phase mode (default)', () => {
     expect(deriveViewOnBoardHref('FEAT-001')).toBe(
+      '/planning?groupBy=phase&highlight=FEAT-001',
+    );
+  });
+
+  it('derives correct href for standard feature ID in state mode', () => {
+    expect(deriveViewOnBoardHref('FEAT-001', 'state')).toBe(
       '/planning?groupBy=feature&highlight=FEAT-001',
     );
   });
 
   it('encodes feature ID containing slashes', () => {
     expect(deriveViewOnBoardHref('FEAT/001')).toBe(
-      '/planning?groupBy=feature&highlight=FEAT%2F001',
+      '/planning?groupBy=phase&highlight=FEAT%2F001',
     );
   });
 
   it('encodes feature ID containing spaces', () => {
     expect(deriveViewOnBoardHref('my feature')).toBe(
-      '/planning?groupBy=feature&highlight=my%20feature',
+      '/planning?groupBy=phase&highlight=my%20feature',
     );
   });
 
-  it('always uses groupBy=feature', () => {
-    const href = deriveViewOnBoardHref('ANY-ID');
+  it('uses groupBy=phase when in phase mode', () => {
+    const href = deriveViewOnBoardHref('ANY-ID', 'phase');
+    expect(href).toContain('groupBy=phase');
+  });
+
+  it('uses groupBy=feature when in state mode', () => {
+    const href = deriveViewOnBoardHref('ANY-ID', 'state');
     expect(href).toContain('groupBy=feature');
   });
 });
