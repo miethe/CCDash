@@ -11,7 +11,7 @@ phase: 1
 title: 'G2: URL Encoding on Write Paths'
 status: completed
 created: '2026-04-24'
-updated: '2026-04-24'
+updated: '2026-04-26'
 started: 2026-04-24T00:00Z
 completed: '2026-04-24'
 commit_refs: []
@@ -102,19 +102,19 @@ success_criteria:
 - id: SC-1
   description: Three write methods in apiClient.ts (updateFeatureStatus, updatePhaseStatus,
     updateTaskStatus) use encodeURIComponent() on all ID params
-  status: pending
+  status: met
 - id: SC-2
   description: "Unit tests pass: \u22656 test cases with reserved characters (#, ?,\
     \ &, space, %, +)"
-  status: pending
+  status: met
 - id: SC-3
   description: Existing tests for updateFeatureStatus, updatePhaseStatus, updateTaskStatus
     remain green after changes
-  status: pending
+  status: met
 - id: SC-4
   description: No encoding/decoding round-trip bugs in browser console or backend
     logs
-  status: pending
+  status: met
 files_modified:
 - services/apiClient.ts
 - services/__tests__/apiClient.test.ts
