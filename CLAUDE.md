@@ -138,6 +138,7 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Project switching**: Multi-project support via `projects.json` and `backend/project_manager.py`. Each project has its own session/doc/progress paths.
 - **MCP transport**: `backend/mcp/server.py` is a stdio server. Running it manually will block waiting for an MCP client; use `.mcp.json` or `backend/tests/test_mcp_server.py` for normal validation.
 - **Frontend tests**: Vitest covers utility and architecture guardrail tests under `components/**/__tests__`, `contexts/__tests__`, `lib/__tests__`, and `services/__tests__`.
+- **Planning design tokens**: `planning-tokens.css` defines the OKLCH token system for planning surfaces. Planning primitives live in `components/Planning/primitives/`.
 - **Planning modal-first navigation**: Route helpers in `lib/planning-routes.ts` enforce planning-page-local modals for features/artifacts. See feature guide at `.claude/worknotes/ccdash-planning-reskin-v2-interaction-performance-addendum/feature-guide.md`.
 - **Planning browser cache (SWR + LRU)**: Active-first, bounded, stale-while-revalidate cache in `services/planning.ts`. Invalidates on session/doc/link changes. See feature guide for cache patterns.
 - **Planning summary payload**: Backend `statusCounts`, `ctxPerPhase`, `tokenTelemetry` fields on planning query responses. See implementation plan § Data Contracts.

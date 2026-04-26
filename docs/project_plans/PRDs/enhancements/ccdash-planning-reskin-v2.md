@@ -1,10 +1,10 @@
 ---
-title: "CCDash Planning Reskin & Enhancement Wave v2"
+title: CCDash Planning Reskin & Enhancement Wave v2
 schema_version: 2
 doc_type: prd
-status: draft
+status: completed
 created: 2026-04-20
-updated: 2026-04-20
+updated: '2026-04-26'
 feature_slug: ccdash-planning-reskin-v2
 feature_version: v2
 prd_ref: null
@@ -15,34 +15,49 @@ category: product-planning
 changelog_required: true
 owner: platform-engineering
 contributors: []
-tags: [prd, planning, ui, reskin, design-handoff, enhancements]
+tags:
+- prd
+- planning
+- ui
+- reskin
+- design-handoff
+- enhancements
 milestone: null
 commit_refs: []
 pr_refs: []
 files_affected: []
 related_documents:
-  - docs/project_plans/designs/ccdash-planning/README.md
-  - "docs/project_plans/designs/ccdash-planning/project/Planning Deck.html"
-  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/designs/ccdash-planning/README.md
+- docs/project_plans/designs/ccdash-planning/project/Planning Deck.html
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
 references:
   user_docs: []
   context: []
   specs:
-    - docs/project_plans/designs/ccdash-planning/project/app/data.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/app.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/graph.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/feature_detail.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/triage.jsx
-    - docs/project_plans/designs/ccdash-planning/project/app/primitives.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/data.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/app.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/graph.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/feature_detail.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/triage.jsx
+  - docs/project_plans/designs/ccdash-planning/project/app/primitives.jsx
   related_prds:
-    - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
+  - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
 spike_ref: null
 adr_refs: []
 charter_ref: null
 changelog_ref: null
 test_plan_ref: null
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+- docs/project_plans/design-specs/live-agent-sse-streaming-v1.md
+- docs/project_plans/design-specs/spike-execution-wiring-v1.md
+- docs/project_plans/design-specs/oq-frontmatter-writeback-v1.md
+- docs/project_plans/design-specs/bundled-fonts-offline-v1.md
+- docs/project_plans/design-specs/spec-creation-workflow-v1.md
+- docs/project_plans/design-specs/planning-primitives-extraction-v1.md
+- docs/project_plans/design-specs/planning-collab-threads-v1.md
+- docs/project_plans/design-specs/planning-lightmode-tokens-v1.md
+- docs/project_plans/design-specs/planning-graph-virtualization-v1.md
 findings_doc_ref: null
 ---
 

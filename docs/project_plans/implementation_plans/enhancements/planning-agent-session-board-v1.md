@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: Planning Agent Session Board V1'
 description: Implement a rich Kanban-style planning board for active agent sessions,
@@ -15,7 +15,7 @@ summary: Extend the planning control plane with normalized session-to-planning c
   lanes, and copy-only next-run prompt preparation.
 author: codex
 created: 2026-04-25
-updated: '2026-04-25'
+updated: '2026-04-26'
 priority: high
 risk_level: medium
 complexity: high
@@ -55,14 +55,14 @@ tags:
 prd: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
 prd_ref: docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
 related:
-  - docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
-  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/agent-session-board.png
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/feature-agent-lane.png
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/session-detail-panel.png
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/prompt-context-composer.png
-  - components/Planning/PlanningAgentRosterPanel.tsx
+- docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/agent-session-board.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/feature-agent-lane.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/session-detail-panel.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/prompt-context-composer.png
+- components/Planning/PlanningAgentRosterPanel.tsx
 - components/Planning/AgentDetailModal.tsx
 - components/Planning/PlanningLaunchSheet.tsx
 - components/Planning/primitives/PhaseOperationsPanel.tsx

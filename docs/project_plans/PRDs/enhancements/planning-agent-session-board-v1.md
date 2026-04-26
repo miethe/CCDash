@@ -3,14 +3,18 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: draft
+status: completed
 category: enhancements
-title: "PRD: Planning Agent Session Board V1"
-description: "Add a rich planning-native board that shows active agent sessions as interactive cards tied to features, phases, tasks, transcripts, and next-run prompt previews."
-summary: "Extend the planning control plane with an animated Kanban-style agent/session board, feature drill-down, lineage highlighting, activity detail, and prepared CLI prompt chains without requiring in-app execution."
+title: 'PRD: Planning Agent Session Board V1'
+description: Add a rich planning-native board that shows active agent sessions as
+  interactive cards tied to features, phases, tasks, transcripts, and next-run prompt
+  previews.
+summary: Extend the planning control plane with an animated Kanban-style agent/session
+  board, feature drill-down, lineage highlighting, activity detail, and prepared CLI
+  prompt chains without requiring in-app execution.
 author: codex
 created: 2026-04-25
-updated: 2026-04-25
+updated: '2026-04-26'
 priority: high
 risk_level: medium
 complexity: high
@@ -25,57 +29,59 @@ lineage_parent:
   kind: follow_up
 lineage_children: []
 lineage_type: enhancement
-problem_statement: CCDash shows planning state and a live agent roster, but it does not yet provide a planning-native board where operators can see which active agent sessions are working on which feature, phase, task, and prompt chain.
+problem_statement: CCDash shows planning state and a live agent roster, but it does
+  not yet provide a planning-native board where operators can see which active agent
+  sessions are working on which feature, phase, task, and prompt chain.
 owner: fullstack-engineering
 owners:
-  - fullstack-engineering
-  - platform-engineering
-  - ai-integrations
+- fullstack-engineering
+- platform-engineering
+- ai-integrations
 contributors:
-  - ai-agents
+- ai-agents
 audience:
-  - ai-agents
-  - developers
-  - platform-engineering
-  - engineering-leads
+- ai-agents
+- developers
+- platform-engineering
+- engineering-leads
 tags:
-  - prd
-  - planning
-  - sessions
-  - agents
-  - orchestration
-  - cli
-  - frontend
-  - interactive-board
-  - animation
+- prd
+- planning
+- sessions
+- agents
+- orchestration
+- cli
+- frontend
+- interactive-board
+- animation
 linked_features:
-  - ccdash-planning-control-plane-v1
-  - feature-execution-workbench-v1
+- ccdash-planning-control-plane-v1
+- feature-execution-workbench-v1
 related_documents:
-  - docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
-  - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
-  - docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/agent-session-board.png
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/feature-agent-lane.png
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/session-detail-panel.png
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/prompt-context-composer.png
+- docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
+- docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
+- docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/agent-session-board.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/feature-agent-lane.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/session-detail-panel.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-agent-session-board-v1/prompt-context-composer.png
 context_files:
-  - components/Planning/PlanningAgentRosterPanel.tsx
-  - components/Planning/AgentDetailModal.tsx
-  - components/Planning/PlanningLaunchSheet.tsx
-  - components/Planning/primitives/PhaseOperationsPanel.tsx
-  - components/Planning/PlanningNodeDetail.tsx
-  - components/FeatureExecutionWorkbench.tsx
-  - components/SessionInspector.tsx
-  - backend/application/services/agent_queries/planning.py
-  - backend/services/feature_execution.py
-  - backend/routers/planning.py
-  - backend/routers/execution.py
-  - services/planning.ts
-  - services/execution.ts
-  - types.ts
+- components/Planning/PlanningAgentRosterPanel.tsx
+- components/Planning/AgentDetailModal.tsx
+- components/Planning/PlanningLaunchSheet.tsx
+- components/Planning/primitives/PhaseOperationsPanel.tsx
+- components/Planning/PlanningNodeDetail.tsx
+- components/FeatureExecutionWorkbench.tsx
+- components/SessionInspector.tsx
+- backend/application/services/agent_queries/planning.py
+- backend/services/feature_execution.py
+- backend/routers/planning.py
+- backend/routers/execution.py
+- services/planning.ts
+- services/execution.ts
+- types.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/planning-agent-session-board-v1.md
 ---
 

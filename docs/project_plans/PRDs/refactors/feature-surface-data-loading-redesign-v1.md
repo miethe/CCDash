@@ -1,17 +1,28 @@
 ---
-title: "Feature Surface Data Loading Redesign - PRD"
-description: "Refactor feature board, feature modal, and linked-session data loading around bounded list contracts, aggregate rollups, lazy details, and storage-backed filtering."
-audience: [ai-agents, developers]
-tags: [prd, refactor, performance, features, sessions, api-contracts, caching]
+title: Feature Surface Data Loading Redesign - PRD
+description: Refactor feature board, feature modal, and linked-session data loading
+  around bounded list contracts, aggregate rollups, lazy details, and storage-backed
+  filtering.
+audience:
+- ai-agents
+- developers
+tags:
+- prd
+- refactor
+- performance
+- features
+- sessions
+- api-contracts
+- caching
 created: 2026-04-22
-updated: 2026-04-22
-category: "product-planning"
-status: draft
+updated: '2026-04-26'
+category: product-planning
+status: completed
 related:
-  - /docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1.md
-  - /docs/project_plans/implementation_plans/refactors/testing-page-performance-pass-v1.md
-  - /docs/guides/storage-profiles-guide.md
-  - /docs/guides/query-cache-tuning-guide.md
+- /docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1.md
+- /docs/project_plans/implementation_plans/refactors/testing-page-performance-pass-v1.md
+- /docs/guides/storage-profiles-guide.md
+- /docs/guides/query-cache-tuning-guide.md
 ---
 
 # Feature Brief & Metadata
