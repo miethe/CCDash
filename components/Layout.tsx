@@ -7,8 +7,9 @@ import { ProjectSelector } from './ProjectSelector';
 
 // Brand color for the Planning nav item active ring (matches planning-tokens.css --brand)
 const PLANNING_BRAND = 'oklch(75% 0.14 195)';
-const SIDEBAR_LOGO_SRC = '/branding/ccdash-logo-primary.png';
-const SIDEBAR_ICON_SRC = '/branding/ccdash-app-icon.png';
+const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`;
+const SIDEBAR_LOGO_SRC = assetUrl('/branding/ccdash-logo-primary.png');
+const SIDEBAR_ICON_SRC = assetUrl('/branding/ccdash-app-icon.png');
 
 const NavItem = ({
   to,
@@ -104,7 +105,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         </button>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden">
-          <NavItem to="/" icon={LayoutDashboard} label="Overview" active={location.pathname === '/'} isCollapsed={isCollapsed} />
+          <NavItem to="/dashboard" icon={LayoutDashboard} label="Overview" active={location.pathname === '/dashboard'} isCollapsed={isCollapsed} />
           <NavItem to="/planning" icon={GitBranch} label="Planning" active={location.pathname.startsWith('/planning')} isCollapsed={isCollapsed} planningHighlight />
           <NavItem to="/board" icon={ListTodo} label="Project Board" active={location.pathname === '/board'} isCollapsed={isCollapsed} />
           <NavItem to="/execution" icon={Command} label="Execution" active={location.pathname === '/execution'} isCollapsed={isCollapsed} />

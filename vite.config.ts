@@ -64,10 +64,12 @@ export default defineConfig(({ mode }) => {
   const apiBaseUrl = normalizeApiBaseUrl(env.VITE_CCDASH_API_BASE_URL);
   const proxyTarget = resolveProxyTarget(env, backendPort, apiBaseUrl);
   const proxy = createApiProxy(proxyTarget);
+  const base = env.VITE_BASE_PATH || '/';
 
   validateHostedApiBaseUrl(apiBaseUrl);
 
   return {
+    base,
     server: {
       port: Number.parseInt(env.VITE_PORT || DEFAULT_FRONTEND_PORT, 10),
       host: '0.0.0.0',

@@ -18,39 +18,49 @@ import { TestingPage } from './components/TestVisualizer/TestingPage';
 import { WorkflowRegistryPage } from './components/Workflows/WorkflowRegistryPage';
 import { PlanningHomePage, PlanningNodeDetail, PlanningRouteLayout } from './components/Planning';
 import { ArtifactDrillDownPage } from './components/Planning/ArtifactDrillDownPage';
+import { LandingPage } from './components/LandingPage';
 
 const App: React.FC = () => {
   return (
     <ThemeProvider>
-      <DataProvider>
-        <ModelColorsProvider>
-          <HashRouter>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/board" element={<ProjectBoard />} />
-                <Route path="/plans" element={<PlanCatalog />} />
-                <Route path="/sessions" element={<SessionInspector />} />
-                <Route path="/execution" element={<FeatureExecutionWorkbench />} />
-                <Route element={<PlanningRouteLayout />}>
-                  <Route path="/planning" element={<PlanningHomePage />} />
-                  <Route path="/planning/feature/:featureId" element={<PlanningNodeDetail />} />
-                  <Route path="/planning/artifacts/:type" element={<ArtifactDrillDownPage />} />
-                </Route>
-                <Route path="/tests" element={<TestingPage />} />
-                <Route path="/analytics" element={<AnalyticsDashboard />} />
-                <Route path="/workflows" element={<WorkflowRegistryPage />} />
-                <Route path="/workflows/:workflowId" element={<WorkflowRegistryPage />} />
-                <Route path="/session-mappings" element={<SessionMappings />} />
-                <Route path="/ops" element={<OpsPanel />} />
-                <Route path="/codebase" element={<CodebaseExplorer />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </Layout>
-          </HashRouter>
-        </ModelColorsProvider>
-      </DataProvider>
+      <HashRouter>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/app" element={<Navigate to="/dashboard" replace />} />
+          <Route
+            path="/*"
+            element={
+              <DataProvider>
+                <ModelColorsProvider>
+                  <Layout>
+                    <Routes>
+                      <Route path="/dashboard" element={<Dashboard />} />
+                      <Route path="/board" element={<ProjectBoard />} />
+                      <Route path="/plans" element={<PlanCatalog />} />
+                      <Route path="/sessions" element={<SessionInspector />} />
+                      <Route path="/execution" element={<FeatureExecutionWorkbench />} />
+                      <Route element={<PlanningRouteLayout />}>
+                        <Route path="/planning" element={<PlanningHomePage />} />
+                        <Route path="/planning/feature/:featureId" element={<PlanningNodeDetail />} />
+                        <Route path="/planning/artifacts/:type" element={<ArtifactDrillDownPage />} />
+                      </Route>
+                      <Route path="/tests" element={<TestingPage />} />
+                      <Route path="/analytics" element={<AnalyticsDashboard />} />
+                      <Route path="/workflows" element={<WorkflowRegistryPage />} />
+                      <Route path="/workflows/:workflowId" element={<WorkflowRegistryPage />} />
+                      <Route path="/session-mappings" element={<SessionMappings />} />
+                      <Route path="/ops" element={<OpsPanel />} />
+                      <Route path="/codebase" element={<CodebaseExplorer />} />
+                      <Route path="/settings" element={<Settings />} />
+                      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                    </Routes>
+                  </Layout>
+                </ModelColorsProvider>
+              </DataProvider>
+            }
+          />
+        </Routes>
+      </HashRouter>
     </ThemeProvider>
   );
 };
