@@ -111,6 +111,7 @@ Group features by domain or subsystem. Maturity labels: `implemented`, `partial`
 | Document-first discovery | Cross-references PRDs, plans, progress files automatically | Developer | `components/PlanCatalog`, `backend/parsers/documents.py`, `backend/document_linking.py` | — | implemented | H | `[evidence]` |
 | Plan/doc modal with tabs | Summary, Delivery, Relationships, Content, Timeline tabs | Developer | `components/PlanCatalog` | `backend/routers/api.py` documents endpoints | implemented | H | `[evidence]` |
 | Task tracking with deferred caveats | Phase+task accordion with deferred-complete detection | Developer | `components/ProjectBoard`, `backend/parsers/progress.py` | — | implemented | M | `[inference]` |
+| Planning Agent Session Board | Kanban-style agent/session board with feature-scoped lanes, correlation evidence, next-run prompt preview, and context composition | Developer | `components/Planning/PlanningAgentSessionBoard.tsx`, `backend/application/services/agent_queries/planning_sessions.py`, `backend/routers/agent.py` | `CCDASH_PLANNING_CONTROL_PLANE_ENABLED`, `CCDASH_NEXT_RUN_PREVIEW_ENABLED` (default true) | implemented | H | Phases 1–5 complete |
 
 ### Domain: Execution Workbench
 

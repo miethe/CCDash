@@ -3,6 +3,7 @@ import type { ReactNode, RefObject } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
+  Bot,
   AlertTriangle,
   ArrowLeft,
   BookOpen,
@@ -54,6 +55,7 @@ import {
   ExecBtn,
   StatusPill,
 } from './primitives/PhaseZeroPrimitives';
+import { PlanningFeatureAgentLane } from './PlanningFeatureAgentLane';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -74,7 +76,7 @@ function sortNodesByType(nodes: PlanningNode[]): PlanningNode[] {
 }
 
 type LineageKind = 'spec' | 'spike' | 'prd' | 'plan' | 'phase' | 'ctx' | 'report';
-type DetailSectionKey = 'lineage' | 'spec' | 'phases' | 'tasks' | 'blockers' | 'artifacts';
+type DetailSectionKey = 'lineage' | 'spec' | 'phases' | 'tasks' | 'sessions' | 'blockers' | 'artifacts';
 type ExecutionViewMode = 'batches' | 'dag';
 
 interface LineageTileModel {
@@ -1568,6 +1570,7 @@ export function PlanningNodeDetail() {
     spec: true,
     phases: true,
     tasks: true,
+    sessions: true,
     blockers: true,
     artifacts: true,
   });
@@ -1577,6 +1580,7 @@ export function PlanningNodeDetail() {
     spec: useRef<HTMLElement>(null),
     phases: useRef<HTMLElement>(null),
     tasks: useRef<HTMLElement>(null),
+    sessions: useRef<HTMLElement>(null),
     blockers: useRef<HTMLElement>(null),
     artifacts: useRef<HTMLElement>(null),
   };
@@ -1852,6 +1856,20 @@ export function PlanningNodeDetail() {
             />
           </CollapsibleSection>
         )}
+
+        <CollapsibleSection
+          title="Agent Sessions"
+          eyebrow="Session forensics"
+          icon={<Bot size={15} />}
+          color="var(--brand)"
+          open={openSections.sessions}
+          onToggle={() => setOpenSections(current => ({ ...current, sessions: !current.sessions }))}
+          sectionRef={sectionRefs.sessions}
+        >
+          {featureId && (
+            <PlanningFeatureAgentLane featureId={featureId} />
+          )}
+        </CollapsibleSection>
 
         <CollapsibleSection
           title="Blockers"

@@ -17,7 +17,7 @@ import logging
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
@@ -45,12 +45,14 @@ from .feature_forensics import FeatureForensicsQueryService
 from .models import (
     FeaturePlanningContextDTO,
     FeatureSummaryItem,
+    NextRunContextRef,
     OpenQuestionResolutionDTO,
     PhaseContextItem,
     PhaseOperationsDTO,
     PhaseTaskItem,
     PlanningArtifactRef,
     PlanningCtxPerPhase,
+    PlanningNextRunPreviewDTO,
     PlanningNodeCountsByType,
     PlanningOpenQuestionItem,
     PlanningSpikeItem,
@@ -59,6 +61,7 @@ from .models import (
     PlanningTokenTelemetryEntry,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
+    PromptContextSelection,
     TokenUsageByModel,
 )
 
@@ -1754,4 +1757,377 @@ class PlanningQueryService:
             progress_evidence=progress_evidence,
             data_freshness=data_freshness,
             source_refs=collect_source_refs(feature_id, [str(phase_number)]),
+        )
+
+    # ── Query 5: Next-run preview (PASB-401) ─────────────────────────────────
+
+    async def get_next_run_preview(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        feature_id: str,
+        phase_number: Optional[int] = None,
+        context_selection: Optional[PromptContextSelection] = None,
+        project_id_override: Optional[str] = None,
+    ) -> PlanningNextRunPreviewDTO:
+        """Generate a next-run CLI command and prompt preview for the given feature/phase.
+
+        Returns a ``PlanningNextRunPreviewDTO`` containing a copyable CLI command
+        string and a prompt skeleton with ``{{placeholder}}`` tokens for context
+        that will be injected by the caller.
+
+        Composition logic (PASB-402):
+        1. Resolve feature and its planning context (phases, tasks, linked docs).
+        2. Derive a deterministic CLI command string using real CCDash slash commands.
+        3. Build a structured prompt skeleton with feature/phase context and
+           {{placeholder}} tokens for user-supplied sections.
+        4. Collect NextRunContextRef entries for all selected sessions, phase refs,
+           and artifact refs (including the feature plan doc if present).
+        5. Generate warnings for missing or stale context.
+        """
+        scope = resolve_project_scope(context, ports, project_id_override)
+        if scope is None:
+            return PlanningNextRunPreviewDTO(
+                status="error",
+                feature_id=feature_id,
+                warnings=["Project scope could not be resolved."],
+                source_refs=[feature_id],
+            )
+
+        project = scope.project
+        selection = context_selection or PromptContextSelection()
+        warnings: list[str] = []
+        partial = False
+
+        # ── 1. Load feature row and planning projection ───────────────────────
+        feature_row = await ports.storage.features().get_by_id(feature_id)
+        if feature_row is None:
+            return PlanningNextRunPreviewDTO(
+                status="error",
+                feature_id=feature_id,
+                warnings=[f"Feature '{feature_id}' not found."],
+                source_refs=[feature_id],
+            )
+
+        feature = feature_from_row(feature_row)
+
+        try:
+            _rows, _features, feature_index = await _load_all_features(ports, project.id)
+        except Exception:
+            feature_index = {}
+            partial = True
+
+        doc_rows: list[dict[str, Any]] = []
+        try:
+            doc_rows = await _load_all_doc_rows(ports, project.id)
+        except Exception:
+            partial = True
+
+        current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature_id)
+        dep_state = feature_dependency_state(feature, doc_rows, feature_index)
+        apply_planning_projection(feature, current_doc_rows, dep_state)
+
+        feature_name: Optional[str] = feature.name or None
+        feature_slug: str = str(feature_row.get("slug") or feature_row.get("feature_slug") or feature_id)
+        feature_status: str = str(feature.status or "backlog")
+        fp = feature.planningStatus
+        effective_feature_status: str = _effective_status(fp) or feature_status
+
+        # Load linked docs for artifact bucket classification.
+        linked_docs: list[LinkedDocument] = []
+        try:
+            linked_docs = await load_execution_documents(
+                ports.storage.db, project.id, feature_id
+            )
+        except Exception:
+            linked_docs = [
+                LinkedDocument(
+                    id=str(row.get("id") or ""),
+                    title=str(row.get("title") or ""),
+                    filePath=str(row.get("file_path") or ""),
+                    docType=str(row.get("doc_type") or ""),
+                )
+                for row in current_doc_rows
+            ]
+            partial = True
+
+        _specs, _prds, plans, _ctxs, _reports, _spikes = _build_artifact_buckets(linked_docs)
+
+        # ── 2. Locate target phase ─────────────────────────────────────────────
+        target_phase: Optional[FeaturePhase] = None
+        if phase_number is not None:
+            for phase in feature.phases:
+                token = str(phase.phase or "").strip()
+                try:
+                    if int(token) == phase_number:
+                        target_phase = phase
+                        break
+                except (ValueError, TypeError):
+                    pass
+            if target_phase is None:
+                warnings.append(
+                    f"Phase {phase_number} not found in feature '{feature_id}'. "
+                    "Preview is scoped to the feature level."
+                )
+        elif feature.phases:
+            # Auto-select: first non-terminal phase.
+            _terminal = {"done", "completed", "deferred"}
+            for phase in feature.phases:
+                ps = phase.planningStatus
+                eff = _effective_status(ps) or str(phase.status or "backlog")
+                if eff not in _terminal:
+                    target_phase = phase
+                    try:
+                        phase_number = int(str(phase.phase or "").strip())
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
+        # ── 3. Blocked predecessor check ──────────────────────────────────────
+        if target_phase is not None:
+            _terminal_statuses = {"done", "completed", "deferred"}
+            for phase in feature.phases:
+                ps = phase.planningStatus
+                eff = _effective_status(ps) or str(phase.status or "backlog")
+                token = str(phase.phase or "").strip()
+                try:
+                    pnum = int(token)
+                except (ValueError, TypeError):
+                    continue
+                if phase_number is not None and pnum >= phase_number:
+                    break
+                if eff not in _terminal_statuses and eff not in {"in-progress", "review"}:
+                    phase_title = str(phase.title or f"Phase {pnum}")
+                    warnings.append(
+                        f"Predecessor phase {pnum} ('{phase_title}') is '{eff}' — "
+                        "verify it is complete before running this phase."
+                    )
+
+        # ── 4. Build context refs ──────────────────────────────────────────────
+        context_refs: list[NextRunContextRef] = []
+        now_utc = datetime.now(timezone.utc)
+        stale_threshold_hours = 24
+
+        # Session refs from explicit selection.
+        for sid in sorted(set(selection.session_ids)):
+            try:
+                session_row = await ports.storage.sessions().get_by_id(sid)
+            except Exception:
+                session_row = None
+            if session_row is None:
+                warnings.append(f"Selected session '{sid}' not found.")
+                continue
+            session_started = None
+            try:
+                raw_ts = session_row.get("started_at") or session_row.get("created_at")
+                if raw_ts:
+                    from backend.application.services.agent_queries._filters import _coerce_datetime
+                    session_started = _coerce_datetime(raw_ts)
+            except Exception:
+                pass
+            if session_started is not None:
+                age_hours = (now_utc - session_started).total_seconds() / 3600
+                if age_hours > stale_threshold_hours:
+                    warnings.append(
+                        f"Session '{sid}' is {int(age_hours)}h old — context may be stale."
+                    )
+            session_label = str(
+                session_row.get("title") or session_row.get("task_id") or sid
+            )
+            context_refs.append(
+                NextRunContextRef(ref_type="session", ref_id=sid, ref_label=session_label)
+            )
+
+        if not selection.session_ids:
+            warnings.append(
+                "No sessions selected — adding recent session context improves prompt quality."
+            )
+
+        # Phase refs from selection.
+        for phase_ref in sorted(set(selection.phase_refs)):
+            context_refs.append(
+                NextRunContextRef(
+                    ref_type="phase",
+                    ref_id=phase_ref,
+                    ref_label=f"Phase {phase_ref}",
+                )
+            )
+
+        # Task refs from selection.
+        for task_ref in sorted(set(selection.task_refs)):
+            context_refs.append(
+                NextRunContextRef(
+                    ref_type="task",
+                    ref_id=task_ref,
+                    ref_label=f"Task {task_ref}",
+                )
+            )
+
+        # Artifact refs from selection.
+        for art_ref in sorted(set(selection.artifact_refs)):
+            context_refs.append(
+                NextRunContextRef(ref_type="artifact", ref_id=art_ref, ref_label=art_ref)
+            )
+
+        # Auto-include the feature plan doc if found and not already in selection.
+        plan_path: Optional[str] = None
+        for plan in plans:
+            candidate = str(plan.file_path or "").strip()
+            if candidate:
+                plan_path = candidate
+                plan_art_id = str(plan.artifact_id or candidate)
+                if plan_art_id not in selection.artifact_refs:
+                    context_refs.append(
+                        NextRunContextRef(
+                            ref_type="artifact",
+                            ref_id=plan_art_id,
+                            ref_label=str(plan.title or plan_art_id),
+                            ref_path=candidate,
+                        )
+                    )
+                break  # Use first plan doc found.
+
+        # ── 5. Derive deterministic CLI command ────────────────────────────────
+        if target_phase is not None and phase_number is not None:
+            plan_arg = f" {plan_path}" if plan_path else f" {feature_slug}"
+            command = f"/dev:execute-phase {phase_number}{plan_arg}"
+        elif effective_feature_status in {"backlog", "planning", "design", "approved"}:
+            feature_desc = feature_name or feature_id
+            command = f"/dev:quick-feature {feature_desc}"
+        else:
+            plan_arg = f" {plan_path}" if plan_path else f" {feature_slug}"
+            phase_arg = f" {phase_number}" if phase_number is not None else ""
+            command = f"/dev:execute-phase{phase_arg}{plan_arg}"
+
+        # ── 6. Build prompt skeleton ───────────────────────────────────────────
+        lines: list[str] = []
+
+        # Header block.
+        lines.append(f"# Agent Session: {feature_name or feature_id}")
+        lines.append("")
+        lines.append("## Feature Context")
+        lines.append(f"- **Feature ID**: `{feature_id}`")
+        if feature_name:
+            lines.append(f"- **Name**: {feature_name}")
+        lines.append(f"- **Status**: {effective_feature_status}")
+        if feature_slug and feature_slug != feature_id:
+            lines.append(f"- **Slug**: `{feature_slug}`")
+        lines.append("")
+
+        # Phase block.
+        if target_phase is not None:
+            ps = target_phase.planningStatus
+            phase_eff = _effective_status(ps) or str(target_phase.status or "backlog")
+            phase_title = str(target_phase.title or f"Phase {phase_number}")
+            total = _safe_int(target_phase.totalTasks)
+            completed = _safe_int(target_phase.completedTasks)
+            remaining = max(0, total - completed)
+
+            lines.append(f"## Phase {phase_number}: {phase_title}")
+            lines.append(f"- **Status**: {phase_eff}")
+            lines.append(f"- **Progress**: {completed}/{total} tasks complete, {remaining} remaining")
+            lines.append("")
+
+            # Tasks.
+            completed_tasks: list[str] = []
+            pending_tasks: list[str] = []
+            for task in (target_phase.tasks or []):
+                task_title = str(getattr(task, "title", "") or getattr(task, "id", "") or "")
+                task_status = str(getattr(task, "status", "") or "").lower()
+                if task_status in {"completed", "done", "deferred"}:
+                    completed_tasks.append(task_title)
+                else:
+                    pending_tasks.append(task_title)
+
+            if completed_tasks:
+                lines.append("### Completed Tasks")
+                for t in sorted(completed_tasks):
+                    lines.append(f"- [x] {t}")
+                lines.append("")
+
+            if pending_tasks:
+                lines.append("### Remaining Tasks")
+                for t in sorted(pending_tasks):
+                    lines.append(f"- [ ] {t}")
+                lines.append("")
+        else:
+            lines.append("## Phases Overview")
+            _terminal_phases = {"done", "completed", "deferred"}
+            for phase in feature.phases:
+                ps = phase.planningStatus
+                eff = _effective_status(ps) or str(phase.status or "backlog")
+                token = str(phase.phase or "?")
+                title = str(phase.title or f"Phase {token}")
+                mark = "x" if eff in _terminal_phases else " "
+                lines.append(f"- [{mark}] Phase {token}: {title} ({eff})")
+            lines.append("")
+
+        # Selected context block.
+        lines.append("## Selected Context")
+        if selection.session_ids:
+            lines.append("### Sessions")
+            for ref in context_refs:
+                if ref.ref_type == "session":
+                    lines.append(f"- Session `{ref.ref_id}`: {ref.ref_label}")
+            lines.append("")
+        else:
+            lines.append("_No sessions selected. Add session IDs to `context_selection.session_ids` for richer context._")
+            lines.append("")
+
+        if plan_path:
+            lines.append("### Plan Document")
+            lines.append(f"- `{plan_path}`")
+            lines.append("")
+
+        if selection.artifact_refs:
+            lines.append("### Additional Artifacts")
+            for art_ref in sorted(set(selection.artifact_refs)):
+                lines.append(f"- `{art_ref}`")
+            lines.append("")
+
+        # User-supplied objectives placeholder.
+        lines.append("## Objectives for This Run")
+        lines.append("{{objectives}}")
+        lines.append("")
+
+        # Additional context placeholder.
+        lines.append("## Additional Context")
+        lines.append("{{additional_context}}")
+        lines.append("")
+
+        # Command hint.
+        lines.append("## Suggested Command")
+        lines.append(f"```")
+        lines.append(command)
+        lines.append(f"```")
+
+        if warnings:
+            lines.append("")
+            lines.append("## Warnings")
+            for w in warnings:
+                lines.append(f"- {w}")
+
+        prompt_skeleton = "\n".join(lines)
+
+        # ── 7. Data freshness ──────────────────────────────────────────────────
+        data_freshness = derive_data_freshness(
+            (feature_row or {}).get("updated_at") or (feature_row or {}).get("updatedAt"),
+            *[row.get("updated_at") or row.get("updatedAt") for row in current_doc_rows],
+        )
+
+        return PlanningNextRunPreviewDTO(
+            status="partial" if partial else "ok",
+            feature_id=feature_id,
+            feature_name=feature_name,
+            phase_number=phase_number,
+            command=command,
+            prompt_skeleton=prompt_skeleton,
+            context_refs=context_refs,
+            warnings=warnings,
+            data_freshness=data_freshness,
+            source_refs=collect_source_refs(
+                feature_id,
+                [str(phase_number)] if phase_number is not None else [],
+            ),
         )

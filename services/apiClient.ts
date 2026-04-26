@@ -42,6 +42,8 @@ export interface RuntimeHealthResponse {
   storageCanonicalStore?: string;
   storageSchema?: string;
   canonicalSessionStore?: string;
+  /** Feature-surface v2 data path rollout toggle. Defaults to true when absent. */
+  featureSurfaceV2Enabled?: boolean;
 }
 
 export interface RuntimeProbeReasonResponse {
@@ -219,24 +221,27 @@ export function createApiClient(): ApiClient {
       });
     },
 
+    // Encode featureId to handle RFC 3986 § 2.2 reserved characters (e.g. #, ?, &, +, space) in path segments.
     async updateFeatureStatus(featureId, status) {
-      return requestJson<Feature>(`/features/${featureId}/status`, {
+      return requestJson<Feature>(`/features/${encodeURIComponent(featureId)}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
     },
 
+    // Encode featureId and phaseId to handle RFC 3986 § 2.2 reserved characters in path segments.
     async updatePhaseStatus(featureId, phaseId, status) {
-      return requestJson<Feature>(`/features/${featureId}/phases/${phaseId}/status`, {
+      return requestJson<Feature>(`/features/${encodeURIComponent(featureId)}/phases/${encodeURIComponent(phaseId)}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
     },
 
+    // Encode featureId, phaseId, and taskId to handle RFC 3986 § 2.2 reserved characters in path segments.
     async updateTaskStatus(featureId, phaseId, taskId, status) {
-      return requestJson<Feature>(`/features/${featureId}/phases/${phaseId}/tasks/${taskId}/status`, {
+      return requestJson<Feature>(`/features/${encodeURIComponent(featureId)}/phases/${encodeURIComponent(phaseId)}/tasks/${encodeURIComponent(taskId)}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),

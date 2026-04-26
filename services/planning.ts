@@ -22,9 +22,23 @@ import type {
   PlanningStatusCounts,
   PlanningCtxPerPhase,
   PlanningTokenTelemetry,
+  PlanningAgentSessionBoard,
+  PlanningAgentSessionCard,
+  PlanningBoardGroup,
+  PlanningBoardGroupingMode,
+  SessionCorrelation,
+  SessionCorrelationEvidence,
+  BoardSessionRelationship,
+  SessionActivityMarker,
+  SessionTokenSummary,
+  NextRunContextRef,
+  PlanningNextRunPreview,
+  PromptContextSelection,
 } from '../types';
 import type { AgentQueryEnvelope } from '../types';
 import type { PlanningStatusBucket } from './planningRoutes';
+import { subscribeToFeatureWrites } from './featureCacheBus';
+import { emitCacheTelemetry } from './telemetry';
 
 const API_BASE = '/api/agent/planning';
 const DEFAULT_PROJECT_CACHE_KEY = '__default__';
@@ -55,10 +69,12 @@ export const PLANNING_BROWSER_CACHE_LIMITS = {
   freshnessKeysPerProject: 3,
   payloadTypesPerFreshness: 3,
   featureContexts: 24,
+  sessionBoards: 16,
 } as const;
 
 const PLANNING_BROWSER_CACHE = new Map<string, PlanningBrowserProjectCache>();
 const PLANNING_FEATURE_CONTEXT_CACHE = new Map<string, PlanningBrowserCacheEntry<FeaturePlanningContext>>();
+const PLANNING_SESSION_BOARD_CACHE = new Map<string, PlanningBrowserCacheEntry<PlanningAgentSessionBoard>>();
 const PENDING_CACHE_FRESHNESS = '__pending__';
 
 export interface PlanningBrowserCacheSnapshot {
@@ -109,6 +125,14 @@ function featureContextCacheKey(featureId: string, projectId?: string): string {
   return JSON.stringify([projectCacheKey(projectId), featureId]);
 }
 
+function sessionBoardCacheKey(
+  featureId: string | null,
+  projectId?: string,
+  grouping?: PlanningBoardGroupingMode,
+): string {
+  return JSON.stringify([projectCacheKey(projectId), featureId ?? '__project__', grouping ?? '__default__']);
+}
+
 function touchMapKey<K, V>(map: Map<K, V>, key: K): void {
   const value = map.get(key);
   if (value === undefined) return;
@@ -153,15 +177,31 @@ function getFreshnessBucket(projectCache: PlanningBrowserProjectCache, freshness
   return created;
 }
 
+function _planningKeyBucket(
+  payloadType: PlanningBrowserCachePayloadType,
+): 'summary' | 'facets' | 'list' | 'other' {
+  if (payloadType === 'summary') return 'summary';
+  if (payloadType === 'facets') return 'facets';
+  if (payloadType === 'list') return 'list';
+  return 'other';
+}
+
 function findLatestCacheEntry<T>(
   projectCache: PlanningBrowserProjectCache,
   payloadType: PlanningBrowserCachePayloadType,
 ): PlanningBrowserCacheEntry<T> | null {
   const latestFreshness = projectCache.latestFreshness;
-  if (!latestFreshness) return null;
+  if (!latestFreshness) {
+    emitCacheTelemetry({ cache: 'planning', event: 'miss', keyBucket: _planningKeyBucket(payloadType) });
+    return null;
+  }
   const bucket = projectCache.freshnessBuckets.get(latestFreshness);
   const entry = bucket?.payloads.get(payloadType);
-  if (!entry) return null;
+  if (!entry) {
+    emitCacheTelemetry({ cache: 'planning', event: 'miss', keyBucket: _planningKeyBucket(payloadType) });
+    return null;
+  }
+  emitCacheTelemetry({ cache: 'planning', event: 'hit', keyBucket: _planningKeyBucket(payloadType) });
   touchMapKey(projectCache.freshnessBuckets, latestFreshness);
   touchMapKey(bucket.payloads, payloadType);
   return entry as PlanningBrowserCacheEntry<T>;
@@ -183,6 +223,7 @@ function storeCacheEntry<T>(
   touchMapKey(projectCache.freshnessBuckets, freshness);
   touchMapKey(PLANNING_BROWSER_CACHE, projectKey);
   trimMapToLimit(PLANNING_BROWSER_CACHE, PLANNING_BROWSER_CACHE_LIMITS.projects);
+  emitCacheTelemetry({ cache: 'planning', event: 'set', keyBucket: _planningKeyBucket(payloadType) });
   return entry;
 }
 
@@ -252,11 +293,29 @@ export function clearPlanningBrowserCache(projectId?: string): void {
       const [cachedProjectKey] = JSON.parse(cacheKey) as [string, string];
       if (cachedProjectKey === key) PLANNING_FEATURE_CONTEXT_CACHE.delete(cacheKey);
     }
+    for (const cacheKey of Array.from(PLANNING_SESSION_BOARD_CACHE.keys())) {
+      const [cachedProjectKey] = JSON.parse(cacheKey) as [string, string, string];
+      if (cachedProjectKey === key) PLANNING_SESSION_BOARD_CACHE.delete(cacheKey);
+    }
     return;
   }
   PLANNING_BROWSER_CACHE.clear();
   PLANNING_FEATURE_CONTEXT_CACHE.clear();
+  PLANNING_SESSION_BOARD_CACHE.clear();
 }
+
+// ── Cross-cache invalidation bus subscription (P4-011) ───────────────────────
+// Subscribes the planning browser cache to the shared feature-write event bus.
+// Feature status changes, phase progressions, renames, and task updates
+// published via publishFeatureWriteEvent() will automatically evict the
+// planning summary/facets/list entries for the affected project.
+// See: docs/project_plans/design-specs/feature-surface-planning-cache-coordination.md
+
+subscribeToFeatureWrites((event) => {
+  // Delegate to clearPlanningBrowserCache which handles both the project-level
+  // Map and the PLANNING_FEATURE_CONTEXT_CACHE in one call.
+  clearPlanningBrowserCache(event.projectId);
+});
 
 export function getCachedProjectPlanningSummary(projectId?: string): ProjectPlanningSummary | null {
   const cache = PLANNING_BROWSER_CACHE.get(projectCacheKey(projectId));
@@ -571,6 +630,90 @@ interface WirePhaseOperations extends WireEnvelope {
   progress_evidence: string[];
 }
 
+// ── Session-board wire shapes ─────────────────────────────────────────────────
+
+interface WireSessionCorrelationEvidence {
+  source_type: string;
+  source_id?: string;
+  source_label: string;
+  confidence: 'high' | 'medium' | 'low' | 'unknown';
+  detail?: string;
+}
+
+interface WireSessionCorrelation {
+  feature_id?: string;
+  feature_name?: string;
+  phase_number?: number;
+  phase_title?: string;
+  batch_id?: string;
+  task_id?: string;
+  task_title?: string;
+  confidence: 'high' | 'medium' | 'low' | 'unknown';
+  evidence: WireSessionCorrelationEvidence[];
+}
+
+interface WireBoardSessionRelationship {
+  related_session_id: string;
+  relation_type: 'parent' | 'root' | 'sibling' | 'child';
+  agent_name?: string;
+  state?: string;
+}
+
+interface WireSessionActivityMarker {
+  marker_type: 'tool_call' | 'file_edit' | 'command' | 'error' | 'completion';
+  label: string;
+  timestamp?: string;
+  detail?: string;
+}
+
+interface WireSessionTokenSummary {
+  tokens_in: number;
+  tokens_out: number;
+  total_tokens: number;
+  context_window_pct?: number;
+  model?: string;
+}
+
+interface WirePlanningAgentSessionCard {
+  session_id: string;
+  agent_name?: string;
+  agent_type?: string;
+  state: 'running' | 'thinking' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+  model?: string;
+  correlation?: WireSessionCorrelation;
+  transcript_href?: string;
+  planning_href?: string;
+  phase_href?: string;
+  parent_session_id?: string;
+  root_session_id?: string;
+  started_at?: string;
+  last_activity_at?: string;
+  duration_seconds?: number;
+  token_summary?: WireSessionTokenSummary;
+  relationships: WireBoardSessionRelationship[];
+  activity_markers: WireSessionActivityMarker[];
+}
+
+interface WirePlanningBoardGroup {
+  group_key: string;
+  group_label: string;
+  group_type: 'state' | 'feature' | 'phase' | 'agent' | 'model';
+  cards: WirePlanningAgentSessionCard[];
+  card_count: number;
+}
+
+interface WirePlanningAgentSessionBoard {
+  project_id: string;
+  feature_id?: string;
+  grouping: PlanningBoardGroupingMode;
+  groups: WirePlanningBoardGroup[];
+  total_card_count: number;
+  active_count: number;
+  completed_count: number;
+  data_freshness?: string;
+  generated_at?: string;
+}
+
 // ── Adapters (snake_case → camelCase) ─────────────────────────────────────────
 
 function adaptEnvelope(wire: WireEnvelope): AgentQueryEnvelope {
@@ -772,6 +915,108 @@ function adaptTokenTelemetry(wire: WireTokenTelemetry | null | undefined): Plann
   };
 }
 
+// ── Session-board adapters ────────────────────────────────────────────────────
+
+function adaptSessionCorrelationEvidence(wire: WireSessionCorrelationEvidence): SessionCorrelationEvidence {
+  return {
+    sourceType: wire.source_type ?? '',
+    sourceId: wire.source_id,
+    sourceLabel: wire.source_label ?? '',
+    confidence: wire.confidence ?? 'unknown',
+    detail: wire.detail,
+  };
+}
+
+function adaptSessionCorrelation(wire: WireSessionCorrelation | undefined): SessionCorrelation | undefined {
+  if (!wire) return undefined;
+  return {
+    featureId: wire.feature_id,
+    featureName: wire.feature_name,
+    phaseNumber: wire.phase_number,
+    phaseTitle: wire.phase_title,
+    batchId: wire.batch_id,
+    taskId: wire.task_id,
+    taskTitle: wire.task_title,
+    confidence: wire.confidence ?? 'unknown',
+    evidence: (wire.evidence ?? []).map(adaptSessionCorrelationEvidence),
+  };
+}
+
+function adaptBoardSessionRelationship(wire: WireBoardSessionRelationship): BoardSessionRelationship {
+  return {
+    relatedSessionId: wire.related_session_id ?? '',
+    relationType: wire.relation_type ?? 'sibling',
+    agentName: wire.agent_name,
+    state: wire.state,
+  };
+}
+
+function adaptSessionActivityMarker(wire: WireSessionActivityMarker): SessionActivityMarker {
+  return {
+    markerType: wire.marker_type ?? 'tool_call',
+    label: wire.label ?? '',
+    timestamp: wire.timestamp,
+    detail: wire.detail,
+  };
+}
+
+function adaptSessionTokenSummary(wire: WireSessionTokenSummary | undefined): SessionTokenSummary | undefined {
+  if (!wire) return undefined;
+  return {
+    tokensIn: wire.tokens_in ?? 0,
+    tokensOut: wire.tokens_out ?? 0,
+    totalTokens: wire.total_tokens ?? 0,
+    contextWindowPct: wire.context_window_pct,
+    model: wire.model,
+  };
+}
+
+function adaptPlanningAgentSessionCard(wire: WirePlanningAgentSessionCard): PlanningAgentSessionCard {
+  return {
+    sessionId: wire.session_id ?? '',
+    agentName: wire.agent_name,
+    agentType: wire.agent_type,
+    state: wire.state ?? 'unknown',
+    model: wire.model,
+    correlation: adaptSessionCorrelation(wire.correlation),
+    transcriptHref: wire.transcript_href,
+    planningHref: wire.planning_href,
+    phaseHref: wire.phase_href,
+    parentSessionId: wire.parent_session_id,
+    rootSessionId: wire.root_session_id,
+    startedAt: wire.started_at,
+    lastActivityAt: wire.last_activity_at,
+    durationSeconds: wire.duration_seconds,
+    tokenSummary: adaptSessionTokenSummary(wire.token_summary),
+    relationships: (wire.relationships ?? []).map(adaptBoardSessionRelationship),
+    activityMarkers: (wire.activity_markers ?? []).map(adaptSessionActivityMarker),
+  };
+}
+
+function adaptPlanningBoardGroup(wire: WirePlanningBoardGroup): PlanningBoardGroup {
+  return {
+    groupKey: wire.group_key ?? '',
+    groupLabel: wire.group_label ?? '',
+    groupType: wire.group_type ?? 'state',
+    cards: (wire.cards ?? []).map(adaptPlanningAgentSessionCard),
+    cardCount: wire.card_count ?? 0,
+  };
+}
+
+function adaptPlanningAgentSessionBoard(wire: WirePlanningAgentSessionBoard): PlanningAgentSessionBoard {
+  return {
+    projectId: wire.project_id ?? '',
+    featureId: wire.feature_id,
+    grouping: wire.grouping ?? 'state',
+    groups: (wire.groups ?? []).map(adaptPlanningBoardGroup),
+    totalCardCount: wire.total_card_count ?? 0,
+    activeCount: wire.active_count ?? 0,
+    completedCount: wire.completed_count ?? 0,
+    dataFreshness: wire.data_freshness,
+    generatedAt: wire.generated_at,
+  };
+}
+
 // ── Public API helpers ────────────────────────────────────────────────────────
 
 /**
@@ -953,6 +1198,113 @@ export async function getPhaseOperations(
   };
 }
 
+/**
+ * Fetch the project-wide Planning Agent Session Board.
+ *
+ * Returns all agent sessions grouped by the chosen dimension (default: "state").
+ * Results are cached in a bounded LRU store (up to 16 entries). The cache is
+ * automatically evicted when `clearPlanningBrowserCache` is called for the
+ * owning project (e.g. via the feature-write bus).
+ *
+ * Mirrors: GET /api/agent/planning/session-board
+ */
+export async function getSessionBoard(
+  projectId?: string,
+  grouping?: PlanningBoardGroupingMode,
+  opts: { forceRefresh?: boolean } = {},
+): Promise<PlanningAgentSessionBoard> {
+  const cacheKey = sessionBoardCacheKey(null, projectId, grouping);
+  const existing = PLANNING_SESSION_BOARD_CACHE.get(cacheKey);
+
+  if (!opts.forceRefresh && existing?.value) {
+    touchMapKey(PLANNING_SESSION_BOARD_CACHE, cacheKey);
+    return existing.value;
+  }
+  if (!opts.forceRefresh && existing?.inFlight) return existing.inFlight;
+
+  const params = new URLSearchParams();
+  if (projectId) params.set('project_id', projectId);
+  if (grouping) params.set('grouping', grouping);
+
+  const pending = planningFetch<WirePlanningAgentSessionBoard>(
+    '/session-board',
+    params.toString() ? params : undefined,
+  )
+    .then((wire) => {
+      const value = adaptPlanningAgentSessionBoard(wire);
+      PLANNING_SESSION_BOARD_CACHE.set(cacheKey, { value });
+      touchMapKey(PLANNING_SESSION_BOARD_CACHE, cacheKey);
+      trimMapToLimit(PLANNING_SESSION_BOARD_CACHE, PLANNING_BROWSER_CACHE_LIMITS.sessionBoards);
+      return value;
+    })
+    .catch((error) => {
+      const latest = PLANNING_SESSION_BOARD_CACHE.get(cacheKey);
+      if (latest?.inFlight === pending && !latest.value) PLANNING_SESSION_BOARD_CACHE.delete(cacheKey);
+      throw error;
+    });
+
+  PLANNING_SESSION_BOARD_CACHE.set(cacheKey, {
+    value: existing?.value as PlanningAgentSessionBoard,
+    inFlight: pending,
+  });
+  touchMapKey(PLANNING_SESSION_BOARD_CACHE, cacheKey);
+  trimMapToLimit(PLANNING_SESSION_BOARD_CACHE, PLANNING_BROWSER_CACHE_LIMITS.sessionBoards);
+  return pending;
+}
+
+/**
+ * Fetch a feature-scoped Planning Agent Session Board.
+ *
+ * Only sessions correlated to the given feature are included. Uses the same
+ * bounded LRU cache as `getSessionBoard`, keyed by (featureId, projectId, grouping).
+ *
+ * Mirrors: GET /api/agent/planning/session-board/{featureId}
+ */
+export async function getFeatureSessionBoard(
+  featureId: string,
+  projectId?: string,
+  grouping?: PlanningBoardGroupingMode,
+  opts: { forceRefresh?: boolean } = {},
+): Promise<PlanningAgentSessionBoard> {
+  const cacheKey = sessionBoardCacheKey(featureId, projectId, grouping);
+  const existing = PLANNING_SESSION_BOARD_CACHE.get(cacheKey);
+
+  if (!opts.forceRefresh && existing?.value) {
+    touchMapKey(PLANNING_SESSION_BOARD_CACHE, cacheKey);
+    return existing.value;
+  }
+  if (!opts.forceRefresh && existing?.inFlight) return existing.inFlight;
+
+  const params = new URLSearchParams();
+  if (projectId) params.set('project_id', projectId);
+  if (grouping) params.set('grouping', grouping);
+
+  const pending = planningFetch<WirePlanningAgentSessionBoard>(
+    `/session-board/${encodeURIComponent(featureId)}`,
+    params.toString() ? params : undefined,
+  )
+    .then((wire) => {
+      const value = adaptPlanningAgentSessionBoard(wire);
+      PLANNING_SESSION_BOARD_CACHE.set(cacheKey, { value });
+      touchMapKey(PLANNING_SESSION_BOARD_CACHE, cacheKey);
+      trimMapToLimit(PLANNING_SESSION_BOARD_CACHE, PLANNING_BROWSER_CACHE_LIMITS.sessionBoards);
+      return value;
+    })
+    .catch((error) => {
+      const latest = PLANNING_SESSION_BOARD_CACHE.get(cacheKey);
+      if (latest?.inFlight === pending && !latest.value) PLANNING_SESSION_BOARD_CACHE.delete(cacheKey);
+      throw error;
+    });
+
+  PLANNING_SESSION_BOARD_CACHE.set(cacheKey, {
+    value: existing?.value as PlanningAgentSessionBoard,
+    inFlight: pending,
+  });
+  touchMapKey(PLANNING_SESSION_BOARD_CACHE, cacheKey);
+  trimMapToLimit(PLANNING_SESSION_BOARD_CACHE, PLANNING_BROWSER_CACHE_LIMITS.sessionBoards);
+  return pending;
+}
+
 // ── Status bucket derivation (P13-003) ───────────────────────────────────────
 
 /**
@@ -1009,4 +1361,122 @@ export function featureMatchesSignal(
     case 'mismatch':
       return feature.isMismatch;
   }
+}
+
+// ── Next-run preview wire shapes ──────────────────────────────────────────────
+
+interface WireNextRunContextRef {
+  ref_type: string;
+  ref_id: string;
+  ref_label: string;
+  ref_path?: string;
+}
+
+interface WirePlanningNextRunPreview {
+  status: string;
+  feature_id: string;
+  feature_name?: string;
+  phase_number?: number;
+  command: string;
+  prompt_skeleton: string;
+  context_refs: WireNextRunContextRef[];
+  warnings: string[];
+  data_freshness?: string;
+  generated_at?: string;
+}
+
+// ── Next-run preview adapters ─────────────────────────────────────────────────
+
+function adaptNextRunContextRef(wire: WireNextRunContextRef): NextRunContextRef {
+  return {
+    refType: (wire.ref_type ?? 'session') as NextRunContextRef['refType'],
+    refId: wire.ref_id ?? '',
+    refLabel: wire.ref_label ?? '',
+    refPath: wire.ref_path,
+  };
+}
+
+function adaptPlanningNextRunPreview(wire: WirePlanningNextRunPreview): PlanningNextRunPreview {
+  return {
+    featureId: wire.feature_id ?? '',
+    featureName: wire.feature_name,
+    phaseNumber: wire.phase_number,
+    command: wire.command ?? '',
+    promptSkeleton: wire.prompt_skeleton ?? '',
+    contextRefs: (wire.context_refs ?? []).map(adaptNextRunContextRef),
+    warnings: wire.warnings ?? [],
+    dataFreshness: wire.data_freshness,
+    generatedAt: wire.generated_at,
+  };
+}
+
+// ── Next-run preview public API ───────────────────────────────────────────────
+
+/**
+ * Fetch a scaffolded next-run command + prompt preview for a feature.
+ *
+ * Preview data is request-specific and not cached — each call reflects
+ * the current state of the feature and any selected context.
+ *
+ * Mirrors: GET /api/agent/planning/next-run-preview/{featureId}
+ */
+export async function getNextRunPreview(
+  featureId: string,
+  phaseNumber?: number,
+  projectId?: string,
+): Promise<PlanningNextRunPreview> {
+  const params = new URLSearchParams();
+  if (phaseNumber != null) params.set('phase_number', String(phaseNumber));
+  if (projectId) params.set('project_id', projectId);
+
+  const wire = await planningFetch<WirePlanningNextRunPreview>(
+    `/next-run-preview/${encodeURIComponent(featureId)}`,
+    params.toString() ? params : undefined,
+  );
+
+  return adaptPlanningNextRunPreview(wire);
+}
+
+/**
+ * Fetch a scaffolded next-run preview with an explicit context selection.
+ *
+ * Use this variant when the user has curated which sessions, phases, tasks,
+ * artifacts, and transcripts should be included in the prompt skeleton.
+ *
+ * Mirrors: POST /api/agent/planning/next-run-preview/{featureId}
+ */
+export async function postNextRunPreview(
+  featureId: string,
+  contextSelection: PromptContextSelection,
+  phaseNumber?: number,
+  projectId?: string,
+): Promise<PlanningNextRunPreview> {
+  const params = new URLSearchParams();
+  if (phaseNumber != null) params.set('phase_number', String(phaseNumber));
+  if (projectId) params.set('project_id', projectId);
+
+  const qs = params.toString();
+  const url = `${API_BASE}/next-run-preview/${encodeURIComponent(featureId)}${qs ? `?${qs}` : ''}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_ids: contextSelection.sessionIds,
+      phase_refs: contextSelection.phaseRefs,
+      task_refs: contextSelection.taskRefs,
+      artifact_refs: contextSelection.artifactRefs,
+      transcript_refs: contextSelection.transcriptRefs,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new PlanningApiError(
+      `Planning API error: ${res.status} ${res.statusText} for ${url}`,
+      res.status,
+    );
+  }
+
+  const wire = (await res.json()) as WirePlanningNextRunPreview;
+  return adaptPlanningNextRunPreview(wire);
 }

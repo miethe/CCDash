@@ -231,15 +231,33 @@ export interface UseFeatureSurfaceOptions {
   cacheAdapter?: FeatureSurfaceCacheAdapter;
   /** Set to true to disable caching entirely (useful in tests / edge cases). */
   noCache?: boolean;
+  /**
+   * P5-005: Feature-surface v2 rollout flag.
+   *
+   * When false the hook skips the v2 listFeatureCards + getFeatureRollups path
+   * entirely and surfaces an empty result set, deferring to the legacy
+   * getLegacyFeatureDetail path that callers fall back to.  Cards and rollups
+   * are both returned as empty so existing null-guards in ProjectBoard continue
+   * to behave correctly.
+   *
+   * Callers should read this value once (at mount) from
+   * `isFeatureSurfaceV2Enabled(runtimeStatus)` and pass it here.  The flag is
+   * NOT re-evaluated mid-lifecycle to avoid a re-mount loop.
+   *
+   * Default: true (v2 path is the happy path).
+   */
+  featureSurfaceV2Enabled?: boolean;
 }
 
-// Default rollup fields: minimum set for card-metric display.
-// Covers: session badge (session_counts), cost badge (token_cost_totals),
-// last-active indicator (latest_activity).
+// Default rollup fields for board cards. These stay bounded to the current
+// feature page and avoid session logs, but include the aggregate groups the
+// card UI reads for session breakdowns and document-count badges.
 const DEFAULT_ROLLUP_FIELDS: FeatureRollupFieldKey[] = [
   'session_counts',
   'token_cost_totals',
   'latest_activity',
+  'model_provider_summary',
+  'doc_metrics',
 ];
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -250,7 +268,15 @@ export function useFeatureSurface(options: UseFeatureSurfaceOptions = {}): UseFe
     rollupFields = DEFAULT_ROLLUP_FIELDS,
     cacheAdapter,
     noCache = false,
+    // P5-005: Capture the flag at mount.  useRef ensures subsequent re-renders
+    // with a changed prop do NOT trigger a re-fetch — the path is fixed for the
+    // lifetime of this hook instance to prevent a re-mount loop.
+    featureSurfaceV2Enabled: featureSurfaceV2EnabledOption = true,
   } = options;
+
+  // Freeze the flag at mount time — never re-read from options on re-render.
+  const featureSurfaceV2EnabledRef = useRef(featureSurfaceV2EnabledOption);
+  const featureSurfaceV2Enabled = featureSurfaceV2EnabledRef.current;
 
   const cache = cacheAdapter ?? _defaultCache;
 
@@ -298,6 +324,18 @@ export function useFeatureSurface(options: UseFeatureSurfaceOptions = {}): UseFe
   // ── List fetch ──────────────────────────────────────────────────────────────
   const fetchList = useCallback(
     async (currentQuery: FeatureSurfaceQuery, requestId: number, bypassCache: boolean) => {
+      // P5-005: When v2 is disabled, produce an empty result immediately.
+      // The caller (ProjectBoard) falls back to the legacy getLegacyFeatureDetail
+      // path for its modal data; the board card grid just stays empty/loading-free.
+      if (!featureSurfaceV2Enabled) {
+        setCards([]);
+        setTotals({ total: 0 });
+        setFreshness(null);
+        setListState('success');
+        setListError(null);
+        return [];
+      }
+
       const key = buildCacheKey(currentQuery);
 
       if (!bypassCache) {

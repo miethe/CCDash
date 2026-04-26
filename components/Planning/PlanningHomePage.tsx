@@ -39,6 +39,7 @@ import {
 import { PlanningDensityToggle } from './PlanningRouteLayout';
 import { PlanningTriagePanel } from './PlanningTriagePanel';
 import { PlanningAgentRosterPanel } from './PlanningAgentRosterPanel';
+import { PlanningAgentSessionBoard } from './PlanningAgentSessionBoard';
 import {
   Chip,
   EffectiveStatusChips,
@@ -909,6 +910,11 @@ function PlanningShell({
           activeSignal={activeSignal}
         />
       </Panel>
+
+      {/* PASB-201: Agent Session Board */}
+      <div data-testid="planning-agent-session-board-section">
+        <PlanningAgentSessionBoard />
+      </div>
     </div>
   );
 }

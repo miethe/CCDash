@@ -167,6 +167,10 @@ def _build_health_payload(
         "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
         "authEnabled": bool(runtime_status.get("authEnabled", False)),
         "integrationsEnabled": bool(runtime_status.get("integrationsEnabled", False)),
+        # Feature surface v2 rollout flag — readable by the FE from /api/health
+        # to decide which data path to activate.  Defaults to True (v2 enabled).
+        # Set CCDASH_FEATURE_SURFACE_V2_ENABLED=false to fall back to the v0 path.
+        "featureSurfaceV2Enabled": config.CCDASH_FEATURE_SURFACE_V2_ENABLED,
         "allowedStorageProfiles": list(runtime_status.get("allowedStorageProfiles", ())),
         "runtimeSyncBehavior": str(runtime_status.get("runtimeSyncBehavior", "")),
         "runtimeJobBehavior": str(runtime_status.get("runtimeJobBehavior", "")),
@@ -269,6 +273,9 @@ def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any
             "activities": dict(detail.get("activities", {})),
             "checks": list(detail.get("checks", ())),
         },
+        # Feature-surface v2 rollout flag exposed at the detail level so the FE
+        # can read it from the same /api/health/detail probe it already polls.
+        "featureSurfaceV2Enabled": config.CCDASH_FEATURE_SURFACE_V2_ENABLED,
     }
 
 

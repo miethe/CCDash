@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time as _time_mod
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -61,6 +62,7 @@ from backend.services.feature_execution import (
 )
 from backend.services.agentic_intelligence_flags import stack_recommendations_enabled
 from backend.services.stack_recommendations import build_stack_recommendations
+from backend.observability import otel as _otel
 
 
 features_router = APIRouter(prefix="/api/features", tags=["features"])
@@ -107,6 +109,41 @@ _STATUS_RANK = {
     "done": 3,
     "deferred": 3,
 }
+
+
+def _classify_filter_kind(*, status: str | None = None, q: str | None = None) -> str:
+    """Derive a cardinality-safe filter label for observability attributes."""
+    has_status = bool(status and status.strip())
+    has_search = bool(q and q.strip())
+    if has_status and has_search:
+        return "both"
+    if has_status:
+        return "status_only"
+    if has_search:
+        return "search_only"
+    return "none"
+
+
+def _estimate_payload_bytes(obj: Any) -> int:
+    """Return a best-effort estimate of JSON-serialised byte size.
+
+    Uses Pydantic model_dump() for model objects then json.dumps for the dict.
+    Falls back to 0 on any error so observability never blocks a request.
+    """
+    try:
+        if hasattr(obj, "model_dump"):
+            return len(json.dumps(obj.model_dump(), default=str).encode("utf-8"))
+        if isinstance(obj, list):
+            if len(obj) > 20 and obj and hasattr(obj[0], "model_dump"):
+                sample = len(json.dumps(obj[0].model_dump(), default=str).encode("utf-8"))
+                return sample * len(obj)
+            return len(json.dumps(
+                [i.model_dump() if hasattr(i, "model_dump") else i for i in obj],
+                default=str,
+            ).encode("utf-8"))
+    except Exception:
+        pass
+    return 0
 
 
 def _runtime_profile_name(request: Request) -> str:
@@ -800,8 +837,11 @@ def _task_from_feature_blob(task_data: dict[str, Any], feature_id: str, phase_id
 async def list_features(
     offset: int = Query(0, ge=0),
     limit: int = Query(200, ge=1, le=5000),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
 ):
     """Return paginated discovered features from DB."""
+    _obs_started = _time_mod.monotonic()
     project = project_manager.get_active_project()
     if not project:
         return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
@@ -899,6 +939,13 @@ async def list_features(
                 _apply_feature_execution_derived_state(feature, derived_states.get(feature.id))
         except Exception:
             logger.exception("Failed to derive dependency/family state for feature list")
+    _otel.record_feature_surface_request(
+        endpoint="list",
+        filter_kind=_classify_filter_kind(status=status, q=q),
+        result_count=len(results),
+        payload_bytes=_estimate_payload_bytes(results),
+        duration_ms=(_time_mod.monotonic() - _obs_started) * 1000.0,
+    )
     return PaginatedResponse(items=results, total=total, offset=offset, limit=limit)
 
 
@@ -1036,6 +1083,7 @@ async def track_execution_event(req: ExecutionTelemetryRequest):
 @features_router.get("/{feature_id}/execution-context", response_model=FeatureExecutionContext)
 async def get_feature_execution_context(feature_id: str):
     """Return unified context payload for the execution workbench."""
+    _obs_started = _time_mod.monotonic()
     active_project = project_manager.get_active_project()
     if not active_project:
         raise HTTPException(status_code=400, detail="No active project")
@@ -1137,7 +1185,7 @@ async def get_feature_execution_context(feature_id: str):
             )
         )
 
-    return build_execution_context(
+    exec_ctx = build_execution_context(
         feature=feature,
         documents=documents,
         sessions=sessions,
@@ -1149,11 +1197,20 @@ async def get_feature_execution_context(feature_id: str):
         definition_resolution_warnings=definition_resolution_warnings,
         derived_state=derived_state,
     )
+    _otel.record_feature_surface_request(
+        endpoint="execution_context",
+        filter_kind="none",
+        result_count=1,
+        payload_bytes=_estimate_payload_bytes(exec_ctx),
+        duration_ms=(_time_mod.monotonic() - _obs_started) * 1000.0,
+    )
+    return exec_ctx
 
 
 @features_router.get("/{feature_id}", response_model=Feature)
 async def get_feature(feature_id: str, include_tasks: bool = True):
     """Return full feature detail from DB."""
+    _obs_started = _time_mod.monotonic()
     db = await connection.get_connection()
     repo = get_feature_repository(db)
     
@@ -1291,12 +1348,20 @@ async def get_feature(feature_id: str, include_tasks: bool = True):
             _apply_feature_execution_derived_state(feature, derived_state)
         except Exception:
             logger.exception("Failed to derive dependency/family state for feature '%s'", feature.id)
+    _otel.record_feature_surface_request(
+        endpoint="detail",
+        filter_kind="none",
+        result_count=1,
+        payload_bytes=_estimate_payload_bytes(feature),
+        duration_ms=(_time_mod.monotonic() - _obs_started) * 1000.0,
+    )
     return feature
 
 
 @features_router.get("/{feature_id}/linked-sessions", response_model=list[FeatureSessionLink])
 async def get_feature_linked_sessions(feature_id: str):
     """Return linked sessions for a feature using confidence-scored entity links."""
+    _obs_started = _time_mod.monotonic()
     db = await connection.get_connection()
     active_project = project_manager.get_active_project()
     mappings = await load_session_mappings(db, active_project.id) if active_project else []
@@ -1783,6 +1848,13 @@ async def get_feature_linked_sessions(feature_id: str):
 
     items = list(items_by_session_id.values())
     items.sort(key=lambda item: (item.confidence, item.startedAt), reverse=True)
+    _otel.record_feature_surface_request(
+        endpoint="linked_sessions",
+        filter_kind="none",
+        result_count=len(items),
+        payload_bytes=_estimate_payload_bytes(items),
+        duration_ms=(_time_mod.monotonic() - _obs_started) * 1000.0,
+    )
     return items
 
 

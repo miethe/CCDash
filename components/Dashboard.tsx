@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useData } from '../contexts/DataContext';
-import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu, LayoutGrid, ShieldAlert, CheckCircle2, Clock } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
 import { analyticsService } from '../services/analytics';
 import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../lib/chartTheme';
@@ -10,6 +10,7 @@ import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tok
 import { Button } from './ui/button';
 import { Surface, AlertSurface } from './ui/surface';
 import { cn } from '../lib/utils';
+import { useFeatureSurface } from '../services/useFeatureSurface';
 
 const STAT_TONE_STYLES: Record<string, string> = {
   primary: 'border-primary-border bg-primary/10 text-primary-foreground',
@@ -34,8 +35,65 @@ const StatCard = ({ label, value, sub, icon: Icon, tone }: any) => (
   </Surface>
 );
 
+// ── Feature surface summary chip ──────────────────────────────────────────────
+
+const FeatureSummaryChip = ({
+  icon: Icon,
+  label,
+  count,
+  tone,
+}: {
+  icon: React.ElementType;
+  label: string;
+  count: number;
+  tone: string;
+}) => (
+  <div className={cn('flex items-center gap-2 rounded-lg border px-3 py-2 text-sm', STAT_TONE_STYLES[tone])}>
+    <Icon size={14} className="shrink-0" />
+    <span className="font-semibold tabular-nums">{count.toLocaleString()}</span>
+    <span className="text-xs">{label}</span>
+  </div>
+);
+
 export const Dashboard: React.FC = () => {
   const { sessions, tasks, loading } = useData();
+
+  // Feature surface — one bounded page fetch + one rollup batch.
+  // pageSize:1 is sufficient to get totals; rollup fields give cost+session
+  // aggregates across all features.  No per-feature /api/features/{id}/...
+  // calls are made; the bounded cache guards against duplicate requests.
+  const {
+    cards: surfaceCards,
+    rollups: surfaceRollups,
+    totals: surfaceTotals,
+    listState: surfaceListState,
+  } = useFeatureSurface({
+    initialQuery: { pageSize: 50, sortBy: 'updated_at', sortDirection: 'desc' },
+    rollupFields: ['session_counts', 'token_cost_totals', 'latest_activity'],
+  });
+
+  // Derive per-status counts from the surface card list (client-side, no extra
+  // fetch).  Falls back to zeros while list is loading.
+  const featureCounts = useMemo(() => {
+    const counts = { active: 0, blocked: 0, completed: 0, total: surfaceTotals.total };
+    for (const card of surfaceCards) {
+      const s = card.effectiveStatus ?? card.status;
+      if (s === 'completed' || s === 'done') counts.completed += 1;
+      else if (card.qualitySignals?.hasBlockingSignals || card.dependencyState?.state === 'blocked' || card.dependencyState?.state === 'blocked_unknown') counts.blocked += 1;
+      else counts.active += 1;
+    }
+    return counts;
+  }, [surfaceCards, surfaceTotals.total]);
+
+  // Total cost across all loaded feature rollups (no per-feature call).
+  const surfaceTotalCost = useMemo(() => {
+    let cost = 0;
+    for (const rollup of surfaceRollups.values()) {
+      cost += rollup.displayCost ?? rollup.totalCost ?? 0;
+    }
+    return cost;
+  }, [surfaceRollups]);
+
   const [insight, setInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
@@ -145,6 +203,31 @@ export const Dashboard: React.FC = () => {
           <div>{insight}</div>
         </AlertSurface>
       )}
+
+      {/* Feature Surface Summary — sourced from useFeatureSurface (unified payload, no per-feature calls) */}
+      <Surface tone="panel" padding="lg">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">Feature Portfolio</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {surfaceListState === 'loading'
+                ? 'Loading...'
+                : `${surfaceTotals.total.toLocaleString()} features tracked`}
+            </p>
+          </div>
+          {surfaceRollups.size > 0 && (
+            <span className="text-xs text-muted-foreground">
+              Surface cost: <span className="font-semibold text-panel-foreground">${surfaceTotalCost.toFixed(2)}</span>
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <FeatureSummaryChip icon={LayoutGrid} label="total" count={surfaceTotals.total} tone="info" />
+          <FeatureSummaryChip icon={Clock} label="active" count={featureCounts.active} tone="primary" />
+          <FeatureSummaryChip icon={ShieldAlert} label="blocked" count={featureCounts.blocked} tone="danger" />
+          <FeatureSummaryChip icon={CheckCircle2} label="completed" count={featureCounts.completed} tone="success" />
+        </div>
+      </Surface>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">

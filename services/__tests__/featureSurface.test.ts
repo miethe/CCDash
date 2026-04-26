@@ -66,6 +66,53 @@ function wireCard(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function backendCard(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'FEAT-1',
+    name: 'Test Feature',
+    status: 'active',
+    effectiveStatus: 'in_progress',
+    category: 'core',
+    tags: ['tag-a'],
+    summary: 'A summary',
+    descriptionPreview: 'preview text',
+    priority: 'high',
+    riskLevel: 'medium',
+    complexity: 'moderate',
+    executionReadiness: 'ready',
+    testImpact: 'moderate',
+    planningStatus: { effectiveStatus: 'active' },
+    totalTasks: 10,
+    completedTasks: 4,
+    deferredTasks: 1,
+    phaseCount: 3,
+    plannedAt: '2026-01-01',
+    startedAt: '2026-02-01',
+    completedAt: '',
+    updatedAt: '2026-04-01',
+    documentCoverage: { present: ['prd'], missing: ['plan'], countsByType: { prd: 1 } },
+    qualitySignals: {
+      blockerCount: 1,
+      atRiskTaskCount: 1,
+      hasBlockingSignals: true,
+      testImpact: 'moderate',
+      integritySignalRefs: ['sig-1'],
+    },
+    dependencyState: {
+      state: 'ready',
+      blockingReason: '',
+      blockedByCount: 0,
+      readyDependencyCount: 2,
+    },
+    primaryDocuments: [{ documentId: 'doc-1', title: 'PRD', docType: 'prd', status: 'active', filePath: 'docs/prd.md', updatedAt: '2026-04-01' }],
+    familyPosition: { position: 1, total: 2, label: '1 of 2', nextItemId: 'FEAT-2', nextItemLabel: 'Next' },
+    relatedFeatureCount: 7,
+    precision: 'exact',
+    freshness: null,
+    ...overrides,
+  };
+}
+
 function wireRollup(featureId = 'FEAT-1'): Record<string, unknown> {
   return {
     feature_id: featureId,
@@ -90,6 +137,35 @@ function wireRollup(featureId = 'FEAT-1'): Record<string, unknown> {
     linked_pr_count: null,
     test_count: null,
     failing_test_count: null,
+    precision: 'eventually_consistent',
+    freshness: null,
+  };
+}
+
+function backendRollup(featureId = 'FEAT-1'): Record<string, unknown> {
+  return {
+    featureId,
+    sessionCount: 5,
+    primarySessionCount: 3,
+    subthreadCount: 2,
+    unresolvedSubthreadCount: 0,
+    totalCost: 1.23,
+    displayCost: 1.23,
+    observedTokens: 50000,
+    modelIoTokens: 48000,
+    cacheInputTokens: 2000,
+    latestSessionAt: '2026-04-20T10:00:00Z',
+    latestActivityAt: '2026-04-20T11:00:00Z',
+    modelFamilies: [{ key: 'claude', label: 'Claude', count: 5, share: 1.0 }],
+    providers: [],
+    workflowTypes: [],
+    linkedDocCount: 3,
+    linkedDocCountsByType: [],
+    linkedTaskCount: 10,
+    linkedCommitCount: null,
+    linkedPrCount: null,
+    testCount: null,
+    failingTestCount: null,
     precision: 'eventually_consistent',
     freshness: null,
   };
@@ -146,6 +222,45 @@ describe('featureSurface service', () => {
       expect(card.dependencyState.readyDependencyCount).toBe(2);
       expect(result.hasMore).toBe(true);
       expect(result.queryHash).toBe('qh');
+    });
+
+    it('adapts backend camelCase card fields without dropping board metrics', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          okJson(envelope({
+            items: [backendCard()],
+            total: 1,
+            offset: 0,
+            limit: 50,
+            hasMore: true,
+            queryHash: 'qh-camel',
+            precision: 'exact',
+            freshness: null,
+          })),
+        ),
+      );
+
+      const result = await listFeatureCards();
+      const card = result.items[0];
+
+      expect(card.effectiveStatus).toBe('in_progress');
+      expect(card.descriptionPreview).toBe('preview text');
+      expect(card.riskLevel).toBe('medium');
+      expect(card.executionReadiness).toBe('ready');
+      expect(card.planningStatus?.effectiveStatus).toBe('active');
+      expect(card.totalTasks).toBe(10);
+      expect(card.completedTasks).toBe(4);
+      expect(card.deferredTasks).toBe(1);
+      expect(card.phaseCount).toBe(3);
+      expect(card.documentCoverage.countsByType).toEqual({ prd: 1 });
+      expect(card.qualitySignals.blockerCount).toBe(1);
+      expect(card.dependencyState.readyDependencyCount).toBe(2);
+      expect(card.primaryDocuments[0].documentId).toBe('doc-1');
+      expect(card.familyPosition?.nextItemId).toBe('FEAT-2');
+      expect(card.relatedFeatureCount).toBe(7);
+      expect(result.hasMore).toBe(true);
+      expect(result.queryHash).toBe('qh-camel');
     });
 
     it('sends multi-value status, stage, and tags params', async () => {
@@ -239,6 +354,36 @@ describe('featureSurface service', () => {
       expect(r.latestActivityAt).toBe('2026-04-20T11:00:00Z');
       expect(r.linkedDocCount).toBe(3);
       expect(r.linkedTaskCount).toBe(10);
+    });
+
+    it('adapts backend camelCase rollup fields used by board cards', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          okJson(envelope({
+            rollups: { 'FEAT-2': backendRollup('FEAT-2') },
+            missing: [],
+            errors: {},
+            generatedAt: '2026-04-23T00:00:00Z',
+            cacheVersion: 'v2',
+          })),
+        ),
+      );
+
+      const result = await getFeatureRollups({ featureIds: ['FEAT-2'] });
+      const r = result.rollups['FEAT-2'];
+
+      expect(r.featureId).toBe('FEAT-2');
+      expect(r.sessionCount).toBe(5);
+      expect(r.primarySessionCount).toBe(3);
+      expect(r.subthreadCount).toBe(2);
+      expect(r.observedTokens).toBe(50000);
+      expect(r.modelIoTokens).toBe(48000);
+      expect(r.latestActivityAt).toBe('2026-04-20T11:00:00Z');
+      expect(r.linkedDocCount).toBe(3);
+      expect(r.linkedTaskCount).toBe(10);
+      expect(result.generatedAt).toBe('2026-04-23T00:00:00Z');
+      expect(result.cacheVersion).toBe('v2');
     });
   });
 
@@ -432,6 +577,73 @@ describe('featureSurface service', () => {
       expect(s.isSubthread).toBe(false);
       expect(s.relatedTasks[0].taskId).toBe('t-1');
       expect(s.relatedTasks[0].matchedBy).toBe('title');
+      expect(result.enrichment.logsRead).toBe(true);
+      expect(result.enrichment.commandCountIncluded).toBe(true);
+      expect(result.enrichment.taskRefsIncluded).toBe(true);
+    });
+
+    it('adapts backend camelCase linked-session pages without empty session IDs', async () => {
+      const backendSession = {
+        sessionId: 'sess-1',
+        title: 'Session 1',
+        status: 'completed',
+        model: 'claude-3-sonnet',
+        modelProvider: 'anthropic',
+        modelFamily: 'claude',
+        startedAt: '2026-04-20T09:00:00Z',
+        endedAt: '2026-04-20T10:00:00Z',
+        updatedAt: '2026-04-20T10:00:00Z',
+        totalCost: 0.50,
+        observedTokens: 20000,
+        rootSessionId: 'root-1',
+        parentSessionId: null,
+        workflowType: 'code',
+        isPrimaryLink: true,
+        isSubthread: false,
+        threadChildCount: 0,
+        reasons: ['slug_match'],
+        commands: ['Bash'],
+        relatedTasks: [
+          { taskId: 't-1', taskTitle: 'Task 1', phaseId: 'p-1', phase: 'Phase 1', matchedBy: 'title' },
+        ],
+      };
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          okJson(envelope({
+            items: [backendSession],
+            total: 1,
+            offset: 0,
+            limit: 20,
+            hasMore: false,
+            nextCursor: null,
+            enrichment: {
+              includes: ['commands', 'tasks'],
+              logsRead: true,
+              commandCountIncluded: true,
+              taskRefsIncluded: true,
+              threadChildrenIncluded: false,
+            },
+            precision: 'eventually_consistent',
+            freshness: null,
+          })),
+        ),
+      );
+
+      const result = await getFeatureLinkedSessionPage('FEAT-1');
+      const s = result.items[0];
+
+      expect(s.sessionId).toBe('sess-1');
+      expect(s.modelProvider).toBe('anthropic');
+      expect(s.modelFamily).toBe('claude');
+      expect(s.totalCost).toBe(0.5);
+      expect(s.observedTokens).toBe(20000);
+      expect(s.rootSessionId).toBe('root-1');
+      expect(s.isPrimaryLink).toBe(true);
+      expect(s.relatedTasks[0].taskId).toBe('t-1');
+      expect(s.relatedTasks[0].matchedBy).toBe('title');
+      expect(result.hasMore).toBe(false);
       expect(result.enrichment.logsRead).toBe(true);
       expect(result.enrichment.commandCountIncluded).toBe(true);
       expect(result.enrichment.taskRefsIncluded).toBe(true);

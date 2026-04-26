@@ -160,6 +160,9 @@ interface WireFeatureCardDTO {
   priority?: string;
   risk_level?: string;
   complexity?: string;
+  execution_readiness?: string;
+  test_impact?: string;
+  planning_status?: Record<string, unknown> | null;
   total_tasks?: number;
   completed_tasks?: number;
   deferred_tasks?: number;
@@ -406,6 +409,9 @@ export interface FeatureCardDTO {
   priority: string;
   riskLevel: string;
   complexity: string;
+  executionReadiness?: string;
+  testImpact?: string;
+  planningStatus?: Record<string, unknown> | null;
   totalTasks: number;
   completedTasks: number;
   deferredTasks: number;
@@ -621,14 +627,26 @@ export interface LinkedSessionPageParams {
   offset?: number;
 }
 
-// ── Adapters (snake_case wire → camelCase public) ─────────────────────────────
+// ── Adapters (v1 camelCase wire → camelCase public, with snake_case fallback) ──
+
+function wireField<T>(
+  wire: object | null | undefined,
+  camelKey: string,
+  snakeKey: string,
+): T | undefined {
+  if (!wire) return undefined;
+  const record = wire as Record<string, unknown>;
+  if (camelKey in record) return record[camelKey] as T;
+  if (snakeKey in record) return record[snakeKey] as T;
+  return undefined;
+}
 
 function adaptDTOFreshness(wire: WireDTOFreshness | null | undefined): DTOFreshness | null {
   if (!wire) return null;
   return {
-    observedAt: wire.observed_at ?? null,
-    sourceRevision: wire.source_revision ?? '',
-    cacheVersion: wire.cache_version ?? '',
+    observedAt: wireField<string | null>(wire, 'observedAt', 'observed_at') ?? null,
+    sourceRevision: wireField<string>(wire, 'sourceRevision', 'source_revision') ?? '',
+    cacheVersion: wireField<string>(wire, 'cacheVersion', 'cache_version') ?? '',
   };
 }
 
@@ -637,12 +655,12 @@ function adaptFeatureRollupFreshness(
 ): FeatureRollupFreshnessDTO | null {
   if (!wire) return null;
   return {
-    observedAt: wire.observed_at ?? null,
-    sourceRevision: wire.source_revision ?? '',
-    cacheVersion: wire.cache_version ?? '',
-    sessionSyncAt: wire.session_sync_at ?? '',
-    linksUpdatedAt: wire.links_updated_at ?? '',
-    testHealthAt: wire.test_health_at ?? '',
+    observedAt: wireField<string | null>(wire, 'observedAt', 'observed_at') ?? null,
+    sourceRevision: wireField<string>(wire, 'sourceRevision', 'source_revision') ?? '',
+    cacheVersion: wireField<string>(wire, 'cacheVersion', 'cache_version') ?? '',
+    sessionSyncAt: wireField<string>(wire, 'sessionSyncAt', 'session_sync_at') ?? '',
+    linksUpdatedAt: wireField<string>(wire, 'linksUpdatedAt', 'links_updated_at') ?? '',
+    testHealthAt: wireField<string>(wire, 'testHealthAt', 'test_health_at') ?? '',
   };
 }
 
@@ -652,7 +670,7 @@ function adaptDocumentCoverage(
   return {
     present: wire?.present ?? [],
     missing: wire?.missing ?? [],
-    countsByType: wire?.counts_by_type ?? {},
+    countsByType: wireField<Record<string, number>>(wire, 'countsByType', 'counts_by_type') ?? {},
   };
 }
 
@@ -660,11 +678,11 @@ function adaptQualitySignals(
   wire: WireFeatureQualitySignalsDTO | undefined,
 ): FeatureQualitySignalsDTO {
   return {
-    blockerCount: wire?.blocker_count ?? 0,
-    atRiskTaskCount: wire?.at_risk_task_count ?? 0,
-    hasBlockingSignals: wire?.has_blocking_signals ?? false,
-    testImpact: wire?.test_impact ?? '',
-    integritySignalRefs: wire?.integrity_signal_refs ?? [],
+    blockerCount: wireField<number>(wire, 'blockerCount', 'blocker_count') ?? 0,
+    atRiskTaskCount: wireField<number>(wire, 'atRiskTaskCount', 'at_risk_task_count') ?? 0,
+    hasBlockingSignals: wireField<boolean>(wire, 'hasBlockingSignals', 'has_blocking_signals') ?? false,
+    testImpact: wireField<string>(wire, 'testImpact', 'test_impact') ?? '',
+    integritySignalRefs: wireField<string[]>(wire, 'integritySignalRefs', 'integrity_signal_refs') ?? [],
   };
 }
 
@@ -673,9 +691,9 @@ function adaptDependencyState(
 ): FeatureDependencySummaryDTO {
   return {
     state: wire?.state ?? '',
-    blockingReason: wire?.blocking_reason ?? '',
-    blockedByCount: wire?.blocked_by_count ?? 0,
-    readyDependencyCount: wire?.ready_dependency_count ?? 0,
+    blockingReason: wireField<string>(wire, 'blockingReason', 'blocking_reason') ?? '',
+    blockedByCount: wireField<number>(wire, 'blockedByCount', 'blocked_by_count') ?? 0,
+    readyDependencyCount: wireField<number>(wire, 'readyDependencyCount', 'ready_dependency_count') ?? 0,
   };
 }
 
@@ -687,19 +705,19 @@ function adaptFamilyPosition(
     position: wire.position ?? null,
     total: wire.total ?? null,
     label: wire.label ?? '',
-    nextItemId: wire.next_item_id ?? '',
-    nextItemLabel: wire.next_item_label ?? '',
+    nextItemId: wireField<string>(wire, 'nextItemId', 'next_item_id') ?? '',
+    nextItemLabel: wireField<string>(wire, 'nextItemLabel', 'next_item_label') ?? '',
   };
 }
 
 function adaptDocumentSummary(wire: WireFeatureDocumentSummaryDTO): FeatureDocumentSummaryDTO {
   return {
-    documentId: wire.document_id ?? '',
+    documentId: wireField<string>(wire, 'documentId', 'document_id') ?? '',
     title: wire.title ?? '',
-    docType: wire.doc_type ?? '',
+    docType: wireField<string>(wire, 'docType', 'doc_type') ?? '',
     status: wire.status ?? '',
-    filePath: wire.file_path ?? '',
-    updatedAt: wire.updated_at ?? '',
+    filePath: wireField<string>(wire, 'filePath', 'file_path') ?? '',
+    updatedAt: wireField<string>(wire, 'updatedAt', 'updated_at') ?? '',
   };
 }
 
@@ -708,28 +726,31 @@ function adaptFeatureCard(wire: WireFeatureCardDTO): FeatureCardDTO {
     id: wire.id ?? '',
     name: wire.name ?? '',
     status: wire.status ?? '',
-    effectiveStatus: wire.effective_status ?? '',
+    effectiveStatus: wireField<string>(wire, 'effectiveStatus', 'effective_status') ?? '',
     category: wire.category ?? '',
     tags: wire.tags ?? [],
     summary: wire.summary ?? '',
-    descriptionPreview: wire.description_preview ?? '',
+    descriptionPreview: wireField<string>(wire, 'descriptionPreview', 'description_preview') ?? '',
     priority: wire.priority ?? '',
-    riskLevel: wire.risk_level ?? '',
+    riskLevel: wireField<string>(wire, 'riskLevel', 'risk_level') ?? '',
     complexity: wire.complexity ?? '',
-    totalTasks: wire.total_tasks ?? 0,
-    completedTasks: wire.completed_tasks ?? 0,
-    deferredTasks: wire.deferred_tasks ?? 0,
-    phaseCount: wire.phase_count ?? 0,
-    plannedAt: wire.planned_at ?? '',
-    startedAt: wire.started_at ?? '',
-    completedAt: wire.completed_at ?? '',
-    updatedAt: wire.updated_at ?? '',
-    documentCoverage: adaptDocumentCoverage(wire.document_coverage),
-    qualitySignals: adaptQualitySignals(wire.quality_signals),
-    dependencyState: adaptDependencyState(wire.dependency_state),
-    primaryDocuments: (wire.primary_documents ?? []).map(adaptDocumentSummary),
-    familyPosition: adaptFamilyPosition(wire.family_position),
-    relatedFeatureCount: wire.related_feature_count ?? 0,
+    executionReadiness: wireField<string>(wire, 'executionReadiness', 'execution_readiness') ?? '',
+    testImpact: wireField<string>(wire, 'testImpact', 'test_impact') ?? '',
+    planningStatus: wireField<Record<string, unknown> | null>(wire, 'planningStatus', 'planning_status') ?? null,
+    totalTasks: wireField<number>(wire, 'totalTasks', 'total_tasks') ?? 0,
+    completedTasks: wireField<number>(wire, 'completedTasks', 'completed_tasks') ?? 0,
+    deferredTasks: wireField<number>(wire, 'deferredTasks', 'deferred_tasks') ?? 0,
+    phaseCount: wireField<number>(wire, 'phaseCount', 'phase_count') ?? 0,
+    plannedAt: wireField<string>(wire, 'plannedAt', 'planned_at') ?? '',
+    startedAt: wireField<string>(wire, 'startedAt', 'started_at') ?? '',
+    completedAt: wireField<string>(wire, 'completedAt', 'completed_at') ?? '',
+    updatedAt: wireField<string>(wire, 'updatedAt', 'updated_at') ?? '',
+    documentCoverage: adaptDocumentCoverage(wireField<WireFeatureDocumentCoverageDTO>(wire, 'documentCoverage', 'document_coverage')),
+    qualitySignals: adaptQualitySignals(wireField<WireFeatureQualitySignalsDTO>(wire, 'qualitySignals', 'quality_signals')),
+    dependencyState: adaptDependencyState(wireField<WireFeatureDependencySummaryDTO>(wire, 'dependencyState', 'dependency_state')),
+    primaryDocuments: (wireField<WireFeatureDocumentSummaryDTO[]>(wire, 'primaryDocuments', 'primary_documents') ?? []).map(adaptDocumentSummary),
+    familyPosition: adaptFamilyPosition(wireField<WireFeatureFamilyPositionDTO | null>(wire, 'familyPosition', 'family_position')),
+    relatedFeatureCount: wireField<number>(wire, 'relatedFeatureCount', 'related_feature_count') ?? 0,
     precision: wire.precision ?? 'exact',
     freshness: adaptDTOFreshness(wire.freshness),
   };
@@ -746,28 +767,28 @@ function adaptRollupBucket(wire: WireFeatureRollupBucketDTO): FeatureRollupBucke
 
 function adaptFeatureRollup(wire: WireFeatureRollupDTO): FeatureRollupDTO {
   return {
-    featureId: wire.feature_id ?? '',
-    sessionCount: wire.session_count ?? null,
-    primarySessionCount: wire.primary_session_count ?? null,
-    subthreadCount: wire.subthread_count ?? null,
-    unresolvedSubthreadCount: wire.unresolved_subthread_count ?? null,
-    totalCost: wire.total_cost ?? null,
-    displayCost: wire.display_cost ?? null,
-    observedTokens: wire.observed_tokens ?? null,
-    modelIoTokens: wire.model_io_tokens ?? null,
-    cacheInputTokens: wire.cache_input_tokens ?? null,
-    latestSessionAt: wire.latest_session_at ?? '',
-    latestActivityAt: wire.latest_activity_at ?? '',
-    modelFamilies: (wire.model_families ?? []).map(adaptRollupBucket),
+    featureId: wireField<string>(wire, 'featureId', 'feature_id') ?? '',
+    sessionCount: wireField<number | null>(wire, 'sessionCount', 'session_count') ?? null,
+    primarySessionCount: wireField<number | null>(wire, 'primarySessionCount', 'primary_session_count') ?? null,
+    subthreadCount: wireField<number | null>(wire, 'subthreadCount', 'subthread_count') ?? null,
+    unresolvedSubthreadCount: wireField<number | null>(wire, 'unresolvedSubthreadCount', 'unresolved_subthread_count') ?? null,
+    totalCost: wireField<number | null>(wire, 'totalCost', 'total_cost') ?? null,
+    displayCost: wireField<number | null>(wire, 'displayCost', 'display_cost') ?? null,
+    observedTokens: wireField<number | null>(wire, 'observedTokens', 'observed_tokens') ?? null,
+    modelIoTokens: wireField<number | null>(wire, 'modelIoTokens', 'model_io_tokens') ?? null,
+    cacheInputTokens: wireField<number | null>(wire, 'cacheInputTokens', 'cache_input_tokens') ?? null,
+    latestSessionAt: wireField<string>(wire, 'latestSessionAt', 'latest_session_at') ?? '',
+    latestActivityAt: wireField<string>(wire, 'latestActivityAt', 'latest_activity_at') ?? '',
+    modelFamilies: (wireField<WireFeatureRollupBucketDTO[]>(wire, 'modelFamilies', 'model_families') ?? []).map(adaptRollupBucket),
     providers: (wire.providers ?? []).map(adaptRollupBucket),
-    workflowTypes: (wire.workflow_types ?? []).map(adaptRollupBucket),
-    linkedDocCount: wire.linked_doc_count ?? null,
-    linkedDocCountsByType: (wire.linked_doc_counts_by_type ?? []).map(adaptRollupBucket),
-    linkedTaskCount: wire.linked_task_count ?? null,
-    linkedCommitCount: wire.linked_commit_count ?? null,
-    linkedPrCount: wire.linked_pr_count ?? null,
-    testCount: wire.test_count ?? null,
-    failingTestCount: wire.failing_test_count ?? null,
+    workflowTypes: (wireField<WireFeatureRollupBucketDTO[]>(wire, 'workflowTypes', 'workflow_types') ?? []).map(adaptRollupBucket),
+    linkedDocCount: wireField<number | null>(wire, 'linkedDocCount', 'linked_doc_count') ?? null,
+    linkedDocCountsByType: (wireField<WireFeatureRollupBucketDTO[]>(wire, 'linkedDocCountsByType', 'linked_doc_counts_by_type') ?? []).map(adaptRollupBucket),
+    linkedTaskCount: wireField<number | null>(wire, 'linkedTaskCount', 'linked_task_count') ?? null,
+    linkedCommitCount: wireField<number | null>(wire, 'linkedCommitCount', 'linked_commit_count') ?? null,
+    linkedPrCount: wireField<number | null>(wire, 'linkedPrCount', 'linked_pr_count') ?? null,
+    testCount: wireField<number | null>(wire, 'testCount', 'test_count') ?? null,
+    failingTestCount: wireField<number | null>(wire, 'failingTestCount', 'failing_test_count') ?? null,
     precision: wire.precision ?? 'eventually_consistent',
     freshness: adaptFeatureRollupFreshness(wire.freshness),
   };
@@ -775,36 +796,36 @@ function adaptFeatureRollup(wire: WireFeatureRollupDTO): FeatureRollupDTO {
 
 function adaptLinkedSessionTask(wire: WireLinkedFeatureSessionTaskDTO): LinkedFeatureSessionTaskDTO {
   return {
-    taskId: wire.task_id ?? '',
-    taskTitle: wire.task_title ?? '',
-    phaseId: wire.phase_id ?? '',
+    taskId: wireField<string>(wire, 'taskId', 'task_id') ?? '',
+    taskTitle: wireField<string>(wire, 'taskTitle', 'task_title') ?? '',
+    phaseId: wireField<string>(wire, 'phaseId', 'phase_id') ?? '',
     phase: wire.phase ?? '',
-    matchedBy: wire.matched_by ?? '',
+    matchedBy: wireField<string>(wire, 'matchedBy', 'matched_by') ?? '',
   };
 }
 
 function adaptLinkedSession(wire: WireLinkedFeatureSessionDTO): LinkedFeatureSessionDTO {
   return {
-    sessionId: wire.session_id ?? '',
+    sessionId: wireField<string>(wire, 'sessionId', 'session_id') ?? '',
     title: wire.title ?? '',
     status: wire.status ?? '',
     model: wire.model ?? '',
-    modelProvider: wire.model_provider ?? '',
-    modelFamily: wire.model_family ?? '',
-    startedAt: wire.started_at ?? '',
-    endedAt: wire.ended_at ?? '',
-    updatedAt: wire.updated_at ?? '',
-    totalCost: wire.total_cost ?? 0,
-    observedTokens: wire.observed_tokens ?? 0,
-    rootSessionId: wire.root_session_id ?? '',
-    parentSessionId: wire.parent_session_id ?? null,
-    workflowType: wire.workflow_type ?? '',
-    isPrimaryLink: wire.is_primary_link ?? false,
-    isSubthread: wire.is_subthread ?? false,
-    threadChildCount: wire.thread_child_count ?? 0,
+    modelProvider: wireField<string>(wire, 'modelProvider', 'model_provider') ?? '',
+    modelFamily: wireField<string>(wire, 'modelFamily', 'model_family') ?? '',
+    startedAt: wireField<string>(wire, 'startedAt', 'started_at') ?? '',
+    endedAt: wireField<string>(wire, 'endedAt', 'ended_at') ?? '',
+    updatedAt: wireField<string>(wire, 'updatedAt', 'updated_at') ?? '',
+    totalCost: wireField<number>(wire, 'totalCost', 'total_cost') ?? 0,
+    observedTokens: wireField<number>(wire, 'observedTokens', 'observed_tokens') ?? 0,
+    rootSessionId: wireField<string>(wire, 'rootSessionId', 'root_session_id') ?? '',
+    parentSessionId: wireField<string | null>(wire, 'parentSessionId', 'parent_session_id') ?? null,
+    workflowType: wireField<string>(wire, 'workflowType', 'workflow_type') ?? '',
+    isPrimaryLink: wireField<boolean>(wire, 'isPrimaryLink', 'is_primary_link') ?? false,
+    isSubthread: wireField<boolean>(wire, 'isSubthread', 'is_subthread') ?? false,
+    threadChildCount: wireField<number>(wire, 'threadChildCount', 'thread_child_count') ?? 0,
     reasons: wire.reasons ?? [],
     commands: wire.commands ?? [],
-    relatedTasks: (wire.related_tasks ?? []).map(adaptLinkedSessionTask),
+    relatedTasks: (wireField<WireLinkedFeatureSessionTaskDTO[]>(wire, 'relatedTasks', 'related_tasks') ?? []).map(adaptLinkedSessionTask),
   };
 }
 
@@ -813,10 +834,10 @@ function adaptLinkedSessionEnrichment(
 ): LinkedSessionEnrichmentDTO {
   return {
     includes: wire?.includes ?? [],
-    logsRead: wire?.logs_read ?? false,
-    commandCountIncluded: wire?.command_count_included ?? false,
-    taskRefsIncluded: wire?.task_refs_included ?? false,
-    threadChildrenIncluded: wire?.thread_children_included ?? false,
+    logsRead: wireField<boolean>(wire, 'logsRead', 'logs_read') ?? false,
+    commandCountIncluded: wireField<boolean>(wire, 'commandCountIncluded', 'command_count_included') ?? false,
+    taskRefsIncluded: wireField<boolean>(wire, 'taskRefsIncluded', 'task_refs_included') ?? false,
+    threadChildrenIncluded: wireField<boolean>(wire, 'threadChildrenIncluded', 'thread_children_included') ?? false,
   };
 }
 
@@ -873,8 +894,8 @@ export async function listFeatureCards(
     total: wire.total ?? 0,
     offset: wire.offset ?? 0,
     limit: wire.limit ?? pageSize,
-    hasMore: wire.has_more ?? false,
-    queryHash: wire.query_hash ?? '',
+    hasMore: wireField<boolean>(wire, 'hasMore', 'has_more') ?? false,
+    queryHash: wireField<string>(wire, 'queryHash', 'query_hash') ?? '',
     precision: wire.precision ?? 'exact',
     freshness: adaptDTOFreshness(wire.freshness),
   };
@@ -919,8 +940,8 @@ export async function getFeatureRollups(
     rollups,
     missing: wire.missing ?? [],
     errors,
-    generatedAt: wire.generated_at ?? '',
-    cacheVersion: wire.cache_version ?? '',
+    generatedAt: wireField<string>(wire, 'generatedAt', 'generated_at') ?? '',
+    cacheVersion: wireField<string>(wire, 'cacheVersion', 'cache_version') ?? '',
   };
 }
 
@@ -935,7 +956,7 @@ export async function getFeatureModalOverview(featureId: string): Promise<Featur
   );
 
   return {
-    featureId: wire.feature_id ?? featureId,
+    featureId: wireField<string>(wire, 'featureId', 'feature_id') ?? featureId,
     card: adaptFeatureCard(wire.card ?? {}),
     rollup: wire.rollup ? adaptFeatureRollup(wire.rollup) : null,
     description: wire.description ?? '',
@@ -965,11 +986,11 @@ export async function getFeatureModalSection(
   );
 
   return {
-    featureId: wire.feature_id ?? featureId,
+    featureId: wireField<string>(wire, 'featureId', 'feature_id') ?? featureId,
     section: wire.section ?? section,
     title: wire.title ?? '',
     items: (wire.items ?? []).map((item) => ({
-      itemId: item.item_id ?? '',
+      itemId: wireField<string>(item, 'itemId', 'item_id') ?? '',
       label: item.label ?? '',
       kind: item.kind ?? '',
       status: item.status ?? '',
@@ -981,7 +1002,7 @@ export async function getFeatureModalSection(
     total: wire.total ?? 0,
     offset: wire.offset ?? 0,
     limit: wire.limit ?? 20,
-    hasMore: wire.has_more ?? false,
+    hasMore: wireField<boolean>(wire, 'hasMore', 'has_more') ?? false,
     includes: wire.includes ?? [],
     precision: wire.precision ?? 'exact',
     freshness: adaptDTOFreshness(wire.freshness),
@@ -1012,10 +1033,76 @@ export async function getFeatureLinkedSessionPage(
     total: wire.total ?? 0,
     offset: wire.offset ?? 0,
     limit: wire.limit ?? 20,
-    hasMore: wire.has_more ?? false,
-    nextCursor: wire.next_cursor ?? null,
+    hasMore: wireField<boolean>(wire, 'hasMore', 'has_more') ?? false,
+    nextCursor: wireField<string | null>(wire, 'nextCursor', 'next_cursor') ?? null,
     enrichment: adaptLinkedSessionEnrichment(wire.enrichment),
     precision: wire.precision ?? 'eventually_consistent',
     freshness: adaptDTOFreshness(wire.freshness),
   };
+}
+
+// ── Legacy v0 feature helpers (encoded IDs) ─────────────────────────────────
+// These thin wrappers replace inline fetch() calls scattered across components.
+// They call the /api/features/ legacy endpoints (not /api/v1/) and return the
+// raw wire shapes those endpoints emit.  The important guarantee is that the
+// feature ID is always encoded before being interpolated into the URL, so IDs
+// containing /, spaces, #, ?, and & are handled correctly.
+
+const API_LEGACY_FEATURES_BASE = '/api/features';
+
+async function legacyFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_LEGACY_FEATURES_BASE}${path}`, init);
+  if (!res.ok) {
+    throw new FeatureSurfaceApiError(
+      `Legacy feature API error: ${res.status} ${res.statusText} for ${API_LEGACY_FEATURES_BASE}${path}`,
+      res.status,
+    );
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
+ * Fetch a single feature by ID from the legacy /api/features/{featureId} endpoint.
+ *
+ * The feature ID is percent-encoded so that IDs containing /, spaces, #, ?, and
+ * & are transmitted correctly.
+ */
+export async function getLegacyFeatureDetail<T = unknown>(featureId: string): Promise<T> {
+  return legacyFetch<T>(`/${encodeURIComponent(featureId)}`);
+}
+
+/**
+ * Fetch the linked-sessions list for a feature from the legacy
+ * /api/features/{featureId}/linked-sessions endpoint.
+ *
+ * The feature ID is percent-encoded so that IDs containing /, spaces, #, ?, and
+ * & are transmitted correctly.
+ *
+ * @deprecated Use {@link getFeatureLinkedSessionPage} instead.
+ *   P5-006: All production call sites have been migrated. This export is retained
+ *   for test harnesses that directly exercise the legacy endpoint contract
+ *   (see components/__tests__/FeatureModalEncodedIds.test.tsx). It will be
+ *   removed when the legacy /api/features/{id}/linked-sessions route is retired.
+ */
+export async function getLegacyFeatureLinkedSessions<T = unknown[]>(featureId: string): Promise<T> {
+  return legacyFetch<T>(`/${encodeURIComponent(featureId)}/linked-sessions`);
+}
+
+/**
+ * Fetch task source file content from /api/features/task-source.
+ *
+ * Uses the typed client (via legacyFetch base URL) to eliminate the raw
+ * fetch(`/api/features/task-source?file=...`) call in TaskSourceDialog.
+ * P4-010: last raw /api/features/ interpolation in components/ removed.
+ */
+export async function getFeatureTaskSource(sourceFile: string): Promise<{ content: string }> {
+  const params = new URLSearchParams({ file: sourceFile });
+  const res = await fetch(`${API_LEGACY_FEATURES_BASE}/task-source?${params.toString()}`);
+  if (!res.ok) {
+    throw new FeatureSurfaceApiError(
+      `Feature task-source error: ${res.status} ${res.statusText}`,
+      res.status,
+    );
+  }
+  return res.json() as Promise<{ content: string }>;
 }

@@ -31,6 +31,7 @@ from backend.db.repositories.feature_queries import (
     SortDirection,
     ThreadExpansionMode,
 )
+from backend.document_linking import canonical_slug
 from backend.routers.client_v1_models import (
     ClientV1Envelope,
     ClientV1PaginatedEnvelope,
@@ -81,6 +82,59 @@ _SUPPORTED_MODAL_SECTION_INCLUDES: dict[str, frozenset[str]] = {
 _FEATURE_SURFACE_OBSERVABILITY_EVENT = "Feature surface v1 request observed"
 
 
+def _score_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _feature_row_score(row: dict[str, Any]) -> tuple[int, int, int, str, int]:
+    status = str(row.get("status") or "").lower()
+    status_rank = {
+        "done": 4,
+        "completed": 4,
+        "review": 3,
+        "in-progress": 2,
+        "active": 2,
+        "planned": 1,
+    }.get(status, 0)
+    completed = _score_int(row.get("completed_tasks"))
+    total = _score_int(row.get("total_tasks"))
+    updated_at = str(row.get("updated_at") or "")
+    feature_id = str(row.get("id") or "")
+    return (status_rank, completed, total, updated_at, len(feature_id))
+
+
+def _project_id_from_context(context: RequestContext) -> str:
+    project = getattr(context, "project", None)
+    return str(getattr(project, "project_id", "") or getattr(project, "id", "") or "")
+
+
+async def _resolve_feature_alias_id(storage: Any, context: RequestContext, feature_id: str) -> str:
+    """Resolve base-slug aliases to the best concrete feature row for v1 modal paths."""
+    feature_repo = storage.features()
+    existing = await feature_repo.get_by_id(feature_id)
+    if existing is not None:
+        return feature_id
+
+    project_id = _project_id_from_context(context)
+    if not project_id or not hasattr(feature_repo, "list_all"):
+        return feature_id
+
+    base = canonical_slug(feature_id)
+    candidates = await feature_repo.list_all(project_id)
+    matches = [
+        dict(row)
+        for row in candidates
+        if canonical_slug(str(row.get("id") or "")) == base
+    ]
+    if not matches:
+        return feature_id
+    matches.sort(key=_feature_row_score, reverse=True)
+    return str(matches[0].get("id") or feature_id)
+
+
 class _CamelModel(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
@@ -106,6 +160,7 @@ class FeatureCardPageResponseDTO(_CamelModel):
 class FeatureRollupsRequest(_CamelModel):
     feature_ids: list[str] = Field(..., min_length=1, max_length=100)
     fields: list[str] = Field(default_factory=list)
+    include_inherited_threads: bool | None = None
     include_freshness: bool | None = None
     include_test_metrics: bool = False
     include_subthread_resolution: bool = False
@@ -302,7 +357,8 @@ def _validate_modal_includes(section: str, include: list[str] | None) -> list[st
 
 
 def _build_card_dto(row: dict[str, Any], *, precision: str = "exact") -> FeatureCardDTO:
-    payload = _feature_payload(row)
+    source_row = row.get("raw") if isinstance(row.get("raw"), dict) else row
+    payload = _feature_payload(source_row)
     planning_status = payload.get("planningStatus") if isinstance(payload.get("planningStatus"), dict) else {}
     quality_signals = payload.get("qualitySignals") if isinstance(payload.get("qualitySignals"), dict) else {}
     dependency_state = payload.get("dependencyState") if isinstance(payload.get("dependencyState"), dict) else {}
@@ -310,6 +366,7 @@ def _build_card_dto(row: dict[str, Any], *, precision: str = "exact") -> Feature
     primary_documents = payload.get("primaryDocuments") if isinstance(payload.get("primaryDocuments"), list) else []
     family_position = payload.get("familyPosition") if isinstance(payload.get("familyPosition"), dict) else None
     related_features = payload.get("relatedFeatures") if isinstance(payload.get("relatedFeatures"), list) else []
+    phase_summary = row.get("phase_summary") if isinstance(row.get("phase_summary"), list) else []
 
     return FeatureCardDTO.model_validate(
         {
@@ -324,10 +381,13 @@ def _build_card_dto(row: dict[str, Any], *, precision: str = "exact") -> Feature
             "priority": str(payload.get("priority") or row.get("priority") or ""),
             "riskLevel": str(payload.get("riskLevel") or ""),
             "complexity": str(payload.get("complexity") or ""),
+            "executionReadiness": str(payload.get("executionReadiness") or ""),
+            "testImpact": str(payload.get("testImpact") or quality_signals.get("testImpact") or ""),
+            "planningStatus": planning_status or None,
             "totalTasks": int(row.get("total_tasks") or 0),
             "completedTasks": int(row.get("completed_tasks") or 0),
             "deferredTasks": int(payload.get("deferredTasks") or 0),
-            "phaseCount": int(payload.get("phaseCount") or 0),
+            "phaseCount": int(payload.get("phaseCount") or len(phase_summary) or 0),
             "plannedAt": str(payload.get("plannedAt") or ""),
             "startedAt": str(payload.get("startedAt") or ""),
             "completedAt": str(row.get("completed_at") or payload.get("completedAt") or ""),
@@ -1040,12 +1100,17 @@ async def post_feature_rollups_v1(
     started_at = time.perf_counter()
     try:
         app_request = await _resolve_app_request(request_context, core_ports)
+        include_subthread_resolution = (
+            payload.include_subthread_resolution
+            if payload.include_inherited_threads is None
+            else payload.include_inherited_threads
+        )
         query = _feature_surface_list_rollup_service.build_rollup_query(
             feature_ids=payload.feature_ids,
             fields=payload.fields,
             include_freshness=payload.include_freshness,
             include_test_metrics=payload.include_test_metrics,
-            include_subthread_resolution=payload.include_subthread_resolution,
+            include_subthread_resolution=include_subthread_resolution,
         )
         batch = await _feature_surface_list_rollup_service.get_feature_rollups(
             app_request.context,
@@ -1131,22 +1196,27 @@ async def get_feature_modal_overview_v1(
     started_at = time.perf_counter()
     try:
         app_request = await _resolve_app_request(request_context, core_ports)
+        resolved_feature_id = await _resolve_feature_alias_id(
+            app_request.ports.storage,
+            app_request.context,
+            feature_id,
+        )
         overview = await _feature_modal_detail_service.get_overview(
             app_request.context,
             app_request.ports,
-            feature_id,
+            resolved_feature_id,
         )
         if overview.status == "not_found":
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
 
-        feature_row = await app_request.ports.storage.features().get_by_id(feature_id)
+        feature_row = await app_request.ports.storage.features().get_by_id(resolved_feature_id)
         card = _build_card_dto(dict(feature_row or {}))
 
         rollup = None
         rollup_cache_status = "unknown"
         try:
             rollup_query = _feature_surface_list_rollup_service.build_rollup_query(
-                feature_ids=[feature_id],
+                feature_ids=[resolved_feature_id],
                 fields=[
                     "session_counts",
                     "token_cost_totals",
@@ -1161,16 +1231,16 @@ async def get_feature_modal_overview_v1(
                 app_request.ports,
                 rollup_query,
             )
-            entry = rollup_batch.rollups.get(feature_id)
+            entry = rollup_batch.rollups.get(resolved_feature_id)
             if entry is not None:
-                rollup = _build_rollup_dto(feature_id, entry)
+                rollup = _build_rollup_dto(resolved_feature_id, entry)
             if getattr(rollup_batch, "cache_version", ""):
                 rollup_cache_status = "available"
         except Exception:
             logger.debug("Feature modal overview rollup fetch failed", exc_info=True)
 
         dto = FeatureModalOverviewDTO(
-            feature_id=feature_id,
+            feature_id=resolved_feature_id,
             card=card,
             rollup=rollup,
             description=str(overview.data.get("description") or ""),
@@ -1186,7 +1256,7 @@ async def get_feature_modal_overview_v1(
             result_count=1,
             payload=envelope.data,
             cache_status=rollup_cache_status,
-            feature_id=feature_id,
+            feature_id=resolved_feature_id,
         )
         return envelope
     except Exception as exc:
@@ -1219,6 +1289,11 @@ async def get_feature_modal_section_v1(
         effective_limit = max(1, min(limit, 50 if section == "sessions" else _MAX_LIMIT))
         effective_offset = max(0, offset)
         app_request = await _resolve_app_request(request_context, core_ports)
+        resolved_feature_id = await _resolve_feature_alias_id(
+            app_request.ports.storage,
+            app_request.context,
+            feature_id,
+        )
 
         if section == "overview":
             raise _bad_request("Use GET /api/v1/features/{feature_id}/modal for overview.")
@@ -1227,19 +1302,19 @@ async def get_feature_modal_section_v1(
             result = await _feature_modal_detail_service.get_phases_tasks(
                 app_request.context,
                 app_request.ports,
-                feature_id,
+                resolved_feature_id,
             )
         elif section == "documents":
             result = await _feature_modal_detail_service.get_docs(
                 app_request.context,
                 app_request.ports,
-                feature_id,
+                resolved_feature_id,
             )
         elif section == "relations":
             results = await _feature_modal_detail_service.get_sections(
                 app_request.context,
                 app_request.ports,
-                feature_id,
+                resolved_feature_id,
                 sections=["relations"],
             )
             result = results["relations"]
@@ -1247,7 +1322,7 @@ async def get_feature_modal_section_v1(
             result = await _feature_modal_detail_service.get_sessions(
                 app_request.context,
                 app_request.ports,
-                feature_id,
+                resolved_feature_id,
                 limit=effective_limit,
                 offset=effective_offset,
                 thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
@@ -1256,13 +1331,13 @@ async def get_feature_modal_section_v1(
             result = await _feature_modal_detail_service.get_test_status(
                 app_request.context,
                 app_request.ports,
-                feature_id,
+                resolved_feature_id,
             )
         else:
             result = await _feature_modal_detail_service.get_activity(
                 app_request.context,
                 app_request.ports,
-                feature_id,
+                resolved_feature_id,
                 limit=effective_limit,
                 offset=effective_offset,
             )
@@ -1271,7 +1346,7 @@ async def get_feature_modal_section_v1(
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
 
         dto = _section_result_to_dto(
-            feature_id,
+            resolved_feature_id,
             section,
             result,
             includes=resolved_include,
@@ -1288,7 +1363,7 @@ async def get_feature_modal_section_v1(
             result_count=len(dto.items),
             payload=envelope.data,
             cache_status="unknown",
-            feature_id=feature_id,
+            feature_id=resolved_feature_id,
             section=section,
             limit=effective_limit,
             offset=effective_offset,
@@ -1324,10 +1399,15 @@ async def get_feature_linked_session_page_v1(
     effective_offset = max(0, offset)
     try:
         app_request = await _resolve_app_request(request_context, core_ports)
+        resolved_feature_id = await _resolve_feature_alias_id(
+            app_request.ports.storage,
+            app_request.context,
+            feature_id,
+        )
         result = await _feature_modal_detail_service.get_sessions(
             app_request.context,
             app_request.ports,
-            feature_id,
+            resolved_feature_id,
             limit=effective_limit,
             offset=effective_offset,
             thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
@@ -1361,7 +1441,7 @@ async def get_feature_linked_session_page_v1(
             result_count=len(dto.items),
             payload=envelope.data,
             cache_status="unknown",
-            feature_id=feature_id,
+            feature_id=resolved_feature_id,
             limit=effective_limit,
             offset=effective_offset,
         )

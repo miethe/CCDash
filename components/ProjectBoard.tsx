@@ -51,12 +51,22 @@ import {
   type PlanningFeatureModalTab,
 } from '../services/planningRoutes';
 import { invalidateFeatureSurface } from '../services/featureSurfaceCache';
+// P4-011: publish feature-write events so BOTH caches are invalidated via the
+// featureCacheBus.  The explicit invalidateFeatureSurface() call below is kept
+// as a belt-and-suspenders guard for React state reset; the bus handles the
+// planning cache.  See feature-surface-planning-cache-coordination.md
+import { publishFeatureWriteEvent } from '../services/featureCacheBus';
 import {
   cardDTOBoardStage,
   cardDTOToFeature,
   rollupToSessionSummary,
 } from './featureCardAdapters';
 import type { FeatureCardDTO } from '../services/featureSurface';
+import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, getFeatureTaskSource } from '../services/featureSurface';
+import { useFeatureModalData, type ModalTabId } from '../services/useFeatureModalData';
+import { TabStateView } from './FeatureModal/TabStateView';
+import { isFeatureSurfaceV2Enabled } from '../services/featureSurfaceFlag';
+import { useAppRuntime } from '../contexts/AppRuntimeContext';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -1309,13 +1319,10 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
       setLoading(false);
       return;
     }
-    fetch(`/api/features/task-source?file=${encodeURIComponent(task.sourceFile)}`)
-      .then(r => {
-        if (!r.ok) throw new Error(`Failed to load (${r.status})`);
-        return r.json();
-      })
+    // P4-010: replaced raw /api/features/task-source fetch with typed client.
+    getFeatureTaskSource(task.sourceFile)
       .then(data => { setContent(data.content); setLoading(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
+      .catch(e => { setError((e as Error).message); setLoading(false); });
   }, [task.sourceFile]);
 
   return (
@@ -1380,6 +1387,10 @@ export const ProjectBoardFeatureModal = ({
 }) => {
   const navigate = useNavigate();
   const { activeProject, updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
+  // P5-005: Read the v2 flag once at mount so both the modal section hook and
+  // the legacy refresh callbacks pick a consistent path for this modal instance.
+  const { runtimeStatus: modalRuntimeStatus } = useAppRuntime();
+  const modalV2Enabled = isFeatureSurfaceV2Enabled(modalRuntimeStatus);
   const [activeTab, setActiveTab] = useState<FeatureModalTab>(initialTab);
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -1402,37 +1413,79 @@ export const ProjectBoardFeatureModal = ({
   const [featureTestHealth, setFeatureTestHealth] = useState<FeatureTestHealth | null>(null);
   const featureDetailRequestIdRef = useRef(0);
   const linkedSessionsRequestIdRef = useRef(0);
+  // P4-003: tracks whether linked sessions have been fetched for the current
+  // feature.  Reset on feature change.  Prevents eager fetch on modal open.
+  const sessionsFetchedRef = useRef(false);
+
+  // P4-010: per-section hook for typed, lazy modal data loading.
+  // Each section (overview, phases, docs, relations, sessions, test-status,
+  // history) has independent status/error/retry lifecycle via useFeatureModalData.
+  // `fullFeature` + `linkedSessionLinks` state above remain for compatibility with
+  // existing sub-components; sections loaded here provide supplementary TabStateView
+  // states without replacing the existing data flow in this task.
+  // P5-005: Pass v2 flag so the hook picks legacy path when disabled.
+  const modalSections = useFeatureModalData(feature.id, { featureSurfaceV2Enabled: modalV2Enabled });
 
   const refreshFeatureDetail = useCallback(async () => {
     const requestId = ++featureDetailRequestIdRef.current;
     try {
-      const res = await fetch(`/api/features/${feature.id}`);
-      if (!res.ok) throw new Error(`Failed to load feature detail (${res.status})`);
-      const data = await res.json();
+      const data = await getLegacyFeatureDetail<Feature>(feature.id);
       if (requestId !== featureDetailRequestIdRef.current) return;
-      setFullFeature(normalizeFeatureForModal(data as Feature));
+      setFullFeature(normalizeFeatureForModal(data));
     } catch {
       // Keep existing detail snapshot on transient failures.
     }
   }, [feature.id]);
 
+  // P5-006: refreshLinkedSessions now uses the paginated v2 API (getFeatureLinkedSessionPage)
+  // instead of the retired legacy endpoint. The existing lazy gate (activeTab === 'sessions' &&
+  // !sessionsFetchedRef.current) is preserved unchanged.  We fetch the first page (limit 50)
+  // for the initial load; subsequent pages are pulled by the pagination accumulator in P4-004.
   const refreshLinkedSessions = useCallback(async () => {
     const requestId = ++linkedSessionsRequestIdRef.current;
     try {
-      const res = await fetch(`/api/features/${feature.id}/linked-sessions`);
-      if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
-      const data = await res.json();
+      const page = await getFeatureLinkedSessionPage(feature.id, { limit: 50, offset: 0 });
       if (requestId !== linkedSessionsRequestIdRef.current) return;
-      const rows = Array.isArray(data) ? (data as FeatureSessionLink[]) : [];
       const bestBySession = new Map<string, FeatureSessionLink>();
-      rows.forEach(row => {
-        const sessionId = String(row.sessionId || '').trim();
-        if (!sessionId) return;
+      for (const dto of page.items) {
+        const sessionId = String(dto.sessionId || '').trim();
+        if (!sessionId) continue;
+        const confidence = dto.isPrimaryLink ? 0.9 : 0.5;
         const existing = bestBySession.get(sessionId);
-        if (!existing || row.confidence > existing.confidence) {
-          bestBySession.set(sessionId, row);
+        if (!existing || confidence > existing.confidence) {
+          bestBySession.set(sessionId, {
+            sessionId: dto.sessionId,
+            title: dto.title,
+            confidence,
+            reasons: dto.reasons ?? [],
+            commands: dto.commands ?? [],
+            commitHashes: [],
+            status: dto.status,
+            model: dto.model,
+            modelProvider: dto.modelProvider,
+            modelFamily: dto.modelFamily,
+            startedAt: dto.startedAt,
+            endedAt: dto.endedAt,
+            updatedAt: dto.updatedAt,
+            totalCost: dto.totalCost,
+            observedTokens: dto.observedTokens,
+            durationSeconds: 0,
+            parentSessionId: dto.parentSessionId ?? null,
+            rootSessionId: dto.rootSessionId,
+            isSubthread: dto.isSubthread,
+            isPrimaryLink: dto.isPrimaryLink,
+            workflowType: dto.workflowType,
+            relatedPhases: [],
+            relatedTasks: (dto.relatedTasks ?? []).map(t => ({
+              taskId: t.taskId,
+              taskTitle: t.taskTitle,
+              phaseId: t.phaseId,
+              phase: t.phase,
+              matchedBy: t.matchedBy,
+            })),
+          });
         }
-      });
+      }
       setLinkedSessionLinks(Array.from(bestBySession.values()));
     } catch {
       // Keep previous linked sessions on transient failures.
@@ -1451,13 +1504,112 @@ export const ProjectBoardFeatureModal = ({
     setPhaseStatusFilter('all');
     setTaskStatusFilter('all');
     setViewingDoc(null);
+    // P4-003: Reset session fetch guard so Sessions tab re-fetches for the new feature.
+    sessionsFetchedRef.current = false;
+    // P4-004: Reset pagination accumulator pointer on feature change.
+    prevAccumulatedCountRef.current = 0;
     refreshFeatureDetail();
-    refreshLinkedSessions();
-  }, [feature.id, refreshFeatureDetail, refreshLinkedSessions]);
+    // NOTE: linked sessions are NOT fetched here (P4-003).
+    // They are loaded lazily on first Sessions tab activation.
+  }, [feature.id, refreshFeatureDetail]);
 
   useEffect(() => {
     setActiveTab(initialTab);
   }, [feature.id, initialTab]);
+
+  // P4-003: Lazy Sessions Tab — fetch linked sessions ONLY on first Sessions tab
+  // activation for this feature.  Subsequent switches to the sessions tab reuse
+  // the already-fetched data (cache guard via sessionsFetchedRef).
+  useEffect(() => {
+    if (activeTab === 'sessions' && !sessionsFetchedRef.current) {
+      sessionsFetchedRef.current = true;
+      void refreshLinkedSessions();
+    }
+  }, [activeTab, refreshLinkedSessions]);
+
+  // P4-004: Adapt LinkedFeatureSessionDTO items from the paginated accumulator
+  // into FeatureSessionLink and merge into linkedSessionLinks when new pages load.
+  // Only items not already present (by sessionId) are appended; the first-page
+  // load via refreshLinkedSessions (P5-006: now v2 getFeatureLinkedSessionPage)
+  // remains authoritative for the initial result set.
+  const prevAccumulatedCountRef = useRef(0);
+  useEffect(() => {
+    const { accumulatedItems } = modalSections.sessionPagination;
+    if (accumulatedItems.length <= prevAccumulatedCountRef.current) {
+      // No net new items; also handle reset (accumulator cleared on feature change).
+      prevAccumulatedCountRef.current = accumulatedItems.length;
+      return;
+    }
+    const newItems = accumulatedItems.slice(prevAccumulatedCountRef.current);
+    prevAccumulatedCountRef.current = accumulatedItems.length;
+
+    setLinkedSessionLinks(prev => {
+      const existingIds = new Set(prev.map(s => s.sessionId));
+      const toAppend: FeatureSessionLink[] = newItems
+        .filter(dto => !existingIds.has(dto.sessionId))
+        .map(dto => ({
+          sessionId: dto.sessionId,
+          title: dto.title,
+          confidence: dto.isPrimaryLink ? 0.9 : 0.5,
+          reasons: dto.reasons ?? [],
+          commands: dto.commands ?? [],
+          commitHashes: [],
+          status: dto.status,
+          model: dto.model,
+          modelProvider: dto.modelProvider,
+          modelFamily: dto.modelFamily,
+          startedAt: dto.startedAt,
+          endedAt: dto.endedAt,
+          updatedAt: dto.updatedAt,
+          totalCost: dto.totalCost,
+          observedTokens: dto.observedTokens,
+          durationSeconds: 0,
+          parentSessionId: dto.parentSessionId ?? null,
+          rootSessionId: dto.rootSessionId,
+          isSubthread: dto.isSubthread,
+          isPrimaryLink: dto.isPrimaryLink,
+          workflowType: dto.workflowType,
+          relatedPhases: [],
+          relatedTasks: (dto.relatedTasks ?? []).map(t => ({
+            taskId: t.taskId,
+            taskTitle: t.taskTitle,
+            phaseId: t.phaseId,
+            phase: t.phase,
+            matchedBy: t.matchedBy,
+          })),
+        }));
+      if (toAppend.length === 0) return prev;
+      return [...prev, ...toAppend];
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalSections.sessionPagination.accumulatedItems]);
+
+  // P4-010: Trigger useFeatureModalData section loads on tab activation.
+  // Overview loads on mount; each other tab loads when first activated.
+  // Sections that are already 'loading' or 'success'/'stale' are no-ops (handled
+  // inside the hook's load() guard).  The existing fullFeature / linkedSessionLinks
+  // state paths remain the authoritative data source for sub-components; these
+  // load() calls provide the TabStateView status signals for each tab.
+  useEffect(() => {
+    if (activeTab === 'overview') {
+      modalSections.overview.load();
+    } else if (activeTab === 'phases') {
+      modalSections.phases.load();
+    } else if (activeTab === 'docs') {
+      modalSections.docs.load();
+    } else if (activeTab === 'relations') {
+      modalSections.relations.load();
+    } else if (activeTab === 'sessions') {
+      modalSections.sessions.load();
+    } else if (activeTab === 'test-status') {
+      modalSections['test-status'].load();
+    } else if (activeTab === 'history') {
+      modalSections.history.load();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+  // Note: modalSections intentionally excluded from deps — the hook reference is
+  // stable per feature; including it would cause double-loads on every render.
 
   const refreshFeatureTestHealth = useCallback(async () => {
     if (!activeProject?.id) {
@@ -1484,18 +1636,102 @@ export const ProjectBoardFeatureModal = ({
     }
   }, [activeTab, featureTestHealth]);
 
+  // ── P4-006: Live-refresh policy ───────────────────────────────────────────────
+  //
+  // Overview shell is ALWAYS refreshed (it is the open-cost; always considered
+  // "active" for refresh purposes).
+  //
+  // For every other section on a live-invalidation event OR a polling tick:
+  //
+  //   ACTIVE tab  →  call the legacy refresh function immediately.  The user is
+  //                  looking at this data; stale results are visible.
+  //
+  //   INACTIVE tab, section.status === 'success' | 'stale'
+  //               →  call markStale(section) ONLY.  Do NOT fetch.  The section
+  //                  will re-fetch automatically on next tab activation via the
+  //                  existing tab-activation useEffect (P4-010).
+  //
+  //   INACTIVE tab, section.status === 'idle' | 'loading' | 'error'
+  //               →  do NOTHING.  'idle' was never loaded; 'loading' is already
+  //                  in-flight; 'error' waits for user-driven retry.  Pre-fetching
+  //                  unloaded heavy sections on behalf of background refresh is
+  //                  exactly what P4-006 prohibits.
+  //
+  // The heavy sections subject to this policy are:
+  //   phases, sessions, docs, relations, history, test-status
+  // (overview is always refreshed; sessions also uses the legacy sessionsFetchedRef guard)
+  //
+  // "ACTIVE" is defined as: the section whose tab is currently open in the modal.
+  // A section may be loaded (status === 'success') but inactive if the user has
+  // navigated away from its tab.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Applies the P4-006 live-refresh policy for a single non-overview section.
+   * Returns a Promise<void> so it can be composed in Promise.all / setInterval.
+   *
+   * @param section   - The ModalTabId of the section to evaluate.
+   * @param refreshFn - The legacy async refresh to call when the section is active.
+   */
+  const applyLiveRefreshPolicy = useCallback(
+    (
+      section: Exclude<ModalTabId, 'overview'>,
+      refreshFn: () => Promise<void>,
+    ): Promise<void> => {
+      const isActive = activeTab === section;
+      const sectionStatus = modalSections[section].status;
+
+      if (isActive) {
+        // Active tab: fetch immediately so the user sees fresh data.
+        return refreshFn();
+      }
+
+      // Inactive tab: only promote loaded sections to stale; never pre-fetch.
+      if (sectionStatus === 'success' || sectionStatus === 'stale') {
+        modalSections.markStale(section);
+      }
+      // 'idle' | 'loading' | 'error' → no-op
+      return Promise.resolve();
+    },
+    [activeTab, modalSections],
+  );
+
   const featureLiveEnabled = Boolean(activeProject?.id && isFeatureLiveUpdatesEnabled());
   const featureLiveStatus = useLiveInvalidation({
     topics: featureLiveEnabled && activeProject?.id ? [featureTopic(feature.id), projectFeaturesTopic(activeProject.id)] : [],
     enabled: featureLiveEnabled,
     pauseWhenHidden: true,
     onInvalidate: async () => {
+      // Overview shell always refreshes (open-cost; always "active").
+      // Heavy sections follow the P4-006 policy via applyLiveRefreshPolicy.
       await Promise.all([
         refreshFeatureDetail(),
-        (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history')
-          ? refreshLinkedSessions()
-          : Promise.resolve(),
-        activeTab === 'test-status' ? refreshFeatureTestHealth() : Promise.resolve(),
+        applyLiveRefreshPolicy(
+          'phases',
+          () => Promise.resolve(), // phases currently wired through refreshFeatureDetail; no dedicated legacy fn
+        ),
+        // P4-003 / P4-006: sessions — guard both the legacy fetch ref AND the
+        // section status so we never fetch sessions that were never loaded.
+        applyLiveRefreshPolicy(
+          'sessions',
+          () => sessionsFetchedRef.current ? refreshLinkedSessions() : Promise.resolve(),
+        ),
+        applyLiveRefreshPolicy(
+          'docs',
+          () => Promise.resolve(), // docs currently wired through refreshFeatureDetail; no dedicated legacy fn
+        ),
+        applyLiveRefreshPolicy(
+          'relations',
+          () => Promise.resolve(), // relations currently wired through refreshFeatureDetail; no dedicated legacy fn
+        ),
+        applyLiveRefreshPolicy(
+          'history',
+          () => Promise.resolve(), // history currently wired through refreshFeatureDetail; no dedicated legacy fn
+        ),
+        applyLiveRefreshPolicy(
+          'test-status',
+          () => refreshFeatureTestHealth(),
+        ),
       ]);
     },
   });
@@ -1505,16 +1741,24 @@ export const ProjectBoardFeatureModal = ({
       return undefined;
     }
     const interval = setInterval(() => {
+      // Overview shell always refreshes (open-cost; always "active").
       void refreshFeatureDetail();
-      if (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history') {
-        void refreshLinkedSessions();
-      }
-      if (activeTab === 'test-status') {
-        void refreshFeatureTestHealth();
-      }
+
+      // Heavy sections follow the P4-006 policy via applyLiveRefreshPolicy.
+      // P4-003 / P4-006: sessions — guard both the legacy fetch ref AND the
+      // section status so we never fetch sessions that were never loaded.
+      void applyLiveRefreshPolicy(
+        'sessions',
+        () => sessionsFetchedRef.current ? refreshLinkedSessions() : Promise.resolve(),
+      );
+      void applyLiveRefreshPolicy('phases', () => Promise.resolve());
+      void applyLiveRefreshPolicy('docs', () => Promise.resolve());
+      void applyLiveRefreshPolicy('relations', () => Promise.resolve());
+      void applyLiveRefreshPolicy('history', () => Promise.resolve());
+      void applyLiveRefreshPolicy('test-status', () => refreshFeatureTestHealth());
     }, FEATURE_MODAL_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [activeTab, featureLiveEnabled, featureLiveStatus, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
+  }, [activeTab, applyLiveRefreshPolicy, featureLiveEnabled, featureLiveStatus, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
 
   const togglePhase = (phaseKey: string) => {
     setExpandedPhases(prev => {
@@ -1566,6 +1810,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updateFeatureStatus(feature.id, newStatus);
+      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
+      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'status' });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -1611,6 +1857,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updatePhaseStatus(feature.id, phaseId, newStatus);
+      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
+      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'phase' });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -1644,6 +1892,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updateTaskStatus(feature.id, phaseId, taskId, newStatus, previousTaskStatus);
+      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
+      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'task' });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -2356,7 +2606,13 @@ export const ProjectBoardFeatureModal = ({
       { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
       { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
       { id: 'relations', label: `Relations (${getFeatureLinkedFeatureCount(activeFeature)})`, icon: Link2 },
-      { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
+      {
+        id: 'sessions',
+        // P4-004: prefer server-reported total (from rollup/page) over materialized count.
+        // Falls back to the local list length while first page is loading.
+        label: `Sessions (${modalSections.sessionPagination.serverTotal > 0 ? modalSections.sessionPagination.serverTotal : linkedSessions.length})`,
+        icon: Terminal,
+      },
       { id: 'history', label: 'Git History', icon: Calendar },
     ];
     if ((featureTestHealth?.totalTests || 0) > 0) {
@@ -3117,6 +3373,14 @@ export const ProjectBoardFeatureModal = ({
 
           {/* Phases Tab */}
           {activeTab === 'phases' && (
+            <TabStateView
+              status={modalSections.phases.status}
+              error={modalSections.phases.error?.message}
+              onRetry={modalSections.phases.retry}
+              isEmpty={phases.length === 0 && modalSections.phases.status === 'success'}
+              emptyLabel="No phases tracked for this feature."
+              staleLabel="Refreshing phases…"
+            >
             <div className="space-y-3">
               {phases.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-panel-border bg-panel/70">
@@ -3363,10 +3627,19 @@ export const ProjectBoardFeatureModal = ({
                 );
               })}
             </div>
+            </TabStateView>
           )}
 
           {/* Documents Tab — clickable */}
           {activeTab === 'docs' && (
+            <TabStateView
+              status={modalSections.docs.status}
+              error={modalSections.docs.error?.message}
+              onRetry={modalSections.docs.retry}
+              isEmpty={linkedDocs.length === 0 && modalSections.docs.status === 'success'}
+              emptyLabel="No documents linked to this feature."
+              staleLabel="Refreshing documents…"
+            >
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <FeatureMetricTile
@@ -3498,8 +3771,17 @@ export const ProjectBoardFeatureModal = ({
                 </FeatureModalSection>
               )}
             </div>
+            </TabStateView>
           )}
           {activeTab === 'relations' && (
+            <TabStateView
+              status={modalSections.relations.status}
+              error={modalSections.relations.error?.message}
+              onRetry={modalSections.relations.retry}
+              isEmpty={(activeFeature.linkedFeatures || []).length === 0 && activeFeature.relatedFeatures.length === 0 && modalSections.relations.status === 'success'}
+              emptyLabel="No relations found for this feature."
+              staleLabel="Refreshing relations…"
+            >
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-panel border border-panel-border rounded-lg p-4">
@@ -3615,9 +3897,18 @@ export const ProjectBoardFeatureModal = ({
                 </div>
               </div>
             </div>
+            </TabStateView>
           )}
           {/* Sessions Tab */}
           {activeTab === 'sessions' && (
+            <TabStateView
+              status={modalSections.sessions.status}
+              error={modalSections.sessions.error?.message}
+              onRetry={modalSections.sessions.retry}
+              isEmpty={linkedSessions.length === 0 && modalSections.sessions.status === 'success'}
+              emptyLabel="No sessions linked to this feature."
+              staleLabel="Refreshing sessions…"
+            >
             <div className="space-y-4">
               {linkedSessions.length === 0 && (
                 <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
@@ -3717,6 +4008,12 @@ export const ProjectBoardFeatureModal = ({
                             <AnimatePresence initial={false}>
                               {group.roots.map(node => renderSessionTreeNode(node))}
                             </AnimatePresence>
+                            {/* P4-004: partial-tree indicator when more pages are available */}
+                            {modalSections.sessionPagination.hasMore && (
+                              <p className="text-[11px] text-muted-foreground italic pl-1">
+                                More sessions may appear in this group — load more below.
+                              </p>
+                            )}
                           </div>
                         )
                       )}
@@ -3752,11 +4049,60 @@ export const ProjectBoardFeatureModal = ({
                       )
                     )}
                   </FeatureModalSection>
+
+                  {/* P4-004: Load-more pagination control */}
+                  {(() => {
+                    const { hasMore, isLoadingMore, serverTotal } = modalSections.sessionPagination;
+                    const notYetLoaded = serverTotal > 0 ? serverTotal - linkedSessions.length : 0;
+                    if (!hasMore && notYetLoaded <= 0) return null;
+                    return (
+                      <div className="flex flex-col items-center gap-2 pt-2 pb-1">
+                        {notYetLoaded > 0 && !hasMore && (
+                          <p className="text-[11px] text-muted-foreground">
+                            {notYetLoaded} more session{notYetLoaded !== 1 ? 's' : ''} not yet loaded
+                          </p>
+                        )}
+                        {hasMore && (
+                          <button
+                            type="button"
+                            disabled={isLoadingMore}
+                            onClick={() => { void modalSections.loadMoreSessions(); }}
+                            className="inline-flex items-center gap-2 rounded-lg border border-panel-border bg-surface-muted px-4 py-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {isLoadingMore ? (
+                              <>
+                                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                Loading…
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown size={13} />
+                                Load more sessions
+                                {notYetLoaded > 0 && (
+                                  <span className="rounded-full bg-panel px-1.5 py-0.5 text-[10px] font-bold text-panel-foreground">
+                                    {notYetLoaded}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>
+            </TabStateView>
           )}
           {activeTab === 'test-status' && featureTestHealth && (
+            <TabStateView
+              status={modalSections['test-status'].status}
+              error={modalSections['test-status'].error?.message}
+              onRetry={modalSections['test-status'].retry}
+              isEmpty={false}
+              staleLabel="Refreshing test status…"
+            >
             <FeatureModalTestStatus
               featureId={activeFeature.id}
               health={featureTestHealth}
@@ -3765,8 +4111,17 @@ export const ProjectBoardFeatureModal = ({
                 navigate(`/execution?feature=${encodeURIComponent(activeFeature.id)}&tab=test-status`);
               }}
             />
+            </TabStateView>
           )}
           {activeTab === 'history' && (
+            <TabStateView
+              status={modalSections.history.status}
+              error={modalSections.history.error?.message}
+              onRetry={modalSections.history.retry}
+              isEmpty={gitHistoryData.commits.length === 0 && gitHistoryData.pullRequests.length === 0 && modalSections.history.status === 'success'}
+              emptyLabel="No git history found for this feature."
+              staleLabel="Refreshing git history…"
+            >
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="bg-panel border border-panel-border rounded-lg p-3">
@@ -3940,6 +4295,7 @@ export const ProjectBoardFeatureModal = ({
                 </div>
               )}
             </div>
+            </TabStateView>
           )}
         </div>
 
@@ -4144,6 +4500,11 @@ const FeatureCard = ({
       )}
 
       <h4 className="font-medium text-panel-foreground mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
+      {(card.descriptionPreview || card.summary) && (
+        <p className="mb-2 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+          {card.descriptionPreview || card.summary}
+        </p>
+      )}
       {featureHasDeferred && (
         <div className="mb-2">
           <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10">
@@ -4168,7 +4529,18 @@ const FeatureCard = ({
       </div>
       <div className="flex flex-wrap gap-1.5 mb-3 text-[9px]">
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{card.priority || 'priority n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">readiness n/a</span>
+        {card.riskLevel && (
+          <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">risk {card.riskLevel}</span>
+        )}
+        {card.complexity && (
+          <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">complexity {card.complexity}</span>
+        )}
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.executionReadiness || 'readiness n/a'}</span>
+        {(feature.qualitySignals?.blockerCount || 0) > 0 && (
+          <span className="px-1.5 py-0.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-200">
+            {feature.qualitySignals?.blockerCount} blocker{feature.qualitySignals?.blockerCount === 1 ? '' : 's'}
+          </span>
+        )}
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{getFeatureCoverageSummary(feature)}</span>
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {card.relatedFeatureCount}</span>
       </div>
@@ -4231,6 +4603,11 @@ const FeatureListCard = ({
             )}
           </div>
           <h3 className="font-bold text-panel-foreground text-lg group-hover:text-indigo-400 transition-colors truncate">{card.name}</h3>
+          {(card.descriptionPreview || card.summary) && (
+            <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
+              {card.descriptionPreview || card.summary}
+            </p>
+          )}
         </div>
         <div className="text-right ml-4 flex-shrink-0">
           <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{card.totalTasks}</div>
@@ -4253,7 +4630,18 @@ const FeatureListCard = ({
       </div>
       <div className="mb-3 flex flex-wrap gap-1.5 text-[10px]">
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{card.priority || 'priority n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">readiness n/a</span>
+        {card.riskLevel && (
+          <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">risk {card.riskLevel}</span>
+        )}
+        {card.complexity && (
+          <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">complexity {card.complexity}</span>
+        )}
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.executionReadiness || 'readiness n/a'}</span>
+        {(feature.qualitySignals?.blockerCount || 0) > 0 && (
+          <span className="px-1.5 py-0.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-200">
+            {feature.qualitySignals?.blockerCount} blocker{feature.qualitySignals?.blockerCount === 1 ? '' : 's'}
+          </span>
+        )}
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{getFeatureCoverageSummary(feature)}</span>
         <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {card.relatedFeatureCount}</span>
       </div>
@@ -4370,6 +4758,9 @@ function boardSortToApiSort(sort: 'date' | 'progress' | 'tasks'): string {
 
 export const ProjectBoard: React.FC = () => {
   const { features: apiFeatures, activeProject, updateFeatureStatus } = useData();
+  // P5-005: Read the v2 flag once at mount so the hook picks a path and keeps it.
+  const { runtimeStatus } = useAppRuntime();
+  const v2Enabled = isFeatureSurfaceV2Enabled(runtimeStatus);
   const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
@@ -4444,6 +4835,7 @@ export const ProjectBoard: React.FC = () => {
     rollupState: surfaceRollupState,
     cards: surfaceCards,
     rollups: surfaceRollups,
+    invalidate: invalidateSurface,
   } = useFeatureSurface({
     initialQuery: {
       projectId: activeProject?.id,
@@ -4455,6 +4847,29 @@ export const ProjectBoard: React.FC = () => {
       sortDirection: 'desc',
     },
     noCache: false,
+    // P5-005: flag frozen at mount; hook picks v2 or legacy path once.
+    featureSurfaceV2Enabled: v2Enabled,
+  });
+
+  // G1-002: Wire live invalidation directly into the surface cache so that
+  // feature/session/task live events bypass the global provider refresh cycle.
+  // Topics: per-project features + per-project ops (covers session/task changes).
+  // Only subscribed when v2 is active and live updates are enabled — when v2 is
+  // disabled the global AppRuntimeContext subscription handles invalidation.
+  const boardLiveEnabled = Boolean(
+    v2Enabled
+    && activeProject?.id
+    && isFeatureLiveUpdatesEnabled(),
+  );
+  useLiveInvalidation({
+    topics: boardLiveEnabled && activeProject?.id
+      ? [projectFeaturesTopic(activeProject.id)]
+      : [],
+    enabled: boardLiveEnabled,
+    pauseWhenHidden: true,
+    onInvalidate: () => {
+      invalidateSurface('all');
+    },
   });
 
   // Derive unique categories from surfaceCards (v1 source) when available,
@@ -4478,6 +4893,9 @@ export const ProjectBoard: React.FC = () => {
     const currentStatus = card?.status ?? legacyFeature?.status;
     if (currentStatus === undefined || currentStatus === newStatus) return;
     await updateFeatureStatus(featureId, newStatus);
+    // P4-011: publish to the cross-cache bus (invalidates planning + surface caches).
+    publishFeatureWriteEvent({ projectId: activeProjectId, featureIds: [featureId], kind: 'status' });
+    // Belt-and-suspenders: also call the surface helper directly for React state reset.
     invalidateFeatureSurface({ projectId: activeProjectId, featureIds: [featureId] });
   }, [surfaceCards, apiFeatures, updateFeatureStatus, activeProjectId]);
 
@@ -4511,14 +4929,23 @@ export const ProjectBoard: React.FC = () => {
     if (selectedFeature) {
       const selectedBase = getFeatureBaseSlug(selectedFeature.id);
       const updated = apiFeatures.find(f => f.id === selectedFeature.id)
-        || apiFeatures.find(f => getFeatureBaseSlug(f.id) === selectedBase);
+        || apiFeatures.find(f => getFeatureBaseSlug(f.id) === selectedBase)
+        || surfaceCards.find(c => c.id === selectedFeature.id)
+        || surfaceCards.find(c => getFeatureBaseSlug(c.id) === selectedBase);
       if (updated) {
-        setSelectedFeature(updated);
+        const nextFeature = 'phaseCount' in updated ? cardDTOToFeature(updated) : updated;
+        if (
+          nextFeature.id !== selectedFeature.id
+          || nextFeature.status !== selectedFeature.status
+          || nextFeature.updatedAt !== selectedFeature.updatedAt
+        ) {
+          setSelectedFeature(nextFeature);
+        }
       } else if (apiFeatures.length > 0) {
         setSelectedFeature(null);
       }
     }
-  }, [apiFeatures, selectedFeature]);
+  }, [apiFeatures, selectedFeature, surfaceCards]);
 
   const openFeatureModal = useCallback((feature: Feature, initialTab: FeatureModalTab = 'overview') => {
     setSelectedFeatureTab(initialTab);
@@ -4529,11 +4956,13 @@ export const ProjectBoard: React.FC = () => {
   const openFeatureModalById = useCallback((featureId: string, initialTab: FeatureModalTab = 'overview') => {
     const featureBase = getFeatureBaseSlug(featureId);
     const feature = apiFeatures.find(f => f.id === featureId)
-      || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase);
+      || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase)
+      || surfaceCards.find(c => c.id === featureId)
+      || surfaceCards.find(c => getFeatureBaseSlug(c.id) === featureBase);
     if (feature) {
-      openFeatureModal(feature, initialTab);
+      openFeatureModal('phaseCount' in feature ? cardDTOToFeature(feature) : feature, initialTab);
     }
-  }, [apiFeatures, openFeatureModal]);
+  }, [apiFeatures, surfaceCards, openFeatureModal]);
 
   const hasPendingFilterChanges = (
     draftSearchQuery !== searchQuery

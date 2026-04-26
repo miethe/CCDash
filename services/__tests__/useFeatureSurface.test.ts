@@ -351,19 +351,27 @@ describe('list + rollup data-flow contract', () => {
     expect(Object.keys(rollup.rollups)).toContain('F1');
   });
 
-  it('default rollup fields include session_counts, token_cost_totals, latest_activity', async () => {
+  it('default rollup fields include card aggregate groups', async () => {
     mockListFeatureCards.mockResolvedValueOnce(makeCardPage(['F1']));
     mockGetFeatureRollups.mockResolvedValueOnce(makeRollupsResponse(['F1']));
 
     const page = await listFeatureCards({});
     const ids = page.items.map((c) => c.id);
-    const defaultFields = ['session_counts', 'token_cost_totals', 'latest_activity'] as const;
+    const defaultFields = [
+      'session_counts',
+      'token_cost_totals',
+      'latest_activity',
+      'model_provider_summary',
+      'doc_metrics',
+    ] as const;
     await getFeatureRollups({ featureIds: ids, fields: [...defaultFields] });
 
     const call = mockGetFeatureRollups.mock.calls[0][0];
     expect(call.fields).toContain('session_counts');
     expect(call.fields).toContain('token_cost_totals');
     expect(call.fields).toContain('latest_activity');
+    expect(call.fields).toContain('model_provider_summary');
+    expect(call.fields).toContain('doc_metrics');
   });
 
   it('retry: re-fires list request then rollup batch after list failure', async () => {

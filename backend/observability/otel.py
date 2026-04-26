@@ -39,6 +39,12 @@ _worker_job_backpressure_gauge: Any | None = None
 _agent_query_cache_hit_counter: Any | None = None
 _agent_query_cache_miss_counter: Any | None = None
 
+# ── Feature-surface hot-path metrics ─────────────────────────────────────────
+_feature_surface_requests_counter: Any | None = None
+_feature_surface_latency_hist: Any | None = None
+_prom_feature_surface_requests_counter: Any | None = None
+_prom_feature_surface_latency_hist: Any | None = None
+
 _prom_enabled = False
 _prom_ingestion_counter: Any | None = None
 _prom_ingestion_latency_hist: Any | None = None
@@ -147,11 +153,13 @@ def initialize(app: FastAPI | None = None) -> None:
     global _telemetry_export_queue_depth_gauge, _telemetry_export_errors_counter
     global _telemetry_export_disabled_gauge, _worker_job_freshness_gauge, _worker_job_backpressure_gauge
     global _agent_query_cache_hit_counter, _agent_query_cache_miss_counter
+    global _feature_surface_requests_counter, _feature_surface_latency_hist
     global _prom_enabled
     global _prom_ingestion_counter, _prom_ingestion_latency_hist, _prom_parser_failure_counter
     global _prom_tool_calls_counter, _prom_tool_duration_hist, _prom_tokens_counter, _prom_cost_counter
     global _prom_telemetry_export_events_counter, _prom_telemetry_export_latency_hist
     global _prom_telemetry_export_queue_depth_gauge, _prom_telemetry_export_errors_counter
+    global _prom_feature_surface_requests_counter, _prom_feature_surface_latency_hist
     global _prom_telemetry_export_disabled_gauge
     global _prom_worker_job_freshness_gauge, _prom_worker_job_backpressure_gauge
 
@@ -267,6 +275,16 @@ def initialize(app: FastAPI | None = None) -> None:
         unit="1",
         description="Agent-query cache miss count",
     )
+    _feature_surface_requests_counter = meter.create_counter(
+        "ccdash_feature_surface_requests_total",
+        unit="1",
+        description="Feature-surface endpoint request count by endpoint, filter_kind, and result_count_bucket",
+    )
+    _feature_surface_latency_hist = meter.create_histogram(
+        "ccdash_feature_surface_latency_ms",
+        unit="ms",
+        description="Feature-surface endpoint latency in milliseconds",
+    )
     _telemetry_export_queue_depth_gauge = meter.create_observable_gauge(
         "ccdash_telemetry_export_queue_depth",
         callbacks=[_observe_telemetry_queue_depth(Observation)],
@@ -375,6 +393,16 @@ def initialize(app: FastAPI | None = None) -> None:
                 "ccdash_worker_job_backpressure_ratio",
                 "Worker job backlog pressure ratio by job and runtime metadata",
                 ["job", "project", *_RUNTIME_PROM_LABEL_NAMES],
+            )
+            _prom_feature_surface_requests_counter = Counter(
+                "ccdash_feature_surface_requests_total",
+                "Feature-surface endpoint request count",
+                ["endpoint", "filter_kind", "result_count_bucket", "payload_bytes_bucket"],
+            )
+            _prom_feature_surface_latency_hist = Histogram(
+                "ccdash_feature_surface_latency_ms",
+                "Feature-surface endpoint latency in milliseconds",
+                ["endpoint", "filter_kind"],
             )
             logger.info("Prometheus fallback metrics server listening on port %s", config.PROM_PORT)
         except Exception as exc:  # noqa: BLE001
@@ -633,6 +661,70 @@ def set_worker_job_backpressure(
     if _prom_enabled and _prom_worker_job_backpressure_gauge is not None:
         prom = _metric_prom_labels(project_id=project_id, runtime_metadata=runtime_metadata, job=job_name)
         _prom_worker_job_backpressure_gauge.labels(**prom).set(value)
+
+
+def _result_count_bucket(count: int) -> str:
+    """Map a raw result count to a cardinality-safe bucket label."""
+    if count <= 0:
+        return "empty"
+    if count <= 10:
+        return "small"
+    if count <= 100:
+        return "medium"
+    return "large"
+
+
+def _payload_bytes_bucket(bytes_: int) -> str:
+    """Map a raw byte count to a cardinality-safe bucket label."""
+    if bytes_ <= 0:
+        return "empty"
+    if bytes_ < 10_000:
+        return "small"     # < 10 KB
+    if bytes_ < 100_000:
+        return "medium"    # 10–100 KB
+    if bytes_ < 500_000:
+        return "large"     # 100–500 KB
+    return "xlarge"        # >= 500 KB
+
+
+def record_feature_surface_request(
+    *,
+    endpoint: str,
+    filter_kind: str,
+    result_count: int,
+    payload_bytes: int,
+    duration_ms: float,
+) -> None:
+    """Record a feature-surface endpoint request with cardinality-safe bucketed labels."""
+    result_count_bucket = _result_count_bucket(result_count)
+    payload_bytes_bucket = _payload_bytes_bucket(payload_bytes)
+    safe_endpoint = (endpoint or "unknown").strip() or "unknown"
+    safe_filter = (filter_kind or "none").strip() or "none"
+    labels = {
+        "endpoint": safe_endpoint,
+        "filter_kind": safe_filter,
+        "result_count_bucket": result_count_bucket,
+        "payload_bytes_bucket": payload_bytes_bucket,
+    }
+    try:
+        if _enabled and _feature_surface_requests_counter is not None:
+            _feature_surface_requests_counter.add(1, labels)
+        if _enabled and _feature_surface_latency_hist is not None:
+            _feature_surface_latency_hist.record(max(0.0, float(duration_ms)), labels)
+        if _prom_enabled and _prom_feature_surface_requests_counter is not None:
+            _prom_feature_surface_requests_counter.labels(
+                endpoint=safe_endpoint,
+                filter_kind=safe_filter,
+                result_count_bucket=result_count_bucket,
+                payload_bytes_bucket=payload_bytes_bucket,
+            ).inc()
+        if _prom_enabled and _prom_feature_surface_latency_hist is not None:
+            _prom_feature_surface_latency_hist.labels(
+                endpoint=safe_endpoint,
+                filter_kind=safe_filter,
+            ).observe(max(0.0, float(duration_ms)))
+    except Exception:
+        logger.debug("feature_surface metrics unavailable", exc_info=True)
 
 
 def record_cache_hit(endpoint: str) -> None:

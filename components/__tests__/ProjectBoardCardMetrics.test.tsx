@@ -36,6 +36,9 @@ const FIXTURE_CARD: FeatureCardDTO = {
   priority: 'high',
   riskLevel: 'medium',
   complexity: 'high',
+  executionReadiness: 'ready',
+  testImpact: 'auth regression suite',
+  planningStatus: { effectiveStatus: 'active' },
   totalTasks: 10,
   completedTasks: 4,
   deferredTasks: 0,
@@ -45,7 +48,7 @@ const FIXTURE_CARD: FeatureCardDTO = {
   completedAt: '',
   updatedAt: '2026-04-20T00:00:00Z',
   documentCoverage: { present: ['prd', 'plan'], missing: [], countsByType: {} },
-  qualitySignals: { blockerCount: 0, atRiskTaskCount: 0, hasBlockingSignals: false, testImpact: '', integritySignalRefs: [] },
+  qualitySignals: { blockerCount: 1, atRiskTaskCount: 0, hasBlockingSignals: true, testImpact: 'auth regression suite', integritySignalRefs: [] },
   dependencyState: { state: 'unblocked', blockingReason: '', blockedByCount: 0, readyDependencyCount: 0 },
   primaryDocuments: [],
   familyPosition: null,
@@ -243,6 +246,19 @@ vi.mock('../TestVisualizer/TestStatusView', () => ({
   TestStatusView: () => <div data-mock="test-status-view" />,
 }));
 
+vi.mock('../../contexts/AppRuntimeContext', () => ({
+  useAppRuntime: () => ({
+    loading: false,
+    error: null,
+    runtimeStatus: null,
+    refreshAll: vi.fn(),
+  }),
+}));
+
+vi.mock('../../services/featureSurfaceFlag', () => ({
+  isFeatureSurfaceV2Enabled: vi.fn(() => false),
+}));
+
 // ── Component under test ──────────────────────────────────────────────────────
 
 import { ProjectBoard } from '../ProjectBoard';
@@ -309,6 +325,15 @@ describe('P3-005 — Card Metric Mapping: session count from rollup', () => {
   it('renders card priority badge', () => {
     const html = renderBoard();
     expect(html).toContain('high');
+  });
+
+  it('renders saved card metadata without requiring full feature details', () => {
+    const html = renderBoard();
+    expect(html).toContain('Rewrite auth layer');
+    expect(html).toContain('risk medium');
+    expect(html).toContain('complexity high');
+    expect(html).toContain('ready');
+    expect(html).toContain('1 blocker');
   });
 });
 

@@ -149,6 +149,9 @@ class FeatureCardDTO(FeatureSurfaceDTO):
     priority: str = ""
     risk_level: str = ""
     complexity: str = ""
+    execution_readiness: str = ""
+    test_impact: str = ""
+    planning_status: dict[str, Any] | None = None
     total_tasks: int = Field(0, ge=0)
     completed_tasks: int = Field(0, ge=0)
     deferred_tasks: int = Field(0, ge=0)

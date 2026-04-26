@@ -16,7 +16,7 @@
  */
 
 import type { FeatureCardDTO, FeatureRollupDTO, FeatureRollupBucketDTO } from '../services/featureSurface';
-import type { Feature, LinkedDocument } from '../types';
+import type { Feature, LinkedDocument, PlanningEffectiveStatus } from '../types';
 
 // ── FeatureSessionSummary projection ─────────────────────────────────────────
 //
@@ -93,6 +93,48 @@ function bucketsToDocCoverage(coverage: FeatureCardDTO['documentCoverage']): Fea
   };
 }
 
+function adaptPlanningStatus(raw: FeatureCardDTO['planningStatus']): PlanningEffectiveStatus | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const rawStatus =
+    typeof raw.rawStatus === 'string'
+      ? raw.rawStatus
+      : typeof raw.raw_status === 'string'
+        ? raw.raw_status
+        : '';
+  const effectiveStatus =
+    typeof raw.effectiveStatus === 'string'
+      ? raw.effectiveStatus
+      : typeof raw.effective_status === 'string'
+        ? raw.effective_status
+        : '';
+  if (!rawStatus && !effectiveStatus) return null;
+
+  const provenanceRaw = raw.provenance;
+  const provenance = provenanceRaw && typeof provenanceRaw === 'object' && !Array.isArray(provenanceRaw)
+    ? provenanceRaw as Record<string, unknown>
+    : {};
+  const mismatchRaw = raw.mismatchState ?? raw.mismatch_state;
+  const mismatch = mismatchRaw && typeof mismatchRaw === 'object' && !Array.isArray(mismatchRaw)
+    ? mismatchRaw as Record<string, unknown>
+    : {};
+
+  return {
+    rawStatus,
+    effectiveStatus,
+    provenance: {
+      source: (typeof provenance.source === 'string' ? provenance.source : 'unknown') as PlanningEffectiveStatus['provenance']['source'],
+      reason: typeof provenance.reason === 'string' ? provenance.reason : '',
+      evidence: Array.isArray(provenance.evidence) ? provenance.evidence as PlanningEffectiveStatus['provenance']['evidence'] : [],
+    },
+    mismatchState: {
+      state: (typeof mismatch.state === 'string' ? mismatch.state : 'unknown') as PlanningEffectiveStatus['mismatchState']['state'],
+      reason: typeof mismatch.reason === 'string' ? mismatch.reason : '',
+      isMismatch: mismatch.isMismatch === true || mismatch.is_mismatch === true,
+      evidence: Array.isArray(mismatch.evidence) ? mismatch.evidence as PlanningEffectiveStatus['mismatchState']['evidence'] : [],
+    },
+  };
+}
+
 /**
  * Converts a FeatureCardDTO to a minimal Feature suitable for card rendering.
  *
@@ -137,9 +179,12 @@ export function cardDTOToFeature(card: FeatureCardDTO): Feature {
     category: card.category ?? '',
     tags: card.tags ?? [],
     summary: card.summary ?? '',
+    description: card.descriptionPreview || card.summary || undefined,
     priority: card.priority || undefined,
     riskLevel: card.riskLevel || undefined,
     complexity: card.complexity || undefined,
+    executionReadiness: card.executionReadiness || undefined,
+    testImpact: card.testImpact || card.qualitySignals?.testImpact || undefined,
     updatedAt: card.updatedAt ?? '',
     plannedAt: card.plannedAt || undefined,
     startedAt: card.startedAt || undefined,
@@ -148,17 +193,38 @@ export function cardDTOToFeature(card: FeatureCardDTO): Feature {
     linkedDocs: [] as LinkedDocument[],
     relatedFeatures,
     phases: phases as Feature['phases'],
-    // Fields not in FeatureCardDTO — omitted (components handle undefined)
-    planningStatus: undefined,
-    executionReadiness: undefined,
+    planningStatus: adaptPlanningStatus(card.planningStatus),
     linkedFeatures: undefined,
     familyPosition: undefined,
     familySummary: undefined,
     executionGate: undefined,
     blockingFeatures: undefined,
     primaryDocuments: undefined,
-    qualitySignals: undefined,
-    dependencyState: undefined,
+    qualitySignals: card.qualitySignals
+      ? {
+          blockerCount: card.qualitySignals.blockerCount ?? 0,
+          atRiskTaskCount: card.qualitySignals.atRiskTaskCount ?? 0,
+          integritySignalRefs: card.qualitySignals.integritySignalRefs ?? [],
+          reportFindingsBySeverity: {},
+          testImpact: card.testImpact || card.qualitySignals.testImpact || '',
+          hasBlockingSignals: card.qualitySignals.hasBlockingSignals ?? false,
+        }
+      : undefined,
+    dependencyState: card.dependencyState
+      ? {
+          state: (card.dependencyState.state || 'unblocked') as Feature['dependencyState']['state'],
+          dependencyCount: (card.dependencyState.blockedByCount ?? 0) + (card.dependencyState.readyDependencyCount ?? 0),
+          resolvedDependencyCount: card.dependencyState.readyDependencyCount ?? 0,
+          blockedDependencyCount: card.dependencyState.blockedByCount ?? 0,
+          unknownDependencyCount: 0,
+          blockingFeatureIds: [],
+          blockingDocumentIds: [],
+          firstBlockingDependencyId: '',
+          blockingReason: card.dependencyState.blockingReason ?? '',
+          completionEvidence: [],
+          dependencies: [],
+        }
+      : undefined,
     dates: undefined,
     timeline: undefined,
   };

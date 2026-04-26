@@ -15,11 +15,16 @@
 // the featureIds on the current page.  ProjectBoard must call it with
 // `invalidateFeatureSurface({ projectId, scope: 'all' })` on project switch.
 //
-// Status-write integration (P3-004/P3-005): call
+// Status-write integration (P3-004/P3-005 + P4-011): call
 //   invalidateFeatureSurface({ projectId, featureIds: [updatedId] })
 // from any mutation handler that changes feature status, phase, or task state.
+// As of P4-011 the featureCacheBus also drives this automatically so explicit
+// call sites that publishFeatureWriteEvent() do not need to call
+// invalidateFeatureSurface() separately.
 
 import type { CacheEntry, FeatureSurfaceCacheAdapter } from './useFeatureSurface';
+import { subscribeToFeatureWrites } from './featureCacheBus';
+import { emitCacheTelemetry } from './telemetry';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -139,11 +144,18 @@ export class FeatureSurfaceCache implements FeatureSurfaceCacheAdapter {
   // ── FeatureSurfaceCacheAdapter (list tier) ──────────────────────────────────
 
   get(key: string): CacheEntry | undefined {
-    return this._listCache.get(key);
+    const entry = this._listCache.get(key);
+    emitCacheTelemetry({
+      cache: 'featureSurface',
+      event: entry !== undefined ? 'hit' : 'miss',
+      keyBucket: 'list',
+    });
+    return entry;
   }
 
   set(key: string, entry: CacheEntry): void {
     this._listCache.set(key, entry);
+    emitCacheTelemetry({ cache: 'featureSurface', event: 'set', keyBucket: 'list' });
   }
 
   delete(key: string): void {
@@ -172,12 +184,19 @@ export class FeatureSurfaceCache implements FeatureSurfaceCacheAdapter {
 
   getRollup(key: string): RollupCacheEntry | undefined {
     const entry = this._rollupCache.get(key);
+    const isStale = entry !== undefined && Date.now() - entry.timestamp > this._rollupTtlMs;
+    emitCacheTelemetry({
+      cache: 'featureSurface',
+      event: entry === undefined ? 'miss' : isStale ? 'stale' : 'hit',
+      keyBucket: 'rollup',
+    });
     if (!entry) return undefined;
     return entry;
   }
 
   setRollup(key: string, entry: RollupCacheEntry): void {
     this._rollupCache.set(key, entry);
+    emitCacheTelemetry({ cache: 'featureSurface', event: 'set', keyBucket: 'rollup' });
   }
 
   isRollupStale(key: string): boolean {
@@ -298,6 +317,22 @@ export function invalidateFeatureSurface({
     );
   }
 }
+
+// ── Cross-cache invalidation bus subscription (P4-011) ───────────────────────
+// Subscribes this cache to the shared feature-write event bus.  Any call to
+// publishFeatureWriteEvent() (e.g. after updateFeatureStatus) will
+// automatically evict the relevant entries here — no additional call to
+// invalidateFeatureSurface() is needed at the write site.
+// See: docs/project_plans/design-specs/feature-surface-planning-cache-coordination.md
+
+subscribeToFeatureWrites((event) => {
+  // Route through the same helper that explicit call sites use so eviction
+  // logic stays in one place.
+  invalidateFeatureSurface({
+    projectId: event.projectId,
+    featureIds: event.featureIds?.length ? event.featureIds : undefined,
+  });
+});
 
 // ── React hook: live-topic wiring ─────────────────────────────────────────────
 //
