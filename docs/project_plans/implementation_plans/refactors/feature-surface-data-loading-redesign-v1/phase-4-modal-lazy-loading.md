@@ -13,7 +13,7 @@ related:
 
 # Phase 4: Modal Lazy Loading and Reliability
 
-**Effort:** 10 pts
+**Effort:** 20 pts
 **Dependencies:** Phase 2 API contracts, Phase 3 API client methods
 **Assigned Subagent(s):** frontend-developer, ui-engineer-enhanced, react-performance-optimizer
 
@@ -31,6 +31,11 @@ Make feature modal data loading intentional and reliable: open a cheap overview 
 | P4-004 | Session Pagination UI | Add load-more/page handling for linked sessions while preserving current tree/grouping, summaries, and card detail sections. | Sessions tab supports large linked-session sets without loading all rows. | 2 pts | ui-engineer-enhanced | P4-003 |
 | P4-005 | Tab State Rendering | Add visible loading, error, retry, empty, and stale states for each tab. | Transient failures are not rendered as valid empty data. | 1 pt | ui-engineer-enhanced | P4-002 |
 | P4-006 | Modal Live Refresh Policy | Update polling/live invalidation to refresh only loaded or active sections and avoid redundant detail fetches. | Background refresh does not fetch unloaded heavy sections. | 1 pt | react-performance-optimizer | P4-003 |
+| P4-007 | SessionInspector Migration | Replace per-feature linked-session fan-out with `useFeatureSurface` + paginated modal session client; preserve existing tab behavior. | No eager per-feature summary calls on SessionInspector mount; session tabs paginate on demand. | 2 pts | frontend-developer | P3-001, P3-006 |
+| P4-008 | FeatureExecutionWorkbench Migration | Move feature/session reads onto shared surface client + bounded cache; render workbench from `FeatureCardDTO` rollup where applicable. | Workbench renders from unified payload; no duplicate fan-out calls. | 2 pts | frontend-developer | P3-001, P3-005, P3-006 |
+| P4-009 | Dashboard / BlockingFeatureList Migration | Consume shared `FeatureCardDTO` path; retire bespoke fetches. | Dashboard cards render from unified payload. | 2 pts | ui-engineer-enhanced | P3-005 |
+| P4-010 | Modal Consumer Wiring | Wire `FeatureModal*` consumers onto P3-001 overview/section clients (if not already via P4-002). | All modal sections go through encoded clients; no direct `/api/features/...` interpolation in components. | 1 pt | frontend-developer | P4-001, P4-002 |
+| P4-011 | Planning Cache Coordination | Define layered invalidation between `services/planning.ts` SWR+LRU cache and new `useFeatureSurface` bounded cache. Decide unified invalidation bus or explicit layering with documented write-through rules. | Feature writes invalidate both caches deterministically; documented in short ADR-style note in plan or `docs/project_plans/design-specs/`. | 2 pts | frontend-architect, react-performance-optimizer | P3-006 |
 
 ## Modal Loading Policy
 

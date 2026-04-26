@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1750,6 +1750,55 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
 
     # Migrate outbound_telemetry_queue: add event_type, drop sessions FK
     await _migrate_outbound_telemetry_queue_add_event_type(db)
+
+    # ── P1-006: Feature surface query indexes ─────────────────────────────────
+    # features: composite for status IN-list filter + updated_at sort
+    # Used by: list_feature_cards WHERE project_id=? AND status IN (...)
+    #          ORDER BY updated_at DESC (eliminates full-project scan + sort B-tree)
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_features_status_updated"
+        " ON features(project_id, status, updated_at)",
+    )
+    # features: category filter composite
+    # Used by: list_feature_cards WHERE project_id=? AND LOWER(category) IN (...)
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_features_category"
+        " ON features(project_id, category)",
+    )
+    # features: completed_at range filter + sort
+    # Used by: list_feature_cards completed DateRange + FeatureSortKey.COMPLETED_AT
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_features_completed_at"
+        " ON features(project_id, completed_at)",
+    )
+    # features: created_at range filter + sort
+    # Used by: list_feature_cards created DateRange + FeatureSortKey.CREATED_AT
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_features_created_at"
+        " ON features(project_id, created_at)",
+    )
+    # entity_links: composite for rollup feature→session/doc/task hot path
+    # Used by: _query_session_aggregates, _query_doc_metrics, _query_freshness,
+    #          list_feature_session_refs
+    # Adds target_type + link_type to existing idx_links_source so residual
+    # row filtering is eliminated for the dominant 4-column predicate.
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_links_feature_session"
+        " ON entity_links(source_type, source_id, target_type, link_type)",
+    )
+    # sessions: updated_at for latest_activity aggregation
+    # Used by: _query_session_aggregates MAX(s.updated_at), _query_freshness,
+    #          FeatureSortKey.LATEST_ACTIVITY fallback
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at"
+        " ON sessions(project_id, updated_at)",
+    )
 
     # Seed metric types
     await db.executescript(_SEED_METRIC_TYPES)

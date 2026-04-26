@@ -1,14 +1,26 @@
 ---
-title: "Feature Surface Data Loading Redesign - Implementation Plan"
-description: "Phased implementation plan for bounded feature board loading, aggregate rollups, lazy modal data, repository-backed filtering, and cache discipline."
-audience: [ai-agents, developers]
-tags: [implementation, refactor, performance, features, sessions, api-contracts]
+title: Feature Surface Data Loading Redesign - Implementation Plan
+description: Phased implementation plan for bounded feature board loading, aggregate
+  rollups, lazy modal data, repository-backed filtering, and cache discipline.
+audience:
+- ai-agents
+- developers
+tags:
+- implementation
+- refactor
+- performance
+- features
+- sessions
+- api-contracts
 created: 2026-04-22
-updated: 2026-04-22
-category: "product-planning"
-status: draft
+updated: '2026-04-24'
+scope_addendum: Phase 3 scope limited to ProjectBoard; Phase 4 extends to SessionInspector,
+  FeatureExecutionWorkbench, Dashboard, and planning-modal cache coordination; Phase
+  5 inventories legacy callers.
+category: product-planning
+status: completed
 related:
-  - /docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
+- /docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
 ---
 
 # Implementation Plan: Feature Surface Data Loading Redesign
@@ -17,7 +29,7 @@ related:
 **Date:** 2026-04-22
 **Author:** Codex
 **Complexity:** XL
-**Total Estimated Effort:** 69 points
+**Total Estimated Effort:** 85 points
 **Target Timeline:** 3-5 engineering weeks, depending on test fixture readiness and rollout strictness
 
 ## Executive Summary
@@ -60,9 +72,9 @@ This plan replaces the feature board's eager per-feature linked-session calls wi
 | 0 | Inventory, Contracts, Guardrails | 8 pts | [Phase 0](./feature-surface-data-loading-redesign-v1/phase-0-inventory-contracts.md) |
 | 1 | Repository and Query Foundation | 14 pts | [Phase 1](./feature-surface-data-loading-redesign-v1/phase-1-repository-query-foundation.md) |
 | 2 | Service and API Contracts | 15 pts | [Phase 2](./feature-surface-data-loading-redesign-v1/phase-2-service-api-contracts.md) |
-| 3 | Frontend Data Layer and Board Migration | 13 pts | [Phase 3](./feature-surface-data-loading-redesign-v1/phase-3-frontend-board.md) |
-| 4 | Modal Lazy Loading and Reliability | 10 pts | [Phase 4](./feature-surface-data-loading-redesign-v1/phase-4-modal-lazy-loading.md) |
-| 5 | Validation, Observability, Rollout | 9 pts | [Phase 5](./feature-surface-data-loading-redesign-v1/phase-5-validation-rollout.md) |
+| 3 | Frontend Data Layer and Board Migration | 13 pts | [Phase 3](./feature-surface-data-loading-redesign-v1/phase-3-frontend-board.md) — ProjectBoard only |
+| 4 | Modal Lazy Loading and Cross-Surface Migration | 20 pts | [Phase 4](./feature-surface-data-loading-redesign-v1/phase-4-modal-lazy-loading.md) — modal + SessionInspector, Workbench, Dashboard, planning cache |
+| 5 | Validation, Observability, Rollout | 12 pts | [Phase 5](./feature-surface-data-loading-redesign-v1/phase-5-validation-rollout.md) — includes legacy caller inventory |
 
 ## Critical Path
 

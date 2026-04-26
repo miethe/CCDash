@@ -13,8 +13,32 @@ from ccdash_contracts import (
     ClientV1Meta,
     ClientV1PaginatedEnvelope,
     ClientV1PaginatedMeta,
+    DTOFreshness,
+    FeatureCardDTO,
+    FeatureCardPageDTO,
+    FeatureDependencySummaryDTO,
+    FeatureDocumentCoverageDTO,
+    FeatureDocumentSummaryDTO,
     FeatureSummaryDTO,
+    FeatureFamilyPositionDTO,
+    FeatureModalOverviewDTO,
+    FeatureModalSectionDTO,
+    FeatureModalSectionItemDTO,
+    FeatureModalSectionKey,
+    FeatureQualitySignalsDTO,
+    FeatureRollupBucketDTO,
+    FeatureRollupDTO,
+    FeatureRollupErrorDTO,
+    FeatureRollupFieldKey,
+    FeatureRollupFreshnessDTO,
+    FeatureRollupRequestDTO,
+    FeatureRollupResponseDTO,
+    FeatureSurfacePrecision,
     InstanceMetaDTO,
+    LinkedFeatureSessionDTO,
+    LinkedFeatureSessionPageDTO,
+    LinkedFeatureSessionTaskDTO,
+    LinkedSessionEnrichmentDTO,
 )
 
 from backend.application.services.agent_queries.models import DocumentRef, SessionRef
@@ -55,7 +79,8 @@ def build_client_v1_paginated_meta(
 
 # NOTE:
 # The shared package is now the source of truth for public envelope/meta models
-# plus the DTOs whose field shapes already match the live API surface.
+# plus the DTOs whose field shapes already match the live or planned v1 API
+# surface.
 #
 # The feature/session document refs below still depend on richer backend-owned
 # query-service DTOs. Keeping these as thin router-local compatibility models
@@ -88,10 +113,34 @@ __all__ = [
     "ClientV1Meta",
     "ClientV1PaginatedEnvelope",
     "ClientV1PaginatedMeta",
+    "DTOFreshness",
+    "FeatureCardDTO",
+    "FeatureCardPageDTO",
+    "FeatureDependencySummaryDTO",
+    "FeatureDocumentCoverageDTO",
+    "FeatureDocumentSummaryDTO",
     "FeatureDocumentsDTO",
+    "FeatureFamilyPositionDTO",
+    "FeatureModalOverviewDTO",
+    "FeatureModalSectionDTO",
+    "FeatureModalSectionItemDTO",
+    "FeatureModalSectionKey",
+    "FeatureQualitySignalsDTO",
+    "FeatureRollupBucketDTO",
+    "FeatureRollupDTO",
+    "FeatureRollupErrorDTO",
+    "FeatureRollupFieldKey",
+    "FeatureRollupFreshnessDTO",
+    "FeatureRollupRequestDTO",
+    "FeatureRollupResponseDTO",
     "FeatureSessionsDTO",
     "FeatureSummaryDTO",
+    "FeatureSurfacePrecision",
     "InstanceMetaDTO",
+    "LinkedFeatureSessionDTO",
+    "LinkedFeatureSessionPageDTO",
+    "LinkedFeatureSessionTaskDTO",
+    "LinkedSessionEnrichmentDTO",
     "SessionFamilyDTO",
     "build_client_v1_meta",
     "build_client_v1_paginated_meta",

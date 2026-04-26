@@ -58,6 +58,10 @@ import {
   trackExecutionEvent,
 } from '../services/execution';
 import { getFeaturePlanningContext, PlanningApiError } from '../services/planning';
+import { getLegacyFeatureDetail } from '../services/featureSurface';
+import {
+  useFeatureSurface,
+} from '../services/useFeatureSurface';
 import { isStackRecommendationsEnabled, isWorkflowAnalyticsEnabled } from '../services/agenticIntelligence';
 import { listTestRuns } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
@@ -590,7 +594,20 @@ const copyText = async (value: string): Promise<void> => {
 export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { activeProject, features, refreshFeatures, documents, getSessionById, runtimeStatus } = useData();
+  const { activeProject, documents, getSessionById, runtimeStatus } = useData();
+
+  // ── Feature surface: bounded list + rollup, replaces DataContext features fan-out ──
+  // The workbench only needs the feature list for the sidebar picker; rollup fields
+  // (session_counts, token_cost_totals) are available as a bonus if needed later.
+  // P4-008: no per-feature /api/features/{id} calls on sidebar list.
+  const {
+    cards: surfaceCards,
+    listState: surfaceListState,
+    refetch: refetchSurface,
+  } = useFeatureSurface({
+    rollupFields: ['session_counts', 'token_cost_totals', 'latest_activity'],
+  });
+
   const stackRecommendationsAvailable = isStackRecommendationsEnabled(activeProject);
   const workflowAnalyticsAvailable = isWorkflowAnalyticsEnabled(activeProject);
   const featureParam = searchParams.get('feature') || '';
@@ -646,34 +663,30 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const isAnalyticsTabActive = activeTab === 'analytics';
   const executionLiveEnabled = isExecutionLiveUpdatesEnabled();
 
-  useEffect(() => {
-    if (features.length === 0) {
-      void refreshFeatures();
-    }
-  }, [features.length, refreshFeatures]);
-
+  // P4-008: feature picker list sourced from surface cards (bounded, cached).
   const filteredFeatures = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const rows = [...features].sort((a, b) => a.name.localeCompare(b.name));
+    const rows = [...surfaceCards].sort((a, b) => a.name.localeCompare(b.name));
     if (!needle) return rows;
-    return rows.filter(feature => {
-      const haystack = [feature.id, feature.name, feature.category, ...(feature.tags || [])].join(' ').toLowerCase();
+    return rows.filter(card => {
+      const haystack = [card.id, card.name, card.category, ...(card.tags ?? [])].join(' ').toLowerCase();
       return haystack.includes(needle);
     });
-  }, [features, query]);
+  }, [surfaceCards, query]);
 
+  // P4-008: use surfaceCards (FeatureCardDTO[]) for the picker's auto-select.
   useEffect(() => {
     if (featureParam) {
       setSelectedFeatureId(prev => (prev === featureParam ? prev : featureParam));
       return;
     }
-    if (features.length === 0) return;
+    if (surfaceCards.length === 0) return;
     setSelectedFeatureId(prev => {
       if (prev) return prev;
-      const first = [...features].sort((a, b) => a.name.localeCompare(b.name))[0];
+      const first = [...surfaceCards].sort((a, b) => a.name.localeCompare(b.name))[0];
       return first?.id || prev;
     });
-  }, [featureParam, features]);
+  }, [featureParam, surfaceCards]);
 
   useEffect(() => {
     if (isWorkbenchTab(tabParam)) {
@@ -1160,14 +1173,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
     let cancelled = false;
     setFullFeatureLoading(true);
-    fetch(`/api/features/${encodeURIComponent(featureId)}`)
-      .then(res => {
-        if (!res.ok) throw new Error(`Failed to load feature detail (${res.status})`);
-        return res.json();
-      })
+    getLegacyFeatureDetail<Feature>(featureId)
       .then(payload => {
         if (cancelled) return;
-        setFullFeature(payload as Feature);
+        setFullFeature(payload);
       })
       .catch(() => {
         if (cancelled) return;
@@ -2107,7 +2116,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
           <Command size={16} />
           Select a feature to load execution guidance.
           <button
-            onClick={() => void refreshFeatures()}
+            onClick={() => refetchSurface()}
             className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-panel-border text-foreground hover:border-hover text-xs"
           >
             <RefreshCw size={13} />

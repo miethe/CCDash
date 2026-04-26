@@ -13,3 +13,7 @@ export { PlanningNodeDetail } from './PlanningNodeDetail';
 export { TrackerIntakePanel } from './TrackerIntakePanel';
 export type { TrackerIntakePanelProps } from './TrackerIntakePanel';
 export * from './primitives';
+export { PlanningNextRunPreview } from './PlanningNextRunPreview';
+export type { PlanningNextRunPreviewProps } from './PlanningNextRunPreview';
+export { PlanningPromptContextTray } from './PlanningPromptContextTray';
+export type { PlanningPromptContextTrayProps, ContextTrayItem } from './PlanningPromptContextTray';

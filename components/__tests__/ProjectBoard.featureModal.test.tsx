@@ -145,6 +145,19 @@ vi.mock('../TestVisualizer/TestStatusView', () => ({
   TestStatusView: () => <div data-mock="test-status-view" />,
 }));
 
+vi.mock('../../contexts/AppRuntimeContext', () => ({
+  useAppRuntime: () => ({
+    loading: false,
+    error: null,
+    runtimeStatus: null,
+    refreshAll: vi.fn(),
+  }),
+}));
+
+vi.mock('../../services/featureSurfaceFlag', () => ({
+  isFeatureSurfaceV2Enabled: vi.fn(() => false),
+}));
+
 import { ProjectBoard } from '../ProjectBoard';
 import { planningFeatureDetailHref, planningFeatureModalHref } from '../../services/planningRoutes';
 

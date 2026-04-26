@@ -26,17 +26,20 @@ from backend.application.services.agent_queries.models import (
     FeaturePlanningContextDTO,
     FeatureSummaryItem,
     KeyMetrics,
+    NextRunContextRef,
     OpenQuestionResolutionDTO,
     PhaseContextItem,
     PhaseOperationsDTO,
     PhaseTaskItem,
     PlanningArtifactRef,
+    PlanningNextRunPreviewDTO,
     PlanningNodeCountsByType,
     PlanningOpenQuestionItem,
     PlanningSpikeItem,
     ProjectPlanningSummaryDTO,
     ProjectPlanningGraphDTO,
     ProjectStatusDTO,
+    PromptContextSelection,
     QueryStatus,
     SessionRef,
     SessionSummary,
@@ -53,6 +56,10 @@ from backend.application.services.agent_queries.feature_forensics import Feature
 from backend.application.services.agent_queries.planning import PlanningQueryService
 from backend.application.services.agent_queries.project_status import ProjectStatusQueryService
 from backend.application.services.agent_queries.reporting import ReportingQueryService
+from backend.application.services.agent_queries.planning_sessions import (
+    PlanningAgentSessionBoardDTO,
+    PlanningSessionQueryService,
+)
 from backend.application.services.agent_queries.workflow_intelligence import WorkflowDiagnosticsQueryService
 
 __all__ = [
@@ -107,4 +114,11 @@ __all__ = [
     "ProjectPlanningSummaryDTO",
     "ProjectPlanningGraphDTO",
     "TokenUsageByModel",
+    # Planning session board (PASB-103)
+    "PlanningAgentSessionBoardDTO",
+    "PlanningSessionQueryService",
+    # Next-run preview (PASB-401)
+    "NextRunContextRef",
+    "PlanningNextRunPreviewDTO",
+    "PromptContextSelection",
 ]

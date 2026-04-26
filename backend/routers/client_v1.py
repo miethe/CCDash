@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Body, Depends, Path, Query
 
 from backend import config
 from backend.application.context import RequestContext
@@ -18,6 +18,11 @@ from backend.application.services.agent_queries import (
     FeatureForensicsDTO,
     ProjectStatusDTO,
     WorkflowDiagnosticsDTO,
+)
+from backend.application.services.feature_surface import (
+    FeatureModalOverviewDTO,
+    FeatureModalSectionDTO,
+    LinkedFeatureSessionPageDTO,
 )
 from backend.models import SessionIntelligenceConcern
 from backend.models import (
@@ -30,10 +35,11 @@ from backend.request_scope import get_core_ports, get_request_context
 from backend.routers.client_v1_models import (
     ClientV1Envelope,
     ClientV1PaginatedEnvelope,
-    InstanceMetaDTO,
     FeatureDocumentsDTO,
+    FeatureRollupResponseDTO,
     FeatureSessionsDTO,
     FeatureSummaryDTO,
+    InstanceMetaDTO,
     SessionFamilyDTO,
     build_client_v1_meta,
 )
@@ -42,10 +48,15 @@ from backend.routers._client_v1_project import (
     get_workflow_failures_v1,
 )
 from backend.routers._client_v1_features import (
+    FeatureRollupsRequest,
     get_feature_detail_v1,
     get_feature_documents_v1,
+    get_feature_linked_session_page_v1,
+    get_feature_modal_overview_v1,
+    get_feature_modal_section_v1,
     get_feature_sessions_v1,
     list_features_v1,
+    post_feature_rollups_v1,
 )
 from backend.routers._client_v1_sessions import (
     get_session_detail_v1,
@@ -137,16 +148,72 @@ async def workflow_failures(
 
 @client_v1_router.get("/features")
 async def features_list(
+    view: str = Query(default="summary", description="Response view: 'summary' preserves the legacy list, 'cards' uses the Phase 2 feature surface."),
     status: list[str] | None = Query(default=None, description="Filter by status (repeatable)."),
+    stage: list[str] | None = Query(default=None, description="Filter by derived board stage (cards view only, repeatable)."),
     category: str | None = Query(default=None, description="Filter by category."),
+    tags: list[str] | None = Query(default=None, description="Filter by tags (cards view only, repeatable)."),
+    has_deferred: bool | None = Query(default=None, description="Filter to features with deferred tasks (cards view only)."),
+    planned_from: str | None = Query(default=None, description="Planned lower date bound (cards view only)."),
+    planned_to: str | None = Query(default=None, description="Planned upper date bound (cards view only)."),
+    started_from: str | None = Query(default=None, description="Started lower date bound (cards view only)."),
+    started_to: str | None = Query(default=None, description="Started upper date bound (cards view only)."),
+    completed_from: str | None = Query(default=None, description="Completed lower date bound (cards view only)."),
+    completed_to: str | None = Query(default=None, description="Completed upper date bound (cards view only)."),
+    updated_from: str | None = Query(default=None, description="Updated lower date bound (cards view only)."),
+    updated_to: str | None = Query(default=None, description="Updated upper date bound (cards view only)."),
+    progress_min: float | None = Query(default=None, ge=0.0, le=1.0, description="Minimum progress ratio (cards view only)."),
+    progress_max: float | None = Query(default=None, ge=0.0, le=1.0, description="Maximum progress ratio (cards view only)."),
+    task_count_min: int | None = Query(default=None, ge=0, description="Minimum task count (cards view only)."),
+    task_count_max: int | None = Query(default=None, ge=0, description="Maximum task count (cards view only)."),
+    sort_by: str = Query(default="updated_at", description="Sort key for cards view."),
+    sort_direction: str | None = Query(default=None, description="Sort direction for cards view."),
+    include: list[str] | None = Query(default=None, description="Optional include fields for cards view."),
     limit: int = Query(default=200, ge=1, le=200, description="Page size."),
     offset: int = Query(default=0, ge=0, description="Page offset."),
     q: str | None = Query(default=None, description="Keyword substring filter on feature name and slug (case-insensitive)."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-) -> ClientV1PaginatedEnvelope[FeatureSummaryDTO]:
-    """Return a paginated list of features."""
-    return await list_features_v1(status, category, limit, offset, request_context, core_ports, q=q)
+) -> object:
+    """Return the legacy summary list or the richer Phase 2 feature-card view."""
+    return await list_features_v1(
+        status,
+        category,
+        limit,
+        offset,
+        request_context,
+        core_ports,
+        q=q,
+        view=view,
+        stage=stage,
+        tags=tags,
+        has_deferred=has_deferred,
+        planned_from=planned_from,
+        planned_to=planned_to,
+        started_from=started_from,
+        started_to=started_to,
+        completed_from=completed_from,
+        completed_to=completed_to,
+        updated_from=updated_from,
+        updated_to=updated_to,
+        progress_min=progress_min,
+        progress_max=progress_max,
+        task_count_min=task_count_min,
+        task_count_max=task_count_max,
+        sort_by=sort_by,
+        sort_direction=sort_direction,
+        include=include,
+    )
+
+
+@client_v1_router.post("/features/rollups")
+async def feature_rollups(
+    payload: FeatureRollupsRequest = Body(...),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[FeatureRollupResponseDTO]:
+    """Return bounded Phase 2 rollups for a list of feature IDs."""
+    return await post_feature_rollups_v1(payload, request_context, core_ports)
 
 
 @client_v1_router.get("/features/{feature_id}")
@@ -173,6 +240,18 @@ async def feature_sessions(
     return await get_feature_sessions_v1(feature_id, limit, offset, request_context, core_ports, bypass_cache=bypass_cache)
 
 
+@client_v1_router.get("/features/{feature_id}/sessions/page")
+async def feature_sessions_page(
+    feature_id: str = Path(..., description="Feature ID."),
+    limit: int = Query(default=20, ge=1, le=50, description="Page size."),
+    offset: int = Query(default=0, ge=0, description="Page offset."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[LinkedFeatureSessionPageDTO]:
+    """Return the Phase 2 linked-session page DTO for a feature."""
+    return await get_feature_linked_session_page_v1(feature_id, request_context, core_ports, limit=limit, offset=offset)
+
+
 @client_v1_router.get("/features/{feature_id}/documents")
 async def feature_documents(
     feature_id: str = Path(..., description="Feature ID."),
@@ -181,6 +260,38 @@ async def feature_documents(
 ) -> ClientV1Envelope[FeatureDocumentsDTO]:
     """Return documents linked to a feature."""
     return await get_feature_documents_v1(feature_id, request_context, core_ports)
+
+
+@client_v1_router.get("/features/{feature_id}/modal")
+async def feature_modal_overview(
+    feature_id: str = Path(..., description="Feature ID."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[FeatureModalOverviewDTO]:
+    """Return the Phase 2 modal overview payload for a feature."""
+    return await get_feature_modal_overview_v1(feature_id, request_context, core_ports)
+
+
+@client_v1_router.get("/features/{feature_id}/modal/{section}")
+async def feature_modal_section(
+    feature_id: str = Path(..., description="Feature ID."),
+    section: str = Path(..., description="Modal section key."),
+    include: list[str] | None = Query(default=None, description="Optional include fields for the requested section."),
+    limit: int = Query(default=20, ge=1, le=200, description="Page size for pageable sections."),
+    offset: int = Query(default=0, ge=0, description="Page offset for pageable sections."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[FeatureModalSectionDTO]:
+    """Return a single Phase 2 modal section/tab payload for a feature."""
+    return await get_feature_modal_section_v1(
+        feature_id,
+        section,
+        request_context,
+        core_ports,
+        include=include,
+        limit=limit,
+        offset=offset,
+    )
 
 
 # ---------------------------------------------------------------------------

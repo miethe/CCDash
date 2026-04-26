@@ -478,3 +478,157 @@ class PhaseOperationsDTO(AgentQueryEnvelope):
     tasks: list[PhaseTaskItem] = Field(default_factory=list)
     dependency_resolution: dict[str, Any] = Field(default_factory=dict)
     progress_evidence: list[str] = Field(default_factory=list)
+
+
+# ── Planning Agent Session Board DTOs ────────────────────────────────────────
+# These DTOs define the data contracts for the Planning Agent Session Board
+# feature, which surfaces agent sessions as rich cards on a Kanban-style board
+# correlated to features, phases, and tasks.
+
+
+class SessionCorrelationEvidence(BaseModel):
+    """Evidence for why a session is linked to a planning entity."""
+
+    source_type: str
+    source_id: str | None = None
+    source_label: str = ""
+    confidence: str = "unknown"
+    detail: str | None = None
+
+
+class SessionCorrelation(BaseModel):
+    """Aggregated correlation for one session-to-planning-entity binding."""
+
+    feature_id: str | None = None
+    feature_name: str | None = None
+    phase_number: int | None = None
+    phase_title: str | None = None
+    batch_id: str | None = None
+    task_id: str | None = None
+    task_title: str | None = None
+    confidence: str = "unknown"
+    evidence: list[SessionCorrelationEvidence] = Field(default_factory=list)
+
+
+class SessionRelationship(BaseModel):
+    """Relationship between sessions."""
+
+    related_session_id: str
+    relation_type: str = ""
+    agent_name: str | None = None
+    state: str | None = None
+
+
+class SessionActivityMarker(BaseModel):
+    """Lightweight activity indicator for a session."""
+
+    marker_type: str = ""
+    label: str = ""
+    timestamp: str | None = None
+    detail: str | None = None
+
+
+class SessionTokenSummary(BaseModel):
+    """Compact token usage for a session."""
+
+    tokens_in: int = 0
+    tokens_out: int = 0
+    total_tokens: int = 0
+    context_window_pct: float | None = None
+    model: str | None = None
+
+
+class PlanningAgentSessionCardDTO(BaseModel):
+    """Primary board card representing one agent session."""
+
+    session_id: str
+    agent_name: str | None = None
+    agent_type: str | None = None
+    state: str = "unknown"
+    model: str | None = None
+    correlation: SessionCorrelation | None = None
+    transcript_href: str | None = None
+    planning_href: str | None = None
+    phase_href: str | None = None
+    parent_session_id: str | None = None
+    root_session_id: str | None = None
+    started_at: str | None = None
+    last_activity_at: str | None = None
+    duration_seconds: float | None = None
+    token_summary: SessionTokenSummary | None = None
+    relationships: list[SessionRelationship] = Field(default_factory=list)
+    activity_markers: list[SessionActivityMarker] = Field(default_factory=list)
+
+
+class PlanningBoardGroupDTO(BaseModel):
+    """A group of session cards on the planning board."""
+
+    group_key: str
+    group_label: str = ""
+    group_type: str = ""
+    cards: list[PlanningAgentSessionCardDTO] = Field(default_factory=list)
+    card_count: int = 0
+
+
+PlanningBoardGroupingMode = Literal["state", "feature", "phase", "agent", "model"]
+
+
+class PlanningAgentSessionBoardDTO(AgentQueryEnvelope):
+    """Top-level board response for the Planning Agent Session Board.
+
+    ``feature_id`` is populated only when the board is scoped to a single
+    feature.  ``grouping`` reflects the applied ``PlanningBoardGroupingMode``.
+    ``active_count`` and ``completed_count`` are convenience tallies derived
+    from the card states across all groups.
+    """
+
+    project_id: str
+    feature_id: str | None = None
+    grouping: str = "state"
+    groups: list[PlanningBoardGroupDTO] = Field(default_factory=list)
+    total_card_count: int = 0
+    active_count: int = 0
+    completed_count: int = 0
+
+
+class NextRunContextRef(BaseModel):
+    """Reference to an artifact or session for next-run prompt context."""
+
+    ref_type: str = ""
+    ref_id: str = ""
+    ref_label: str = ""
+    ref_path: str | None = None
+
+
+class PromptContextSelection(BaseModel):
+    """User's selected context items for prompt composition (PASB-401).
+
+    Carries the explicit selections the caller wants injected into the rendered
+    prompt skeleton.  All fields default to empty so callers can omit any
+    dimension they don't need.
+    """
+
+    session_ids: list[str] = Field(default_factory=list)
+    phase_refs: list[str] = Field(default_factory=list)
+    task_refs: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    transcript_refs: list[str] = Field(default_factory=list)
+
+
+class PlanningNextRunPreviewDTO(AgentQueryEnvelope):
+    """Next-run prompt preview for a feature or phase.
+
+    ``command`` is the full CLI invocation string.  ``prompt_skeleton`` is the
+    rendered prompt text with placeholders resolved where possible.
+    ``context_refs`` lists the artifacts and sessions that will be injected as
+    context.  ``warnings`` surfaces any missing or stale inputs that may affect
+    run quality.
+    """
+
+    feature_id: str
+    feature_name: str | None = None
+    phase_number: int | None = None
+    command: str = ""
+    prompt_skeleton: str = ""
+    context_refs: list[NextRunContextRef] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

@@ -90,6 +90,12 @@ vi.mock('../../contexts/DataContext', () => ({
   useData: () => mockData,
 }));
 
+// P5-005: AppRuntimeContext is now used by ProjectBoard for the v2 flag.
+// Return a minimal stub so tests that omit AppRuntimeProvider still work.
+vi.mock('../../contexts/AppRuntimeContext', () => ({
+  useAppRuntime: () => ({ runtimeStatus: null, loading: false, error: null, refreshAll: vi.fn() }),
+}));
+
 vi.mock('../../services/live', () => ({
   executionRunTopic: vi.fn(),
   featureTopic: vi.fn(),

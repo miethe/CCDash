@@ -14,11 +14,15 @@ from backend.application.services.agent_queries import (
     FeatureForensicsQueryService,
     FeaturePlanningContextDTO,
     PhaseOperationsDTO,
+    PlanningAgentSessionBoardDTO,
+    PlanningNextRunPreviewDTO,
     PlanningQueryService,
+    PlanningSessionQueryService,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     ProjectStatusDTO,
     ProjectStatusQueryService,
+    PromptContextSelection,
     ReportingQueryService,
     WorkflowDiagnosticsDTO,
     WorkflowDiagnosticsQueryService,
@@ -42,12 +46,26 @@ def _require_planning_enabled() -> None:
         )
 
 
+def _require_next_run_preview_enabled() -> None:
+    if not config.CCDASH_NEXT_RUN_PREVIEW_ENABLED:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "next_run_preview_disabled",
+                "message": "Next-run preview feature is disabled.",
+                "hint": "Set CCDASH_NEXT_RUN_PREVIEW_ENABLED=true to enable.",
+            },
+        )
+
+
 project_status_query_service = ProjectStatusQueryService()
 feature_forensics_query_service = FeatureForensicsQueryService()
 workflow_diagnostics_query_service = WorkflowDiagnosticsQueryService()
 reporting_query_service = ReportingQueryService()
 # PCP-202: planning query surface — one singleton for the whole process lifetime.
 planning_query_service = PlanningQueryService()
+# PASB-102: planning session board query surface.
+planning_session_query_service = PlanningSessionQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -278,4 +296,170 @@ async def get_phase_operations(
                 else f"Feature '{feature_id}' not found."
             )
             raise HTTPException(status_code=404, detail=detail)
+        return result
+
+
+# ── Planning session board endpoints (PASB-103) ──────────────────────────────
+# Project-wide and feature-scoped Kanban board of agent sessions correlated to
+# planning entities.  Both handlers are thin: resolve the app request, delegate
+# to the PlanningSessionQueryService singleton, and return the DTO unchanged.
+# status="error" from the service means the project scope could not be resolved;
+# we surface that as a 404 rather than a 500 so REST clients get the right code.
+
+
+@agent_router.get(
+    "/planning/session-board",
+    response_model=PlanningAgentSessionBoardDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_session_board(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    grouping: str = Query(
+        default="state",
+        description="Board grouping mode: one of 'state', 'feature', 'phase', 'agent', 'model'.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningAgentSessionBoardDTO:
+    """Return a project-wide Kanban board of agent sessions correlated to planning entities."""
+    with otel.start_span("planning.session_board", {"project_id": project_id or "", "grouping": grouping}):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_session_query_service.get_session_board(
+            app_request.context,
+            app_request.ports,
+            project_id=project_id,
+            grouping=grouping,
+        )
+        if result.status == "error":
+            raise HTTPException(status_code=404, detail="Project scope could not be resolved.")
+        return result
+
+
+@agent_router.get(
+    "/planning/session-board/{feature_id}",
+    response_model=PlanningAgentSessionBoardDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_session_board_for_feature(
+    feature_id: str = Path(..., description="Feature id to scope the session board to."),
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    grouping: str = Query(
+        default="state",
+        description="Board grouping mode: one of 'state', 'feature', 'phase', 'agent', 'model'.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningAgentSessionBoardDTO:
+    """Return a feature-scoped Kanban board of agent sessions correlated to planning entities."""
+    with otel.start_span(
+        "planning.session_board_feature",
+        {"feature_id": feature_id, "project_id": project_id or "", "grouping": grouping},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_session_query_service.get_session_board(
+            app_request.context,
+            app_request.ports,
+            project_id=project_id,
+            feature_id=feature_id,
+            grouping=grouping,
+        )
+        if result.status == "error":
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
+        return result
+
+
+# ── Next-run preview (PASB-401) ───────────────────────────────────────────────
+
+
+@agent_router.get(
+    "/planning/next-run-preview/{feature_id}",
+    response_model=PlanningNextRunPreviewDTO,
+    dependencies=[Depends(_require_planning_enabled), Depends(_require_next_run_preview_enabled)],
+)
+async def get_planning_next_run_preview(
+    feature_id: str = Path(..., description="Feature id to generate the next-run preview for."),
+    phase_number: int | None = Query(default=None, description="Optional phase number to scope the preview to."),
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningNextRunPreviewDTO:
+    """Return a next-run CLI command and prompt skeleton for the given feature/phase.
+
+    The response includes a copyable ``command`` string and a ``prompt_skeleton``
+    template with ``{{placeholder}}`` tokens showing what context would be
+    injected.  ``warnings`` surfaces missing context, stale data, or blocked
+    predecessors that may affect run quality.
+    """
+    with otel.start_span(
+        "planning.next_run_preview",
+        {"feature_id": feature_id, "project_id": project_id or "", "phase_number": str(phase_number or "")},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_query_service.get_next_run_preview(
+            app_request.context,
+            app_request.ports,
+            feature_id=feature_id,
+            phase_number=phase_number,
+            project_id_override=project_id,
+        )
+        if result.status == "error":
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
+        return result
+
+
+@agent_router.post(
+    "/planning/next-run-preview/{feature_id}",
+    response_model=PlanningNextRunPreviewDTO,
+    dependencies=[Depends(_require_planning_enabled), Depends(_require_next_run_preview_enabled)],
+)
+async def post_planning_next_run_preview(
+    context_selection: PromptContextSelection,
+    feature_id: str = Path(..., description="Feature id to generate the next-run preview for."),
+    phase_number: int | None = Query(default=None, description="Optional phase number to scope the preview to."),
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningNextRunPreviewDTO:
+    """Return a next-run CLI command and prompt skeleton with explicit context selection.
+
+    Accepts a ``PromptContextSelection`` body so the caller can inject specific
+    session IDs, phase refs, task refs, and artifact refs into the composed prompt.
+    The GET variant is for simple, unselected previews; this POST variant drives
+    the full interactive context-composer flow.
+
+    The response includes a copyable ``command`` string and a ``prompt_skeleton``
+    template populated with the provided context references.  ``warnings`` surfaces
+    missing context, stale data, or blocked predecessors.
+    """
+    with otel.start_span(
+        "planning.next_run_preview.post",
+        {"feature_id": feature_id, "project_id": project_id or "", "phase_number": str(phase_number or "")},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_query_service.get_next_run_preview(
+            app_request.context,
+            app_request.ports,
+            feature_id=feature_id,
+            phase_number=phase_number,
+            context_selection=context_selection,
+            project_id_override=project_id,
+        )
+        if result.status == "error":
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
         return result
