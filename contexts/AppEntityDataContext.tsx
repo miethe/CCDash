@@ -17,6 +17,7 @@ import {
   type SessionFilters,
 } from './dataContextShared';
 import { useDataClient } from './DataClientContext';
+import { MAX_DOCUMENTS_IN_MEMORY } from '../constants';
 
 interface AppEntityDataContextValue {
   sessions: AgentSession[];
@@ -24,6 +25,8 @@ interface AppEntityDataContextValue {
   sessionFilters: SessionFilters;
   setSessionFilters: (filters: SessionFilters) => void;
   documents: PlanDocument[];
+  documentsTruncated: boolean;
+  loadMoreDocuments: () => Promise<void>;
   tasks: ProjectTask[];
   alerts: AlertConfig[];
   notifications: Notification[];
@@ -50,6 +53,9 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
   const [sessionTotal, setSessionTotal] = useState(0);
   const [sessionFilters, setSessionFilters] = useState<SessionFilters>({ include_subagents: true });
   const [documents, setDocuments] = useState<PlanDocument[]>([]);
+  const [documentsTruncated, setDocumentsTruncated] = useState(false);
+  const [documentOffset, setDocumentOffset] = useState(0);
+  const [documentTotal, setDocumentTotal] = useState(0);
   const [tasks, setTasks] = useState<ProjectTask[]>([]);
   const [alerts, setAlerts] = useState<AlertConfig[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -59,6 +65,8 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
   const sessionsRef = useRef<AgentSession[]>([]);
   const refreshFeaturesInFlightRef = useRef<Promise<void> | null>(null);
   const sessionDetailRequestsRef = useRef<Map<string, Promise<AgentSession | null>>>(new Map());
+  const sessionDetailTimestampsRef = useRef<Map<string, number>>(new Map());
+  const SESSION_DETAIL_TTL_MS = 30_000;
 
   const upsertFeatureInState = useCallback((updatedFeature: Feature) => {
     setFeatures(prev => {
@@ -109,6 +117,16 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [refreshSessions, sessionTotal, sessions.length]);
 
+  const gcSessionDetailRequests = useCallback(() => {
+    const now = Date.now();
+    for (const [key, ts] of sessionDetailTimestampsRef.current) {
+      if (now - ts > SESSION_DETAIL_TTL_MS) {
+        sessionDetailRequestsRef.current.delete(key);
+        sessionDetailTimestampsRef.current.delete(key);
+      }
+    }
+  }, [SESSION_DETAIL_TTL_MS]);
+
   const getSessionById = useCallback(async (sessionId: string, options?: SessionFetchOptions): Promise<AgentSession | null> => {
     const forceFetch = Boolean(options?.force);
     const cachedSessions = sessionsRef.current;
@@ -117,6 +135,9 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!forceFetch && hasSessionDetail(existing)) {
       return existing;
     }
+
+    // GC expired entries before checking/inserting
+    gcSessionDetailRequests();
 
     const inFlight = sessionDetailRequestsRef.current.get(sessionId);
     if (inFlight) {
@@ -133,26 +154,32 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
         return null;
       } finally {
         sessionDetailRequestsRef.current.delete(sessionId);
+        sessionDetailTimestampsRef.current.delete(sessionId);
       }
     })();
 
     sessionDetailRequestsRef.current.set(sessionId, request);
+    sessionDetailTimestampsRef.current.set(sessionId, Date.now());
     return request;
-  }, [client]);
+  }, [client, gcSessionDetailRequests]);
 
   const refreshDocuments = useCallback(async () => {
     const pageSize = 500;
     const firstPage = await client.getDocuments(0, pageSize);
     if (Array.isArray(firstPage)) {
-      setDocuments(firstPage);
+      setDocuments(firstPage.slice(0, MAX_DOCUMENTS_IN_MEMORY));
+      setDocumentsTruncated(firstPage.length > MAX_DOCUMENTS_IN_MEMORY);
+      setDocumentOffset(Math.min(firstPage.length, MAX_DOCUMENTS_IN_MEMORY));
+      setDocumentTotal(firstPage.length);
       return;
     }
 
     const collected = [...(firstPage.items || [])];
     const total = firstPage.total || collected.length;
+    setDocumentTotal(total);
     let offset = collected.length;
 
-    while (offset < total) {
+    while (offset < total && collected.length < MAX_DOCUMENTS_IN_MEMORY) {
       const page = await client.getDocuments(offset, pageSize);
       if (Array.isArray(page)) {
         if (page.length === 0) break;
@@ -166,8 +193,26 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
       offset += items.length;
     }
 
-    setDocuments(collected);
+    const capped = collected.slice(0, MAX_DOCUMENTS_IN_MEMORY);
+    setDocuments(capped);
+    setDocumentsTruncated(total > MAX_DOCUMENTS_IN_MEMORY);
+    setDocumentOffset(capped.length);
   }, [client]);
+
+  const loadMoreDocuments = useCallback(async () => {
+    if (documentOffset >= documentTotal) return;
+    const pageSize = 500;
+    const page = await client.getDocuments(documentOffset, pageSize);
+    const items = Array.isArray(page) ? page : (page.items || []);
+    if (items.length === 0) return;
+    setDocuments(prev => {
+      const merged = [...prev, ...items];
+      const capped = merged.slice(0, MAX_DOCUMENTS_IN_MEMORY);
+      setDocumentsTruncated(documentTotal > capped.length);
+      setDocumentOffset(prev.length + items.length);
+      return capped;
+    });
+  }, [client, documentOffset, documentTotal]);
 
   const refreshTasks = useCallback(async () => {
     const data = await client.getTasks();
@@ -362,6 +407,8 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
         features,
         refreshSessions,
         loadMoreSessions,
+        documentsTruncated,
+        loadMoreDocuments,
         refreshDocuments,
         refreshTasks,
         refreshAlerts,

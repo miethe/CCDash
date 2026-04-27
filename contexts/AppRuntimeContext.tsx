@@ -9,6 +9,9 @@ import { isFeatureSurfaceV2Enabled } from '../services/featureSurfaceFlag';
 import { useDataClient } from './DataClientContext';
 import { useAppEntityData } from './AppEntityDataContext';
 import { useAppSession } from './AppSessionContext';
+import { stopLiveConnection } from '../services/live/connectionManager';
+
+const CONSECUTIVE_FAILURE_THRESHOLD = 3;
 
 interface AppRuntimeContextValue {
   loading: boolean;
@@ -24,6 +27,10 @@ interface AppRuntimeContextValue {
    * refreshAll() when they call it explicitly.
    */
   featureSurfaceV2Active: boolean;
+  /** FE-104: True after N=3 consecutive backend-unreachable health checks. */
+  runtimeUnreachable: boolean;
+  /** FE-104: Re-enable polling and reconnect EventSource after teardown. */
+  retryRuntime: () => void;
 }
 
 const POLL_INTERVAL_MS = 30_000;
@@ -43,10 +50,18 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [error, setError] = useState<string | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [isTestsRoute, setIsTestsRoute] = useState<boolean>(isTestsHashRoute);
+  const [runtimeUnreachable, setRuntimeUnreachable] = useState(false);
   const hasLoadedOnceRef = useRef(false);
   const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
   const refreshAllRef = useRef<() => Promise<void>>(async () => undefined);
   const refreshFeaturesRef = useRef(entity.refreshFeatures);
+  // FE-104: consecutive failure counter for the health-check path
+  const consecutiveFailuresRef = useRef(0);
+  // FE-104: refs to the two poll intervals so teardown can clear them
+  const healthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const featurePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // FE-104: flag to gate whether polling is currently active
+  const pollingActiveRef = useRef(true);
 
   // G1-001: Derive v2 flag from current runtimeStatus.  When v2 is active the
   // global feature polling cycle is suppressed — ProjectBoard manages its own
@@ -60,6 +75,21 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const onHashChange = () => setIsTestsRoute(isTestsHashRoute());
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  /** FE-104: Tear down both poll intervals and the live EventSource. */
+  const teardownPolling = useCallback(() => {
+    if (healthPollRef.current !== null) {
+      clearInterval(healthPollRef.current);
+      healthPollRef.current = null;
+    }
+    if (featurePollRef.current !== null) {
+      clearInterval(featurePollRef.current);
+      featurePollRef.current = null;
+    }
+    stopLiveConnection();
+    pollingActiveRef.current = false;
+    setRuntimeUnreachable(true);
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -81,7 +111,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           entity.refreshAlerts(),
           entity.refreshNotifications(),
           session.refreshProjects(),
-          client.getHealth().then(payload => setRuntimeStatus(normalizeRuntimeStatus(payload))),
+          client.getHealth().then(payload => {
+            // FE-104: successful health response resets the failure counter
+            consecutiveFailuresRef.current = 0;
+            setRuntimeStatus(normalizeRuntimeStatus(payload));
+          }),
         ];
         // G1-001: Skip legacy feature refresh when v2 surface is active.
         // ProjectBoard drives its own surface cache; legacy consumers still get
@@ -93,6 +127,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : 'Failed to load data';
         setError(message);
+        // FE-104: count consecutive backend-unreachable failures
+        consecutiveFailuresRef.current += 1;
+        if (consecutiveFailuresRef.current >= CONSECUTIVE_FAILURE_THRESHOLD) {
+          teardownPolling();
+        }
       } finally {
         if (isInitialLoad) {
           setLoading(false);
@@ -109,7 +148,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         refreshAllInFlightRef.current = null;
       }
     }
-  }, [client, entity, featureSurfaceV2Active, isTestsRoute, session]);
+  }, [client, entity, featureSurfaceV2Active, isTestsRoute, session, teardownPolling]);
 
   useEffect(() => {
     refreshAllRef.current = refreshAll;
@@ -139,13 +178,22 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     void refreshAllRef.current();
   }, []);
 
+  // FE-104: Health poll — store interval ref so teardown can clear it
   useEffect(() => {
-    const interval = setInterval(() => {
+    const id = setInterval(() => {
+      if (!pollingActiveRef.current) return;
       void refreshAllRef.current();
     }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    healthPollRef.current = id;
+    return () => {
+      clearInterval(id);
+      if (healthPollRef.current === id) {
+        healthPollRef.current = null;
+      }
+    };
   }, []);
 
+  // FE-104: Feature poll — store interval ref so teardown can clear it
   useEffect(() => {
     // G1-001: When v2 surface is active, skip the legacy 5s feature polling
     // fallback.  ProjectBoard handles invalidation via useLiveInvalidation wired
@@ -156,11 +204,26 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (featureLiveEnabled && !['backoff', 'closed'].includes(featureLiveStatus)) {
       return undefined;
     }
-    const interval = setInterval(() => {
+    const id = setInterval(() => {
+      if (!pollingActiveRef.current) return;
       void refreshFeaturesRef.current();
     }, FEATURE_POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    featurePollRef.current = id;
+    return () => {
+      clearInterval(id);
+      if (featurePollRef.current === id) {
+        featurePollRef.current = null;
+      }
+    };
   }, [featureLiveEnabled, featureLiveStatus, featureSurfaceV2Active, isTestsRoute]);
+
+  /** FE-104: Re-enable polling and reconnect after the backend comes back. */
+  const retryRuntime = useCallback(() => {
+    consecutiveFailuresRef.current = 0;
+    pollingActiveRef.current = true;
+    setRuntimeUnreachable(false);
+    void refreshAllRef.current();
+  }, []);
 
   return (
     <AppRuntimeContext.Provider
@@ -170,6 +233,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         runtimeStatus,
         refreshAll,
         featureSurfaceV2Active,
+        runtimeUnreachable,
+        retryRuntime,
       }}
     >
       {children}
