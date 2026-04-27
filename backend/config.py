@@ -590,8 +590,9 @@ CCDASH_LIVE_MAX_PENDING_EVENTS = _env_int("CCDASH_LIVE_MAX_PENDING_EVENTS", 100)
 
 # Agent query cache settings
 # Controls how long memoized agent query service results are cached.
-# Set to 0 to disable caching entirely.
-CCDASH_QUERY_CACHE_TTL_SECONDS = _env_int("CCDASH_QUERY_CACHE_TTL_SECONDS", 60)
+# Set to 0 to disable caching entirely. Default 600s: warmer fires every 300s,
+# so entries survive 2 full warmer cycles before expiry — no cold-window misses.
+CCDASH_QUERY_CACHE_TTL_SECONDS = _env_int("CCDASH_QUERY_CACHE_TTL_SECONDS", 600)
 # Reserved for background cache refresh scheduling (not active in phase 3).
 CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = _env_int("CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS", 300)
 

@@ -2,89 +2,117 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "runtime-performance-hardening-v1"
-feature_slug: "runtime-performance-hardening"
+prd: runtime-performance-hardening-v1
+feature_slug: runtime-performance-hardening
 phase: 3
-phase_title: "Cached Query Alignment"
-title: "runtime-performance-hardening-v1 - Phase 3: Cached Query Alignment"
-status: planning
+phase_title: Cached Query Alignment
+title: 'runtime-performance-hardening-v1 - Phase 3: Cached Query Alignment'
+status: pending
 started: null
 completed: null
-created: 2026-04-20
-updated: 2026-04-20
-prd_ref: "docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md"
-plan_ref: "docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md"
+created: '2026-04-20'
+updated: '2026-04-27'
+prd_ref: docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
+plan_ref: docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-owners: ["python-backend-engineer", "data-layer-expert"]
+owners:
+- python-backend-engineer
+- data-layer-expert
 contributors: []
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
 tasks:
-  - id: "BE-301"
-    description: "Change CCDASH_QUERY_CACHE_TTL_SECONDS default from 60 to 600 in backend/config.py"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    estimated_effort: "0.5 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-302"
-    description: "Add fetch_workflow_details(ids: list[str]) batch repository helper; returns list of detail dicts in single query"
-    status: "pending"
-    assigned_to: ["data-layer-expert"]
-    dependencies: []
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-303"
-    description: "Refactor workflow_intelligence.py:157 N+1 loop to call fetch_workflow_details() once"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-302"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-304"
-    description: "Keep get_workflow_registry_detail(id) method in repository for backward compatibility"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-302"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
+- id: BE-301
+  description: Change CCDASH_QUERY_CACHE_TTL_SECONDS default from 60 to 600 in backend/config.py
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  estimated_effort: 0.5 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T15:22Z
+  completed: 2026-04-27T15:22Z
+  evidence:
+  - test: backend/tests/test_cache_warming_job.py
+- id: BE-302
+  description: 'Add fetch_workflow_details(ids: list[str]) batch repository helper;
+    returns list of detail dicts in single query'
+  status: completed
+  assigned_to:
+  - data-layer-expert
+  dependencies: []
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T15:22Z
+  completed: 2026-04-27T15:22Z
+  evidence:
+  - test: backend/tests/test_workflow_repository_batch.py
+- id: BE-303
+  description: Refactor workflow_intelligence.py:157 N+1 loop to call fetch_workflow_details()
+    once
+  status: pending
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-302
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-304
+  description: Keep get_workflow_registry_detail(id) method in repository for backward
+    compatibility
+  status: pending
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-302
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: adaptive
 parallelization:
-  batch_1: ["BE-301", "BE-302"]
-  batch_2: ["BE-303", "BE-304"]
-  critical_path: ["BE-302", "BE-303"]
-  estimated_total_time: "2-3 days"
-
+  batch_1:
+  - BE-301
+  - BE-302
+  batch_2:
+  - BE-303
+  - BE-304
+  critical_path:
+  - BE-302
+  - BE-303
+  estimated_total_time: 2-3 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-1", description: "TTL default updated; verified in config.py", status: "pending" }
-  - { id: "SC-2", description: "Batch helper method added; accepts list and returns list of details", status: "pending" }
-  - { id: "SC-3", description: "N+1 loop replaced; query count verified (1 batch query vs. N single queries)", status: "pending" }
-  - { id: "SC-4", description: "Single-item method still available; no breaking changes", status: "pending" }
-
+- id: SC-1
+  description: TTL default updated; verified in config.py
+  status: pending
+- id: SC-2
+  description: Batch helper method added; accepts list and returns list of details
+  status: pending
+- id: SC-3
+  description: N+1 loop replaced; query count verified (1 batch query vs. N single
+    queries)
+  status: pending
+- id: SC-4
+  description: Single-item method still available; no breaking changes
+  status: pending
 files_modified: []
+progress: 50
 ---
 
 # runtime-performance-hardening-v1 - Phase 3: Cached Query Alignment
