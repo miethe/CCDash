@@ -9,12 +9,14 @@ phase_title: Observability & Telemetry
 title: 'runtime-performance-hardening-v1 - Phase 4: Observability & Telemetry'
 status: completed
 started: 2026-04-27T15:56Z
-completed: null
+completed: 2026-04-27T16:35Z
 created: '2026-04-20'
 updated: '2026-04-27'
 prd_ref: docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md
-commit_refs: []
+commit_refs:
+- f4170a9
+- 38ac574
 pr_refs: []
 execution_model: batch-parallel
 overall_progress: 0
@@ -42,6 +44,12 @@ tasks:
   priority: high
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T15:56Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: f4170a9
+  verified_by:
+  - phase-4-tests
 - id: OBS-402
   description: Increment ccdash_frontend_poll_teardown_total when polling stops in
     Phase 1 (FE-104)
@@ -55,6 +63,12 @@ tasks:
   priority: medium
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T16:34Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: 38ac574
+  verified_by:
+  - phase-4-tests
 - id: OBS-403
   description: Increment ccdash_link_rebuild_scope{scope} with correct label in Phase
     2 dispatch (BE-205)
@@ -68,6 +82,12 @@ tasks:
   priority: medium
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T16:34Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: 38ac574
+  verified_by:
+  - phase-4-tests
 - id: OBS-404
   description: Increment ccdash_filesystem_scan_cached_total when light-mode scan
     skipped (BE-209)
@@ -81,6 +101,12 @@ tasks:
   priority: medium
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T16:34Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: 38ac574
+  verified_by:
+  - phase-4-tests
 - id: OBS-405
   description: Increment ccdash_workflow_detail_batch_rows with batch size in Phase
     3 (BE-303)
@@ -94,6 +120,12 @@ tasks:
   priority: medium
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T16:34Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: 38ac574
+  verified_by:
+  - phase-4-tests
 - id: OBS-406
   description: Extend /api/health response with runtimePerfDefaults block reporting
     TTL, deferred-rebuild, light-mode knobs
@@ -105,6 +137,12 @@ tasks:
   priority: high
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T15:56Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: f4170a9
+  verified_by:
+  - phase-4-tests
 parallelization:
   batch_1:
   - OBS-401
@@ -140,6 +178,10 @@ success_criteria:
   status: pending
 files_modified: []
 progress: 100
+runtime_smoke: skipped
+runtime_smoke_reason: Backend-only observability instrumentation; FE beacon path covered
+  by unit tests in test_observability_router.py and the existing AppRuntimeContext
+  test surface. Dev server smoke deferred to phase 5 testing harness.
 ---
 
 # runtime-performance-hardening-v1 - Phase 4: Observability & Telemetry
