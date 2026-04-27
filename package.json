@@ -27,7 +27,8 @@
     "docker:hosted:smoke:job": "python3 -c \"import json, os, urllib.request; base=f\\\"http://127.0.0.1:{os.environ.get('CCDASH_API_PORT','8000')}\\\"; settings_req=urllib.request.Request(f'{base}/api/telemetry/export/settings', data=json.dumps({'enabled': True}).encode(), headers={'Content-Type': 'application/json'}, method='PATCH'); settings=json.load(urllib.request.urlopen(settings_req, timeout=5)); push_req=urllib.request.Request(f'{base}/api/telemetry/export/push-now', data=b'', method='POST'); push=json.load(urllib.request.urlopen(push_req, timeout=5)); assert settings.get('configured') is True, settings; assert settings.get('envLocked') is False, settings; assert push.get('success') is True, push; print(json.dumps({'settings': settings, 'push_now': push}, indent=2))\"",
     "docker:hosted:smoke:cli-contract": "docker compose --env-file deploy/runtime/compose.hosted.env.example -f deploy/runtime/compose.yaml --profile enterprise --profile postgres exec -T api python -m pytest backend/tests/test_cli_commands.py -q",
     "docker:hosted:smoke:mcp-contract": "docker compose --env-file deploy/runtime/compose.hosted.env.example -f deploy/runtime/compose.yaml --profile enterprise --profile postgres exec -T api python -m pytest backend/tests/test_mcp_server.py -q",
-    "docker:hosted:smoke:validate": "npm run docker:hosted:smoke:config && npm run docker:hosted:smoke:up && npm run docker:hosted:smoke:ps && npm run docker:hosted:smoke:probes && npm run docker:hosted:smoke:job && npm run docker:hosted:smoke:cli-contract && npm run docker:hosted:smoke:mcp-contract"
+    "docker:hosted:smoke:validate": "npm run docker:hosted:smoke:config && npm run docker:hosted:smoke:up && npm run docker:hosted:smoke:ps && npm run docker:hosted:smoke:probes && npm run docker:hosted:smoke:job && npm run docker:hosted:smoke:cli-contract && npm run docker:hosted:smoke:mcp-contract",
+    "profile:memory": "node ./scripts/memory-profile.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.40.0",
@@ -61,6 +62,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.3",
+    "puppeteer": "^24.42.0",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
