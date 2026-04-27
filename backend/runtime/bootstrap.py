@@ -172,6 +172,14 @@ def _build_health_payload(
         # Set CCDASH_FEATURE_SURFACE_V2_ENABLED=false to fall back to the v0 path.
         "featureSurfaceV2Enabled": config.CCDASH_FEATURE_SURFACE_V2_ENABLED,
         "allowedStorageProfiles": list(runtime_status.get("allowedStorageProfiles", ())),
+        # Effective values of runtime-performance feature flags, surfaced to the FE
+        # so operators can verify env-var overrides are applied without server logs.
+        "runtimePerfDefaults": {
+            "queryCacheTtlSeconds": int(config.CCDASH_QUERY_CACHE_TTL_SECONDS),
+            "startupDeferredRebuildLinks": bool(config.STARTUP_DEFERRED_REBUILD_LINKS),
+            "startupSyncLightMode": bool(config.STARTUP_SYNC_LIGHT_MODE),
+            "incrementalLinkRebuildEnabled": bool(config.INCREMENTAL_LINK_REBUILD_ENABLED),
+        },
         "runtimeSyncBehavior": str(runtime_status.get("runtimeSyncBehavior", "")),
         "runtimeJobBehavior": str(runtime_status.get("runtimeJobBehavior", "")),
         "runtimeAuthBehavior": str(runtime_status.get("runtimeAuthBehavior", "")),

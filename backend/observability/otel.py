@@ -45,6 +45,16 @@ _feature_surface_latency_hist: Any | None = None
 _prom_feature_surface_requests_counter: Any | None = None
 _prom_feature_surface_latency_hist: Any | None = None
 
+# ── Runtime-performance-hardening metrics (OBS-401) ──────────────────────────
+_frontend_poll_teardown_counter: Any | None = None
+_link_rebuild_scope_counter: Any | None = None
+_filesystem_scan_cached_counter: Any | None = None
+_workflow_detail_batch_rows_hist: Any | None = None
+_prom_frontend_poll_teardown_counter: Any | None = None
+_prom_link_rebuild_scope_counter: Any | None = None
+_prom_filesystem_scan_cached_counter: Any | None = None
+_prom_workflow_detail_batch_rows_hist: Any | None = None
+
 _prom_enabled = False
 _prom_ingestion_counter: Any | None = None
 _prom_ingestion_latency_hist: Any | None = None
@@ -154,6 +164,8 @@ def initialize(app: FastAPI | None = None) -> None:
     global _telemetry_export_disabled_gauge, _worker_job_freshness_gauge, _worker_job_backpressure_gauge
     global _agent_query_cache_hit_counter, _agent_query_cache_miss_counter
     global _feature_surface_requests_counter, _feature_surface_latency_hist
+    global _frontend_poll_teardown_counter, _link_rebuild_scope_counter
+    global _filesystem_scan_cached_counter, _workflow_detail_batch_rows_hist
     global _prom_enabled
     global _prom_ingestion_counter, _prom_ingestion_latency_hist, _prom_parser_failure_counter
     global _prom_tool_calls_counter, _prom_tool_duration_hist, _prom_tokens_counter, _prom_cost_counter
@@ -162,6 +174,8 @@ def initialize(app: FastAPI | None = None) -> None:
     global _prom_feature_surface_requests_counter, _prom_feature_surface_latency_hist
     global _prom_telemetry_export_disabled_gauge
     global _prom_worker_job_freshness_gauge, _prom_worker_job_backpressure_gauge
+    global _prom_frontend_poll_teardown_counter, _prom_link_rebuild_scope_counter
+    global _prom_filesystem_scan_cached_counter, _prom_workflow_detail_batch_rows_hist
 
     if _initialized:
         if _enabled and app and _fastapi_instrumentor:
@@ -310,6 +324,28 @@ def initialize(app: FastAPI | None = None) -> None:
         description="Worker job backlog pressure ratio by job and runtime metadata",
     )
 
+    # ── Runtime-performance-hardening metrics (OBS-401) ───────────────────────
+    _frontend_poll_teardown_counter = meter.create_counter(
+        "ccdash_frontend_poll_teardown_total",
+        unit="1",
+        description="Frontend polling teardown events triggered after sustained unreachability.",
+    )
+    _link_rebuild_scope_counter = meter.create_counter(
+        "ccdash_link_rebuild_scope",
+        unit="1",
+        description="Link rebuild dispatches by resolved scope.",
+    )
+    _filesystem_scan_cached_counter = meter.create_counter(
+        "ccdash_filesystem_scan_cached_total",
+        unit="1",
+        description="Filesystem scan invocations skipped via light-mode manifest cache.",
+    )
+    _workflow_detail_batch_rows_hist = meter.create_histogram(
+        "ccdash_workflow_detail_batch_rows",
+        unit="1",
+        description="Workflow-detail batch query row counts.",
+    )
+
     _trace_provider = trace_provider
     _meter_provider = meter_provider
     _tracer = tracer
@@ -403,6 +439,26 @@ def initialize(app: FastAPI | None = None) -> None:
                 "ccdash_feature_surface_latency_ms",
                 "Feature-surface endpoint latency in milliseconds",
                 ["endpoint", "filter_kind"],
+            )
+            # ── Runtime-performance-hardening metrics (OBS-401) ───────────────
+            _prom_frontend_poll_teardown_counter = Counter(
+                "ccdash_frontend_poll_teardown_total",
+                "Frontend polling teardown events triggered after sustained unreachability.",
+            )
+            _prom_link_rebuild_scope_counter = Counter(
+                "ccdash_link_rebuild_scope",
+                "Link rebuild dispatches by resolved scope.",
+                ["scope"],
+            )
+            _prom_filesystem_scan_cached_counter = Counter(
+                "ccdash_filesystem_scan_cached_total",
+                "Filesystem scan invocations skipped via light-mode manifest cache.",
+            )
+            _prom_workflow_detail_batch_rows_hist = Histogram(
+                "ccdash_workflow_detail_batch_rows",
+                "Workflow-detail batch query row counts.",
+                ["endpoint"],
+                buckets=[1, 5, 10, 25, 50, 100, 250, 500, 1000],
             )
             logger.info("Prometheus fallback metrics server listening on port %s", config.PROM_PORT)
         except Exception as exc:  # noqa: BLE001
@@ -743,6 +799,76 @@ def record_cache_miss(endpoint: str) -> None:
             _agent_query_cache_miss_counter.add(1, {"endpoint": endpoint or "unknown"})
     except Exception:  # never let observability break a request
         logger.debug("cache.miss counter unavailable", exc_info=True)
+
+
+# ── Runtime-performance-hardening helpers (OBS-401) ──────────────────────────
+
+_VALID_LINK_REBUILD_SCOPES = frozenset({"full", "entities_changed", "none"})
+
+
+def record_frontend_poll_teardown() -> None:
+    """Increment the frontend polling teardown counter (no labels)."""
+    if not _initialized:
+        return
+    try:
+        if _enabled and _frontend_poll_teardown_counter is not None:
+            _frontend_poll_teardown_counter.add(1)
+        if _prom_enabled and _prom_frontend_poll_teardown_counter is not None:
+            _prom_frontend_poll_teardown_counter.inc()
+    except Exception:
+        logger.warning("record_frontend_poll_teardown: metric unavailable", exc_info=True)
+
+
+def record_link_rebuild_scope(scope: str) -> None:
+    """Increment the link-rebuild dispatch counter for the given scope.
+
+    Valid scope values are ``full``, ``entities_changed``, and ``none``.
+    Unknown values are coerced to ``full`` with a warning so that the metric
+    is never silently dropped.
+    """
+    if not _initialized:
+        return
+    safe_scope = (scope or "").strip()
+    if safe_scope not in _VALID_LINK_REBUILD_SCOPES:
+        logger.warning(
+            "record_link_rebuild_scope: unknown scope %r — defaulting to 'full'", scope
+        )
+        safe_scope = "full"
+    try:
+        if _enabled and _link_rebuild_scope_counter is not None:
+            _link_rebuild_scope_counter.add(1, {"scope": safe_scope})
+        if _prom_enabled and _prom_link_rebuild_scope_counter is not None:
+            _prom_link_rebuild_scope_counter.labels(scope=safe_scope).inc()
+    except Exception:
+        logger.warning("record_link_rebuild_scope: metric unavailable", exc_info=True)
+
+
+def record_filesystem_scan_cached() -> None:
+    """Increment the filesystem scan cache-skip counter (no labels)."""
+    if not _initialized:
+        return
+    try:
+        if _enabled and _filesystem_scan_cached_counter is not None:
+            _filesystem_scan_cached_counter.add(1)
+        if _prom_enabled and _prom_filesystem_scan_cached_counter is not None:
+            _prom_filesystem_scan_cached_counter.inc()
+    except Exception:
+        logger.warning("record_filesystem_scan_cached: metric unavailable", exc_info=True)
+
+
+def record_workflow_detail_batch_rows(rows: int) -> None:
+    """Record a workflow-detail batch query row count observation."""
+    if not _initialized:
+        return
+    safe_rows = max(0, int(rows))
+    labels = {"endpoint": "workflow_detail"}
+    try:
+        if _enabled and _workflow_detail_batch_rows_hist is not None:
+            _workflow_detail_batch_rows_hist.record(safe_rows, labels)
+        if _prom_enabled and _prom_workflow_detail_batch_rows_hist is not None:
+            _prom_workflow_detail_batch_rows_hist.labels(endpoint="workflow_detail").observe(safe_rows)
+    except Exception:
+        logger.warning("record_workflow_detail_batch_rows: metric unavailable", exc_info=True)
 
 
 def _observe_telemetry_queue_depth(observation_type: Any):
