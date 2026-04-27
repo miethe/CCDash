@@ -11,10 +11,14 @@ title: Runtime Contract and Launch Surface
 status: completed
 started: '2026-04-14'
 completed: '2026-04-14'
-commit_refs: ["5496546", "9554151", "7b866bb"]
+commit_refs:
+- '5496546'
+- '9554151'
+- 7b866bb
 pr_refs: []
 overall_progress: 100
-completion_estimate: "completed; Phase 1 runtime contract, launcher, and boot-time guardrail work is fully landed"
+completion_estimate: completed; Phase 1 runtime contract, launcher, and boot-time
+  guardrail work is fully landed
 total_tasks: 3
 completed_tasks: 3
 in_progress_tasks: 0
@@ -37,10 +41,10 @@ tasks:
   estimated_effort: 2pt
   priority: high
 - id: RUN-002
-  description: Update `scripts/backend.mjs`, package scripts, and related launch
-    helpers so hosted startup resolves to `backend.runtime.bootstrap_api:app` while
-    `backend.main:app` stays local-only.
-  status: pending
+  description: Update `scripts/backend.mjs`, package scripts, and related launch helpers
+    so hosted startup resolves to `backend.runtime.bootstrap_api:app` while `backend.main:app`
+    stays local-only.
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -50,7 +54,7 @@ tasks:
 - id: RUN-003
   description: Add startup validation that rejects invalid runtime/storage/auth combinations
     and surfaces runtime metadata consistently at boot.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - python-backend-engineer
@@ -73,8 +77,8 @@ blockers: []
 success_criteria:
 - Local, api, worker, and test each have one explicit bootstrap path with no ambiguous
   hosted default.
-- Hosted startup resolves to `backend.runtime.bootstrap_api:app` and never falls
-  back to the local profile.
+- Hosted startup resolves to `backend.runtime.bootstrap_api:app` and never falls back
+  to the local profile.
 - Invalid runtime, storage, and auth pairings fail fast while runtime metadata is
   visible in startup logs.
 files_modified:
@@ -92,7 +96,7 @@ files_modified:
 - scripts/backend.mjs
 - scripts/dev.mjs
 progress: 100
-updated: '2026-04-14'
+updated: '2026-04-27'
 ---
 
 # deployment-runtime-modularization-v1 - Phase 1

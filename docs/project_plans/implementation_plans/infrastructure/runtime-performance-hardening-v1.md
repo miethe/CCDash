@@ -1,32 +1,37 @@
 ---
 schema_version: 2
 doc_type: implementation_plan
-title: "CCDash Runtime Performance Hardening v1 - Implementation Plan"
-status: draft
+title: CCDash Runtime Performance Hardening v1 - Implementation Plan
+status: completed
 created: 2026-04-20
-updated: 2026-04-20
+updated: '2026-04-27'
 feature_slug: runtime-performance-hardening
-feature_version: "v1"
+feature_version: v1
 prd_ref: /docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
 plan_ref: null
-scope: "Frontend memory hardening, link rebuild dedup, cached query cold windows, and performance observability"
-effort_estimate: "38 story points"
-architecture_summary: "Frontend polling/transcript lifecycle hardening, backend link-rebuild scope resolution with incremental rebuild support, query cache TTL alignment with warmer cycle, batch workflow diagnostics query, and Prometheus observability instrumentation."
+scope: Frontend memory hardening, link rebuild dedup, cached query cold windows, and
+  performance observability
+effort_estimate: 38 story points
+architecture_summary: Frontend polling/transcript lifecycle hardening, backend link-rebuild
+  scope resolution with incremental rebuild support, query cache TTL alignment with
+  warmer cycle, batch workflow diagnostics query, and Prometheus observability instrumentation.
 related_documents:
-  - docs/project_plans/design-specs/runtime-performance-hardening-v1.md
-  - docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
-  - docs/project_plans/meta_plans/performance-and-reliability-v1.md
-  - docs/project_plans/implementation_plans/db-caching-layer-v1.md
-  - docs/guides/query-cache-tuning-guide.md
+- docs/project_plans/design-specs/runtime-performance-hardening-v1.md
+- docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
+- docs/project_plans/meta_plans/performance-and-reliability-v1.md
+- docs/project_plans/implementation_plans/db-caching-layer-v1.md
+- docs/guides/query-cache-tuning-guide.md
 references:
   user_docs:
-    - docs/guides/operator-setup-user-guide.md
+  - docs/guides/operator-setup-user-guide.md
   context: []
   specs: []
   related_prds: []
 spike_ref: null
 adr_refs: []
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+- docs/project_plans/design-specs/transcript-fetch-on-demand-v1.md
+- docs/project_plans/design-specs/agent-query-cache-lru-v1.md
 findings_doc_ref: null
 changelog_required: true
 owner: nick
@@ -34,11 +39,55 @@ contributors: []
 priority: high
 risk_level: medium
 category: infrastructure
-tags: [performance, memory, reliability, sync, cache, frontend, backend]
+tags:
+- performance
+- memory
+- reliability
+- sync
+- cache
+- frontend
+- backend
 milestone: null
-commit_refs: []
+commit_refs:
+- '0ac2ceb'
+- '59b1230'
+- '8748f65'
+- '38ac574'
+- 'f4170a9'
+- '76373c2'
+- '2774000'
+- '8cc3304'
+- 'a7bcbfc'
+- '5c059b1'
+- '6e55357'
+- 'b579c9f'
+- '07ffacf'
+- 'bf84597'
+- 'e748fc4'
+- '24c4f35'
+- '94c1d34'
 pr_refs: []
-files_affected: []
+files_affected:
+- .claude/findings/runtime-perf-load-test-smoke-2026-04-27.md
+- .claude/progress/runtime-performance-hardening-v1/phase-1-progress.md
+- .claude/progress/runtime-performance-hardening-v1/phase-2-progress.md
+- .claude/progress/runtime-performance-hardening-v1/phase-3-progress.md
+- .claude/progress/runtime-performance-hardening-v1/phase-4-progress.md
+- .claude/progress/runtime-performance-hardening-v1/phase-5-progress.md
+- .claude/progress/runtime-performance-hardening-v1/phase-6-progress.md
+- .claude/worknotes/runtime-performance-hardening-v1/be-201-audit.md
+- backend/observability/otel.py
+- backend/routers/observability.py
+- backend/runtime/bootstrap.py
+- backend/services/workflow_registry.py
+- backend/tests/perf/test_cache_hit_rate.py
+- backend/tests/perf/test_cold_start_benchmark.py
+- backend/tests/test_agent_queries_workflow_diagnostics.py
+- contexts/AppRuntimeContext.tsx
+- docs/guides/setup.md
+- docs/project_plans/design-specs/agent-query-cache-lru-v1.md
+- docs/project_plans/design-specs/transcript-fetch-on-demand-v1.md
+- lib/featureFlags.ts
 ---
 
 # Implementation Plan: CCDash Runtime Performance Hardening v1
