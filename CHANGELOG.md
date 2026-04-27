@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Containerized deployment infrastructure**: Unified backend Dockerfile with `CCDASH_RUNTIME_PROFILE` dispatch, hardened frontend nginx image with non-root user and envsubst templating, unified `compose.yaml` with composable `local` (SQLite single-container), `enterprise` (split API/worker with external Postgres), and `postgres` (bundled postgres:17-alpine) profiles, rootless Podman support via UID/GID build args and SELinux bind-mount labels, and operator quickstart guide. Single-command deployment: `docker compose --profile local up --build`.
 - **Feature flags for runtime-performance hardening**:
   - `VITE_CCDASH_MEMORY_GUARD_ENABLED` (default true): gates frontend memory hardening via transcript ring-buffer cap, document pagination, and in-flight request garbage collection.
   - `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` (default false): enables incremental link rebuild with cached-state gating to skip relink when entities are unchanged.

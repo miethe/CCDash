@@ -8,9 +8,9 @@ prd_ref: docs/project_plans/PRDs/infrastructure/containerized-deployment-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/containerized-deployment-v1.md
 phase: 6
 title: Documentation Finalization
-status: not_started
+status: completed
 created: '2026-04-20'
-updated: '2026-04-20'
+updated: '2026-04-27'
 commit_refs: []
 pr_refs: []
 owners:
@@ -21,35 +21,35 @@ tasks:
 - id: DOC-001
   description: Add [Unreleased] CHANGELOG entry under Added for containerized deployment
     infrastructure
-  status: pending
+  status: completed
   assigned_to:
   - changelog-generator
   dependencies: []
 - id: DOC-002
   description: Write docs/guides/containerized-deployment-quickstart.md covering all
     three profiles + rootless Podman notes
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   dependencies: []
 - id: DOC-003
   description: Update docs/setup-user-guide.md to recommend container path as primary
     onboarding route
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   dependencies:
   - DOC-002
 - id: DOC-004
   description: Document image tag strategy (ghcr.io/ccdash/backend:<version>, ghcr.io/ccdash/frontend:<version>)
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   dependencies: []
 - id: DOC-005
   description: Update npm run docker:* scripts to target compose.yaml with correct
     profiles
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   dependencies: []
@@ -66,6 +66,11 @@ parallelization:
   - DOC-003
 blockers: []
 success_criteria: []
+total_tasks: 5
+completed_tasks: 5
+in_progress_tasks: 0
+blocked_tasks: 0
+progress: 100
 ---
 
 # containerized-deployment-v1 - Phase 6: Documentation Finalization
