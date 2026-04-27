@@ -7,7 +7,7 @@ feature_slug: runtime-performance-hardening
 phase: 2
 phase_title: Link Rebuild Dedup & Throttling
 title: 'runtime-performance-hardening-v1 - Phase 2: Link Rebuild Dedup & Throttling'
-status: pending
+status: completed
 started: null
 completed: null
 created: '2026-04-20'
@@ -20,7 +20,7 @@ execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 9
-completed_tasks: 8
+completed_tasks: 9
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -102,7 +102,7 @@ tasks:
 - id: BE-206
   description: Gate incremental rebuild dispatch behind CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED
     (default false)
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -111,6 +111,10 @@ tasks:
   priority: high
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T15:19Z
+  completed: 2026-04-27T15:19Z
+  evidence:
+  - test: backend/tests/test_sync_link_rebuild_dispatch.py
 - id: BE-207
   description: Memoize rglob(root, pattern) results for the life of a sync run
   status: completed
@@ -196,10 +200,10 @@ success_criteria:
   description: Migration runs cleanly; manifest table populated
   status: pending
 - id: SC-9
-  description: Light mode enabled → scan skipped on unchanged manifests
+  description: "Light mode enabled \u2192 scan skipped on unchanged manifests"
   status: pending
 files_modified: []
-progress: 88
+progress: 100
 ---
 
 # runtime-performance-hardening-v1 - Phase 2: Link Rebuild Dedup & Throttling

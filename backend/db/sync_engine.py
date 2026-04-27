@@ -2380,6 +2380,21 @@ class SyncEngine:
             )
 
         # scope.kind == "entities_changed"
+        # BE-206: gate incremental rebuild behind a feature flag (default OFF).
+        # When disabled, coerce entities_changed to a full rebuild so v1 ships
+        # with proven correctness until the incremental path is validated.
+        if not config.INCREMENTAL_LINK_REBUILD_ENABLED:
+            logger.info(
+                "links_rebuild_dispatch scope=entities_changed — incremental_rebuild_gated_off;"
+                " falling back to full rebuild",
+            )
+            return await self._rebuild_entity_links(
+                project_id,
+                docs_dir,
+                progress_dir,
+                operation_id=operation_id,
+            )
+
         entity_ids: list[str] = scope.entity_ids or []
         if not entity_ids:
             # entity_ids were not populated at the stats layer (see _should_rebuild_links_after_full_sync):

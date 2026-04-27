@@ -1,10 +1,14 @@
-"""Tests for SyncEngine._dispatch_link_rebuild (BE-205).
+"""Tests for SyncEngine._dispatch_link_rebuild (BE-205 / BE-206).
 
 Covers all four scope branches:
   1. kind="full"                               → _rebuild_entity_links called once
   2. kind="entities_changed" + non-empty ids  → rebuild_links_for_entities called
   3. kind="entities_changed" + empty ids      → falls back to full rebuild + WARNING
   4. kind="none"                               → neither rebuild method called
+
+BE-206 flag tests:
+  5. flag=False + entities_changed            → coerces to full rebuild; rebuild_links_for_entities NOT called
+  6. flag=True  + entities_changed            → routes to rebuild_links_for_entities (incremental path)
 """
 
 import logging
@@ -12,6 +16,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import backend.config as _config
 from backend.db.sync_engine import RebuildScope, SyncEngine
 
 
@@ -70,13 +75,14 @@ class TestDispatchLinkRebuildFull(unittest.IsolatedAsyncioTestCase):
 
 
 class TestDispatchLinkRebuildEntitiesChanged(unittest.IsolatedAsyncioTestCase):
-    """kind='entities_changed' with non-empty ids → rebuild_links_for_entities called."""
+    """kind='entities_changed' with non-empty ids → rebuild_links_for_entities called (flag=True)."""
 
     async def test_non_empty_ids_routes_to_scoped_rebuild(self) -> None:
         engine = _make_engine()
         scope = RebuildScope(kind="entities_changed", entity_ids=["sess-abc", "sess-def"])
 
-        result = await engine._dispatch_link_rebuild(scope, "proj-2")
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            result = await engine._dispatch_link_rebuild(scope, "proj-2")
 
         engine.rebuild_links_for_entities.assert_awaited_once()
         engine._rebuild_entity_links.assert_not_awaited()
@@ -87,7 +93,8 @@ class TestDispatchLinkRebuildEntitiesChanged(unittest.IsolatedAsyncioTestCase):
         ids = ["sess-111", "sess-222", "sess-333"]
         scope = RebuildScope(kind="entities_changed", entity_ids=ids)
 
-        await engine._dispatch_link_rebuild(scope, "proj-2")
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            await engine._dispatch_link_rebuild(scope, "proj-2")
 
         call_args = engine.rebuild_links_for_entities.call_args
         # positional: (project_id, entity_type, ids)
@@ -96,13 +103,15 @@ class TestDispatchLinkRebuildEntitiesChanged(unittest.IsolatedAsyncioTestCase):
 
 
 class TestDispatchLinkRebuildEntitiesChangedEmptyFallback(unittest.IsolatedAsyncioTestCase):
-    """kind='entities_changed' with empty ids → falls back to full rebuild + WARNING log."""
+    """kind='entities_changed' with empty ids → falls back to full rebuild + WARNING log (flag=True)."""
 
     async def test_empty_ids_falls_back_to_full_rebuild(self) -> None:
         engine = _make_engine()
         scope = RebuildScope(kind="entities_changed", entity_ids=[])
 
-        result = await engine._dispatch_link_rebuild(scope, "proj-3")
+        # flag=True so the guard passes and the empty-ids branch is reached
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            result = await engine._dispatch_link_rebuild(scope, "proj-3")
 
         engine._rebuild_entity_links.assert_awaited_once()
         engine.rebuild_links_for_entities.assert_not_awaited()
@@ -112,8 +121,9 @@ class TestDispatchLinkRebuildEntitiesChangedEmptyFallback(unittest.IsolatedAsync
         engine = _make_engine()
         scope = RebuildScope(kind="entities_changed", entity_ids=[])
 
-        with self.assertLogs("ccdash.sync", level=logging.WARNING) as cm:
-            await engine._dispatch_link_rebuild(scope, "proj-3")
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            with self.assertLogs("ccdash.sync", level=logging.WARNING) as cm:
+                await engine._dispatch_link_rebuild(scope, "proj-3")
 
         warning_lines = [line for line in cm.output if "WARNING" in line]
         self.assertTrue(warning_lines, "Expected at least one WARNING log line")
@@ -123,11 +133,12 @@ class TestDispatchLinkRebuildEntitiesChangedEmptyFallback(unittest.IsolatedAsync
         )
 
     async def test_none_entity_ids_also_falls_back(self) -> None:
-        """entity_ids=None is treated the same as empty list."""
+        """entity_ids=None is treated the same as empty list (flag=True to reach that branch)."""
         engine = _make_engine()
         scope = RebuildScope(kind="entities_changed", entity_ids=None)
 
-        result = await engine._dispatch_link_rebuild(scope, "proj-3")
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            result = await engine._dispatch_link_rebuild(scope, "proj-3")
 
         engine._rebuild_entity_links.assert_awaited_once()
         engine.rebuild_links_for_entities.assert_not_awaited()
@@ -147,6 +158,62 @@ class TestDispatchLinkRebuildNone(unittest.IsolatedAsyncioTestCase):
         engine.rebuild_links_for_entities.assert_not_awaited()
         self.assertEqual(result["created"], 0)
         self.assertEqual(result["auto_links_rebuilt"], 0)
+
+
+class TestDispatchLinkRebuildIncrementalFlagOff(unittest.IsolatedAsyncioTestCase):
+    """BE-206: flag=False + entities_changed → coerces to full rebuild."""
+
+    async def test_flag_off_entities_changed_coerces_to_full(self) -> None:
+        engine = _make_engine()
+        scope = RebuildScope(kind="entities_changed", entity_ids=["sess-aaa", "sess-bbb"])
+
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", False):
+            result = await engine._dispatch_link_rebuild(scope, "proj-flag-off")
+
+        engine._rebuild_entity_links.assert_awaited_once()
+        engine.rebuild_links_for_entities.assert_not_awaited()
+        self.assertIn("created", result)
+
+    async def test_flag_off_emits_info_log(self) -> None:
+        engine = _make_engine()
+        scope = RebuildScope(kind="entities_changed", entity_ids=["sess-xyz"])
+
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", False):
+            with self.assertLogs("ccdash.sync", level=logging.INFO) as cm:
+                await engine._dispatch_link_rebuild(scope, "proj-flag-off-log")
+
+        self.assertTrue(
+            any("incremental_rebuild_gated_off" in line for line in cm.output),
+            "Expected info log mentioning incremental_rebuild_gated_off",
+        )
+
+
+class TestDispatchLinkRebuildIncrementalFlagOn(unittest.IsolatedAsyncioTestCase):
+    """BE-206: flag=True + entities_changed → incremental path (rebuild_links_for_entities)."""
+
+    async def test_flag_on_entities_changed_routes_to_scoped_rebuild(self) -> None:
+        engine = _make_engine()
+        ids = ["sess-111", "sess-222"]
+        scope = RebuildScope(kind="entities_changed", entity_ids=ids)
+
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            result = await engine._dispatch_link_rebuild(scope, "proj-flag-on")
+
+        engine.rebuild_links_for_entities.assert_awaited_once()
+        engine._rebuild_entity_links.assert_not_awaited()
+        self.assertEqual(result["auto_links_rebuilt"], 3)
+
+    async def test_flag_on_passes_entity_ids(self) -> None:
+        engine = _make_engine()
+        ids = ["sess-aaa", "sess-bbb", "sess-ccc"]
+        scope = RebuildScope(kind="entities_changed", entity_ids=ids)
+
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            await engine._dispatch_link_rebuild(scope, "proj-flag-on-ids")
+
+        call_args = engine.rebuild_links_for_entities.call_args
+        passed_ids = call_args[0][2] if len(call_args[0]) >= 3 else call_args[1].get("ids")
+        self.assertEqual(passed_ids, ids)
 
 
 if __name__ == "__main__":
