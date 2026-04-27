@@ -20,7 +20,7 @@ execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 9
-completed_tasks: 5
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -58,7 +58,7 @@ tasks:
 - id: BE-203
   description: 'If BE-201 finds method missing: add rebuild_for_entities(ids) to EntityLinksRepository;
     if exists: skip'
-  status: pending
+  status: completed
   assigned_to:
   - data-layer-expert
   dependencies:
@@ -67,6 +67,10 @@ tasks:
   priority: high
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T15:12Z
+  completed: 2026-04-27T15:12Z
+  evidence:
+  - test: backend/tests/test_entity_links_rebuild_for_entities.py
 - id: BE-204
   description: Refactor _should_rebuild_links_after_full_sync() to return scope object
     (full|entities_changed|none)
@@ -187,7 +191,7 @@ success_criteria:
   description: Light mode enabled → scan skipped on unchanged manifests
   status: pending
 files_modified: []
-progress: 55
+progress: 66
 ---
 
 # runtime-performance-hardening-v1 - Phase 2: Link Rebuild Dedup & Throttling

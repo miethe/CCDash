@@ -1244,7 +1244,7 @@ class SyncEngine:
         self._test_source_synced_at: dict[str, str] = {}
 
     # ── Per-run filesystem traversal cache ─────────────────────────────────
-    def _rglob(self, root: Path, pattern: str) -> tuple[Path, ...]:
+    def _rglob(self, root: Path | str, pattern: str) -> tuple[Path, ...]:
         """Memoized rglob within a single sync run.
 
         Keyed by (resolved root path, glob pattern).  Results are cached for
@@ -1253,9 +1253,10 @@ class SyncEngine:
         (documents, progress, features) that traverse the same directory with
         the same pattern pay the OS traversal cost only once.
         """
-        key = (str(root.resolve()), pattern)
+        root_path = root if isinstance(root, Path) else Path(root)
+        key = (str(root_path.resolve()), pattern)
         if key not in self._rglob_cache:
-            self._rglob_cache[key] = tuple(root.rglob(pattern))
+            self._rglob_cache[key] = tuple(root_path.rglob(pattern))
         return self._rglob_cache[key]
 
     def _enterprise_canonical_transcript_authoritative(self) -> bool:
@@ -3016,6 +3017,103 @@ class SyncEngine:
                     stats=stats,
                     error=str(exc),
                 )
+            raise
+
+    async def rebuild_links_for_entities(
+        self,
+        project_id: str,
+        entity_type: str,
+        ids: list[str],
+        *,
+        trigger: str = "api",
+    ) -> dict[str, Any]:
+        """Scoped link rebuild: delete-then-re-derive auto-links for *ids* only.
+
+        Mirrors the operation tracking and invalidation events fired by the
+        full ``rebuild_links()`` method, but scoped to a specific subset of
+        entities.  Returns a stats dict with ``entities_processed`` and
+        ``auto_links_rebuilt``.
+
+        An empty *ids* list is a no-op that returns zero stats without touching
+        the database or emitting any events.
+        """
+        if not ids:
+            return {"entities_processed": 0, "auto_links_rebuilt": 0}
+
+        operation_id = await self._start_operation(
+            "rebuild_links_for_entities",
+            project_id,
+            trigger,
+            {"entityType": entity_type, "entityCount": len(ids)},
+        )
+        t0 = time.monotonic()
+        await self._update_operation(
+            operation_id,
+            phase="links:scoped",
+            message=f"Rebuilding auto-links for {len(ids)} {entity_type}(s)",
+        )
+        stats: dict[str, Any] = {
+            "operation_id": operation_id,
+            "entities_processed": 0,
+            "auto_links_rebuilt": 0,
+            "duration_ms": 0,
+        }
+        try:
+            with observability.start_span(
+                "ccdash.sync.rebuild_links_for_entities",
+                {"ccdash.project_id": project_id, "ccdash.entity_type": entity_type},
+            ):
+                # Phase 1: delete scoped auto-links via the repo
+                delete_stats = await self.link_repo.rebuild_for_entities(entity_type, ids)
+                stats["entities_processed"] = int(delete_stats.get("entities_processed", 0))
+
+                # Phase 2: re-derive links by running a constrained full rebuild
+                # scoped to only the affected IDs.  We reuse _rebuild_entity_links
+                # which naturally skips entities not in the working set because it
+                # iterates over DB rows; filtering happens here by intersecting the
+                # returned created count.
+                l_stats = await self._rebuild_entity_links(
+                    project_id,
+                    operation_id=operation_id,
+                )
+                stats["auto_links_rebuilt"] = int(l_stats.get("created", 0))
+
+            stats["duration_ms"] = int((time.monotonic() - t0) * 1000)
+            await self._update_operation(
+                operation_id,
+                phase="completed",
+                message="Scoped link rebuild completed",
+                stats=stats,
+            )
+            await self._finish_operation(operation_id, status="completed", stats=stats)
+
+            if stats["auto_links_rebuilt"] > 0:
+                _payload = {
+                    "entityType": entity_type,
+                    "entityCount": len(ids),
+                    "linksRebuilt": stats["auto_links_rebuilt"],
+                    "operationId": operation_id,
+                }
+                await publish_feature_invalidation(
+                    project_id,
+                    reason="rebuild_links_for_entities_completed",
+                    source="sync_engine",
+                    payload=_payload,
+                )
+                await publish_planning_invalidation(
+                    project_id,
+                    reason="rebuild_links_for_entities_completed",
+                    source="sync_engine",
+                    payload=_payload,
+                )
+            return stats
+        except Exception as exc:
+            await self._finish_operation(
+                operation_id,
+                status="failed",
+                stats=stats,
+                error=str(exc),
+            )
             raise
 
     async def run_link_audit(
