@@ -68,7 +68,7 @@ class SyncEngineLinkingTests(unittest.TestCase):
 
     def test_should_rebuild_links_after_full_sync_when_logic_version_changes(self) -> None:
         engine = self._build_engine_stub("2")
-        should_rebuild, reason = engine._should_rebuild_links_after_full_sync(
+        scope = engine._should_rebuild_links_after_full_sync(
             force=False,
             link_state={"logicVersion": "1"},
             stats={
@@ -79,12 +79,13 @@ class SyncEngineLinkingTests(unittest.TestCase):
             },
         )
 
-        self.assertTrue(should_rebuild)
-        self.assertEqual(reason, "logic_version_changed")
+        self.assertTrue(scope.should_rebuild)
+        self.assertEqual(scope.kind, "full")
+        self.assertEqual(scope.reason, "full")
 
     def test_should_skip_rebuild_after_full_sync_when_unchanged_and_version_matches(self) -> None:
         engine = self._build_engine_stub("1")
-        should_rebuild, reason = engine._should_rebuild_links_after_full_sync(
+        scope = engine._should_rebuild_links_after_full_sync(
             force=False,
             link_state={"logicVersion": "1"},
             stats={
@@ -95,8 +96,9 @@ class SyncEngineLinkingTests(unittest.TestCase):
             },
         )
 
-        self.assertFalse(should_rebuild)
-        self.assertEqual(reason, "up_to_date")
+        self.assertFalse(scope.should_rebuild)
+        self.assertEqual(scope.kind, "none")
+        self.assertEqual(scope.reason, "up_to_date")
 
 
 class SyncEngineAmbiguityPenaltyTests(unittest.TestCase):

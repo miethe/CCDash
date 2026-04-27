@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -934,6 +934,14 @@ CREATE INDEX IF NOT EXISTS idx_planning_worktree_feature_phase_batch
     ON planning_worktree_contexts(feature_id, phase_number, batch_id);
 CREATE INDEX IF NOT EXISTS idx_planning_worktree_metadata_json
     ON planning_worktree_contexts USING GIN (metadata_json);
+
+-- ── 15. Filesystem Scan Manifest ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS filesystem_scan_manifest (
+    path       TEXT PRIMARY KEY,
+    mtime      DOUBLE PRECISION NOT NULL,
+    size       INTEGER NOT NULL,
+    scanned_at TEXT NOT NULL
+);
 """
 
 _TEST_VISUALIZER_TABLES = """

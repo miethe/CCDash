@@ -18,7 +18,8 @@ import uuid
 from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 import aiosqlite
 import yaml
@@ -1173,6 +1174,35 @@ def _build_session_telemetry_events(
     return events
 
 
+@dataclass
+class RebuildScope:
+    """Describes the scope of a link-rebuild decision after a full sync.
+
+    kind:
+        "full"             – cold start, forced, or coarse change signal; full rebuild required.
+        "entities_changed" – a bounded set of entities changed; entity_ids carries their IDs
+                             (empty list means IDs not tracked at this layer — treat as full).
+        "none"             – nothing relevant changed; skip rebuild.
+    entity_ids:
+        Non-None only when kind == "entities_changed".  BE-205 will use these to drive
+        incremental rebuild_for_entities(); until then callers treat any non-"none" as rebuild.
+    """
+
+    kind: Literal["full", "entities_changed", "none"]
+    entity_ids: list[str] | None = field(default=None)
+
+    # ── convenience helpers ──────────────────────────────────────────────────
+    @property
+    def should_rebuild(self) -> bool:
+        """True for any scope that requires link rebuilding (full or bounded)."""
+        return self.kind != "none"
+
+    @property
+    def reason(self) -> str:
+        """Human-readable rebuild reason string (mirrors legacy tuple[1])."""
+        return self.kind if self.kind != "none" else "up_to_date"
+
+
 class SyncEngine:
     """Incremental mtime-based file → DB synchronization.
 
@@ -1182,6 +1212,10 @@ class SyncEngine:
 
     def __init__(self, db: Any): # db is Union[aiosqlite.Connection, asyncpg.Pool]
         self.db = db
+        # Per-run rglob memo table.  Populated by _rglob() at the start of
+        # sync_project() and cleared on return so results never outlive a
+        # single sync run (avoids stale-path bugs across consecutive runs).
+        self._rglob_cache: dict[tuple[str, str], tuple[Path, ...]] = {}
         self.session_repo = get_session_repository(db)
         self.document_repo = get_document_repository(db)
         self.task_repo = get_task_repository(db)
@@ -1208,6 +1242,21 @@ class SyncEngine:
         self._linking_logic_version = str(getattr(config, "LINKING_LOGIC_VERSION", "1")).strip() or "1"
         self._test_source_errors: dict[str, str] = {}
         self._test_source_synced_at: dict[str, str] = {}
+
+    # ── Per-run filesystem traversal cache ─────────────────────────────────
+    def _rglob(self, root: Path, pattern: str) -> tuple[Path, ...]:
+        """Memoized rglob within a single sync run.
+
+        Keyed by (resolved root path, glob pattern).  Results are cached for
+        the duration of sync_project() and cleared afterwards so subsequent
+        runs always see a fresh filesystem snapshot.  Multiple scan phases
+        (documents, progress, features) that traverse the same directory with
+        the same pattern pay the OS traversal cost only once.
+        """
+        key = (str(root.resolve()), pattern)
+        if key not in self._rglob_cache:
+            self._rglob_cache[key] = tuple(root.rglob(pattern))
+        return self._rglob_cache[key]
 
     def _enterprise_canonical_transcript_authoritative(self) -> bool:
         storage_profile = getattr(config, "STORAGE_PROFILE", None)
@@ -2294,11 +2343,22 @@ class SyncEngine:
         force: bool,
         link_state: dict[str, Any],
         stats: dict[str, Any],
-    ) -> tuple[bool, str]:
+    ) -> RebuildScope:
+        """Return a :class:`RebuildScope` describing whether and how broadly links must be rebuilt.
+
+        Decision ladder (first match wins):
+
+        1. ``force=True``                     → ``RebuildScope("full")``   (caller explicitly requested)
+        2. Link-logic version changed         → ``RebuildScope("full")``   (broad schema change)
+        3. One or more entity counters > 0    → ``RebuildScope("entities_changed", entity_ids=[])``
+           (entity_ids is an empty list here; BE-205 will populate it once the sync layer
+           tracks per-entity IDs.  Callers that see an empty list must fall back to full rebuild.)
+        4. Nothing changed                    → ``RebuildScope("none")``
+        """
         if force:
-            return True, "force"
+            return RebuildScope(kind="full")
         if self._is_link_logic_version_stale(link_state):
-            return True, "logic_version_changed"
+            return RebuildScope(kind="full")
         if any(
             int(stats.get(key, 0)) > 0
             for key in (
@@ -2309,8 +2369,10 @@ class SyncEngine:
                 "commit_correlations_backfilled",
             )
         ):
-            return True, "entities_changed"
-        return False, "up_to_date"
+            # entity_ids=[] signals "bounded change, IDs not yet tracked at this layer"
+            # BE-205 will replace [] with the actual IDs and route them to rebuild_for_entities().
+            return RebuildScope(kind="entities_changed", entity_ids=[])
+        return RebuildScope(kind="none")
 
     async def start_operation(
         self,
@@ -2655,6 +2717,9 @@ class SyncEngine:
             message="Syncing sessions",
         )
 
+        # Reset the per-run rglob memo table.  Any stale entries from a prior
+        # (possibly failed) run are discarded so this run gets a clean view.
+        self._rglob_cache = {}
         try:
             with observability.start_span(
                 "ccdash.sync.project",
@@ -2732,11 +2797,16 @@ class SyncEngine:
                 f_stats = await self._sync_features(project.id, docs_dir, progress_dir)
                 stats["features_synced"] = f_stats["synced"]
                 link_state = await self._load_link_state(project.id)
-                should_rebuild_links, rebuild_reason = self._should_rebuild_links_after_full_sync(
+                rebuild_scope = self._should_rebuild_links_after_full_sync(
                     force=force,
                     link_state=link_state,
                     stats=stats,
                 )
+                # BE-205 will route "entities_changed" scopes to rebuild_for_entities();
+                # for now both "full" and "entities_changed" trigger a full rebuild so
+                # existing behaviour is preserved.
+                should_rebuild_links = rebuild_scope.should_rebuild
+                rebuild_reason = rebuild_scope.reason
                 if rebuild_links and should_rebuild_links:
                     await self._update_operation(
                         operation_id,
@@ -2849,6 +2919,9 @@ class SyncEngine:
                     error=str(exc),
                 )
             raise
+        finally:
+            # Clear the per-run memo so the next sync run starts fresh.
+            self._rglob_cache = {}
 
     async def rebuild_links(
         self,
@@ -3428,7 +3501,7 @@ class SyncEngine:
                     patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
                 )
             ]
-        root_scopes: list[Path] = []
+        root_scopes: list[Path | str] = []
         if docs_dir.exists():
             root_scopes.append(docs_dir)
         if progress_dir.exists():
@@ -3626,7 +3699,7 @@ class SyncEngine:
         if not sessions_dir.exists():
             return stats
 
-        for jsonl_file in sorted(sessions_dir.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+        for jsonl_file in sorted(self._rglob(sessions_dir, "*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
             synced = await self._sync_single_session(project_id, jsonl_file, force)
             if synced:
                 stats["synced"] += 1
@@ -3893,7 +3966,7 @@ class SyncEngine:
 
     async def _sync_documents(self, project_id: str, docs_dir: Path, progress_dir: Path, force: bool) -> dict:
         stats = {"synced": 0, "skipped": 0}
-        roots: list[Path] = []
+        roots: list[Path | str] = []
         if docs_dir.exists():
             roots.append(docs_dir)
         if progress_dir.exists():
@@ -3905,7 +3978,7 @@ class SyncEngine:
         git_date_index, dirty_paths = self._build_git_doc_dates(project_root, roots)
 
         for root in roots:
-            for md_file in sorted(root.rglob("*.md")):
+            for md_file in sorted(self._rglob(root, "*.md")):
                 if md_file.name.startswith("."):
                     continue
                 synced = await self._sync_single_document(
@@ -4006,7 +4079,7 @@ class SyncEngine:
         if not progress_dir.exists():
             return stats
 
-        for md_file in sorted(progress_dir.rglob("*progress*.md")):
+        for md_file in sorted(self._rglob(progress_dir, "*progress*.md")):
             if md_file.name.startswith("."):
                 continue
             synced = await self._sync_single_progress(project_id, md_file, progress_dir, force)
@@ -4099,7 +4172,7 @@ class SyncEngine:
         project_root = project_root or infer_project_root(docs_dir, progress_dir)
         resolved_dirty_paths = set(dirty_paths or set())
         if git_date_index is None:
-            roots: list[Path] = []
+            roots: list[Path | str] = []
             if docs_dir.exists():
                 roots.append(docs_dir)
             if progress_dir.exists():
@@ -4462,7 +4535,7 @@ class SyncEngine:
             for root in (docs_dir, progress_dir):
                 if not root.exists():
                     continue
-                for path in sorted(root.rglob("*.md")):
+                for path in sorted(self._rglob(root, "*.md")):
                     if path.name.startswith("."):
                         continue
                     try:

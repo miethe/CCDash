@@ -2,146 +2,192 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "runtime-performance-hardening-v1"
-feature_slug: "runtime-performance-hardening"
+prd: runtime-performance-hardening-v1
+feature_slug: runtime-performance-hardening
 phase: 2
-phase_title: "Link Rebuild Dedup & Throttling"
-title: "runtime-performance-hardening-v1 - Phase 2: Link Rebuild Dedup & Throttling"
-status: planning
+phase_title: Link Rebuild Dedup & Throttling
+title: 'runtime-performance-hardening-v1 - Phase 2: Link Rebuild Dedup & Throttling'
+status: pending
 started: null
 completed: null
-created: 2026-04-20
-updated: 2026-04-20
-prd_ref: "docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md"
-plan_ref: "docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md"
+created: '2026-04-20'
+updated: '2026-04-27'
+prd_ref: docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
+plan_ref: docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 9
-completed_tasks: 0
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-owners: ["python-backend-engineer", "data-layer-expert", "backend-architect"]
+owners:
+- python-backend-engineer
+- data-layer-expert
+- backend-architect
 contributors: []
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
 tasks:
-  - id: "BE-201"
-    description: "Determine if rebuild_for_entities(ids) method exists in EntityLinksRepository; document findings"
-    status: "pending"
-    assigned_to: ["data-layer-expert"]
-    dependencies: []
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-202"
-    description: "Change CCDASH_STARTUP_DEFERRED_REBUILD_LINKS default from true to false in backend/config.py"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-203"
-    description: "If BE-201 finds method missing: add rebuild_for_entities(ids) to EntityLinksRepository; if exists: skip"
-    status: "pending"
-    assigned_to: ["data-layer-expert"]
-    dependencies: ["BE-201"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-204"
-    description: "Refactor _should_rebuild_links_after_full_sync() to return scope object (full|entities_changed|none)"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: []
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-205"
-    description: "Wire scope resolver output into rebuild dispatch; call rebuild_for_entities() when scope is entities_changed"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-204", "BE-203"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-206"
-    description: "Gate incremental rebuild dispatch behind CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED (default false)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-205"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-207"
-    description: "Memoize rglob(root, pattern) results for the life of a sync run"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    estimated_effort: "2 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-208"
-    description: "Add filesystem_scan_manifest migration (path, mtime, size); implement manifest diff logic"
-    status: "pending"
-    assigned_to: ["data-layer-expert"]
-    dependencies: []
-    estimated_effort: "2 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "BE-209"
-    description: "Implement manifest-based scan skip when CCDASH_STARTUP_SYNC_LIGHT_MODE=true and inode stats unchanged"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-208"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
+- id: BE-201
+  description: Determine if rebuild_for_entities(ids) method exists in EntityLinksRepository;
+    document findings
+  status: completed
+  assigned_to:
+  - data-layer-expert
+  dependencies: []
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-202
+  description: Change CCDASH_STARTUP_DEFERRED_REBUILD_LINKS default from true to false
+    in backend/config.py
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-203
+  description: 'If BE-201 finds method missing: add rebuild_for_entities(ids) to EntityLinksRepository;
+    if exists: skip'
+  status: pending
+  assigned_to:
+  - data-layer-expert
+  dependencies:
+  - BE-201
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-204
+  description: Refactor _should_rebuild_links_after_full_sync() to return scope object
+    (full|entities_changed|none)
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies: []
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-205
+  description: Wire scope resolver output into rebuild dispatch; call rebuild_for_entities()
+    when scope is entities_changed
+  status: pending
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-204
+  - BE-203
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-206
+  description: Gate incremental rebuild dispatch behind CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED
+    (default false)
+  status: pending
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-205
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-207
+  description: Memoize rglob(root, pattern) results for the life of a sync run
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  estimated_effort: 2 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-208
+  description: Add filesystem_scan_manifest migration (path, mtime, size); implement
+    manifest diff logic
+  status: completed
+  assigned_to:
+  - data-layer-expert
+  dependencies: []
+  estimated_effort: 2 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: BE-209
+  description: Implement manifest-based scan skip when CCDASH_STARTUP_SYNC_LIGHT_MODE=true
+    and inode stats unchanged
+  status: pending
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-208
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: adaptive
 parallelization:
-  batch_1: ["BE-201", "BE-202", "BE-204", "BE-207", "BE-208"]
-  batch_2: ["BE-203"]
-  batch_3: ["BE-205", "BE-209"]
-  batch_4: ["BE-206"]
-  critical_path: ["BE-201", "BE-203", "BE-205", "BE-206"]
-  estimated_total_time: "4-5 days"
-
+  batch_1:
+  - BE-201
+  - BE-202
+  - BE-204
+  - BE-207
+  - BE-208
+  batch_2:
+  - BE-203
+  batch_3:
+  - BE-205
+  - BE-209
+  batch_4:
+  - BE-206
+  critical_path:
+  - BE-201
+  - BE-203
+  - BE-205
+  - BE-206
+  estimated_total_time: 4-5 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-1", description: "Method existence audit documented; decision point cleared", status: "pending" }
-  - { id: "SC-2", description: "Default changed; verified via backend/config.py", status: "pending" }
-  - { id: "SC-3", description: "Repository method added (if needed) with correct signature", status: "pending" }
-  - { id: "SC-4", description: "Scope resolver logic sound; returns correct scope in test cases", status: "pending" }
-  - { id: "SC-5", description: "Incremental dispatch wired; partial rebuild verified on small entity changes", status: "pending" }
-  - { id: "SC-6", description: "Feature flag gates incremental logic correctly", status: "pending" }
-  - { id: "SC-7", description: "Memoization reduces directory traversal count to 1 per sync run", status: "pending" }
-  - { id: "SC-8", description: "Migration runs cleanly; manifest table populated", status: "pending" }
-  - { id: "SC-9", description: "Light mode enabled → scan skipped on unchanged manifests", status: "pending" }
-
+- id: SC-1
+  description: Method existence audit documented; decision point cleared
+  status: pending
+- id: SC-2
+  description: Default changed; verified via backend/config.py
+  status: pending
+- id: SC-3
+  description: Repository method added (if needed) with correct signature
+  status: pending
+- id: SC-4
+  description: Scope resolver logic sound; returns correct scope in test cases
+  status: pending
+- id: SC-5
+  description: Incremental dispatch wired; partial rebuild verified on small entity
+    changes
+  status: pending
+- id: SC-6
+  description: Feature flag gates incremental logic correctly
+  status: pending
+- id: SC-7
+  description: Memoization reduces directory traversal count to 1 per sync run
+  status: pending
+- id: SC-8
+  description: Migration runs cleanly; manifest table populated
+  status: pending
+- id: SC-9
+  description: Light mode enabled → scan skipped on unchanged manifests
+  status: pending
 files_modified: []
+progress: 55
 ---
 
 # runtime-performance-hardening-v1 - Phase 2: Link Rebuild Dedup & Throttling
