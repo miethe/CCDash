@@ -45,3 +45,4 @@ build/
 # Load-test / profiling artifacts
 artifacts/
 
+.env

@@ -7,7 +7,7 @@ feature_slug: runtime-performance-hardening
 phase: 3
 phase_title: Cached Query Alignment
 title: 'runtime-performance-hardening-v1 - Phase 3: Cached Query Alignment'
-status: pending
+status: completed
 started: null
 completed: null
 created: '2026-04-20'
@@ -20,7 +20,7 @@ execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 2
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -64,7 +64,7 @@ tasks:
 - id: BE-303
   description: Refactor workflow_intelligence.py:157 N+1 loop to call fetch_workflow_details()
     once
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -73,10 +73,14 @@ tasks:
   priority: high
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T15:26Z
+  completed: 2026-04-27T15:26Z
+  evidence:
+  - test: backend/tests/test_workflow_repository_batch.py
 - id: BE-304
   description: Keep get_workflow_registry_detail(id) method in repository for backward
     compatibility
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -85,6 +89,10 @@ tasks:
   priority: medium
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T15:26Z
+  completed: 2026-04-27T15:26Z
+  evidence:
+  - test: backend/tests/test_workflow_repository_batch.py
 parallelization:
   batch_1:
   - BE-301
@@ -112,7 +120,7 @@ success_criteria:
   description: Single-item method still available; no breaking changes
   status: pending
 files_modified: []
-progress: 50
+progress: 100
 ---
 
 # runtime-performance-hardening-v1 - Phase 3: Cached Query Alignment

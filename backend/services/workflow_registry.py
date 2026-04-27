@@ -1024,11 +1024,15 @@ async def get_workflow_registry_detail(
     *,
     registry_id: str,
 ) -> dict[str, Any] | None:
-    details = await _load_registry_details(db, project)
-    for detail in details:
-        if str(detail.get("id") or "") == registry_id:
-            return detail
-    return None
+    """Return the full registry detail dict for *registry_id*, or ``None`` if not found.
+
+    Delegates to :func:`fetch_workflow_details` so that both the single-item
+    and batch paths share one load pass through ``_load_registry_details``.
+    Semantics are identical to the original implementation: the caller receives
+    a single ``dict`` on hit and ``None`` on miss.
+    """
+    results = await fetch_workflow_details(db, project, [registry_id])
+    return results[0] if results else None
 
 
 async def fetch_workflow_details(

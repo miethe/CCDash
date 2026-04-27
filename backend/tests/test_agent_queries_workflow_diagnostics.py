@@ -107,8 +107,8 @@ class WorkflowDiagnosticsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
             "backend.application.services.agent_queries.workflow_intelligence.detect_failure_patterns",
             new=AsyncMock(return_value={"items": [{"scopeId": "wf-1", "title": "Retry Loop"}], "generatedAt": "2026-04-11T10:02:00+00:00"}),
         ), patch(
-            "backend.application.services.agent_queries.workflow_intelligence.get_workflow_registry_detail",
-            new=AsyncMock(return_value={"representativeSessions": [{"sessionId": "session-1", "workflowRef": "wf-1"}]}),
+            "backend.application.services.agent_queries.workflow_intelligence.fetch_workflow_details",
+            new=AsyncMock(return_value=[{"id": "registry-1", "representativeSessions": [{"sessionId": "session-1", "workflowRef": "wf-1"}]}]),
         ):
             result = await WorkflowDiagnosticsQueryService().get_diagnostics(_context(), _ports())
 
