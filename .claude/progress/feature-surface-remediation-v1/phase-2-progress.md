@@ -11,7 +11,7 @@ phase: 2
 title: 'G1: App-Shell Feature Refresh Decoupling'
 status: completed
 created: '2026-04-24'
-updated: '2026-04-24'
+updated: '2026-04-26'
 started: '2026-04-24'
 completed: '2026-04-24'
 commit_refs: []
@@ -46,8 +46,7 @@ tasks:
   started: '2026-04-24T16:00:00Z'
   completed: '2026-04-24T16:10:00Z'
   evidence:
-  - commit: pending
-  - commit: pending-phase2
+  - commit: 31847d2
   - test: services/__tests__/featureSurfaceDecoupling.test.ts
   verified_by:
   - G1-003
@@ -66,8 +65,7 @@ tasks:
   started: '2026-04-24T16:00:00Z'
   completed: '2026-04-24T16:10:00Z'
   evidence:
-  - commit: pending
-  - commit: pending-phase2
+  - commit: 31847d2
   - test: services/__tests__/featureSurfaceDecoupling.test.ts
   verified_by:
   - G1-003
@@ -108,22 +106,22 @@ success_criteria:
   description: ProjectBoard no longer depends on AppEntityDataContext.refreshFeatures();
     refresh logic is still available for legacy consumers (SessionInspector, Dashboard);
     no circular dependencies between contexts
-  status: pending
+  status: met
 - id: SC-2
   description: Feature modal updates trigger immediate surface cache invalidation;
     network trace shows no stale card metrics after update; no race conditions between
     invalidation and UI render
-  status: pending
+  status: met
 - id: SC-3
   description: "Network trace artifact saved; request count \u22643 (list, rollups,\
     \ optional prefetch); initial-load payload size \u2264500 KB for 50 features;\
     \ target_surfaces lists AppEntityDataContext \u2192 ProjectBoard, SessionInspector,\
     \ Dashboard consumers"
-  status: pending
+  status: met
 - id: SC-4
   description: SessionInspector and Dashboard tests remain green (or are intentionally
     migrated to v2)
-  status: pending
+  status: met
 files_modified:
 - contexts/AppEntityDataContext.tsx
 - components/ProjectBoard.tsx

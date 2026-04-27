@@ -5,9 +5,9 @@ title: Feature Surface Remediation - Implementation Plan
 description: 'Address four gaps from the feature-surface-data-loading-redesign review:
   G1 app-shell feature refresh decoupling, G2 URL encoding on write paths, G3 FeatureExecutionWorkbench
   migration decision, and G4 runtime smoke validation.'
-status: in-progress
+status: completed
 created: '2026-04-24'
-updated: '2026-04-24'
+updated: '2026-04-26'
 feature_slug: feature-surface-remediation-v1
 feature_version: v1
 prd_ref: null
