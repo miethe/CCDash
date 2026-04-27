@@ -290,6 +290,88 @@ class TestLightModeSkip:
         )
 
 
+class TestLightModeSkipObservability:
+    """Verify that record_filesystem_scan_cached() is called on the skip path only."""
+
+    def test_manifest_match_records_cached_counter(self, tmp_path: Path):
+        """Counter fires exactly once when light-mode skips due to manifest match."""
+        docs_dir = tmp_path / "docs"
+        progress_dir = tmp_path / "progress"
+        docs_dir.mkdir()
+        progress_dir.mkdir()
+        md = _create_md_files(docs_dir, ["README.md"])[0]
+        st = md.stat()
+        stored = {str(md): (st.st_mtime, st.st_size)}
+        manifest_repo = _make_manifest_repo(stored=stored)
+
+        engine = _make_engine(manifest_repo=manifest_repo)
+        engine._build_git_doc_dates = MagicMock(return_value=({}, set()))
+        engine._sync_single_document = AsyncMock(return_value=False)
+        engine._update_manifest_for_roots = AsyncMock()
+
+        async def run():
+            with patch("backend.db.sync_engine.config") as mock_config, \
+                 patch("backend.observability.otel.record_filesystem_scan_cached") as mock_counter:
+                mock_config.STARTUP_SYNC_LIGHT_MODE = True
+                await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
+                return mock_counter
+
+        mock_counter = asyncio.get_event_loop().run_until_complete(run())
+        mock_counter.assert_called_once()
+
+    def test_manifest_mismatch_does_not_record_cached_counter(self, tmp_path: Path):
+        """Counter must NOT fire when manifest differs (full walk taken)."""
+        docs_dir = tmp_path / "docs"
+        progress_dir = tmp_path / "progress"
+        docs_dir.mkdir()
+        progress_dir.mkdir()
+        md = _create_md_files(docs_dir, ["changed.md"])[0]
+        st = md.stat()
+        # Stale mtime → diff is non-empty → skip NOT taken.
+        stored = {str(md): (st.st_mtime - 10.0, st.st_size)}
+        manifest_repo = _make_manifest_repo(stored=stored)
+
+        engine = _make_engine(manifest_repo=manifest_repo)
+        engine._build_git_doc_dates = MagicMock(return_value=({}, set()))
+        engine._sync_single_document = AsyncMock(return_value=True)
+
+        async def run():
+            with patch("backend.db.sync_engine.config") as mock_config, \
+                 patch("backend.observability.otel.record_filesystem_scan_cached") as mock_counter:
+                mock_config.STARTUP_SYNC_LIGHT_MODE = True
+                await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
+                return mock_counter
+
+        mock_counter = asyncio.get_event_loop().run_until_complete(run())
+        mock_counter.assert_not_called()
+
+    def test_light_mode_disabled_does_not_record_cached_counter(self, tmp_path: Path):
+        """Counter must NOT fire when light-mode is disabled entirely."""
+        docs_dir = tmp_path / "docs"
+        progress_dir = tmp_path / "progress"
+        docs_dir.mkdir()
+        progress_dir.mkdir()
+        md = _create_md_files(docs_dir, ["plan.md"])[0]
+        st = md.stat()
+        stored = {str(md): (st.st_mtime, st.st_size)}
+        manifest_repo = _make_manifest_repo(stored=stored)
+
+        engine = _make_engine(manifest_repo=manifest_repo)
+        engine._build_git_doc_dates = MagicMock(return_value=({}, set()))
+        engine._sync_single_document = AsyncMock(return_value=False)
+        engine._update_manifest_for_roots = AsyncMock()
+
+        async def run():
+            with patch("backend.db.sync_engine.config") as mock_config, \
+                 patch("backend.observability.otel.record_filesystem_scan_cached") as mock_counter:
+                mock_config.STARTUP_SYNC_LIGHT_MODE = False
+                await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
+                return mock_counter
+
+        mock_counter = asyncio.get_event_loop().run_until_complete(run())
+        mock_counter.assert_not_called()
+
+
 class TestLightModeProgressSync:
     """Unit tests for the light-mode short-circuit in _sync_progress."""
 

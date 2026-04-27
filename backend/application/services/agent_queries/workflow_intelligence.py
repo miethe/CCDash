@@ -9,6 +9,7 @@ from backend.services.workflow_effectiveness import detect_failure_patterns, get
 import logging
 
 from backend.services.workflow_registry import fetch_workflow_details, list_workflow_registry
+from backend.observability import otel
 
 _logger = logging.getLogger(__name__)
 
@@ -155,6 +156,7 @@ class WorkflowDiagnosticsQueryService:
                 scope.project,
                 registry_ids,
             )
+            otel.record_workflow_detail_batch_rows(len(batch_details))
         except Exception:
             batch_details = []
             partial = True

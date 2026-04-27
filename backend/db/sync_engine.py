@@ -25,6 +25,7 @@ import aiosqlite
 import yaml
 
 from backend import config, observability
+from backend.observability import otel
 from backend.models import Project
 from backend.parsers.sessions import parse_session_file
 from backend.parsers.documents import parse_document_file
@@ -2368,10 +2369,12 @@ class SyncEngine:
             logger.info(
                 "links_rebuild_dispatch scope=none entities=0 — skipping rebuild",
             )
+            observability.record_link_rebuild_scope("none")
             return {"created": 0, "auto_links_rebuilt": 0, "entities_processed": 0}
 
         if scope.kind == "full":
             logger.info("links_rebuild_dispatch scope=full")
+            observability.record_link_rebuild_scope("full")
             return await self._rebuild_entity_links(
                 project_id,
                 docs_dir,
@@ -2388,6 +2391,7 @@ class SyncEngine:
                 "links_rebuild_dispatch scope=entities_changed — incremental_rebuild_gated_off;"
                 " falling back to full rebuild",
             )
+            observability.record_link_rebuild_scope("full")
             return await self._rebuild_entity_links(
                 project_id,
                 docs_dir,
@@ -2404,6 +2408,7 @@ class SyncEngine:
                 "links_rebuild_dispatch scope=entities_changed entities=0"
                 " — entity_ids not tracked at sync-stats layer; falling back to full rebuild",
             )
+            observability.record_link_rebuild_scope("none")
             return await self._rebuild_entity_links(
                 project_id,
                 docs_dir,
@@ -2422,6 +2427,7 @@ class SyncEngine:
             len(entity_ids),
             entity_type,
         )
+        observability.record_link_rebuild_scope("entities_changed")
         return await self.rebuild_links_for_entities(
             project_id,
             entity_type,
@@ -4218,6 +4224,7 @@ class SyncEngine:
             manifest_key,
             entry_count,
         )
+        otel.record_filesystem_scan_cached()
         return True
 
     async def _update_manifest_for_roots(

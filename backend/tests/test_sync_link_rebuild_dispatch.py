@@ -216,5 +216,62 @@ class TestDispatchLinkRebuildIncrementalFlagOn(unittest.IsolatedAsyncioTestCase)
         self.assertEqual(passed_ids, ids)
 
 
+class TestDispatchLinkRebuildScopeMetric(unittest.IsolatedAsyncioTestCase):
+    """OBS-403: record_link_rebuild_scope is called with the correct label for every dispatch path."""
+
+    _PATCH_TARGET = "backend.observability.record_link_rebuild_scope"
+
+    async def test_full_scope_records_full(self) -> None:
+        engine = _make_engine()
+        scope = RebuildScope(kind="full")
+
+        with patch(self._PATCH_TARGET) as mock_record:
+            await engine._dispatch_link_rebuild(scope, "proj-metric-full")
+
+        mock_record.assert_called_once_with("full")
+
+    async def test_none_scope_records_none(self) -> None:
+        engine = _make_engine()
+        scope = RebuildScope(kind="none")
+
+        with patch(self._PATCH_TARGET) as mock_record:
+            await engine._dispatch_link_rebuild(scope, "proj-metric-none")
+
+        mock_record.assert_called_once_with("none")
+
+    async def test_entities_changed_flag_off_records_full(self) -> None:
+        """When BE-206 flag is off, entities_changed coerces to full rebuild — records 'full'."""
+        engine = _make_engine()
+        scope = RebuildScope(kind="entities_changed", entity_ids=["sess-aaa"])
+
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", False):
+            with patch(self._PATCH_TARGET) as mock_record:
+                await engine._dispatch_link_rebuild(scope, "proj-metric-flag-off")
+
+        mock_record.assert_called_once_with("full")
+
+    async def test_entities_changed_empty_ids_records_none(self) -> None:
+        """entities_changed with empty ids records 'none' (no entity scope executed)."""
+        engine = _make_engine()
+        scope = RebuildScope(kind="entities_changed", entity_ids=[])
+
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            with patch(self._PATCH_TARGET) as mock_record:
+                await engine._dispatch_link_rebuild(scope, "proj-metric-empty-ids")
+
+        mock_record.assert_called_once_with("none")
+
+    async def test_entities_changed_non_empty_ids_records_entities_changed(self) -> None:
+        """entities_changed with non-empty ids records 'entities_changed'."""
+        engine = _make_engine()
+        scope = RebuildScope(kind="entities_changed", entity_ids=["sess-1", "sess-2"])
+
+        with patch.object(_config, "INCREMENTAL_LINK_REBUILD_ENABLED", True):
+            with patch(self._PATCH_TARGET) as mock_record:
+                await engine._dispatch_link_rebuild(scope, "proj-metric-scoped")
+
+        mock_record.assert_called_once_with("entities_changed")
+
+
 if __name__ == "__main__":
     unittest.main()

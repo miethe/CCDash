@@ -78,6 +78,25 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  /** OBS-402: sessionStorage key used to accumulate teardown events across
+   *  backend-unreachable periods.  Flushed as a beacon on next successful
+   *  reconnect via POST /api/observability/poll-teardown. */
+  const TEARDOWN_BEACON_KEY = 'ccdash.pendingTeardownEvents';
+
+  /** OBS-402: Persist one more teardown event in sessionStorage so it can be
+   *  beaconed on the next successful reconnect. */
+  const recordTeardownToStorage = useCallback(() => {
+    try {
+      const raw = sessionStorage.getItem(TEARDOWN_BEACON_KEY);
+      const current = parseInt(raw ?? '0', 10) || 0;
+      // Cap at 100 to match the backend's clamp contract.
+      const next = Math.min(current + 1, 100);
+      sessionStorage.setItem(TEARDOWN_BEACON_KEY, String(next));
+    } catch {
+      // sessionStorage may be unavailable in some environments — swallow silently.
+    }
+  }, []);
+
   /** FE-104: Tear down both poll intervals and the live EventSource. */
   const teardownPolling = useCallback(() => {
     if (healthPollRef.current !== null) {
@@ -90,8 +109,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
     stopLiveConnection();
     pollingActiveRef.current = false;
+    // OBS-402: Persist the teardown event so it can be beaconed on reconnect.
+    recordTeardownToStorage();
     setRuntimeUnreachable(true);
-  }, []);
+  }, [recordTeardownToStorage]);
 
   const refreshAll = useCallback(async () => {
     if (refreshAllInFlightRef.current) {
@@ -116,6 +137,23 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             // FE-104: successful health response resets the failure counter
             consecutiveFailuresRef.current = 0;
             setRuntimeStatus(normalizeRuntimeStatus(payload));
+            // OBS-402: Flush any accumulated teardown beacon on successful
+            // reconnect.  Fire-and-forget; errors are swallowed so a beacon
+            // failure never disrupts the UI reconnect flow.
+            try {
+              const raw = sessionStorage.getItem('ccdash.pendingTeardownEvents');
+              const events = parseInt(raw ?? '0', 10) || 0;
+              if (events > 0) {
+                sessionStorage.removeItem('ccdash.pendingTeardownEvents');
+                fetch('/api/observability/poll-teardown', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ events }),
+                }).catch(() => { /* beacon best-effort only */ });
+              }
+            } catch {
+              // sessionStorage unavailable — skip beacon silently.
+            }
           }),
         ];
         // G1-001: Skip legacy feature refresh when v2 surface is active.
