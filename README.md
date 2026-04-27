@@ -497,3 +497,9 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Observability**: New backend endpoints should include appropriate OpenTelemetry spans where relevant.
 
 See [`CLAUDE.md`](CLAUDE.md) for the full development reference.
+
+## License
+
+CCDash is licensed under the Business Source License 1.1. It converts to Apache 2.0 on 2028-04-27. See [LICENSE](./LICENSE).
+
+You may use, modify, and self-host CCDash freely. You may not offer it as a hosted or managed service to third parties before the Change Date.

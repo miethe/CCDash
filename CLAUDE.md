@@ -146,6 +146,9 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Planning session board**: `PlanningAgentSessionBoard` renders Kanban-style agent session cards grouped by state/feature/phase/agent/model. Backend queries at `backend/application/services/agent_queries/planning_sessions.py` + `planning.py` (next-run preview). Endpoints: `/api/agent/planning/session-board`, `/api/agent/planning/next-run-preview/{feature_id}`. Feature flags: `CCDASH_PLANNING_CONTROL_PLANE_ENABLED` (parent), `CCDASH_NEXT_RUN_PREVIEW_ENABLED` (preview, default true). Prompt context tray is copy/preview-only.
 - **Runtime smoke gate**: For UI or frontend changes, start the dev server and perform a browser smoke check before marking a phase complete. If runtime is unavailable, Phase N cannot be marked `completed` without an explicit `runtime_smoke: skipped` field and reason; a clean unit-test pass is not a substitute.
 - **Resilience-by-default**: Every new optional backend field requires an explicit FE fallback AC. Missing is a contract state, not a bug.
+- **Memory guard flag**: `VITE_CCDASH_MEMORY_GUARD_ENABLED` (default true) gates frontend memory hardening (transcript ring-buffer cap, document pagination cap, in-flight request GC).
+- **Incremental link rebuild**: `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` (default false) enables scoped link-rebuild dispatch on partial syncs.
+- **Light-mode startup sync**: `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default false) enables manifest-based filesystem scan skip on unchanged paths.
 
 ---
 

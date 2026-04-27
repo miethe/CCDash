@@ -64,11 +64,13 @@ Copy `.env.example` to `.env` and set values as needed:
 - `CCDASH_STORAGE_SCHEMA` (required for schema-based isolation)
 - `CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED` (optional filesystem ingest in enterprise mode)
 - `CCDASH_LINKING_LOGIC_VERSION` (default `1`; bump to force a full link rebuild after linking-logic changes)
-- `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default `true`; startup runs a light sync first)
+- `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default `false`; enables manifest-based filesystem scan skip on unchanged paths during startup sync; replaces pre-Phase-6 heavy manifest scanning)
 - `CCDASH_STARTUP_SYNC_DELAY_SECONDS` (default `2`; delay before startup sync begins)
-- `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` (default `true`; deferred heavier rebuild after startup)
+- `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` (default `false`; single-batch rebuild now preferred for cold-start latency; changed from `true` in Phase 6)
 - `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS` (default `45`)
 - `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS` (default `false`)
+- `VITE_CCDASH_MEMORY_GUARD_ENABLED` (default `true`; gates frontend memory hardening with transcript ring-buffer cap at 5000, document pagination cap at 2000, and in-flight request GC; disable to revert to pre-hardening behavior)
+- `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` (default `false`; enables incremental link rebuild dispatch path; set `true` once stability validated in your environment)
 
 Telemetry exporter configuration is documented in the dedicated guide:
 
@@ -352,15 +354,17 @@ If CCDash feels heavy — slow startup, repeated syncs, sluggish responses after
 Copy these into `.env` to smooth out cold starts and keep cached queries warm:
 
 ```bash
-# Keep the agent query cache warm across warmer runs (default 60/300 leaves cold windows).
-CCDASH_QUERY_CACHE_TTL_SECONDS=600
-CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS=300
+# Keep the agent query cache warm across warmer runs (Phase 6: default changed to 600/300).
+# Override below if upgrading from Phase 5 and prefer the old 60-second window:
+# CCDASH_QUERY_CACHE_TTL_SECONDS=60
+# CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS=300
 
-# Halve startup link work — the deferred rebuild is rarely needed day-to-day.
-CCDASH_STARTUP_DEFERRED_REBUILD_LINKS=false
+# Single-batch rebuild now preferred for cold-start latency (Phase 6: default changed to false).
+# Override below if you require immediate full relink at startup:
+# CCDASH_STARTUP_DEFERRED_REBUILD_LINKS=true
 
-# Keep light-mode startup on so the readiness probe passes quickly.
-CCDASH_STARTUP_SYNC_LIGHT_MODE=true
+# Manifest-based skip on unchanged paths reduces startup sync overhead (Phase 6: default false).
+CCDASH_STARTUP_SYNC_LIGHT_MODE=false
 ```
 
 ### Why the worker matters
@@ -455,7 +459,7 @@ All backend variables are read in [`backend/config.py`](../backend/config.py); f
 | `CCDASH_LAUNCH_PREP_ENABLED` | `false` | Launch preparation surfaces |
 | `CCDASH_PLANNING_CONTROL_PLANE_ENABLED` | `true` | Planning control plane surfaces |
 
-### Frontend live rollout
+### Frontend live rollout and memory hardening
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -465,14 +469,15 @@ All backend variables are read in [`backend/config.py`](../backend/config.py); f
 | `VITE_CCDASH_LIVE_FEATURES_ENABLED` | `false` | Feature board/modal live invalidation |
 | `VITE_CCDASH_LIVE_TESTS_ENABLED` | `false` | Test visualizer live invalidation |
 | `VITE_CCDASH_LIVE_OPS_ENABLED` | `false` | Ops panel live invalidation |
+| `VITE_CCDASH_MEMORY_GUARD_ENABLED` | `true` (Phase 6+) | Frontend memory hardening: transcript ring-buffer capped at 5000, document pagination capped at 2000, in-flight request GC enabled. Set `false` to revert to pre-Phase-6 behavior. |
 
 ### Startup + live tuning (performance-sensitive)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CCDASH_STARTUP_SYNC_LIGHT_MODE` | `true` | Light-mode first pass at startup |
+| `CCDASH_STARTUP_SYNC_LIGHT_MODE` | `false` (Phase 6+) | Enables manifest-based filesystem scan skip on unchanged paths |
 | `CCDASH_STARTUP_SYNC_DELAY_SECONDS` | `2` | Delay before startup sync begins |
-| `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` | `true` | Deferred heavier link rebuild |
+| `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` | `false` (Phase 6+) | Single-batch rebuild preferred; set `true` if immediate full relink required at cold start |
 | `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS` | `45` | Delay before deferred rebuild |
 | `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS` | `false` | Capture analytics during deferred rebuild |
 | `CCDASH_LINKING_LOGIC_VERSION` | `1` | Bump to force full relink |
@@ -480,12 +485,13 @@ All backend variables are read in [`backend/config.py`](../backend/config.py); f
 | `CCDASH_LIVE_REPLAY_BUFFER_SIZE` | `200` | Replay buffer per live topic |
 | `CCDASH_LIVE_HEARTBEAT_SECONDS` | `15` | SSE heartbeat cadence |
 | `CCDASH_LIVE_MAX_PENDING_EVENTS` | `100` | Max pending events before coarse invalidation |
+| `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` | `false` | Enables incremental link rebuild dispatch path; set `true` after validation |
 
 ### Agent query cache
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CCDASH_QUERY_CACHE_TTL_SECONDS` | `60` | Cache lifetime. `0` disables. |
+| `CCDASH_QUERY_CACHE_TTL_SECONDS` | `600` (Phase 6+) | Cache lifetime; changed from `60` for better warm-cache window alignment. Set `60` if upgrading and prefer shorter TTL. `0` disables. |
 | `CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS` | `300` | Worker warmer interval. `0` disables. |
 
 ### CLI + worker
