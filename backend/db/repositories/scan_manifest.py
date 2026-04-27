@@ -15,6 +15,26 @@ import aiosqlite
 logger = logging.getLogger("ccdash.db.scan_manifest")
 
 
+class _NoOpScanManifestRepository:
+    """Stub used when the backing DB is not SQLite (e.g. Postgres).
+
+    All reads return empty state so light-mode never triggers a skip on
+    non-SQLite backends, and all writes are silently discarded.
+    """
+
+    async def upsert_manifest(self, entries: list[tuple[str, float, int]]) -> None:  # noqa: ARG002
+        return
+
+    async def fetch_manifest(self) -> dict[str, tuple[float, int]]:
+        return {}
+
+    async def diff_against(
+        self, current: dict[str, tuple[float, int]]
+    ) -> dict[str, list[Any]]:
+        # Treat everything as added so callers always do a full walk.
+        return {"added": sorted(current), "removed": [], "changed": []}
+
+
 class SqliteScanManifestRepository:
     """Concrete SQLite implementation of the scan manifest store."""
 

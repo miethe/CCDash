@@ -91,6 +91,7 @@ from backend.db.factory import (
     get_feature_repository, # Added in factory
     get_pricing_catalog_repository,
     get_telemetry_queue_repository,
+    get_scan_manifest_repository,
 )
 
 logger = logging.getLogger("ccdash.sync")
@@ -1231,6 +1232,7 @@ class SyncEngine:
         self.telemetry_transformer = TelemetryTransformer()
         self.pricing_catalog_repo = get_pricing_catalog_repository(db)
         self.pricing_catalog_service = PricingCatalogService(self.pricing_catalog_repo)
+        self.scan_manifest_repo = get_scan_manifest_repository(db)
         self._ops_lock = asyncio.Lock()
         self._operations: dict[str, dict[str, Any]] = {}
         self._operation_order: list[str] = []
@@ -2334,6 +2336,84 @@ class SyncEngine:
                 payload,
             )
 
+    async def _dispatch_link_rebuild(
+        self,
+        scope: "RebuildScope",
+        project_id: str,
+        *,
+        trigger: str = "sync",
+        docs_dir: "Path | None" = None,
+        progress_dir: "Path | None" = None,
+        operation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Route a link-rebuild decision based on *scope*.
+
+        Branch table:
+
+        * ``kind="full"``             → full :meth:`_rebuild_entity_links` (existing path).
+        * ``kind="entities_changed"`` → :meth:`rebuild_links_for_entities` when *entity_ids*
+          is non-empty; falls back to full rebuild + WARNING when empty (IDs not yet tracked
+          at the sync-stats layer — see comment in ``_should_rebuild_links_after_full_sync``).
+        * ``kind="none"``             → no-op; returns zero stats.
+
+        The caller is responsible for ``_save_link_state`` and operation-phase updates; this
+        helper only performs the rebuild work and returns a stats dict with at least a
+        ``"created"`` key (full path) or ``"auto_links_rebuilt"`` key (per-entity path).
+
+        .. note::
+            Feature-flag gating (BE-206) is a one-line wrap around the ``kind="entities_changed"``
+            branch — structure is intentionally preserved here.
+        """
+        if scope.kind == "none":
+            logger.info(
+                "links_rebuild_dispatch scope=none entities=0 — skipping rebuild",
+            )
+            return {"created": 0, "auto_links_rebuilt": 0, "entities_processed": 0}
+
+        if scope.kind == "full":
+            logger.info("links_rebuild_dispatch scope=full")
+            return await self._rebuild_entity_links(
+                project_id,
+                docs_dir,
+                progress_dir,
+                operation_id=operation_id,
+            )
+
+        # scope.kind == "entities_changed"
+        entity_ids: list[str] = scope.entity_ids or []
+        if not entity_ids:
+            # entity_ids were not populated at the stats layer (see _should_rebuild_links_after_full_sync):
+            # _sync_sessions and _sync_documents return only counts, not individual IDs.
+            # Until those helpers surface IDs, fall back defensively to a full rebuild.
+            logger.warning(
+                "links_rebuild_dispatch scope=entities_changed entities=0"
+                " — entity_ids not tracked at sync-stats layer; falling back to full rebuild",
+            )
+            return await self._rebuild_entity_links(
+                project_id,
+                docs_dir,
+                progress_dir,
+                operation_id=operation_id,
+            )
+
+        # Non-empty entity_ids: route to scoped rebuild.
+        # In the current code path all changed IDs come from a single sync phase
+        # (sessions or documents); the entity_type defaults to "session" as the
+        # most common trigger.  BE-206 will extend this once the stats layer
+        # carries per-type buckets.
+        entity_type = "session"
+        logger.info(
+            "links_rebuild_dispatch scope=entities_changed entities=%d entity_type=%s",
+            len(entity_ids),
+            entity_type,
+        )
+        return await self.rebuild_links_for_entities(
+            project_id,
+            entity_type,
+            entity_ids,
+            trigger=trigger,
+        )
+
     def _is_link_logic_version_stale(self, link_state: dict[str, Any]) -> bool:
         last_version = str(link_state.get("logicVersion") or "").strip()
         return last_version != self._linking_logic_version
@@ -2803,12 +2883,8 @@ class SyncEngine:
                     link_state=link_state,
                     stats=stats,
                 )
-                # BE-205 will route "entities_changed" scopes to rebuild_for_entities();
-                # for now both "full" and "entities_changed" trigger a full rebuild so
-                # existing behaviour is preserved.
-                should_rebuild_links = rebuild_scope.should_rebuild
                 rebuild_reason = rebuild_scope.reason
-                if rebuild_links and should_rebuild_links:
+                if rebuild_links and rebuild_scope.kind != "none":
                     await self._update_operation(
                         operation_id,
                         phase="links",
@@ -2816,18 +2892,23 @@ class SyncEngine:
                         counters={"featuresSynced": stats["features_synced"]},
                     )
 
-                    # Phase 5: Auto-discover cross-references
+                    # Phase 5: Auto-discover cross-references — dispatched by scope kind.
                     with observability.start_span(
                         "ccdash.sync.rebuild_links",
                         {"ccdash.project_id": project.id},
                     ):
-                        l_stats = await self._rebuild_entity_links(
+                        l_stats = await self._dispatch_link_rebuild(
+                            rebuild_scope,
                             project.id,
-                            docs_dir,
-                            progress_dir,
+                            trigger=trigger,
+                            docs_dir=docs_dir,
+                            progress_dir=progress_dir,
                             operation_id=operation_id,
                         )
-                    stats["links_created"] = l_stats["created"]
+                    # Normalise: full path returns "created"; scoped path "auto_links_rebuilt".
+                    stats["links_created"] = int(
+                        l_stats.get("created") or l_stats.get("auto_links_rebuilt") or 0
+                    )
                     await self._save_link_state(
                         project.id,
                         trigger=trigger,
@@ -4060,6 +4141,85 @@ class SyncEngine:
 
         return True
 
+    # ── Light-mode manifest helpers ─────────────────────────────────
+
+    @staticmethod
+    def _build_inode_snapshot(roots: list[Path], pattern: str) -> dict[str, tuple[float, int]]:
+        """Stat-walk *roots* cheaply and return ``{path_str: (mtime, size)}``.
+
+        Only paths whose name matches *pattern* (fnmatch) and do not start with
+        a dot are included.  Used by light-mode to compare against the stored
+        manifest without opening any file content.
+        """
+        snapshot: dict[str, tuple[float, int]] = {}
+        for root in roots:
+            if not root.exists():
+                continue
+            for path in root.rglob(pattern):
+                if path.name.startswith("."):
+                    continue
+                try:
+                    st = path.stat()
+                    snapshot[str(path)] = (st.st_mtime, st.st_size)
+                except OSError:
+                    pass
+        return snapshot
+
+    async def _light_mode_scan_skip(
+        self,
+        roots: list[Path],
+        pattern: str,
+        manifest_key: str,
+        force: bool,
+    ) -> bool:
+        """Return True when light-mode can skip the full walk for *roots*.
+
+        Side-effects:
+        - When a full walk IS needed (returns False), the caller is responsible
+          for calling ``_update_manifest_for_roots`` afterwards.
+        - Emits a single ``light_mode_scan_skip`` log line when skipping.
+
+        Args:
+            roots: Directories to stat-walk.
+            pattern: Glob pattern (e.g. ``"*.md"``).
+            manifest_key: Human label used in the skip log line.
+            force: When True this method always returns False (no skip).
+        """
+        if force:
+            return False
+        light_mode: bool = bool(getattr(config, "STARTUP_SYNC_LIGHT_MODE", False))
+        if not light_mode:
+            return False
+
+        current = self._build_inode_snapshot(roots, pattern)
+        diff = await self.scan_manifest_repo.diff_against(current)
+        has_changes = bool(diff["added"] or diff["removed"] or diff["changed"])
+        if has_changes:
+            return False
+
+        entry_count = len(current)
+        logger.info(
+            "light_mode_scan_skip root=%s entries=%d",
+            manifest_key,
+            entry_count,
+        )
+        return True
+
+    async def _update_manifest_for_roots(
+        self,
+        roots: list[Path],
+        pattern: str,
+    ) -> None:
+        """Write a fresh inode snapshot to the scan manifest table.
+
+        Called after every full walk so subsequent light-mode checks see
+        up-to-date state.
+        """
+        snapshot = self._build_inode_snapshot(roots, pattern)
+        if snapshot:
+            entries = [(path, mtime, size) for path, (mtime, size) in snapshot.items()]
+            await self.scan_manifest_repo.upsert_manifest(entries)
+
     # ── Document Sync ───────────────────────────────────────────────
 
     async def _sync_documents(self, project_id: str, docs_dir: Path, progress_dir: Path, force: bool) -> dict:
@@ -4070,6 +4230,15 @@ class SyncEngine:
         if progress_dir.exists():
             roots.append(progress_dir)
         if not roots:
+            return stats
+
+        # Light-mode: skip the full walk when manifest stats are unchanged.
+        resolved_roots = [r if isinstance(r, Path) else Path(r) for r in roots]
+        manifest_key = "|".join(str(r) for r in resolved_roots)
+        skipped = await self._light_mode_scan_skip(
+            resolved_roots, "*.md", manifest_key, force
+        )
+        if skipped:
             return stats
 
         project_root = infer_project_root(docs_dir, progress_dir)
@@ -4094,6 +4263,8 @@ class SyncEngine:
                 else:
                     stats["skipped"] += 1
 
+        # Update manifest after every full walk so next run can skip if nothing changed.
+        await self._update_manifest_for_roots(resolved_roots, "*.md")
         return stats
 
     async def _sync_single_document(
@@ -4177,6 +4348,13 @@ class SyncEngine:
         if not progress_dir.exists():
             return stats
 
+        # Light-mode: skip the full walk when manifest stats are unchanged.
+        skipped = await self._light_mode_scan_skip(
+            [progress_dir], "*progress*.md", str(progress_dir), force
+        )
+        if skipped:
+            return stats
+
         for md_file in sorted(self._rglob(progress_dir, "*progress*.md")):
             if md_file.name.startswith("."):
                 continue
@@ -4186,6 +4364,8 @@ class SyncEngine:
             else:
                 stats["skipped"] += 1
 
+        # Update manifest after every full walk.
+        await self._update_manifest_for_roots([progress_dir], "*progress*.md")
         return stats
 
     async def _sync_single_progress(

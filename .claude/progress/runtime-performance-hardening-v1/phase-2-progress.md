@@ -20,7 +20,7 @@ execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 9
-completed_tasks: 6
+completed_tasks: 8
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -85,7 +85,7 @@ tasks:
 - id: BE-205
   description: Wire scope resolver output into rebuild dispatch; call rebuild_for_entities()
     when scope is entities_changed
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -95,6 +95,10 @@ tasks:
   priority: high
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T15:16Z
+  completed: 2026-04-27T15:16Z
+  evidence:
+  - test: backend/tests/test_sync_link_rebuild_dispatch.py
 - id: BE-206
   description: Gate incremental rebuild dispatch behind CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED
     (default false)
@@ -131,7 +135,7 @@ tasks:
 - id: BE-209
   description: Implement manifest-based scan skip when CCDASH_STARTUP_SYNC_LIGHT_MODE=true
     and inode stats unchanged
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -140,6 +144,10 @@ tasks:
   priority: medium
   assigned_model: sonnet
   model_effort: adaptive
+  started: 2026-04-27T15:16Z
+  completed: 2026-04-27T15:16Z
+  evidence:
+  - test: backend/tests/test_sync_light_mode.py
 parallelization:
   batch_1:
   - BE-201
@@ -191,7 +199,7 @@ success_criteria:
   description: Light mode enabled → scan skipped on unchanged manifests
   status: pending
 files_modified: []
-progress: 66
+progress: 88
 ---
 
 # runtime-performance-hardening-v1 - Phase 2: Link Rebuild Dedup & Throttling
