@@ -157,7 +157,7 @@ class TestLightModeSkip:
                 engine._update_manifest_for_roots = AsyncMock()
                 await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
         assert rglob_call_count >= 1, (
             "Expected at least one _rglob call when light mode is disabled; "
@@ -194,7 +194,7 @@ class TestLightModeSkip:
                 engine._sync_single_document = AsyncMock(return_value=True)
                 await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
         assert rglob_call_count >= 1, "Full walk must run when manifest is empty"
         assert manifest_repo.upsert_manifest.called, (
@@ -236,7 +236,7 @@ class TestLightModeSkip:
                 engine._update_manifest_for_roots = AsyncMock()
                 await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
         assert rglob_call_count == 0, (
             "Expected zero _rglob calls when light mode skips the walk; "
@@ -279,7 +279,7 @@ class TestLightModeSkip:
                 engine._sync_single_document = AsyncMock(return_value=True)
                 await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
         assert rglob_call_count >= 1, (
             "Expected a full walk when one file's mtime changed in the manifest; "
@@ -316,7 +316,7 @@ class TestLightModeSkipObservability:
                 await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
                 return mock_counter
 
-        mock_counter = asyncio.get_event_loop().run_until_complete(run())
+        mock_counter = asyncio.run(run())
         mock_counter.assert_called_once()
 
     def test_manifest_mismatch_does_not_record_cached_counter(self, tmp_path: Path):
@@ -342,7 +342,7 @@ class TestLightModeSkipObservability:
                 await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
                 return mock_counter
 
-        mock_counter = asyncio.get_event_loop().run_until_complete(run())
+        mock_counter = asyncio.run(run())
         mock_counter.assert_not_called()
 
     def test_light_mode_disabled_does_not_record_cached_counter(self, tmp_path: Path):
@@ -368,7 +368,7 @@ class TestLightModeSkipObservability:
                 await engine._sync_documents("proj", docs_dir, progress_dir, force=False)
                 return mock_counter
 
-        mock_counter = asyncio.get_event_loop().run_until_complete(run())
+        mock_counter = asyncio.run(run())
         mock_counter.assert_not_called()
 
 
@@ -394,7 +394,7 @@ class TestLightModeProgressSync:
                 mock_config.STARTUP_SYNC_LIGHT_MODE = True
                 return await engine._sync_progress("proj", progress_dir, force=False)
 
-        stats = asyncio.get_event_loop().run_until_complete(run())
+        stats = asyncio.run(run())
 
         engine._sync_single_progress.assert_not_called()
         engine._update_manifest_for_roots.assert_not_called()
@@ -418,7 +418,7 @@ class TestLightModeProgressSync:
                 mock_config.STARTUP_SYNC_LIGHT_MODE = True
                 return await engine._sync_progress("proj", progress_dir, force=False)
 
-        stats = asyncio.get_event_loop().run_until_complete(run())
+        stats = asyncio.run(run())
 
         engine._sync_single_progress.assert_called_once()
         assert manifest_repo.upsert_manifest.called

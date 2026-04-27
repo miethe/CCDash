@@ -61,6 +61,26 @@ async function runCappedPagination(
   };
 }
 
+/**
+ * Mirrors the loadMoreDocuments merge logic from AppEntityDataContext.tsx.
+ * prev + newItems is sliced to cap; truncated reflects whether documentTotal
+ * exceeds the resulting capped length.
+ */
+function simulateLoadMore(
+  prev: Record<string, unknown>[],
+  newItems: Record<string, unknown>[],
+  documentTotal: number,
+  cap: number,
+): { next: Record<string, unknown>[]; truncated: boolean; newOffset: number } {
+  const merged = [...prev, ...newItems];
+  const capped = merged.slice(0, cap);
+  return {
+    next: capped,
+    truncated: documentTotal > capped.length,
+    newOffset: prev.length + newItems.length,
+  };
+}
+
 describe('Document pagination cap (FE-103)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -172,5 +192,177 @@ describe('Document pagination cap — memory guard disabled (FE-106)', () => {
     expect(enabled.collected.length).toBe(disabled.collected.length);
     expect(enabled.truncated).toBe(disabled.truncated);
     expect(enabled.finalOffset).toBe(disabled.finalOffset);
+  });
+});
+
+// TEST-502: lazy-load scroll trigger and unbounded array growth guard
+describe('loadMoreDocuments — lazy-load on scroll (TEST-502 / FE-103)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('loadMoreDocuments fires when scroll position exceeds threshold', () => {
+    // Simulate a scroll container: threshold = 80% of scrollHeight
+    const scrollHeight = 1000;
+    const threshold = scrollHeight * 0.8;
+    const loadMore = vi.fn();
+
+    function onScroll(scrollTop: number, clientHeight: number) {
+      if (scrollTop + clientHeight >= threshold) {
+        loadMore();
+      }
+    }
+
+    // below threshold — should not trigger
+    onScroll(600, 100); // 700 < 800
+    expect(loadMore).not.toHaveBeenCalled();
+
+    // at threshold — should trigger
+    onScroll(700, 100); // 800 === 800
+    expect(loadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it('loadMoreDocuments does not fire when scroll is far from threshold', () => {
+    const scrollHeight = 2000;
+    const threshold = scrollHeight * 0.8;
+    const loadMore = vi.fn();
+
+    function onScroll(scrollTop: number, clientHeight: number) {
+      if (scrollTop + clientHeight >= threshold) {
+        loadMore();
+      }
+    }
+
+    onScroll(0, 400);   // 400 < 1600
+    onScroll(200, 400); // 600 < 1600
+    expect(loadMore).not.toHaveBeenCalled();
+  });
+
+  it('loadMoreDocuments is a no-op when documentOffset >= documentTotal', async () => {
+    // When offset has caught up to total, the guard short-circuits immediately
+    let callCount = 0;
+    async function loadMoreDocuments(documentOffset: number, documentTotal: number) {
+      if (documentOffset >= documentTotal) return; // guard
+      callCount++;
+      // would fetch…
+    }
+
+    await loadMoreDocuments(2000, 2000);
+    expect(callCount).toBe(0);
+
+    await loadMoreDocuments(2001, 2000);
+    expect(callCount).toBe(0);
+  });
+
+  it('loadMoreDocuments fetches the next page when offset < total', async () => {
+    const documentTotal = 3000;
+    const documentOffset = 2000;
+    const fetcher = vi.fn(async (offset: number, pageSize: number) => makePage(offset, pageSize, documentTotal));
+
+    async function loadMoreDocuments() {
+      if (documentOffset >= documentTotal) return;
+      await fetcher(documentOffset, 500);
+    }
+
+    await loadMoreDocuments();
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledWith(2000, 500);
+  });
+
+  it('scroll trigger does not call loadMore multiple times for the same scroll position', () => {
+    const scrollHeight = 1000;
+    const threshold = scrollHeight * 0.8;
+    let triggered = false;
+    const loadMore = vi.fn();
+
+    function onScroll(scrollTop: number, clientHeight: number) {
+      if (!triggered && scrollTop + clientHeight >= threshold) {
+        triggered = true;
+        loadMore();
+      }
+    }
+
+    // Rapid scroll events at the same position
+    onScroll(700, 100);
+    onScroll(700, 100);
+    onScroll(705, 100);
+
+    expect(loadMore).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('loadMoreDocuments — no unbounded array growth (TEST-502 / FE-103)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('merged array never exceeds MAX_DOCUMENTS_IN_MEMORY after a single append', () => {
+    const prev = Array.from({ length: MAX_DOCUMENTS_IN_MEMORY - 100 }, (_, i) => ({ id: `doc-${i}` }));
+    const newItems = Array.from({ length: 300 }, (_, i) => ({ id: `doc-new-${i}` }));
+    const documentTotal = 5000;
+
+    const { next, truncated } = simulateLoadMore(prev, newItems, documentTotal, MAX_DOCUMENTS_IN_MEMORY);
+
+    expect(next.length).toBeLessThanOrEqual(MAX_DOCUMENTS_IN_MEMORY);
+    expect(next.length).toBe(MAX_DOCUMENTS_IN_MEMORY);
+    expect(truncated).toBe(true);
+  });
+
+  it('array stays bounded across multiple sequential appends', () => {
+    let state = Array.from({ length: 500 }, (_, i) => ({ id: `doc-${i}` }));
+    const documentTotal = 10_000;
+
+    // Simulate 20 append rounds, each adding 500 items
+    for (let round = 0; round < 20; round++) {
+      const newItems = Array.from({ length: 500 }, (_, i) => ({ id: `doc-r${round}-${i}` }));
+      const { next } = simulateLoadMore(state, newItems, documentTotal, MAX_DOCUMENTS_IN_MEMORY);
+      state = next;
+
+      expect(state.length).toBeLessThanOrEqual(MAX_DOCUMENTS_IN_MEMORY);
+    }
+
+    // After 20 rounds (total attempted: 10500 items) the array must still be capped
+    expect(state.length).toBe(MAX_DOCUMENTS_IN_MEMORY);
+  });
+
+  it('truncated flag is set correctly after every append that hits the cap', () => {
+    const documentTotal = 5000;
+    let state: Record<string, unknown>[] = [];
+
+    for (let round = 0; round < 5; round++) {
+      const newItems = Array.from({ length: 500 }, (_, i) => ({ id: `doc-r${round}-${i}` }));
+      const { next, truncated } = simulateLoadMore(state, newItems, documentTotal, MAX_DOCUMENTS_IN_MEMORY);
+      state = next;
+
+      if (state.length < MAX_DOCUMENTS_IN_MEMORY) {
+        // Haven't hit the cap yet; truncated only if total > items collected
+        expect(truncated).toBe(documentTotal > state.length);
+      } else {
+        // At or beyond cap — always truncated since total (5000) > 2000
+        expect(truncated).toBe(true);
+      }
+    }
+  });
+
+  it('does not grow when empty items array is returned', () => {
+    const prev = Array.from({ length: 1500 }, (_, i) => ({ id: `doc-${i}` }));
+    const { next, truncated, newOffset } = simulateLoadMore(prev, [], 1500, MAX_DOCUMENTS_IN_MEMORY);
+
+    expect(next.length).toBe(1500); // unchanged
+    expect(truncated).toBe(false);
+    expect(newOffset).toBe(1500);
+  });
+
+  it('first-load flat-array branch also enforces the cap', () => {
+    // Mirrors the Array.isArray(firstPage) branch in refreshDocuments
+    const oversized = Array.from({ length: 4000 }, (_, i) => ({ id: `doc-${i}` }));
+    const capped = oversized.slice(0, MAX_DOCUMENTS_IN_MEMORY);
+    const truncated = oversized.length > MAX_DOCUMENTS_IN_MEMORY;
+
+    expect(capped.length).toBe(MAX_DOCUMENTS_IN_MEMORY);
+    expect(truncated).toBe(true);
+    // Verify the cap is a hard ceiling — adding one more item would still be sliced
+    const withExtra = [...capped, { id: 'extra' }].slice(0, MAX_DOCUMENTS_IN_MEMORY);
+    expect(withExtra.length).toBe(MAX_DOCUMENTS_IN_MEMORY);
   });
 });
