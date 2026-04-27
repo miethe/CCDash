@@ -42,3 +42,7 @@ examples/*
 data/
 build/
 
+# Load-test / profiling artifacts
+artifacts/
+
+.env

@@ -231,5 +231,14 @@ class FeatureSurfaceV2ConfigDefaultTest(unittest.TestCase):
                 self.assertTrue(result, msg=f"Expected True for env value {truthy!r}")
 
 
+class StartupDeferredRebuildLinksDefaultTest(unittest.TestCase):
+    """BE-202: CCDASH_STARTUP_DEFERRED_REBUILD_LINKS must default to False."""
+
+    def test_config_default_is_false(self) -> None:
+        """STARTUP_DEFERRED_REBUILD_LINKS default changed from True to False (BE-202)."""
+        from backend import config
+        self.assertFalse(config._env_bool("CCDASH_STARTUP_DEFERRED_REBUILD_LINKS", False))
+
+
 if __name__ == "__main__":
     unittest.main()

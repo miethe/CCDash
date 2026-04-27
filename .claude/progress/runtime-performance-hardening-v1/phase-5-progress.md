@@ -2,150 +2,213 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "runtime-performance-hardening-v1"
-feature_slug: "runtime-performance-hardening"
+prd: runtime-performance-hardening-v1
+feature_slug: runtime-performance-hardening
 phase: 5
-phase_title: "Testing & Validation"
-title: "runtime-performance-hardening-v1 - Phase 5: Testing & Validation"
-status: planning
-started: null
-completed: null
-created: 2026-04-20
-updated: 2026-04-20
-prd_ref: "docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md"
-plan_ref: "docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md"
+phase_title: Testing & Validation
+title: 'runtime-performance-hardening-v1 - Phase 5: Testing & Validation'
+status: completed
+started: 2026-04-27T17:00Z
+completed: 2026-04-27T18:10Z
+created: '2026-04-20'
+updated: '2026-04-27'
+prd_ref: docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
+plan_ref: docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 10
-completed_tasks: 0
+completed_tasks: 10
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-owners: ["testing specialist", "python-backend-engineer", "frontend-developer", "react-performance-optimizer"]
+owners:
+- testing specialist
+- python-backend-engineer
+- frontend-developer
+- react-performance-optimizer
 contributors: []
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
 tasks:
-  - id: "TEST-501"
-    description: "Vitest: transcript ring-buffer cap and truncation marker (FE-101)"
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    dependencies: ["FE-101"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-502"
-    description: "Vitest: document pagination cap and lazy-load (FE-103)"
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    dependencies: ["FE-103"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-503"
-    description: "Vitest: polling teardown after N=3 unreachable checks (FE-104)"
-    status: "pending"
-    assigned_to: ["frontend-developer"]
-    dependencies: ["FE-104"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-504"
-    description: "Vitest: in-flight request rejection clearing and 30s TTL (FE-105)"
-    status: "pending"
-    assigned_to: ["react-performance-optimizer"]
-    dependencies: ["FE-105"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-505"
-    description: "Pytest: scope resolver logic on various sync deltas (BE-204)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-204"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-506"
-    description: "Pytest: manifest-based scan skip on unchanged/changed paths (BE-208)"
-    status: "pending"
-    assigned_to: ["data-layer-expert"]
-    dependencies: ["BE-208"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-507"
-    description: "Pytest: batch workflow query returns correct detail rows; replaces N+1 (BE-303)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-303"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-508"
-    description: "Run 60-min idle + worker running load test; measure tab memory at 1-min intervals"
-    status: "pending"
-    assigned_to: ["react-performance-optimizer"]
-    dependencies: ["FE-101", "FE-102", "FE-103", "FE-104", "FE-105", "FE-106", "FE-107", "OBS-402"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-509"
-    description: "Cold-start benchmark: boot → GET /api/project-status on 50k-session workspace; measure p95 latency"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-301", "BE-202"]
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "TEST-510"
-    description: "Steady-state cache hit rate validation; measure hit rate during 10-min steady-state"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BE-301", "OBS-405"]
-    estimated_effort: "0.5 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
+- id: TEST-501
+  description: 'Vitest: transcript ring-buffer cap and truncation marker (FE-101)'
+  status: completed
+  assigned_to:
+  - frontend-developer
+  dependencies:
+  - FE-101
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: TEST-502
+  description: 'Vitest: document pagination cap and lazy-load (FE-103)'
+  status: completed
+  assigned_to:
+  - frontend-developer
+  dependencies:
+  - FE-103
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: TEST-503
+  description: 'Vitest: polling teardown after N=3 unreachable checks (FE-104)'
+  status: completed
+  assigned_to:
+  - frontend-developer
+  dependencies:
+  - FE-104
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: TEST-504
+  description: 'Vitest: in-flight request rejection clearing and 30s TTL (FE-105)'
+  status: completed
+  assigned_to:
+  - react-performance-optimizer
+  dependencies:
+  - FE-105
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: TEST-505
+  description: 'Pytest: scope resolver logic on various sync deltas (BE-204)'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-204
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: TEST-506
+  description: 'Pytest: manifest-based scan skip on unchanged/changed paths (BE-208)'
+  status: completed
+  assigned_to:
+  - data-layer-expert
+  dependencies:
+  - BE-208
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: TEST-507
+  description: 'Pytest: batch workflow query returns correct detail rows; replaces
+    N+1 (BE-303)'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-303
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T18:00Z
+  completed: 2026-04-27T18:30Z
+  evidence:
+  - test: backend/tests/test_be303_batch_workflow_query.py
+- id: TEST-508
+  description: Run 60-min idle + worker running load test; measure tab memory at 1-min
+    intervals
+  status: completed
+  assigned_to:
+  - react-performance-optimizer
+  dependencies:
+  - FE-101
+  - FE-102
+  - FE-103
+  - FE-104
+  - FE-105
+  - FE-106
+  - FE-107
+  - OBS-402
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+- id: TEST-509
+  description: "Cold-start benchmark: boot \u2192 GET /api/project-status on 50k-session\
+    \ workspace; measure p95 latency"
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-301
+  - BE-202
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T18:00Z
+  completed: 2026-04-27T18:30Z
+  evidence:
+  - test: backend/tests/perf/test_cold_start_benchmark.py
+- id: TEST-510
+  description: Steady-state cache hit rate validation; measure hit rate during 10-min
+    steady-state
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BE-301
+  - OBS-405
+  estimated_effort: 0.5 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T17:30Z
+  completed: 2026-04-27T18:00Z
+  evidence:
+  - test: backend/tests/perf/test_cache_hit_rate.py
+  verified_by:
+  - TEST-510
 parallelization:
-  batch_1: ["TEST-501", "TEST-502", "TEST-503", "TEST-504", "TEST-505", "TEST-506", "TEST-507", "TEST-509", "TEST-510"]
-  batch_2: ["TEST-508"]
-  critical_path: ["FE-101", "FE-107", "OBS-402", "TEST-508"]
-  estimated_total_time: "3-4 days"
-
+  batch_1:
+  - TEST-501
+  - TEST-502
+  - TEST-503
+  - TEST-504
+  - TEST-505
+  - TEST-506
+  - TEST-507
+  - TEST-509
+  - TEST-510
+  batch_2:
+  - TEST-508
+  critical_path:
+  - FE-101
+  - FE-107
+  - OBS-402
+  - TEST-508
+  estimated_total_time: 3-4 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-1", description: "All Vitest coverage >80% for FE changes (TEST-501 through TEST-504)", status: "pending" }
-  - { id: "SC-2", description: "All pytest coverage for BE changes passing (TEST-505 through TEST-507)", status: "pending" }
-  - { id: "SC-3", description: "Load test succeeds; tab memory flat within ±50MB over 60-min idle", status: "pending" }
-  - { id: "SC-4", description: "Cold-start benchmark p95 < 500ms on 50k-session workspace", status: "pending" }
-  - { id: "SC-5", description: "Cache hit rate ≥ 95% in 10-min steady-state operation", status: "pending" }
-
+- id: SC-1
+  description: All Vitest coverage >80% for FE changes (TEST-501 through TEST-504)
+  status: pending
+- id: SC-2
+  description: All pytest coverage for BE changes passing (TEST-505 through TEST-507)
+  status: pending
+- id: SC-3
+  description: "Load test succeeds; tab memory flat within \xB150MB over 60-min idle"
+  status: pending
+- id: SC-4
+  description: Cold-start benchmark p95 < 500ms on 50k-session workspace
+  status: pending
+- id: SC-5
+  description: "Cache hit rate \u2265 95% in 10-min steady-state operation"
+  status: pending
 files_modified: []
+progress: 100
 ---
 
 # runtime-performance-hardening-v1 - Phase 5: Testing & Validation

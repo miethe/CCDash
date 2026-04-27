@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, ListTodo, Settings, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow, GitBranch } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Settings, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow, GitBranch, WifiOff, RefreshCw } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
+import { useAppRuntime } from '../contexts/AppRuntimeContext';
 import { cn } from '../lib/utils';
 import { ProjectSelector } from './ProjectSelector';
 
@@ -64,6 +65,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const [isCollapsed, setIsCollapsed] = useState(false);
   const location = useLocation();
   const { notifications } = useData();
+  const { runtimeUnreachable, retryRuntime } = useAppRuntime();
   const unreadCount = notifications.filter(n => !n.isRead).length;
   const isPlanningRoute = location.pathname.startsWith('/planning');
 
@@ -148,6 +150,22 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
       {/* Main Content */}
       <main className="flex min-w-0 flex-1 flex-col overflow-x-auto overflow-y-hidden bg-app-background">
+        {/* FE-104: Backend disconnected banner */}
+        {runtimeUnreachable && (
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-danger/30 bg-danger/10 px-4 py-2 text-sm text-danger">
+            <div className="flex items-center gap-2">
+              <WifiOff size={14} className="shrink-0" />
+              <span>Backend disconnected — live updates paused.</span>
+            </div>
+            <button
+              onClick={retryRuntime}
+              className="flex items-center gap-1.5 rounded border border-danger/40 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/20"
+            >
+              <RefreshCw size={12} />
+              Retry
+            </button>
+          </div>
+        )}
         <div
           className={cn(
             'flex-1 min-w-[1024px] h-full min-h-0 scroll-smooth',

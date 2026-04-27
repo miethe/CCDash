@@ -25,6 +25,7 @@ from backend.routers.live import live_router
 from backend.routers.planning import planning_router
 from backend.routers.pricing import pricing_router
 from backend.routers.projects import projects_router
+from backend.routers.observability import observability_router
 from backend.routers.session_mappings import session_mappings_router
 from backend.routers.telemetry import telemetry_router
 from backend.routers.test_visualizer import test_visualizer_router
@@ -172,6 +173,14 @@ def _build_health_payload(
         # Set CCDASH_FEATURE_SURFACE_V2_ENABLED=false to fall back to the v0 path.
         "featureSurfaceV2Enabled": config.CCDASH_FEATURE_SURFACE_V2_ENABLED,
         "allowedStorageProfiles": list(runtime_status.get("allowedStorageProfiles", ())),
+        # Effective values of runtime-performance feature flags, surfaced to the FE
+        # so operators can verify env-var overrides are applied without server logs.
+        "runtimePerfDefaults": {
+            "queryCacheTtlSeconds": int(config.CCDASH_QUERY_CACHE_TTL_SECONDS),
+            "startupDeferredRebuildLinks": bool(config.STARTUP_DEFERRED_REBUILD_LINKS),
+            "startupSyncLightMode": bool(config.STARTUP_SYNC_LIGHT_MODE),
+            "incrementalLinkRebuildEnabled": bool(config.INCREMENTAL_LINK_REBUILD_ENABLED),
+        },
         "runtimeSyncBehavior": str(runtime_status.get("runtimeSyncBehavior", "")),
         "runtimeJobBehavior": str(runtime_status.get("runtimeJobBehavior", "")),
         "runtimeAuthBehavior": str(runtime_status.get("runtimeAuthBehavior", "")),
@@ -333,4 +342,5 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(github_integrations_router)
     app.include_router(telemetry_router)
     app.include_router(pricing_router)
+    app.include_router(observability_router)
     app.include_router(client_v1_router)

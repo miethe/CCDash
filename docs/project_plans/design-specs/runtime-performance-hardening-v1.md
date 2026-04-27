@@ -2,7 +2,7 @@
 schema_version: "1.0"
 doc_type: design-spec
 title: "CCDash Runtime Performance Hardening v1"
-status: draft
+status: accepted
 created: "2026-04-17"
 feature_slug: "runtime-performance-hardening"
 meta_plan_ref: "docs/project_plans/meta_plans/performance-and-reliability-v1.md"

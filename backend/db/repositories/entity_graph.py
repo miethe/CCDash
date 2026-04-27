@@ -119,6 +119,40 @@ class SqliteEntityLinkRepository:
         )
         await self.db.commit()
 
+    async def rebuild_for_entities(
+        self, entity_type: str, ids: list[str]
+    ) -> dict:
+        """Delete then re-derive auto-links scoped to the supplied entity IDs.
+
+        Covers both outbound links (where the entity is the source) and inbound
+        auto-links (where the entity is the target).  Actual link re-derivation
+        is delegated back to the caller via the returned stats dict; this method
+        is responsible only for the delete phase and counting.  Callers that
+        want full re-derivation should call ``SyncEngine.rebuild_links_for_entities``
+        which drives re-derivation through the normal sync pipeline.
+
+        Returns:
+            {"entities_processed": N, "auto_links_rebuilt": 0}
+            (``auto_links_rebuilt`` is populated by the SyncEngine wrapper after
+            it re-upserts links for the affected entities.)
+        """
+        if not ids:
+            return {"entities_processed": 0, "auto_links_rebuilt": 0}
+
+        deleted = 0
+        for entity_id in ids:
+            async with self.db.execute(
+                """DELETE FROM entity_links
+                   WHERE ((source_type = ? AND source_id = ?)
+                       OR (target_type = ? AND target_id = ?))
+                     AND origin = 'auto'""",
+                (entity_type, entity_id, entity_type, entity_id),
+            ) as cur:
+                deleted += cur.rowcount or 0
+            await self.db.commit()
+
+        return {"entities_processed": len(ids), "auto_links_rebuilt": 0}
+
 
 class SqliteTagRepository:
     """Cross-entity tag management."""

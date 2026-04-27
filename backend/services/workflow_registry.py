@@ -1024,8 +1024,51 @@ async def get_workflow_registry_detail(
     *,
     registry_id: str,
 ) -> dict[str, Any] | None:
+    """Return the full registry detail dict for *registry_id*, or ``None`` if not found.
+
+    Delegates to :func:`fetch_workflow_details` so that both the single-item
+    and batch paths share one load pass through ``_load_registry_details``.
+    Semantics are identical to the original implementation: the caller receives
+    a single ``dict`` on hit and ``None`` on miss.
+    """
+    results = await fetch_workflow_details(db, project, [registry_id])
+    return results[0] if results else None
+
+
+async def fetch_workflow_details(
+    db: Any,
+    project: Any,
+    ids: list[str],
+) -> list[dict[str, Any]]:
+    """Return registry detail dicts for the given registry IDs in a single load pass.
+
+    Issues one call to ``_load_registry_details`` regardless of the number of
+    requested IDs, eliminating the N+1 pattern that arises when
+    ``get_workflow_registry_detail`` is called in a loop.
+
+    Ordering mirrors input order.  IDs that are not present in the registry are
+    silently omitted — callers can detect missing entries by comparing
+    ``len(result)`` with ``len(ids)``.
+
+    Args:
+        db: Database connection (aiosqlite or asyncpg connection/pool).
+        project: Project namespace with at least an ``id`` attribute.
+        ids: Registry IDs to fetch (e.g. ``["workflow:phase-execution", ...]``).
+
+    Returns:
+        List of detail dicts, one per found ID, in the same order as *ids*.
+        Empty list when *ids* is empty (no DB call is made).
+    """
+    if not ids:
+        return []
+
     details = await _load_registry_details(db, project)
-    for detail in details:
-        if str(detail.get("id") or "") == registry_id:
-            return detail
-    return None
+    index: dict[str, dict[str, Any]] = {
+        str(detail.get("id") or ""): detail for detail in details
+    }
+    result: list[dict[str, Any]] = []
+    for registry_id in ids:
+        detail = index.get(str(registry_id))
+        if detail is not None:
+            result.append(detail)
+    return result

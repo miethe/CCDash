@@ -290,6 +290,7 @@ export interface AgentSession {
   linkedFeatureIds?: string[];
   phaseHints?: string[];
   taskHints?: string[];
+  transcriptTruncated?: { droppedCount: number; firstRetainedTimestamp?: string };
 }
 
 export type SessionUsageTokenFamily =

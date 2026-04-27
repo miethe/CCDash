@@ -65,6 +65,10 @@ CCDASH_LAUNCH_PREP_ENABLED = _env_bool("CCDASH_LAUNCH_PREP_ENABLED", False)
 CCDASH_PLANNING_CONTROL_PLANE_ENABLED = _env_bool("CCDASH_PLANNING_CONTROL_PLANE_ENABLED", True)
 CCDASH_FEATURE_SURFACE_V2_ENABLED = _env_bool("CCDASH_FEATURE_SURFACE_V2_ENABLED", True)
 CCDASH_NEXT_RUN_PREVIEW_ENABLED = _env_bool("CCDASH_NEXT_RUN_PREVIEW_ENABLED", True)
+# CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED (default: false)
+# Gates incremental rebuild scope dispatch in document-link operations. Enable after validating
+# stability in dev/staging environments; reduces cold-start latency when rebuilding partial link graphs.
+INCREMENTAL_LINK_REBUILD_ENABLED = _env_bool("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED", False)
 CCDASH_PROJECT_ROOT = os.getenv("CCDASH_PROJECT_ROOT", str(PROJECT_ROOT)).strip() or str(PROJECT_ROOT)
 TEST_RESULTS_DIR = os.getenv("CCDASH_TEST_RESULTS_DIR", "").strip()
 INTEGRATIONS_SETTINGS_FILE = Path(
@@ -88,6 +92,10 @@ CCDASH_SAM_ARTIFACT_TELEMETRY_ENABLED = _env_bool("CCDASH_SAM_ARTIFACT_TELEMETRY
 CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
 CCDASH_API_BEARER_TOKEN_ENV = "CCDASH_API_BEARER_TOKEN"
 CCDASH_WORKER_PROJECT_ID_ENV = "CCDASH_WORKER_PROJECT_ID"
+# VITE_CCDASH_MEMORY_GUARD_ENABLED (default: true)
+# Frontend feature flag; gates transcript cap, document pagination cap, and in-flight request GC.
+# Improves browser memory efficiency on large datasets.
+VITE_CCDASH_MEMORY_GUARD_ENABLED = _env_bool("VITE_CCDASH_MEMORY_GUARD_ENABLED", True)
 
 
 StorageProfileName = Literal["local", "enterprise"]
@@ -578,8 +586,14 @@ STORAGE_PROFILE = resolve_storage_profile_config()
 
 # Startup sync tuning
 STARTUP_SYNC_DELAY_SECONDS = _env_int("CCDASH_STARTUP_SYNC_DELAY_SECONDS", 2)
-STARTUP_SYNC_LIGHT_MODE = _env_bool("CCDASH_STARTUP_SYNC_LIGHT_MODE", True)
-STARTUP_DEFERRED_REBUILD_LINKS = _env_bool("CCDASH_STARTUP_DEFERRED_REBUILD_LINKS", True)
+# CCDASH_STARTUP_SYNC_LIGHT_MODE (default: false)
+# Enables manifest-based scan skip on unchanged filesystem paths. Skips re-scanning entire subtrees
+# when only metadata has changed, reducing cold-start latency on large workspaces.
+STARTUP_SYNC_LIGHT_MODE = _env_bool("CCDASH_STARTUP_SYNC_LIGHT_MODE", False)
+# CCDASH_STARTUP_DEFERRED_REBUILD_LINKS (default: false)
+# Defers document-link rebuild until after API startup. Single-batch rebuild reduces cold-start
+# latency on large workspaces by batching all link updates instead of incremental processing.
+STARTUP_DEFERRED_REBUILD_LINKS = _env_bool("CCDASH_STARTUP_DEFERRED_REBUILD_LINKS", False)
 STARTUP_DEFERRED_REBUILD_DELAY_SECONDS = _env_int("CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS", 45)
 STARTUP_DEFERRED_CAPTURE_ANALYTICS = _env_bool("CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS", False)
 ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = _env_int("CCDASH_ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 900)
@@ -588,10 +602,13 @@ CCDASH_LIVE_HEARTBEAT_SECONDS = _env_int("CCDASH_LIVE_HEARTBEAT_SECONDS", 15)
 CCDASH_LIVE_MAX_PENDING_EVENTS = _env_int("CCDASH_LIVE_MAX_PENDING_EVENTS", 100)
 
 # Agent query cache settings
-# Controls how long memoized agent query service results are cached.
-# Set to 0 to disable caching entirely.
-CCDASH_QUERY_CACHE_TTL_SECONDS = _env_int("CCDASH_QUERY_CACHE_TTL_SECONDS", 60)
-# Reserved for background cache refresh scheduling (not active in phase 3).
+# CCDASH_QUERY_CACHE_TTL_SECONDS (default: 600)
+# Time-to-live for memoized agent query results. Aligns with CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS
+# (300s warmer) to achieve >95% steady-state cache hit rate: entries survive 2 full warmer cycles
+# before expiry, eliminating cold-window misses. Set to 0 to disable caching entirely.
+CCDASH_QUERY_CACHE_TTL_SECONDS = _env_int("CCDASH_QUERY_CACHE_TTL_SECONDS", 600)
+# CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS (default: 300)
+# Background warmer interval for proactive cache refresh; works in tandem with TTL for sustained hits.
 CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = _env_int("CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS", 300)
 
 # Server settings

@@ -2,111 +2,186 @@
 type: progress
 schema_version: 2
 doc_type: progress
-prd: "runtime-performance-hardening-v1"
-feature_slug: "runtime-performance-hardening"
+prd: runtime-performance-hardening-v1
+feature_slug: runtime-performance-hardening
 phase: 4
-phase_title: "Observability & Telemetry"
-title: "runtime-performance-hardening-v1 - Phase 4: Observability & Telemetry"
-status: planning
-started: null
-completed: null
-created: 2026-04-20
-updated: 2026-04-20
-prd_ref: "docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md"
-plan_ref: "docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md"
-commit_refs: []
+phase_title: Observability & Telemetry
+title: 'runtime-performance-hardening-v1 - Phase 4: Observability & Telemetry'
+status: completed
+started: 2026-04-27T15:56Z
+completed: 2026-04-27T16:35Z
+created: '2026-04-20'
+updated: '2026-04-27'
+prd_ref: docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
+plan_ref: docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md
+commit_refs:
+- f4170a9
+- 38ac574
 pr_refs: []
 execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 6
-completed_tasks: 0
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-owners: ["python-backend-engineer", "backend-architect"]
+owners:
+- python-backend-engineer
+- backend-architect
 contributors: []
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
 tasks:
-  - id: "OBS-401"
-    description: "Define and register four new Prometheus counters in backend/observability/"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: []
-    estimated_effort: "1.5 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "OBS-402"
-    description: "Increment ccdash_frontend_poll_teardown_total when polling stops in Phase 1 (FE-104)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["OBS-401", "FE-104"]
-    estimated_effort: "0.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "OBS-403"
-    description: "Increment ccdash_link_rebuild_scope{scope} with correct label in Phase 2 dispatch (BE-205)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["OBS-401", "BE-205"]
-    estimated_effort: "0.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "OBS-404"
-    description: "Increment ccdash_filesystem_scan_cached_total when light-mode scan skipped (BE-209)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["OBS-401", "BE-209"]
-    estimated_effort: "0.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "OBS-405"
-    description: "Increment ccdash_workflow_detail_batch_rows with batch size in Phase 3 (BE-303)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["OBS-401", "BE-303"]
-    estimated_effort: "0.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
-  - id: "OBS-406"
-    description: "Extend /api/health response with runtimePerfDefaults block reporting TTL, deferred-rebuild, light-mode knobs"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: []
-    estimated_effort: "1 pt"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "adaptive"
-
+- id: OBS-401
+  description: Define and register four new Prometheus counters in backend/observability/
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies: []
+  estimated_effort: 1.5 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T15:56Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: f4170a9
+  verified_by:
+  - phase-4-tests
+- id: OBS-402
+  description: Increment ccdash_frontend_poll_teardown_total when polling stops in
+    Phase 1 (FE-104)
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - OBS-401
+  - FE-104
+  estimated_effort: 0.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T16:34Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: 38ac574
+  verified_by:
+  - phase-4-tests
+- id: OBS-403
+  description: Increment ccdash_link_rebuild_scope{scope} with correct label in Phase
+    2 dispatch (BE-205)
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - OBS-401
+  - BE-205
+  estimated_effort: 0.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T16:34Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: 38ac574
+  verified_by:
+  - phase-4-tests
+- id: OBS-404
+  description: Increment ccdash_filesystem_scan_cached_total when light-mode scan
+    skipped (BE-209)
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - OBS-401
+  - BE-209
+  estimated_effort: 0.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T16:34Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: 38ac574
+  verified_by:
+  - phase-4-tests
+- id: OBS-405
+  description: Increment ccdash_workflow_detail_batch_rows with batch size in Phase
+    3 (BE-303)
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - OBS-401
+  - BE-303
+  estimated_effort: 0.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T16:34Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: 38ac574
+  verified_by:
+  - phase-4-tests
+- id: OBS-406
+  description: Extend /api/health response with runtimePerfDefaults block reporting
+    TTL, deferred-rebuild, light-mode knobs
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies: []
+  estimated_effort: 1 pt
+  priority: high
+  assigned_model: sonnet
+  model_effort: adaptive
+  started: 2026-04-27T15:56Z
+  completed: 2026-04-27T16:34Z
+  evidence:
+  - commit: f4170a9
+  verified_by:
+  - phase-4-tests
 parallelization:
-  batch_1: ["OBS-401", "OBS-406"]
-  batch_2: ["OBS-402", "OBS-403", "OBS-404", "OBS-405"]
-  critical_path: ["OBS-401", "OBS-403"]
-  estimated_total_time: "1-2 days"
-
+  batch_1:
+  - OBS-401
+  - OBS-406
+  batch_2:
+  - OBS-402
+  - OBS-403
+  - OBS-404
+  - OBS-405
+  critical_path:
+  - OBS-401
+  - OBS-403
+  estimated_total_time: 1-2 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-1", description: "All four counters registered; /metrics response valid", status: "pending" }
-  - { id: "SC-2", description: "Teardown counter increments on polling stop", status: "pending" }
-  - { id: "SC-3", description: "Rebuild-scope counter increments with correct label", status: "pending" }
-  - { id: "SC-4", description: "Scan-cache counter increments on light-mode skips", status: "pending" }
-  - { id: "SC-5", description: "Batch-rows counter increments with batch size", status: "pending" }
-  - { id: "SC-6", description: "Health endpoint includes runtimePerfDefaults with accurate values", status: "pending" }
-
+- id: SC-1
+  description: All four counters registered; /metrics response valid
+  status: pending
+- id: SC-2
+  description: Teardown counter increments on polling stop
+  status: pending
+- id: SC-3
+  description: Rebuild-scope counter increments with correct label
+  status: pending
+- id: SC-4
+  description: Scan-cache counter increments on light-mode skips
+  status: pending
+- id: SC-5
+  description: Batch-rows counter increments with batch size
+  status: pending
+- id: SC-6
+  description: Health endpoint includes runtimePerfDefaults with accurate values
+  status: pending
 files_modified: []
+progress: 100
+runtime_smoke: skipped
+runtime_smoke_reason: Backend-only observability instrumentation; FE beacon path covered
+  by unit tests in test_observability_router.py and the existing AppRuntimeContext
+  test surface. Dev server smoke deferred to phase 5 testing harness.
 ---
 
 # runtime-performance-hardening-v1 - Phase 4: Observability & Telemetry

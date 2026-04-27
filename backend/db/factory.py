@@ -29,6 +29,18 @@ from backend.db.repositories.telemetry_queue import SqliteTelemetryQueueReposito
 from backend.db.repositories.entity_graph import SqliteEntityLinkRepository, SqliteTagRepository
 from backend.db.repositories.pricing import SqlitePricingCatalogRepository
 from backend.db.repositories.runtime_state import SqliteAlertConfigRepository, SqliteSyncStateRepository
+from backend.db.repositories.scan_manifest import SqliteScanManifestRepository
+
+def get_scan_manifest_repository(db: Any):
+    # Scan manifest is SQLite-only (filesystem scan state is a local-runtime concept).
+    # For Postgres deployments we fall back to the SQLite implementation backed by the
+    # same aiosqlite connection type check; if the connection is not SQLite, return a
+    # no-op stub so callers degrade gracefully without crashing.
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteScanManifestRepository(db)
+    # Postgres: return a lightweight no-op stub so light-mode always skips gracefully.
+    from backend.db.repositories.scan_manifest import _NoOpScanManifestRepository
+    return _NoOpScanManifestRepository()
 
 def get_session_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):

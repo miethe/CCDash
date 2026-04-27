@@ -556,6 +556,57 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["authGuardrail"]["anonymousFallbackReasonCode"], "anonymous_fallback_outside_bearer_path")
         self.assertEqual(payload["probeContract"]["ready"]["state"], "ready")
 
+    def test_health_endpoint_exposes_runtime_perf_defaults(self) -> None:
+        # Verify runtimePerfDefaults is present and typed correctly under
+        # both default env and explicit env-var override scenarios.
+        app = build_local_app()
+        app.state.runtime_container.storage_profile = _local_storage_profile()
+
+        # Default values — no env overrides.
+        payload = _health_payload(app)
+
+        block = payload["runtimePerfDefaults"]
+        self.assertIsInstance(block, dict)
+        self.assertIn("queryCacheTtlSeconds", block)
+        self.assertIn("startupDeferredRebuildLinks", block)
+        self.assertIn("startupSyncLightMode", block)
+        self.assertIn("incrementalLinkRebuildEnabled", block)
+        self.assertIsInstance(block["queryCacheTtlSeconds"], int)
+        self.assertIsInstance(block["startupDeferredRebuildLinks"], bool)
+        self.assertIsInstance(block["startupSyncLightMode"], bool)
+        self.assertIsInstance(block["incrementalLinkRebuildEnabled"], bool)
+
+        # Env-var overrides propagate to the health payload.
+        import importlib
+        import backend.config as cfg_mod
+        with patch.dict(
+            "os.environ",
+            {
+                "CCDASH_QUERY_CACHE_TTL_SECONDS": "999",
+                "CCDASH_STARTUP_DEFERRED_REBUILD_LINKS": "true",
+                "CCDASH_STARTUP_SYNC_LIGHT_MODE": "false",
+                "CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            importlib.reload(cfg_mod)
+            # Re-import the bootstrap module so it picks up reloaded config values.
+            import backend.runtime.bootstrap as bootstrap_mod
+            importlib.reload(bootstrap_mod)
+            overridden_app = bootstrap_mod.build_local_app()
+            overridden_app.state.runtime_container.storage_profile = _local_storage_profile()
+            overridden_payload = _health_payload(overridden_app)
+
+        overridden_block = overridden_payload["runtimePerfDefaults"]
+        self.assertEqual(overridden_block["queryCacheTtlSeconds"], 999)
+        self.assertTrue(overridden_block["startupDeferredRebuildLinks"])
+        self.assertFalse(overridden_block["startupSyncLightMode"])
+        self.assertTrue(overridden_block["incrementalLinkRebuildEnabled"])
+
+        # Restore module state so subsequent tests are not polluted.
+        importlib.reload(cfg_mod)
+        importlib.reload(bootstrap_mod)
+
     def test_live_probe_endpoint_reports_process_liveness_when_readiness_fails(self) -> None:
         app = build_api_app()
         app.state.runtime_container.storage_profile = _enterprise_storage_profile()

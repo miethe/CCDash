@@ -214,3 +214,11 @@ export class LiveConnectionManager {
 }
 
 export const sharedLiveConnectionManager = new LiveConnectionManager();
+
+/**
+ * FE-104: Stop the shared live EventSource connection.
+ * Called by AppRuntimeContext when N consecutive health checks fail.
+ */
+export function stopLiveConnection(): void {
+  sharedLiveConnectionManager.disconnect();
+}

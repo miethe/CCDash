@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
@@ -35,6 +36,7 @@ import {
     type LiveConnectionStatus,
 } from '../services/live';
 import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../services/featureSurface';
+import { isMemoryGuardEnabled } from '../lib/featureFlags';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -2339,6 +2341,130 @@ const DetailPane: React.FC<{
     );
 };
 
+// --- Virtualized Transcript List ---
+
+const TRANSCRIPT_ROW_GAP = 8; // px — matches space-y-2
+
+const VirtualizedTranscriptList: React.FC<{
+    containerRef: React.RefObject<HTMLDivElement | null>;
+    logs: SessionLog[];
+    insertedIds: Set<string>;
+    isLive: boolean;
+    selectedLogId: string | null;
+    setSelectedLogId: (id: string | null) => void;
+    formattedMessagesByLogId: Map<string, TranscriptFormattedMessage>;
+    filesByLogId: Map<string, number>;
+    artifactsByLogId: Map<string, SessionArtifact[]>;
+    threadSessionDetails: Record<string, AgentSession>;
+    subagentNameBySessionId: Map<string, string>;
+    onOpenThread: (sessionId: string) => void;
+    onShowLinked: (tab: 'activity' | 'artifacts', sourceLogId: string) => void;
+    messagePreset: ReturnType<typeof import('./animations').getMotionPreset>;
+    transcriptTruncated?: { droppedCount: number; firstRetainedTimestamp?: string };
+}> = ({
+    containerRef,
+    logs,
+    insertedIds,
+    isLive,
+    selectedLogId,
+    setSelectedLogId,
+    formattedMessagesByLogId,
+    filesByLogId,
+    artifactsByLogId,
+    threadSessionDetails,
+    subagentNameBySessionId,
+    onOpenThread,
+    onShowLinked,
+    messagePreset,
+    transcriptTruncated,
+}) => {
+    const rowVirtualizer = useVirtualizer({
+        count: logs.length,
+        getScrollElement: () => containerRef.current,
+        estimateSize: () => 68,
+        overscan: 8,
+        gap: TRANSCRIPT_ROW_GAP,
+    });
+
+    const virtualItems = rowVirtualizer.getVirtualItems();
+    const totalSize = rowVirtualizer.getTotalSize();
+
+    return (
+        <div
+            ref={containerRef}
+            className="flex-1 overflow-y-auto custom-scrollbar"
+            style={{ contain: 'strict' }}
+        >
+            {/* Truncation notice */}
+            {isMemoryGuardEnabled() && transcriptTruncated && transcriptTruncated.droppedCount > 0 && (
+                <div className="px-4 pt-4 pb-2">
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300 font-mono">
+                        Older {transcriptTruncated.droppedCount.toLocaleString()} messages hidden
+                        {transcriptTruncated.firstRetainedTimestamp ? (
+                            <span className="text-amber-400/70 ml-1">(showing from {new Date(transcriptTruncated.firstRetainedTimestamp).toLocaleTimeString()})</span>
+                        ) : null}
+                    </div>
+                </div>
+            )}
+
+            {logs.length === 0 && (
+                <div className="p-8 text-center text-muted-foreground italic">No logs found for this view.</div>
+            )}
+
+            {logs.length > 0 && (
+                <div
+                    style={{
+                        height: totalSize + 32, // 16px top + 16px bottom padding
+                        position: 'relative',
+                        paddingTop: 16,
+                    }}
+                >
+                    <AnimatePresence initial={false}>
+                        {virtualItems.map(virtualRow => {
+                            const log = logs[virtualRow.index];
+                            const shouldAnimateIn = isLive && insertedIds.has(log.id);
+                            return (
+                                <motion.div
+                                    key={log.id}
+                                    data-index={virtualRow.index}
+                                    ref={rowVirtualizer.measureElement}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        transform: `translateY(${virtualRow.start + 16}px)`,
+                                        paddingLeft: 16,
+                                        paddingRight: 16,
+                                    }}
+                                    initial={shouldAnimateIn ? messagePreset.initial : false}
+                                    animate={shouldAnimateIn ? messagePreset.animate : undefined}
+                                    exit={messagePreset.exit}
+                                    transition={messagePreset.transition}
+                                >
+                                    <LogItemBlurb
+                                        log={log}
+                                        formattedMessage={formattedMessagesByLogId.get(log.id)}
+                                        isSelected={selectedLogId === log.id}
+                                        onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
+                                        fileCount={filesByLogId.get(log.id) || 0}
+                                        artifactCount={(artifactsByLogId.get(log.id) || []).length}
+                                        onShowFiles={() => onShowLinked('activity', log.id)}
+                                        onShowArtifacts={() => onShowLinked('artifacts', log.id)}
+                                        threadSessionDetails={threadSessionDetails}
+                                        subagentNameBySessionId={subagentNameBySessionId}
+                                        onOpenThread={onOpenThread}
+                                    />
+                                </motion.div>
+                            );
+                        })}
+                    </AnimatePresence>
+                </div>
+            )}
+        </div>
+    );
+};
+
 // --- View Components ---
 
 const TranscriptView: React.FC<{
@@ -2611,38 +2737,23 @@ const TranscriptView: React.FC<{
                     </h3>
                     <div className="text-[10px] text-muted-foreground font-mono">{animatedLogs.items.length} Steps</div>
                 </div>
-                <div ref={smartScroll.containerRef} className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                    <AnimatePresence initial={false}>
-                        {animatedLogs.items.map(log => {
-                            const shouldAnimateIn = liveTranscriptState.isLive && animatedLogs.insertedIds.has(log.id);
-                            return (
-                                <motion.div
-                                    key={log.id}
-                                    layout="position"
-                                    initial={shouldAnimateIn ? messagePreset.initial : false}
-                                    animate={shouldAnimateIn ? messagePreset.animate : undefined}
-                                    exit={messagePreset.exit}
-                                    transition={messagePreset.transition}
-                                >
-                                    <LogItemBlurb
-                                        log={log}
-                                        formattedMessage={formattedMessagesByLogId.get(log.id)}
-                                        isSelected={selectedLogId === log.id}
-                                        onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
-                                        fileCount={filesByLogId.get(log.id) || 0}
-                                        artifactCount={(artifactsByLogId.get(log.id) || []).length}
-                                        onShowFiles={() => onShowLinked('activity', log.id)}
-                                        onShowArtifacts={() => onShowLinked('artifacts', log.id)}
-                                        threadSessionDetails={threadSessionDetails}
-                                        subagentNameBySessionId={subagentNameBySessionId}
-                                        onOpenThread={onOpenThread}
-                                    />
-                                </motion.div>
-                            );
-                        })}
-                    </AnimatePresence>
-                    {animatedLogs.items.length === 0 && <div className="p-8 text-center text-muted-foreground italic">No logs found for this view.</div>}
-                </div>
+                <VirtualizedTranscriptList
+                    containerRef={smartScroll.containerRef}
+                    logs={animatedLogs.items}
+                    insertedIds={animatedLogs.insertedIds}
+                    isLive={liveTranscriptState.isLive}
+                    selectedLogId={selectedLogId}
+                    setSelectedLogId={setSelectedLogId}
+                    formattedMessagesByLogId={formattedMessagesByLogId}
+                    filesByLogId={filesByLogId}
+                    artifactsByLogId={artifactsByLogId}
+                    threadSessionDetails={threadSessionDetails}
+                    subagentNameBySessionId={subagentNameBySessionId}
+                    onOpenThread={onOpenThread}
+                    onShowLinked={onShowLinked}
+                    messagePreset={messagePreset}
+                    transcriptTruncated={session.transcriptTruncated}
+                />
                 {liveTranscriptState.isLive && (
                     <div className="border-t border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
                         <div className="flex flex-wrap items-center justify-between gap-3">

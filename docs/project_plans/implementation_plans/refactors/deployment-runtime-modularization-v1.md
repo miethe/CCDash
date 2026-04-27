@@ -4,11 +4,14 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: refactors
 title: 'Implementation Plan: Deployment and Runtime Modularization V1'
-description: Turn CCDash runtime profiles into deployable API, worker, local, and test operating modes with explicit launch contracts, health semantics, and packaging.
-summary: Close the gap between profile-aware runtime composition already in code and a real hosted operator model by separating entrypoints, background-job ownership, probes, env contracts, and deployment artifacts.
+description: Turn CCDash runtime profiles into deployable API, worker, local, and
+  test operating modes with explicit launch contracts, health semantics, and packaging.
+summary: Close the gap between profile-aware runtime composition already in code and
+  a real hosted operator model by separating entrypoints, background-job ownership,
+  probes, env contracts, and deployment artifacts.
 author: codex
 audience:
 - ai-agents
@@ -17,11 +20,11 @@ audience:
 - backend-platform
 - devops
 created: 2026-04-08
-updated: '2026-04-18'
+updated: '2026-04-27'
 commit_refs:
-- "4c64bff"
-- "80f3dfc"
-- "20887a8"
+- 4c64bff
+- 80f3dfc
+- 20887a8
 pr_refs: []
 tags:
 - implementation

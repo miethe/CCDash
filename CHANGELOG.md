@@ -4,6 +4,36 @@
 
 ### Added
 
+- **Feature flags for runtime-performance hardening**:
+  - `VITE_CCDASH_MEMORY_GUARD_ENABLED` (default true): gates frontend memory hardening via transcript ring-buffer cap, document pagination, and in-flight request garbage collection.
+  - `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` (default false): enables incremental link rebuild with cached-state gating to skip relink when entities are unchanged.
+  - `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default false): enables manifest-based filesystem scan skip to reduce startup I/O and sync latency.
+- New observability counters: query cache hit/miss tracking, scan-cached/scanned distinctions, and performance health defaults via `runtimePerfDefaults` health endpoint.
+
+### Changed
+
+- `CCDASH_QUERY_CACHE_TTL_SECONDS` default increased from 60s to 600s to align with background cache-warming interval and reduce redundant queries.
+- `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` default changed from true to false: link rebuilds are now opt-in after startup to defer I/O-heavy work.
+- Polling teardown now triggers after 3 unreachable health checks; frontend displays "backend disconnected" banner with manual retry button.
+- Frontend memory stability improvements: transcript ring-buffer cap (configurable via health defaults), document pagination cap, and in-flight request lifecycle GC.
+- Backend workflow batch query eliminates N+1 query pattern for fetching linked workflows.
+- Filesystem scan manifest skip in light mode bypasses redundant file enumeration when metadata is unchanged.
+
+### Fixed
+
+- Polling teardown prevents cascade of failed health checks and reconnection storms.
+- Frontend memory leaks from unbounded transcript caches and orphaned in-flight requests during disconnections.
+
+### Docs
+
+- Added:
+  - `docs/guides/runtime-performance-hardening-v1.md`
+- Updated:
+  - `.env.example` with new feature flags and default value changes.
+  - `CLAUDE.md` with feature flag descriptions and runtime profile tuning guidance.
+
+---
+
 - Containerized deployment infrastructure: unified backend Dockerfile, hardened frontend image, `compose.yaml` with `local`, `enterprise`, and `postgres` profiles, rootless Podman support, and single-command deployment via `docker compose` or `podman-compose`.
 - CCDash Planning Reskin v2 documentation finalization: updated the root README and planning control-plane guide, added a planning context pointer in the design-handoff bundle, and authored deferred-item design specs for DEFER-01, DEFER-02, DEFER-03, DEFER-04, DEFER-06, DEFER-07, DEFER-08, DEFER-09, and DEFER-10 under `docs/project_plans/design-specs/`.
 - CCDash Planning Reskin v2 interaction and performance addendum: modal-first navigation (clicks open panels/modals instead of routing; explicit board affordance preserved), active-first cached loading with stale-while-revalidate and bounded LRU in `services/planning.ts`, real statusCounts wiring on metric tiles with active-first filtering, PlanningQuickViewPanel for side-panel triage/tracker interactions, AgentDetailModal with agent naming precedence and keyboard/a11y handling, and roster hint chips with tab/filter state persistence.

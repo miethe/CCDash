@@ -1,6 +1,8 @@
 
 import { ProjectTask, AgentSession, AnalyticsMetric, AlertConfig, Notification, PlanDocument } from './types';
 
+export const MAX_SESSION_LOG_ROWS = 5000;
+
 export const MOCK_TASKS: ProjectTask[] = [
   {
     id: 'T-101',
@@ -385,3 +387,5 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
     isRead: true
   }
 ];
+
+export const MAX_DOCUMENTS_IN_MEMORY = 2000;

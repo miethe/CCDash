@@ -1,4 +1,6 @@
 import type { AgentSession, Feature } from '../types';
+import { MAX_SESSION_LOG_ROWS } from '../constants';
+import { isMemoryGuardEnabled } from '../lib/featureFlags';
 
 export interface SessionFilters {
   status?: string;
@@ -45,7 +47,26 @@ export const mergeSessionDetail = (sessions: AgentSession[], fetched: AgentSessi
   const idx = sessions.findIndex(session => session.id === fetched.id);
   if (idx === -1) return sessions;
   const next = [...sessions];
-  next[idx] = fetched;
+  const logs = fetched.logs ?? [];
+  let merged: AgentSession;
+
+  // FE-101 / FE-106: only enforce the log cap when the memory guard is enabled.
+  // When disabled → pass through unmodified (original behavior).
+  if (isMemoryGuardEnabled() && logs.length > MAX_SESSION_LOG_ROWS) {
+    const droppedCount = logs.length - MAX_SESSION_LOG_ROWS;
+    const retained = logs.slice(droppedCount);
+    merged = {
+      ...fetched,
+      logs: retained,
+      transcriptTruncated: {
+        droppedCount,
+        firstRetainedTimestamp: retained[0]?.timestamp,
+      },
+    };
+  } else {
+    merged = fetched;
+  }
+  next[idx] = merged;
   return next;
 };
 

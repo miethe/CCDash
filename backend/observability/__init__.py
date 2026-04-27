@@ -8,6 +8,7 @@ from backend.observability.otel import (
     record_parser_failure,
     record_tool_result,
     record_token_cost,
+    record_link_rebuild_scope,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "record_parser_failure",
     "record_tool_result",
     "record_token_cost",
+    "record_link_rebuild_scope",
 ]

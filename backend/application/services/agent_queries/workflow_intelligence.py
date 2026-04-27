@@ -6,7 +6,12 @@ from typing import Any
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
-from backend.services.workflow_registry import get_workflow_registry_detail, list_workflow_registry
+import logging
+
+from backend.services.workflow_registry import fetch_workflow_details, list_workflow_registry
+from backend.observability import otel
+
+_logger = logging.getLogger(__name__)
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
 from .cache import memoized_query
@@ -132,6 +137,40 @@ class WorkflowDiagnosticsQueryService:
             )
 
         registry_items = registry_payload.get("items", [])
+
+        # --- batch-fetch all registry details in one pass (eliminates N+1) ---
+        registry_ids: list[str] = []
+        for row in registry_items:
+            identity = row.get("identity") if isinstance(row.get("identity"), dict) else {}
+            workflow_id = str(
+                identity.get("resolvedWorkflowId")
+                or identity.get("registryId")
+                or row.get("id")
+                or ""
+            )
+            registry_ids.append(str(row.get("id") or workflow_id))
+
+        try:
+            batch_details = await fetch_workflow_details(
+                ports.storage.db,
+                scope.project,
+                registry_ids,
+            )
+            otel.record_workflow_detail_batch_rows(len(batch_details))
+        except Exception:
+            batch_details = []
+            partial = True
+
+        fetched_ids = {str(d.get("id") or ""): d for d in batch_details}
+
+        missing = [rid for rid in registry_ids if rid not in fetched_ids]
+        if missing:
+            _logger.warning(
+                "fetch_workflow_details: %d registry IDs not found in detail store: %s",
+                len(missing),
+                missing,
+            )
+
         for row in registry_items:
             identity = row.get("identity") if isinstance(row.get("identity"), dict) else {}
             workflow_id = str(
@@ -153,15 +192,7 @@ class WorkflowDiagnosticsQueryService:
             if not diagnostic.session_count:
                 diagnostic.session_count = _safe_int(row.get("sampleSize"))
 
-            try:
-                detail = await get_workflow_registry_detail(
-                    ports.storage.db,
-                    scope.project,
-                    registry_id=str(row.get("id") or workflow_id),
-                )
-            except Exception:
-                detail = None
-                partial = True
+            detail = fetched_ids.get(str(row.get("id") or workflow_id))
             if isinstance(detail, dict):
                 diagnostic.representative_sessions = [
                     _session_ref_from_registry_evidence(item)

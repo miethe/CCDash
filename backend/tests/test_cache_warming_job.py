@@ -817,7 +817,7 @@ class TestCacheWarmAfterRun(unittest.IsolatedAsyncioTestCase):
             "get_data_version_fingerprint",
             AsyncMock(return_value="stable-fp-c5"),
         ), patch.object(_cache_mod, "config") as cfg_mock:
-            cfg_mock.CCDASH_QUERY_CACHE_TTL_SECONDS = 60
+            cfg_mock.CCDASH_QUERY_CACHE_TTL_SECONDS = 600
 
             fake_context = MagicMock()
             fake_context.project.project_id = "proj-c5"
