@@ -10,7 +10,7 @@ title: 'runtime-performance-hardening-v1 - Phase 1: Frontend Memory Hardening'
 status: completed
 started: null
 completed: null
-created: 2026-04-20
+created: '2026-04-20'
 updated: '2026-04-27'
 prd_ref: docs/project_plans/PRDs/infrastructure/runtime-performance-hardening-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/runtime-performance-hardening-v1.md
