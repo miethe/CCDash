@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MAX_DOCUMENTS_IN_MEMORY } from '../../constants';
 
 /**
@@ -22,10 +22,13 @@ function makePage(offset: number, pageSize: number, total: number): Page {
  * Standalone re-implementation of the capped pagination loop so we can test
  * the logic in isolation.  Must stay in sync with the loop in
  * contexts/AppEntityDataContext.tsx → refreshDocuments().
+ *
+ * FE-106: accepts a `memoryGuard` flag mirroring isMemoryGuardEnabled().
  */
 async function runCappedPagination(
   fetcher: (offset: number, pageSize: number) => Promise<Page>,
   cap: number,
+  memoryGuard = true,
 ): Promise<{ collected: Record<string, unknown>[]; truncated: boolean; finalOffset: number }> {
   const pageSize = 500;
   const firstPage = await fetcher(0, pageSize);
@@ -33,7 +36,8 @@ async function runCappedPagination(
   const total = firstPage.total || collected.length;
   let offset = collected.length;
 
-  while (offset < total && collected.length < cap) {
+  // FE-103 / FE-106: only apply cap when guard enabled
+  while (offset < total && (!memoryGuard || collected.length < cap)) {
     const page = await fetcher(offset, pageSize);
     const items = page.items || [];
     if (items.length === 0) break;
@@ -41,11 +45,19 @@ async function runCappedPagination(
     offset += items.length;
   }
 
-  const capped = collected.slice(0, cap);
+  if (memoryGuard) {
+    const capped = collected.slice(0, cap);
+    return {
+      collected: capped,
+      truncated: total > cap,
+      finalOffset: capped.length,
+    };
+  }
+
   return {
-    collected: capped,
-    truncated: total > cap,
-    finalOffset: capped.length,
+    collected,
+    truncated: false,
+    finalOffset: collected.length,
   };
 }
 
@@ -114,5 +126,51 @@ describe('Document pagination cap (FE-103)', () => {
 
     expect(result.collected.length).toBe(MAX_DOCUMENTS_IN_MEMORY);
     expect(result.truncated).toBe(false);
+  });
+});
+
+// FE-106: disabled-flag pathway
+describe('Document pagination cap — memory guard disabled (FE-106)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('fetches ALL pages when guard is disabled, even beyond MAX_DOCUMENTS_IN_MEMORY', async () => {
+    const total = 3500;
+    const fetcher = vi.fn(async (offset: number, pageSize: number) => makePage(offset, pageSize, total));
+
+    const result = await runCappedPagination(fetcher, MAX_DOCUMENTS_IN_MEMORY, /* memoryGuard */ false);
+
+    // Should have fetched all 3500 documents (7 pages × 500)
+    expect(result.collected.length).toBe(total);
+    expect(result.truncated).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(7);
+  });
+
+  it('does not set truncated=true when guard is disabled and total exceeds cap', async () => {
+    const total = 5000;
+    const fetcher = vi.fn(async (offset: number, pageSize: number) => makePage(offset, pageSize, total));
+
+    const result = await runCappedPagination(fetcher, MAX_DOCUMENTS_IN_MEMORY, /* memoryGuard */ false);
+
+    expect(result.truncated).toBe(false);
+    expect(result.collected.length).toBe(total);
+  });
+
+  it('guard-enabled and guard-disabled produce identical results when total <= cap', async () => {
+    const total = 800; // well under 2000
+    const fetcherEnabled = vi.fn(async (offset: number, pageSize: number) => makePage(offset, pageSize, total));
+    const fetcherDisabled = vi.fn(async (offset: number, pageSize: number) => makePage(offset, pageSize, total));
+
+    const enabled = await runCappedPagination(fetcherEnabled, MAX_DOCUMENTS_IN_MEMORY, true);
+    const disabled = await runCappedPagination(fetcherDisabled, MAX_DOCUMENTS_IN_MEMORY, false);
+
+    expect(enabled.collected.length).toBe(disabled.collected.length);
+    expect(enabled.truncated).toBe(disabled.truncated);
+    expect(enabled.finalOffset).toBe(disabled.finalOffset);
   });
 });

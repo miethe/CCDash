@@ -10,6 +10,7 @@ import { useDataClient } from './DataClientContext';
 import { useAppEntityData } from './AppEntityDataContext';
 import { useAppSession } from './AppSessionContext';
 import { stopLiveConnection } from '../services/live/connectionManager';
+import { isMemoryGuardEnabled } from '../lib/featureFlags';
 
 const CONSECUTIVE_FAILURE_THRESHOLD = 3;
 
@@ -127,10 +128,13 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : 'Failed to load data';
         setError(message);
-        // FE-104: count consecutive backend-unreachable failures
-        consecutiveFailuresRef.current += 1;
-        if (consecutiveFailuresRef.current >= CONSECUTIVE_FAILURE_THRESHOLD) {
-          teardownPolling();
+        // FE-104 / FE-106: only count failures and trigger teardown when memory guard is enabled.
+        // When disabled → polling continues indefinitely (original behavior); banner never shows.
+        if (isMemoryGuardEnabled()) {
+          consecutiveFailuresRef.current += 1;
+          if (consecutiveFailuresRef.current >= CONSECUTIVE_FAILURE_THRESHOLD) {
+            teardownPolling();
+          }
         }
       } finally {
         if (isInitialLoad) {

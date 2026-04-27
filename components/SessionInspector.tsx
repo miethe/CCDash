@@ -36,6 +36,7 @@ import {
     type LiveConnectionStatus,
 } from '../services/live';
 import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../services/featureSurface';
+import { isMemoryGuardEnabled } from '../lib/featureFlags';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -2395,7 +2396,7 @@ const VirtualizedTranscriptList: React.FC<{
             style={{ contain: 'strict' }}
         >
             {/* Truncation notice */}
-            {transcriptTruncated && transcriptTruncated.droppedCount > 0 && (
+            {isMemoryGuardEnabled() && transcriptTruncated && transcriptTruncated.droppedCount > 0 && (
                 <div className="px-4 pt-4 pb-2">
                     <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300 font-mono">
                         Older {transcriptTruncated.droppedCount.toLocaleString()} messages hidden

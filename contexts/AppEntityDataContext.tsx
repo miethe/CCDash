@@ -18,6 +18,7 @@ import {
 } from './dataContextShared';
 import { useDataClient } from './DataClientContext';
 import { MAX_DOCUMENTS_IN_MEMORY } from '../constants';
+import { isMemoryGuardEnabled } from '../lib/featureFlags';
 
 interface AppEntityDataContextValue {
   sessions: AgentSession[];
@@ -118,6 +119,9 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [refreshSessions, sessionTotal, sessions.length]);
 
   const gcSessionDetailRequests = useCallback(() => {
+    // FE-105 / FE-106: only sweep TTL-expired entries when the memory guard is enabled.
+    // When disabled → skip GC (original delete-on-finally only behavior).
+    if (!isMemoryGuardEnabled()) return;
     const now = Date.now();
     for (const [key, ts] of sessionDetailTimestampsRef.current) {
       if (now - ts > SESSION_DETAIL_TTL_MS) {
@@ -164,12 +168,20 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [client, gcSessionDetailRequests]);
 
   const refreshDocuments = useCallback(async () => {
+    const memoryGuard = isMemoryGuardEnabled();
     const pageSize = 500;
     const firstPage = await client.getDocuments(0, pageSize);
     if (Array.isArray(firstPage)) {
-      setDocuments(firstPage.slice(0, MAX_DOCUMENTS_IN_MEMORY));
-      setDocumentsTruncated(firstPage.length > MAX_DOCUMENTS_IN_MEMORY);
-      setDocumentOffset(Math.min(firstPage.length, MAX_DOCUMENTS_IN_MEMORY));
+      // FE-103 / FE-106: cap only when guard is enabled
+      if (memoryGuard) {
+        setDocuments(firstPage.slice(0, MAX_DOCUMENTS_IN_MEMORY));
+        setDocumentsTruncated(firstPage.length > MAX_DOCUMENTS_IN_MEMORY);
+        setDocumentOffset(Math.min(firstPage.length, MAX_DOCUMENTS_IN_MEMORY));
+      } else {
+        setDocuments(firstPage);
+        setDocumentsTruncated(false);
+        setDocumentOffset(firstPage.length);
+      }
       setDocumentTotal(firstPage.length);
       return;
     }
@@ -179,7 +191,9 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
     setDocumentTotal(total);
     let offset = collected.length;
 
-    while (offset < total && collected.length < MAX_DOCUMENTS_IN_MEMORY) {
+    // FE-103 / FE-106: only apply the cap guard in the pagination loop when enabled.
+    // When disabled → original unbounded while (offset < total) behavior.
+    while (offset < total && (!memoryGuard || collected.length < MAX_DOCUMENTS_IN_MEMORY)) {
       const page = await client.getDocuments(offset, pageSize);
       if (Array.isArray(page)) {
         if (page.length === 0) break;
@@ -193,10 +207,16 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
       offset += items.length;
     }
 
-    const capped = collected.slice(0, MAX_DOCUMENTS_IN_MEMORY);
-    setDocuments(capped);
-    setDocumentsTruncated(total > MAX_DOCUMENTS_IN_MEMORY);
-    setDocumentOffset(capped.length);
+    if (memoryGuard) {
+      const capped = collected.slice(0, MAX_DOCUMENTS_IN_MEMORY);
+      setDocuments(capped);
+      setDocumentsTruncated(total > MAX_DOCUMENTS_IN_MEMORY);
+      setDocumentOffset(capped.length);
+    } else {
+      setDocuments(collected);
+      setDocumentsTruncated(false);
+      setDocumentOffset(collected.length);
+    }
   }, [client]);
 
   const loadMoreDocuments = useCallback(async () => {
