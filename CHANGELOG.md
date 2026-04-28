@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **Frontend re-render reduction**: Memoized context provider values in `AppEntityDataContext`, `AppRuntimeContext`, and `AppSessionContext`. Consumers (SessionInspector, ProjectBoard, Planning surfaces) no longer re-render on every parent state change — eliminates per-poll-tick render cascades.
+- **Backend N+1 elimination**: Six confirmed N+1 patterns in agent_queries hot paths replaced with batch repository fetches: feature forensics linked-session loops, planning session enrichment, planning-session-board entity-link aggregation, document detail fan-out, integrations stack-observation loop, and session-intelligence rollup gather. New bulk methods on sessions/documents/features/entity_graph repositories.
+- **DB indexes**: Added composite indexes for `sessions(conversation_family_id)`, `features(project_id, status)`, and `feature_phases(feature_id, status)` — closes scan gaps on planning summary and feature-list filters.
+
+### Fixed
+
+- **Silent error handling**: Replaced `except: pass` blocks in planning hot paths (`planning_sessions.py:695`, `planning.py:1927`) and six `except: continue` blocks in `parsers/features.py` with logged warnings — partial failures no longer corrupt downstream board cards or skip malformed PRDs invisibly.
+- **Accessibility**: PlanCatalog clickable doc-row divs now expose `role="button"`, `tabIndex={0}`, and Enter/Space keyboard activation.
+
 ### Added
 
 - **Containerized deployment infrastructure**: Unified backend Dockerfile with `CCDASH_RUNTIME_PROFILE` dispatch, hardened frontend nginx image with non-root user and envsubst templating, unified `compose.yaml` with composable `local` (SQLite single-container), `enterprise` (split API/worker with external Postgres), and `postgres` (bundled postgres:17-alpine) profiles, rootless Podman support via UID/GID build args and SELinux bind-mount labels, and operator quickstart guide. Single-command deployment: `docker compose --profile local up --build`.
