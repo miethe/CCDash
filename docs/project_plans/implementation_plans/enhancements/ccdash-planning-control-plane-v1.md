@@ -14,7 +14,7 @@ summary: Build a derived planning graph, planning APIs, live planning updates, p
   home and drill-down surfaces, and plan-driven launch preparation with worktree and
   provider/model awareness.
 created: 2026-04-16
-updated: '2026-04-17'
+updated: '2026-04-28'
 phase_7_status: completed
 phase_8_status: completed
 priority: high
@@ -78,7 +78,26 @@ related:
 plan_ref: ccdash-planning-control-plane-v1
 linked_sessions: []
 request_log_id: ''
-commits: []
+commits:
+- 5aa082b
+- 94080a1
+- 05babb4
+- 8dee6f2
+- 1ae85d8
+- fce6526
+- 1522f57
+- 41a8860
+- dabf816
+- 8cad10c
+- be72764
+- 6d02505
+- c18f865
+- ccc7e6f
+- 287fe92
+- a98738e
+- 68cba09
+- 694c98d
+- d50a2d2
 prs: []
 phase_4_status: completed
 ---

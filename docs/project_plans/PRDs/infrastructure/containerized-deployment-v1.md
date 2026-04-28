@@ -2,9 +2,9 @@
 title: "PRD: Containerized Deployment Infrastructure"
 schema_version: 2
 doc_type: prd
-status: draft
+status: completed
 created: 2026-04-20
-updated: 2026-04-20
+updated: 2026-04-28
 feature_slug: containerized-deployment-v1
 feature_version: "v1"
 prd_ref: null

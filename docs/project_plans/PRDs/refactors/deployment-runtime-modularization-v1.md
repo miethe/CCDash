@@ -3,13 +3,13 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: product_requirements
-status: pending
+status: completed
 category: refactors
 title: "PRD: Deployment and Runtime Modularization V1"
 description: "Split CCDash into deployable runtime profiles and service boundaries suitable for local-first use and hosted/shared environments."
 summary: "Decouple API, workers, and local-watch behaviors so CCDash can be deployed reliably beyond the current single-process development model."
 created: 2026-03-11
-updated: 2026-04-08
+updated: 2026-04-28
 priority: high
 risk_level: high
 complexity: High

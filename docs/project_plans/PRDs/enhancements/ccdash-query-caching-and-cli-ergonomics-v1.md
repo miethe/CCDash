@@ -2,9 +2,9 @@
 title: "PRD: CCDash Query Caching and CLI Ergonomics"
 schema_version: 2
 doc_type: prd
-status: draft
+status: completed
 created: 2026-04-14
-updated: 2026-04-14 (findings folded: Pass 2/3 CLI usage, E2.5 extension, E2.6 reconciliation, E3 pagination)
+updated: 2026-04-28
 feature_slug: "ccdash-query-caching-and-cli-ergonomics"
 feature_version: "v1"
 prd_ref: null

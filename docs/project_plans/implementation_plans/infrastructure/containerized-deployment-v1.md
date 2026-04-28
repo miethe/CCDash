@@ -4,7 +4,7 @@ schema_version: 2
 doc_type: implementation_plan
 status: completed
 created: 2026-04-20
-updated: '2026-04-27'
+updated: '2026-04-28'
 feature_slug: containerized-deployment-v1
 feature_version: v1
 prd_ref: /docs/project_plans/PRDs/infrastructure/containerized-deployment-v1.md
@@ -58,7 +58,12 @@ tags:
 - containers
 - compose
 milestone: null
-commit_refs: []
+commit_refs:
+- c93f6fc
+- 48bbaca
+- c233b8d
+- 3fcda5a
+- 7d9dc5a
 pr_refs: []
 files_affected:
 - deploy/runtime/Dockerfile
