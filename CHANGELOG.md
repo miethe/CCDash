@@ -2,20 +2,14 @@
 
 ## [Unreleased]
 
-### Performance
-
-- **Frontend re-render reduction**: Memoized context provider values in `AppEntityDataContext`, `AppRuntimeContext`, and `AppSessionContext`. Consumers (SessionInspector, ProjectBoard, Planning surfaces) no longer re-render on every parent state change — eliminates per-poll-tick render cascades.
-- **Backend N+1 elimination**: Six confirmed N+1 patterns in agent_queries hot paths replaced with batch repository fetches: feature forensics linked-session loops, planning session enrichment, planning-session-board entity-link aggregation, document detail fan-out, integrations stack-observation loop, and session-intelligence rollup gather. New bulk methods on sessions/documents/features/entity_graph repositories.
-- **DB indexes**: Added composite indexes for `sessions(conversation_family_id)`, `features(project_id, status)`, and `feature_phases(feature_id, status)` — closes scan gaps on planning summary and feature-list filters.
-
-### Fixed
-
-- **Silent error handling**: Replaced `except: pass` blocks in planning hot paths (`planning_sessions.py:695`, `planning.py:1927`) and six `except: continue` blocks in `parsers/features.py` with logged warnings — partial failures no longer corrupt downstream board cards or skip malformed PRDs invisibly.
-- **Accessibility**: PlanCatalog clickable doc-row divs now expose `role="button"`, `tabIndex={0}`, and Enter/Space keyboard activation.
-
+## [0.2.0] - 2026-04-28
 ### Added
 
-- **Containerized deployment infrastructure**: Unified backend Dockerfile with `CCDASH_RUNTIME_PROFILE` dispatch, hardened frontend nginx image with non-root user and envsubst templating, unified `compose.yaml` with composable `local` (SQLite single-container), `enterprise` (split API/worker with external Postgres), and `postgres` (bundled postgres:17-alpine) profiles, rootless Podman support via UID/GID build args and SELinux bind-mount labels, and operator quickstart guide. Single-command deployment: `docker compose --profile local up --build`.
+- **Planning Reskin v2**: Comprehensive UI refresh including modal-first navigation, agent roster filtering, triage inbox prioritization, home metrics and chip indicators, graph reskin with improved layouts, feature detail drawer with execution info, and writeback surface. Backend planning session board queries support filtering and state aggregation. Addendum includes caching strategy (SWR + LRU), OTEL instrumentation, and modal-scoped route helpers. (commits 4c02882, 4911484, a471f6e, f3435ac, efd0940, 4943e0e, 75642d7, 0f78eec, ed0d86b, dced2f0, 8b78d74, 635acc8)
+- **Feature Surface Data Loading Redesign and Planning Agent Session Board**: Layered list→rollup→modal contracts with two-tier browser cache and unified invalidation bus. Session board renders Kanban-style cards grouped by state/feature/phase/agent/model. Performance budgets and cache invalidation patterns documented. (31847d2, 7b69b56)
+- **Feature Surface Remediation v1**: Resolved data-contract gaps from phase 1 reskin including missing fields, type mismatches, and resilience-by-default FE fallbacks. (a5f7564)
+- **CCDash landing page and static hosting support**: Public-facing landing page with Nginx templating for static asset delivery and environment-based configuration injection. (21aeec9)
+- **Containerized deployment infrastructure**: Unified backend Dockerfile with `CCDASH_RUNTIME_PROFILE` dispatch, hardened frontend nginx image with non-root user and envsubst templating, unified `compose.yaml` with composable `local` (SQLite single-container), `enterprise` (split API/worker with external Postgres), and `postgres` (bundled postgres:17-alpine) profiles, rootless Podman support via UID/GID build args and SELinux bind-mount labels, and operator quickstart guide. Single-command deployment: `docker compose --profile local up --build`. (f14adbc, c408175)
 - **Feature flags for runtime-performance hardening**:
   - `VITE_CCDASH_MEMORY_GUARD_ENABLED` (default true): gates frontend memory hardening via transcript ring-buffer cap, document pagination, and in-flight request garbage collection.
   - `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` (default false): enables incremental link rebuild with cached-state gating to skip relink when entities are unchanged.
@@ -33,23 +27,27 @@
 
 ### Fixed
 
-- Polling teardown prevents cascade of failed health checks and reconnection storms.
-- Frontend memory leaks from unbounded transcript caches and orphaned in-flight requests during disconnections.
+- **Silent error handling**: Replaced `except: pass` blocks in planning hot paths (`planning_sessions.py:695`, `planning.py:1927`) and six `except: continue` blocks in `parsers/features.py` with logged warnings — partial failures no longer corrupt downstream board cards or skip malformed PRDs invisibly.
+- **Accessibility**: PlanCatalog clickable doc-row divs now expose `role="button"`, `tabIndex={0}`, and Enter/Space keyboard activation.
+- **Polling teardown** prevents cascade of failed health checks and reconnection storms when the backend goes unreachable.
+- **Frontend memory leaks** from unbounded transcript caches and orphaned in-flight requests during disconnections.
+
+### Performance
+
+- **Frontend re-render reduction**: Memoized context provider values in `AppEntityDataContext`, `AppRuntimeContext`, and `AppSessionContext`. Consumers (SessionInspector, ProjectBoard, Planning surfaces) no longer re-render on every parent state change — eliminates per-poll-tick render cascades.
+- **Backend N+1 elimination**: Six confirmed N+1 patterns in agent_queries hot paths replaced with batch repository fetches: feature forensics linked-session loops, planning session enrichment, planning-session-board entity-link aggregation, document detail fan-out, integrations stack-observation loop, and session-intelligence rollup gather. New bulk methods on sessions/documents/features/entity_graph repositories.
+- **DB indexes**: Added composite indexes for `sessions(conversation_family_id)`, `features(project_id, status)`, and `feature_phases(feature_id, status)` — closes scan gaps on planning summary and feature-list filters.
 
 ### Docs
 
 - Added:
   - `docs/guides/runtime-performance-hardening-v1.md`
+  - `docs/guides/feature-surface-architecture.md`
+  - `docs/guides/planning-reskin-v2-feature-guide.md`
 - Updated:
   - `.env.example` with new feature flags and default value changes.
   - `CLAUDE.md` with feature flag descriptions and runtime profile tuning guidance.
-
----
-
-- Containerized deployment infrastructure: unified backend Dockerfile, hardened frontend image, `compose.yaml` with `local`, `enterprise`, and `postgres` profiles, rootless Podman support, and single-command deployment via `docker compose` or `podman-compose`.
-- CCDash Planning Reskin v2 documentation finalization: updated the root README and planning control-plane guide, added a planning context pointer in the design-handoff bundle, and authored deferred-item design specs for DEFER-01, DEFER-02, DEFER-03, DEFER-04, DEFER-06, DEFER-07, DEFER-08, DEFER-09, and DEFER-10 under `docs/project_plans/design-specs/`.
-- CCDash Planning Reskin v2 interaction and performance addendum: modal-first navigation (clicks open panels/modals instead of routing; explicit board affordance preserved), active-first cached loading with stale-while-revalidate and bounded LRU in `services/planning.ts`, real statusCounts wiring on metric tiles with active-first filtering, PlanningQuickViewPanel for side-panel triage/tracker interactions, AgentDetailModal with agent naming precedence and keyboard/a11y handling, and roster hint chips with tab/filter state persistence.
-- Planning summary backend enhancements: `GET /api/planning/summary` now exposes `statusCounts`, `ctx_per_phase`, and `token_telemetry` with document-driven cache invalidation; agent session canonical fields (`subagentType`, `displayAgentType`) are now available in session payloads; OpenTelemetry spans instrumented on planning summary and cache fingerprint paths.
+- Marked completed plans: feature-surface-redesign, session-board, and reskin addendum. (994d1e8)
 
 ## 2026-04-15
 
