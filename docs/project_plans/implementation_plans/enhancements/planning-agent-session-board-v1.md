@@ -15,7 +15,7 @@ summary: Extend the planning control plane with normalized session-to-planning c
   lanes, and copy-only next-run prompt preparation.
 author: codex
 created: 2026-04-25
-updated: '2026-04-26'
+updated: '2026-04-28'
 priority: high
 risk_level: medium
 complexity: high
@@ -75,6 +75,27 @@ related:
 - types.ts
 plan_ref: planning-agent-session-board-v1
 linked_sessions: []
+commit_refs:
+- 994d1e8
+- 31847d2
+- 2ed24b0
+- beb772a
+- 08475fb
+- 0381641
+- fc79319
+- 80f3cdd
+- a73b2d7
+- 67f1990
+- b59153e
+- ae1c968
+- aea2d26
+- ec10878
+- bbe1962
+- f72ae16
+- c8c4001
+- 2d7920d
+- 04d8140
+- 22ec25e
 ---
 
 # Implementation Plan: Planning Agent Session Board V1

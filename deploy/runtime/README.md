@@ -84,6 +84,63 @@ The frontend examples intentionally use `npm run start:frontend`, which currentl
 
 The supervisor example uses `/bin/sh -lc` to source env files because supervisord does not have a native `EnvironmentFile=` equivalent like systemd.
 
+## Rootless Podman Notes
+
+The compose contract is validated against rootless Podman 4.6+ and podman-compose 1.5+. The following operator notes are required for parity with `docker compose`:
+
+### Podman machine memory (macOS / Windows)
+
+The default `podman machine` allocation is 2 GiB, which is not enough RAM for the frontend `vite build` step. The build will OOM (`Killed`, exit 137) at the `computing gzip size` stage. Bump the VM to at least 4 GiB before running `podman-compose ... up --build`:
+
+```bash
+podman machine stop
+podman machine set --memory 4096
+podman machine start
+```
+
+On a fresh install, also run `podman machine start` first — `podman machine list` will show `Last Up: Never` until that step is performed.
+
+### `HEALTHCHECK` ignored on OCI image format
+
+`podman build` warns: `HEALTHCHECK is not supported for OCI image format and will be ignored. Must use docker format`. The Dockerfile-level `HEALTHCHECK` is therefore inert under Podman, but the **compose-level** `healthcheck:` blocks defined in `compose.yaml` are honored by podman-compose, so end-to-end health gating still works. If you need the image-embedded healthcheck under Podman, build with `podman build --format=docker ...`.
+
+### SELinux `:Z` bind-mount label
+
+On SELinux-enforcing hosts (RHEL/Fedora/CentOS Stream), bind-mounted host paths must be relabeled or the container will see `Permission denied` even when UIDs match. Append `:Z` (private label, single-container) or `:z` (shared label, multi-container) to bind-mount sources:
+
+```yaml
+volumes:
+  # Single-container access — relabel exclusively for this container
+  - /opt/ccdash/projects.json:/app/projects.json:Z
+  # Shared between containers — shared label
+  - /opt/ccdash/data:/var/lib/ccdash:z
+```
+
+Named volumes (the default for `ccdash-local-data` and `ccdash-postgres` in `compose.yaml`) do not require `:Z`; Podman manages their SELinux labels automatically.
+
+`:Z` is a no-op on non-SELinux hosts (Debian/Ubuntu, macOS Podman machine, WSL2) and is safe to leave in place across platforms. This was not live-tested on this Phase 5 host (Darwin / no SELinux available); the syntax is documented from the Podman upstream contract.
+
+### External Postgres under `podman-compose` 1.5.0
+
+`podman-compose` 1.5.0 does not honor `depends_on.<svc>.required: false` and aborts with `KeyError: 'postgres'` when the `enterprise` profile is brought up against an externally-managed Postgres (`CCDASH_DATABASE_URL` pointing off-stack). Layer `deploy/runtime/compose.external-postgres.yaml` to strip the optional postgres dependency:
+
+```bash
+podman-compose --env-file deploy/runtime/.env \
+  -f deploy/runtime/compose.yaml \
+  -f deploy/runtime/compose.external-postgres.yaml \
+  --profile enterprise up
+```
+
+Do NOT layer this override when running with the bundled `postgres` profile — it intentionally removes the dependency edge.
+
+### `podman-compose` build-context size
+
+`podman-compose` 1.5 streams the build context through an in-memory tar; large or polluted contexts (e.g. `data/`, `node_modules/`, `.git/`, local virtualenvs) cause `archive/tar: write too long`. The repo ships a `.dockerignore` that excludes these paths. If you fork the build context, keep the ignore list intact.
+
+### Named volume UID mapping
+
+Rootless Podman maps the in-container UID (e.g. `1000`) into the user namespace via `/etc/subuid`. Named volumes created by podman-compose are owned by that mapped UID and are writable from the container without further configuration. Verified path on Phase 5 smoke: `/var/lib/ccdash` mounted as named volume `ccdash-local-data` is owned by `ccdash:ccdash` (UID/GID 1000) inside the container, and the SQLite cache (`ccdash.db`, `.db-shm`, `.db-wal`) is writable.
+
 ## Image Tagging Convention
 
 If you publish the container images to a registry, use the following tags:

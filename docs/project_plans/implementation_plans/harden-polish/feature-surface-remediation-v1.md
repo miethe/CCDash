@@ -7,7 +7,7 @@ description: 'Address four gaps from the feature-surface-data-loading-redesign r
   migration decision, and G4 runtime smoke validation.'
 status: completed
 created: '2026-04-24'
-updated: '2026-04-26'
+updated: '2026-04-28'
 feature_slug: feature-surface-remediation-v1
 feature_version: v1
 prd_ref: null
@@ -43,8 +43,12 @@ tags:
 - encoding
 - validation
 milestone: null
-commit_refs: []
-pr_refs: []
+commit_refs:
+- a5f7564
+- de5d363
+- b910dd5
+pr_refs:
+- '#35'
 files_affected:
 - services/apiClient.ts
 - contexts/AppEntityDataContext.tsx

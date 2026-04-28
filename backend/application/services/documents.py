@@ -1,6 +1,7 @@
 """Application services for document read paths."""
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -392,9 +393,20 @@ class DocumentQueryService:
             elif counterpart_type == "document" and counterpart_id != canonical_doc_id:
                 document_ids.add(counterpart_id)
 
+        # Bulk fetch all linked entities to avoid N+1 per-link awaits.
+        feature_id_list = sorted(feature_ids)
+        session_id_list = sorted(session_ids)
+        doc_id_list = sorted(document_ids)
+
+        feature_map, session_map, doc_map = await asyncio.gather(
+            feature_repo.get_many_by_ids(feature_id_list),
+            session_repo.get_many_by_ids(session_id_list),
+            doc_repo.get_many_by_ids(doc_id_list),
+        )
+
         features = []
-        for feature_id in sorted(feature_ids):
-            feature_row = await feature_repo.get_by_id(feature_id)
+        for feature_id in feature_id_list:
+            feature_row = feature_map.get(feature_id)
             if not feature_row:
                 continue
             features.append(
@@ -424,8 +436,8 @@ class DocumentQueryService:
             )
 
         sessions = []
-        for session_id in sorted(session_ids):
-            session_row = await session_repo.get_by_id(session_id)
+        for session_id in session_id_list:
+            session_row = session_map.get(session_id)
             if not session_row:
                 continue
             sessions.append(
@@ -439,8 +451,8 @@ class DocumentQueryService:
             )
 
         documents = []
-        for linked_doc_id in sorted(document_ids):
-            linked_row = await doc_repo.get_by_id(linked_doc_id)
+        for linked_doc_id in doc_id_list:
+            linked_row = doc_map.get(linked_doc_id)
             if not linked_row:
                 continue
             documents.append(

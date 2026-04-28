@@ -231,6 +231,17 @@ class SqliteFeatureRepository:
             row = await cur.fetchone()
             return dict(row) if row else None
 
+    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Fetch multiple features in a single query. Returns a dict keyed by feature id."""
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        async with self.db.execute(
+            f"SELECT * FROM features WHERE id IN ({placeholders})", tuple(ids)
+        ) as cur:
+            rows = await cur.fetchall()
+        return {row["id"]: dict(row) for row in rows}
+
     async def list_all(self, project_id: str | None = None) -> list[dict]:
         if project_id:
             async with self.db.execute(

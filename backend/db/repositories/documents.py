@@ -350,6 +350,17 @@ class SqliteDocumentRepository:
             row = await cur.fetchone()
             return dict(row) if row else None
 
+    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Fetch multiple documents in a single query. Returns a dict keyed by document id."""
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        async with self.db.execute(
+            f"SELECT * FROM documents WHERE id IN ({placeholders})", tuple(ids)
+        ) as cur:
+            rows = await cur.fetchall()
+        return {row["id"]: dict(row) for row in rows}
+
     async def get_by_path(self, project_id: str, canonical_path: str) -> dict | None:
         async with self.db.execute(
             "SELECT * FROM documents WHERE project_id = ? AND canonical_path = ? LIMIT 1",

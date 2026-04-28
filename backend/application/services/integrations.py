@@ -1,6 +1,7 @@
 """Application services for integration orchestration."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from backend.application.context import RequestContext
@@ -181,12 +182,15 @@ class SkillMeatApplicationService:
 
         repo = ports.storage.agentic_intelligence()
         rows = await repo.list_stack_observations(str(project.id), limit=limit, offset=offset)
-        hydrated: list[dict[str, Any]] = []
-        for row in rows:
-            observation = await repo.get_stack_observation(str(project.id), str(row.get("session_id") or ""))
-            if observation:
-                hydrated.append(observation)
-        return hydrated
+        if not rows:
+            return []
+        observations = await asyncio.gather(
+            *[
+                repo.get_stack_observation(str(project.id), str(row.get("session_id") or ""))
+                for row in rows
+            ]
+        )
+        return [obs for obs in observations if obs]
 
     async def list_memory_drafts(
         self,

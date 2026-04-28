@@ -8,7 +8,7 @@ prd_ref: /docs/project_plans/PRDs/refactors/data-platform-modularization-v1.md
 plan_ref: /docs/project_plans/implementation_plans/refactors/data-platform-modularization-v1.md
 phase: 2
 title: "Adapter Composition and Unit-of-Work Split"
-status: "in_progress"
+status: "completed"
 started: "2026-03-30"
 completed: null
 commit_refs: ["5511adb"]

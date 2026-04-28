@@ -133,7 +133,7 @@ services:
 
   postgres:
     profiles: ["postgres"]
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
       POSTGRES_DB: "${CCDASH_POSTGRES_DB:-ccdash}"
@@ -150,8 +150,8 @@ services:
     ports:
       - "${CCDASH_POSTGRES_PORT:-5432}:5432"
     volumes:
-      - ccdash-postgres-data:/var/lib/postgresql/data
+      - ccdash-postgres:/var/lib/postgresql/data
 
 volumes:
   ccdash-local-data:
-  ccdash-postgres-data:
+  ccdash-postgres:

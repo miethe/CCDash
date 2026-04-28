@@ -4,9 +4,9 @@ doc_type: report
 type: report
 report_category: performance-analysis
 title: "P16-005: Planning Load Budget Measurement (SC-16.5)"
-status: complete
+status: accepted
 created: 2026-04-22
-updated: 2026-04-22
+updated: 2026-04-28
 feature_slug: ccdash-planning-reskin-v2-interaction-performance-addendum
 description: "Service-layer timing measurements for the Planning warm-cache and cold-path shell budgets claimed by Phase 12 (SC-16.5)."
 ---

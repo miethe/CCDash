@@ -8,7 +8,7 @@ prd_ref: /docs/project_plans/PRDs/enhancements/workflow-registry-and-correlation
 plan_ref: /docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
 phase: 4
 title: Router and API surface
-status: in_progress
+status: completed
 started: '2026-03-14'
 completed: null
 commit_refs:

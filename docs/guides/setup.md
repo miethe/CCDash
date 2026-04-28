@@ -31,6 +31,10 @@ docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --p
 For the enterprise and bundled Postgres variants, replace `--profile local` with the matching profile set above. The canonical operator flow is documented in
 [`docs/guides/containerized-deployment-quickstart.md`](containerized-deployment-quickstart.md).
 
+## Local Development Setup (Contributors)
+
+This section covers contributor setup. For the preferred operator onboarding path, see "Containerized Deployment (Preferred)" above.
+
 ## 1) Install Frontend Dependencies
 
 ```bash

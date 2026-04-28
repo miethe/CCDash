@@ -682,20 +682,19 @@ class PlanningSessionQueryService:
         # ── Load entity links for session→feature bindings ───────────────────
         links: list[dict[str, Any]] = []
         try:
-            # entity_links does not provide a project-scoped list_all; we iterate
-            # per-session for explicit session→feature links.  To avoid N+1 per session,
-            # we load them in bulk by looking up all known feature IDs.
+            # Bulk load links for all features in a single query to avoid N+1.
             feature_ids = [_safe_str(f.get("id")) for f in features if _safe_str(f.get("id"))]
-            for fid in feature_ids:
-                try:
-                    feature_links = await ports.storage.entity_links().get_links_for(
-                        "feature", fid
-                    )
+            if feature_ids:
+                links_by_feature = await ports.storage.entity_links().get_links_for_many(
+                    "feature", feature_ids
+                )
+                for fid, feature_links in links_by_feature.items():
                     links.extend(feature_links)
-                except Exception:
-                    pass
         except Exception:
-            logger.debug("Failed to load entity links; proceeding without explicit links")
+            logger.warning(
+                "planning-sessions: failed to load entity links for project %s; proceeding without explicit links",
+                effective_project_id,
+            )
             partial = True
 
         # ── Correlate sessions ───────────────────────────────────────────────

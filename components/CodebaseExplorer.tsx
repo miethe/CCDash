@@ -238,7 +238,7 @@ export const CodebaseExplorer: React.FC = () => {
         </select>
         <select
           value={sortBy}
-          onChange={event => setSortBy(event.target.value as any)}
+          onChange={event => setSortBy(event.target.value as "last_touched" | "touches" | "sessions" | "agents" | "net_diff" | "path" | "file_name")}
           className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200"
         >
           <option value="last_touched">Last touched</option>

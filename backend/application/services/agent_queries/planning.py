@@ -1909,12 +1909,18 @@ class PlanningQueryService:
         now_utc = datetime.now(timezone.utc)
         stale_threshold_hours = 24
 
-        # Session refs from explicit selection.
-        for sid in sorted(set(selection.session_ids)):
+        # Session refs from explicit selection — bulk fetch to avoid N+1.
+        unique_session_ids = sorted(set(selection.session_ids))
+        if unique_session_ids:
             try:
-                session_row = await ports.storage.sessions().get_by_id(sid)
+                session_map = await ports.storage.sessions().get_many_by_ids(unique_session_ids)
             except Exception:
-                session_row = None
+                session_map = {}
+        else:
+            session_map = {}
+
+        for sid in unique_session_ids:
+            session_row = session_map.get(sid)
             if session_row is None:
                 warnings.append(f"Selected session '{sid}' not found.")
                 continue
@@ -1925,7 +1931,10 @@ class PlanningQueryService:
                     from backend.application.services.agent_queries._filters import _coerce_datetime
                     session_started = _coerce_datetime(raw_ts)
             except Exception:
-                pass
+                logger.warning(
+                    "planning: failed to parse timestamp for session '%s'; skipping staleness check",
+                    sid,
+                )
             if session_started is not None:
                 age_hours = (now_utc - session_started).total_seconds() / 3600
                 if age_hours > stale_threshold_hours:

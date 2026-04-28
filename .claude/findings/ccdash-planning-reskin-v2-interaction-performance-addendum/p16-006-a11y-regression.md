@@ -4,9 +4,9 @@ doc_type: report
 report_category: accessibility
 prd: ccdash-planning-reskin-v2-interaction-performance-addendum
 created: 2026-04-21
-updated: 2026-04-21
+updated: 2026-04-28
 title: P16-006 Accessibility Regression Report — Modal/Panel Surfaces
-status: completed
+status: accepted
 ---
 
 # P16-006 A11y Regression Report — Modal/Panel Surfaces

@@ -5,7 +5,7 @@ title: "CCDash CLI and MCP Enablement - Implementation Plan"
 description: "Phased implementation plan for exposing CCDash project intelligence via transport-neutral query services, REST composite endpoints, Python CLI, and MCP server for coding agents."
 status: completed
 created: "2026-04-02"
-updated: "2026-04-14"
+updated: "2026-04-28"
 feature_slug: "ccdash-cli-mcp-enablement"
 feature_version: "v1"
 prd_ref: "docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md"
@@ -18,7 +18,23 @@ risk_level: medium
 owner: "Backend Engineering"
 contributors: ["Architecture Review Team"]
 milestone: null
-commit_refs: []
+commit_refs:
+- df1543f
+- cb74cf7
+- ea47c02
+- 22862a5
+- 7f25216
+- bf6f012
+- 071f891
+- 6a7aa8f
+- 35eed1e
+- b654887
+- 160a6ca
+- 350f344
+- 6cafe2b
+- 3c85b62
+- 280d8a4
+- c094dc9
 pr_refs: []
 files_affected: []
 category: "product-planning"

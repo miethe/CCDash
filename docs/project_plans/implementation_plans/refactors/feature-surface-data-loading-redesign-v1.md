@@ -13,12 +13,41 @@ tags:
 - sessions
 - api-contracts
 created: 2026-04-22
-updated: '2026-04-24'
+updated: '2026-04-28'
 scope_addendum: Phase 3 scope limited to ProjectBoard; Phase 4 extends to SessionInspector,
   FeatureExecutionWorkbench, Dashboard, and planning-modal cache coordination; Phase
   5 inventories legacy callers.
 category: product-planning
 status: completed
+commit_refs:
+- 994d1e8
+- 31847d2
+- ef561d1
+- c697129
+- 6bd075f
+- 942461d
+- 09c376d
+- ddaf26b
+- 4fff4e5
+- 34e4738
+- 42dfe77
+- 277382e
+- 9cd8dbc
+- a54aab2
+- aa46d0b
+- b0e34ac
+- 54a5b44
+- 97c51f1
+- 0ae6e66
+- 88c241a
+- dce5e2c
+- 3751e95
+- 701aec9
+- ea7ea0a
+- 2b5de0b
+- a04ae76
+- 782c5ef
+- 7b69b56
 related:
 - /docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
 ---

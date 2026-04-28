@@ -1,0 +1,55 @@
+# Build artifacts and caches
+node_modules
+dist
+build
+.next
+.turbo
+*.tsbuildinfo
+
+# Local Python virtualenvs and caches
+backend/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Git and CI metadata
+.git
+.gitignore
+.github
+
+# Local data, logs, generated DBs (the largest offender by far)
+data
+logs
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Editor / IDE
+.vscode
+.idea
+.DS_Store
+
+# Tooling state
+.claude/findings
+.claude/worknotes
+.claude/progress
+output
+
+# Local env files (do not bake into images)
+.env
+.env.*
+!.env.example
+
+# Test coverage
+coverage
+.coverage
+htmlcov
+
+# Temporary files
+tmp
+temp
+*.tmp

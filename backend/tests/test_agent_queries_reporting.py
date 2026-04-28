@@ -96,7 +96,10 @@ def _ports(*, features=None, sessions=None, documents=None, tasks=None, links=No
         workspace_registry=_WorkspaceRegistry(project),
         storage=_Storage(
             features_repo=features or types.SimpleNamespace(get_by_id=AsyncMock(return_value=None)),
-            sessions_repo=sessions or types.SimpleNamespace(get_by_id=AsyncMock(return_value=None)),
+            sessions_repo=sessions or types.SimpleNamespace(
+                get_by_id=AsyncMock(return_value=None),
+                get_many_by_ids=AsyncMock(return_value={}),
+            ),
             documents_repo=documents or types.SimpleNamespace(list_paginated=AsyncMock(return_value=[])),
             tasks_repo=tasks or types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[])),
             links_repo=links or types.SimpleNamespace(get_links_for=AsyncMock(return_value=[])),
@@ -111,17 +114,17 @@ class ReportingQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         features_repo = types.SimpleNamespace(
             get_by_id=AsyncMock(return_value={"id": "feature-1", "name": "Feature 1", "updated_at": "2026-04-11T10:00:00+00:00"})
         )
+        _aar_session_row = {
+            "id": "session-1",
+            "status": "completed",
+            "started_at": "2026-04-11T09:00:00+00:00",
+            "ended_at": "2026-04-11T09:30:00+00:00",
+            "total_cost": 1.5,
+            "observed_tokens": 400,
+        }
         sessions_repo = types.SimpleNamespace(
-            get_by_id=AsyncMock(
-                return_value={
-                    "id": "session-1",
-                    "status": "completed",
-                    "started_at": "2026-04-11T09:00:00+00:00",
-                    "ended_at": "2026-04-11T09:30:00+00:00",
-                    "total_cost": 1.5,
-                    "observed_tokens": 400,
-                }
-            )
+            get_by_id=AsyncMock(return_value=_aar_session_row),
+            get_many_by_ids=AsyncMock(return_value={"session-1": _aar_session_row}),
         )
         documents_repo = types.SimpleNamespace(
             list_paginated=AsyncMock(return_value=[{"id": "doc-1", "title": "Plan", "file_path": "docs/plan.md", "updated_at": "2026-04-11T09:20:00+00:00"}])

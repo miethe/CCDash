@@ -8,10 +8,11 @@ prd_ref: docs/project_plans/PRDs/infrastructure/containerized-deployment-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/containerized-deployment-v1.md
 phase: 4
 title: Postgres Profile Wiring
-status: not_started
+status: completed
 created: '2026-04-20'
-updated: '2026-04-20'
-commit_refs: []
+updated: '2026-04-27'
+commit_refs:
+- 48bbaca
 pr_refs: []
 owners:
 - devops-architect
@@ -20,29 +21,65 @@ tasks:
 - id: PG-001
   description: Add postgres:17-alpine service to compose.yaml under --profile postgres
     with named volume and pg_isready health check
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   dependencies:
   - COMP-001
+  started: '2026-04-27T20:15:00Z'
+  completed: '2026-04-27T20:19:00Z'
+  evidence:
+  - commit: 48bbaca
+  - smoke: postgres:17-alpine service with ccdash-postgres named volume + pg_isready
+      healthcheck wired; podman-compose config validates
+  - verified-by: self-smoke
+  verified_by:
+  - self-smoke
 - id: PG-002
   description: 'Verify api + worker have depends_on: postgres: condition: service_healthy
     in postgres profile'
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   dependencies:
   - PG-001
   - COMP-003
+  started: '2026-04-27T20:19:00Z'
+  completed: '2026-04-27T20:20:00Z'
+  evidence:
+  - commit: 48bbaca
+  - smoke: depends_on chain verified - api->postgres(healthy), worker->api(healthy)+postgres(healthy)
+      under enterprise+postgres profiles
+  - verified-by: self-smoke
+  verified_by:
+  - self-smoke
 - id: PG-003
   description: Run docker compose --profile postgres up smoke test; verify all health
     checks pass and database accessible
-  status: pending
+  status: completed
   assigned_to:
   - devops-architect
   dependencies:
   - PG-001
   - PG-002
+  started: '2026-04-27T20:20:00Z'
+  completed: '2026-04-27T20:28:00Z'
+  evidence:
+  - commit: 48bbaca
+  - smoke: podman-compose --profile postgres up -d -> ccdash_postgres_1 healthy <5s;
+      pg_isready 'accepting connections'; volume ccdash_ccdash-postgres created; teardown
+      via down -v clean
+  - smoke: 'enterprise+postgres bring-up exposed unrelated Phase 1 defect (PermissionError:
+      /app/projects.json non-writable as UID 1000) -- api/worker stuck in ''starting''.
+      Postgres profile wiring itself verified healthy; cross-image fix tracked for
+      Phase 5/Phase 7.'
+  - smoke: podman/docker delta - HEALTHCHECK on backend image emits 'not supported
+      for OCI image format' warning (informational; compose-level healthcheck overrides);
+      frontend image build OOM-killed (exit 137) inside default 2GiB podman VM --
+      not a compose concern, but flag for Phase 7 smoke runners.
+  - verified-by: self-smoke
+  verified_by:
+  - self-smoke
 parallelization:
   batch_1:
   - PG-001
@@ -56,6 +93,11 @@ parallelization:
   - PG-003
 blockers: []
 success_criteria: []
+total_tasks: 3
+completed_tasks: 3
+in_progress_tasks: 0
+blocked_tasks: 0
+progress: 100
 ---
 
 # containerized-deployment-v1 - Phase 4: Postgres Profile Wiring

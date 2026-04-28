@@ -108,7 +108,10 @@ class _Storage:
         async def get_by_id(session_id):
             return sessions_data.get(session_id)
 
-        return types.SimpleNamespace(get_by_id=get_by_id)
+        async def get_many_by_ids(ids):
+            return {sid: sessions_data[sid] for sid in ids if sid in sessions_data}
+
+        return types.SimpleNamespace(get_by_id=get_by_id, get_many_by_ids=get_many_by_ids)
 
     def documents(self):
         return self._doc_repo
@@ -388,7 +391,10 @@ class CacheInvalidationOnNewSessionTests(unittest.IsolatedAsyncioTestCase):
         self._ports.storage._sessions_data = original_sessions_data
 
         # Patch get_by_id at the storage level for the second call
-        spy_sessions_repo = types.SimpleNamespace(get_by_id=spy_get_by_id)
+        spy_sessions_repo = types.SimpleNamespace(
+            get_by_id=spy_get_by_id,
+            get_many_by_ids=AsyncMock(return_value={}),
+        )
 
         # Replace the sessions data dict reference so sessions() method uses spy
         # We override the sessions() method on the storage instance directly
@@ -506,18 +512,21 @@ class CacheInvalidationOnFeatureUpdateTests(unittest.IsolatedAsyncioTestCase):
         first = await _call_forensics(self._service, self._ctx, self._ports, self._feature_id)
         self.assertEqual(first.feature_id, self._feature_id)
 
+        spy_get_many = AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data})
         spy_sessions_repo = types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid))
+            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
+            get_many_by_ids=spy_get_many,
         )
 
         # Verify second call is a hit by checking spy not called
         self._ports.storage.sessions = lambda: spy_sessions_repo
         await _call_forensics(self._service, self._ctx, self._ports, self._feature_id)
-        self.assertEqual(spy_sessions_repo.get_by_id.await_count, 0, "Second call must be a cache hit")
+        self.assertEqual(spy_sessions_repo.get_many_by_ids.await_count, 0, "Second call must be a cache hit")
 
         # Reset sessions() to normal before the bump
         self._ports.storage.sessions = lambda: types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid))
+            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
+            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data}),
         )
 
         # Bump features.updated_at in the DB — fingerprint must advance
@@ -668,22 +677,24 @@ class CacheIsolationBetweenFeaturesTests(unittest.IsolatedAsyncioTestCase):
 
         # Spy: if A's cache is still live, sessions() for A's session will not be called
         spy_a_sessions = types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid))
+            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
+            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data}),
         )
         self._ports.storage.sessions = lambda: spy_a_sessions
 
         # Confirm A's entry is cached before touching B
         await _call_forensics(self._service, self._ctx, self._ports, self._feat_a)
         self.assertEqual(
-            spy_a_sessions.get_by_id.await_count,
+            spy_a_sessions.get_many_by_ids.await_count,
             0,
             "A's cache entry should be live before touching B",
         )
 
         # Reset spy count, then touch B
-        spy_a_sessions.get_by_id.reset_mock()
+        spy_a_sessions.get_many_by_ids.reset_mock()
         self._ports.storage.sessions = lambda: types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid))
+            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
+            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data}),
         )
         later = "2026-04-14T12:00:00+00:00"
         await _bump_feature_updated_at(self._db, self._feat_b, later)
@@ -694,7 +705,8 @@ class CacheIsolationBetweenFeaturesTests(unittest.IsolatedAsyncioTestCase):
 
         # Attach fresh spy for A's next call
         spy_a_after_b_touch = types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid))
+            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
+            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data}),
         )
         self._ports.storage.sessions = lambda: spy_a_after_b_touch
 
@@ -704,7 +716,7 @@ class CacheIsolationBetweenFeaturesTests(unittest.IsolatedAsyncioTestCase):
         # Document observed behaviour: project-wide MAX means touching B invalidates A
         # If this assertion fails, the fingerprint has been narrowed to per-feature scope.
         self.assertGreater(
-            spy_a_after_b_touch.get_by_id.await_count,
+            spy_a_after_b_touch.get_many_by_ids.await_count,
             0,
             "OBSERVED BEHAVIOUR (project-wide fingerprint): touching feature B advances "
             "MAX(features.updated_at) for the project, which changes the shared fingerprint "

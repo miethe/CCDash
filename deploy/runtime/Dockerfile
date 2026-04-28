@@ -39,6 +39,12 @@ COPY --chown=ccdash:ccdash backend ./backend
 COPY --chown=ccdash:ccdash packages/ccdash_contracts ./packages/ccdash_contracts
 COPY --chown=ccdash:ccdash deploy/runtime/entrypoint.sh ./deploy/runtime/entrypoint.sh
 
+# WORKDIR /app is created root-owned by the WORKDIR directive; ensure the
+# non-root runtime user can seed runtime artifacts (e.g. projects.json) at the
+# project root. Without this, rootless Podman + UID 1000 fails with
+# PermissionError: [Errno 13] Permission denied: '/app/projects.json'.
+RUN chown ccdash:ccdash /app
+
 USER ccdash:ccdash
 
 EXPOSE 8000 9465

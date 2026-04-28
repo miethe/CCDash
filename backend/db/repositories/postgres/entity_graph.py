@@ -60,6 +60,33 @@ class PostgresEntityLinkRepository:
             )
         return [dict(r) for r in rows]
 
+    async def get_links_for_many(
+        self, entity_type: str, entity_ids: list[str]
+    ) -> dict[str, list[dict]]:
+        """Fetch entity links for many entity ids in a single query.
+
+        Returns a dict keyed by entity_id.  Entities with no links map to [].
+        """
+        if not entity_ids:
+            return {}
+        rows = await self.db.fetch(
+            """SELECT * FROM entity_links
+               WHERE (source_type = $1 AND source_id = ANY($2::text[]))
+                  OR (target_type = $3 AND target_id = ANY($4::text[]))""",
+            entity_type, entity_ids, entity_type, entity_ids,
+        )
+
+        result: dict[str, list[dict]] = {eid: [] for eid in entity_ids}
+        for row in rows:
+            r = dict(row)
+            if r.get("source_type") == entity_type and r.get("source_id") in result:
+                result[r["source_id"]].append(r)
+            if r.get("target_type") == entity_type and r.get("target_id") in result:
+                # Avoid double-appending if source and target are the same entity
+                if r.get("source_type") != entity_type or r.get("source_id") != r.get("target_id"):
+                    result[r["target_id"]].append(r)
+        return result
+
     async def get_tree(self, entity_type: str, entity_id: str) -> dict:
         children = await self.db.fetch(
             """SELECT * FROM entity_links

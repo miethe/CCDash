@@ -107,7 +107,10 @@ def _ports(*, features=None, sessions=None, documents=None, tasks=None, links=No
         workspace_registry=_WorkspaceRegistry(project),
         storage=_Storage(
             features_repo=features or types.SimpleNamespace(get_by_id=AsyncMock(return_value=None)),
-            sessions_repo=sessions or types.SimpleNamespace(get_by_id=AsyncMock(return_value=None)),
+            sessions_repo=sessions or types.SimpleNamespace(
+                get_by_id=AsyncMock(return_value=None),
+                get_many_by_ids=AsyncMock(return_value={}),
+            ),
             documents_repo=documents or types.SimpleNamespace(list_paginated=AsyncMock(return_value=[])),
             tasks_repo=tasks or types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[])),
             links_repo=links or types.SimpleNamespace(get_links_for=AsyncMock(return_value=[])),
@@ -175,17 +178,17 @@ class FeatureForensicsAliasTests(unittest.IsolatedAsyncioTestCase):
                 return_value={"id": "feature-1", "name": "Feature 1", "status": "active", "updated_at": "2026-04-14T10:00:00+00:00"}
             )
         )
+        _session_row_1 = {
+            "id": "session-1",
+            "status": "completed",
+            "started_at": "2026-04-14T09:00:00+00:00",
+            "ended_at": "2026-04-14T09:30:00+00:00",
+            "total_cost": 1.0,
+            "observed_tokens": 100,
+        }
         sessions_repo = types.SimpleNamespace(
-            get_by_id=AsyncMock(
-                return_value={
-                    "id": "session-1",
-                    "status": "completed",
-                    "started_at": "2026-04-14T09:00:00+00:00",
-                    "ended_at": "2026-04-14T09:30:00+00:00",
-                    "total_cost": 1.0,
-                    "observed_tokens": 100,
-                }
-            )
+            get_by_id=AsyncMock(return_value=_session_row_1),
+            get_many_by_ids=AsyncMock(return_value={"session-1": _session_row_1}),
         )
         documents_repo = types.SimpleNamespace(list_paginated=AsyncMock(return_value=[]))
         tasks_repo = types.SimpleNamespace(
@@ -300,17 +303,17 @@ class FeatureForensicsAliasTests(unittest.IsolatedAsyncioTestCase):
                 }
             )
         )
+        _session_row_nested = {
+            "id": "session-nested",
+            "status": "completed",
+            "started_at": "2026-04-14T09:00:00+00:00",
+            "ended_at": "2026-04-14T09:30:00+00:00",
+            "total_cost": 0.5,
+            "observed_tokens": 50,
+        }
         sessions_repo = types.SimpleNamespace(
-            get_by_id=AsyncMock(
-                return_value={
-                    "id": "session-nested",
-                    "status": "completed",
-                    "started_at": "2026-04-14T09:00:00+00:00",
-                    "ended_at": "2026-04-14T09:30:00+00:00",
-                    "total_cost": 0.5,
-                    "observed_tokens": 50,
-                }
-            )
+            get_by_id=AsyncMock(return_value=_session_row_nested),
+            get_many_by_ids=AsyncMock(return_value={"session-nested": _session_row_nested}),
         )
         links_repo = types.SimpleNamespace(
             get_links_for=AsyncMock(

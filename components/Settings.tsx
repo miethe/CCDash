@@ -1388,9 +1388,10 @@ const ProjectsTab: React.FC = () => {
     try {
       const result = await syncTestSources(editData.id, { force: true });
       setSourceStatus(result.sources || []);
-      const synced = Number((result.stats as any)?.synced || 0);
-      const metrics = Number((result.stats as any)?.metrics || 0);
-      const errors = Number((result.stats as any)?.errors || 0);
+      const stats = result.stats as Record<string, number>;
+      const synced = Number(stats?.synced || 0);
+      const metrics = Number(stats?.metrics || 0);
+      const errors = Number(stats?.errors || 0);
       setTestingActionInfo(`Sync complete: ${synced} files synced, ${metrics} metrics captured, ${errors} errors.`);
     } catch (e: any) {
       setTestingActionError(e.message || 'Failed to run test source sync');
@@ -1609,7 +1610,7 @@ const ProjectsTab: React.FC = () => {
                     <span className="text-sm text-slate-200">{label}</span>
                     <input
                       type="checkbox"
-                      checked={(editData.testConfig?.flags as any)?.[key] ?? false}
+                      checked={(editData.testConfig?.flags as Record<string, boolean>)?.[key] ?? false}
                       onChange={event => updateFlag(key as keyof Project['testConfig']['flags'], event.target.checked)}
                       className="h-4 w-4"
                     />
@@ -2277,7 +2278,7 @@ const IntegrationsTab: React.FC = () => {
                   </div>
                   <input
                     type="checkbox"
-                    checked={(editData.skillMeat?.featureFlags as any)?.[key] ?? true}
+                    checked={(editData.skillMeat?.featureFlags as Record<string, boolean>)?.[key] ?? true}
                     onChange={event => updateSkillMeatConfig(prev => ({
                       ...prev,
                       featureFlags: {

@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: report
 title: "Feature Surface Remediation — Runtime Smoke Findings"
-status: draft
+status: accepted
 created: 2026-04-24
 feature_slug: feature-surface-remediation-v1
 plan_ref: docs/project_plans/implementation_plans/harden-polish/feature-surface-remediation-v1.md

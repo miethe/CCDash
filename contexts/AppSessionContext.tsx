@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { Project } from '../types';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { useDataClient } from './DataClientContext';
@@ -45,17 +45,17 @@ export const AppSessionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     await refreshProjects();
   }, [client, refreshProjects]);
 
+  const contextValue = useMemo(() => ({
+    projects,
+    activeProject,
+    refreshProjects,
+    addProject,
+    updateProject,
+    switchProject,
+  }), [projects, activeProject, refreshProjects, addProject, updateProject, switchProject]);
+
   return (
-    <AppSessionContext.Provider
-      value={{
-        projects,
-        activeProject,
-        refreshProjects,
-        addProject,
-        updateProject,
-        switchProject,
-      }}
-    >
+    <AppSessionContext.Provider value={contextValue}>
       {children}
     </AppSessionContext.Provider>
   );

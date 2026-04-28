@@ -8,7 +8,7 @@ prd_ref: /docs/project_plans/PRDs/refactors/data-platform-modularization-v1.md
 plan_ref: /docs/project_plans/implementation_plans/refactors/data-platform-modularization-v1.md
 phase: 1
 title: "Storage Profile Capability Contract"
-status: "in_progress"
+status: "completed"
 started: "2026-03-28"
 completed: null
 commit_refs: ["e97f277", "0e112e8"]

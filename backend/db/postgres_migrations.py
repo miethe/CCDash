@@ -1867,6 +1867,30 @@ async def run_migrations(db: asyncpg.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_session ON session_memory_drafts(project_id, session_id, updated_at DESC)"
     )
 
+    # sessions: conversation_family_id single-column lookup
+    # Used by: sessions.py:213 WHERE conversation_family_id = ?
+    # (idx_sessions_family covers the 3-column form; this covers bare equality scans)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_conversation_family"
+        " ON sessions(conversation_family_id)"
+    )
+
+    # features: composite (project_id, status) for planning summary status-IN queries
+    # Used by: planning summary queries that filter status IN (...) within a project
+    # (idx_features_project covers project_id alone; this eliminates residual status scan)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_features_project_status"
+        " ON features(project_id, status)"
+    )
+
+    # feature_phases: composite (feature_id, status) for planning rollup status counters
+    # Used by: planning rollup status-count queries grouping phases by status per feature
+    # (idx_phases_feature covers feature_id alone; this eliminates residual status scan)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_phases_feature_status"
+        " ON feature_phases(feature_id, status)"
+    )
+
     # Seed metric types
     await db.execute(_SEED_METRIC_TYPES)
 
