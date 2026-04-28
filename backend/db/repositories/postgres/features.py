@@ -209,6 +209,15 @@ class PostgresFeatureRepository:
         row = await self.db.fetchrow("SELECT * FROM features WHERE id = $1", feature_id)
         return dict(row) if row else None
 
+    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Fetch multiple features in a single query. Returns a dict keyed by feature id."""
+        if not ids:
+            return {}
+        rows = await self.db.fetch(
+            "SELECT * FROM features WHERE id = ANY($1::text[])", ids
+        )
+        return {row["id"]: dict(row) for row in rows}
+
     async def list_all(self, project_id: str | None = None) -> list[dict]:
         if project_id:
             rows = await self.db.fetch(

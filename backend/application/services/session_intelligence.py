@@ -148,7 +148,7 @@ class SessionIntelligenceQueryService:
             include_subagents=include_subagents,
             session_id=session_id,
         )
-        items = [await self._build_rollup(ports, session_row) for session_row in sessions]
+        items = list(await asyncio.gather(*[self._build_rollup(ports, session_row) for session_row in sessions]))
         return SessionIntelligenceListResponse(
             generatedAt=_now(),
             total=len(items),
@@ -227,9 +227,12 @@ class SessionIntelligenceQueryService:
             include_subagents=include_subagents,
             session_id=session_id,
         )
+        all_drilldown = await asyncio.gather(
+            *[self._build_drilldown_items(ports, session_row, concern) for session_row in sessions]
+        )
         items: list[SessionIntelligenceDrilldownItem] = []
-        for session_row in sessions:
-            items.extend(await self._build_drilldown_items(ports, session_row, concern))
+        for drilldown_items in all_drilldown:
+            items.extend(drilldown_items)
         paged_items = items[offset : offset + limit]
         return SessionIntelligenceDrilldownResponse(
             concern=concern,

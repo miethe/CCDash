@@ -55,6 +55,12 @@ from backend.date_utils import (
 
 logger = logging.getLogger("ccdash")
 
+try:
+    from backend.observability.otel import record_parser_failure as _record_parser_failure
+except Exception:
+    def _record_parser_failure(parser: str, *, project_id: str = "unknown") -> None:  # type: ignore[misc]
+        pass
+
 # ── Status helpers ──────────────────────────────────────────────────
 
 # Ordering for "furthest progression" inference.
@@ -592,6 +598,8 @@ def _scan_impl_plans(
         try:
             text = path.read_text(encoding="utf-8")
         except Exception:
+            logger.warning("features-parser: failed to read impl-plan file %s", path)
+            _record_parser_failure("impl_plan", project_id="unknown")
             continue
 
         fm = _extract_frontmatter(text)
@@ -699,6 +707,8 @@ def _scan_prds(
         try:
             text = path.read_text(encoding="utf-8")
         except Exception:
+            logger.warning("features-parser: failed to read PRD file %s", path)
+            _record_parser_failure("prd", project_id="unknown")
             continue
 
         fm = _extract_frontmatter(text)
@@ -1037,6 +1047,8 @@ def _scan_progress_dirs(
             try:
                 text = md_file.read_text(encoding="utf-8")
             except Exception:
+                logger.warning("features-parser: failed to read progress file %s", md_file)
+                _record_parser_failure("progress", project_id="unknown")
                 continue
 
             fm = _extract_frontmatter(text)
@@ -1186,6 +1198,8 @@ def _scan_progress_dirs(
                     progress_data[slug]["prd_slug"] = str(prd_val).lower()
                     break
             except Exception:
+                logger.warning("features-parser: failed to read prd-slug from %s", md_file)
+                _record_parser_failure("progress_prd_slug", project_id="unknown")
                 continue
 
     return progress_data
@@ -1236,6 +1250,8 @@ def resolve_file_for_phase(
             if str(fm.get("phase", "all")) == phase_id:
                 return md_file
         except Exception:
+            logger.warning("features-parser: failed to read phase file %s", md_file)
+            _record_parser_failure("phase_file", project_id="unknown")
             continue
 
     return None
@@ -1285,6 +1301,8 @@ def _scan_auxiliary_docs(
             try:
                 text = path.read_text(encoding="utf-8")
             except Exception:
+                logger.warning("features-parser: failed to read document file %s", path)
+                _record_parser_failure("document_catalog", project_id="unknown")
                 continue
             fm = _extract_frontmatter(text)
             metadata = _extract_doc_metadata(path, project_root, fm, git_date_index=git_date_index, dirty_paths=dirty_paths)

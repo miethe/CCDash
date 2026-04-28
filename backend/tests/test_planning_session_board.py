@@ -153,6 +153,7 @@ class _Storage:
         self._sessions_repo = sessions_repo or types.SimpleNamespace(
             list_paginated=AsyncMock(return_value=[]),
             get_by_id=AsyncMock(return_value=None),
+            get_many_by_ids=AsyncMock(return_value={}),
         )
 
     def features(self):
@@ -459,6 +460,7 @@ class NextRunPreviewContextSelectionTests(unittest.IsolatedAsyncioTestCase):
         sessions_repo = types.SimpleNamespace(
             list_paginated=AsyncMock(return_value=[session_row]),
             get_by_id=AsyncMock(return_value=session_row),
+            get_many_by_ids=AsyncMock(return_value={"sess-abc": session_row}),
         )
         ports = _ports(features_repo=features_repo, sessions_repo=sessions_repo)
 
@@ -512,6 +514,7 @@ class NextRunPreviewContextSelectionTests(unittest.IsolatedAsyncioTestCase):
         sessions_repo = types.SimpleNamespace(
             list_paginated=AsyncMock(return_value=[]),
             get_by_id=AsyncMock(return_value=None),
+            get_many_by_ids=AsyncMock(return_value={}),
         )
         ports = _ports(features_repo=features_repo, sessions_repo=sessions_repo)
 
@@ -989,6 +992,7 @@ class NextRunPreviewEdgeCaseTests(unittest.IsolatedAsyncioTestCase):
         sessions_repo = types.SimpleNamespace(
             list_paginated=AsyncMock(return_value=[session_row]),
             get_by_id=AsyncMock(return_value=session_row),
+            get_many_by_ids=AsyncMock(return_value={"sess-old": session_row}),
         )
         ports = _ports(features_repo=features_repo, sessions_repo=sessions_repo)
 

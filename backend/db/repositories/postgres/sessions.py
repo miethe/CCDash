@@ -141,6 +141,15 @@ class PostgresSessionRepository:
             return None
         return dict(row)
 
+    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Fetch multiple sessions in a single query. Returns a dict keyed by session id."""
+        if not ids:
+            return {}
+        rows = await self.db.fetch(
+            "SELECT * FROM sessions WHERE id = ANY($1::text[])", ids
+        )
+        return {row["id"]: dict(row) for row in rows}
+
     async def list_by_source(self, source_file: str) -> list[dict]:
         rows = await self.db.fetch(
             "SELECT * FROM sessions WHERE source_file = $1",

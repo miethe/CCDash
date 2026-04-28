@@ -58,6 +58,35 @@ class SqliteEntityLinkRepository:
         async with self.db.execute(query, params) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
+    async def get_links_for_many(
+        self, entity_type: str, entity_ids: list[str]
+    ) -> dict[str, list[dict]]:
+        """Fetch entity links for many entity ids in a single query.
+
+        Returns a dict keyed by entity_id.  Entities with no links map to [].
+        """
+        if not entity_ids:
+            return {}
+        placeholders = ",".join("?" for _ in entity_ids)
+        query = (
+            f"SELECT * FROM entity_links"
+            f" WHERE (source_type = ? AND source_id IN ({placeholders}))"
+            f"    OR (target_type = ? AND target_id IN ({placeholders}))"
+        )
+        params = tuple([entity_type] + list(entity_ids) + [entity_type] + list(entity_ids))
+        async with self.db.execute(query, params) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+
+        result: dict[str, list[dict]] = {eid: [] for eid in entity_ids}
+        for row in rows:
+            if row.get("source_type") == entity_type and row.get("source_id") in result:
+                result[row["source_id"]].append(row)
+            if row.get("target_type") == entity_type and row.get("target_id") in result:
+                # Avoid double-appending if source and target are the same entity
+                if row.get("source_type") != entity_type or row.get("source_id") != row.get("target_id"):
+                    result[row["target_id"]].append(row)
+        return result
+
     async def get_tree(self, entity_type: str, entity_id: str) -> dict:
         """Get full tree: parents, children, siblings."""
         async with self.db.execute(

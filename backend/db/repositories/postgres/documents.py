@@ -362,6 +362,15 @@ class PostgresDocumentRepository:
         row = await self.db.fetchrow("SELECT * FROM documents WHERE id = $1", doc_id)
         return dict(row) if row else None
 
+    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Fetch multiple documents in a single query. Returns a dict keyed by document id."""
+        if not ids:
+            return {}
+        rows = await self.db.fetch(
+            "SELECT * FROM documents WHERE id = ANY($1::text[])", ids
+        )
+        return {row["id"]: dict(row) for row in rows}
+
     async def get_by_path(self, project_id: str, canonical_path: str) -> dict | None:
         row = await self.db.fetchrow(
             "SELECT * FROM documents WHERE project_id = $1 AND canonical_path = $2 LIMIT 1",

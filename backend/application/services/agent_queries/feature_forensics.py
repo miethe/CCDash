@@ -1,6 +1,7 @@
 """Feature-level development history and forensics service."""
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from typing import Any
 
@@ -134,13 +135,12 @@ async def _load_feature_session_rows(
     feature_id: str,
     linked_session_ids: list[str],
 ) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for session_id in linked_session_ids:
-        row = await ports.storage.sessions().get_by_id(session_id)
-        if row:
-            rows.append(row)
-    if rows:
-        return rows
+    if linked_session_ids:
+        fetched = await ports.storage.sessions().get_many_by_ids(linked_session_ids)
+        # Preserve input order and drop missing ids
+        rows: list[dict[str, Any]] = [fetched[sid] for sid in linked_session_ids if sid in fetched]
+        if rows:
+            return rows
 
     response = await SessionIntelligenceReadService().list_sessions(
         context,
@@ -162,12 +162,18 @@ async def _enrich_session_refs(
     failure_patterns: list[str] = []
     transcript_service = SessionTranscriptService()
 
-    for row in session_rows:
-        ref = _session_ref_from_row(row)
+    async def _safe_fetch_logs(row: dict[str, Any]) -> list[dict]:
         try:
-            logs = await transcript_service.list_session_logs(row, ports)
+            return await transcript_service.list_session_logs(row, ports)
         except Exception:
-            logs = []
+            return []
+
+    all_logs: list[list[dict]] = await asyncio.gather(
+        *[_safe_fetch_logs(row) for row in session_rows]
+    )
+
+    for row, logs in zip(session_rows, all_logs):
+        ref = _session_ref_from_row(row)
 
         workflow_tokens: list[str] = []
         tool_names: list[str] = []
