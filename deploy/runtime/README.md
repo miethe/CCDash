@@ -120,6 +120,19 @@ Named volumes (the default for `ccdash-local-data` and `ccdash-postgres` in `com
 
 `:Z` is a no-op on non-SELinux hosts (Debian/Ubuntu, macOS Podman machine, WSL2) and is safe to leave in place across platforms. This was not live-tested on this Phase 5 host (Darwin / no SELinux available); the syntax is documented from the Podman upstream contract.
 
+### External Postgres under `podman-compose` 1.5.0
+
+`podman-compose` 1.5.0 does not honor `depends_on.<svc>.required: false` and aborts with `KeyError: 'postgres'` when the `enterprise` profile is brought up against an externally-managed Postgres (`CCDASH_DATABASE_URL` pointing off-stack). Layer `deploy/runtime/compose.external-postgres.yaml` to strip the optional postgres dependency:
+
+```bash
+podman-compose --env-file deploy/runtime/.env \
+  -f deploy/runtime/compose.yaml \
+  -f deploy/runtime/compose.external-postgres.yaml \
+  --profile enterprise up
+```
+
+Do NOT layer this override when running with the bundled `postgres` profile — it intentionally removes the dependency edge.
+
 ### `podman-compose` build-context size
 
 `podman-compose` 1.5 streams the build context through an in-memory tar; large or polluted contexts (e.g. `data/`, `node_modules/`, `.git/`, local virtualenvs) cause `archive/tar: write too long`. The repo ships a `.dockerignore` that excludes these paths. If you fork the build context, keep the ignore list intact.

@@ -11,7 +11,8 @@ title: Smoke Validation and Rollout
 status: completed
 created: '2026-04-20'
 updated: '2026-04-27'
-commit_refs: []
+commit_refs:
+- 48bbaca
 pr_refs: []
 owners:
 - devops-architect
@@ -32,7 +33,7 @@ tasks:
       ports remapped due to host conflict
   - fix: 'Dockerfile frontend nginx pid duplicate (one-line: sed pid path + drop -g
       override)'
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-005
@@ -49,7 +50,7 @@ tasks:
   - smoke: enterprise+postgres up; api/worker/frontend/postgres all healthy
   - fix: compose.yaml bundled pg image -> pgvector/pgvector:pg17 (enterprise migrations
       require vector ext)
-  - commit: pending
+  - commit: 48bbaca
   verified_by:
   - SMOKE-005
 - id: SMOKE-003
@@ -64,7 +65,7 @@ tasks:
   - runtime_smoke: skipped:podman-compose 1.5.0 KeyError on depends_on.postgres when
       --profile postgres omitted (ignores required:false). Tested 2 invocation patterns;
       both fail. Workaround would require compose.yaml override.
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-010
@@ -81,7 +82,7 @@ tasks:
   evidence:
   - runtime_smoke: duplicate-of-SMOKE-001:Podman is the smoke runtime for the entire
       phase per orchestrator decision; runtime equivalence verified by SMOKE-001
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-001
@@ -102,7 +103,7 @@ tasks:
       keys); enterprise 44/50 (same 4 + 2 env-isolation failures from live DATABASE_URL).
       All 4-6 failures are pre-existing test/code drift unrelated to containerization.'
   - note: pytest not installed in image; used python -m unittest equivalent
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-009
@@ -120,7 +121,7 @@ tasks:
       state=ready
   - note: worker only runs in enterprise profile per Phase 3 design; SMOKE-001 local
       has no separate worker
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-005
@@ -137,7 +138,7 @@ tasks:
   - smoke: bind-mount /Users/miethe/ccdash-smoke-sessions:/host-sessions:Z under user
       1000:1000; sample.jsonl readable; json.loads parses cleanly
   - note: /tmp not visible in podman machine VM; used /Users/miethe path
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-005
@@ -154,7 +155,7 @@ tasks:
   - smoke: CCDASH_DB_BACKEND=sqlite + CCDASH_STORAGE_PROFILE=enterprise fails fast
       with pydantic ValidationError 'enterprise storage profile requires CCDASH_DB_BACKEND=postgres'
       from StorageProfileConfig
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-005
@@ -173,7 +174,7 @@ tasks:
   - note: frontend overage primarily nginx:1.27-alpine base; html dist is 13.8MB.
       Reducing requires base swap (e.g. distroless nginx) — out of scope for one-line
       fix. Logged as Phase 7 advisory.
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-010
@@ -194,7 +195,7 @@ tasks:
       2) CCDASH_API_UPSTREAM doc says http://backend:8000 but actual default http://api:8000
       (api is the alias). 3) Enterprise quickstart omits CCDASH_WORKER_PROJECT_ID
       requirement; only mentioned in troubleshooting.
-  - commit: pending
+  - commit: 48bbaca
   - note: verified-by-update
   verified_by:
   - SMOKE-009

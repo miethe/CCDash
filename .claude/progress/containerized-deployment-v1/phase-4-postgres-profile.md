@@ -11,7 +11,8 @@ title: Postgres Profile Wiring
 status: completed
 created: '2026-04-20'
 updated: '2026-04-27'
-commit_refs: []
+commit_refs:
+- 48bbaca
 pr_refs: []
 owners:
 - devops-architect
@@ -28,7 +29,7 @@ tasks:
   started: '2026-04-27T20:15:00Z'
   completed: '2026-04-27T20:19:00Z'
   evidence:
-  - commit: pending
+  - commit: 48bbaca
   - smoke: postgres:17-alpine service with ccdash-postgres named volume + pg_isready
       healthcheck wired; podman-compose config validates
   - verified-by: self-smoke
@@ -46,7 +47,7 @@ tasks:
   started: '2026-04-27T20:19:00Z'
   completed: '2026-04-27T20:20:00Z'
   evidence:
-  - commit: pending
+  - commit: 48bbaca
   - smoke: depends_on chain verified - api->postgres(healthy), worker->api(healthy)+postgres(healthy)
       under enterprise+postgres profiles
   - verified-by: self-smoke
@@ -64,7 +65,7 @@ tasks:
   started: '2026-04-27T20:20:00Z'
   completed: '2026-04-27T20:28:00Z'
   evidence:
-  - commit: pending
+  - commit: 48bbaca
   - smoke: podman-compose --profile postgres up -d -> ccdash_postgres_1 healthy <5s;
       pg_isready 'accepting connections'; volume ccdash_ccdash-postgres created; teardown
       via down -v clean

@@ -11,7 +11,8 @@ title: Rootless Podman Compatibility
 status: completed
 created: '2026-04-20'
 updated: '2026-04-27'
-commit_refs: []
+commit_refs:
+- 48bbaca
 pr_refs: []
 owners:
 - devops-architect
@@ -30,7 +31,7 @@ tasks:
   - backend_id: uid=1000(ccdash)
   - frontend_id: uid=101(nginx)
   - podman_machine_memory: bumped_2GiB_to_4GiB_for_vite_build_OOM
-  - commit: pending
+  - commit: 48bbaca
   started: 2026-04-27T20:30Z
   completed: 2026-04-27T20:45Z
   verified_by:
@@ -49,7 +50,7 @@ tasks:
   - projects_json_perm_fix: RUN_chown_ccdash_app_in_Dockerfile
   - health_endpoint: HTTP_200_on_/api/health/ready
   - deltas_observed: OCI_HEALTHCHECK_warning,podman_compose_tar_size_required_dockerignore,podman_machine_memory_default_2GiB_OOM
-  - commit: pending
+  - commit: 48bbaca
   started: 2026-04-27T20:30Z
   completed: 2026-04-27T20:45Z
   verified_by:
@@ -65,7 +66,7 @@ tasks:
   evidence:
   - selinux_Z_label: documented_in_deploy/runtime/README.md_Rootless_Podman_Notes
   - runtime_smoke: skipped:SELinux unavailable on macOS host
-  - commit: pending
+  - commit: 48bbaca
   started: 2026-04-27T20:30Z
   completed: 2026-04-27T20:45Z
   verified_by:
@@ -82,7 +83,7 @@ tasks:
   - config_enterprise: valid_services=api,worker,frontend
   - config_postgres: valid_services=postgres
   - depends_on_condition_service_healthy: accepted_by_podman_compose_1.5.0
-  - commit: pending
+  - commit: 48bbaca
   started: 2026-04-27T20:30Z
   completed: 2026-04-27T20:45Z
   verified_by:

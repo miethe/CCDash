@@ -169,7 +169,8 @@ Common variables for container profiles:
 | `CCDASH_DB_BACKEND` | All | `sqlite` or `postgres` |
 | `CCDASH_DATABASE_URL` | enterprise/postgres | Postgres connection URL (required for enterprise) |
 | `CCDASH_FRONTEND_PORT` | All | Frontend port (default 3000) |
-| `CCDASH_API_UPSTREAM` | frontend | Backend upstream for nginx reverse-proxy (default `http://backend:8000`) |
+| `CCDASH_API_UPSTREAM` | frontend | Backend upstream for nginx reverse-proxy (default `http://api:8000`) |
+| `CCDASH_WORKER_PROJECT_ID` | enterprise (worker) | Project ID the worker binds to on startup; required for worker container readiness. Default in compose.yaml is `smoke-stack`. |
 | `POSTGRES_USER` | postgres profile | Bundled Postgres username (default `ccdash`) |
 | `POSTGRES_PASSWORD` | postgres profile | Bundled Postgres password (default `ccdash-dev-password`) |
 | `POSTGRES_DB` | postgres profile | Bundled database name (default `ccdash`) |

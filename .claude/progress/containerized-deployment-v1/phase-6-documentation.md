@@ -11,7 +11,8 @@ title: Documentation Finalization
 status: completed
 created: '2026-04-20'
 updated: '2026-04-27'
-commit_refs: []
+commit_refs:
+- c233b8d
 pr_refs: []
 owners:
 - documentation-writer

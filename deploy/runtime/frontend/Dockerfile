@@ -11,7 +11,7 @@ RUN npm ci
 COPY . .
 RUN npm run build:frontend:static
 
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.27-alpine-slim AS runtime
 
 ENV CCDASH_FRONTEND_PORT=3000 \
     CCDASH_API_UPSTREAM=http://api:8000
