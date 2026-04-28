@@ -3092,7 +3092,7 @@ export const ProjectBoardFeatureModal = ({
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id)}
                 className={`inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${activeTab === tab.id
                   ? 'bg-panel text-panel-foreground shadow-sm'
                   : 'text-muted-foreground hover:bg-hover/70 hover:text-foreground'
@@ -5257,7 +5257,7 @@ export const ProjectBoard: React.FC = () => {
                   ].map(s => (
                     <button
                       key={s.key}
-                      onClick={() => setDraftSortBy(s.key as any)}
+                      onClick={() => setDraftSortBy(s.key as "date" | "progress" | "tasks")}
                       className={`py-1.5 px-3 text-xs rounded border text-left transition-colors ${draftSortBy === s.key ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-panel border-panel-border text-muted-foreground'}`}
                     >
                       {s.label}

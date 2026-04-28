@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentSession,
   AlertConfig,
@@ -413,33 +413,55 @@ export const AppEntityDataProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [client, upsertFeatureInState]);
 
+  const contextValue = useMemo(() => ({
+    sessions,
+    sessionTotal,
+    sessionFilters,
+    setSessionFilters,
+    documents,
+    tasks,
+    alerts,
+    notifications,
+    features,
+    refreshSessions,
+    loadMoreSessions,
+    documentsTruncated,
+    loadMoreDocuments,
+    refreshDocuments,
+    refreshTasks,
+    refreshAlerts,
+    refreshNotifications,
+    refreshFeatures,
+    updateFeatureStatus,
+    updatePhaseStatus,
+    updateTaskStatus,
+    getSessionById,
+  }), [
+    sessions,
+    sessionTotal,
+    sessionFilters,
+    documents,
+    tasks,
+    alerts,
+    notifications,
+    features,
+    documentsTruncated,
+    refreshSessions,
+    loadMoreSessions,
+    loadMoreDocuments,
+    refreshDocuments,
+    refreshTasks,
+    refreshAlerts,
+    refreshNotifications,
+    refreshFeatures,
+    updateFeatureStatus,
+    updatePhaseStatus,
+    updateTaskStatus,
+    getSessionById,
+  ]);
+
   return (
-    <AppEntityDataContext.Provider
-      value={{
-        sessions,
-        sessionTotal,
-        sessionFilters,
-        setSessionFilters,
-        documents,
-        tasks,
-        alerts,
-        notifications,
-        features,
-        refreshSessions,
-        loadMoreSessions,
-        documentsTruncated,
-        loadMoreDocuments,
-        refreshDocuments,
-        refreshTasks,
-        refreshAlerts,
-        refreshNotifications,
-        refreshFeatures,
-        updateFeatureStatus,
-        updatePhaseStatus,
-        updateTaskStatus,
-        getSessionById,
-      }}
-    >
+    <AppEntityDataContext.Provider value={contextValue}>
       {children}
     </AppEntityDataContext.Provider>
   );

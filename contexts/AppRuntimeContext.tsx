@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeRuntimeStatus, type RuntimeStatus } from '../services/runtimeProfile';
 import {
   isFeatureLiveUpdatesEnabled,
@@ -267,18 +267,18 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     void refreshAllRef.current();
   }, []);
 
+  const contextValue = useMemo(() => ({
+    loading,
+    error,
+    runtimeStatus,
+    refreshAll,
+    featureSurfaceV2Active,
+    runtimeUnreachable,
+    retryRuntime,
+  }), [loading, error, runtimeStatus, refreshAll, featureSurfaceV2Active, runtimeUnreachable, retryRuntime]);
+
   return (
-    <AppRuntimeContext.Provider
-      value={{
-        loading,
-        error,
-        runtimeStatus,
-        refreshAll,
-        featureSurfaceV2Active,
-        runtimeUnreachable,
-        retryRuntime,
-      }}
-    >
+    <AppRuntimeContext.Provider value={contextValue}>
       {children}
     </AppRuntimeContext.Provider>
   );

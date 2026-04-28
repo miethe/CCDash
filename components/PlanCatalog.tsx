@@ -610,7 +610,7 @@ export const PlanCatalog: React.FC = () => {
                                     <label className="text-[10px] text-slate-500 uppercase tracking-wider">FM</label>
                                     <select
                                         value={draftFrontmatterFilter}
-                                        onChange={(e) => setDraftFrontmatterFilter(e.target.value as any)}
+                                        onChange={(e) => setDraftFrontmatterFilter(e.target.value as "all" | "with" | "without")}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
                                     >
                                         <option value="all">All</option>
@@ -773,8 +773,9 @@ export const PlanCatalog: React.FC = () => {
                                 ...(doc.blockedBy || []),
                                 ...(primaryFeature?.dependencyState?.blockingFeatureIds || []),
                             ].map(value => String(value || '').trim()).filter(Boolean)));
+                            const handleSelectDoc = () => setSelectedDoc(doc);
                             return (
-                                <div key={doc.id} onClick={() => setSelectedDoc(doc)} className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-indigo-500/50 transition-all cursor-pointer group hover:shadow-lg">
+                                <div key={doc.id} onClick={handleSelectDoc} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSelectDoc(); } }} role="button" tabIndex={0} className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-indigo-500/50 transition-all cursor-pointer group hover:shadow-lg">
                                     {linkedFeatures.length > 0 && (
                                         <div className="mb-3 flex flex-wrap gap-1.5">
                                             {linkedFeatures.slice(0, 2).map(linkedFeature => {
@@ -928,8 +929,9 @@ export const PlanCatalog: React.FC = () => {
                                 const primaryFeature = linkedFeature?.feature;
                                 const executionGateState = primaryFeature?.executionGate?.state;
                                 const familyPosition = primaryFeature?.familyPosition || primaryFeature?.executionGate?.familyPosition || null;
+                                const handleSelectDoc = () => setSelectedDoc(doc);
                                 return (
-                                    <div key={doc.id} onClick={() => setSelectedDoc(doc)} className="grid grid-cols-16 gap-3 p-4 border-b border-slate-800 hover:bg-slate-800/30 cursor-pointer transition-colors items-center text-sm">
+                                    <div key={doc.id} onClick={handleSelectDoc} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSelectDoc(); } }} role="button" tabIndex={0} className="grid grid-cols-16 gap-3 p-4 border-b border-slate-800 hover:bg-slate-800/30 cursor-pointer transition-colors items-center text-sm">
                                         <div className="col-span-4 font-semibold text-slate-200 flex items-center gap-2 min-w-0">
                                             <FileText size={16} className="text-indigo-400" /> {doc.title}
                                         </div>
