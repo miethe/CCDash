@@ -6,9 +6,9 @@ description: Address remaining tech-debt and perf gaps surfaced by the 2026-04-2
   deep code-health pass that exceed the safe-to-implement scope of that pass.
   Bundle-split, mega-file split, router raw-SQL refactor, backend SELECT LIMIT,
   features.py JSON-extract → indexed columns, runtime_smoke skip resolution.
-status: draft
+status: in-progress
 created: '2026-04-28'
-updated: '2026-04-28'
+updated: '2026-04-29'
 feature_slug: code-health-cleanup-v1
 feature_version: v1
 prd_ref: null
