@@ -136,11 +136,11 @@ const personas = [
 ];
 
 const docsLinks = [
-  { title: 'Quickstart', body: 'Install dependencies and run the full local stack.', href: repoUrl('docs/guides/setup.md'), icon: Play },
-  { title: 'Operator Guides', body: 'Execution, telemetry, planning, and session intelligence guides.', href: repoUrl('docs/README.md'), icon: BookOpen },
-  { title: 'CLI', body: 'Use CCDash from scripts, terminals, and automation.', href: repoUrl('docs/guides/standalone-cli-guide.md'), icon: Terminal },
-  { title: 'MCP/API', body: 'Query project status, forensics, workflow diagnostics, and AARs.', href: repoUrl('docs/guides/agent-query-surfaces-guide.md'), icon: Code2 },
-  { title: 'Architecture', body: 'Understand data domains, runtime profiles, and integrations.', href: repoUrl('docs/guides/data-domain-ownership-matrix.md'), icon: Layers3 },
+  { title: 'Quickstart', body: 'Install dependencies and run the full local stack.', to: '/docs', icon: Play },
+  { title: 'Operator Guides', body: 'Execution, telemetry, planning, and session intelligence guides.', to: '/docs', icon: BookOpen },
+  { title: 'CLI', body: 'Use CCDash from scripts, terminals, and automation.', to: '/docs', icon: Terminal },
+  { title: 'MCP/API', body: 'Query project status, forensics, workflow diagnostics, and AARs.', to: '/docs', icon: Code2 },
+  { title: 'Architecture', body: 'Understand data domains, runtime profiles, and integrations.', to: '/docs', icon: Layers3 },
 ];
 
 const intelligenceCards: Array<{ title: string; body: string; icon: LucideIcon }> = [
@@ -340,13 +340,13 @@ export const LandingPage: React.FC = () => {
                   Open dashboard
                   <ArrowRight className="h-4 w-4" />
                 </Link>
-                <a
-                  href={repoUrl('docs/README.md')}
+                <Link
+                  to="/docs"
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/5 px-5 text-sm font-semibold text-white transition hover:border-cyan-300/60 hover:bg-white/10"
                 >
                   Read docs
                   <BookOpen className="h-4 w-4" />
-                </a>
+                </Link>
               </div>
               <div className="mt-9 grid gap-3 sm:grid-cols-2">
                 {proofPoints.map((point) => (
@@ -575,14 +575,14 @@ export const LandingPage: React.FC = () => {
           </div>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
             {docsLinks.map((item) => (
-              <a key={item.title} href={item.href} className="group rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-cyan-300 hover:shadow-lg hover:shadow-cyan-100/50">
+              <Link key={item.title} to={item.to} className="group rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-cyan-300 hover:shadow-lg hover:shadow-cyan-100/50">
                 <item.icon className="mb-5 h-6 w-6 text-cyan-700" />
                 <h3 className="flex items-center justify-between gap-3 text-lg font-semibold text-slate-950">
                   {item.title}
                   <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-cyan-700" />
                 </h3>
                 <p className="mt-3 text-sm leading-6 text-slate-600">{item.body}</p>
-              </a>
+              </Link>
             ))}
           </div>
         </div>

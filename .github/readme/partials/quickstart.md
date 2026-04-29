@@ -36,6 +36,7 @@
 | `npm run dev:worker` | Background worker only (sync + scheduled jobs, no HTTP) |
 | `npm run discover:sessions` | Run session signal discovery (default profile: `claude_code`) |
 | `npm run build` | Build frontend assets for production |
+| `npm run build:docs` | Build the static GitHub Pages artifact with `/CCDash/` base path |
 | `npm run start:backend` | Production-style backend startup |
 | `npm run start:worker` | Production-style background worker startup |
 | `npm run start:frontend` | Serve built frontend (`vite preview`) |
@@ -95,4 +96,25 @@
 
 Copy `.env.example` to `.env` for local overrides. All variables are prefixed `CCDASH_*`.
 
-For full setup, troubleshooting, and deployment guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).
+### CLI, API, and MCP
+
+The same operator queries are available through REST, CLI, and MCP:
+
+| Capability | REST | CLI | MCP |
+|-----------|------|-----|-----|
+| Project status | `GET /api/agent/project-status` | `ccdash status project` | `ccdash_project_status` |
+| Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash report feature <feature_id>` | `ccdash_feature_forensics` |
+| Workflow diagnostics | `GET /api/agent/workflow-diagnostics` | `ccdash workflow failures` | `ccdash_workflow_failure_patterns` |
+| After-action report | `POST /api/agent/reports/aar` | `ccdash report aar --feature <feature_id>` | `ccdash_generate_aar` |
+
+See [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md), [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md), and [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md).
+
+### Deployment Modes
+
+| Mode | Command | Guide |
+|------|---------|-------|
+| Local container | `npm run docker:local:up` | [`docs/guides/containerized-deployment-quickstart.md`](docs/guides/containerized-deployment-quickstart.md) |
+| Enterprise split API/worker/frontend | `npm run docker:enterprise:up` | [`deploy/runtime/README.md`](deploy/runtime/README.md) |
+| Enterprise with bundled Postgres | `npm run docker:postgres:up` | [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md) |
+
+For full setup, troubleshooting, and deployment guidance, see [`docs/guides/setup.md`](docs/guides/setup.md), [`docs/guides/runtime-storage-and-performance-quickstart.md`](docs/guides/runtime-storage-and-performance-quickstart.md), and [`docs/README.md`](docs/README.md).

@@ -18,8 +18,8 @@
         },
         {
           "id": "dark-theme",
-          "name": "Slate Dark Mode",
-          "description": "Deep dark theme optimized for extended engineering sessions",
+          "name": "Theme Modes",
+          "description": "Persisted dark, light, and system preferences with first-paint resolution and browser-chrome alignment",
           "highlight": false
         }
       ]
@@ -95,6 +95,18 @@
           "highlight": true
         },
         {
+          "id": "append-first-transcript-live-updates",
+          "name": "Append-First Transcript Live Updates",
+          "description": "Safe active-session deltas merge in place, with coarse invalidation and targeted REST recovery as fallback",
+          "highlight": false
+        },
+        {
+          "id": "shared-content-viewer-session",
+          "name": "Shared Content Viewer",
+          "description": "Long-form prompts, markdown-like detail payloads, and raw file-backed session rows open in the standardized viewer shell",
+          "highlight": false
+        },
+        {
           "id": "forensics-payload",
           "name": "Deep Forensics",
           "description": "Queue pressure, resource footprint, subagent topology, and hook signals",
@@ -155,6 +167,12 @@
           "highlight": true
         },
         {
+          "id": "dependency-aware-execution",
+          "name": "Dependency-Aware Execution",
+          "description": "Feature modals surface blocked-by chips, execution-gate summaries, family position, and family-sequence order",
+          "highlight": false
+        },
+        {
           "id": "kanban-list-views",
           "name": "Kanban & List Views",
           "description": "Toggle between visual Kanban board and sortable list for different workflows",
@@ -188,6 +206,42 @@
           "id": "deferred-tracking",
           "name": "Deferred Task Tracking",
           "description": "Features with terminal-complete deferred steps land in Done with caveat badge",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "planning-control-plane",
+      "name": "Planning Control Plane",
+      "items": [
+        {
+          "id": "planning-home",
+          "name": "Planning Home",
+          "description": "Hero stats, metrics strip, artifact chips, and the planning corpus overview",
+          "highlight": true
+        },
+        {
+          "id": "planning-graph",
+          "name": "Planning Graph",
+          "description": "Lane-based graph with DocChips, totals cells, and dependency-aware execution context",
+          "highlight": true
+        },
+        {
+          "id": "triage-inbox",
+          "name": "Triage Inbox",
+          "description": "Blocked, mismatch, stale, and ready-to-promote tabs for fast cleanup",
+          "highlight": false
+        },
+        {
+          "id": "live-agent-roster",
+          "name": "Live Agent Roster",
+          "description": "Running and idle agents with state dots and live task context",
+          "highlight": false
+        },
+        {
+          "id": "feature-drawer",
+          "name": "Feature Drawer",
+          "description": "Lineage strip, SPIKE tiles, inline OQ resolution, dependency DAG, and execution actions",
           "highlight": false
         }
       ]
@@ -236,6 +290,18 @@
           "id": "document-modal",
           "name": "Document Modal",
           "description": "Tabbed modal with Summary, Delivery, Relationships, Content, and Timeline views",
+          "highlight": false
+        },
+        {
+          "id": "dependency-aware-document-views",
+          "name": "Dependency-Aware Document Views",
+          "description": "Plan cards and the document modal surface family lineage, sequence order, blocked-by links, and board navigation",
+          "highlight": false
+        },
+        {
+          "id": "shared-viewer-rendering",
+          "name": "Shared Viewer Rendering",
+          "description": "Documents, plans, reports, and task sources share one formatted content shell with frontmatter-aware markdown rendering",
           "highlight": false
         },
         {
@@ -293,6 +359,12 @@
           "highlight": false
         },
         {
+          "id": "telemetry-exporter",
+          "name": "Telemetry Exporter",
+          "description": "Worker-side outbound queue, SAM push controls, queue-depth visibility, and disabled-state monitoring",
+          "highlight": false
+        },
+        {
           "id": "ai-pricing-catalog",
           "name": "AI Pricing Catalog",
           "description": "Global platform pricing with provider sync, exact-model rows, and manual overrides",
@@ -315,6 +387,12 @@
           "name": "Recommended Stack",
           "description": "Confidence-scored workflow suggestions based on historical outcomes and SkillMeat definitions",
           "highlight": true
+        },
+        {
+          "id": "dependency-aware-review",
+          "name": "Dependency-Aware Review",
+          "description": "The workbench shows execution gates, family position, blocked-by evidence, and navigation back to board, plans, sessions, and analytics",
+          "highlight": false
         },
         {
           "id": "run-launch-ux",
@@ -392,6 +470,18 @@
           "id": "stack-extraction",
           "name": "Observed Stack Extraction",
           "description": "Backfills historical sessions into stack observations against cached SkillMeat definitions",
+          "highlight": false
+        },
+        {
+          "id": "canonical-transcript-intelligence",
+          "name": "Canonical Transcript Intelligence",
+          "description": "Local SQLite stays cache-oriented while enterprise Postgres acts as the canonical transcript-intelligence store",
+          "highlight": false
+        },
+        {
+          "id": "approval-gated-memory-drafts",
+          "name": "Approval-Gated Memory Drafts",
+          "description": "CCDash can draft SkillMeat memory candidates from session intelligence, while publication remains operator-approved",
           "highlight": false
         },
         {

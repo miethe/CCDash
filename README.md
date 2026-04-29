@@ -6,6 +6,8 @@ Where Kanban meets session logs. Where token costs meet delivery velocity.
 
 <!-- badges placeholder -->
 
+Docs: [Documentation home](docs/README.md)
+
 ### Why CCDash
 
 - **Agent-First Traceability**: Every task, commit, and document change is traceable back to specific Agent Sessions.
@@ -26,12 +28,21 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 | Surface | Route | What You'll See |
 |---------|-------|----------------|
-| Dashboard | `/` | KPI cards, cost/velocity chart, model usage breakdown, and AI-generated project health summary |
-| Session Inspector | `/sessions` | 3-pane transcript with tool call expansion, forensics payload, and session analytics |
+| Landing | `/` | Product overview, docs entrypoint, and public release positioning |
+| Dashboard | `/dashboard` | KPI cards, cost/velocity chart, model usage breakdown, and AI-generated project health summary |
+| Planning Control Plane | `/planning` | Planning summary, triage inbox, graph view, and feature drill-down surfaces |
 | Feature Board | `/board` | Kanban columns grouped by stage with drill-down modals showing phases, tasks, and linked docs |
 | Execution Workbench | `/execution` | Recommended stack card, pre-run review modal, safety pipeline, and streaming run output |
+| Testing | `/tests` | Test ingestion, health, integrity, and feature/test correlation surfaces |
+| Documents | `/plans` | Documentation catalog with document modal, local editing, and GitHub write-back support |
+| Docs | `/docs` | Curated public docs site rendered from repo Markdown |
+| Session Inspector | `/sessions` | 3-pane transcript with tool call expansion, forensics payload, and session analytics |
+| Codebase Explorer | `/codebase` | File tree, activity correlation, and feature/session references |
+| Session Mappings | `/session-mappings` | Mapping integrity and semantic correlation controls |
+| Operations | `/ops` | Sync, cache, telemetry, and runtime maintenance controls |
+| Analytics | `/analytics` | Workflow intelligence, session intelligence, and alert/notification surfaces |
 | Workflow Registry | `/workflows` | Searchable catalog with effectiveness scores, composition summary, and issue cards |
-| Analytics — Workflow Intelligence | `/analytics?tab=workflow_intelligence` | Workflow leaderboard with failure-pattern clustering and attribution signals |
+| Settings | `/settings` | Project paths, integrations, alert rules, pricing, and runtime configuration |
 
 > Screenshots are being captured. Run `npm run dev` to explore these surfaces live.
 
@@ -39,13 +50,13 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 ## Features
 
-60+ capabilities across 12 categories.
+73 capabilities across 13 categories.
 
 ### Global Navigation & Layout
 
 - **Collapsible Sidebar**: Fluid-transition sidebar with icon-only mode to maximize workspace
 - Notification Badges: System alerts for cost overruns, quality drops, and threshold breaches
-- Theme Modes: Persisted `dark`, `light`, and `system` preferences with first-paint resolution and browser-chrome alignment
+- Theme Modes: Persisted dark, light, and system preferences with first-paint resolution and browser-chrome alignment
 
 ### Dashboard & Analytics
 
@@ -71,13 +82,12 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - Test Status: Track modified test files and run telemetry including framework, status, and timing
 - File Activity: Per-file action chips, touch counts, net diff, and session history in one table
 - Agent Cards: Card view of participating agents with click-to-filter transcript navigation
-- Session transcript live updates use append-first delivery for safe growth and refetch on ambiguous updates or gaps.
 
 ### Feature Board
 
 - **Feature-Centric Board**: Kanban and list views grouping work by feature stage with drill-down modals
 - **Document-First Discovery**: Cross-references PRDs, implementation plans, and progress files automatically
-- Dependency-Aware Execution: Feature modals now surface blocked-by chips, execution-gate summaries, family position, and family-sequence order
+- Dependency-Aware Execution: Feature modals surface blocked-by chips, execution-gate summaries, family position, and family-sequence order
 - Kanban & List Views: Toggle between visual Kanban board and sortable list for different workflows
 - Drill-Down Modal: Overview, phases accordion, documents tab, and session summaries per feature
 - Phase & Task Tracking: Accordion phase view with real-time task checklist and deferred caveat indicators
@@ -87,12 +97,11 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 ### Planning Control Plane
 
-- Planning Home: hero stats, metrics strip, artifact chips, and the planning corpus overview
-- Planning Graph: lane-based graph with DocChips, totals cells, and dependency-aware execution context
-- Triage Inbox: blocked, mismatch, stale, and ready-to-promote tabs for fast cleanup
-- Live Agent Roster: running and idle agents with state dots and live task context
-- Feature Drawer: lineage strip, SPIKE tiles, inline OQ resolution, dependency DAG, and exec buttons
-- Planning docs: see [`docs/guides/planning-control-plane-guide.md`](docs/guides/planning-control-plane-guide.md) and the Phase 10 design specs in [`docs/project_plans/design-specs/`](docs/project_plans/design-specs/)
+- **Planning Home**: Hero stats, metrics strip, artifact chips, and the planning corpus overview
+- **Planning Graph**: Lane-based graph with DocChips, totals cells, and dependency-aware execution context
+- Triage Inbox: Blocked, mismatch, stale, and ready-to-promote tabs for fast cleanup
+- Live Agent Roster: Running and idle agents with state dots and live task context
+- Feature Drawer: Lineage strip, SPIKE tiles, inline OQ resolution, dependency DAG, and execution actions
 
 ### Project Management
 
@@ -105,8 +114,8 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - **Card Grid View**: Visual overview of PRDs, RFCs, and architecture docs in scannable card format
 - Folder Explorer: 3-pane IDE-style file explorer for navigating documentation hierarchies
 - Document Modal: Tabbed modal with Summary, Delivery, Relationships, Content, and Timeline views
-- Dependency-Aware Document Views: plan cards and the document modal surface family lineage, sequence order, blocked-by links, and board-navigation affordances
-- Shared Viewer Rendering: Documents, plans, reports, and task sources share the same formatted content shell with frontmatter-aware markdown rendering
+- Dependency-Aware Document Views: Plan cards and the document modal surface family lineage, sequence order, blocked-by links, and board navigation
+- Shared Viewer Rendering: Documents, plans, reports, and task sources share one formatted content shell with frontmatter-aware markdown rendering
 - Inline Document Editing: Edit plan documents in-modal with local save and GitHub write-back support
 
 ### Codebase Explorer
@@ -120,14 +129,14 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - **Alert Rules Engine**: Persisted threshold-based alerts with activate/deactivate toggle controls
 - Projects Tab: Per-project path editors, typed source selection, and testing configuration
 - Integrations Tab: SkillMeat and GitHub sub-tabs for token validation and workspace controls
-- Telemetry Exporter: Worker-side outbound queue, SAM push controls, queue-depth visibility, and disabled-state monitoring. See the operator guides for [setup and usage](docs/guides/telemetry-exporter-guide.md) and [troubleshooting](docs/guides/telemetry-exporter-troubleshooting.md).
+- Telemetry Exporter: Worker-side outbound queue, SAM push controls, queue-depth visibility, and disabled-state monitoring
 - AI Pricing Catalog: Global platform pricing with provider sync, exact-model rows, and manual overrides
 
 ### Execution Workbench
 
 - **Execution Workbench**: Feature-scoped execution with safety pipeline, env profiles, and run history
 - **Recommended Stack**: Confidence-scored workflow suggestions based on historical outcomes and SkillMeat definitions
-- Dependency-Aware Review: The workbench overview now shows execution gates, family position, blocked-by evidence, and direct navigation back to board/plans/sessions/analytics
+- Dependency-Aware Review: The workbench shows execution gates, family position, blocked-by evidence, and navigation back to board, plans, sessions, and analytics
 - Run Launch UX: Pre-run review modal with editable command, working directory, and env profile selection
 - Safety Pipeline: Allow, approval-required, and deny command policies for auditable run lifecycles
 - Run History & Output: Streamed terminal output with run history, active run metadata, cancel, and retry
@@ -145,8 +154,8 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 - **SkillMeat Sync**: Read-only cache for artifact, workflow, context-module, and bundle definitions
 - Observed Stack Extraction: Backfills historical sessions into stack observations against cached SkillMeat definitions
-- Canonical Transcript Intelligence: Complete for the `session-intelligence-canonical-storage-v1` rollout, with `local` SQLite staying cache-oriented and `enterprise` Postgres acting as the canonical transcript-intelligence store
-- Approval-Gated Memory Drafts: CCDash can draft SkillMeat memory candidates from session intelligence, but publication remains operator-approved rather than automatic
+- Canonical Transcript Intelligence: Local SQLite stays cache-oriented while enterprise Postgres acts as the canonical transcript-intelligence store
+- Approval-Gated Memory Drafts: CCDash can draft SkillMeat memory candidates from session intelligence, while publication remains operator-approved
 - Operator Tooling: CLI script to sync definitions, backfill observations, and recompute workflow rollups
 
 ### Platform Support
@@ -184,71 +193,6 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
    Frontend runs on `http://localhost:3000`; backend API on `http://localhost:8000`. Vite proxies `/api` requests automatically.
 
-### Agent Query Surfaces
-
-Phase 3/4 adds a transport-neutral query layer in `backend/application/services/agent_queries/`. The same four intelligence queries are exposed through REST, CLI, and MCP so agents and operators can choose the transport that fits their workflow.
-
-| Capability | REST | CLI | MCP |
-|-----------|------|-----|-----|
-| Project status | `GET /api/agent/project-status` | `ccdash status project` | `ccdash_project_status` |
-| Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash report feature <feature_id>` | `ccdash_feature_forensics` |
-| Workflow diagnostics | `GET /api/agent/workflow-diagnostics` | `ccdash workflow failures` | `ccdash_workflow_failure_patterns` |
-| After-action report | `POST /api/agent/reports/aar` | `ccdash report aar --feature <feature_id>` | `ccdash_generate_aar` |
-
-REST returns the shared DTOs directly, CLI renders the same data as human/json/markdown, and MCP wraps results in a `status` + `data` + `meta` envelope.
-
-### CLI
-
-CCDash provides two CLI entry points:
-
-**Standalone CLI** (recommended for operators): Install globally with `pipx install ccdash-cli` once the package is published to PyPI, and use from any terminal. For pre-publish local validation, install `./packages/ccdash_contracts` and `./packages/ccdash_cli` into a fresh virtual environment. Talks to a running CCDash server over HTTP. See [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md).
-
-```bash
-ccdash --version
-ccdash target show
-ccdash status project
-ccdash feature list --status active
-ccdash session search "authentication" --json
-ccdash report aar --feature FEAT-123
-ccdash target add staging https://ccdash-staging.example.com
-```
-
-**Repo-local CLI** (for development): Installed via `npm run setup` in `backend/.venv`. Directly imports backend runtime. See [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md).
-
-```bash
-backend/.venv/bin/ccdash --help
-backend/.venv/bin/ccdash status project
-backend/.venv/bin/ccdash feature report FEAT-123 --json
-```
-
-For migrating from the repo-local CLI, see [`docs/guides/cli-migration-guide.md`](docs/guides/cli-migration-guide.md).
-
-Each command supports `--output human|json|markdown`, plus `--json` and `--md` shortcuts.
-
-### REST API
-
-The HTTP transport lives under `backend/routers/agent.py`:
-
-```bash
-curl http://localhost:8000/api/agent/project-status
-curl http://localhost:8000/api/agent/feature-forensics/FEAT-123
-curl http://localhost:8000/api/agent/workflow-diagnostics?feature_id=FEAT-123
-curl -X POST http://localhost:8000/api/agent/reports/aar \
-  -H 'Content-Type: application/json' \
-  -d '{"feature_id":"FEAT-123"}'
-```
-
-### MCP Server
-
-The repo ships a workspace `.mcp.json` that launches the stdio server with `python -m backend.mcp.server` from the repo root. That path boots the same transport-neutral query services without requiring the HTTP server to be in the request path.
-
-```bash
-python -m backend.mcp.server
-backend/.venv/bin/python -m unittest backend.tests.test_mcp_server
-```
-
-Running `python -m backend.mcp.server` directly starts a stdio MCP process and waits for a client connection. For end-user setup and client configuration, see [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md). For failure cases, see [`docs/guides/mcp-troubleshooting.md`](docs/guides/mcp-troubleshooting.md).
-
 ### Available Scripts
 
 | Script | Description |
@@ -259,6 +203,7 @@ Running `python -m backend.mcp.server` directly starts a stdio MCP process and w
 | `npm run dev:worker` | Background worker only (sync + scheduled jobs, no HTTP) |
 | `npm run discover:sessions` | Run session signal discovery (default profile: `claude_code`) |
 | `npm run build` | Build frontend assets for production |
+| `npm run build:docs` | Build the static GitHub Pages artifact with `/CCDash/` base path |
 | `npm run start:backend` | Production-style backend startup |
 | `npm run start:worker` | Production-style background worker startup |
 | `npm run start:frontend` | Serve built frontend (`vite preview`) |
@@ -286,16 +231,6 @@ Running `python -m backend.mcp.server` directly starts a stdio MCP process and w
 | `CCDASH_DB_BACKEND` | `sqlite` | Database backend (`sqlite` or `postgres`) |
 | `CCDASH_DATABASE_URL` | — | PostgreSQL connection URL (required when using `postgres`) |
 
-#### Storage Profiles
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CCDASH_STORAGE_PROFILE` | `local` | Operator-facing storage selector (`local` or `enterprise`) |
-| `CCDASH_STORAGE_SHARED_POSTGRES` | `false` | Enables the shared-enterprise Postgres posture |
-| `CCDASH_STORAGE_ISOLATION_MODE` | `dedicated` | Isolation contract (`dedicated`, `schema`, or `tenant`) |
-| `CCDASH_STORAGE_SCHEMA` | — | Required schema name for shared-enterprise schema isolation |
-| `CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED` | `false` | Optional filesystem ingestion adapter in enterprise mode |
-
 #### Feature Gates
 
 | Variable | Default | Description |
@@ -308,17 +243,6 @@ Running `python -m backend.mcp.server` directly starts a stdio MCP process and w
 | `CCDASH_AGENTIC_RECOMMENDATIONS_ENABLED` | `true` | Global gate for historical stack recommendations |
 | `CCDASH_AGENTIC_WORKFLOW_ANALYTICS_ENABLED` | `true` | Global gate for workflow intelligence endpoints |
 | `CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED` | `true` | Global gate for attribution analytics and payloads |
-
-#### Frontend Live Rollout
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VITE_CCDASH_LIVE_EXECUTION_ENABLED` | `true` | Stream-first execution run updates |
-| `VITE_CCDASH_LIVE_SESSIONS_ENABLED` | `true` | Stream-first active session invalidation/recovery |
-| `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` | `false` | Append-first active session transcript updates with REST fallback on gaps/mismatches |
-| `VITE_CCDASH_LIVE_FEATURES_ENABLED` | `false` | Feature board and feature-modal invalidation topics |
-| `VITE_CCDASH_LIVE_TESTS_ENABLED` | `false` | Test visualizer invalidation topics (requires backend test live gate too) |
-| `VITE_CCDASH_LIVE_OPS_ENABLED` | `false` | Ops panel live operation/status invalidation topics |
 
 #### Startup Tuning
 
@@ -339,15 +263,28 @@ Running `python -m backend.mcp.server` directly starts a stdio MCP process and w
 
 Copy `.env.example` to `.env` for local overrides. All variables are prefixed `CCDASH_*`.
 
-Telemetry exporter configuration lives in the `CCDASH_TELEMETRY_*` and `CCDASH_SAM_*` env vars documented in the operator guides.
+### CLI, API, and MCP
 
-Storage posture is now explicit:
+The same operator queries are available through REST, CLI, and MCP:
 
-- `local` + SQLite remains the supported desktop/local-first contract with canonical transcript projection, limited optional intelligence, and filesystem-led rebuilds.
-- `enterprise` + Postgres is the canonical hosted posture for transcript intelligence, full analytics, and checkpointed historical backfill.
-- `GET /api/health` reports the resolved posture through `sessionIntelligenceProfile`, `sessionIntelligenceBackfillStrategy`, `sessionIntelligenceMemoryDraftFlow`, and `storageProfileValidationMatrix`.
+| Capability | REST | CLI | MCP |
+|-----------|------|-----|-----|
+| Project status | `GET /api/agent/project-status` | `ccdash status project` | `ccdash_project_status` |
+| Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash report feature <feature_id>` | `ccdash_feature_forensics` |
+| Workflow diagnostics | `GET /api/agent/workflow-diagnostics` | `ccdash workflow failures` | `ccdash_workflow_failure_patterns` |
+| After-action report | `POST /api/agent/reports/aar` | `ccdash report aar --feature <feature_id>` | `ccdash_generate_aar` |
 
-For full setup, troubleshooting, and deployment guidance, see [`docs/guides/setup.md`](docs/guides/setup.md), [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md), and [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md).
+See [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md), [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md), and [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md).
+
+### Deployment Modes
+
+| Mode | Command | Guide |
+|------|---------|-------|
+| Local container | `npm run docker:local:up` | [`docs/guides/containerized-deployment-quickstart.md`](docs/guides/containerized-deployment-quickstart.md) |
+| Enterprise split API/worker/frontend | `npm run docker:enterprise:up` | [`deploy/runtime/README.md`](deploy/runtime/README.md) |
+| Enterprise with bundled Postgres | `npm run docker:postgres:up` | [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md) |
+
+For full setup, troubleshooting, and deployment guidance, see [`docs/guides/setup.md`](docs/guides/setup.md), [`docs/guides/runtime-storage-and-performance-quickstart.md`](docs/guides/runtime-storage-and-performance-quickstart.md), and [`docs/README.md`](docs/README.md).
 
 ---
 
@@ -360,7 +297,7 @@ CCDash is a full-stack local-first application with a split frontend/backend des
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 19, TypeScript, Vite (port 3000) |
-| Styling | Tailwind CSS with semantic theme tokens (`dark`, `light`, `system`) |
+| Styling | Tailwind CSS (Slate dark mode) |
 | Charts | Recharts (Area, Bar, Pie, Line, Composed) |
 | Routing | React Router DOM v7 (HashRouter) |
 | Backend | Python FastAPI (port 8000) |
@@ -429,30 +366,21 @@ Markdown documentation with typed identity/classification metadata, canonical de
 
 | Guide | Audience |
 |-------|---------|
-| [`docs/README.md`](docs/README.md) | Documentation index and current structure |
-| [`docs/guides/setup.md`](docs/guides/setup.md) | Setup, troubleshooting, and deployment |
-| [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md) | Configure the stdio MCP server and validate the shipped tool surface |
-| [`docs/guides/mcp-troubleshooting.md`](docs/guides/mcp-troubleshooting.md) | Common MCP startup, project-resolution, and tool-call failures |
-| [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md) | Standalone CLI operator reference: install, commands, targets, auth, and troubleshooting |
-| [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md) | Repo-local CLI setup, commands, output modes, and troubleshooting |
-| [`docs/guides/cli-migration-guide.md`](docs/guides/cli-migration-guide.md) | Migrating from repo-local CLI to standalone CLI |
-| [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md) | Local vs enterprise storage posture, runtime pairings, and validation matrix |
-| [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md) | Canonical transcript-intelligence rollout, checkpointed enterprise backfill, and SkillMeat draft approval flow |
-| [`docs/guides/theme-modes.md`](docs/guides/theme-modes.md) | Theme selection, persistence, and `system` behavior |
-| [`docs/guides/testing.md`](docs/guides/testing.md) | Test configuration and ingestion flow |
-| [`docs/guides/shared-content-viewer.md`](docs/guides/shared-content-viewer.md) | End-user content rendering behavior across documents, task sources, and sessions |
+| [`docs/README.md`](docs/README.md) | Documentation home and launch point |
+| [`docs/guides/setup.md`](docs/guides/setup.md) | Setup, troubleshooting, and local development |
+| [`docs/guides/containerized-deployment-quickstart.md`](docs/guides/containerized-deployment-quickstart.md) | Containerized local and hosted deployment quickstart |
+| [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md) | Standalone CLI install, targets, auth, commands, and troubleshooting |
+| [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md) | MCP server setup and validation |
 | [`docs/guides/execution-workbench.md`](docs/guides/execution-workbench.md) | End-user execution workflow |
+| [`docs/guides/planning-control-plane-guide.md`](docs/guides/planning-control-plane-guide.md) | Planning graph, triage, artifact, and feature workflow |
 | [`docs/guides/agentic-sdlc-intelligence.md`](docs/guides/agentic-sdlc-intelligence.md) | Workflow intelligence and recommended-stack usage |
 | [`docs/guides/session-usage-attribution.md`](docs/guides/session-usage-attribution.md) | Attribution semantics and interpretation |
-| [`backend/mcp/README.md`](backend/mcp/README.md) | MCP server architecture, tool-registration workflow, and stdio test pattern |
-| [`docs/guides/operations-panel.md`](docs/guides/operations-panel.md) | Sync and rebuild operation behavior |
-| [`docs/developer/codebase-explorer.md`](docs/developer/codebase-explorer.md) | Codebase explorer backend and scoring details |
-| [`docs/developer/live-update-platform.md`](docs/developer/live-update-platform.md) | Live update platform implementation details |
-| [`docs/developer/telemetry-analytics.md`](docs/developer/telemetry-analytics.md) | Telemetry and analytics implementation reference |
+| [`docs/guides/telemetry-exporter-guide.md`](docs/guides/telemetry-exporter-guide.md) | Telemetry exporter setup and operations |
+| [`docs/schemas/document_frontmatter/README.md`](docs/schemas/document_frontmatter/README.md) | Document frontmatter contracts |
 
 ---
 
-**v0.1.0** — Released Mar 12, 2026 | Licensed under MIT
+**v0.2.0** — Released Apr 29, 2026 | Licensed under Business Source License 1.1 | Change license: Apache 2.0 on 2028-04-27
 
 ---
 
@@ -497,9 +425,3 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Observability**: New backend endpoints should include appropriate OpenTelemetry spans where relevant.
 
 See [`CLAUDE.md`](CLAUDE.md) for the full development reference.
-
-## License
-
-CCDash is licensed under the Business Source License 1.1. It converts to Apache 2.0 on 2028-04-27. See [LICENSE](./LICENSE).
-
-You may use, modify, and self-host CCDash freely. You may not offer it as a hosted or managed service to third parties before the Change Date.

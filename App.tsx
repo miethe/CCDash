@@ -19,6 +19,7 @@ import { WorkflowRegistryPage } from './components/Workflows/WorkflowRegistryPag
 import { PlanningHomePage, PlanningNodeDetail, PlanningRouteLayout } from './components/Planning';
 import { ArtifactDrillDownPage } from './components/Planning/ArtifactDrillDownPage';
 import { LandingPage } from './components/LandingPage';
+import { DocsPage } from './components/Docs/DocsPage';
 
 const App: React.FC = () => {
   return (
@@ -26,6 +27,7 @@ const App: React.FC = () => {
       <HashRouter>
         <Routes>
           <Route path="/" element={<LandingPage />} />
+          <Route path="/docs" element={<DocsPage />} />
           <Route path="/app" element={<Navigate to="/dashboard" replace />} />
           <Route
             path="/*"

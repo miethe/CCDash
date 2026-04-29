@@ -6,6 +6,8 @@ Where Kanban meets session logs. Where token costs meet delivery velocity.
 
 <!-- badges placeholder -->
 
+Docs: [Documentation home](docs/README.md)
+
 ### Why CCDash
 
 - **Agent-First Traceability**: Every task, commit, and document change is traceable back to specific Agent Sessions.

@@ -15,6 +15,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
+    "build:docs": "VITE_BASE_PATH=/CCDash/ vite build",
     "build:frontend:static": "vite build",
     "preview": "vite preview --strictPort",
     "start:backend": "node ./scripts/backend.mjs --runtime api --host 0.0.0.0",
