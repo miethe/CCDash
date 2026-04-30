@@ -26,8 +26,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 // ── Source under test ─────────────────────────────────────────────────────────
-const SOURCE_PATH = path.resolve(__dirname, '../SessionInspector.tsx');
-const SOURCE = fs.readFileSync(SOURCE_PATH, 'utf-8');
+const SESSION_INSPECTOR_SOURCE = fs.readFileSync(path.resolve(__dirname, '../SessionInspector.tsx'), 'utf-8');
+const TRANSCRIPT_VIEW_SOURCE = fs.readFileSync(path.resolve(__dirname, '../SessionInspector/TranscriptView.tsx'), 'utf-8');
+const SOURCE = [
+  SESSION_INSPECTOR_SOURCE,
+  TRANSCRIPT_VIEW_SOURCE,
+].join('\n');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

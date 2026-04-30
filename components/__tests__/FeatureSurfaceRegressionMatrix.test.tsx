@@ -384,6 +384,13 @@ function readSource(relPath: string): string {
   return fs.readFileSync(path.resolve(ROOT, relPath), 'utf-8');
 }
 
+function readSessionInspectorSource(): string {
+  return [
+    readSource('components/SessionInspector.tsx'),
+    readSource('components/SessionInspector/TranscriptView.tsx'),
+  ].join('\n');
+}
+
 /**
  * Returns non-comment lines that contain the given pattern.
  */
@@ -584,7 +591,7 @@ describe('P5-004 Matrix — ProjectBoard source: no eager linked-sessions call',
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('P5-004 Matrix — SessionInspector source: no eager linked-sessions call', () => {
-  const src = readSource('components/SessionInspector.tsx');
+  const src = readSessionInspectorSource();
 
   it('no eager fetch template-literal to /linked-sessions', () => {
     expect(hasEagerLinkedSessionsInSource(src)).toBe(false);
