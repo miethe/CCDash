@@ -32,9 +32,7 @@ _SORT_COLUMN: dict[FeatureSortKey, str] = {
         " ELSE 0.0 END"
     ),
     FeatureSortKey.TASK_COUNT: "total_tasks",
-    # TODO P2: replace fallback with real latest_activity_at column when rollup join lands
     FeatureSortKey.LATEST_ACTIVITY: "updated_at",
-    # TODO P2: replace fallback with session_count from rollup join in Phase 2
     FeatureSortKey.SESSION_COUNT: "updated_at",
 }
 
@@ -80,31 +78,19 @@ def _build_feature_list_where_clause(
         conditions.append(f"LOWER(category) IN ({placeholders})")
         params.extend(lower_cats)
 
-    # ── tags: basic JSON extraction via json_extract / LIKE ─────────────────
-    # json_extract returns the raw JSON of the tags array; we fall back to a
-    # LIKE search against the stringified array.  A missing/null tags value
-    # is treated gracefully (COALESCE to '[]').
+    # ── tags: promoted column with stringified JSON containment ────────────
     if query.tags:
         tag_parts: list[str] = []
         for tag in query.tags:
-            # Match the tag value anywhere in the JSON array representation.
-            # This is intentionally coarse; Phase 2 will add a GIN / junction table.
-            # TODO P2: replace with json_each CTE or feature_tags junction table.
-            tag_parts.append("COALESCE(json_extract(data_json, '$.tags'), '[]') LIKE ?")
+            tag_parts.append("COALESCE(tags_json, '[]') LIKE ?")
             params.append(f'%"{tag}"%')
         conditions.append(f"({' OR '.join(tag_parts)})")
 
     # ── has_deferred ─────────────────────────────────────────────────────────
-    # TODO P2: add a `deferred_tasks` indexed column; JSON extraction is
-    # expensive at scale.  For now skip when the column does not exist.
     if query.has_deferred is True:
-        conditions.append(
-            "CAST(COALESCE(json_extract(data_json, '$.deferredTasks'), 0) AS INTEGER) > 0"
-        )
+        conditions.append("COALESCE(deferred_tasks, 0) > 0")
     elif query.has_deferred is False:
-        conditions.append(
-            "CAST(COALESCE(json_extract(data_json, '$.deferredTasks'), 0) AS INTEGER) = 0"
-        )
+        conditions.append("COALESCE(deferred_tasks, 0) = 0")
 
     # ── completed date range (column exists) ────────────────────────────────
     _add_date_range(conditions, params, "completed_at", query.completed)
@@ -112,23 +98,13 @@ def _build_feature_list_where_clause(
     # ── updated date range (column exists) ──────────────────────────────────
     _add_date_range(conditions, params, "updated_at", query.updated)
 
-    # ── planned date range — JSON extraction (Phase 2 concern for indexing)
-    # TODO P2: add `planned_at` column + index; use json_extract for now.
+    # ── planned date range ──────────────────────────────────────────────────
     if query.planned:
-        _add_date_range(
-            conditions, params,
-            "json_extract(data_json, '$.plannedAt')",
-            query.planned,
-        )
+        _add_date_range(conditions, params, "planned_at", query.planned)
 
-    # ── started date range — JSON extraction
-    # TODO P2: add `started_at` column + index; use json_extract for now.
+    # ── started date range ──────────────────────────────────────────────────
     if query.started:
-        _add_date_range(
-            conditions, params,
-            "json_extract(data_json, '$.startedAt')",
-            query.started,
-        )
+        _add_date_range(conditions, params, "started_at", query.started)
 
     # ── numeric ranges ───────────────────────────────────────────────────────
     if query.progress_min is not None:
@@ -195,12 +171,17 @@ class SqliteFeatureRepository:
         await self.db.execute(
             """INSERT INTO features (
                 id, project_id, name, status, category,
+                tags_json, deferred_tasks, planned_at, started_at,
                 total_tasks, completed_tasks, parent_feature_id,
                 created_at, updated_at, completed_at, data_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, status=excluded.status,
                 category=excluded.category,
+                tags_json=excluded.tags_json,
+                deferred_tasks=excluded.deferred_tasks,
+                planned_at=excluded.planned_at,
+                started_at=excluded.started_at,
                 total_tasks=excluded.total_tasks,
                 completed_tasks=excluded.completed_tasks,
                 parent_feature_id=excluded.parent_feature_id,
@@ -213,6 +194,10 @@ class SqliteFeatureRepository:
                 feature_data.get("name", ""),
                 feature_data.get("status", "backlog"),
                 feature_data.get("category", ""),
+                json.dumps(feature_data.get("tags", [])),
+                int(feature_data.get("deferredTasks", 0) or 0),
+                feature_data.get("plannedAt", "") or "",
+                feature_data.get("startedAt", "") or "",
                 feature_data.get("totalTasks", 0),
                 feature_data.get("completedTasks", 0),
                 feature_data.get("parentFeatureId"),

@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -417,6 +417,10 @@ CREATE TABLE IF NOT EXISTS features (
     name            TEXT NOT NULL,
     status          TEXT DEFAULT 'backlog',
     category        TEXT DEFAULT '',
+    tags_json       TEXT DEFAULT '[]',
+    deferred_tasks  INTEGER DEFAULT 0,
+    planned_at      TEXT DEFAULT '',
+    started_at      TEXT DEFAULT '',
     total_tasks     INTEGER DEFAULT 0,
     completed_tasks INTEGER DEFAULT 0,
     parent_feature_id TEXT,
@@ -1331,6 +1335,19 @@ async def _ensure_column(db: asyncpg.Connection, table: str, column: str, defini
     await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
+async def _backfill_feature_query_columns(db: asyncpg.Connection) -> None:
+    await db.execute(
+        """
+        UPDATE features
+        SET
+            tags_json = COALESCE(NULLIF(data_json, '')::jsonb->'tags', '[]'::jsonb)::text,
+            deferred_tasks = COALESCE((NULLIF(data_json, '')::jsonb->>'deferredTasks')::integer, 0),
+            planned_at = COALESCE(NULLIF(data_json, '')::jsonb->>'plannedAt', ''),
+            started_at = COALESCE(NULLIF(data_json, '')::jsonb->>'startedAt', '')
+        """
+    )
+
+
 async def _ensure_test_visualizer_tables(db: asyncpg.Connection) -> None:
     if not config.CCDASH_TEST_VISUALIZER_ENABLED:
         return
@@ -1873,6 +1890,34 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_conversation_family"
         " ON sessions(conversation_family_id)"
+    )
+
+    await _ensure_column(db, "features", "tags_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "features", "deferred_tasks", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "features", "planned_at", "TEXT DEFAULT ''")
+    await _ensure_column(db, "features", "started_at", "TEXT DEFAULT ''")
+    await _backfill_feature_query_columns(db)
+
+    # features: promoted columns for queryable metadata and range filters
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_features_planned_at"
+        " ON features(project_id, planned_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_features_started_at"
+        " ON features(project_id, started_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_features_deferred_tasks"
+        " ON features(project_id, deferred_tasks)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_features_category_lower"
+        " ON features(project_id, LOWER(category))"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_features_tags_json"
+        " ON features USING GIN ((COALESCE(tags_json, '[]')::jsonb))"
     )
 
     # features: composite (project_id, status) for planning summary status-IN queries

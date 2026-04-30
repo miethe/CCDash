@@ -9,6 +9,7 @@ category filters were applied in-memory after pagination, making ``total`` wrong
 """
 from __future__ import annotations
 
+import json
 import unittest
 
 import aiosqlite
@@ -20,6 +21,7 @@ from backend.db.repositories.feature_queries import (
     FeatureSortKey,
     SortDirection,
 )
+from backend.db.repositories.postgres.features import _build_feature_list_where_clause_pg
 from backend.db.sqlite_migrations import run_migrations
 
 
@@ -113,7 +115,9 @@ _SEED_FEATURES = [
     _make_feature("F-020", "Upsilon Finalize", "done", "cat-b", 8, 8,
                   updated_at="2024-06-05T00:00:00Z",
                   completed_at="2024-06-05T00:00:00Z",
-                  tags=["release"], deferred_tasks=2),
+                  tags=["release"], deferred_tasks=2,
+                  planned_at="2024-06-01T00:00:00Z",
+                  started_at="2024-06-02T00:00:00Z"),
 ]
 
 
@@ -270,6 +274,67 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
         page = await self.repo.list_feature_cards("proj-1", q)
         self.assertEqual(page.total, 1)
         self.assertEqual(page.rows[0]["id"], "F-020")
+
+    async def test_promoted_columns_are_used_after_data_json_changes(self) -> None:
+        await self.db.execute(
+            "UPDATE features SET data_json = ? WHERE id = ?",
+            (
+                json.dumps({
+                    "id": "F-020",
+                    "name": "Upsilon Finalize",
+                    "status": "done",
+                    "category": "cat-b",
+                    "totalTasks": 8,
+                    "completedTasks": 8,
+                    "tags": [],
+                    "deferredTasks": 0,
+                    "plannedAt": "",
+                    "startedAt": "",
+                }),
+                "F-020",
+            ),
+        )
+        await self.db.commit()
+
+        q = FeatureListQuery(
+            tags=["release"],
+            has_deferred=True,
+            planned=DateRange(
+                from_date="2024-06-01T00:00:00Z",
+                to_date="2024-06-30T00:00:00Z",
+            ),
+            started=DateRange(
+                from_date="2024-06-02T00:00:00Z",
+                to_date="2024-06-30T00:00:00Z",
+            ),
+            limit=200,
+        )
+        page = await self.repo.list_feature_cards("proj-1", q)
+        self.assertEqual(page.total, 1)
+        self.assertEqual(page.rows[0]["id"], "F-020")
+
+    def test_postgres_query_builder_uses_promoted_columns(self) -> None:
+        q = FeatureListQuery(
+            tags=["release"],
+            has_deferred=True,
+            planned=DateRange(
+                from_date="2024-06-01T00:00:00Z",
+                to_date="2024-06-30T00:00:00Z",
+            ),
+            started=DateRange(
+                from_date="2024-06-02T00:00:00Z",
+                to_date="2024-06-30T00:00:00Z",
+            ),
+            limit=200,
+        )
+        where_sql, params = _build_feature_list_where_clause_pg("proj-1", q)
+
+        self.assertIn("tags_json", where_sql)
+        self.assertIn("deferred_tasks", where_sql)
+        self.assertIn("planned_at", where_sql)
+        self.assertIn("started_at", where_sql)
+        self.assertNotIn("data_json", where_sql)
+        self.assertEqual(params[0], "proj-1")
 
     # ── completed date range ─────────────────────────────────────────────────
 
