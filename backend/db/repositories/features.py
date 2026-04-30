@@ -32,28 +32,9 @@ _SORT_COLUMN: dict[FeatureSortKey, str] = {
         " ELSE 0.0 END"
     ),
     FeatureSortKey.TASK_COUNT: "total_tasks",
-    FeatureSortKey.LATEST_ACTIVITY: (
-        "COALESCE(("
-        "SELECT MAX(CASE WHEN COALESCE(s.updated_at, '') > COALESCE(s.started_at, '')"
-        " THEN s.updated_at ELSE s.started_at END)"
-        " FROM entity_links el"
-        " JOIN sessions s ON s.id = el.target_id AND s.project_id = features.project_id"
-        " WHERE el.source_type = 'feature'"
-        " AND el.target_type = 'session'"
-        " AND el.source_id = features.id"
-        "), updated_at)"
-    ),
-    FeatureSortKey.SESSION_COUNT: (
-        "COALESCE(("
-        "SELECT COUNT(DISTINCT el.target_id)"
-        " FROM entity_links el"
-        " JOIN sessions s ON s.id = el.target_id AND s.project_id = features.project_id"
-        " WHERE el.source_type = 'feature'"
-        " AND el.target_type = 'session'"
-        " AND el.source_id = features.id"
-        "), 0)"
-    ),
 }
+
+_ROLLUP_SORT_KEYS = {FeatureSortKey.LATEST_ACTIVITY, FeatureSortKey.SESSION_COUNT}
 
 
 def _build_feature_list_where_clause(
@@ -167,10 +148,39 @@ def _add_date_range(
         params.append(dr.to_date)
 
 
+def _build_rollup_sort_join_clause(query: FeatureListQuery) -> str:
+    if query.sort_by not in _ROLLUP_SORT_KEYS:
+        return ""
+    return """
+LEFT JOIN (
+    SELECT
+        el.source_id AS feature_id,
+        COUNT(DISTINCT el.target_id) AS session_count,
+        MAX(CASE
+            WHEN COALESCE(s.updated_at, '') > COALESCE(s.started_at, '') THEN s.updated_at
+            ELSE s.started_at
+        END) AS latest_activity_at
+    FROM entity_links el
+    JOIN sessions s ON s.id = el.target_id AND s.project_id = ?
+    WHERE el.source_type = 'feature'
+      AND el.target_type = 'session'
+    GROUP BY el.source_id
+) feature_session_rollups ON feature_session_rollups.feature_id = features.id
+"""
+
+
 def _build_order_clause(query: FeatureListQuery) -> str:
     """Return an ORDER BY clause with a stable feature_id tiebreaker."""
-    col = _SORT_COLUMN.get(query.sort_by, "updated_at")
     direction = query.effective_sort_direction.value.upper()
+    if query.sort_by == FeatureSortKey.LATEST_ACTIVITY:
+        return (
+            "ORDER BY feature_session_rollups.latest_activity_at IS NULL ASC,"
+            f" feature_session_rollups.latest_activity_at {direction}, id ASC"
+        )
+    if query.sort_by == FeatureSortKey.SESSION_COUNT:
+        return f"ORDER BY COALESCE(feature_session_rollups.session_count, 0) {direction}, id ASC"
+
+    col = _SORT_COLUMN.get(query.sort_by, "updated_at")
     return f"ORDER BY {col} {direction}, id ASC"
 
 
@@ -470,6 +480,8 @@ class SqliteFeatureRepository:
         is applied after pagination.
         """
         where_sql, params = _build_feature_list_where_clause(project_id, query)
+        rollup_join_sql = _build_rollup_sort_join_clause(query)
+        row_params_prefix: list[Any] = [project_id] if rollup_join_sql else []
         order_sql = _build_order_clause(query)
 
         # Run count and data fetch concurrently via two separate queries.
@@ -486,9 +498,9 @@ class SqliteFeatureRepository:
                 return int(row[0]) if row else 0
 
         async def _fetch_rows() -> list[dict]:
-            row_params = list(params) + [query.limit, query.offset]
+            row_params = row_params_prefix + list(params) + [query.limit, query.offset]
             async with self.db.execute(
-                f"SELECT * FROM features {where_sql}"
+                f"SELECT features.* FROM features {rollup_join_sql} {where_sql}"
                 f" {order_sql}"
                 " LIMIT ? OFFSET ?",
                 row_params,

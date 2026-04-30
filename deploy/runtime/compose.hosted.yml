@@ -22,7 +22,7 @@ services:
       CCDASH_DB_BACKEND: ${CCDASH_DB_BACKEND:-postgres}
       CCDASH_DATABASE_URL: postgresql://${CCDASH_POSTGRES_USER:-ccdash}:${CCDASH_POSTGRES_PASSWORD:-ccdash}@postgres:5432/${CCDASH_POSTGRES_DB:-ccdash}
       CCDASH_API_BEARER_TOKEN: ${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}
-      CCDASH_FRONTEND_ORIGIN: ${CCDASH_FRONTEND_ORIGIN:-http://localhost:3000}
+      CCDASH_FRONTEND_ORIGIN: ${CCDASH_FRONTEND_ORIGIN:-http://localhost:${CCDASH_FRONTEND_PORT:-3000}}
       CCDASH_PROJECT_ROOT: ${CCDASH_PROJECT_ROOT:-/app}
     depends_on:
       postgres:

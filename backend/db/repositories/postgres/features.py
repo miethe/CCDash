@@ -32,27 +32,9 @@ _SORT_COLUMN_PG: dict[FeatureSortKey, str] = {
         " ELSE 0.0 END"
     ),
     FeatureSortKey.TASK_COUNT: "total_tasks",
-    FeatureSortKey.LATEST_ACTIVITY: (
-        "COALESCE(("
-        "SELECT GREATEST(MAX(s.updated_at), MAX(s.started_at))"
-        " FROM entity_links el"
-        " JOIN sessions s ON s.id = el.target_id AND s.project_id = features.project_id"
-        " WHERE el.source_type = 'feature'"
-        " AND el.target_type = 'session'"
-        " AND el.source_id = features.id"
-        "), updated_at)"
-    ),
-    FeatureSortKey.SESSION_COUNT: (
-        "COALESCE(("
-        "SELECT COUNT(DISTINCT el.target_id)"
-        " FROM entity_links el"
-        " JOIN sessions s ON s.id = el.target_id AND s.project_id = features.project_id"
-        " WHERE el.source_type = 'feature'"
-        " AND el.target_type = 'session'"
-        " AND el.source_id = features.id"
-        "), 0)"
-    ),
 }
+
+_ROLLUP_SORT_KEYS = {FeatureSortKey.LATEST_ACTIVITY, FeatureSortKey.SESSION_COUNT}
 
 
 def _build_feature_list_where_clause_pg(
@@ -155,9 +137,42 @@ def _add_date_range_pg(
         conditions.append(f"{col} <= {_p(dr.to_date)}")
 
 
+def _renumber_pg_placeholders(sql: str, *, offset: int) -> str:
+    """Shift asyncpg $N placeholders when a clause is placed after earlier params."""
+    import re
+
+    return re.sub(r"\$(\d+)", lambda match: f"${int(match.group(1)) + offset}", sql)
+
+
+def _build_rollup_sort_join_clause_pg(query: FeatureListQuery) -> str:
+    if query.sort_by not in _ROLLUP_SORT_KEYS:
+        return ""
+    return """
+LEFT JOIN (
+    SELECT
+        el.source_id AS feature_id,
+        COUNT(DISTINCT el.target_id) AS session_count,
+        GREATEST(MAX(s.updated_at), MAX(s.started_at)) AS latest_activity_at
+    FROM entity_links el
+    JOIN sessions s ON s.id = el.target_id AND s.project_id = $1
+    WHERE el.source_type = 'feature'
+      AND el.target_type = 'session'
+    GROUP BY el.source_id
+) feature_session_rollups ON feature_session_rollups.feature_id = features.id
+"""
+
+
 def _build_order_clause_pg(query: FeatureListQuery) -> str:
-    col = _SORT_COLUMN_PG.get(query.sort_by, "updated_at")
     direction = query.effective_sort_direction.value.upper()
+    if query.sort_by == FeatureSortKey.LATEST_ACTIVITY:
+        return (
+            "ORDER BY feature_session_rollups.latest_activity_at IS NULL ASC,"
+            f" feature_session_rollups.latest_activity_at {direction}, id ASC"
+        )
+    if query.sort_by == FeatureSortKey.SESSION_COUNT:
+        return f"ORDER BY COALESCE(feature_session_rollups.session_count, 0) {direction}, id ASC"
+
+    col = _SORT_COLUMN_PG.get(query.sort_by, "updated_at")
     return f"ORDER BY {col} {direction}, id ASC"
 
 
@@ -440,6 +455,10 @@ class PostgresFeatureRepository:
         a separate count round-trip.
         """
         where_sql, params = _build_feature_list_where_clause_pg(project_id, query)
+        rollup_join_sql = _build_rollup_sort_join_clause_pg(query)
+        if rollup_join_sql:
+            params = [project_id, *params]
+            where_sql = _renumber_pg_placeholders(where_sql, offset=1)
         order_sql = _build_order_clause_pg(query)
 
         # Add LIMIT/OFFSET as the next positional params
@@ -449,8 +468,8 @@ class PostgresFeatureRepository:
         offset_ph = f"${len(params)}"
 
         sql = (
-            f"SELECT *, COUNT(*) OVER () AS _total_count"
-            f" FROM features {where_sql}"
+            f"SELECT features.*, COUNT(*) OVER () AS _total_count"
+            f" FROM features {rollup_join_sql} {where_sql}"
             f" {order_sql}"
             f" LIMIT {limit_ph} OFFSET {offset_ph}"
         )
