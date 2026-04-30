@@ -245,13 +245,14 @@ class SqliteFeatureRepository:
     async def list_all(self, project_id: str | None = None) -> list[dict]:
         if project_id:
             async with self.db.execute(
-                "SELECT * FROM features WHERE project_id = ? ORDER BY name",
-                (project_id,),
+                "SELECT * FROM features WHERE project_id = ? ORDER BY name LIMIT ?",
+                (project_id, 5000),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
         else:
             async with self.db.execute(
-                "SELECT * FROM features ORDER BY name"
+                "SELECT * FROM features ORDER BY name LIMIT ?",
+                (5000,),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
 

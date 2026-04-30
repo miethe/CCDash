@@ -88,11 +88,32 @@ class SessionTranscriptService:
         self,
         session_row: dict[str, object],
         ports: CorePorts,
+        *,
+        limit: int = 5000,
+        offset: int = 0,
     ) -> list[dict[str, object]]:
         session_id = str(session_row.get("id") or "")
-        canonical_rows = await ports.storage.session_messages().list_by_session(session_id)
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
+        try:
+            canonical_rows = await ports.storage.session_messages().list_by_session(
+                session_id,
+                limit=safe_limit,
+                offset=safe_offset,
+            )
+        except TypeError:
+            canonical_rows = await ports.storage.session_messages().list_by_session(session_id)
+            canonical_rows = canonical_rows[safe_offset:safe_offset + safe_limit]
         if not canonical_rows:
-            raw_logs = await ports.storage.sessions().get_logs(session_id)
+            try:
+                raw_logs = await ports.storage.sessions().get_logs(
+                    session_id,
+                    limit=safe_limit,
+                    offset=safe_offset,
+                )
+            except TypeError:
+                raw_logs = await ports.storage.sessions().get_logs(session_id)
+                raw_logs = raw_logs[safe_offset:safe_offset + safe_limit]
             return [self._legacy_log_payload(row) for row in raw_logs]
         return [self._canonical_log_payload(row) for row in canonical_rows]
 

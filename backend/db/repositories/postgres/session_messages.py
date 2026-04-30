@@ -62,10 +62,14 @@ class PostgresSessionMessageRepository:
                 records,
             )
 
-    async def list_by_session(self, session_id: str) -> list[dict[str, object]]:
+    async def list_by_session(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict[str, object]]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         rows = await self.db.fetch(
-            "SELECT * FROM session_messages WHERE session_id = $1 ORDER BY message_index ASC",
+            "SELECT * FROM session_messages WHERE session_id = $1 ORDER BY message_index ASC LIMIT $2 OFFSET $3",
             session_id,
+            safe_limit,
+            safe_offset,
         )
         return [dict(row) for row in rows]
 

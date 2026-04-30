@@ -53,6 +53,16 @@ class _EmptySessionMessageRepo:
         return []
 
 
+class _PagedSessionMessageRepo:
+    def __init__(self, rows):
+        self.rows = rows
+        self.last_call = None
+
+    async def list_by_session(self, session_id, limit=5000, offset=0):
+        self.last_call = {"session_id": session_id, "limit": limit, "offset": offset}
+        return self.rows[offset:offset + limit]
+
+
 class _FakeStorage:
     def __init__(self, *, db=None, session_repo=None, session_message_repo=None, link_repo=None, feature_repo=None) -> None:
         self.db = db if db is not None else object()
@@ -555,6 +565,41 @@ class SessionApiRouterIsPrimaryLinkTests(unittest.TestCase):
 
 
 class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_session_logs_returns_cursor_when_more_rows_exist(self) -> None:
+        rows = [
+            {
+                "message_index": i,
+                "source_log_id": f"log-{i}",
+                "event_timestamp": f"2026-02-16T00:00:{i % 60:02d}Z",
+                "role": "assistant",
+                "message_type": "message",
+                "content": f"message {i}",
+                "agent_name": None,
+                "linked_session_id": None,
+                "related_tool_call_id": None,
+                "metadata_json": "{}",
+            }
+            for i in range(6000)
+        ]
+        message_repo = _PagedSessionMessageRepo(rows)
+
+        response = await api_router.get_session_logs(
+            "S-main",
+            cursor=0,
+            limit=5000,
+            core_ports=_core_ports(
+                session_repo=_FakeSessionDetailRepo(),
+                session_message_repo=message_repo,
+            ),
+        )
+
+        self.assertEqual(len(response["items"]), 5000)
+        self.assertEqual(response["nextCursor"], 5000)
+        self.assertEqual(
+            message_repo.last_call,
+            {"session_id": "S-main", "limit": 5001, "offset": 0},
+        )
+
     def test_derive_session_title_prefers_subagent_type_for_subagent(self) -> None:
         title = api_router._derive_session_title(
             session_metadata=None,

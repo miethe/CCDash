@@ -71,10 +71,12 @@ class SqliteSessionUsageRepository(SessionUsageRepository):
             )
         await self.db.commit()
 
-    async def get_session_usage_events(self, session_id: str) -> list[dict[str, object]]:
+    async def get_session_usage_events(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict[str, object]]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         async with self.db.execute(
-            "SELECT * FROM session_usage_events WHERE session_id = ? ORDER BY captured_at ASC, id ASC",
-            (session_id,),
+            "SELECT * FROM session_usage_events WHERE session_id = ? ORDER BY captured_at ASC, id ASC LIMIT ? OFFSET ?",
+            (session_id, safe_limit, safe_offset),
         ) as cur:
             return [dict(row) for row in await cur.fetchall()]
 

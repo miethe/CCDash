@@ -775,6 +775,35 @@ async def get_session_platform_facets(
     return [SessionPlatformFacet(**row) for row in rows]
 
 
+@sessions_router.get("/{session_id}/logs")
+async def get_session_logs(
+    session_id: str,
+    cursor: int = Query(0, ge=0, description="Zero-based log offset cursor"),
+    limit: int = Query(5000, ge=1, le=5000, description="Maximum logs to return"),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    """Return a paginated session transcript page."""
+    repo = core_ports.storage.sessions()
+    session_row = await repo.get_by_id(session_id)
+    if not session_row:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    page_plus_one = await session_transcript_service.list_session_logs(
+        session_row,
+        core_ports,
+        limit=limit + 1,
+        offset=cursor,
+    )
+    items = page_plus_one[:limit]
+    next_cursor = cursor + limit if len(page_plus_one) > limit else None
+    return {
+        "items": items,
+        "cursor": cursor,
+        "limit": limit,
+        "nextCursor": next_cursor,
+    }
+
+
 @sessions_router.get("/{session_id}", response_model=AgentSession)
 async def get_session(
     session_id: str,

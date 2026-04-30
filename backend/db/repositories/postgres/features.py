@@ -221,11 +221,12 @@ class PostgresFeatureRepository:
     async def list_all(self, project_id: str | None = None) -> list[dict]:
         if project_id:
             rows = await self.db.fetch(
-                "SELECT * FROM features WHERE project_id = $1 ORDER BY name",
+                "SELECT * FROM features WHERE project_id = $1 ORDER BY name LIMIT $2",
                 project_id,
+                5000,
             )
         else:
-            rows = await self.db.fetch("SELECT * FROM features ORDER BY name")
+            rows = await self.db.fetch("SELECT * FROM features ORDER BY name LIMIT $1", 5000)
         return [dict(r) for r in rows]
 
     async def list_paginated(

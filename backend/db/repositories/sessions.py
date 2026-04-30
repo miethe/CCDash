@@ -697,30 +697,39 @@ class SqliteSessionRepository:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def get_logs(self, session_id: str) -> list[dict]:
+    async def get_logs(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         async with self.db.execute(
-            "SELECT * FROM session_logs WHERE session_id = ? ORDER BY log_index",
-            (session_id,),
+            "SELECT * FROM session_logs WHERE session_id = ? ORDER BY log_index LIMIT ? OFFSET ?",
+            (session_id, safe_limit, safe_offset),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def get_tool_usage(self, session_id: str) -> list[dict]:
+    async def get_tool_usage(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         async with self.db.execute(
-            "SELECT * FROM session_tool_usage WHERE session_id = ?",
-            (session_id,),
+            "SELECT * FROM session_tool_usage WHERE session_id = ? LIMIT ? OFFSET ?",
+            (session_id, safe_limit, safe_offset),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def get_file_updates(self, session_id: str) -> list[dict]:
+    async def get_file_updates(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         async with self.db.execute(
-            "SELECT * FROM session_file_updates WHERE session_id = ?",
-            (session_id,),
+            "SELECT * FROM session_file_updates WHERE session_id = ? LIMIT ? OFFSET ?",
+            (session_id, safe_limit, safe_offset),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def get_artifacts(self, session_id: str) -> list[dict]:
+    async def get_artifacts(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         async with self.db.execute(
-            "SELECT * FROM session_artifacts WHERE session_id = ?", (session_id,)
+            "SELECT * FROM session_artifacts WHERE session_id = ? LIMIT ? OFFSET ?",
+            (session_id, safe_limit, safe_offset),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 

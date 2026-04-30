@@ -52,10 +52,12 @@ class SqliteSessionMessageRepository:
             )
         await self.db.commit()
 
-    async def list_by_session(self, session_id: str) -> list[dict[str, object]]:
+    async def list_by_session(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict[str, object]]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         async with self.db.execute(
-            "SELECT * FROM session_messages WHERE session_id = ? ORDER BY message_index ASC",
-            (session_id,),
+            "SELECT * FROM session_messages WHERE session_id = ? ORDER BY message_index ASC LIMIT ? OFFSET ?",
+            (session_id, safe_limit, safe_offset),
         ) as cur:
             return [dict(row) for row in await cur.fetchall()]
 

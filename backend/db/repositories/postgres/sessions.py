@@ -737,31 +737,47 @@ class PostgresSessionRepository:
         )
         return [dict(r) for r in rows]
 
-    async def get_logs(self, session_id: str) -> list[dict]:
+    async def get_logs(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         rows = await self.db.fetch(
-            "SELECT * FROM session_logs WHERE session_id = $1 ORDER BY log_index",
-            session_id
+            "SELECT * FROM session_logs WHERE session_id = $1 ORDER BY log_index LIMIT $2 OFFSET $3",
+            session_id,
+            safe_limit,
+            safe_offset,
         )
         return [dict(r) for r in rows]
 
-    async def get_tool_usage(self, session_id: str) -> list[dict]:
+    async def get_tool_usage(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         rows = await self.db.fetch(
-            "SELECT * FROM session_tool_usage WHERE session_id = $1",
-            session_id
+            "SELECT * FROM session_tool_usage WHERE session_id = $1 LIMIT $2 OFFSET $3",
+            session_id,
+            safe_limit,
+            safe_offset,
         )
         return [dict(r) for r in rows]
 
-    async def get_file_updates(self, session_id: str) -> list[dict]:
+    async def get_file_updates(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         rows = await self.db.fetch(
-            "SELECT * FROM session_file_updates WHERE session_id = $1",
-            session_id
+            "SELECT * FROM session_file_updates WHERE session_id = $1 LIMIT $2 OFFSET $3",
+            session_id,
+            safe_limit,
+            safe_offset,
         )
         return [dict(r) for r in rows]
 
-    async def get_artifacts(self, session_id: str) -> list[dict]:
+    async def get_artifacts(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 5000), 5001))
+        safe_offset = max(0, int(offset or 0))
         rows = await self.db.fetch(
-            "SELECT * FROM session_artifacts WHERE session_id = $1",
-            session_id
+            "SELECT * FROM session_artifacts WHERE session_id = $1 LIMIT $2 OFFSET $3",
+            session_id,
+            safe_limit,
+            safe_offset,
         )
         return [dict(r) for r in rows]
 
