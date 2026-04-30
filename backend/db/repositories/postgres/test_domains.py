@@ -71,3 +71,31 @@ class PostgresTestDomainRepository:
 
     async def delete_by_source(self, source_file: str) -> None:
         _ = source_file
+
+    async def prune_unmapped_leaf_domains(self, project_id: str) -> int:
+        rows = await self.db.fetch(
+            """
+            SELECT d.domain_id
+            FROM test_domains d
+            LEFT JOIN test_feature_mappings m
+              ON m.project_id = d.project_id
+             AND m.domain_id = d.domain_id
+            LEFT JOIN test_domains child
+              ON child.project_id = d.project_id
+             AND child.parent_id = d.domain_id
+            WHERE d.project_id = $1
+            GROUP BY d.domain_id
+            HAVING COUNT(m.mapping_id) = 0 AND COUNT(child.domain_id) = 0
+            """,
+            project_id,
+        )
+        leaf_ids = [str(row.get("domain_id") or "").strip() for row in rows if str(row.get("domain_id") or "").strip()]
+        if not leaf_ids:
+            return 0
+        for domain_id in leaf_ids:
+            await self.db.execute(
+                "DELETE FROM test_domains WHERE project_id = $1 AND domain_id = $2",
+                project_id,
+                domain_id,
+            )
+        return len(leaf_ids)

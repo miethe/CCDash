@@ -39,6 +39,13 @@ class _FakeAnalyticsRepo:
             "session_tokens": 3456,
         }
 
+    async def get_prometheus_telemetry_rows(self, *args, **kwargs):
+        return {
+            "tool_rows": [],
+            "model_rows": [],
+            "event_rows": [],
+        }
+
 
 class _FakeAlertRepo:
     def __init__(self) -> None:

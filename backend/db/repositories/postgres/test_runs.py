@@ -233,3 +233,66 @@ class PostgresTestRunRepository:
             feature_id,
         )
         return dict(row) if row else None
+
+    async def get_latest_commit_correlation(self, project_id: str, git_sha: str) -> dict | None:
+        row = await self.db.fetchrow(
+            """
+            SELECT *
+            FROM commit_correlations
+            WHERE project_id = $1 AND commit_hash = $2
+            ORDER BY window_end DESC
+            LIMIT 1
+            """,
+            project_id,
+            git_sha,
+        )
+        if row is None:
+            return None
+        payload = dict(row)
+        raw_payload = payload.get("payload_json")
+        if isinstance(raw_payload, str):
+            try:
+                payload["payload_json"] = json.loads(raw_payload)
+            except Exception:
+                payload["payload_json"] = {}
+        elif not isinstance(raw_payload, dict):
+            payload["payload_json"] = {}
+        return payload
+
+    async def get_metric_summary(self, project_id: str) -> dict[str, object]:
+        summary = {
+            "total_metrics": 0,
+            "latest_collected_at": "",
+            "by_platform": {},
+            "by_metric_type": {},
+        }
+
+        row = await self.db.fetchrow(
+            "SELECT COUNT(*)::int AS count, MAX(collected_at) AS latest FROM test_metrics WHERE project_id = $1",
+            project_id,
+        )
+        if row:
+            summary["total_metrics"] = int(row.get("count") or 0)
+            summary["latest_collected_at"] = str(row.get("latest") or "")
+
+        rows = await self.db.fetch(
+            "SELECT platform, COUNT(*)::int AS count FROM test_metrics WHERE project_id = $1 GROUP BY platform",
+            project_id,
+        )
+        summary["by_platform"] = {
+            str(item["platform"] or ""): int(item["count"] or 0)
+            for item in rows
+            if str(item["platform"] or "").strip()
+        }
+
+        rows = await self.db.fetch(
+            "SELECT metric_type, COUNT(*)::int AS count FROM test_metrics WHERE project_id = $1 GROUP BY metric_type",
+            project_id,
+        )
+        summary["by_metric_type"] = {
+            str(item["metric_type"] or ""): int(item["count"] or 0)
+            for item in rows
+            if str(item["metric_type"] or "").strip()
+        }
+
+        return summary

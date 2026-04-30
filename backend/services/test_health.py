@@ -1,12 +1,9 @@
 """Service layer for Test Visualizer health, timeline, and correlation endpoints."""
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
-
-import aiosqlite
 
 from backend.db.factory import (
     get_feature_repository,
@@ -578,39 +575,4 @@ class TestHealthService:
     async def _load_commit_correlation(self, project_id: str, git_sha: str) -> dict[str, Any] | None:
         if not git_sha:
             return None
-
-        if isinstance(self.db, aiosqlite.Connection):
-            query = """
-                SELECT *
-                FROM commit_correlations
-                WHERE project_id = ? AND commit_hash = ?
-                ORDER BY window_end DESC
-                LIMIT 1
-            """
-            async with self.db.execute(query, (project_id, git_sha)) as cur:
-                row = await cur.fetchone()
-                if row is None:
-                    return None
-                payload = dict(row)
-        else:
-            query = """
-                SELECT *
-                FROM commit_correlations
-                WHERE project_id = $1 AND commit_hash = $2
-                ORDER BY window_end DESC
-                LIMIT 1
-            """
-            row = await self.db.fetchrow(query, project_id, git_sha)
-            if row is None:
-                return None
-            payload = dict(row)
-
-        raw_payload = payload.get("payload_json")
-        if isinstance(raw_payload, str) and raw_payload.strip():
-            try:
-                payload["payload_json"] = json.loads(raw_payload)
-            except Exception:
-                payload["payload_json"] = {}
-        elif not isinstance(raw_payload, dict):
-            payload["payload_json"] = {}
-        return payload
+        return await self.run_repo.get_latest_commit_correlation(project_id, git_sha)

@@ -107,6 +107,34 @@ class SqliteTestDomainRepository:
                 roots.append(node)
         return roots
 
+    async def prune_unmapped_leaf_domains(self, project_id: str) -> int:
+        async with self.db.execute(
+            """
+            SELECT d.domain_id
+            FROM test_domains d
+            LEFT JOIN test_feature_mappings m
+              ON m.project_id = d.project_id
+             AND m.domain_id = d.domain_id
+            LEFT JOIN test_domains child
+              ON child.project_id = d.project_id
+             AND child.parent_id = d.domain_id
+            WHERE d.project_id = ?
+            GROUP BY d.domain_id
+            HAVING COUNT(m.mapping_id) = 0 AND COUNT(child.domain_id) = 0
+            """,
+            (project_id,),
+        ) as cur:
+            leaf_ids = [str(row[0]) for row in await cur.fetchall() if str(row[0]).strip()]
+        if not leaf_ids:
+            return 0
+        for domain_id in leaf_ids:
+            await self.db.execute(
+                "DELETE FROM test_domains WHERE project_id = ? AND domain_id = ?",
+                (project_id, domain_id),
+            )
+        await self.db.commit()
+        return len(leaf_ids)
+
     async def get_or_create_by_name(
         self,
         project_id: str,

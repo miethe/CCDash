@@ -19,16 +19,12 @@ from backend.models import (
 from backend.routers import features as features_router
 
 
-class _FakeTelemetryDb:
+class _FakeTelemetryRepo:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[object, ...]]] = []
-        self.commits = 0
+        self.calls: list[dict[str, object]] = []
 
-    async def execute(self, sql: str, *params: object) -> None:
-        self.calls.append((sql, params))
-
-    async def commit(self) -> None:
-        self.commits += 1
+    async def record_execution_event(self, **kwargs: object) -> None:
+        self.calls.append(kwargs)
 
 
 class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
@@ -447,7 +443,8 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_execution_telemetry_accepts_dependency_navigation_and_family_selection_events(self) -> None:
         project = types.SimpleNamespace(id="project-1")
-        fake_db = _FakeTelemetryDb()
+        fake_db = object()
+        fake_repo = _FakeTelemetryRepo()
         allowed_events = [
             "execution_blocked_state_viewed",
             "execution_dependency_navigated",
@@ -457,6 +454,7 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(features_router.project_manager, "get_active_project", return_value=project),
             patch.object(features_router.connection, "get_connection", return_value=fake_db),
+            patch.object(features_router, "get_analytics_repository", return_value=fake_repo),
         ):
             for event_type in allowed_events:
                 response = await features_router.track_execution_event(
@@ -468,8 +466,8 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(response["status"], "ok")
 
-        self.assertEqual(len(fake_db.calls), len(allowed_events))
-        self.assertEqual([call[1][8] for call in fake_db.calls], allowed_events)
+        self.assertEqual(len(fake_repo.calls), len(allowed_events))
+        self.assertEqual([call["event_type"] for call in fake_repo.calls], allowed_events)
 
     async def test_execution_telemetry_rejects_unknown_event_type(self) -> None:
         project = types.SimpleNamespace(id="project-1")
