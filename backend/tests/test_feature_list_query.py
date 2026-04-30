@@ -133,6 +133,43 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.db.close()
 
+    async def _link_session(
+        self,
+        feature_id: str,
+        session_id: str,
+        *,
+        started_at: str,
+        updated_at: str,
+    ) -> None:
+        await self.db.execute(
+            """
+            INSERT INTO sessions (
+                id, project_id, task_id, status, model,
+                created_at, updated_at, started_at, source_file
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                "proj-1",
+                feature_id,
+                "completed",
+                "claude-sonnet",
+                started_at,
+                updated_at,
+                started_at,
+                f"{session_id}.jsonl",
+            ),
+        )
+        await self.db.execute(
+            """
+            INSERT INTO entity_links (
+                source_type, source_id, target_type, target_id, link_type, created_at
+            ) VALUES ('feature', ?, 'session', ?, 'related', ?)
+            """,
+            (feature_id, session_id, updated_at),
+        )
+        await self.db.commit()
+
     # ── empty filter matches all ─────────────────────────────────────────────
 
     async def test_empty_filter_returns_all(self) -> None:
@@ -239,6 +276,39 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
                 f"row {row['id']} has progress {prog} > previous {prev}",
             )
             prev = prog
+
+    async def test_sort_by_latest_activity_uses_linked_session_rollup(self) -> None:
+        await self._link_session(
+            "F-001",
+            "S-latest",
+            started_at="2026-04-01T00:00:00Z",
+            updated_at="2026-04-02T00:00:00Z",
+        )
+
+        q = FeatureListQuery(sort_by=FeatureSortKey.LATEST_ACTIVITY, limit=5)
+        page = await self.repo.list_feature_cards("proj-1", q)
+
+        self.assertEqual(page.rows[0]["id"], "F-001")
+
+    async def test_sort_by_session_count_uses_linked_session_rollup(self) -> None:
+        for idx in range(3):
+            await self._link_session(
+                "F-002",
+                f"S-count-{idx}",
+                started_at=f"2024-01-0{idx + 1}T00:00:00Z",
+                updated_at=f"2024-01-0{idx + 1}T00:00:00Z",
+            )
+        await self._link_session(
+            "F-003",
+            "S-count-low",
+            started_at="2024-01-10T00:00:00Z",
+            updated_at="2024-01-10T00:00:00Z",
+        )
+
+        q = FeatureListQuery(sort_by=FeatureSortKey.SESSION_COUNT, limit=5)
+        page = await self.repo.list_feature_cards("proj-1", q)
+
+        self.assertEqual(page.rows[0]["id"], "F-002")
 
     # ── q search matches both id and name ────────────────────────────────────
 

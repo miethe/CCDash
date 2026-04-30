@@ -49,7 +49,9 @@ Feature list filtering now reads from promoted columns instead of JSON-extract f
 - Added feature-list indexes for the promoted date and deferred-task predicates, plus a category lower-case index and a Postgres GIN index for tag containment.
 - Added focused regression coverage for upsert column population, migration backfill, and query-builder behavior.
 - Validation passed: `backend/.venv/bin/python -m pytest backend/tests/test_features_repository.py backend/tests/test_feature_list_query.py backend/tests/test_sqlite_migrations.py -q` -> 24 passed, 1 skipped.
+- Follow-up completed: `latest_activity` and `session_count` sorting now use linked-session rollup subqueries instead of falling back to `updated_at`.
+- Follow-up validation passed: `backend/.venv/bin/python -m pytest backend/tests/test_feature_list_query.py backend/tests/test_feature_surface_list_rollup_service.py -q` -> 26 passed, 1 skipped.
 
 ## Remaining Blocker
 
-- `latest_activity` and `session_count` still fall back to `updated_at` in the feature list sort mapping. Those values are derived from rollup/session data, so promoting them safely needs a separate rollup-backed column or join change.
+- None.

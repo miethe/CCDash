@@ -258,19 +258,17 @@ class FeatureSurfaceListRollupService:
         if query.sort_by == FeatureSortKey.LATEST_ACTIVITY:
             return FeatureListSortMetadataDTO(
                 requested_sort_by=query.sort_by.value,
-                applied_sort_by=FeatureSortKey.UPDATED_DATE.value,
+                applied_sort_by=query.sort_by.value,
                 sort_direction=query.effective_sort_direction.value,
-                precision="fallback",
-                note="latest_activity currently falls back to updated_at in the repository layer.",
+                precision="exact",
             )
 
         if query.sort_by == FeatureSortKey.SESSION_COUNT:
             return FeatureListSortMetadataDTO(
                 requested_sort_by=query.sort_by.value,
-                applied_sort_by=FeatureSortKey.UPDATED_DATE.value,
+                applied_sort_by=query.sort_by.value,
                 sort_direction=query.effective_sort_direction.value,
-                precision="fallback",
-                note="session_count currently falls back to updated_at in the repository layer.",
+                precision="exact",
             )
 
         return FeatureListSortMetadataDTO(

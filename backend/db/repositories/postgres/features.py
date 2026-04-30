@@ -32,8 +32,26 @@ _SORT_COLUMN_PG: dict[FeatureSortKey, str] = {
         " ELSE 0.0 END"
     ),
     FeatureSortKey.TASK_COUNT: "total_tasks",
-    FeatureSortKey.LATEST_ACTIVITY: "updated_at",
-    FeatureSortKey.SESSION_COUNT: "updated_at",
+    FeatureSortKey.LATEST_ACTIVITY: (
+        "COALESCE(("
+        "SELECT GREATEST(MAX(s.updated_at), MAX(s.started_at))"
+        " FROM entity_links el"
+        " JOIN sessions s ON s.id = el.target_id AND s.project_id = features.project_id"
+        " WHERE el.source_type = 'feature'"
+        " AND el.target_type = 'session'"
+        " AND el.source_id = features.id"
+        "), updated_at)"
+    ),
+    FeatureSortKey.SESSION_COUNT: (
+        "COALESCE(("
+        "SELECT COUNT(DISTINCT el.target_id)"
+        " FROM entity_links el"
+        " JOIN sessions s ON s.id = el.target_id AND s.project_id = features.project_id"
+        " WHERE el.source_type = 'feature'"
+        " AND el.target_type = 'session'"
+        " AND el.source_id = features.id"
+        "), 0)"
+    ),
 }
 
 
