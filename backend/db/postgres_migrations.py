@@ -530,6 +530,7 @@ CREATE TABLE IF NOT EXISTS outbound_telemetry_queue (
     session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     project_slug    TEXT NOT NULL,
     payload_json    TEXT NOT NULL,
+    event_type      TEXT NOT NULL DEFAULT 'execution_outcome',
     status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'synced', 'failed', 'abandoned')),
     created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
     last_attempt_at TEXT,
@@ -542,6 +543,8 @@ CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_status
     ON outbound_telemetry_queue(status);
 CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_created_at
     ON outbound_telemetry_queue(created_at);
+CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_event_type
+    ON outbound_telemetry_queue(event_type, status);
 
 -- ── 10. Commit Correlations ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS commit_correlations (
@@ -1462,6 +1465,11 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_family ON sessions(project_id, conversation_family_id, started_at DESC)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_thread_kind ON sessions(project_id, thread_kind, started_at DESC)")
+
+    await _ensure_column(db, "outbound_telemetry_queue", "event_type", "TEXT NOT NULL DEFAULT 'execution_outcome'")
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_event_type ON outbound_telemetry_queue(event_type, status)"
+    )
 
     await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "related_tool_call_id", "TEXT")

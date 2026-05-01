@@ -161,7 +161,7 @@ class _FakeEntityLinkRepository:
 
 
 class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
-    def _request(self, engine: _FakeSyncEngine, live_broker: _FakeLiveBroker | None = None):
+    def _request(self, engine: _FakeSyncEngine | None, live_broker: _FakeLiveBroker | None = None):
         return types.SimpleNamespace(
             app=types.SimpleNamespace(
                 state=types.SimpleNamespace(sync_engine=engine, live_event_broker=live_broker)
@@ -204,6 +204,23 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["liveUpdates"]["published_events"], 12)
         self.assertEqual(payload["liveUpdates"]["replay_gaps"], 2)
+
+    async def test_status_returns_unavailable_when_sync_engine_missing(self) -> None:
+        request = self._request(None)
+        project = types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
+
+        payload = await cache_router.get_cache_status(request, self._core_ports(project=project))
+
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertEqual(payload["sync_engine"], "unavailable")
+        self.assertEqual(payload["operations"]["trackedOperationCount"], 0)
+
+    async def test_operations_returns_empty_when_sync_engine_missing(self) -> None:
+        request = self._request(None)
+
+        payload = await cache_router.list_cache_operations(request)
+
+        self.assertEqual(payload, {"status": "unavailable", "count": 0, "items": []})
 
     async def test_sync_background_returns_operation_id(self) -> None:
         engine = _FakeSyncEngine()

@@ -6,14 +6,16 @@ from typing import Any
 
 import asyncpg
 
+from backend.db.repositories.postgres._transactions import postgres_transaction
+
 
 class PostgresSessionMessageRepository:
     def __init__(self, db: asyncpg.Connection):
         self.db = db
 
     async def replace_session_messages(self, session_id: str, messages: list[dict[str, object]]) -> None:
-        async with self.db.transaction():
-            await self.db.execute("DELETE FROM session_messages WHERE session_id = $1", session_id)
+        async with postgres_transaction(self.db) as conn:
+            await conn.execute("DELETE FROM session_messages WHERE session_id = $1", session_id)
             if not messages:
                 return
 
@@ -46,7 +48,7 @@ class PostgresSessionMessageRepository:
                         metadata_json,
                     )
                 )
-            await self.db.executemany(
+            await conn.executemany(
                 """
                 INSERT INTO session_messages (
                     session_id, message_index, source_log_id, message_id, role, message_type,

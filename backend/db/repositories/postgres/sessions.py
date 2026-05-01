@@ -7,6 +7,7 @@ from typing import Any
 
 import asyncpg
 from backend.model_identity import model_filter_tokens
+from backend.db.repositories.postgres._transactions import postgres_transaction
 
 class PostgresSessionRepository:
     """PostgreSQL-backed session storage."""
@@ -555,8 +556,8 @@ class PostgresSessionRepository:
     # ── Detail tables ───────────────────────────────────────────────
 
     async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:
-        async with self.db.transaction():
-            await self.db.execute("DELETE FROM session_logs WHERE session_id = $1", session_id)
+        async with postgres_transaction(self.db) as conn:
+            await conn.execute("DELETE FROM session_logs WHERE session_id = $1", session_id)
             if not logs:
                 return
                 
@@ -590,7 +591,7 @@ class PostgresSessionRepository:
                     log.get("linkedSessionId"), tool_args, tool_output, tool_status, metadata_json,
                 ))
 
-            await self.db.executemany(
+            await conn.executemany(
                 """INSERT INTO session_logs
                     (session_id, log_index, source_log_id, timestamp, speaker, type, content,
                      agent_name, tool_name, tool_call_id, related_tool_call_id,
@@ -600,8 +601,8 @@ class PostgresSessionRepository:
             )
 
     async def upsert_tool_usage(self, session_id: str, tools: list[dict]) -> None:
-        async with self.db.transaction():
-            await self.db.execute("DELETE FROM session_tool_usage WHERE session_id = $1", session_id)
+        async with postgres_transaction(self.db) as conn:
+            await conn.execute("DELETE FROM session_tool_usage WHERE session_id = $1", session_id)
             if not tools:
                 return
             
@@ -613,15 +614,15 @@ class PostgresSessionRepository:
                     max(0, int(t.get("totalMs", 0) or 0)),
                 ))
                 
-            await self.db.executemany(
+            await conn.executemany(
                 """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms)
                    VALUES ($1, $2, $3, $4, $5)""",
                 records
             )
 
     async def upsert_file_updates(self, session_id: str, updates: list[dict]) -> None:
-        async with self.db.transaction():
-            await self.db.execute("DELETE FROM session_file_updates WHERE session_id = $1", session_id)
+        async with postgres_transaction(self.db) as conn:
+            await conn.execute("DELETE FROM session_file_updates WHERE session_id = $1", session_id)
             if not updates:
                 return
 
@@ -642,7 +643,7 @@ class PostgresSessionRepository:
                     u.get("sourceToolName"),
                 ))
             
-            await self.db.executemany(
+            await conn.executemany(
                 """INSERT INTO session_file_updates (
                     session_id, file_path, action, file_type, action_timestamp,
                     additions, deletions, agent_name, thread_session_id, root_session_id,
@@ -652,8 +653,8 @@ class PostgresSessionRepository:
             )
 
     async def upsert_artifacts(self, session_id: str, artifacts: list[dict]) -> None:
-        async with self.db.transaction():
-            await self.db.execute("DELETE FROM session_artifacts WHERE session_id = $1", session_id)
+        async with postgres_transaction(self.db) as conn:
+            await conn.execute("DELETE FROM session_artifacts WHERE session_id = $1", session_id)
             if not artifacts:
                 return
                 
@@ -665,7 +666,7 @@ class PostgresSessionRepository:
                    a.get("url"), a.get("sourceLogId"), a.get("sourceToolName"),
                 ))
 
-            await self.db.executemany(
+            await conn.executemany(
                 """INSERT INTO session_artifacts (
                     id, session_id, title, type, description, source, url, source_log_id, source_tool_name
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",

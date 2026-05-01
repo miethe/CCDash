@@ -40,6 +40,18 @@ x-backend-service: &backend-service
       source: "${CCDASH_PROJECTS_FILE:-../../projects.json}"
       target: /app/projects.json
       read_only: true
+    - type: bind
+      source: "${CCDASH_WORKSPACE_HOST_ROOT:-../../..}"
+      target: "${CCDASH_WORKSPACE_CONTAINER_ROOT:-/workspace}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_CLAUDE_HOME:-~/.claude}"
+      target: "${CCDASH_CLAUDE_CONTAINER_HOME:-/home/ccdash/.claude}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_CODEX_HOME:-~/.codex}"
+      target: "${CCDASH_CODEX_CONTAINER_HOME:-/home/ccdash/.codex}"
+      read_only: true
 
 x-postgres-connection: &postgres-connection
   CCDASH_STORAGE_PROFILE: "${CCDASH_STORAGE_PROFILE:-enterprise}"
@@ -123,6 +135,7 @@ services:
     environment:
       CCDASH_FRONTEND_PORT: "${CCDASH_FRONTEND_PORT:-3000}"
       CCDASH_API_UPSTREAM: "${CCDASH_API_UPSTREAM:-http://api:8000}"
+      CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
     healthcheck:
       test:
         - CMD-SHELL
