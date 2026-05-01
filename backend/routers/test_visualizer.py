@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
@@ -20,6 +19,7 @@ from backend.application.live_updates.domain_events import publish_test_invalida
 from backend.db import connection
 from backend.db.factory import (
     get_test_definition_repository,
+    get_test_domain_repository,
     get_test_integrity_repository,
     get_test_mapping_repository,
     get_test_result_repository,
@@ -201,61 +201,8 @@ async def _prune_unmapped_leaf_domains(db: Any, project_id: str) -> int:
     normalized_project = str(project_id or "").strip()
     if not normalized_project:
         return 0
-
-    if isinstance(db, aiosqlite.Connection):
-        async with db.execute(
-            """
-            SELECT d.domain_id
-            FROM test_domains d
-            LEFT JOIN test_feature_mappings m
-              ON m.project_id = d.project_id
-             AND m.domain_id = d.domain_id
-            LEFT JOIN test_domains child
-              ON child.project_id = d.project_id
-             AND child.parent_id = d.domain_id
-            WHERE d.project_id = ?
-            GROUP BY d.domain_id
-            HAVING COUNT(m.mapping_id) = 0 AND COUNT(child.domain_id) = 0
-            """,
-            (normalized_project,),
-        ) as cur:
-            leaf_ids = [str(row[0]) for row in await cur.fetchall() if str(row[0]).strip()]
-        if not leaf_ids:
-            return 0
-        for domain_id in leaf_ids:
-            await db.execute(
-                "DELETE FROM test_domains WHERE project_id = ? AND domain_id = ?",
-                (normalized_project, domain_id),
-            )
-        await db.commit()
-        return len(leaf_ids)
-
-    rows = await db.fetch(
-        """
-        SELECT d.domain_id
-        FROM test_domains d
-        LEFT JOIN test_feature_mappings m
-          ON m.project_id = d.project_id
-         AND m.domain_id = d.domain_id
-        LEFT JOIN test_domains child
-          ON child.project_id = d.project_id
-         AND child.parent_id = d.domain_id
-        WHERE d.project_id = $1
-        GROUP BY d.domain_id
-        HAVING COUNT(m.mapping_id) = 0 AND COUNT(child.domain_id) = 0
-        """,
-        normalized_project,
-    )
-    leaf_ids = [str(row.get("domain_id") or "").strip() for row in rows if str(row.get("domain_id") or "").strip()]
-    if not leaf_ids:
-        return 0
-    for domain_id in leaf_ids:
-        await db.execute(
-            "DELETE FROM test_domains WHERE project_id = $1 AND domain_id = $2",
-            normalized_project,
-            domain_id,
-        )
-    return len(leaf_ids)
+    domain_repo = get_test_domain_repository(db)
+    return await domain_repo.prune_unmapped_leaf_domains(normalized_project)
 
 
 def _extract_meta(raw: Any) -> dict[str, Any]:
@@ -411,39 +358,8 @@ async def _load_definitions_for_test_ids(
     unique_ids = sorted({str(test_id).strip() for test_id in test_ids if str(test_id).strip()})
     if not unique_ids:
         return {}
-
-    if isinstance(db, aiosqlite.Connection):
-        placeholders = ",".join("?" for _ in unique_ids)
-        query = f"""
-            SELECT *
-            FROM test_definitions
-            WHERE project_id = ?
-              AND test_id IN ({placeholders})
-        """
-        params: list[Any] = [project_id, *unique_ids]
-        async with db.execute(query, params) as cur:
-            rows = await cur.fetchall()
-        return {
-            str(dict(row).get("test_id") or ""): dict(row)
-            for row in rows
-            if str(dict(row).get("test_id") or "").strip()
-        }
-
-    rows = await db.fetch(
-        """
-        SELECT *
-        FROM test_definitions
-        WHERE project_id = $1
-          AND test_id = ANY($2::text[])
-        """,
-        project_id,
-        unique_ids,
-    )
-    return {
-        str(dict(row).get("test_id") or ""): dict(row)
-        for row in rows
-        if str(dict(row).get("test_id") or "").strip()
-    }
+    definition_repo = get_test_definition_repository(db)
+    return await definition_repo.get_many_by_ids(project_id, unique_ids)
 
 
 def _to_test_signal_dto(row: dict[str, Any]) -> TestIntegritySignalDTO:
@@ -517,57 +433,15 @@ async def _request_payload_from_json(request: Request) -> IngestRunRequest:
 
 
 async def _load_metric_summary(project_id: str, db: Any) -> TestMetricSummaryDTO:
-    by_platform: dict[str, int] = {}
-    by_metric_type: dict[str, int] = {}
-    latest_collected_at = ""
-    total_metrics = 0
-
-    if isinstance(db, aiosqlite.Connection):
-        async with db.execute(
-            "SELECT COUNT(*) AS count, MAX(collected_at) AS latest FROM test_metrics WHERE project_id = ?",
-            (project_id,),
-        ) as cur:
-            row = await cur.fetchone()
-            if row:
-                total_metrics = int(row[0] or 0)
-                latest_collected_at = str(row[1] or "")
-        async with db.execute(
-            "SELECT platform, COUNT(*) AS count FROM test_metrics WHERE project_id = ? GROUP BY platform",
-            (project_id,),
-        ) as cur:
-            rows = await cur.fetchall()
-            by_platform = {str(item[0] or ""): int(item[1] or 0) for item in rows if str(item[0] or "").strip()}
-        async with db.execute(
-            "SELECT metric_type, COUNT(*) AS count FROM test_metrics WHERE project_id = ? GROUP BY metric_type",
-            (project_id,),
-        ) as cur:
-            rows = await cur.fetchall()
-            by_metric_type = {str(item[0] or ""): int(item[1] or 0) for item in rows if str(item[0] or "").strip()}
-    else:
-        row = await db.fetchrow(
-            "SELECT COUNT(*)::int AS count, MAX(collected_at) AS latest FROM test_metrics WHERE project_id = $1",
-            project_id,
-        )
-        if row:
-            total_metrics = int(row.get("count") or 0)
-            latest_collected_at = str(row.get("latest") or "")
-        rows = await db.fetch(
-            "SELECT platform, COUNT(*)::int AS count FROM test_metrics WHERE project_id = $1 GROUP BY platform",
-            project_id,
-        )
-        by_platform = {str(item["platform"] or ""): int(item["count"] or 0) for item in rows if str(item["platform"] or "").strip()}
-        rows = await db.fetch(
-            "SELECT metric_type, COUNT(*)::int AS count FROM test_metrics WHERE project_id = $1 GROUP BY metric_type",
-            project_id,
-        )
-        by_metric_type = {str(item["metric_type"] or ""): int(item["count"] or 0) for item in rows if str(item["metric_type"] or "").strip()}
+    repo = get_test_run_repository(db)
+    summary = await repo.get_metric_summary(project_id)
 
     return TestMetricSummaryDTO(
         project_id=project_id,
-        total_metrics=total_metrics,
-        by_platform=by_platform,
-        by_metric_type=by_metric_type,
-        latest_collected_at=latest_collected_at,
+        total_metrics=int(summary.get("total_metrics") or 0),
+        by_platform=dict(summary.get("by_platform") or {}),
+        by_metric_type=dict(summary.get("by_metric_type") or {}),
+        latest_collected_at=str(summary.get("latest_collected_at") or ""),
     )
 
 

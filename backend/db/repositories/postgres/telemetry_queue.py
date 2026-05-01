@@ -252,7 +252,7 @@ class PostgresTelemetryQueueRepository:
             WHERE status = 'synced' AND last_attempt_at IS NOT NULL
               AND (last_attempt_at::timestamptz) >= ($1::timestamptz)
             """,
-            (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),
+            datetime.now(timezone.utc) - timedelta(hours=24),
         )
         error_row = await self.db.fetchrow(
             """

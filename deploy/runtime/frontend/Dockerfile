@@ -14,7 +14,8 @@ RUN npm run build:frontend:static
 FROM nginx:1.27-alpine-slim AS runtime
 
 ENV CCDASH_FRONTEND_PORT=3000 \
-    CCDASH_API_UPSTREAM=http://api:8000
+    CCDASH_API_UPSTREAM=http://api:8000 \
+    CCDASH_API_BEARER_TOKEN=
 
 RUN mkdir -p /etc/nginx/conf.d /var/cache/nginx \
     && chown -R nginx:nginx /etc/nginx/conf.d /var/cache/nginx \

@@ -181,7 +181,9 @@ progress: 100
 runtime_smoke: skipped
 runtime_smoke_reason: Backend-only observability instrumentation; FE beacon path covered
   by unit tests in test_observability_router.py and the existing AppRuntimeContext
-  test surface. Dev server smoke deferred to phase 5 testing harness.
+  test surface. Permanent waiver recorded in code-health-cleanup-v1 Phase 6:
+  no user-visible runtime surface changed in this phase, and frontend beacon
+  behavior is covered by existing component/service tests.
 ---
 
 # runtime-performance-hardening-v1 - Phase 4: Observability & Telemetry

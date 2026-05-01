@@ -240,6 +240,29 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["tool_result_cache_creation_input_tokens"], 55)
         self.assertEqual(row["tool_result_cache_read_input_tokens"], 89)
 
+    async def test_session_detail_logs_are_limited_and_offsettable(self) -> None:
+        await self.repo.upsert_logs(
+            "S-main",
+            [
+                {
+                    "id": f"log-{i}",
+                    "timestamp": f"2026-02-16T00:00:{i % 60:02d}Z",
+                    "speaker": "assistant",
+                    "type": "message",
+                    "content": f"message {i}",
+                }
+                for i in range(6000)
+            ],
+        )
+
+        first_page = await self.repo.get_logs("S-main")
+        second_page = await self.repo.get_logs("S-main", limit=10, offset=5000)
+
+        self.assertEqual(len(first_page), 5000)
+        self.assertEqual(first_page[0]["source_log_id"], "log-0")
+        self.assertEqual(first_page[-1]["source_log_id"], "log-4999")
+        self.assertEqual([row["source_log_id"] for row in second_page[:2]], ["log-5000", "log-5001"])
+
     async def test_relationship_upsert_and_lookup(self) -> None:
         await self.repo.delete_relationships_for_source("project-1", "sessions/main.jsonl")
         await self.repo.upsert_relationships(

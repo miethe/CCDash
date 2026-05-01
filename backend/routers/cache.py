@@ -92,6 +92,10 @@ def _get_sync_engine(request: Request):
     return sync_engine
 
 
+def _optional_sync_engine(request: Request):
+    return getattr(request.app.state, "sync_engine", None)
+
+
 def _get_active_project_context(core_ports: CorePorts) -> tuple[Project, ResolvedProjectPaths]:
     project = core_ports.workspace_registry.get_active_project()
     if not project:
@@ -200,10 +204,30 @@ async def get_cache_status(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return sync engine + watcher status, including live operations."""
-    sync_engine = _get_sync_engine(request)
+    sync_engine = _optional_sync_engine(request)
     live_broker = getattr(request.app.state, "live_event_broker", None)
     project = core_ports.workspace_registry.get_active_project()
     bundle = core_ports.workspace_registry.resolve_project_paths(project) if project else None
+    if not sync_engine:
+        return {
+            "status": "unavailable",
+            "sync_engine": "unavailable",
+            "watcher": "stopped",
+            "projectId": getattr(project, "id", ""),
+            "projectName": getattr(project, "name", ""),
+            "activePaths": {
+                "sessionsDir": str(bundle.sessions.path) if bundle else "",
+                "docsDir": str(bundle.plan_docs.path) if bundle else "",
+                "progressDir": str(bundle.progress.path) if bundle else "",
+            },
+            "operations": {
+                "activeOperationCount": 0,
+                "activeOperations": [],
+                "recentOperations": [],
+                "trackedOperationCount": 0,
+            },
+            "liveUpdates": asdict(live_broker.stats()) if live_broker and hasattr(live_broker, "stats") else None,
+        }
     observability = await sync_engine.get_observability_snapshot()
     return {
         "status": "active",
@@ -224,7 +248,9 @@ async def get_cache_status(
 @cache_router.get("/operations")
 async def list_cache_operations(request: Request, limit: int = Query(20, ge=1, le=200)):
     """List recent sync/rebuild operations."""
-    sync_engine = _get_sync_engine(request)
+    sync_engine = _optional_sync_engine(request)
+    if not sync_engine:
+        return {"status": "unavailable", "count": 0, "items": []}
     operations = await sync_engine.list_operations(limit=limit)
     return {"status": "ok", "count": len(operations), "items": operations}
 

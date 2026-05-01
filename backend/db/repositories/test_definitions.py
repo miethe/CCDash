@@ -98,6 +98,28 @@ class SqliteTestDefinitionRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    async def get_many_by_ids(self, project_id: str, test_ids: list[str]) -> dict[str, dict]:
+        normalized = sorted({str(test_id).strip() for test_id in test_ids if str(test_id).strip()})
+        if not normalized:
+            return {}
+        placeholders = ",".join("?" for _ in normalized)
+        async with self.db.execute(
+            f"""
+            SELECT *
+            FROM test_definitions
+            WHERE project_id = ?
+              AND test_id IN ({placeholders})
+            """,
+            [project_id, *normalized],
+        ) as cur:
+            rows = await cur.fetchall()
+        mapped_rows = [self._row_to_dict(row) for row in rows]
+        return {
+            str(row.get("test_id") or ""): row
+            for row in mapped_rows
+            if str(row.get("test_id") or "").strip()
+        }
+
     async def get_or_create(
         self,
         project_id: str,

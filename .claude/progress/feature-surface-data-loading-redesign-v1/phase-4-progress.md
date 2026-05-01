@@ -37,6 +37,10 @@ model_usage:
   external: []
 ui_touched: true
 runtime_smoke: skipped
+runtime_smoke_reason: Phase executed headlessly; full browser smoke was not run
+  against a live dev stack. Waived in code-health-cleanup-v1 Phase 6 because
+  feature-surface-remediation-v1 Phase 3 G4 later ran the v2 surface smoke,
+  and the remaining production gate is the explicit checklist in this file.
 tasks:
 - id: P4-001
   description: Encoded Modal Paths - Replace raw feature ID path interpolation in

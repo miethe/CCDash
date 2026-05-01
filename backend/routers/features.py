@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-import aiosqlite
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
@@ -27,6 +26,7 @@ from backend.models import (
 from backend.project_manager import project_manager
 from backend.db import connection
 from backend.db.factory import (
+    get_analytics_repository,
     get_entity_link_repository,
     get_feature_repository,
     get_session_repository,
@@ -1002,80 +1002,15 @@ async def track_execution_event(req: ExecutionTelemetryRequest):
     }
     source_key = f"ui-execution:{event_type}:{uuid4().hex}"
 
-    if isinstance(db, aiosqlite.Connection):
-        await db.execute(
-            """
-            INSERT INTO telemetry_events (
-                project_id, session_id, root_session_id, feature_id, task_id, commit_hash,
-                pr_number, phase, event_type, tool_name, model, agent, skill, status,
-                duration_ms, token_input, token_output, cost_usd, occurred_at, sequence_no,
-                source, source_key, payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                active_project.id,
-                "ui-execution-workbench",
-                "ui-execution-workbench",
-                feature_id,
-                "",
-                "",
-                "",
-                "",
-                event_type,
-                "",
-                "",
-                "frontend",
-                "",
-                "ok",
-                0,
-                0,
-                0,
-                0.0,
-                occurred_at,
-                0,
-                "frontend",
-                source_key,
-                json.dumps(payload),
-            ),
-        )
-        await db.commit()
-    else:
-        await db.execute(
-            """
-            INSERT INTO telemetry_events (
-                project_id, session_id, root_session_id, feature_id, task_id, commit_hash,
-                pr_number, phase, event_type, tool_name, model, agent, skill, status,
-                duration_ms, token_input, token_output, cost_usd, occurred_at, sequence_no,
-                source, source_key, payload_json
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                $15, $16, $17, $18, $19, $20, $21, $22, $23
-            )
-            """,
-            active_project.id,
-            "ui-execution-workbench",
-            "ui-execution-workbench",
-            feature_id,
-            "",
-            "",
-            "",
-            "",
-            event_type,
-            "",
-            "",
-            "frontend",
-            "",
-            "ok",
-            0,
-            0,
-            0,
-            0.0,
-            occurred_at,
-            0,
-            "frontend",
-            source_key,
-            json.dumps(payload),
-        )
+    analytics_repo = get_analytics_repository(db)
+    await analytics_repo.record_execution_event(
+        project_id=active_project.id,
+        event_type=event_type,
+        feature_id=feature_id,
+        occurred_at=occurred_at,
+        source_key=source_key,
+        payload_json=json.dumps(payload),
+    )
 
     return {"status": "ok"}
 

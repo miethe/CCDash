@@ -32,11 +32,9 @@ _SORT_COLUMN_PG: dict[FeatureSortKey, str] = {
         " ELSE 0.0 END"
     ),
     FeatureSortKey.TASK_COUNT: "total_tasks",
-    # TODO P2: replace fallback with real latest_activity_at column when rollup join lands
-    FeatureSortKey.LATEST_ACTIVITY: "updated_at",
-    # TODO P2: replace fallback with session_count from rollup join in Phase 2
-    FeatureSortKey.SESSION_COUNT: "updated_at",
 }
+
+_ROLLUP_SORT_KEYS = {FeatureSortKey.LATEST_ACTIVITY, FeatureSortKey.SESSION_COUNT}
 
 
 def _build_feature_list_where_clause_pg(
@@ -79,25 +77,19 @@ def _build_feature_list_where_clause_pg(
         phs = [_p(c.lower()) for c in query.category]
         conditions.append(f"LOWER(category) IN ({','.join(phs)})")
 
-    # ── tags: jsonb containment (@>) — at least one match ───────────────────
-    # TODO P2: add GIN index on data_json::jsonb; use jsonb_path_exists for precision.
+    # ── tags: promoted column with jsonb containment (@>) ──────────────────
     if query.tags:
         tag_parts: list[str] = []
         for tag in query.tags:
             ph = _p(json.dumps([tag]))
-            tag_parts.append(f"data_json::jsonb -> 'tags' @> {ph}::jsonb")
+            tag_parts.append(f"COALESCE(tags_json, '[]')::jsonb @> {ph}::jsonb")
         conditions.append(f"({' OR '.join(tag_parts)})")
 
     # ── has_deferred ─────────────────────────────────────────────────────────
-    # TODO P2: add a `deferred_tasks` indexed column; JSON extraction is expensive.
     if query.has_deferred is True:
-        conditions.append(
-            "COALESCE((data_json::jsonb->>'deferredTasks')::integer, 0) > 0"
-        )
+        conditions.append("COALESCE(deferred_tasks, 0) > 0")
     elif query.has_deferred is False:
-        conditions.append(
-            "COALESCE((data_json::jsonb->>'deferredTasks')::integer, 0) = 0"
-        )
+        conditions.append("COALESCE(deferred_tasks, 0) = 0")
 
     # ── completed date range ─────────────────────────────────────────────────
     _add_date_range_pg(conditions, _p, "completed_at", query.completed)
@@ -105,23 +97,13 @@ def _build_feature_list_where_clause_pg(
     # ── updated date range ───────────────────────────────────────────────────
     _add_date_range_pg(conditions, _p, "updated_at", query.updated)
 
-    # ── planned date range (JSON extraction) ────────────────────────────────
-    # TODO P2: add `planned_at` indexed column; use jsonb extraction for now.
+    # ── planned date range ──────────────────────────────────────────────────
     if query.planned:
-        _add_date_range_pg(
-            conditions, _p,
-            "data_json::jsonb->>'plannedAt'",
-            query.planned,
-        )
+        _add_date_range_pg(conditions, _p, "planned_at", query.planned)
 
-    # ── started date range (JSON extraction) ────────────────────────────────
-    # TODO P2: add `started_at` indexed column.
+    # ── started date range ──────────────────────────────────────────────────
     if query.started:
-        _add_date_range_pg(
-            conditions, _p,
-            "data_json::jsonb->>'startedAt'",
-            query.started,
-        )
+        _add_date_range_pg(conditions, _p, "started_at", query.started)
 
     # ── numeric ranges ───────────────────────────────────────────────────────
     _progress_expr = (
@@ -155,9 +137,42 @@ def _add_date_range_pg(
         conditions.append(f"{col} <= {_p(dr.to_date)}")
 
 
+def _renumber_pg_placeholders(sql: str, *, offset: int) -> str:
+    """Shift asyncpg $N placeholders when a clause is placed after earlier params."""
+    import re
+
+    return re.sub(r"\$(\d+)", lambda match: f"${int(match.group(1)) + offset}", sql)
+
+
+def _build_rollup_sort_join_clause_pg(query: FeatureListQuery) -> str:
+    if query.sort_by not in _ROLLUP_SORT_KEYS:
+        return ""
+    return """
+LEFT JOIN (
+    SELECT
+        el.source_id AS feature_id,
+        COUNT(DISTINCT el.target_id) AS session_count,
+        GREATEST(MAX(s.updated_at), MAX(s.started_at)) AS latest_activity_at
+    FROM entity_links el
+    JOIN sessions s ON s.id = el.target_id AND s.project_id = $1
+    WHERE el.source_type = 'feature'
+      AND el.target_type = 'session'
+    GROUP BY el.source_id
+) feature_session_rollups ON feature_session_rollups.feature_id = features.id
+"""
+
+
 def _build_order_clause_pg(query: FeatureListQuery) -> str:
-    col = _SORT_COLUMN_PG.get(query.sort_by, "updated_at")
     direction = query.effective_sort_direction.value.upper()
+    if query.sort_by == FeatureSortKey.LATEST_ACTIVITY:
+        return (
+            "ORDER BY feature_session_rollups.latest_activity_at IS NULL ASC,"
+            f" feature_session_rollups.latest_activity_at {direction}, id ASC"
+        )
+    if query.sort_by == FeatureSortKey.SESSION_COUNT:
+        return f"ORDER BY COALESCE(feature_session_rollups.session_count, 0) {direction}, id ASC"
+
+    col = _SORT_COLUMN_PG.get(query.sort_by, "updated_at")
     return f"ORDER BY {col} {direction}, id ASC"
 
 
@@ -177,12 +192,17 @@ class PostgresFeatureRepository:
         query = """
             INSERT INTO features (
                 id, project_id, name, status, category,
+                tags_json, deferred_tasks, planned_at, started_at,
                 total_tasks, completed_tasks, parent_feature_id,
                 created_at, updated_at, completed_at, data_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT(id) DO UPDATE SET
                 name=EXCLUDED.name, status=EXCLUDED.status,
                 category=EXCLUDED.category,
+                tags_json=EXCLUDED.tags_json,
+                deferred_tasks=EXCLUDED.deferred_tasks,
+                planned_at=EXCLUDED.planned_at,
+                started_at=EXCLUDED.started_at,
                 total_tasks=EXCLUDED.total_tasks,
                 completed_tasks=EXCLUDED.completed_tasks,
                 parent_feature_id=EXCLUDED.parent_feature_id,
@@ -196,6 +216,10 @@ class PostgresFeatureRepository:
             feature_data.get("name", ""),
             feature_data.get("status", "backlog"),
             feature_data.get("category", ""),
+            json.dumps(feature_data.get("tags", [])),
+            int(feature_data.get("deferredTasks", 0) or 0),
+            feature_data.get("plannedAt", "") or "",
+            feature_data.get("startedAt", "") or "",
             feature_data.get("totalTasks", 0),
             feature_data.get("completedTasks", 0),
             feature_data.get("parentFeatureId"),
@@ -221,11 +245,12 @@ class PostgresFeatureRepository:
     async def list_all(self, project_id: str | None = None) -> list[dict]:
         if project_id:
             rows = await self.db.fetch(
-                "SELECT * FROM features WHERE project_id = $1 ORDER BY name",
+                "SELECT * FROM features WHERE project_id = $1 ORDER BY name LIMIT $2",
                 project_id,
+                5000,
             )
         else:
-            rows = await self.db.fetch("SELECT * FROM features ORDER BY name")
+            rows = await self.db.fetch("SELECT * FROM features ORDER BY name LIMIT $1", 5000)
         return [dict(r) for r in rows]
 
     async def list_paginated(
@@ -430,6 +455,10 @@ class PostgresFeatureRepository:
         a separate count round-trip.
         """
         where_sql, params = _build_feature_list_where_clause_pg(project_id, query)
+        rollup_join_sql = _build_rollup_sort_join_clause_pg(query)
+        if rollup_join_sql:
+            params = [project_id, *params]
+            where_sql = _renumber_pg_placeholders(where_sql, offset=1)
         order_sql = _build_order_clause_pg(query)
 
         # Add LIMIT/OFFSET as the next positional params
@@ -439,8 +468,8 @@ class PostgresFeatureRepository:
         offset_ph = f"${len(params)}"
 
         sql = (
-            f"SELECT *, COUNT(*) OVER () AS _total_count"
-            f" FROM features {where_sql}"
+            f"SELECT features.*, COUNT(*) OVER () AS _total_count"
+            f" FROM features {rollup_join_sql} {where_sql}"
             f" {order_sql}"
             f" LIMIT {limit_ph} OFFSET {offset_ph}"
         )

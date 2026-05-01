@@ -214,6 +214,66 @@ class SqliteTestRunRepository:
             row = await cur.fetchone()
             return self._row_to_dict(row) if row else None
 
+    async def get_latest_commit_correlation(self, project_id: str, git_sha: str) -> dict | None:
+        async with self.db.execute(
+            """
+            SELECT *
+            FROM commit_correlations
+            WHERE project_id = ? AND commit_hash = ?
+            ORDER BY window_end DESC
+            LIMIT 1
+            """,
+            (project_id, git_sha),
+        ) as cur:
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            payload = dict(row)
+        raw_payload = payload.get("payload_json")
+        payload["payload_json"] = _parse_json(raw_payload, {}) if raw_payload is not None else {}
+        return payload
+
+    async def get_metric_summary(self, project_id: str) -> dict[str, object]:
+        summary = {
+            "total_metrics": 0,
+            "latest_collected_at": "",
+            "by_platform": {},
+            "by_metric_type": {},
+        }
+
+        async with self.db.execute(
+            "SELECT COUNT(*) AS count, MAX(collected_at) AS latest FROM test_metrics WHERE project_id = ?",
+            (project_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                summary["total_metrics"] = int(row[0] or 0)
+                summary["latest_collected_at"] = str(row[1] or "")
+
+        async with self.db.execute(
+            "SELECT platform, COUNT(*) AS count FROM test_metrics WHERE project_id = ? GROUP BY platform",
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+            summary["by_platform"] = {
+                str(item[0] or ""): int(item[1] or 0)
+                for item in rows
+                if str(item[0] or "").strip()
+            }
+
+        async with self.db.execute(
+            "SELECT metric_type, COUNT(*) AS count FROM test_metrics WHERE project_id = ? GROUP BY metric_type",
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+            summary["by_metric_type"] = {
+                str(item[0] or ""): int(item[1] or 0)
+                for item in rows
+                if str(item[0] or "").strip()
+            }
+
+        return summary
+
     def _row_to_dict(self, row: aiosqlite.Row | None) -> dict:
         if row is None:
             return {}

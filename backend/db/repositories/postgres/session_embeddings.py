@@ -7,6 +7,8 @@ from typing import Any
 
 import asyncpg
 
+from backend.db.repositories.postgres._transactions import postgres_transaction
+
 
 @dataclass(frozen=True, slots=True)
 class StorageCapabilityDescriptor:
@@ -44,11 +46,11 @@ class PostgresSessionEmbeddingRepository:
         return [dict(row) for row in rows]
 
     async def replace_session_embeddings(self, session_id: str, blocks: list[dict[str, Any]]) -> None:
-        async with self.db.transaction():
-            await self.db.execute("DELETE FROM app.session_embeddings WHERE session_id = $1", session_id)
+        async with postgres_transaction(self.db) as conn:
+            await conn.execute("DELETE FROM app.session_embeddings WHERE session_id = $1", session_id)
             if not blocks:
                 return
-            await self.db.executemany(
+            await conn.executemany(
                 """
                 INSERT INTO app.session_embeddings (
                     session_id, block_kind, block_index, content_hash, message_ids_json,

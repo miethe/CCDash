@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -423,6 +423,10 @@ CREATE TABLE IF NOT EXISTS features (
     name            TEXT NOT NULL,
     status          TEXT DEFAULT 'backlog',
     category        TEXT DEFAULT '',
+    tags_json       TEXT DEFAULT '[]',
+    deferred_tasks  INTEGER DEFAULT 0,
+    planned_at      TEXT DEFAULT '',
+    started_at      TEXT DEFAULT '',
     total_tasks     INTEGER DEFAULT 0,
     completed_tasks INTEGER DEFAULT 0,
     parent_feature_id TEXT,
@@ -1217,6 +1221,19 @@ async def _ensure_index(db: aiosqlite.Connection, ddl: str) -> None:
     await db.execute(ddl)
 
 
+async def _backfill_feature_query_columns(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        """
+        UPDATE features
+        SET
+            tags_json = COALESCE(json_extract(data_json, '$.tags'), '[]'),
+            deferred_tasks = COALESCE(CAST(json_extract(data_json, '$.deferredTasks') AS INTEGER), 0),
+            planned_at = COALESCE(json_extract(data_json, '$.plannedAt'), ''),
+            started_at = COALESCE(json_extract(data_json, '$.startedAt'), '')
+        """
+    )
+
+
 async def _ensure_test_visualizer_tables(db: aiosqlite.Connection) -> None:
     if not config.CCDASH_TEST_VISUALIZER_ENABLED:
         return
@@ -1759,6 +1776,13 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     # Migrate outbound_telemetry_queue: add event_type, drop sessions FK
     await _migrate_outbound_telemetry_queue_add_event_type(db)
 
+    # Explicit feature-column upgrades/backfill for legacy rows.
+    await _ensure_column(db, "features", "tags_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "features", "deferred_tasks", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "features", "planned_at", "TEXT DEFAULT ''")
+    await _ensure_column(db, "features", "started_at", "TEXT DEFAULT ''")
+    await _backfill_feature_query_columns(db)
+
     # ── P1-006: Feature surface query indexes ─────────────────────────────────
     # features: composite for status IN-list filter + updated_at sort
     # Used by: list_feature_cards WHERE project_id=? AND status IN (...)
@@ -1788,6 +1812,26 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         db,
         "CREATE INDEX IF NOT EXISTS idx_features_created_at"
         " ON features(project_id, created_at)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_features_planned_at"
+        " ON features(project_id, planned_at)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_features_started_at"
+        " ON features(project_id, started_at)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_features_deferred_tasks"
+        " ON features(project_id, deferred_tasks)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_features_category_lower"
+        " ON features(project_id, LOWER(category))",
     )
     # entity_links: composite for rollup feature→session/doc/task hot path
     # Used by: _query_session_aggregates, _query_doc_metrics, _query_freshness,

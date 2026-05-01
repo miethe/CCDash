@@ -4,48 +4,48 @@ doc_type: meta-plan
 title: "CCDash Performance & Reliability Meta-Plan v1"
 status: active
 created: "2026-04-17"
-updated: "2026-04-19"
+updated: "2026-04-30"
 owner: "@nick"
 tags: [meta-plan, performance, reliability, caching, sync, memory]
 waves:
   - id: 1
     title: "Default Flips + N+1 Fix (low-risk wins)"
-    status: planned
+    status: completed
     items:
       - title: "Flip query TTL default to 600s (§3.3.1)"
-        status: planned
+        status: completed
         artifacts:
           spec: docs/project_plans/design-specs/runtime-performance-hardening-v1.md
       - title: "Flip deferred link rebuild default OFF (§3.2.1)"
-        status: planned
+        status: completed
         artifacts:
           spec: docs/project_plans/design-specs/runtime-performance-hardening-v1.md
       - title: "Batch workflow diagnostics query (§3.3.2)"
-        status: planned
+        status: completed
         artifacts:
           spec: docs/project_plans/design-specs/runtime-performance-hardening-v1.md
   - id: 2
     title: "Frontend Memory Hardening (flagged)"
-    status: planned
+    status: completed
     items:
       - title: "Transcript windowing + pagination cap (§3.1.1–3.1.2)"
-        status: planned
+        status: completed
       - title: "Polling/EventSource teardown + request-cache TTL (§3.1.3–3.1.4)"
-        status: planned
+        status: completed
   - id: 3
     title: "Perf Observability"
-    status: planned
+    status: completed
     items:
       - title: "Metrics for cache hit rate, scan timings, link-rebuild cost (§3.4)"
-        status: planned
+        status: completed
   - id: 4
     title: "Incremental Rebuild + Scan Manifest (flagged)"
-    status: planned
+    status: completed
     items:
       - title: "Incremental link rebuild (§3.2.2)"
-        status: planned
+        status: completed
       - title: "Filesystem scan manifest cache (§3.2.3)"
-        status: planned
+        status: completed
   - id: 5
     title: "Runtime + Storage Sustain Work"
     status: completed
@@ -110,7 +110,7 @@ observability.
 | 1 | Data Platform Modularization v1 | Foundation refactor | ✅ Done | All 6 phases | [plan](../implementation_plans/refactors/data-platform-modularization-v1.md) |
 | 2 | Deployment Runtime Modularization v1 | Runtime separation | ✅ Done | All 6 phases | [plan](../implementation_plans/refactors/deployment-runtime-modularization-v1.md) |
 | 3 | DB Caching Layer v1 | Sync + query cache | ✅ Done | Phase 0 baseline + 1–4 complete | [plan](../implementation_plans/db-caching-layer-v1.md) |
-| 4 | Runtime Performance Hardening v1 | Gap fixes | 🆕 Draft | Design-spec only | [spec](../design-specs/runtime-performance-hardening-v1.md) |
+| 4 | Runtime Performance Hardening v1 | Gap fixes | ✅ Done | All 6 phases | [plan](../implementation_plans/infrastructure/runtime-performance-hardening-v1.md) |
 
 Status legend: ✅ done · 🟡 in-progress · 🆕 draft · 🔴 blocked · ⏸ paused.
 
@@ -162,18 +162,16 @@ Status legend: ✅ done · 🟡 in-progress · 🆕 draft · 🔴 blocked · ⏸
 | P3 Session-storage modernization (canonical `session_messages`) | ✅ | Closed via `.claude/progress/db-caching-layer-v1/phase-3-progress.md` |
 | P4 Migration governance + shared-Postgres isolation verification | ✅ | Closed via `.claude/progress/db-caching-layer-v1/phase-4-progress.md` |
 
-### 4.4 Runtime Performance Hardening v1 — 🆕 Draft
+### 4.4 Runtime Performance Hardening v1 — ✅ Done
 
-| Track | Spec §  | Status | Owner |
-|-------|---------|--------|-------|
-| Frontend transcript windowing + pagination cap | §3.1.1–3.1.2 | 🆕 | TBD |
-| Polling/EventSource teardown + request-cache TTL | §3.1.3–3.1.4 | 🆕 | TBD |
-| Default flip: deferred rebuild off | §3.2.1 | 🆕 | TBD |
-| Incremental link rebuild | §3.2.2 | 🆕 | TBD |
-| Filesystem scan manifest cache | §3.2.3 | 🆕 | TBD |
-| Default flip: query TTL 600s | §3.3.1 | 🆕 | TBD |
-| Workflow diagnostics batching (N+1 fix) | §3.3.2 | 🆕 | TBD |
-| Perf observability additions | §3.4 | 🆕 | TBD |
+| Phase | Status | Notes |
+|-------|--------|-------|
+| P1 Frontend Memory Hardening | ✅ | Memory guard behind `VITE_CCDASH_MEMORY_GUARD_ENABLED` |
+| P2 Link Rebuild Dedup & Throttling | ✅ | Incremental rebuild flag at `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` |
+| P3 Cached Query Alignment | ✅ | TTL default 600s, workflow batch query |
+| P4 Observability & Telemetry | ✅ | Perf counters registered and wired |
+| P5 Testing & Validation | ✅ | Vitest + pytest coverage |
+| P6 Documentation Finalization | ✅ | Plan and guide docs updated |
 
 ---
 
@@ -314,43 +312,26 @@ active execution track.
 
 ## 10. Current Next Steps
 
-The remaining work is now concentrated in **Runtime Performance Hardening v1**.
-Because runtime separation and storage-profile work are complete, the next
-cycle should optimize defaults and measure before attempting deeper structural
-changes.
+Waves 1–4 shipped during April 2026 under the runtime-performance-hardening-v1
+implementation plan. All default flips, frontend memory hardening, perf
+observability, and incremental rebuild groundwork are in place.
 
-### Recommended order
+### Remaining work — Wave 6: Benchmark Validation
 
-1. **Wave 1 first**: ship the low-risk default flips and the workflow
-   diagnostics batching fix.
-   - Change default `CCDASH_QUERY_CACHE_TTL_SECONDS` `60 → 600`.
-   - Change default `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` `true → false`.
-   - Replace per-workflow detail fetches with the batch query path in
-     `workflow_intelligence.py`.
-2. **Wave 3 next**: add the perf observability fields/counters needed to
-   measure whether Waves 1 and 4 actually help.
-3. **Wave 2 in parallel where convenient**: land the frontend memory guards
-   behind the proposed flag with focused Vitest coverage and a manual idle-tab
-   validation pass.
-4. **Wave 4 after telemetry exists**: implement incremental link rebuild and
-   filesystem scan manifest caching behind `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED=false`.
-5. **Wave 6 last**: run PERF-G1..G5 on the reference workspace, record the
-   results, then decide whether the remaining gaps justify a v2 meta-plan.
+1. **Run PERF-G1..G5** on the reference 50k-session workspace with all
+   hardening defaults active.
+2. **Record results** in `docs/project_plans/reports/`.
+3. **Decide on incremental rebuild default flip**: if PERF-G4 < 3s is
+   sustained under soak, flip `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED`
+   to `true` and `CCDASH_STARTUP_SYNC_LIGHT_MODE` to `true`.
+4. **Close Initiative 4** and evaluate whether a v2 meta-plan is warranted
+   per §7 quarterly review cadence.
 
 ### Operator note
 
-Until Wave 1 lands as true defaults, the recommended operator posture is still
-to set the tuned cache/deferred-rebuild values manually in `.env` and run a
-worker alongside the API for any non-trivial workload.
-
-### Sequencing summary
-
-```
-Wave 1 ─┐
-        ├─► Wave 3 ─► Wave 4 ─┐
-Wave 2 ─┘                     ├─► Wave 6
-          Wave 5 (completed baseline)
-```
+All hardening defaults are now active. The only manual knob remaining is
+`CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` (default `false`), pending
+Wave 6 benchmark soak.
 
 ---
 

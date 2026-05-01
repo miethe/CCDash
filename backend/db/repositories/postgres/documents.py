@@ -401,8 +401,8 @@ class PostgresDocumentRepository:
 
     async def list_all(self, project_id: str | None = None) -> list[dict]:
         if project_id:
-            return await self.list_paginated(project_id, 0, 1_000_000, {})
-        rows = await self.db.fetch("SELECT * FROM documents ORDER BY title")
+            return await self.list_paginated(project_id, 0, 5000, {})
+        rows = await self.db.fetch("SELECT * FROM documents ORDER BY title LIMIT $1", 5000)
         return [dict(row) for row in rows]
 
     async def get_catalog_facets(self, project_id: str, filters: dict | None = None) -> dict:

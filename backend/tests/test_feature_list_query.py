@@ -9,6 +9,7 @@ category filters were applied in-memory after pagination, making ``total`` wrong
 """
 from __future__ import annotations
 
+import json
 import unittest
 
 import aiosqlite
@@ -19,6 +20,11 @@ from backend.db.repositories.feature_queries import (
     FeatureListQuery,
     FeatureSortKey,
     SortDirection,
+)
+from backend.db.repositories.postgres.features import (
+    _build_feature_list_where_clause_pg,
+    _build_order_clause_pg,
+    _build_rollup_sort_join_clause_pg,
 )
 from backend.db.sqlite_migrations import run_migrations
 
@@ -113,7 +119,9 @@ _SEED_FEATURES = [
     _make_feature("F-020", "Upsilon Finalize", "done", "cat-b", 8, 8,
                   updated_at="2024-06-05T00:00:00Z",
                   completed_at="2024-06-05T00:00:00Z",
-                  tags=["release"], deferred_tasks=2),
+                  tags=["release"], deferred_tasks=2,
+                  planned_at="2024-06-01T00:00:00Z",
+                  started_at="2024-06-02T00:00:00Z"),
 ]
 
 
@@ -128,6 +136,43 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
+
+    async def _link_session(
+        self,
+        feature_id: str,
+        session_id: str,
+        *,
+        started_at: str,
+        updated_at: str,
+    ) -> None:
+        await self.db.execute(
+            """
+            INSERT INTO sessions (
+                id, project_id, task_id, status, model,
+                created_at, updated_at, started_at, source_file
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                "proj-1",
+                feature_id,
+                "completed",
+                "claude-sonnet",
+                started_at,
+                updated_at,
+                started_at,
+                f"{session_id}.jsonl",
+            ),
+        )
+        await self.db.execute(
+            """
+            INSERT INTO entity_links (
+                source_type, source_id, target_type, target_id, link_type, created_at
+            ) VALUES ('feature', ?, 'session', ?, 'related', ?)
+            """,
+            (feature_id, session_id, updated_at),
+        )
+        await self.db.commit()
 
     # ── empty filter matches all ─────────────────────────────────────────────
 
@@ -236,6 +281,59 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
             )
             prev = prog
 
+    async def test_sort_by_latest_activity_uses_linked_session_rollup(self) -> None:
+        await self.db.execute(
+            "UPDATE features SET updated_at = ? WHERE id = ?",
+            ("2027-01-01T00:00:00Z", "F-020"),
+        )
+        await self.db.commit()
+        await self._link_session(
+            "F-001",
+            "S-latest",
+            started_at="2026-04-01T00:00:00Z",
+            updated_at="2026-04-02T00:00:00Z",
+        )
+
+        q = FeatureListQuery(sort_by=FeatureSortKey.LATEST_ACTIVITY, limit=5)
+        page = await self.repo.list_feature_cards("proj-1", q)
+
+        self.assertEqual(page.rows[0]["id"], "F-001")
+        self.assertNotEqual(
+            page.rows[0]["id"],
+            "F-020",
+            "latest_activity must not fall back to feature.updated_at for unlinked features",
+        )
+
+    async def test_sort_by_session_count_uses_linked_session_rollup(self) -> None:
+        await self.db.execute(
+            "UPDATE features SET updated_at = ? WHERE id = ?",
+            ("2027-01-01T00:00:00Z", "F-020"),
+        )
+        await self.db.commit()
+        for idx in range(3):
+            await self._link_session(
+                "F-002",
+                f"S-count-{idx}",
+                started_at=f"2024-01-0{idx + 1}T00:00:00Z",
+                updated_at=f"2024-01-0{idx + 1}T00:00:00Z",
+            )
+        await self._link_session(
+            "F-003",
+            "S-count-low",
+            started_at="2024-01-10T00:00:00Z",
+            updated_at="2024-01-10T00:00:00Z",
+        )
+
+        q = FeatureListQuery(sort_by=FeatureSortKey.SESSION_COUNT, limit=5)
+        page = await self.repo.list_feature_cards("proj-1", q)
+
+        self.assertEqual(page.rows[0]["id"], "F-002")
+        self.assertNotEqual(
+            page.rows[0]["id"],
+            "F-020",
+            "session_count must not fall back to feature.updated_at for unlinked features",
+        )
+
     # ── q search matches both id and name ────────────────────────────────────
 
     async def test_q_matches_feature_id(self) -> None:
@@ -270,6 +368,87 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
         page = await self.repo.list_feature_cards("proj-1", q)
         self.assertEqual(page.total, 1)
         self.assertEqual(page.rows[0]["id"], "F-020")
+
+    async def test_promoted_columns_are_used_after_data_json_changes(self) -> None:
+        await self.db.execute(
+            "UPDATE features SET data_json = ? WHERE id = ?",
+            (
+                json.dumps({
+                    "id": "F-020",
+                    "name": "Upsilon Finalize",
+                    "status": "done",
+                    "category": "cat-b",
+                    "totalTasks": 8,
+                    "completedTasks": 8,
+                    "tags": [],
+                    "deferredTasks": 0,
+                    "plannedAt": "",
+                    "startedAt": "",
+                }),
+                "F-020",
+            ),
+        )
+        await self.db.commit()
+
+        q = FeatureListQuery(
+            tags=["release"],
+            has_deferred=True,
+            planned=DateRange(
+                from_date="2024-06-01T00:00:00Z",
+                to_date="2024-06-30T00:00:00Z",
+            ),
+            started=DateRange(
+                from_date="2024-06-02T00:00:00Z",
+                to_date="2024-06-30T00:00:00Z",
+            ),
+            limit=200,
+        )
+        page = await self.repo.list_feature_cards("proj-1", q)
+        self.assertEqual(page.total, 1)
+        self.assertEqual(page.rows[0]["id"], "F-020")
+
+    def test_postgres_query_builder_uses_promoted_columns(self) -> None:
+        q = FeatureListQuery(
+            tags=["release"],
+            has_deferred=True,
+            planned=DateRange(
+                from_date="2024-06-01T00:00:00Z",
+                to_date="2024-06-30T00:00:00Z",
+            ),
+            started=DateRange(
+                from_date="2024-06-02T00:00:00Z",
+                to_date="2024-06-30T00:00:00Z",
+            ),
+            limit=200,
+        )
+        where_sql, params = _build_feature_list_where_clause_pg("proj-1", q)
+
+        self.assertIn("tags_json", where_sql)
+        self.assertIn("deferred_tasks", where_sql)
+        self.assertIn("planned_at", where_sql)
+        self.assertIn("started_at", where_sql)
+        self.assertNotIn("data_json", where_sql)
+        self.assertEqual(params[0], "proj-1")
+
+    def test_postgres_latest_activity_sort_uses_rollup_join_not_updated_at_fallback(self) -> None:
+        q = FeatureListQuery(sort_by=FeatureSortKey.LATEST_ACTIVITY)
+        join_sql = _build_rollup_sort_join_clause_pg(q)
+        order_sql = _build_order_clause_pg(q)
+
+        self.assertIn("feature_session_rollups", join_sql)
+        self.assertIn("latest_activity_at", order_sql)
+        self.assertNotIn("COALESCE((", order_sql)
+        self.assertNotIn("updated_at)", order_sql)
+
+    def test_postgres_session_count_sort_uses_rollup_join_not_updated_at_fallback(self) -> None:
+        q = FeatureListQuery(sort_by=FeatureSortKey.SESSION_COUNT)
+        join_sql = _build_rollup_sort_join_clause_pg(q)
+        order_sql = _build_order_clause_pg(q)
+
+        self.assertIn("feature_session_rollups", join_sql)
+        self.assertIn("session_count", order_sql)
+        self.assertNotIn("COALESCE((", order_sql)
+        self.assertNotIn("updated_at", order_sql)
 
     # ── completed date range ─────────────────────────────────────────────────
 

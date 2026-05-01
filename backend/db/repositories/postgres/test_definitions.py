@@ -81,3 +81,23 @@ class PostgresTestDefinitionRepository:
 
     async def delete_by_source(self, source_file: str) -> None:
         _ = source_file
+
+    async def get_many_by_ids(self, project_id: str, test_ids: list[str]) -> dict[str, dict]:
+        normalized = sorted({str(test_id).strip() for test_id in test_ids if str(test_id).strip()})
+        if not normalized:
+            return {}
+        rows = await self.db.fetch(
+            """
+            SELECT *
+            FROM test_definitions
+            WHERE project_id = $1
+              AND test_id = ANY($2::text[])
+            """,
+            project_id,
+            normalized,
+        )
+        return {
+            str(dict(row).get("test_id") or ""): dict(row)
+            for row in rows
+            if str(dict(row).get("test_id") or "").strip()
+        }

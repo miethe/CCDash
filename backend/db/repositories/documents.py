@@ -393,8 +393,8 @@ class SqliteDocumentRepository:
 
     async def list_all(self, project_id: str | None = None) -> list[dict]:
         if project_id:
-            return await self.list_paginated(project_id, 0, 1_000_000, {})
-        async with self.db.execute("SELECT * FROM documents ORDER BY title") as cur:
+            return await self.list_paginated(project_id, 0, 5000, {})
+        async with self.db.execute("SELECT * FROM documents ORDER BY title LIMIT ?", (5000,)) as cur:
             return [dict(row) for row in await cur.fetchall()]
 
     async def get_catalog_facets(self, project_id: str, filters: dict | None = None) -> dict:

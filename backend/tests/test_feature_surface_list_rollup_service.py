@@ -209,11 +209,35 @@ class FeatureSurfaceListRollupServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page.rows[0].phase_summary[0].name, "Phase 1")
         self.assertEqual(page.rows[1].phase_summary, [])
         self.assertEqual(page.sort.requested_sort_by, "latest_activity")
-        self.assertEqual(page.sort.applied_sort_by, "updated_at")
-        self.assertEqual(page.sort.precision, "fallback")
+        self.assertEqual(page.sort.applied_sort_by, "latest_activity")
+        self.assertEqual(page.sort.precision, "exact")
         features_repo.list_phase_summaries_for_features.assert_awaited_once()
         phase_query = features_repo.list_phase_summaries_for_features.await_args.args[1]
         self.assertEqual(phase_query.feature_ids, ["FEAT-1", "FEAT-2"])
+
+    async def test_list_feature_cards_reports_session_count_sort_as_exact(self) -> None:
+        features_repo = types.SimpleNamespace(
+            list_feature_cards=AsyncMock(
+                return_value=FeatureListPage(
+                    rows=[],
+                    total=0,
+                    offset=0,
+                    limit=50,
+                )
+            ),
+            list_phase_summaries_for_features=AsyncMock(return_value={}),
+        )
+        service = FeatureSurfaceListRollupService()
+
+        page = await service.list_feature_cards(
+            _context(),
+            _ports(features_repo=features_repo),
+            FeatureListQuery(sort_by=FeatureSortKey.SESSION_COUNT),
+        )
+
+        self.assertEqual(page.sort.requested_sort_by, "session_count")
+        self.assertEqual(page.sort.applied_sort_by, "session_count")
+        self.assertEqual(page.sort.precision, "exact")
 
     async def test_list_feature_cards_rejects_unsupported_include(self) -> None:
         features_repo = types.SimpleNamespace(

@@ -480,6 +480,25 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(first.total_results, 0)
         self.assertGreaterEqual(first.coverage, 0.0)
 
+    async def test_metrics_summary_uses_repository_aggregation(self) -> None:
+        await self.db.execute(
+            """
+            INSERT INTO test_metrics (project_id, platform, metric_type, metric_name, metric_value, unit, collected_at)
+            VALUES
+                ('project-1', 'pytest', 'coverage', 'line', 90.0, 'pct', '2026-02-28T12:05:00Z'),
+                ('project-1', 'playwright', 'duration', 'suite', 123.0, 'ms', '2026-02-28T12:10:00Z')
+            """
+        )
+        await self.db.commit()
+
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            payload = await router.get_metrics_summary(types.SimpleNamespace(), project_id="project-1")
+
+        self.assertEqual(payload.total_metrics, 2)
+        self.assertEqual(payload.by_platform, {"playwright": 1, "pytest": 1})
+        self.assertEqual(payload.by_metric_type, {"coverage": 1, "duration": 1})
+        self.assertEqual(payload.latest_collected_at, "2026-02-28T12:10:00Z")
+
     async def test_import_mappings_rejects_invalid_payload_and_flag(self) -> None:
         bad_request = self._json_request(
             {

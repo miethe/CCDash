@@ -7,7 +7,6 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
@@ -346,21 +345,6 @@ def _operation_kind_label(kind: str) -> str:
     return (normalized.replace("_", " ").strip().title() or "Operation")
 
 
-async def _query_rows(
-    db: Any,
-    *,
-    sqlite_query: str,
-    sqlite_params: tuple[Any, ...],
-    postgres_query: str,
-    postgres_params: tuple[Any, ...],
-) -> list[dict[str, Any]]:
-    if isinstance(db, aiosqlite.Connection):
-        async with db.execute(sqlite_query, sqlite_params) as cur:
-            return [dict(row) for row in await cur.fetchall()]
-    rows = await db.fetch(postgres_query, *postgres_params)
-    return [dict(row) for row in rows]
-
-
 async def _fetch_artifact_analytics_rows(
     db: Any,
     *,
@@ -377,242 +361,24 @@ async def _fetch_artifact_analytics_rows(
     list[dict[str, Any]],
     list[dict[str, Any]],
 ]:
-    artifact_filters_sqlite = [
-        "project_id = ?",
-        "event_type = 'artifact.linked'",
-    ]
-    artifact_params_sqlite: list[Any] = [project_id]
-    if start:
-        artifact_filters_sqlite.append("occurred_at >= ?")
-        artifact_params_sqlite.append(start)
-    if end:
-        artifact_filters_sqlite.append("occurred_at <= ?")
-        artifact_params_sqlite.append(end)
-    if artifact_type:
-        artifact_filters_sqlite.append("LOWER(COALESCE(json_extract(payload_json, '$.type'), status, 'unknown')) = ?")
-        artifact_params_sqlite.append(str(artifact_type).strip().lower())
-    if tool:
-        artifact_filters_sqlite.append("LOWER(COALESCE(tool_name, 'unknown')) = ?")
-        artifact_params_sqlite.append(str(tool).strip().lower())
+    from backend.db.factory import get_analytics_repository
 
-    artifact_filters_pg = [
-        "project_id = $1",
-        "event_type = 'artifact.linked'",
-    ]
-    artifact_params_pg: list[Any] = [project_id]
-    pg_idx = 2
-    if start:
-        artifact_filters_pg.append(f"occurred_at >= ${pg_idx}")
-        artifact_params_pg.append(start)
-        pg_idx += 1
-    if end:
-        artifact_filters_pg.append(f"occurred_at <= ${pg_idx}")
-        artifact_params_pg.append(end)
-        pg_idx += 1
-    if artifact_type:
-        artifact_filters_pg.append(f"LOWER(COALESCE(payload_json::jsonb->>'type', status, 'unknown')) = ${pg_idx}")
-        artifact_params_pg.append(str(artifact_type).strip().lower())
-        pg_idx += 1
-    if tool:
-        artifact_filters_pg.append(f"LOWER(COALESCE(tool_name, 'unknown')) = ${pg_idx}")
-        artifact_params_pg.append(str(tool).strip().lower())
-        pg_idx += 1
-
-    artifact_rows = await _query_rows(
-        db,
-        sqlite_query=f"""
-            SELECT
-                session_id,
-                feature_id,
-                model,
-                tool_name,
-                agent,
-                skill,
-                status,
-                occurred_at,
-                payload_json
-            FROM telemetry_events
-            WHERE {" AND ".join(artifact_filters_sqlite)}
-            ORDER BY occurred_at DESC
-        """,
-        sqlite_params=tuple(artifact_params_sqlite),
-        postgres_query=f"""
-            SELECT
-                session_id,
-                feature_id,
-                model,
-                tool_name,
-                agent,
-                skill,
-                status,
-                occurred_at,
-                payload_json
-            FROM telemetry_events
-            WHERE {" AND ".join(artifact_filters_pg)}
-            ORDER BY occurred_at DESC
-        """,
-        postgres_params=tuple(artifact_params_pg),
+    analytics_repo = get_analytics_repository(db)
+    row_groups = await analytics_repo.list_artifact_analytics_rows(
+        project_id=project_id,
+        start=start,
+        end=end,
+        artifact_type=artifact_type,
+        tool=tool,
     )
-
-    lifecycle_filters_sqlite = [
-        "project_id = ?",
-        "event_type = 'session.lifecycle'",
-    ]
-    lifecycle_params_sqlite: list[Any] = [project_id]
-    if start:
-        lifecycle_filters_sqlite.append("occurred_at >= ?")
-        lifecycle_params_sqlite.append(start)
-    if end:
-        lifecycle_filters_sqlite.append("occurred_at <= ?")
-        lifecycle_params_sqlite.append(end)
-
-    lifecycle_filters_pg = [
-        "project_id = $1",
-        "event_type = 'session.lifecycle'",
-    ]
-    lifecycle_params_pg: list[Any] = [project_id]
-    pg_idx = 2
-    if start:
-        lifecycle_filters_pg.append(f"occurred_at >= ${pg_idx}")
-        lifecycle_params_pg.append(start)
-        pg_idx += 1
-    if end:
-        lifecycle_filters_pg.append(f"occurred_at <= ${pg_idx}")
-        lifecycle_params_pg.append(end)
-        pg_idx += 1
-
-    lifecycle_rows = await _query_rows(
-        db,
-        sqlite_query=f"""
-            SELECT
-                session_id,
-                feature_id,
-                model,
-                status,
-                occurred_at,
-                token_input,
-                token_output,
-                cost_usd,
-                payload_json
-            FROM telemetry_events
-            WHERE {" AND ".join(lifecycle_filters_sqlite)}
-            ORDER BY occurred_at DESC
-        """,
-        sqlite_params=tuple(lifecycle_params_sqlite),
-        postgres_query=f"""
-            SELECT
-                session_id,
-                feature_id,
-                model,
-                status,
-                occurred_at,
-                token_input,
-                token_output,
-                cost_usd,
-                payload_json
-            FROM telemetry_events
-            WHERE {" AND ".join(lifecycle_filters_pg)}
-            ORDER BY occurred_at DESC
-        """,
-        postgres_params=tuple(lifecycle_params_pg),
+    return (
+        row_groups.get("artifact_rows", []),
+        row_groups.get("lifecycle_rows", []),
+        row_groups.get("feature_link_rows", []),
+        row_groups.get("feature_rows", []),
+        row_groups.get("command_rows", []),
+        row_groups.get("agent_rows", []),
     )
-
-    feature_link_rows = await _query_rows(
-        db,
-        sqlite_query="""
-            SELECT
-                el.target_id AS session_id,
-                el.source_id AS feature_id
-            FROM entity_links el
-            JOIN features f ON f.id = el.source_id
-            WHERE
-                el.source_type = 'feature'
-                AND el.target_type = 'session'
-                AND el.link_type = 'related'
-                AND f.project_id = ?
-        """,
-        sqlite_params=(project_id,),
-        postgres_query="""
-            SELECT
-                el.target_id AS session_id,
-                el.source_id AS feature_id
-            FROM entity_links el
-            JOIN features f ON f.id = el.source_id
-            WHERE
-                el.source_type = 'feature'
-                AND el.target_type = 'session'
-                AND el.link_type = 'related'
-                AND f.project_id = $1
-        """,
-        postgres_params=(project_id,),
-    )
-
-    feature_rows = await _query_rows(
-        db,
-        sqlite_query="SELECT id, name FROM features WHERE project_id = ?",
-        sqlite_params=(project_id,),
-        postgres_query="SELECT id, name FROM features WHERE project_id = $1",
-        postgres_params=(project_id,),
-    )
-
-    event_filters_sqlite = ["project_id = ?"]
-    event_params_sqlite: list[Any] = [project_id]
-    if start:
-        event_filters_sqlite.append("occurred_at >= ?")
-        event_params_sqlite.append(start)
-    if end:
-        event_filters_sqlite.append("occurred_at <= ?")
-        event_params_sqlite.append(end)
-
-    event_filters_pg = ["project_id = $1"]
-    event_params_pg: list[Any] = [project_id]
-    pg_idx = 2
-    if start:
-        event_filters_pg.append(f"occurred_at >= ${pg_idx}")
-        event_params_pg.append(start)
-        pg_idx += 1
-    if end:
-        event_filters_pg.append(f"occurred_at <= ${pg_idx}")
-        event_params_pg.append(end)
-        pg_idx += 1
-
-    command_rows = await _query_rows(
-        db,
-        sqlite_query=f"""
-            SELECT session_id, model, occurred_at, payload_json
-            FROM telemetry_events
-            WHERE {" AND ".join(event_filters_sqlite)} AND event_type = 'log.command'
-            ORDER BY occurred_at DESC
-        """,
-        sqlite_params=tuple(event_params_sqlite),
-        postgres_query=f"""
-            SELECT session_id, model, occurred_at, payload_json
-            FROM telemetry_events
-            WHERE {" AND ".join(event_filters_pg)} AND event_type = 'log.command'
-            ORDER BY occurred_at DESC
-        """,
-        postgres_params=tuple(event_params_pg),
-    )
-
-    agent_rows = await _query_rows(
-        db,
-        sqlite_query=f"""
-            SELECT session_id, model, agent, occurred_at, event_type, payload_json
-            FROM telemetry_events
-            WHERE {" AND ".join(event_filters_sqlite)} AND event_type LIKE 'log.%'
-            ORDER BY occurred_at DESC
-        """,
-        sqlite_params=tuple(event_params_sqlite),
-        postgres_query=f"""
-            SELECT session_id, model, agent, occurred_at, event_type, payload_json
-            FROM telemetry_events
-            WHERE {" AND ".join(event_filters_pg)} AND event_type LIKE 'log.%'
-            ORDER BY occurred_at DESC
-        """,
-        postgres_params=tuple(event_params_pg),
-    )
-
-    return artifact_rows, lifecycle_rows, feature_link_rows, feature_rows, command_rows, agent_rows
 
 
 def _build_artifact_analytics_payload(
@@ -2614,7 +2380,6 @@ async def export_prometheus(
     if not project:
         return Response("", media_type="text/plain")
 
-    db = core_ports.storage.db
     repo = core_ports.storage.analytics()
     types = [
         "session_cost", "session_tokens", "session_count",
@@ -2633,116 +2398,10 @@ async def export_prometheus(
     model_rows: list[dict[str, Any]] = []
     event_rows: list[dict[str, Any]] = []
     try:
-        if isinstance(db, aiosqlite.Connection):
-            async with db.execute(
-                """
-                SELECT
-                    tool_name,
-                    status,
-                    SUM(CAST(COALESCE(json_extract(payload_json, '$.callCount'), 0) AS INTEGER)) AS calls,
-                    AVG(COALESCE(duration_ms, 0)) AS avg_duration_ms
-                FROM telemetry_events
-                WHERE project_id = ? AND event_type = 'tool.aggregate'
-                GROUP BY tool_name, status
-                ORDER BY calls DESC
-                """,
-                (project.id,),
-            ) as cur:
-                tool_rows = [dict(row) for row in await cur.fetchall()]
-
-            async with db.execute(
-                """
-                SELECT
-                    model,
-                    SUM(COALESCE(token_input, 0)) AS input_tokens,
-                    SUM(COALESCE(token_output, 0)) AS output_tokens,
-                    SUM(COALESCE(cost_usd, 0)) AS total_cost
-                FROM telemetry_events
-                WHERE project_id = ? AND event_type = 'session.lifecycle'
-                GROUP BY model
-                ORDER BY (input_tokens + output_tokens) DESC
-                """,
-                (project.id,),
-            ) as cur:
-                model_rows = [dict(row) for row in await cur.fetchall()]
-
-            async with db.execute(
-                """
-                SELECT
-                    event_type,
-                    status,
-                    tool_name,
-                    model,
-                    agent,
-                    skill,
-                    phase,
-                    source,
-                    COUNT(*) AS event_count
-                FROM telemetry_events
-                WHERE project_id = ?
-                GROUP BY event_type, status, tool_name, model, agent, skill, phase, source
-                ORDER BY event_count DESC
-                """,
-                (project.id,),
-            ) as cur:
-                event_rows = [dict(row) for row in await cur.fetchall()]
-        else:
-            tool_rows = [
-                dict(row)
-                for row in await db.fetch(
-                    """
-                    SELECT
-                        tool_name,
-                        status,
-                        SUM(COALESCE((payload_json::jsonb->>'callCount')::INTEGER, 0)) AS calls,
-                        AVG(COALESCE(duration_ms, 0)) AS avg_duration_ms
-                    FROM telemetry_events
-                    WHERE project_id = $1 AND event_type = 'tool.aggregate'
-                    GROUP BY tool_name, status
-                    ORDER BY calls DESC
-                    """,
-                    project.id,
-                )
-            ]
-            model_rows = [
-                dict(row)
-                for row in await db.fetch(
-                    """
-                    SELECT
-                        model,
-                        SUM(COALESCE(token_input, 0)) AS input_tokens,
-                        SUM(COALESCE(token_output, 0)) AS output_tokens,
-                        SUM(COALESCE(cost_usd, 0)) AS total_cost
-                    FROM telemetry_events
-                    WHERE project_id = $1 AND event_type = 'session.lifecycle'
-                    GROUP BY model
-                    ORDER BY (SUM(COALESCE(token_input, 0)) + SUM(COALESCE(token_output, 0))) DESC
-                    """,
-                    project.id,
-                )
-            ]
-            event_rows = [
-                dict(row)
-                for row in await db.fetch(
-                    """
-                    SELECT
-                        event_type,
-                        status,
-                        tool_name,
-                        model,
-                        agent,
-                        skill,
-                        phase,
-                        source,
-                        COUNT(*) AS event_count
-                    FROM telemetry_events
-                    WHERE project_id = $1
-                    GROUP BY event_type, status, tool_name, model, agent, skill, phase, source
-                    ORDER BY event_count DESC
-                    """,
-                    project.id,
-                )
-            ]
+        telemetry_rows = await repo.get_prometheus_telemetry_rows(project.id)
+        tool_rows = telemetry_rows.get("tool_rows", [])
+        model_rows = telemetry_rows.get("model_rows", [])
+        event_rows = telemetry_rows.get("event_rows", [])
     except Exception:
         tool_rows = []
         model_rows = []
@@ -2823,7 +2482,7 @@ async def export_prometheus(
     artifact_payload: dict[str, Any] = {}
     try:
         artifact_payload = await _load_artifact_analytics_payload(
-            db,
+            core_ports.storage.db,
             project_id=project.id,
             start=None,
             end=None,
@@ -3023,92 +2682,9 @@ async def export_prometheus(
     link_stats = {"avg_confidence": 0.0, "low_confidence": 0, "total_links": 0}
     thread_stats = {"avg_fanout": 0.0, "max_fanout": 0}
     try:
-        if isinstance(db, aiosqlite.Connection):
-            async with db.execute(
-                """
-                SELECT
-                    AVG(confidence) AS avg_confidence,
-                    SUM(CASE WHEN confidence < 0.6 THEN 1 ELSE 0 END) AS low_confidence,
-                    COUNT(*) AS total_links
-                FROM entity_links el
-                JOIN features f ON f.id = el.source_id
-                WHERE
-                    el.source_type = 'feature'
-                    AND el.target_type = 'session'
-                    AND el.link_type = 'related'
-                    AND f.project_id = ?
-                """,
-                (project.id,),
-            ) as cur:
-                row = await cur.fetchone()
-                if row:
-                    link_stats = {
-                        "avg_confidence": float(row[0] or 0.0),
-                        "low_confidence": int(row[1] or 0),
-                        "total_links": int(row[2] or 0),
-                    }
-            async with db.execute(
-                """
-                SELECT
-                    AVG(child_count) AS avg_fanout,
-                    MAX(child_count) AS max_fanout
-                FROM (
-                    SELECT COUNT(*) AS child_count
-                    FROM sessions
-                    WHERE project_id = ?
-                    GROUP BY root_session_id
-                )
-                """,
-                (project.id,),
-            ) as cur:
-                row = await cur.fetchone()
-                if row:
-                    thread_stats = {
-                        "avg_fanout": float(row[0] or 0.0),
-                        "max_fanout": int(row[1] or 0),
-                    }
-        else:
-            row = await db.fetchrow(
-                """
-                SELECT
-                    AVG(confidence) AS avg_confidence,
-                    SUM(CASE WHEN confidence < 0.6 THEN 1 ELSE 0 END) AS low_confidence,
-                    COUNT(*) AS total_links
-                FROM entity_links el
-                JOIN features f ON f.id = el.source_id
-                WHERE
-                    el.source_type = 'feature'
-                    AND el.target_type = 'session'
-                    AND el.link_type = 'related'
-                    AND f.project_id = $1
-                """,
-                project.id,
-            )
-            if row:
-                link_stats = {
-                    "avg_confidence": float(row["avg_confidence"] or 0.0),
-                    "low_confidence": int(row["low_confidence"] or 0),
-                    "total_links": int(row["total_links"] or 0),
-                }
-            row = await db.fetchrow(
-                """
-                SELECT
-                    AVG(child_count) AS avg_fanout,
-                    MAX(child_count) AS max_fanout
-                FROM (
-                    SELECT COUNT(*) AS child_count
-                    FROM sessions
-                    WHERE project_id = $1
-                    GROUP BY root_session_id
-                ) fanout
-                """,
-                project.id,
-            )
-            if row:
-                thread_stats = {
-                    "avg_fanout": float(row["avg_fanout"] or 0.0),
-                    "max_fanout": int(row["max_fanout"] or 0),
-                }
+        stats = await core_ports.storage.analytics().get_prometheus_link_and_thread_stats(project.id)
+        link_stats = stats.get("link_stats", link_stats)
+        thread_stats = stats.get("thread_stats", thread_stats)
     except Exception:
         link_stats = {"avg_confidence": 0.0, "low_confidence": 0, "total_links": 0}
         thread_stats = {"avg_fanout": 0.0, "max_fanout": 0}

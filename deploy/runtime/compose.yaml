@@ -16,7 +16,7 @@ x-backend-service: &backend-service
     CCDASH_PROJECT_ROOT: "${CCDASH_PROJECT_ROOT:-/app}"
     CCDASH_HOST: "0.0.0.0"
     CCDASH_PORT: "8000"
-    CCDASH_FRONTEND_ORIGIN: "${CCDASH_FRONTEND_ORIGIN:-http://localhost:3000}"
+    CCDASH_FRONTEND_ORIGIN: "${CCDASH_FRONTEND_ORIGIN:-http://localhost:${CCDASH_FRONTEND_PORT:-3000}}"
     CCDASH_OTEL_ENABLED: "${CCDASH_OTEL_ENABLED:-false}"
     CCDASH_OTEL_ENDPOINT: "${CCDASH_OTEL_ENDPOINT:-http://localhost:4318}"
     CCDASH_OTEL_SERVICE_NAME: "${CCDASH_OTEL_SERVICE_NAME:-ccdash-backend}"
@@ -35,6 +35,23 @@ x-backend-service: &backend-service
     timeout: 5s
     retries: 3
     start_period: 30s
+  volumes:
+    - type: bind
+      source: "${CCDASH_PROJECTS_FILE:-../../projects.json}"
+      target: /app/projects.json
+      read_only: true
+    - type: bind
+      source: "${CCDASH_WORKSPACE_HOST_ROOT:-../../..}"
+      target: "${CCDASH_WORKSPACE_CONTAINER_ROOT:-/workspace}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_CLAUDE_HOME:-~/.claude}"
+      target: "${CCDASH_CLAUDE_CONTAINER_HOME:-/home/ccdash/.claude}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_CODEX_HOME:-~/.codex}"
+      target: "${CCDASH_CODEX_CONTAINER_HOME:-/home/ccdash/.codex}"
+      read_only: true
 
 x-postgres-connection: &postgres-connection
   CCDASH_STORAGE_PROFILE: "${CCDASH_STORAGE_PROFILE:-enterprise}"
@@ -64,8 +81,7 @@ services:
     <<: *backend-service
     profiles: ["enterprise"]
     environment:
-      <<: *backend-shared-env
-      <<: *postgres-connection
+      <<: [*backend-shared-env, *postgres-connection]
       CCDASH_RUNTIME_PROFILE: "api"
       CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
     depends_on:
@@ -79,8 +95,7 @@ services:
     <<: *backend-service
     profiles: ["enterprise"]
     environment:
-      <<: *backend-shared-env
-      <<: *postgres-connection
+      <<: [*backend-shared-env, *postgres-connection]
       CCDASH_RUNTIME_PROFILE: "worker"
       CCDASH_WORKER_PROJECT_ID: "${CCDASH_WORKER_PROJECT_ID:-smoke-stack}"
       CCDASH_WORKER_PROBE_HOST: "${CCDASH_WORKER_PROBE_HOST:-0.0.0.0}"
@@ -120,6 +135,7 @@ services:
     environment:
       CCDASH_FRONTEND_PORT: "${CCDASH_FRONTEND_PORT:-3000}"
       CCDASH_API_UPSTREAM: "${CCDASH_API_UPSTREAM:-http://api:8000}"
+      CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
     healthcheck:
       test:
         - CMD-SHELL
