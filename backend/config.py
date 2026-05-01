@@ -92,6 +92,7 @@ CCDASH_SAM_ARTIFACT_TELEMETRY_ENABLED = _env_bool("CCDASH_SAM_ARTIFACT_TELEMETRY
 CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
 CCDASH_API_BEARER_TOKEN_ENV = "CCDASH_API_BEARER_TOKEN"
 CCDASH_WORKER_PROJECT_ID_ENV = "CCDASH_WORKER_PROJECT_ID"
+CCDASH_RUNTIME_PROFILE_ENV = "CCDASH_RUNTIME_PROFILE"
 # VITE_CCDASH_MEMORY_GUARD_ENABLED (default: true)
 # Frontend feature flag; gates transcript cap, document pagination cap, and in-flight request GC.
 # Improves browser memory efficiency on large datasets.
