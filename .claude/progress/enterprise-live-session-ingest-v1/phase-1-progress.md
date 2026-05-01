@@ -8,15 +8,19 @@ prd_ref: /docs/project_plans/PRDs/enhancements/enterprise-live-session-ingest-v1
 plan_ref: /docs/project_plans/implementation_plans/enhancements/enterprise-live-session-ingest-v1.md
 phase: 1
 title: Runtime Capability Model
-status: in_progress
+status: completed
 started: '2026-05-01'
-completed:
-commit_refs: []
+completed: '2026-05-01'
+commit_refs:
+- 5df5d72
+- f82d89f
+- f1098f7
+- 8327501
 pr_refs: []
-overall_progress: 50
-completion_estimate: pending
+overall_progress: 100
+completion_estimate: complete
 total_tasks: 4
-completed_tasks: 2
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -47,7 +51,7 @@ tasks:
   priority: high
 - id: RUN-003
   description: Ensure bootstrap starts the file watcher only for watcher-capable profiles.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - python-backend-engineer
@@ -57,7 +61,7 @@ tasks:
   priority: high
 - id: RUN-004
   description: Add tests covering profile capabilities and watcher startup gating.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - python-backend-engineer
@@ -86,9 +90,12 @@ success_criteria:
 files_modified:
 - .claude/progress/enterprise-live-session-ingest-v1/phase-1-progress.md
 - backend/runtime/container.py
+- backend/config.py
+- backend/runtime/bootstrap_worker.py
 - backend/runtime/storage_contract.py
+- backend/tests/test_runtime_bootstrap.py
 - backend/tests/test_storage_profiles.py
-progress: 50
+progress: 100
 updated: '2026-05-01'
 ---
 
