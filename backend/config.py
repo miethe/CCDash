@@ -100,7 +100,7 @@ VITE_CCDASH_MEMORY_GUARD_ENABLED = _env_bool("VITE_CCDASH_MEMORY_GUARD_ENABLED",
 
 StorageProfileName = Literal["local", "enterprise"]
 StorageIsolationMode = Literal["dedicated", "schema", "tenant"]
-RuntimeProfileName = Literal["local", "api", "worker", "test"]
+RuntimeProfileName = Literal["local", "api", "worker", "worker-watch", "test"]
 DeploymentMode = Literal["local", "hosted"]
 EnvironmentContractScope = Literal["shared", "api_only", "worker_only", "local_only"]
 EnvironmentVariableStatus = Literal["configured", "default", "missing", "not_applicable"]
@@ -330,10 +330,10 @@ def resolve_runtime_environment_contract(
     environ: Mapping[str, str] | None = None,
 ) -> RuntimeEnvironmentContract:
     env = environ or os.environ
-    deployment_mode: DeploymentMode = "hosted" if runtime_profile in {"api", "worker"} else "local"
+    deployment_mode: DeploymentMode = "hosted" if runtime_profile in {"api", "worker", "worker-watch"} else "local"
     hosted_runtime = deployment_mode == "hosted"
     hosted_storage = hosted_runtime and storage_profile.hosted
-    worker_runtime = runtime_profile == "worker"
+    worker_runtime = runtime_profile in {"worker", "worker-watch"}
     api_runtime = runtime_profile == "api"
 
     shared = (

@@ -133,15 +133,31 @@ class RuntimeProfileTests(unittest.TestCase):
     def test_runtime_profiles_cover_expected_modes(self) -> None:
         profiles = {profile.name: profile for profile in iter_runtime_profiles()}
 
-        self.assertEqual(set(profiles), {"local", "api", "worker", "test"})
-        self.assertTrue(profiles["local"].capabilities.watch)
-        self.assertFalse(profiles["api"].capabilities.watch)
-        self.assertFalse(profiles["test"].capabilities.jobs)
-        self.assertTrue(profiles["worker"].capabilities.jobs)
-        self.assertTrue(profiles["worker"].capabilities.sync)
+        self.assertEqual(set(profiles), {"local", "api", "worker", "worker-watch", "test"})
+        capability_matrix = {
+            name: (
+                profile.capabilities.watch,
+                profile.capabilities.sync,
+                profile.capabilities.jobs,
+                profile.capabilities.auth,
+                profile.capabilities.integrations,
+            )
+            for name, profile in profiles.items()
+        }
+        self.assertEqual(
+            capability_matrix,
+            {
+                "local": (True, True, True, False, True),
+                "api": (False, False, False, True, True),
+                "worker": (False, True, True, False, True),
+                "worker-watch": (True, True, True, False, True),
+                "test": (False, False, False, False, False),
+            },
+        )
         self.assertEqual(profiles["local"].recommended_storage_profile, "local")
         self.assertEqual(profiles["api"].recommended_storage_profile, "enterprise")
         self.assertEqual(profiles["worker"].recommended_storage_profile, "enterprise")
+        self.assertEqual(profiles["worker-watch"].recommended_storage_profile, "enterprise")
 
     def test_worker_bootstrap_returns_worker_runtime_container(self) -> None:
         container = build_worker_runtime()
@@ -182,6 +198,7 @@ class RuntimeProfileTests(unittest.TestCase):
                 "local": ("local",),
                 "api": ("enterprise",),
                 "worker": ("enterprise",),
+                "worker-watch": ("enterprise",),
                 "test": ("local", "enterprise"),
             },
         )

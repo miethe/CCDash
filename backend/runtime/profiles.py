@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-RuntimeProfileName = Literal["local", "api", "worker", "test"]
+RuntimeProfileName = Literal["local", "api", "worker", "worker-watch", "test"]
 StorageProfileName = Literal["local", "enterprise"]
 
 
@@ -61,6 +61,18 @@ _RUNTIME_PROFILES: dict[RuntimeProfileName, RuntimeProfile] = {
         ),
         recommended_storage_profile="enterprise",
         description="Background worker profile for sync, refresh, and scheduled job execution without HTTP serving.",
+    ),
+    "worker-watch": RuntimeProfile(
+        name="worker-watch",
+        capabilities=RuntimeCapabilities(
+            watch=True,
+            sync=True,
+            jobs=True,
+            auth=False,
+            integrations=True,
+        ),
+        recommended_storage_profile="enterprise",
+        description="Watcher-capable background worker profile for enterprise filesystem ingest.",
     ),
     "test": RuntimeProfile(
         name="test",
