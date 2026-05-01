@@ -181,6 +181,8 @@ _RUNTIME_STORAGE_CONTRACTS: dict[str, RuntimeStorageContract] = {
             "migration_governance",
             "schema_migrations",
             "worker_binding",
+            "watcher_runtime",
+            "startup_sync",
         ),
         live_probe_interval_seconds=15,
         ready_probe_interval_seconds=20,

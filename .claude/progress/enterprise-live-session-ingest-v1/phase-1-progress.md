@@ -13,10 +13,10 @@ started: '2026-05-01'
 completed:
 commit_refs: []
 pr_refs: []
-overall_progress: 25
+overall_progress: 50
 completion_estimate: pending
 total_tasks: 4
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -37,7 +37,7 @@ tasks:
   priority: high
 - id: RUN-002
   description: Extend runtime storage contract/readiness semantics for watcher worker.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - python-backend-engineer
@@ -85,7 +85,10 @@ success_criteria:
 - Existing local runtime behavior is unchanged.
 files_modified:
 - .claude/progress/enterprise-live-session-ingest-v1/phase-1-progress.md
-progress: 25
+- backend/runtime/container.py
+- backend/runtime/storage_contract.py
+- backend/tests/test_storage_profiles.py
+progress: 50
 updated: '2026-05-01'
 ---
 

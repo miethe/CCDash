@@ -382,6 +382,26 @@ class RuntimeContainer:
         watcher_state = str(status.get("watcher", "unknown"))
         startup_sync_state = str(status.get("startupSync", "idle"))
         required_checks = set(runtime_contract.readiness_checks)
+        worker_binding_required = self.profile.name in {"worker", "worker-watch"}
+        watcher_runtime_required = "watcher_runtime" in required_checks
+        startup_sync_required = "startup_sync" in required_checks
+        sync_provisioned = bool(status.get("syncProvisioned", False))
+        watcher_check_status = "not_applicable"
+        if self.profile.capabilities.watch:
+            if watcher_state == "running":
+                watcher_check_status = "pass"
+            elif watcher_runtime_required:
+                watcher_check_status = "fail"
+            else:
+                watcher_check_status = "warn"
+        startup_sync_check_status = "not_applicable"
+        if self.profile.capabilities.sync:
+            if startup_sync_required and not sync_provisioned:
+                startup_sync_check_status = "fail"
+            elif startup_sync_state == "running":
+                startup_sync_check_status = "warn"
+            else:
+                startup_sync_check_status = "pass"
 
         checks = [
             self._probe_check(
@@ -480,27 +500,27 @@ class RuntimeContainer:
                 category="worker",
                 status=(
                     "not_applicable"
-                    if self.profile.name != "worker"
+                    if not worker_binding_required
                     else "pass" if self.project_binding is not None else "fail"
                 ),
                 required="worker_binding" in required_checks,
                 summary=(
                     "Worker project binding is not required for this runtime."
-                    if self.profile.name != "worker"
+                    if not worker_binding_required
                     else "Worker project binding is resolved."
                     if self.project_binding is not None
                     else "Worker project binding is unresolved."
                 ),
                 detail=(
-                    "Only the worker runtime requires an explicit project binding."
-                    if self.profile.name != "worker"
+                    "Only worker runtimes require an explicit project binding."
+                    if not worker_binding_required
                     else (
                         f"configured={worker_binding_config.configured} "
                         f"requested_project_id={worker_binding_config.project_id or 'n/a'}"
                     )
                 ),
                 data={
-                    "bindingRequired": self.profile.name == "worker",
+                    "bindingRequired": worker_binding_required,
                     "configured": worker_binding_config.configured,
                     "requestedProjectId": worker_binding_config.project_id or None,
                     "resolvedProjectId": (
@@ -511,11 +531,7 @@ class RuntimeContainer:
             self._probe_check(
                 code="watcher_runtime",
                 category="runtime",
-                status=(
-                    "not_applicable"
-                    if not self.profile.capabilities.watch
-                    else "pass" if watcher_state == "running" else "warn"
-                ),
+                status=watcher_check_status,
                 required="watcher_runtime" in required_checks,
                 summary=(
                     "Watcher is not expected for this runtime."
@@ -534,28 +550,28 @@ class RuntimeContainer:
             self._probe_check(
                 code="startup_sync",
                 category="runtime",
-                status=(
-                    "not_applicable"
-                    if not self.profile.capabilities.sync
-                    else "warn" if startup_sync_state == "running" else "pass"
-                ),
+                status=startup_sync_check_status,
                 required="startup_sync" in required_checks,
                 summary=(
                     "Startup sync is not expected for this runtime."
                     if not self.profile.capabilities.sync
+                    else "Startup sync is not provisioned."
+                    if startup_sync_required and not sync_provisioned
                     else "Startup sync is still catching up."
                     if startup_sync_state == "running"
                     else "Startup sync is idle."
                 ),
                 detail=(
-                    "A running startup sync indicates the runtime is live but still reconciling background state."
+                    "Watcher-capable worker readiness requires a provisioned startup sync engine."
+                    if startup_sync_required and not sync_provisioned
+                    else "A running startup sync indicates the runtime is live but still reconciling background state."
                     if self.profile.capabilities.sync
                     else "This runtime does not own startup sync work."
                 ),
                 data={
                     "syncEnabled": self.profile.capabilities.sync,
                     "startupSync": startup_sync_state,
-                    "syncProvisioned": bool(status.get("syncProvisioned", False)),
+                    "syncProvisioned": sync_provisioned,
                 },
             ),
         ]
@@ -760,13 +776,13 @@ class RuntimeContainer:
         return metadata
 
     def _resolve_startup_project_binding(self) -> ProjectBinding | None:
-        if self.profile.name != "worker":
+        if self.profile.name not in {"worker", "worker-watch"}:
             return None
 
         binding_config = config.resolve_worker_binding_config()
         if not binding_config.configured:
             raise RuntimeError(
-                f"Runtime profile 'worker' requires a non-empty "
+                f"Runtime profile '{self.profile.name}' requires a non-empty "
                 f"{config.CCDASH_WORKER_PROJECT_ID_ENV} before starting background jobs."
             )
 
@@ -780,7 +796,7 @@ class RuntimeContainer:
         )
         if binding is None:
             raise RuntimeError(
-                f"Runtime profile 'worker' could not resolve project "
+                f"Runtime profile '{self.profile.name}' could not resolve project "
                 f"'{binding_config.project_id}' from the workspace registry."
             )
 
