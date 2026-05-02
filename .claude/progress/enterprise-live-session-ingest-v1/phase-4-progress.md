@@ -10,11 +10,12 @@ phase: 4
 title: Health, Observability, and Recovery
 status: completed
 started: '2026-05-02'
-completed: null
-commit_refs: []
+completed: '2026-05-02'
+commit_refs:
+- 73fc2cd
 pr_refs: []
-overall_progress: 0
-completion_estimate: pending
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 4
 completed_tasks: 4
 in_progress_tasks: 0
@@ -37,6 +38,13 @@ tasks:
   - RUN-003
   estimated_effort: 2pt
   priority: high
+  started: 2026-05-02T13:00Z
+  completed: 2026-05-02T13:25Z
+  evidence:
+  - commit: 73fc2cd
+  - test: backend/tests/test_runtime_bootstrap.py
+  verified_by:
+  - targeted-backend-validation
 - id: OBS-002
   description: Expose live fanout connected/error counters in API detail or cache
     status.
@@ -48,6 +56,14 @@ tasks:
   - LIVE-003
   estimated_effort: 2pt
   priority: high
+  started: 2026-05-02T13:00Z
+  completed: 2026-05-02T13:25Z
+  evidence:
+  - commit: 73fc2cd
+  - test: backend/tests/test_postgres_live_fanout.py
+  - test: backend/tests/test_cache_router.py
+  verified_by:
+  - targeted-backend-validation
 - id: OBS-003
   description: Add logs for watcher start paths, classified changes, sync result,
     and fanout publish/listen failures.
@@ -59,6 +75,13 @@ tasks:
   - OBS-001
   estimated_effort: 1pt
   priority: medium
+  started: 2026-05-02T13:00Z
+  completed: 2026-05-02T13:25Z
+  evidence:
+  - commit: 73fc2cd
+  - logs: watcher-and-postgres-live-structured-log-fields
+  verified_by:
+  - targeted-diff-review
 - id: OBS-004
   description: Confirm browser REST refresh still recovers when fanout is down and
     sync persists rows.
@@ -70,6 +93,15 @@ tasks:
   - LIVE-003
   estimated_effort: 1pt
   priority: high
+  started: 2026-05-02T13:25Z
+  completed: 2026-05-02T13:32Z
+  evidence:
+  - commit: 73fc2cd
+  - doc: docs/developer/live-update-platform.md
+  - test: backend/tests/test_live_router.py
+  - test: backend/tests/test_sync_engine_transcript_canonicalization.py
+  verified_by:
+  - targeted-backend-validation
 parallelization:
   batch_1:
   - OBS-001

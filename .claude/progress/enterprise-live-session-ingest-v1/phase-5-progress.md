@@ -10,11 +10,15 @@ phase: 5
 title: Validation and Documentation
 status: completed
 started: '2026-05-02'
-completed: null
-commit_refs: []
+completed: '2026-05-02'
+commit_refs:
+- ff3b169
+- a068001
+- c88d90e
+- a4e9270
 pr_refs: []
-overall_progress: 0
-completion_estimate: pending
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 6
 completed_tasks: 6
 in_progress_tasks: 0
@@ -37,6 +41,13 @@ tasks:
   - RUN-004
   estimated_effort: 1pt
   priority: high
+  started: 2026-05-02T13:32Z
+  completed: 2026-05-02T13:40Z
+  evidence:
+  - commit: ff3b169
+  - test: backend/tests/test_file_watcher.py
+  verified_by:
+  - targeted-backend-validation
 - id: TEST-002
   description: Simulate a JSONL append in a watched sessions directory and assert
     incremental sync updates Postgres.
@@ -47,6 +58,13 @@ tasks:
   - OPS-001
   estimated_effort: 2pt
   priority: high
+  started: 2026-05-02T13:32Z
+  completed: 2026-05-02T13:40Z
+  evidence:
+  - commit: ff3b169
+  - test: backend/tests/test_file_watcher.py
+  verified_by:
+  - targeted-backend-validation
 - id: TEST-003
   description: Validate active Session Inspector updates through SSE when worker-watch
     ingests a session change.
@@ -58,6 +76,13 @@ tasks:
   - LIVE-005
   estimated_effort: 2pt
   priority: high
+  started: 2026-05-02T13:40Z
+  completed: 2026-05-02T13:42Z
+  evidence:
+  - commit: a068001
+  - test: components/__tests__/SessionInspectorLiveSmoke.test.tsx
+  verified_by:
+  - targeted-frontend-validation
 - id: TEST-004
   description: Add or document a compose smoke procedure for enterprise live session
     ingest.
@@ -69,6 +94,14 @@ tasks:
   - OPS-004
   estimated_effort: 1pt
   priority: high
+  started: 2026-05-02T13:42Z
+  completed: 2026-05-02T13:45Z
+  evidence:
+  - commit: c88d90e
+  - doc: deploy/runtime/README.md
+  - config: deploy/runtime/compose.yaml
+  verified_by:
+  - compose-config-validation
 - id: DOC-001
   description: Update `deploy/runtime/README.md` and env examples with live-watch
     setup.
@@ -80,6 +113,15 @@ tasks:
   - TEST-004
   estimated_effort: 1pt
   priority: medium
+  started: 2026-05-02T13:42Z
+  completed: 2026-05-02T13:45Z
+  evidence:
+  - commit: c88d90e
+  - doc: deploy/runtime/README.md
+  - env: .env.example
+  - env: deploy/runtime/.env.example
+  verified_by:
+  - docs-diff-check
 - id: DOC-002
   description: Update live-update developer docs with cross-process fanout architecture.
   status: completed
@@ -90,6 +132,13 @@ tasks:
   - LIVE-005
   estimated_effort: 1pt
   priority: medium
+  started: 2026-05-02T13:45Z
+  completed: 2026-05-02T13:47Z
+  evidence:
+  - commit: a4e9270
+  - doc: docs/developer/live-update-platform.md
+  verified_by:
+  - docs-diff-check
 parallelization:
   batch_1:
   - TEST-001
