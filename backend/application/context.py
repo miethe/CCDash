@@ -15,25 +15,92 @@ from pathlib import Path
 from typing import Literal, Mapping
 
 
+AuthMode = Literal["anonymous", "bearer", "local", "oidc", "service-account", "system", "test"]
+PrincipalKind = Literal["anonymous", "service_account", "system", "user"]
 OwnershipPosture = Literal["scope-owned", "directly-ownable", "inherits-parent-ownership"]
 OwnerSubjectType = Literal["user", "team", "enterprise"]
+ScopeType = Literal["enterprise", "team", "workspace", "project", "owned_entity"]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthProviderMetadata:
+    """Hosted identity provider metadata associated with a resolved principal."""
+    provider_id: str
+    issuer: str | None = None
+    audience: str | None = None
+    tenant_id: str | None = None
+    hosted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PrincipalSubject:
+    """Normalized subject key for policy, audit, and ownership bindings."""
+    subject: str
+    kind: PrincipalKind = "user"
+    provider_id: str | None = None
+    issuer: str | None = None
+
+    @property
+    def stable_id(self) -> str:
+        provider = self.provider_id or "local"
+        issuer = self.issuer or "default"
+        return f"{provider}:{issuer}:{self.kind}:{self.subject}"
 
 
 @dataclass(frozen=True, slots=True)
 class PrincipalMembership:
     workspace_id: str
     role: str
+    scope_type: ScopeType = "workspace"
+    scope_id: str | None = None
+    enterprise_id: str | None = None
+    team_id: str | None = None
+    binding_id: str | None = None
+    source: str | None = None
+
+    @property
+    def effective_scope_id(self) -> str:
+        return self.scope_id or self.workspace_id
 
 
 @dataclass(frozen=True, slots=True)
 class Principal:
     subject: str
     display_name: str
-    auth_mode: str
+    auth_mode: AuthMode | str
     email: str | None = None
     is_authenticated: bool = True
     groups: tuple[str, ...] = field(default_factory=tuple)
     memberships: tuple[PrincipalMembership, ...] = field(default_factory=tuple)
+    kind: PrincipalKind = "user"
+    provider: AuthProviderMetadata | None = None
+    normalized_subject: PrincipalSubject | None = None
+    service_account_id: str | None = None
+    scopes: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def auth_provider_id(self) -> str | None:
+        return self.provider.provider_id if self.provider is not None else None
+
+    @property
+    def issuer(self) -> str | None:
+        return self.provider.issuer if self.provider is not None else None
+
+    @property
+    def stable_subject(self) -> str:
+        if self.normalized_subject is not None:
+            return self.normalized_subject.stable_id
+        provider_id = self.auth_provider_id or str(self.auth_mode)
+        return PrincipalSubject(
+            subject=self.subject,
+            kind=self.kind,
+            provider_id=provider_id,
+            issuer=self.issuer,
+        ).stable_id
+
+    @property
+    def is_service_account(self) -> bool:
+        return self.kind == "service_account" or self.service_account_id is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,11 +172,17 @@ class StorageScope:
 
 @dataclass(frozen=True, slots=True)
 class ScopeBinding:
-    scope_type: Literal["enterprise", "team", "workspace", "project", "owned_entity"]
+    scope_type: ScopeType
     scope_id: str
     parent_scope_type: str | None = None
     parent_scope_id: str | None = None
     ownership_mode: Literal["scope-rooted", "directly-owned", "inherits-parent-scope"] = "scope-rooted"
+    membership_id: str | None = None
+    role: str | None = None
+    principal_subject: str | None = None
+    principal_stable_subject: str | None = None
+    provider_id: str | None = None
+    issuer: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

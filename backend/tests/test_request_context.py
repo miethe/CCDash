@@ -17,9 +17,12 @@ from backend.adapters.integrations.local import NoopIntegrationClient
 from backend.adapters.storage.local import LocalStorageUnitOfWork
 from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
 from backend.application.context import (
+    AuthProviderMetadata,
     EnterpriseScope,
     OwnershipResolutionHint,
     Principal,
+    PrincipalMembership,
+    PrincipalSubject,
     RequestContext,
     RequestMetadata,
     ScopeBinding,
@@ -208,6 +211,82 @@ class LocalAdapterTests(unittest.IsolatedAsyncioTestCase):
         await task
 
         self.assertEqual(marker, ["ran"])
+
+
+class PrincipalContractTests(unittest.TestCase):
+    def test_local_principal_constructor_remains_compatible(self) -> None:
+        principal = Principal(
+            subject="local:local-operator",
+            display_name="Local Operator",
+            auth_mode="local",
+            memberships=(PrincipalMembership(workspace_id="project-1", role="owner"),),
+        )
+
+        self.assertEqual(principal.subject, "local:local-operator")
+        self.assertEqual(principal.auth_mode, "local")
+        self.assertEqual(principal.memberships[0].workspace_id, "project-1")
+        self.assertEqual(principal.memberships[0].effective_scope_id, "project-1")
+        self.assertIn(":user:local:local-operator", principal.stable_subject)
+        self.assertFalse(principal.is_service_account)
+
+    def test_bearer_principal_can_carry_hosted_provider_metadata(self) -> None:
+        principal = Principal(
+            subject="api:bearer-client",
+            display_name="Bearer API Client",
+            auth_mode="bearer",
+            provider=AuthProviderMetadata(
+                provider_id="static-bearer",
+                issuer="ccdash-api",
+                audience="ccdash",
+                hosted=True,
+            ),
+            normalized_subject=PrincipalSubject(
+                subject="api:bearer-client",
+                kind="user",
+                provider_id="static-bearer",
+                issuer="ccdash-api",
+            ),
+            memberships=(
+                PrincipalMembership(
+                    workspace_id="project-1",
+                    role="operator",
+                    scope_id="project-1",
+                    source="bearer-token",
+                ),
+            ),
+        )
+
+        self.assertEqual(principal.auth_provider_id, "static-bearer")
+        self.assertEqual(principal.issuer, "ccdash-api")
+        self.assertEqual(
+            principal.stable_subject,
+            "static-bearer:ccdash-api:user:api:bearer-client",
+        )
+        self.assertEqual(principal.memberships[0].source, "bearer-token")
+
+    def test_bearer_identity_provider_defaults_remain_safe_without_metadata(self) -> None:
+        principal = Principal(subject="api:bearer-client", display_name="Bearer API Client", auth_mode="bearer")
+
+        self.assertIsNone(principal.provider)
+        self.assertIsNone(principal.normalized_subject)
+        self.assertEqual(principal.auth_provider_id, None)
+        self.assertEqual(principal.stable_subject, "bearer:default:user:api:bearer-client")
+
+    def test_service_account_principal_can_be_represented(self) -> None:
+        principal = Principal(
+            subject="svc:cache-warmer",
+            display_name="Cache Warming Job",
+            auth_mode="service-account",
+            kind="service_account",
+            service_account_id="cache-warmer",
+            provider=AuthProviderMetadata(provider_id="internal", issuer="ccdash", hosted=True),
+            scopes=("cache:warm", "projects:read"),
+        )
+
+        self.assertTrue(principal.is_service_account)
+        self.assertEqual(principal.service_account_id, "cache-warmer")
+        self.assertEqual(principal.stable_subject, "internal:ccdash:service_account:svc:cache-warmer")
+        self.assertIn("cache:warm", principal.scopes)
 
 
 class RequestContextTests(unittest.IsolatedAsyncioTestCase):
