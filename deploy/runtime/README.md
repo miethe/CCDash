@@ -7,6 +7,7 @@ The compose file at `deploy/runtime/compose.yaml` is the primary deployment mani
 - `local` for the single-container SQLite path
 - `enterprise` for split API and worker containers
 - `postgres` for the bundled `postgres:17-alpine` service layered on top of `enterprise`
+- `live-watch` for an opt-in watcher worker layered on top of `enterprise`
 
 These examples are operator-focused, not a full deployment product. They do not provision TLS, secrets distribution, registry publication automation, or external supervision beyond the example units and compose file shown here.
 
@@ -17,6 +18,7 @@ These examples are operator-focused, not a full deployment product. They do not 
 | `local` | backend + frontend | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile local up --build` |
 | `enterprise` | api + worker + frontend | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise up --build` |
 | `enterprise` + `postgres` | api + worker + frontend + postgres | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres up --build` |
+| `enterprise` + `postgres` + `live-watch` | api + worker + worker-watch + frontend + postgres | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch up --build` |
 
 The backend image is built from `deploy/runtime/Dockerfile` and honors `BUILD_UID` / `BUILD_GID` for rootless runs. The frontend image is built from `deploy/runtime/frontend/Dockerfile` and consumes `VITE_CCDASH_API_BASE_URL`, `CCDASH_API_UPSTREAM`, and `CCDASH_FRONTEND_PORT`.
 
@@ -32,8 +34,38 @@ The container examples assume the probe surfaces the runtime exposes today:
 - Worker liveness: `GET http://127.0.0.1:9465/livez`
 - Worker readiness: `GET http://127.0.0.1:9465/readyz`
 - Worker detail: `GET http://127.0.0.1:9465/detailz`
+- Watcher worker liveness: `GET http://127.0.0.1:9466/livez`
+- Watcher worker readiness: `GET http://127.0.0.1:9466/readyz`
+- Watcher worker detail: `GET http://127.0.0.1:9466/detailz`
 
 The worker probe host and port default to `127.0.0.1:9465`. Override them with `CCDASH_WORKER_PROBE_HOST` and `CCDASH_WORKER_PROBE_PORT` when your supervisor layout needs a different binding.
+
+The watcher worker uses the same probe endpoints on a separate default port, `9466`, through `CCDASH_WORKER_WATCH_PROBE_HOST` and `CCDASH_WORKER_WATCH_PROBE_PORT`. Keep the default worker and watcher worker on distinct ports when they co-run.
+
+## Live Watcher Worker
+
+The `worker-watch` service is an opt-in enterprise worker for live filesystem ingest. It is intended to co-run with the default `worker` service: the default worker keeps scheduled jobs and startup sync on probe port `9465`, while `worker-watch` owns filesystem watching on probe port `9466`.
+
+Start the bundled Postgres enterprise stack with live watching:
+
+```bash
+docker compose --env-file deploy/runtime/.env \
+  -f deploy/runtime/compose.yaml \
+  --profile enterprise --profile postgres --profile live-watch up --build
+```
+
+`worker-watch` binds one project per worker process in v1. Set `CCDASH_WORKER_PROJECT_ID` to a project id that exists in the mounted project registry. To watch more than one project, run another watcher worker instance with a different project id and a different probe port.
+
+Required read-only ingest mounts:
+
+| Mount | Default env | Container target | Why it is required |
+| --- | --- | --- | --- |
+| Project registry | `CCDASH_PROJECTS_FILE=../../projects.json` | `/app/projects.json` | Resolves `CCDASH_WORKER_PROJECT_ID` to a workspace path. |
+| Workspace root | `CCDASH_WORKSPACE_HOST_ROOT=../../..` | `CCDASH_WORKSPACE_CONTAINER_ROOT=/workspace` | Lets workers read project docs and session files referenced by the registry. |
+| Claude home | `CCDASH_CLAUDE_HOME=~/.claude` | `CCDASH_CLAUDE_CONTAINER_HOME=/home/ccdash/.claude` | Provides Claude Code project/session metadata for watcher ingest. |
+| Codex home | `CCDASH_CODEX_HOME=~/.codex` | `CCDASH_CODEX_CONTAINER_HOME=/home/ccdash/.codex` | Provides Codex session metadata for watcher ingest. |
+
+On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, pass `WATCHFILES_FORCE_POLLING=true` into the watcher container and restart it. Keep polling scoped to `worker-watch`; it is a compatibility mode for Docker Desktop file sharing, not the default Linux path.
 
 ## Environment Ownership
 
@@ -50,6 +82,10 @@ These examples split environment variables by runtime role. Shared values may li
 | `CCDASH_WORKER_PROJECT_ID` | worker | required; worker startup fails if the id cannot be resolved |
 | `CCDASH_WORKER_PROBE_HOST` | worker | probe listener bind host |
 | `CCDASH_WORKER_PROBE_PORT` | worker | probe listener bind port |
+| `CCDASH_WORKER_WATCH_PROBE_HOST` | worker-watch | watcher probe listener bind host; defaults to `0.0.0.0` in compose |
+| `CCDASH_WORKER_WATCH_PROBE_PORT` | worker-watch | watcher probe listener bind port; defaults to `9466` to avoid `worker` port conflicts |
+| `CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED` | worker-watch | enables filesystem ingest for the watcher worker; defaults to `true` in compose |
+| `WATCHFILES_FORCE_POLLING` | worker-watch | set to `true` on macOS Docker Desktop when bind-mount events do not reach the watcher |
 | `CCDASH_TELEMETRY_EXPORT_ENABLED` | worker | must be `true` for the smoke exporter path |
 | `CCDASH_SAM_ENDPOINT` | worker | placeholder sink is acceptable for the zero-queue smoke path |
 | `CCDASH_SAM_API_KEY` | worker | required whenever telemetry export is enabled |
@@ -70,6 +106,10 @@ Common hosted-smoke failures and what they mean:
 | telemetry exporter checks fail in an enterprise stack | telemetry exporter env is incomplete or disabled | set `CCDASH_TELEMETRY_EXPORT_ENABLED=true`, `CCDASH_SAM_ENDPOINT`, and `CCDASH_SAM_API_KEY` |
 | telemetry exporter checks return a retry or abandoned error with non-zero batch size | the stack has real queued telemetry rows but the sink is not valid | point the exporter at a real sink or clear the queue before rerunning |
 | CLI or MCP contract checks fail | the adapter surface drifted from the shipped tests | inspect the failing pytest output in the API container before changing operator docs |
+| `worker-watch` exits during startup | `CCDASH_WORKER_PROJECT_ID` is unset, unresolved, or not present in mounted `projects.json` | choose a real project id and confirm `CCDASH_PROJECTS_FILE` points at the expected registry |
+| `worker-watch` detail shows no paths or logs "nothing to monitor" | the workspace root, `.claude`, or `.codex` mount is missing, empty, or mounted at a path that does not match the project registry | check `CCDASH_WORKSPACE_*`, `CCDASH_CLAUDE_*`, and `CCDASH_CODEX_*`; preserve read-only mounts but make the host paths visible to Docker |
+| `worker` and `worker-watch` cannot both publish probes | both workers are configured with the same probe port | keep `CCDASH_WORKER_PROBE_PORT=9465` and `CCDASH_WORKER_WATCH_PROBE_PORT=9466`, or assign another unique watcher port |
+| `worker-watch` starts on macOS Docker Desktop but does not react to file changes | bind-mounted filesystem events are not delivered by Docker Desktop file sharing | restart the watcher with `WATCHFILES_FORCE_POLLING=true` passed into the container |
 
 ## Shipped Examples
 

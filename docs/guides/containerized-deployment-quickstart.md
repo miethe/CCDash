@@ -1,6 +1,6 @@
 # Containerized Deployment Quickstart
 
-This is the preferred onboarding route for CCDash. It covers deploying with Docker Compose or Podman Compose using three composable profiles: `local` (single-container SQLite), `enterprise` (split API/worker), and `postgres` (bundled Postgres service).
+This is the preferred onboarding route for CCDash. It covers deploying with Docker Compose or Podman Compose using four composable profiles: `local` (single-container SQLite), `enterprise` (split API/worker), `postgres` (bundled Postgres service), and `live-watch` (watcher worker for enterprise live ingest).
 
 For full runtime reference, probe endpoints, and environment variables, see `deploy/runtime/README.md`.
 
@@ -111,6 +111,49 @@ What you get:
 - Frontend nginx on port 3000
 - Fully managed inside `compose.yaml` — no external Postgres needed
 
+## Live Watcher Worker Profile
+
+Add `live-watch` when you need enterprise live session ingest from mounted Claude Code or Codex session directories. The watcher co-runs with the default enterprise worker; it does not replace it. The default worker keeps probe port `9465`, and `worker-watch` uses `9466` by default.
+
+1. Confirm `deploy/runtime/.env` has a project id that exists in the mounted registry:
+
+```bash
+CCDASH_WORKER_PROJECT_ID=your-project-id
+CCDASH_WORKER_PROBE_PORT=9465
+CCDASH_WORKER_WATCH_PROBE_PORT=9466
+CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED=true
+```
+
+2. Confirm the required read-only ingest mounts point at host paths Docker can see:
+
+```bash
+CCDASH_PROJECTS_FILE=../../projects.json
+CCDASH_WORKSPACE_HOST_ROOT=../../..
+CCDASH_WORKSPACE_CONTAINER_ROOT=/workspace
+CCDASH_CLAUDE_HOME=~/.claude
+CCDASH_CLAUDE_CONTAINER_HOME=/home/ccdash/.claude
+CCDASH_CODEX_HOME=~/.codex
+CCDASH_CODEX_CONTAINER_HOME=/home/ccdash/.codex
+```
+
+3. Start the stack:
+
+```bash
+docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml \
+  --profile enterprise --profile postgres --profile live-watch up --build
+```
+
+4. Verify both worker roles:
+
+```bash
+curl http://localhost:9465/readyz
+curl http://localhost:9466/readyz
+```
+
+`worker-watch` supports one project id per worker process in v1. Run another watcher worker instance with a unique probe port when you need another project.
+
+On macOS Docker Desktop, bind-mounted filesystem events may not arrive. If the watcher starts but does not detect new session JSONL changes, pass `WATCHFILES_FORCE_POLLING=true` into the `worker-watch` container and restart it.
+
 ## Rootless Podman Configuration
 
 The stack is validated for rootless Podman >= 4.6 and `podman-compose` >= 1.5. Use the same `docker compose` commands with `podman-compose`:
@@ -171,6 +214,9 @@ Common variables for container profiles:
 | `CCDASH_FRONTEND_PORT` | All | Frontend port (default 3000) |
 | `CCDASH_API_UPSTREAM` | frontend | Backend upstream for nginx reverse-proxy (default `http://api:8000`) |
 | `CCDASH_WORKER_PROJECT_ID` | enterprise (worker) | Project ID the worker binds to on startup; required for worker container readiness. Default in compose.yaml is `smoke-stack`. |
+| `CCDASH_WORKER_WATCH_PROBE_PORT` | live-watch | Watcher worker probe port. Default is `9466` so it can co-run with the default worker. |
+| `CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED` | live-watch | Enables filesystem ingest for `worker-watch`; default is `true`. |
+| `WATCHFILES_FORCE_POLLING` | live-watch | Set to `true` on macOS Docker Desktop when bind-mount events are not delivered. |
 | `POSTGRES_USER` | postgres profile | Bundled Postgres username (default `ccdash`) |
 | `POSTGRES_PASSWORD` | postgres profile | Bundled Postgres password (default `ccdash-dev-password`) |
 | `POSTGRES_DB` | postgres profile | Bundled database name (default `ccdash`) |
@@ -186,6 +232,7 @@ All services expose readiness and liveness probes:
 |---------|-------------------|------|-------------------|
 | API | `GET /api/health/ready` | 8000 | `200 OK` within 30s of startup |
 | Worker | `GET /readyz` | 9465 | `200 OK` when project binding is resolved |
+| Worker-watch | `GET /readyz` | 9466 | `200 OK` when project binding and watcher startup are healthy |
 | Frontend | `GET /` | 3000 | `200 OK` (serves static assets) |
 | Postgres | health check (pg_isready) | 5432 | Healthy within 30s (postgres profile only) |
 
@@ -198,6 +245,9 @@ Compose `depends_on: condition: service_healthy` ensures correct startup orderin
 | Containers won't start, `exit 1` with no logs | Missing or invalid `.env` file | Copy `.env.example` and verify all required vars |
 | API readiness fails (enterprise profile) | Postgres not healthy or `CCDASH_DATABASE_URL` invalid | Wait 60s for Postgres; check logs: `docker compose logs postgres api` |
 | Worker exits: `CCDASH_WORKER_PROJECT_ID unresolved` | Required env var not set | Add a valid project ID to `.env` or override in compose |
+| Worker-watch logs "nothing to monitor" or shows no watch paths | Required `projects.json`, workspace root, `.claude`, or `.codex` mount is missing or points outside Docker's shared paths | Check `CCDASH_PROJECTS_FILE`, `CCDASH_WORKSPACE_*`, `CCDASH_CLAUDE_*`, and `CCDASH_CODEX_*` |
+| Worker and worker-watch probe ports conflict | Both services are configured for the same host port | Keep `CCDASH_WORKER_PROBE_PORT=9465` and `CCDASH_WORKER_WATCH_PROBE_PORT=9466`, or assign another unique watcher port |
+| Worker-watch does not detect changes on macOS Docker Desktop | Bind-mounted filesystem events are not delivered | Restart `worker-watch` with `WATCHFILES_FORCE_POLLING=true` passed into the container |
 | Frontend OOM on Podman machine (exit 137) | Insufficient RAM for Vite build | Bump Podman machine: `podman machine set --memory 4096` |
 | SELinux `Permission denied` (RHEL/Fedora/CentOS) | Bind-mount needs relabeling | Add `:Z` suffix to bind-mount sources |
 | Container build fails: `archive/tar: write too long` | Build context too large | Check `.dockerignore` excludes `data/`, `node_modules/`, `.git/`, `.venv/` |
