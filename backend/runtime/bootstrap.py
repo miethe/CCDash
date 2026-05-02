@@ -14,6 +14,7 @@ from backend.db import connection
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.routers.analytics import analytics_router
 from backend.routers.agent import agent_router
+from backend.routers.auth import auth_router
 from backend.routers.client_v1 import client_v1_router
 from backend.routers.api import documents_router, sessions_router, tasks_router
 from backend.routers.cache import cache_router, links_router
@@ -326,6 +327,7 @@ def _serialize_storage_profile_validation_matrix(entries: object) -> list[dict[s
 
 
 def _register_routers(app: FastAPI) -> None:
+    app.include_router(auth_router)
     app.include_router(sessions_router)
     app.include_router(documents_router)
     app.include_router(tasks_router)
