@@ -20,6 +20,14 @@ LIVE_EVENT_BUS_VERSION = 1
 DEFAULT_BUS_RECOVERY_HINT = "rest_snapshot"
 
 _ALLOWED_KINDS = {"append", "invalidate", "heartbeat", "snapshot_required"}
+# Cross-process field allowlist: only keys listed here survive Postgres NOTIFY
+# fanout via compact_live_event_payload().  Any field a downstream consumer
+# (frontend SSE listener, other API process) needs to receive cross-process MUST
+# be added here.  Fields absent from this tuple are silently stripped before the
+# envelope is serialised for transport.  Adding a key is a contract change:
+# verify all SSE consumers handle the new field before landing it.
+# Candidates for future addition (deferred, do not add yet):
+#   runtimeProfile, agentId
 _COMPACT_PAYLOAD_KEYS = (
     "resource",
     "projectId",
@@ -75,27 +83,32 @@ class LiveEventBusEnvelope:
 class LiveEventBusSubscription(Protocol):
     async def next_envelope(self, *, timeout_seconds: float | None = None) -> LiveEventBusEnvelope | None:
         """Return the next cross-process live event envelope, if available."""
+        ...
 
     async def close(self) -> None:
         """Release subscription resources."""
+        ...
 
 
 @runtime_checkable
 class LiveEventBusPublisher(Protocol):
     async def publish(self, event: LiveEventMessage) -> LiveEventBusEnvelope:
         """Publish one live event to the cross-process bus."""
+        ...
 
 
 @runtime_checkable
 class LiveEventBusSubscriber(Protocol):
     async def open_subscription(self) -> LiveEventBusSubscription:
         """Open a subscription to the cross-process bus."""
+        ...
 
 
 @runtime_checkable
 class LiveEventBus(LiveEventBusPublisher, LiveEventBusSubscriber, Protocol):
     async def close(self) -> None:
         """Release bus resources."""
+        ...
 
 
 def compact_live_event_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:

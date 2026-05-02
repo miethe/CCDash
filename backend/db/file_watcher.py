@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,11 @@ from typing import Optional
 from watchfiles import awatch, Change
 
 from backend.services.test_config import ResolvedTestSource
+
+try:
+    from backend.observability import otel as _otel
+except ImportError:  # pragma: no cover — observability is optional
+    _otel = None  # type: ignore[assignment]
 
 logger = logging.getLogger("ccdash.watcher")
 
@@ -180,9 +186,6 @@ class FileWatcher:
 
                 classified = self._classify_changes(
                     changes,
-                    sessions_dir,
-                    docs_dir,
-                    progress_dir,
                     test_results_dir,
                     test_sources,
                 )
@@ -199,6 +202,7 @@ class FileWatcher:
                     },
                 )
                 if classified:
+                    _t0 = time.monotonic()
                     try:
                         await sync_engine.sync_changed_files(
                             project_id, classified,
@@ -207,6 +211,8 @@ class FileWatcher:
                             test_sources=test_sources,
                         )
                     except Exception as e:
+                        if _otel is not None:
+                            _otel.record_watcher_sync_latency((time.monotonic() - _t0) * 1000.0)
                         self._snapshot.last_change_sync_at = _utc_now_iso()
                         self._snapshot.last_change_count = len(classified)
                         self._snapshot.last_sync_status = "failed"
@@ -220,6 +226,8 @@ class FileWatcher:
                             },
                         )
                     else:
+                        if _otel is not None:
+                            _otel.record_watcher_sync_latency((time.monotonic() - _t0) * 1000.0)
                         self._snapshot.last_change_sync_at = _utc_now_iso()
                         self._snapshot.last_change_count = len(classified)
                         self._snapshot.last_sync_status = "succeeded"
@@ -260,9 +268,6 @@ class FileWatcher:
     def _classify_changes(
         self,
         changes: set[tuple[Change, str]],
-        sessions_dir: Path,
-        docs_dir: Path,
-        progress_dir: Path,
         test_results_dir: Path | None = None,
         test_sources: list[ResolvedTestSource] | None = None,
     ) -> list[tuple[str, Path]]:

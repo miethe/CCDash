@@ -128,7 +128,6 @@ services:
       CCDASH_SAM_ENDPOINT: "${CCDASH_SAM_ENDPOINT:-}"
       CCDASH_SAM_API_KEY: "${CCDASH_SAM_API_KEY:-}"
       CCDASH_TELEMETRY_ALLOW_INSECURE: "${CCDASH_TELEMETRY_ALLOW_INSECURE:-false}"
-      WATCHFILES_FORCE_POLLING: "${WATCHFILES_FORCE_POLLING:-false}"
     depends_on:
       api:
         condition: service_healthy
@@ -165,6 +164,7 @@ services:
       CCDASH_SAM_ENDPOINT: "${CCDASH_SAM_ENDPOINT:-}"
       CCDASH_SAM_API_KEY: "${CCDASH_SAM_API_KEY:-}"
       CCDASH_TELEMETRY_ALLOW_INSECURE: "${CCDASH_TELEMETRY_ALLOW_INSECURE:-false}"
+      WATCHFILES_FORCE_POLLING: "${WATCHFILES_FORCE_POLLING:-false}"
     depends_on:
       api:
         condition: service_healthy
@@ -176,7 +176,7 @@ services:
         - CMD
         - python
         - -c
-        - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_PROBE_PORT", "9466") + "/readyz", timeout=3)
+        - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_WATCH_PROBE_PORT", "9466") + "/readyz", timeout=3)
       interval: 30s
       timeout: 5s
       retries: 3

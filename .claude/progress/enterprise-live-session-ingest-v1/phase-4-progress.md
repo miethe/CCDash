@@ -132,4 +132,23 @@ Expose watcher and fanout health clearly enough for operators to diagnose live i
 
 ## Status
 
-Phase 4 is in progress. `OBS-001` through `OBS-004` are pending.
+Phase 4 completed on 2026-05-02. All observability and recovery tasks delivered.
+
+## Tasks Completed
+
+**OBS-001: Watcher Probe Fields**
+Added watcher enabled/running state, watch path count, and last change-sync marker to detail probes. Status distinguishes "not expected", "running", and "configured but no paths" via `detailz` endpoint.
+
+**OBS-002: Fanout Probe Fields**
+Exposed live fanout connected/error counters in cache status detail probe. Operators can now observe listener health and recent fanout errors.
+
+**OBS-003: Structured Logs**
+Integrated structured logging for watcher start paths, classified filesystem changes, sync results, and fanout publish/listen failures. Troubleshooting no longer requires code instrumentation.
+
+**OBS-004: Recovery Semantics**
+Confirmed and documented browser REST refresh recovery path when fanout is degraded or unavailable. Sync persists rows independently; fallback is deterministic and tested.
+
+## Known Limitations
+
+- **SessionInspector wire-boundary smoke test**: Currently uses mock-based validation only (commit a068001). Real end-to-end browser SSE validation with network fault scenarios is deferred to follow-up FU-4 in `.claude/progress/quick-features/live-ingest-review-followups.md`.
+- **Listener reconnect**: Exponential backoff and supervisor-managed lifecycle for fanout listener failures deferred to FU-2 (requires separate planning).

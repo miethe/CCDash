@@ -14,15 +14,22 @@ from backend.application.live_updates import (
     DEFAULT_BUS_RECOVERY_HINT,
     LiveDeliveryHint,
     LiveEventBusPayloadTooLarge,
+    LiveEventEnvelope,
     LiveEventMessage,
     LiveReplayRequest,
 )
+from backend.application.live_updates.contracts import utc_now_iso
 from backend.application.live_updates.bus import (
     LiveEventBusEnvelope,
     decode_live_event_bus_envelope,
     encode_live_event_bus_envelope,
     live_event_bus_envelope_from_message,
     live_event_message_from_bus_envelope,
+)
+from backend.application.live_updates.runtime_state import (
+    get_live_event_publisher,
+    publish_live_invalidation,
+    set_live_event_publisher,
 )
 from backend.application.live_updates.topics import execution_run_topic
 
@@ -64,6 +71,17 @@ class _FakeAsyncpgPool:
         self.released.append(connection)
 
 
+def _stub_envelope(topic: str, kind: str) -> LiveEventEnvelope:
+    """Build a minimal LiveEventEnvelope for use in test fakes."""
+    return LiveEventEnvelope(
+        topic=topic,
+        kind=kind,  # type: ignore[arg-type]
+        cursor="0",
+        sequence=0,
+        occurred_at=utc_now_iso(),
+    )
+
+
 class _RecordingPublisher:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -77,7 +95,7 @@ class _RecordingPublisher:
         occurred_at: str | None = None,
         replayable: bool = True,
         recovery_hint: str | None = None,
-    ) -> None:
+    ) -> LiveEventEnvelope:
         self.calls.append(
             {
                 "topic": topic,
@@ -88,10 +106,38 @@ class _RecordingPublisher:
                 "recovery_hint": recovery_hint,
             }
         )
+        return _stub_envelope(topic, kind)
+
+    async def publish_append(
+        self,
+        *,
+        topic: str,
+        payload: Mapping[str, Any] | None = None,
+        occurred_at: str | None = None,
+    ) -> LiveEventEnvelope:
+        return await self.publish(topic=topic, kind="append", payload=payload, occurred_at=occurred_at)
+
+    async def publish_invalidation(
+        self,
+        *,
+        topic: str,
+        payload: Mapping[str, Any] | None = None,
+        occurred_at: str | None = None,
+        recovery_hint: str | None = None,
+    ) -> LiveEventEnvelope:
+        return await self.publish(
+            topic=topic, kind="invalidate", payload=payload, occurred_at=occurred_at, recovery_hint=recovery_hint
+        )
 
 
 class _FailingPublisher:
-    async def publish(self, **kwargs: Any) -> None:
+    async def publish(self, **kwargs: Any) -> LiveEventEnvelope:
+        raise RuntimeError("broker offline")
+
+    async def publish_append(self, **kwargs: Any) -> LiveEventEnvelope:
+        raise RuntimeError("broker offline")
+
+    async def publish_invalidation(self, **kwargs: Any) -> LiveEventEnvelope:
         raise RuntimeError("broker offline")
 
 
@@ -309,3 +355,110 @@ class PostgresLiveNotificationListenerTests(unittest.IsolatedAsyncioTestCase):
         await _wait_until(lambda: listener.status_snapshot()["republished"] == 1)
         self.assertEqual(api_pool.acquired, 1)
         self.assertEqual(listener.status_snapshot()["received"], 1)
+
+
+class PublishIsolationRegressionTests(unittest.IsolatedAsyncioTestCase):
+    """FU-3: publish failures must not propagate past the caller's return boundary.
+
+    These tests cover the isolation layer in runtime_state.publish_live_invalidation
+    and publish_live_append.  A raising publisher must never abort the surrounding
+    DB write or bubble an exception to the sync engine.
+    """
+
+    async def test_raising_publisher_does_not_propagate_to_caller(self) -> None:
+        """publish_live_invalidation swallows RuntimeError from the publisher."""
+
+        class _RaisingPublisher:
+            async def publish_invalidation(self, **_kwargs: Any) -> None:
+                raise RuntimeError("bus offline")
+
+            async def publish_append(self, **_kwargs: Any) -> None:  # pragma: no cover
+                raise RuntimeError("bus offline")
+
+        previous = get_live_event_publisher()
+        set_live_event_publisher(_RaisingPublisher())  # type: ignore[arg-type]
+        try:
+            # Must not raise — publish failures are logged and swallowed.
+            await publish_live_invalidation(
+                topic="session.test-session-id",
+                payload={"sessionId": "test-session-id", "reason": "test"},
+            )
+        finally:
+            set_live_event_publisher(previous)
+
+    async def test_raising_postgres_bus_publish_failure_counted_not_suppressed(self) -> None:
+        """PostgresNotifyLiveEventBus.publish re-raises on transport error.
+
+        The bus itself re-raises so the caller (PostgresNotifyLiveEventPublisher)
+        can handle it.  The isolation layer above (runtime_state) is what catches
+        it before it reaches sync_engine callers.  This test confirms:
+          (a) the error counter is incremented, and
+          (b) the exception IS re-raised by the bus (expected — isolation lives one
+              layer up).
+        """
+        bus = PostgresNotifyLiveEventBus(_FailingNotifyConnection())
+        event = LiveEventMessage(
+            topic=execution_run_topic("RUN-ISOLATION"),
+            kind="invalidate",
+            payload={"runId": "RUN-ISOLATION", "sequenceNo": 1},
+            occurred_at="2026-05-02T12:00:00+00:00",
+        )
+
+        with self.assertRaises(RuntimeError):
+            await bus.publish(event)
+
+        snapshot = bus.status_snapshot()
+        self.assertEqual(snapshot["publishErrors"], 1)
+
+    async def test_sync_write_path_succeeds_when_publisher_raises(self) -> None:
+        """Simulate a sync-write path: DB upsert succeeds even if publish raises.
+
+        This is the exact scenario from the FU-3 audit requirement.  We model the
+        write as a boolean committed flag that the publish failure must not flip.
+        """
+        db_committed = False
+
+        class _RaisingLiveEventPublisher:
+            async def publish_invalidation(self, **_kwargs: Any) -> None:
+                raise RuntimeError("injected publish failure")
+
+            async def publish_append(self, **_kwargs: Any) -> None:  # pragma: no cover
+                raise RuntimeError("injected publish failure")
+
+        previous = get_live_event_publisher()
+        set_live_event_publisher(_RaisingLiveEventPublisher())  # type: ignore[arg-type]
+        try:
+            # --- simulate DB write ---
+            db_committed = True  # DB write committed before publish call
+
+            # --- publish (would normally fire after upsert) ---
+            await publish_live_invalidation(
+                topic="feature.feat-xyz",
+                payload={"featureId": "feat-xyz", "reason": "sync"},
+            )
+        finally:
+            set_live_event_publisher(previous)
+
+        # DB write must have committed regardless of publish outcome.
+        self.assertTrue(db_committed, "DB write was not committed — publish exception propagated")
+
+    async def test_payload_too_large_publisher_does_not_propagate(self) -> None:
+        """LiveEventBusPayloadTooLarge raised inside publish_live_invalidation is swallowed."""
+
+        class _TooLargePublisher:
+            async def publish_invalidation(self, **_kwargs: Any) -> None:
+                raise LiveEventBusPayloadTooLarge("injected too_large")
+
+            async def publish_append(self, **_kwargs: Any) -> None:  # pragma: no cover
+                raise LiveEventBusPayloadTooLarge("injected too_large")
+
+        previous = get_live_event_publisher()
+        set_live_event_publisher(_TooLargePublisher())  # type: ignore[arg-type]
+        try:
+            # Must not raise.
+            await publish_live_invalidation(
+                topic="session.s1",
+                payload={"sessionId": "s1"},
+            )
+        finally:
+            set_live_event_publisher(previous)

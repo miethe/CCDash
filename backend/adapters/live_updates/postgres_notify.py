@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections import deque
 from typing import Any, Mapping
 
@@ -24,6 +25,10 @@ from backend.application.live_updates.contracts import (
 )
 from backend.application.live_updates.topics import encode_cursor, normalize_topic
 
+try:
+    from backend.observability import otel as _otel
+except ImportError:  # pragma: no cover — observability is optional
+    _otel = None  # type: ignore[assignment]
 
 DEFAULT_CCDASH_LIVE_NOTIFY_CHANNEL = "ccdash_live_events"
 POSTGRES_NOTIFY_PAYLOAD_LIMIT_BYTES = 8000
@@ -70,11 +75,36 @@ class PostgresNotifyLiveEventBus:
             event,
             invalidation_only=self.invalidation_only,
         )
+        t0 = time.monotonic()
         try:
             payload = self._encode_payload(envelope)
             await self._db.execute("SELECT pg_notify($1, $2)", self.channel, payload)
-        except Exception as exc:
+        except LiveEventBusPayloadTooLarge as exc:
+            latency_ms = (time.monotonic() - t0) * 1000.0
             self._record_publish_error(exc, topic=envelope.topic, kind=envelope.kind)
+            if _otel is not None:
+                _otel.record_live_fanout_publish(result="too_large", latency_ms=latency_ms)
+            logger.warning(
+                "Failed to publish Postgres live notification "
+                "(channel=%s, topic=%s, kind=%s, error=%s)",
+                self.channel,
+                envelope.topic,
+                envelope.kind,
+                exc,
+                extra={
+                    "event": "postgres_live_notify_publish_failed",
+                    "channel": self.channel,
+                    "topic": envelope.topic,
+                    "kind": envelope.kind,
+                    "error": str(exc),
+                },
+            )
+            raise
+        except Exception as exc:
+            latency_ms = (time.monotonic() - t0) * 1000.0
+            self._record_publish_error(exc, topic=envelope.topic, kind=envelope.kind)
+            if _otel is not None:
+                _otel.record_live_fanout_publish(result="error", latency_ms=latency_ms)
             logger.warning(
                 "Failed to publish Postgres live notification "
                 "(channel=%s, topic=%s, kind=%s, error=%s)",
@@ -92,7 +122,10 @@ class PostgresNotifyLiveEventBus:
                 exc_info=True,
             )
             raise
+        latency_ms = (time.monotonic() - t0) * 1000.0
         self._published_count += 1
+        if _otel is not None:
+            _otel.record_live_fanout_publish(result="ok", latency_ms=latency_ms)
         return envelope
 
     async def close(self) -> None:

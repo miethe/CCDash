@@ -96,9 +96,6 @@ class FileWatcherClassificationTests(unittest.TestCase):
                     (Change.modified, str(ignored_dir / "junit.xml")),
                     (Change.modified, str(sessions_dir / "scratch.tmp")),
                 },
-                sessions_dir=sessions_dir,
-                docs_dir=docs_dir,
-                progress_dir=progress_dir,
                 test_sources=[test_source],
             )
 

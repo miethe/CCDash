@@ -55,6 +55,16 @@ _prom_link_rebuild_scope_counter: Any | None = None
 _prom_filesystem_scan_cached_counter: Any | None = None
 _prom_workflow_detail_batch_rows_hist: Any | None = None
 
+# ── Live-fanout + watcher metrics (FU-5) ─────────────────────────────────────
+_live_fanout_publish_latency_hist: Any | None = None
+_live_fanout_delivered_counter: Any | None = None
+_live_fanout_listener_received_counter: Any | None = None
+_watcher_sync_latency_hist: Any | None = None
+_prom_live_fanout_publish_latency_hist: Any | None = None
+_prom_live_fanout_delivered_counter: Any | None = None
+_prom_live_fanout_listener_received_counter: Any | None = None
+_prom_watcher_sync_latency_hist: Any | None = None
+
 _prom_enabled = False
 _prom_ingestion_counter: Any | None = None
 _prom_ingestion_latency_hist: Any | None = None
@@ -176,6 +186,10 @@ def initialize(app: FastAPI | None = None) -> None:
     global _prom_worker_job_freshness_gauge, _prom_worker_job_backpressure_gauge
     global _prom_frontend_poll_teardown_counter, _prom_link_rebuild_scope_counter
     global _prom_filesystem_scan_cached_counter, _prom_workflow_detail_batch_rows_hist
+    global _live_fanout_publish_latency_hist, _live_fanout_delivered_counter
+    global _live_fanout_listener_received_counter, _watcher_sync_latency_hist
+    global _prom_live_fanout_publish_latency_hist, _prom_live_fanout_delivered_counter
+    global _prom_live_fanout_listener_received_counter, _prom_watcher_sync_latency_hist
 
     if _initialized:
         if _enabled and app and _fastapi_instrumentor:
@@ -346,6 +360,28 @@ def initialize(app: FastAPI | None = None) -> None:
         description="Workflow-detail batch query row counts.",
     )
 
+    # ── Live-fanout + watcher metrics (FU-5) ─────────────────────────────────
+    _live_fanout_publish_latency_hist = meter.create_histogram(
+        "ccdash_live_fanout_publish_latency_ms",
+        unit="ms",
+        description="Latency of cross-process live fanout publish operations.",
+    )
+    _live_fanout_delivered_counter = meter.create_counter(
+        "ccdash_live_fanout_delivered_total",
+        unit="1",
+        description="Cross-process live fanout publish outcomes by result.",
+    )
+    _live_fanout_listener_received_counter = meter.create_counter(
+        "ccdash_live_fanout_listener_received_total",
+        unit="1",
+        description="Postgres NOTIFY envelopes received and processed by the API listener.",
+    )
+    _watcher_sync_latency_hist = meter.create_histogram(
+        "ccdash_watcher_sync_latency_ms",
+        unit="ms",
+        description="Latency of file-watcher-triggered sync_changed_files calls.",
+    )
+
     _trace_provider = trace_provider
     _meter_provider = meter_provider
     _tracer = tracer
@@ -459,6 +495,26 @@ def initialize(app: FastAPI | None = None) -> None:
                 "Workflow-detail batch query row counts.",
                 ["endpoint"],
                 buckets=[1, 5, 10, 25, 50, 100, 250, 500, 1000],
+            )
+            # ── Live-fanout + watcher metrics (FU-5) ─────────────────────────
+            _prom_live_fanout_publish_latency_hist = Histogram(
+                "ccdash_live_fanout_publish_latency_ms",
+                "Latency of cross-process live fanout publish operations.",
+                ["scope"],
+            )
+            _prom_live_fanout_delivered_counter = Counter(
+                "ccdash_live_fanout_delivered_total",
+                "Cross-process live fanout publish outcomes by result.",
+                ["result"],
+            )
+            _prom_live_fanout_listener_received_counter = Counter(
+                "ccdash_live_fanout_listener_received_total",
+                "Postgres NOTIFY envelopes received and processed by the API listener.",
+                ["result"],
+            )
+            _prom_watcher_sync_latency_hist = Histogram(
+                "ccdash_watcher_sync_latency_ms",
+                "Latency of file-watcher-triggered sync_changed_files calls.",
             )
             logger.info("Prometheus fallback metrics server listening on port %s", config.PROM_PORT)
         except Exception as exc:  # noqa: BLE001
@@ -869,6 +925,63 @@ def record_workflow_detail_batch_rows(rows: int) -> None:
             _prom_workflow_detail_batch_rows_hist.labels(endpoint="workflow_detail").observe(safe_rows)
     except Exception:
         logger.warning("record_workflow_detail_batch_rows: metric unavailable", exc_info=True)
+
+
+# ── Live-fanout + watcher helpers (FU-5) ─────────────────────────────────────
+
+
+def record_live_fanout_publish(*, result: str, latency_ms: float, scope: str = "publisher") -> None:
+    """Record one cross-process fanout publish attempt.
+
+    result must be one of: ``ok``, ``error``, ``too_large``.
+    """
+    if not _initialized:
+        return
+    safe_result = (result or "error").strip() or "error"
+    safe_scope = (scope or "publisher").strip() or "publisher"
+    value = max(0.0, float(latency_ms))
+    try:
+        if _enabled and _live_fanout_publish_latency_hist is not None:
+            _live_fanout_publish_latency_hist.record(value, {"scope": safe_scope})
+        if _enabled and _live_fanout_delivered_counter is not None:
+            _live_fanout_delivered_counter.add(1, {"result": safe_result})
+        if _prom_enabled and _prom_live_fanout_publish_latency_hist is not None:
+            _prom_live_fanout_publish_latency_hist.labels(scope=safe_scope).observe(value)
+        if _prom_enabled and _prom_live_fanout_delivered_counter is not None:
+            _prom_live_fanout_delivered_counter.labels(result=safe_result).inc()
+    except Exception:
+        logger.debug("record_live_fanout_publish: metric unavailable", exc_info=True)
+
+
+def record_live_fanout_listener_received(*, result: str) -> None:
+    """Record one Postgres NOTIFY envelope processed by the API listener.
+
+    result must be one of: ``ok``, ``decode_error``, ``republish_error``.
+    """
+    if not _initialized:
+        return
+    safe_result = (result or "ok").strip() or "ok"
+    try:
+        if _enabled and _live_fanout_listener_received_counter is not None:
+            _live_fanout_listener_received_counter.add(1, {"result": safe_result})
+        if _prom_enabled and _prom_live_fanout_listener_received_counter is not None:
+            _prom_live_fanout_listener_received_counter.labels(result=safe_result).inc()
+    except Exception:
+        logger.debug("record_live_fanout_listener_received: metric unavailable", exc_info=True)
+
+
+def record_watcher_sync_latency(latency_ms: float) -> None:
+    """Record one file-watcher-triggered sync_changed_files call latency."""
+    if not _initialized:
+        return
+    value = max(0.0, float(latency_ms))
+    try:
+        if _enabled and _watcher_sync_latency_hist is not None:
+            _watcher_sync_latency_hist.record(value)
+        if _prom_enabled and _prom_watcher_sync_latency_hist is not None:
+            _prom_watcher_sync_latency_hist.observe(value)
+    except Exception:
+        logger.debug("record_watcher_sync_latency: metric unavailable", exc_info=True)
 
 
 def _observe_telemetry_queue_depth(observation_type: Any):

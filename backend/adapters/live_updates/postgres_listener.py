@@ -28,6 +28,11 @@ except ImportError:  # pragma: no cover - supports LIVE-003 landing before LIVE-
 
 logger = logging.getLogger("ccdash.live.postgres")
 
+try:
+    from backend.observability import otel as _otel
+except ImportError:  # pragma: no cover — observability is optional
+    _otel = None  # type: ignore[assignment]
+
 DEFAULT_LIVE_NOTIFY_CHANNEL = DEFAULT_CCDASH_LIVE_NOTIFY_CHANNEL
 LIVE_EVENT_KINDS: frozenset[str] = frozenset({"append", "invalidate", "heartbeat", "snapshot_required"})
 _BUS_ENVELOPE_KEYS = frozenset({"app", "v"})
@@ -227,6 +232,7 @@ class PostgresLiveNotificationListener:
         connection: Any | None = None
         try:
             connection = await self._acquire_connection()
+            assert connection is not None  # _acquire_connection raises on failure; None is unreachable here
             await connection.add_listener(self._channel, self._handle_notification)
         except BaseException:
             if connection is not None:
@@ -267,6 +273,8 @@ class PostgresLiveNotificationListener:
         except ValueError as exc:
             self._malformed_count += 1
             self._record_error("malformed_notification", exc, channel=channel, server_pid=server_pid)
+            if _otel is not None:
+                _otel.record_live_fanout_listener_received(result="decode_error")
             logger.warning(
                 "Ignoring malformed Postgres live notification "
                 "(channel=%s, server_pid=%s, error=%s)",
@@ -301,6 +309,8 @@ class PostgresLiveNotificationListener:
                 topic=notification.topic,
                 kind=notification.kind,
             )
+            if _otel is not None:
+                _otel.record_live_fanout_listener_received(result="republish_error")
             logger.warning(
                 "Failed to republish Postgres live notification "
                 "(channel=%s, topic=%s, kind=%s, server_pid=%s, error=%s)",
@@ -321,6 +331,8 @@ class PostgresLiveNotificationListener:
             )
             return
         self._republished_count += 1
+        if _otel is not None:
+            _otel.record_live_fanout_listener_received(result="ok")
 
     async def _acquire_connection(self) -> Any:
         acquire = getattr(self._db, "acquire", None)

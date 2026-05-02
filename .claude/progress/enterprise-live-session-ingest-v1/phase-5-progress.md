@@ -171,4 +171,29 @@ Validate enterprise live session ingest end to end and document the operator and
 
 ## Status
 
-Phase 5 is pending. `TEST-001` through `DOC-002` are pending.
+Phase 5 completed on 2026-05-02. All validation and documentation tasks delivered.
+
+## Tasks Completed
+
+**TEST-001: Runtime Unit Tests**
+Covered runtime profile/storage contract matrix and watcher startup gating (commit ff3b169). Tests ensure API remains stateless and watcher capability is isolated to `worker-watch` profile.
+
+**TEST-002: Watcher Integration Test**
+Simulated JSONL append in watched sessions directory and validated incremental sync to Postgres (commit ff3b169). Proved worker ingestion requires no process restart.
+
+**TEST-003: Browser Live Smoke**
+Validated Session Inspector updates via SSE when worker-watch ingests session changes (commit a068001). Automated smoke test confirms event arrival and UI refresh.
+
+**TEST-004: Compose Smoke**
+Documented compose smoke procedure for enterprise live ingest including startup, health probe validation, append simulation, and row count verification (commit c88d90e). Procedure is reproducible and operationally clear.
+
+**DOC-001: Runtime Docs**
+Updated `deploy/runtime/README.md` and `.env.example` with watcher worker setup instructions (commit c88d90e). Docs explain profiles, project binding, mounts, polling mode, and one-project-per-worker limitation.
+
+**DOC-002: Developer Reference**
+Updated live-update platform developer docs with cross-process fanout architecture and responsibilities (commit a4e9270). Identifies in-memory vs Postgres fanout ownership and event flow.
+
+## Known Limitations
+
+- **SessionInspector wire-boundary smoke test**: Test uses mock-based SSE (commit a068001). Real network-fault scenarios and listener reconnect validation deferred to follow-up FU-4 in `.claude/progress/quick-features/live-ingest-review-followups.md`.
+- **Listener reconnect resilience**: Exponential backoff and supervisor lifecycle not yet implemented; deferred to FU-2 (requires planning).
