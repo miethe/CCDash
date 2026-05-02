@@ -223,6 +223,7 @@ Sensitivity key: `critical` can mutate credentials, repository state, execution 
 **Phase 1 Task Status**
 
 1. AUTH-002 matrix drafted on 2026-05-02 from the AUTH-091 inventory. Treat this as the canonical V1 permission vocabulary for implementation planning, pending AUTH-001 principal-contract finalization; do not mark Phase 1 complete from this note alone.
+2. AUTH-004 subject hierarchy and ownership model drafted on 2026-05-02. Phase 1 remains incomplete until AUTH-001 and AUTH-003 are also complete and the quality gates below are satisfied.
 
 ### AUTH-002 Canonical V1 Resource/Action Matrix
 
@@ -254,6 +255,59 @@ Implementation rules:
 4. `PM` owns project operations but not enterprise/team administration. `PV` is read-only except for project switching to bound projects.
 5. `IO`, `XA`, and `AA` are purpose-built roles that may be combined with viewer/maintainer roles; they do not grant broad project write access by themselves.
 6. Denials for write/admin/execute actions must be audited with principal, resource, action, requested scope, and denial reason.
+
+### AUTH-004 Subject Hierarchy and Ownership Model
+
+V1 uses `enterprise > team > workspace > project` as the resource hierarchy, with `user` as an assignable subject that can receive direct bindings at any resource level. `workspace` and `project` are resource scopes, not identity tiers; their access is always evaluated through `user`, `team`, or `enterprise` bindings plus explicit workspace/project ownership metadata.
+
+Authoritative identifiers and stable subject keys:
+
+| Entity | Authoritative ID | Stable key format | Notes |
+|--------|------------------|-------------------|-------|
+| User | Provider subject plus issuer: `issuer_id` + `provider_subject` | `user:{issuer_id}:{provider_subject}` | Email is display/search metadata only and must not be used as the durable key. Local mode may use `user:local:operator`. |
+| Team | CCDash team UUID or external org/group mapping ID after claim normalization | `team:{enterprise_id}:{team_id}` | Provider group names are aliases until mapped; renamed groups must keep the same normalized team ID. |
+| Enterprise | CCDash enterprise UUID or configured hosted tenant/org ID | `enterprise:{enterprise_id}` | Every hosted subject resolves under exactly one enterprise per request. Local mode may use `enterprise:local`. |
+| Workspace | CCDash workspace UUID from the workspace registry | `workspace:{enterprise_id}:{workspace_id}` | A workspace has one owning enterprise and optional owning team/user. |
+| Project | CCDash project UUID or registry ID | `project:{enterprise_id}:{workspace_id}:{project_id}` | A project belongs to one workspace and inherits that workspace's owner bindings unless narrowed. |
+
+Ownership and binding rules:
+
+1. Enterprise owns all teams, workspaces, and projects under its ID. Enterprise bindings may grant access across descendant teams/workspaces/projects.
+2. A team-owned workspace attaches to one owning `team` and one owning `enterprise`. Team bindings flow to descendant projects unless the project has an explicit narrower binding set.
+3. A user-owned workspace attaches to one owning `user` and one owning `enterprise`; it does not inherit team grants unless a team is explicitly bound to that workspace or project.
+4. A project attaches to exactly one workspace and inherits the workspace owner chain. Additional project-level bindings may grant, narrow, or deny access for specific users/teams.
+5. Workspace/project ownership is stored as metadata on the resource; authorization bindings are separate records keyed by stable subject key, role, resource key, and effect.
+
+Inheritance, overrides, and narrowing:
+
+1. Evaluation starts at enterprise scope, then team/user direct bindings, then workspace, then project. The requested action must be granted at a scope that contains the requested resource.
+2. More specific resource bindings can narrow inherited access by replacing inherited role grants for that subject/resource pair or by adding an explicit deny.
+3. Explicit deny wins over any inherited or direct allow at the same or broader scope and must include a reason for audit/operator review.
+4. User direct bindings are additive with team bindings unless a project/workspace deny targets that user. Team membership removal stops future inherited team access but does not remove separately assigned user bindings.
+5. Cross-enterprise access is denied by default. A subject key from one enterprise can access another enterprise only through an explicit delegated binding created by an enterprise admin in the target enterprise.
+
+Conflict resolution:
+
+1. No authenticated subject, unknown enterprise, unknown workspace, or unknown project resolves to `401` or `403` before policy evaluation, depending on whether identity or authorization is missing.
+2. For multiple allows, the most specific matching binding determines scope limits; role permissions are unioned only within that same resource boundary.
+3. For allow plus deny, deny wins. For equal-specificity conflicting role assignments, the evaluator keeps the least-privilege permission set and records a configuration warning.
+4. Local no-auth mode bypasses hosted conflict resolution only through the explicit `LO` permissive profile; hosted mode must never fall back to local ownership.
+
+Bootstrap and admin assignment:
+
+1. Hosted first-run requires an explicit configured bootstrap enterprise and at least one bootstrap admin subject key or verified provider claim. Missing bootstrap configuration is fail-closed.
+2. Bootstrap admin receives `EA` on the bootstrap enterprise only. Additional `EA`, `TA`, and service-account bindings must be created through audited admin operations.
+3. `TA` can manage team-scoped users and roles but cannot assign `EA`, mutate provider configuration, or change cross-team/cross-enterprise ownership.
+4. Service accounts use stable `service:{issuer_id}:{client_id}` subject keys and can receive only the minimum integration/execution permissions required for the configured trust path.
+5. Admin and ownership changes require `admin.role:manage` or `admin.user:manage` at the containing scope and must emit privileged-action audit records.
+
+SkillMeat AAA alignment assumptions:
+
+1. CCDash and SkillMeat share the same issuer/audience trust assumptions or an explicit delegated token exchange; neither side should invent app-local identities for hosted requests.
+2. Enterprise, team, workspace, and project IDs exchanged with SkillMeat must be stable normalized IDs, not display names or filesystem paths.
+3. CCDash may pass the resolved principal subject key, resource key, permissions, and delegation reason to SkillMeat, but SkillMeat remains responsible for enforcing its own AAA policy on its resources.
+4. Workspace/project mappings are one-to-one for V1 unless a documented migration record maps legacy IDs to normalized keys.
+5. Denial/audit semantics should stay compatible: privileged SkillMeat actions initiated from CCDash must preserve the original user or service-account subject key.
 
 **Phase 1 Quality Gates**
 
