@@ -53,6 +53,7 @@ class RuntimeContainer:
     def __init__(self, *, profile: RuntimeProfile) -> None:
         self.profile = profile
         self.storage_profile = config.STORAGE_PROFILE
+        self.auth_config: config.AuthProviderConfig | None = None
         self.db: Any | None = None
         self.sync: Any | None = None
         self.ports: CorePorts | None = None
@@ -70,6 +71,7 @@ class RuntimeContainer:
     async def startup(self, app: FastAPI) -> None:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
         validate_migration_governance_contract()
+        self.auth_config = config.resolve_auth_provider_config(self.profile.name)
         config.validate_runtime_environment_contract(self.profile.name, self.storage_profile)
         self.project_binding = self._resolve_startup_project_binding()
         startup_metadata = self._runtime_metadata()
@@ -184,6 +186,7 @@ class RuntimeContainer:
             self.db,
             runtime_profile=self.profile,
             storage_profile=self.storage_profile,
+            auth_config=self._resolved_auth_config(),
         )
 
     def _build_sync_engine(self) -> Any | None:
@@ -368,6 +371,7 @@ class RuntimeContainer:
             object(),
             runtime_profile=self.profile,
             storage_profile=self.storage_profile,
+            auth_config=self._resolved_auth_config(),
         )
         audit_capability = (
             storage_probe.storage.audit_security().privileged_action_audit_records().describe_capability()
@@ -421,11 +425,9 @@ class RuntimeContainer:
         runtime_contract = get_runtime_storage_contract(self.profile)
         db_connected = bool(connection._connection)
         migration_status = str(status.get("migrationStatus", "unknown"))
-        auth_configured = bool(config.resolve_api_bearer_token())
-        auth_guardrail = StaticBearerTokenIdentityProvider.describe_runtime_guardrail(
-            runtime_profile=self.profile.name,
-            bearer_token_configured=auth_configured,
-        )
+        auth_state = self._auth_probe_state()
+        auth_configured = bool(auth_state["configured"])
+        auth_guardrail = auth_state["guardrail"]
         detail_warnings = list(auth_guardrail["warnings"])
         worker_binding_config = config.resolve_worker_binding_config()
         watcher_detail = self._probe_watcher_detail(status)
@@ -528,21 +530,13 @@ class RuntimeContainer:
                     else "pass" if auth_configured else "fail"
                 ),
                 required="auth_contract" in required_checks,
-                summary=(
-                    "Request authentication is not required for this runtime."
-                    if not self.profile.capabilities.auth
-                    else "Hosted auth contract is configured."
-                    if auth_configured
-                    else "Hosted auth contract is missing its bearer token."
-                ),
-                detail=(
-                    "This runtime does not serve authenticated HTTP traffic."
-                    if not self.profile.capabilities.auth
-                    else f"{config.CCDASH_API_BEARER_TOKEN_ENV} must be set before the API runtime is ready."
-                ),
+                summary=str(auth_state["summary"]),
+                detail=str(auth_state["detail"]),
                 data={
                     "authEnabled": self.profile.capabilities.auth,
+                    "provider": auth_state["provider"],
                     "configured": auth_configured,
+                    "missingRequiredVariables": list(auth_state["missingRequiredVariables"]),
                 },
             ),
             self._probe_check(
@@ -717,7 +711,9 @@ class RuntimeContainer:
                 },
                 "auth": {
                     "enabled": bool(status.get("authEnabled", False)),
+                    "provider": status.get("authProvider"),
                     "configured": auth_configured,
+                    "missingRequiredVariables": list(status.get("authProviderMissingRequiredVariables", ())),
                     "behavior": status.get("runtimeAuthBehavior"),
                     "guardrail": auth_guardrail,
                 },
@@ -888,7 +884,11 @@ class RuntimeContainer:
         observability.set_telemetry_export_disabled(disabled)
 
     def _runtime_metadata(self) -> dict[str, Any]:
-        metadata = build_runtime_metadata(self.profile, self.storage_profile)
+        metadata = build_runtime_metadata(
+            self.profile,
+            self.storage_profile,
+            auth_config=self._resolved_auth_config(),
+        )
         storage_contract = get_storage_capability_contract(self.storage_profile)
         environment_contract = config.resolve_runtime_environment_contract(
             self.profile.name,
@@ -926,6 +926,103 @@ class RuntimeContainer:
             }
         )
         return metadata
+
+    def _resolved_auth_config(self) -> config.AuthProviderConfig | None:
+        if not self.profile.capabilities.auth:
+            return None
+        if self.auth_config is None:
+            self.auth_config = config.resolve_auth_provider_config(self.profile.name)
+        return self.auth_config
+
+    def _auth_probe_state(self) -> dict[str, Any]:
+        if not self.profile.capabilities.auth:
+            return {
+                "provider": "local",
+                "configured": False,
+                "missingRequiredVariables": [],
+                "summary": "Request authentication is not required for this runtime.",
+                "detail": "This runtime does not serve authenticated HTTP traffic.",
+                "guardrail": self._auth_guardrail(
+                    provider="local",
+                    configured=False,
+                    missing_required_variables=(),
+                ),
+            }
+
+        auth_config = self._resolved_auth_config()
+        if auth_config is None:
+            raise RuntimeError("Auth-capable runtime is missing auth provider configuration.")
+
+        missing = tuple(auth_config.missing_required_variables)
+        configured = not bool(auth_config.invalid_provider or missing)
+        if configured:
+            summary = "Hosted auth contract is configured."
+            detail = f"Auth provider '{auth_config.provider}' has the required runtime configuration."
+        elif auth_config.provider == "static_bearer":
+            summary = "Hosted auth contract is missing its bearer token."
+            detail = f"{config.CCDASH_API_BEARER_TOKEN_ENV} must be set before the API runtime is ready."
+        elif auth_config.invalid_provider:
+            summary = "Hosted auth contract selects an unsupported provider."
+            detail = (
+                f"{config.CCDASH_AUTH_PROVIDER_ENV}='{auth_config.invalid_provider}' is not supported."
+            )
+        else:
+            summary = "Hosted auth contract is missing provider settings."
+            detail = "Missing required auth variables: " + ", ".join(missing)
+
+        return {
+            "provider": auth_config.provider,
+            "configured": configured,
+            "missingRequiredVariables": list(missing),
+            "summary": summary,
+            "detail": detail,
+            "guardrail": self._auth_guardrail(
+                provider=auth_config.provider,
+                configured=configured,
+                missing_required_variables=missing,
+            ),
+        }
+
+    def _auth_guardrail(
+        self,
+        *,
+        provider: str,
+        configured: bool,
+        missing_required_variables: tuple[str, ...],
+    ) -> dict[str, Any]:
+        if provider == "static_bearer":
+            return StaticBearerTokenIdentityProvider.describe_runtime_guardrail(
+                runtime_profile=self.profile.name,
+                bearer_token_configured=configured,
+            )
+
+        applies = self.profile.capabilities.auth
+        if provider == "local" and applies:
+            mode = "explicit_hosted_no_auth"
+            summary = (
+                "Hosted API auth is explicitly configured for local no-auth; use only behind a trusted boundary."
+            )
+        elif applies:
+            mode = "hosted_token_provider"
+            summary = f"Hosted API auth is delegated to the configured '{provider}' token provider."
+        else:
+            mode = "not_applicable"
+            summary = "This runtime does not serve authenticated HTTP traffic."
+
+        return {
+            "mode": mode,
+            "applies": applies,
+            "provider": provider,
+            "configured": configured if applies else False,
+            "missingRequiredVariables": list(missing_required_variables) if applies else [],
+            "bearerTokenConfigured": False,
+            "bearerProtectedPathPrefix": None,
+            "anonymousFallbackEnabled": provider == "local" and applies,
+            "anonymousFallbackReasonCode": None,
+            "summary": summary,
+            "warnings": [],
+            "warningCodes": [],
+        }
 
     def _resolve_startup_project_binding(self) -> ProjectBinding | None:
         if self.profile.name not in {"worker", "worker-watch"}:

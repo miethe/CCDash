@@ -5,9 +5,9 @@ from typing import Any
 
 from backend import config
 from backend.adapters.auth import (
+    create_auth_identity_provider,
     LocalIdentityProvider,
     PermitAllAuthorizationPolicy,
-    StaticBearerTokenIdentityProvider,
 )
 from backend.adapters.integrations import NoopIntegrationClient
 from backend.adapters.jobs import InProcessJobScheduler
@@ -34,6 +34,7 @@ def build_core_ports(
     runtime_profile: RuntimeProfile | None = None,
     storage_profile: config.StorageProfileConfig | None = None,
     manager: ProjectManager | None = None,
+    auth_config: config.AuthProviderConfig | None = None,
     identity_provider: Any | None = None,
     authorization_policy: Any | None = None,
     workspace_registry: Any | None = None,
@@ -44,7 +45,10 @@ def build_core_ports(
     workspace_manager = manager or project_manager
     resolved_storage_profile = storage_profile or config.STORAGE_PROFILE
     validate_runtime_storage_pairing(runtime_profile, resolved_storage_profile)
-    resolved_identity_provider = identity_provider or _build_identity_provider(runtime_profile)
+    resolved_identity_provider = identity_provider or _build_identity_provider(
+        runtime_profile,
+        auth_config=auth_config,
+    )
     return CorePorts(
         identity_provider=resolved_identity_provider,
         authorization_policy=authorization_policy or PermitAllAuthorizationPolicy(),
@@ -62,12 +66,14 @@ def build_core_ports(
 def build_runtime_metadata(
     runtime_profile: RuntimeProfile,
     storage_profile: config.StorageProfileConfig,
+    auth_config: config.AuthProviderConfig | None = None,
 ) -> dict[str, object]:
     validate_runtime_storage_pairing(runtime_profile, storage_profile)
     runtime_contract = get_runtime_storage_contract(runtime_profile)
     storage_contract = get_storage_capability_contract(storage_profile)
     storage_composition = resolve_storage_composition_contract(storage_profile)
     governance_metadata = build_migration_governance_metadata(storage_profile)
+    auth_metadata = _build_auth_metadata(runtime_profile, auth_config)
     runtime_capabilities = {
         "watch": runtime_profile.capabilities.watch,
         "sync": runtime_profile.capabilities.sync,
@@ -82,6 +88,9 @@ def build_runtime_metadata(
         "syncEnabled": runtime_profile.capabilities.sync,
         "jobsEnabled": runtime_profile.capabilities.jobs,
         "authEnabled": runtime_profile.capabilities.auth,
+        "authProvider": auth_metadata["provider"],
+        "authProviderConfigured": auth_metadata["configured"],
+        "authProviderMissingRequiredVariables": auth_metadata["missingRequiredVariables"],
         "integrationsEnabled": runtime_profile.capabilities.integrations,
         "runtimeCapabilities": runtime_capabilities,
         "recommendedStorageProfile": runtime_profile.recommended_storage_profile,
@@ -122,10 +131,36 @@ def build_workspace_registry(
     return ProjectManagerWorkspaceRegistry(manager or project_manager)
 
 
-def _build_identity_provider(runtime_profile: RuntimeProfile | None) -> object:
+def _build_identity_provider(
+    runtime_profile: RuntimeProfile | None,
+    *,
+    auth_config: config.AuthProviderConfig | None = None,
+) -> object:
     if runtime_profile is not None and runtime_profile.capabilities.auth:
-        return StaticBearerTokenIdentityProvider()
+        resolved_auth_config = auth_config or config.resolve_auth_provider_config(runtime_profile.name)
+        return create_auth_identity_provider(resolved_auth_config)
     return LocalIdentityProvider()
+
+
+def _build_auth_metadata(
+    runtime_profile: RuntimeProfile,
+    auth_config: config.AuthProviderConfig | None,
+) -> dict[str, object]:
+    if not runtime_profile.capabilities.auth:
+        return {
+            "provider": "local",
+            "configured": False,
+            "missingRequiredVariables": [],
+        }
+
+    resolved_auth_config = auth_config or config.resolve_auth_provider_config(runtime_profile.name)
+    return {
+        "provider": resolved_auth_config.provider,
+        "configured": not bool(
+            resolved_auth_config.invalid_provider or resolved_auth_config.missing_required_variables
+        ),
+        "missingRequiredVariables": list(resolved_auth_config.missing_required_variables),
+    }
 
 
 def _build_storage_unit_of_work(

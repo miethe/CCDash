@@ -9,15 +9,17 @@ plan_ref: docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-
 execution_model: batch-parallel
 phase: 2
 title: Auth Provider Adapters and Hosted Session Flow
-status: in-progress
+status: review
 started: '2026-05-02'
 completed: null
-commit_refs: []
+commit_refs:
+- 6da1a4e
+- 0a48a7f
 pr_refs: []
-overall_progress: 66
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: at-risk
 total_tasks: 3
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -44,6 +46,9 @@ tasks:
   priority: critical
   assigned_model: sonnet
   model_effort: high
+  started: '2026-05-02'
+  completed: '2026-05-02'
+  verified_by: codex-orchestrator
   evidence:
   - Implemented hosted provider registry, generic OIDC JWKS validation, AUTH-101 Clerk
     JWT validation, and focused provider tests; backend/.venv/bin/python -m pytest
@@ -61,12 +66,18 @@ tasks:
   priority: critical
   assigned_model: sonnet
   model_effort: high
+  started: '2026-05-02'
+  completed: '2026-05-02'
+  verified_by: codex-orchestrator
   evidence:
-  - "Implemented signed hosted session/state cookies, authentication service, /api/auth router, bootstrap registration, and focused session-flow tests; backend/.venv/bin/python -m pytest backend/tests/test_auth_session_flow.py backend/tests/test_auth_providers.py -v passed (17 tests)."
+  - Implemented signed hosted session/state cookies, authentication service, /api/auth
+    router, bootstrap registration, and focused session-flow tests; backend/.venv/bin/python
+    -m pytest backend/tests/test_auth_session_flow.py backend/tests/test_auth_providers.py
+    -v passed (17 tests).
 - id: AUTH-103
   description: Update runtime composition so api profile can use selected hosted identity/authorization
     adapters while local and test keep permissive adapters.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   dependencies:
@@ -76,6 +87,11 @@ tasks:
   priority: critical
   assigned_model: sonnet
   model_effort: high
+  started: '2026-05-02'
+  completed: '2026-05-02'
+  verified_by: codex-orchestrator
+  evidence:
+  - "Implemented provider-driven API runtime auth composition, auth metadata/probe reporting, and runtime bootstrap tests for selected providers; backend/.venv/bin/python -m pytest backend/tests/test_auth_session_flow.py backend/tests/test_auth_providers.py backend/tests/test_request_context.py -v passed (54 tests); direct runtime composition script passed; py_compile runtime modules passed. test_runtime_bootstrap.py collection/compile blocked by uninterruptible Python hangs in this environment."
 parallelization:
   batch_1:
   - AUTH-101
@@ -88,19 +104,26 @@ parallelization:
   - AUTH-102
   - AUTH-103
   estimated_total_time: 4-5 days
-blockers: []
+blockers:
+- id: VALIDATION-001
+  title: test_runtime_bootstrap.py collection/compile hangs in Python
+  severity: high
+  blocking:
+  - phase-completion-gate
+  resolution: Re-run runtime bootstrap validation after clearing uninterruptible Python processes or restarting the test host.
+  created: '2026-05-02'
 success_criteria:
 - id: SC-1
   description: Hosted auth is provider-agnostic at the application boundary while
     still supporting Clerk as a first-class built-in option.
-  status: pending
+  status: completed
 - id: SC-2
   description: Local runtime behavior remains unchanged when hosted auth is disabled.
-  status: pending
+  status: completed
 - id: SC-3
   description: Hosted session transport uses secure cookies or equivalent server-managed
     state, not long-lived browser secrets.
-  status: pending
+  status: completed
 files_modified:
 - backend/adapters/auth/__init__.py
 - backend/adapters/auth/provider_factory.py
@@ -114,8 +137,11 @@ files_modified:
 - backend/application/services/authentication.py
 - backend/routers/auth.py
 - backend/runtime/bootstrap.py
+- backend/runtime/container.py
+- backend/runtime_ports.py
+- backend/tests/test_runtime_bootstrap.py
 - backend/tests/test_auth_session_flow.py
-progress: 66
+progress: 100
 updated: '2026-05-02'
 ---
 
