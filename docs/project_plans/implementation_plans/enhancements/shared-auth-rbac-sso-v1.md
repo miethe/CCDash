@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in-progress
 category: enhancements
 title: "Implementation Plan: Shared Auth, RBAC, and SSO V1"
 description: "Implement modular shared auth with local, Clerk, and generic OIDC providers, hierarchical RBAC, and SkillMeat trust alignment while preserving an explicit local no-auth runtime."
@@ -222,8 +222,9 @@ Sensitivity key: `critical` can mutate credentials, repository state, execution 
 
 **Phase 1 Task Status**
 
-1. AUTH-002 matrix drafted on 2026-05-02 from the AUTH-091 inventory. Treat this as the canonical V1 permission vocabulary for implementation planning, pending AUTH-001 principal-contract finalization; do not mark Phase 1 complete from this note alone.
-2. AUTH-004 subject hierarchy and ownership model drafted on 2026-05-02. Phase 1 remains incomplete until AUTH-001 and AUTH-003 are also complete and the quality gates below are satisfied.
+1. AUTH-001, AUTH-002, AUTH-003, and AUTH-004 are complete as of 2026-05-02.
+
+Completion note: Phase 1 is complete based on the refined `Principal` contract in `backend/application/context.py` with focused request-context tests, the documented permission matrix below, the hosted auth configuration contract added in `backend/config.py` with storage profile tests, and the documented subject hierarchy and ownership model below.
 
 ### AUTH-002 Canonical V1 Resource/Action Matrix
 
