@@ -14,6 +14,7 @@ from backend.adapters.auth import LocalIdentityProvider, StaticBearerTokenIdenti
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
 from backend.db import connection
+from backend.db.file_watcher import FileWatcher
 from backend.main import app as local_entrypoint_app
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.db.repositories.identity_access import LocalPrincipalRepository
@@ -65,6 +66,30 @@ def _fake_sync_engine() -> types.SimpleNamespace:
         rebuild_links=AsyncMock(return_value={"created": 0}),
         capture_analytics_snapshot=AsyncMock(return_value={"captured": True}),
     )
+
+
+class _FakeLiveFanoutListener:
+    def status_snapshot(self) -> dict[str, object]:
+        return {
+            "channel": "ccdash_live_events",
+            "running": True,
+            "connected": True,
+            "lastError": "broker offline",
+            "lastErrorAt": "2026-03-14T10:03:00+00:00",
+            "received": 3,
+            "republished": 2,
+            "malformed": 0,
+            "publishErrors": 1,
+            "errorCount": 1,
+            "recentErrors": [
+                {
+                    "phase": "republish",
+                    "topic": "execution.run.run-1",
+                    "error": "broker offline",
+                    "at": "2026-03-14T10:03:00+00:00",
+                }
+            ],
+        }
 
 
 def _project_binding(
@@ -773,12 +798,152 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["detail"]["database"]["status"], "connected")
         self.assertEqual(payload["detail"]["database"]["migrationStatus"], "applied")
         self.assertEqual(payload["detail"]["activities"]["watcher"], "stopped")
+        self.assertEqual(payload["detail"]["watcher"]["state"], "stopped")
+        self.assertTrue(payload["detail"]["watcher"]["expected"])
+        self.assertEqual(payload["detail"]["watcher"]["watchPathCount"], 0)
         self.assertEqual(payload["detail"]["activities"]["startupSync"], "idle")
         check_categories = {check["code"]: check["category"] for check in payload["detail"]["checks"]}
         self.assertEqual(check_categories["db_connection"], "database")
         self.assertEqual(check_categories["storage_pairing"], "storage")
         self.assertEqual(check_categories["schema_migrations"], "migration")
         self.assertEqual(check_categories["watcher_runtime"], "runtime")
+        watcher_check = next(check for check in payload["detail"]["checks"] if check["code"] == "watcher_runtime")
+        self.assertEqual(watcher_check["data"]["state"], "stopped")
+
+    def test_api_health_and_detail_probe_surface_live_fanout_state(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+        app.state.runtime_container.postgres_live_listener = _FakeLiveFanoutListener()
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            health_payload = _health_payload(app)
+            status_code, detail_payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(health_payload["liveFanout"]["mode"], "listen")
+        self.assertTrue(health_payload["liveFanout"]["running"])
+        self.assertTrue(health_payload["liveFanout"]["connected"])
+        self.assertEqual(health_payload["liveFanout"]["errorCount"], 1)
+        self.assertEqual(health_payload["liveFanout"]["listener"]["publishErrors"], 1)
+        self.assertEqual(detail_payload["detail"]["liveFanout"]["mode"], "listen")
+        self.assertEqual(detail_payload["detail"]["liveFanout"]["recentErrors"][0]["component"], "listener")
+
+    def test_detail_probe_distinguishes_no_watch_runtime(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["detail"]["activities"]["watcher"], "not_expected")
+        self.assertEqual(payload["detail"]["watcher"]["state"], "not_expected")
+        self.assertFalse(payload["detail"]["watcher"]["expected"])
+        self.assertFalse(payload["detail"]["watcher"]["enabled"])
+        watcher_check = next(check for check in payload["detail"]["checks"] if check["code"] == "watcher_runtime")
+        self.assertEqual(watcher_check["status"], "not_applicable")
+        self.assertEqual(watcher_check["data"]["state"], "not_expected")
+
+    def test_worker_watch_detail_probe_reports_configured_watcher_with_no_paths(self) -> None:
+        project = _active_project()
+        container = build_worker_runtime()
+        container.profile = get_runtime_profile("worker-watch")
+        container.storage_profile = _enterprise_storage_profile()
+        container.migration_status = "applied"
+        container.project_binding = _project_binding(project, source="explicit")
+        container.job_adapter = types.SimpleNamespace(
+            status_snapshot=lambda: {
+                "watcher": "configured_no_paths",
+                "watcherDetail": {
+                    "state": "configured_no_paths",
+                    "expected": True,
+                    "enabled": True,
+                    "configured": True,
+                    "running": False,
+                    "watchPathCount": 0,
+                    "watchPaths": [],
+                    "lastChangeSyncAt": None,
+                    "lastChangeCount": None,
+                    "lastSyncStatus": None,
+                    "lastSyncError": None,
+                },
+                "startupSync": "idle",
+                "analyticsSnapshots": "idle",
+                "telemetryExports": "idle",
+                "cacheWarming": "idle",
+                "jobsEnabled": True,
+            }
+        )
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id=project.id),
+            ),
+        ):
+            client = TestClient(build_worker_probe_app(container))
+            response = client.get("/detailz")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["runtimeProfile"], "worker-watch")
+        self.assertEqual(payload["ready"]["status"], "fail")
+        self.assertEqual(payload["detail"]["activities"]["watcher"], "configured_no_paths")
+        self.assertEqual(payload["detail"]["watcher"]["state"], "configured_no_paths")
+        self.assertTrue(payload["detail"]["watcher"]["configured"])
+        self.assertFalse(payload["detail"]["watcher"]["running"])
+        self.assertEqual(payload["detail"]["watcher"]["watchPathCount"], 0)
+        watcher_check = next(check for check in payload["detail"]["checks"] if check["code"] == "watcher_runtime")
+        self.assertEqual(watcher_check["status"], "fail")
+        self.assertEqual(watcher_check["data"]["state"], "configured_no_paths")
+
+    def test_detail_probe_reports_running_watcher_path_count_and_last_sync_marker(self) -> None:
+        app = build_local_app()
+        app.state.runtime_container.storage_profile = _local_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+        app.state.runtime_container.job_adapter = types.SimpleNamespace(
+            status_snapshot=lambda: {
+                "watcher": "running",
+                "watcherDetail": {
+                    "state": "running",
+                    "expected": True,
+                    "enabled": True,
+                    "configured": True,
+                    "running": True,
+                    "watchPathCount": 2,
+                    "watchPaths": ["/tmp/sessions", "/tmp/project/docs"],
+                    "lastChangeSyncAt": "2026-05-02T12:00:00Z",
+                    "lastChangeCount": 3,
+                    "lastSyncStatus": "succeeded",
+                    "lastSyncError": None,
+                },
+                "startupSync": "idle",
+                "analyticsSnapshots": "idle",
+                "telemetryExports": "idle",
+                "cacheWarming": "idle",
+                "jobsEnabled": True,
+            }
+        )
+
+        with patch.object(connection, "_connection", object()):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["ready"]["status"], "pass")
+        self.assertEqual(payload["detail"]["watcher"]["state"], "running")
+        self.assertEqual(payload["detail"]["watcher"]["watchPathCount"], 2)
+        self.assertEqual(payload["detail"]["watcher"]["lastChangeSyncAt"], "2026-05-02T12:00:00Z")
+        self.assertEqual(payload["detail"]["watcher"]["lastChangeCount"], 3)
+        self.assertEqual(payload["detail"]["watcher"]["lastSyncStatus"], "succeeded")
 
     @unittest.skip(
         "FU-004: production drift — bootstrap._build_detail_probe_payload "
@@ -1030,6 +1195,30 @@ class StorageAdapterCompositionTests(unittest.TestCase):
         adapter = EnterpriseStorageUnitOfWork(sentinel)
 
         self.assertIs(adapter.db, sentinel)
+
+
+class FileWatcherObservationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_records_configured_no_paths_without_running_task(self) -> None:
+        watcher = FileWatcher()
+        sync = types.SimpleNamespace(sync_changed_files=AsyncMock())
+        missing_root = Path("/tmp/ccdash-missing-watch-root")
+
+        await watcher.start(
+            sync,
+            "project-1",
+            missing_root / "sessions",
+            missing_root / "docs",
+            missing_root / "progress",
+        )
+
+        snapshot = watcher.snapshot()
+        self.assertTrue(snapshot["configured"])
+        self.assertFalse(snapshot["running"])
+        self.assertEqual(snapshot["projectId"], "project-1")
+        self.assertEqual(snapshot["watchPathCount"], 0)
+        self.assertEqual(snapshot["watchPaths"], [])
+        self.assertFalse(watcher.is_running)
+        sync.sync_changed_files.assert_not_awaited()
 
 
 @unittest.skip(

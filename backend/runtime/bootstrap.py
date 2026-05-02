@@ -198,6 +198,7 @@ def _build_health_payload(
         ),
         "migrationGovernanceStatus": str(runtime_status.get("migrationGovernanceStatus", "")),
         "migrationStatus": str(runtime_status.get("migrationStatus", "")),
+        "liveFanout": dict(runtime_status.get("liveFanout", {})),
         "supportedStorageCompositions": [contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS],
         "probeContract": probe_contract,
         "probeSchemaVersion": str(probe_contract["schemaVersion"]),
@@ -280,6 +281,8 @@ def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any
             "database": dict(detail.get("database", {})),
             "binding": dict(detail.get("binding", {})),
             "activities": dict(detail.get("activities", {})),
+            "watcher": dict(detail.get("watcher", {})),
+            "liveFanout": dict(detail.get("liveFanout", {})),
             "checks": list(detail.get("checks", ())),
         },
         # Feature-surface v2 rollout flag exposed at the detail level so the FE

@@ -90,6 +90,16 @@ class _RecordingPublisher:
         )
 
 
+class _FailingPublisher:
+    async def publish(self, **kwargs: Any) -> None:
+        raise RuntimeError("broker offline")
+
+
+class _FailingNotifyConnection:
+    async def execute(self, query: str, *args: Any) -> str:
+        raise RuntimeError("pg notify unavailable")
+
+
 async def _wait_until(predicate: Callable[[], bool], *, timeout_seconds: float = 0.5) -> None:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     while not predicate():
@@ -178,6 +188,28 @@ class PostgresNotifyLiveEventBusTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(LiveEventBusPayloadTooLarge):
             await tiny_bus.publish(event)
 
+    async def test_publish_failure_is_counted_logged_and_rethrown(self) -> None:
+        bus = PostgresNotifyLiveEventBus(_FailingNotifyConnection())
+        event = LiveEventMessage(
+            topic=execution_run_topic("RUN-PUBLISH-FAIL"),
+            kind="invalidate",
+            payload={"runId": "RUN-PUBLISH-FAIL", "sequenceNo": 1},
+            occurred_at="2026-03-14T10:02:30+00:00",
+        )
+
+        with self.assertLogs("ccdash.live.postgres", level="WARNING") as logs:
+            with self.assertRaisesRegex(RuntimeError, "pg notify unavailable"):
+                await bus.publish(event)
+
+        snapshot = bus.status_snapshot()
+        self.assertEqual(snapshot["publishAttempts"], 1)
+        self.assertEqual(snapshot["published"], 0)
+        self.assertEqual(snapshot["publishErrors"], 1)
+        self.assertEqual(snapshot["errorCount"], 1)
+        self.assertEqual(snapshot["lastError"], "pg notify unavailable")
+        self.assertEqual(snapshot["recentErrors"][0]["phase"], "publish")
+        self.assertIn("Failed to publish Postgres live notification", logs.output[0])
+
 
 class PostgresLiveNotificationListenerTests(unittest.IsolatedAsyncioTestCase):
     async def test_malformed_notifications_are_counted_and_not_republished(self) -> None:
@@ -191,6 +223,8 @@ class PostgresLiveNotificationListenerTests(unittest.IsolatedAsyncioTestCase):
             parse_postgres_live_notification("{not-json")
 
         await listener.start()
+        self.assertTrue(listener.status_snapshot()["running"])
+        self.assertTrue(listener.status_snapshot()["connected"])
         connection.fire_notification(listener.channel, "{not-json", pid=8080)
         await _wait_until(lambda: listener.status_snapshot()["malformed"] == 1)
 
@@ -198,7 +232,43 @@ class PostgresLiveNotificationListenerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["received"], 1)
         self.assertEqual(snapshot["republished"], 0)
         self.assertEqual(snapshot["malformed"], 1)
+        self.assertEqual(snapshot["errorCount"], 1)
+        self.assertEqual(snapshot["recentErrors"][0]["phase"], "malformed_notification")
         self.assertEqual(publisher.calls, [])
+
+    async def test_republish_failures_are_counted_and_do_not_stop_listener(self) -> None:
+        connection = _FakeAsyncpgConnection()
+        pool = _FakeAsyncpgPool(connection)
+        listener = PostgresLiveNotificationListener(
+            db=pool,
+            publisher=_FailingPublisher(),
+            startup_timeout_seconds=0.1,
+        )
+        self.addAsyncCleanup(listener.stop)
+        payload = encode_live_event_bus_envelope(
+            LiveEventBusEnvelope(
+                topic="execution.run.run-republish-fail",
+                kind="invalidate",
+                occurred_at="2026-03-14T10:02:45+00:00",
+                payload={"runId": "RUN-REPUBLISH-FAIL", "sequenceNo": 2},
+                recovery_hint=DEFAULT_BUS_RECOVERY_HINT,
+                payload_compacted=True,
+            )
+        )
+
+        await listener.start()
+        with self.assertLogs("ccdash.live.postgres", level="WARNING") as logs:
+            connection.fire_notification(listener.channel, payload, pid=8081)
+            await _wait_until(lambda: listener.status_snapshot()["publishErrors"] == 1)
+
+        snapshot = listener.status_snapshot()
+        self.assertTrue(snapshot["running"])
+        self.assertTrue(snapshot["connected"])
+        self.assertEqual(snapshot["received"], 1)
+        self.assertEqual(snapshot["republished"], 0)
+        self.assertEqual(snapshot["errorCount"], 1)
+        self.assertEqual(snapshot["recentErrors"][0]["phase"], "republish")
+        self.assertIn("Failed to republish Postgres live notification", logs.output[0])
 
     async def test_worker_publish_is_republished_into_in_memory_broker_by_api_listener(self) -> None:
         worker_connection = _FakeAsyncpgConnection()

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +17,39 @@ from watchfiles import awatch, Change
 from backend.services.test_config import ResolvedTestSource
 
 logger = logging.getLogger("ccdash.watcher")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@dataclass(slots=True)
+class FileWatcherSnapshot:
+    configured: bool = False
+    running: bool = False
+    project_id: str | None = None
+    watch_paths: list[str] = field(default_factory=list)
+    last_change_sync_at: str | None = None
+    last_change_count: int | None = None
+    last_sync_status: str | None = None
+    last_sync_error: str | None = None
+
+    @property
+    def watch_path_count(self) -> int:
+        return len(self.watch_paths)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "configured": self.configured,
+            "running": self.running,
+            "projectId": self.project_id,
+            "watchPaths": list(self.watch_paths),
+            "watchPathCount": self.watch_path_count,
+            "lastChangeSyncAt": self.last_change_sync_at,
+            "lastChangeCount": self.last_change_count,
+            "lastSyncStatus": self.last_sync_status,
+            "lastSyncError": self.last_sync_error,
+        }
 
 
 class FileWatcher:
@@ -26,6 +61,7 @@ class FileWatcher:
     def __init__(self):
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        self._snapshot = FileWatcherSnapshot()
 
     async def start(
         self,
@@ -39,10 +75,38 @@ class FileWatcher:
     ) -> None:
         """Start watching project directories in a background task."""
         if self._running:
-            logger.warning("File watcher already running")
+            logger.warning(
+                "File watcher already running",
+                extra={"project_id": self._snapshot.project_id, "watch_path_count": self._snapshot.watch_path_count},
+            )
+            return
+
+        watch_paths = self._resolve_watch_paths(
+            sessions_dir,
+            docs_dir,
+            progress_dir,
+            test_results_dir,
+            test_sources,
+        )
+        self._snapshot.configured = True
+        self._snapshot.project_id = project_id
+        self._snapshot.watch_paths = [str(path) for path in watch_paths]
+        self._snapshot.last_change_sync_at = None
+        self._snapshot.last_change_count = None
+        self._snapshot.last_sync_status = None
+        self._snapshot.last_sync_error = None
+
+        if not watch_paths:
+            self._running = False
+            self._snapshot.running = False
+            logger.warning(
+                "File watcher configured with no existing paths",
+                extra={"project_id": project_id, "watch_path_count": 0, "watch_paths": []},
+            )
             return
 
         self._running = True
+        self._snapshot.running = True
         self._task = asyncio.create_task(
             self._watch_loop(
                 sync_engine,
@@ -50,11 +114,19 @@ class FileWatcher:
                 sessions_dir,
                 docs_dir,
                 progress_dir,
+                watch_paths,
                 test_results_dir,
                 test_sources,
             )
         )
-        logger.info(f"File watcher started for project {project_id}")
+        logger.info(
+            "File watcher started",
+            extra={
+                "project_id": project_id,
+                "watch_path_count": len(watch_paths),
+                "watch_paths": [str(path) for path in watch_paths],
+            },
+        )
 
     async def stop(self) -> None:
         """Stop the file watcher."""
@@ -66,11 +138,19 @@ class FileWatcher:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        logger.info("File watcher stopped")
+        self._snapshot.running = False
+        logger.info(
+            "File watcher stopped",
+            extra={"project_id": self._snapshot.project_id, "watch_path_count": self._snapshot.watch_path_count},
+        )
 
     @property
     def is_running(self) -> bool:
         return self._running
+
+    def snapshot(self) -> dict[str, object]:
+        self._snapshot.running = self._running
+        return self._snapshot.as_dict()
 
     async def _watch_loop(
         self,
@@ -79,24 +159,19 @@ class FileWatcher:
         sessions_dir: Path,
         docs_dir: Path,
         progress_dir: Path,
+        watch_paths: list[Path],
         test_results_dir: Path | None = None,
         test_sources: list[ResolvedTestSource] | None = None,
     ) -> None:
         """Main watching loop. Watches all project dirs for changes."""
-        watch_paths = [p for p in [sessions_dir, docs_dir, progress_dir] if p.exists()]
-        if test_results_dir and test_results_dir.exists():
-            watch_paths.append(test_results_dir)
-        for source in test_sources or []:
-            if source.watch and source.enabled and source.resolved_dir.exists():
-                watch_paths.append(source.resolved_dir)
-        watch_paths = list(dict.fromkeys(watch_paths))
-
-        if not watch_paths:
-            logger.warning("No watch paths exist, watcher has nothing to monitor")
-            self._running = False
-            return
-
-        logger.info(f"Watching {len(watch_paths)} directories: {[str(p) for p in watch_paths]}")
+        logger.info(
+            "Watching directories",
+            extra={
+                "project_id": project_id,
+                "watch_path_count": len(watch_paths),
+                "watch_paths": [str(path) for path in watch_paths],
+            },
+        )
 
         try:
             async for changes in awatch(*watch_paths, stop_event=asyncio.Event() if not self._running else None):
@@ -111,8 +186,19 @@ class FileWatcher:
                     test_results_dir,
                     test_sources,
                 )
+                logger.info(
+                    "File watcher classified changes",
+                    extra={
+                        "project_id": project_id,
+                        "raw_change_count": len(changes),
+                        "classified_change_count": len(classified),
+                        "classified_changes": [
+                            {"change_type": change_type, "path": str(path)}
+                            for change_type, path in classified
+                        ],
+                    },
+                )
                 if classified:
-                    logger.info(f"Detected {len(classified)} file changes, syncing...")
                     try:
                         await sync_engine.sync_changed_files(
                             project_id, classified,
@@ -121,13 +207,55 @@ class FileWatcher:
                             test_sources=test_sources,
                         )
                     except Exception as e:
-                        logger.error(f"Error syncing changed files: {e}")
+                        self._snapshot.last_change_sync_at = _utc_now_iso()
+                        self._snapshot.last_change_count = len(classified)
+                        self._snapshot.last_sync_status = "failed"
+                        self._snapshot.last_sync_error = str(e) or e.__class__.__name__
+                        logger.exception(
+                            "File watcher change sync failed",
+                            extra={
+                                "project_id": project_id,
+                                "classified_change_count": len(classified),
+                                "error": self._snapshot.last_sync_error,
+                            },
+                        )
+                    else:
+                        self._snapshot.last_change_sync_at = _utc_now_iso()
+                        self._snapshot.last_change_count = len(classified)
+                        self._snapshot.last_sync_status = "succeeded"
+                        self._snapshot.last_sync_error = None
+                        logger.info(
+                            "File watcher change sync succeeded",
+                            extra={"project_id": project_id, "classified_change_count": len(classified)},
+                        )
         except asyncio.CancelledError:
-            logger.info("File watcher task cancelled")
+            logger.info("File watcher task cancelled", extra={"project_id": project_id})
         except Exception as e:
-            logger.error(f"File watcher error: {e}")
+            self._snapshot.last_sync_status = "failed"
+            self._snapshot.last_sync_error = str(e) or e.__class__.__name__
+            logger.exception(
+                "File watcher error",
+                extra={"project_id": project_id, "error": self._snapshot.last_sync_error},
+            )
         finally:
             self._running = False
+            self._snapshot.running = False
+
+    def _resolve_watch_paths(
+        self,
+        sessions_dir: Path,
+        docs_dir: Path,
+        progress_dir: Path,
+        test_results_dir: Path | None = None,
+        test_sources: list[ResolvedTestSource] | None = None,
+    ) -> list[Path]:
+        watch_paths = [p for p in [sessions_dir, docs_dir, progress_dir] if p.exists()]
+        if test_results_dir and test_results_dir.exists():
+            watch_paths.append(test_results_dir)
+        for source in test_sources or []:
+            if source.watch and source.enabled and source.resolved_dir.exists():
+                watch_paths.append(source.resolved_dir)
+        return list(dict.fromkeys(watch_paths))
 
     def _classify_changes(
         self,

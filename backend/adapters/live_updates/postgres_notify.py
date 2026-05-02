@@ -1,7 +1,9 @@
 """Postgres LISTEN/NOTIFY publisher for cross-process live fanout."""
 from __future__ import annotations
 
+import logging
 import re
+from collections import deque
 from typing import Any, Mapping
 
 from backend.application.live_updates.bus import (
@@ -28,6 +30,7 @@ POSTGRES_NOTIFY_PAYLOAD_LIMIT_BYTES = 8000
 DEFAULT_NOTIFY_PAYLOAD_BUDGET_BYTES = 7900
 
 _CHANNEL_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+logger = logging.getLogger("ccdash.live.postgres")
 
 
 class PostgresNotifyLiveEventBus:
@@ -48,18 +51,74 @@ class PostgresNotifyLiveEventBus:
             min(int(max_payload_bytes), POSTGRES_NOTIFY_PAYLOAD_LIMIT_BYTES - 1),
         )
         self.invalidation_only = bool(invalidation_only)
+        self._publish_attempts = 0
+        self._published_count = 0
+        self._publish_error_count = 0
+        self._last_error: str | None = None
+        self._last_error_at: str | None = None
+        self._recent_errors: deque[dict[str, Any]] = deque(maxlen=10)
+        self._closed = False
+        logger.info(
+            "Postgres live notification publisher started (channel=%s)",
+            self.channel,
+            extra={"event": "postgres_live_notify_started", "channel": self.channel},
+        )
 
     async def publish(self, event: LiveEventMessage) -> LiveEventBusEnvelope:
+        self._publish_attempts += 1
         envelope = live_event_bus_envelope_from_message(
             event,
             invalidation_only=self.invalidation_only,
         )
-        payload = self._encode_payload(envelope)
-        await self._db.execute("SELECT pg_notify($1, $2)", self.channel, payload)
+        try:
+            payload = self._encode_payload(envelope)
+            await self._db.execute("SELECT pg_notify($1, $2)", self.channel, payload)
+        except Exception as exc:
+            self._record_publish_error(exc, topic=envelope.topic, kind=envelope.kind)
+            logger.warning(
+                "Failed to publish Postgres live notification "
+                "(channel=%s, topic=%s, kind=%s, error=%s)",
+                self.channel,
+                envelope.topic,
+                envelope.kind,
+                exc,
+                extra={
+                    "event": "postgres_live_notify_publish_failed",
+                    "channel": self.channel,
+                    "topic": envelope.topic,
+                    "kind": envelope.kind,
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
+            raise
+        self._published_count += 1
         return envelope
 
     async def close(self) -> None:
         """No owned resources; connections are managed by the runtime container."""
+        self._closed = True
+        logger.info(
+            "Postgres live notification publisher stopped (channel=%s)",
+            self.channel,
+            extra={"event": "postgres_live_notify_stopped", "channel": self.channel},
+        )
+
+    def status_snapshot(self) -> dict[str, Any]:
+        return {
+            "channel": self.channel,
+            "running": not self._closed,
+            "connected": self._db is not None,
+            "invalidationOnly": self.invalidation_only,
+            "maxPayloadBytes": self.max_payload_bytes,
+            "publishAttempts": self._publish_attempts,
+            "published": self._published_count,
+            "publishErrors": self._publish_error_count,
+            "errorCount": self._publish_error_count,
+            "lastError": self._last_error,
+            "lastErrorAt": self._last_error_at,
+            "recentErrors": list(self._recent_errors),
+        }
 
     def _encode_payload(self, envelope: LiveEventBusEnvelope) -> str:
         payload = encode_live_event_bus_envelope(envelope, include_payload=True)
@@ -73,6 +132,21 @@ class PostgresNotifyLiveEventBus:
         raise LiveEventBusPayloadTooLarge(
             "Compact CCDash live event envelope exceeds Postgres NOTIFY payload budget "
             f"({self.max_payload_bytes} bytes) for topic '{envelope.topic}'."
+        )
+
+    def _record_publish_error(self, exc: BaseException, *, topic: str, kind: str) -> None:
+        now = utc_now_iso()
+        self._publish_error_count += 1
+        self._last_error = str(exc)
+        self._last_error_at = now
+        self._recent_errors.append(
+            {
+                "phase": "publish",
+                "topic": topic,
+                "kind": kind,
+                "error": str(exc),
+                "at": now,
+            }
         )
 
 

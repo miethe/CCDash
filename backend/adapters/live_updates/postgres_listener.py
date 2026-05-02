@@ -5,10 +5,11 @@ import asyncio
 import inspect
 import json
 import logging
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Mapping, cast
 
-from backend.application.live_updates.contracts import LiveEventKind
+from backend.application.live_updates.contracts import LiveEventKind, utc_now_iso
 from backend.application.live_updates.publisher import LiveEventPublisher
 
 try:
@@ -122,6 +123,11 @@ class PostgresLiveNotificationListener:
         self._republished_count = 0
         self._malformed_count = 0
         self._publish_error_count = 0
+        self._lifecycle_error_count = 0
+        self._started_at: str | None = None
+        self._stopped_at: str | None = None
+        self._last_error_at: str | None = None
+        self._recent_errors: deque[dict[str, Any]] = deque(maxlen=10)
         self._tasks: set[asyncio.Task[None]] = set()
 
     @property
@@ -134,12 +140,17 @@ class PostgresLiveNotificationListener:
         try:
             await asyncio.wait_for(self._start(), timeout=self._startup_timeout_seconds)
         except Exception as exc:
-            self._last_error = str(exc)
+            self._record_error("startup", exc, channel=self._channel)
             logger.warning(
                 "Postgres live notification listener disabled "
                 "(channel=%s, error=%s)",
                 self._channel,
                 exc,
+                extra={
+                    "event": "postgres_live_listener_start_failed",
+                    "channel": self._channel,
+                    "error": str(exc),
+                },
                 exc_info=True,
             )
             await self.stop()
@@ -155,24 +166,61 @@ class PostgresLiveNotificationListener:
         connection = self._connection
         self._connection = None
         self._running = False
+        self._stopped_at = utc_now_iso()
         if connection is None:
+            logger.info(
+                "Postgres live notification listener stopped without active connection (channel=%s)",
+                self._channel,
+                extra={
+                    "event": "postgres_live_listener_stopped",
+                    "channel": self._channel,
+                    "connected": False,
+                },
+            )
             return
 
         try:
             await connection.remove_listener(self._channel, self._handle_notification)
-        except Exception:
-            logger.debug("Failed to remove Postgres live listener callback.", exc_info=True)
+        except Exception as exc:
+            self._record_error("stop", exc, channel=self._channel)
+            logger.warning(
+                "Failed to remove Postgres live listener callback (channel=%s, error=%s)",
+                self._channel,
+                exc,
+                extra={
+                    "event": "postgres_live_listener_stop_failed",
+                    "channel": self._channel,
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
         await self._release_connection(connection)
+        logger.info(
+            "Postgres live notification listener stopped (channel=%s)",
+            self._channel,
+            extra={
+                "event": "postgres_live_listener_stopped",
+                "channel": self._channel,
+                "connected": True,
+            },
+        )
 
     def status_snapshot(self) -> dict[str, Any]:
         return {
             "channel": self._channel,
             "running": self._running,
+            "connected": self._connection is not None,
             "lastError": self._last_error,
+            "lastErrorAt": self._last_error_at,
+            "startedAt": self._started_at,
+            "stoppedAt": self._stopped_at,
             "received": self._received_count,
             "republished": self._republished_count,
             "malformed": self._malformed_count,
             "publishErrors": self._publish_error_count,
+            "lifecycleErrors": self._lifecycle_error_count,
+            "errorCount": self._malformed_count + self._publish_error_count + self._lifecycle_error_count,
+            "recentErrors": list(self._recent_errors),
         }
 
     async def _start(self) -> None:
@@ -187,7 +235,17 @@ class PostgresLiveNotificationListener:
         self._connection = connection
         self._running = True
         self._last_error = None
-        logger.info("Postgres live notification listener started (channel=%s)", self._channel)
+        self._started_at = utc_now_iso()
+        self._stopped_at = None
+        logger.info(
+            "Postgres live notification listener started (channel=%s)",
+            self._channel,
+            extra={
+                "event": "postgres_live_listener_started",
+                "channel": self._channel,
+                "connected": True,
+            },
+        )
 
     def _handle_notification(self, connection: Any, pid: int, channel: str, payload: str) -> None:
         if not self._running:
@@ -208,12 +266,19 @@ class PostgresLiveNotificationListener:
             notification = parse_postgres_live_notification(payload)
         except ValueError as exc:
             self._malformed_count += 1
+            self._record_error("malformed_notification", exc, channel=channel, server_pid=server_pid)
             logger.warning(
                 "Ignoring malformed Postgres live notification "
                 "(channel=%s, server_pid=%s, error=%s)",
                 channel,
                 server_pid,
                 exc,
+                extra={
+                    "event": "postgres_live_notification_malformed",
+                    "channel": channel,
+                    "server_pid": server_pid,
+                    "error": str(exc),
+                },
             )
             return
 
@@ -228,7 +293,14 @@ class PostgresLiveNotificationListener:
             )
         except Exception as exc:
             self._publish_error_count += 1
-            self._last_error = str(exc)
+            self._record_error(
+                "republish",
+                exc,
+                channel=channel,
+                server_pid=server_pid,
+                topic=notification.topic,
+                kind=notification.kind,
+            )
             logger.warning(
                 "Failed to republish Postgres live notification "
                 "(channel=%s, topic=%s, kind=%s, server_pid=%s, error=%s)",
@@ -237,6 +309,14 @@ class PostgresLiveNotificationListener:
                 notification.kind,
                 server_pid,
                 exc,
+                extra={
+                    "event": "postgres_live_notification_republish_failed",
+                    "channel": channel,
+                    "topic": notification.topic,
+                    "kind": notification.kind,
+                    "server_pid": server_pid,
+                    "error": str(exc),
+                },
                 exc_info=True,
             )
             return
@@ -259,6 +339,21 @@ class PostgresLiveNotificationListener:
             result = release(connection)
             if inspect.isawaitable(result):
                 await result
+
+    def _record_error(self, phase: str, exc: BaseException, **fields: Any) -> None:
+        now = utc_now_iso()
+        if phase in {"startup", "stop"}:
+            self._lifecycle_error_count += 1
+        self._last_error = str(exc)
+        self._last_error_at = now
+        self._recent_errors.append(
+            {
+                "phase": phase,
+                "error": str(exc),
+                "at": now,
+                **fields,
+            }
+        )
 
 
 def _value(document: Mapping[str, Any], *keys: str) -> Any:

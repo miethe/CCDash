@@ -391,6 +391,7 @@ class RuntimeContainer:
                 "migrationGovernanceStatus": "verified",
                 "migrationStatus": self.migration_status,
                 "syncProvisioned": self.sync is not None,
+                "liveFanout": self._live_fanout_status(),
             }
         )
         status.update(activity_status)
@@ -427,7 +428,8 @@ class RuntimeContainer:
         )
         detail_warnings = list(auth_guardrail["warnings"])
         worker_binding_config = config.resolve_worker_binding_config()
-        watcher_state = str(status.get("watcher", "unknown"))
+        watcher_detail = self._probe_watcher_detail(status)
+        watcher_state = str(watcher_detail["state"])
         startup_sync_state = str(status.get("startupSync", "idle"))
         required_checks = set(runtime_contract.readiness_checks)
         worker_binding_required = self.profile.name in {"worker", "worker-watch"}
@@ -586,14 +588,17 @@ class RuntimeContainer:
                     if not self.profile.capabilities.watch
                     else "Watcher is active."
                     if watcher_state == "running"
+                    else "Watcher is configured but no watch paths exist."
+                    if watcher_state == "configured_no_paths"
                     else "Watcher-capable runtime is serving without an active watcher."
                 ),
                 detail=(
-                    "Watcher activity is a local-only degradation signal."
+                    f"watch_path_count={watcher_detail['watchPathCount']} "
+                    f"last_change_sync_at={watcher_detail['lastChangeSyncAt'] or 'n/a'}"
                     if self.profile.capabilities.watch
                     else "This runtime intentionally avoids watcher ownership."
                 ),
-                data={"watchEnabled": self.profile.capabilities.watch, "watcher": watcher_state},
+                data=watcher_detail,
             ),
             self._probe_check(
                 code="startup_sync",
@@ -725,6 +730,7 @@ class RuntimeContainer:
                 },
                 "activities": {
                     "watcher": watcher_state,
+                    "watcherDetail": watcher_detail,
                     "startupSync": startup_sync_state,
                     "analyticsSnapshots": str(status.get("analyticsSnapshots", "idle")),
                     "telemetryExports": str(status.get("telemetryExports", "idle")),
@@ -732,8 +738,106 @@ class RuntimeContainer:
                     "jobsEnabled": bool(status.get("jobsEnabled", False)),
                     "syncProvisioned": bool(status.get("syncProvisioned", False)),
                 },
+                "watcher": watcher_detail,
+                "liveFanout": dict(status.get("liveFanout", {})),
                 "checks": checks,
             },
+        }
+
+    def _live_fanout_status(self) -> dict[str, Any]:
+        listener_status = (
+            self.postgres_live_listener.status_snapshot()
+            if self.postgres_live_listener is not None
+            else None
+        )
+        bus_status = (
+            self.postgres_live_event_bus.status_snapshot()
+            if self.postgres_live_event_bus is not None
+            and hasattr(self.postgres_live_event_bus, "status_snapshot")
+            else None
+        )
+        enabled = listener_status is not None or bus_status is not None
+        listener_errors = int(listener_status.get("errorCount", 0)) if listener_status else 0
+        bus_errors = int(bus_status.get("errorCount", 0)) if bus_status else 0
+        recent_errors: list[dict[str, Any]] = []
+        if listener_status:
+            recent_errors.extend(
+                dict(error, component="listener") for error in listener_status.get("recentErrors", ())
+            )
+        if bus_status:
+            recent_errors.extend(
+                dict(error, component="publisher") for error in bus_status.get("recentErrors", ())
+            )
+
+        return {
+            "enabled": enabled,
+            "mode": (
+                "listen"
+                if listener_status is not None
+                else "publish"
+                if bus_status is not None
+                else "disabled"
+            ),
+            "running": bool(
+                (listener_status and listener_status.get("running"))
+                or (bus_status and bus_status.get("running"))
+            ),
+            "connected": bool(
+                (listener_status and listener_status.get("connected"))
+                or (bus_status and bus_status.get("connected"))
+            ),
+            "listener": listener_status,
+            "publisher": bus_status,
+            "errorCount": listener_errors + bus_errors,
+            "recentErrors": recent_errors[-10:],
+        }
+
+    def _probe_watcher_detail(self, status: dict[str, Any]) -> dict[str, Any]:
+        raw_detail = status.get("watcherDetail")
+        if isinstance(raw_detail, dict):
+            detail = dict(raw_detail)
+        elif self.profile.capabilities.watch:
+            watcher_state = str(status.get("watcher", "stopped"))
+            detail = {
+                "state": watcher_state,
+                "expected": True,
+                "enabled": True,
+                "configured": watcher_state == "running",
+                "running": watcher_state == "running",
+                "watchPathCount": 0,
+                "watchPaths": [],
+                "lastChangeSyncAt": None,
+                "lastChangeCount": None,
+                "lastSyncStatus": None,
+                "lastSyncError": None,
+            }
+        else:
+            detail = {
+                "state": "not_expected",
+                "expected": False,
+                "enabled": False,
+                "configured": False,
+                "running": False,
+                "watchPathCount": 0,
+                "watchPaths": [],
+                "lastChangeSyncAt": None,
+                "lastChangeCount": None,
+                "lastSyncStatus": None,
+                "lastSyncError": None,
+            }
+
+        return {
+            "state": str(detail.get("state", "unknown")),
+            "expected": bool(detail.get("expected", self.profile.capabilities.watch)),
+            "enabled": bool(detail.get("enabled", self.profile.capabilities.watch)),
+            "configured": bool(detail.get("configured", False)),
+            "running": bool(detail.get("running", False)),
+            "watchPathCount": int(detail.get("watchPathCount", 0) or 0),
+            "watchPaths": list(detail.get("watchPaths") or ()),
+            "lastChangeSyncAt": detail.get("lastChangeSyncAt"),
+            "lastChangeCount": detail.get("lastChangeCount"),
+            "lastSyncStatus": detail.get("lastSyncStatus"),
+            "lastSyncError": detail.get("lastSyncError"),
         }
 
     def _probe_check(

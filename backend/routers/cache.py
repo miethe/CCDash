@@ -206,6 +206,7 @@ async def get_cache_status(
     """Return sync engine + watcher status, including live operations."""
     sync_engine = _optional_sync_engine(request)
     live_broker = getattr(request.app.state, "live_event_broker", None)
+    live_fanout = _live_fanout_status(request)
     project = core_ports.workspace_registry.get_active_project()
     bundle = core_ports.workspace_registry.resolve_project_paths(project) if project else None
     if not sync_engine:
@@ -227,6 +228,7 @@ async def get_cache_status(
                 "trackedOperationCount": 0,
             },
             "liveUpdates": asdict(live_broker.stats()) if live_broker and hasattr(live_broker, "stats") else None,
+            "liveFanout": live_fanout,
         }
     observability = await sync_engine.get_observability_snapshot()
     return {
@@ -242,6 +244,62 @@ async def get_cache_status(
         },
         "operations": observability,
         "liveUpdates": asdict(live_broker.stats()) if live_broker and hasattr(live_broker, "stats") else None,
+        "liveFanout": live_fanout,
+    }
+
+
+def _live_fanout_status(request: Request) -> dict[str, Any]:
+    runtime_container = getattr(request.app.state, "runtime_container", None)
+    if runtime_container is not None and hasattr(runtime_container, "runtime_status"):
+        runtime_status = runtime_container.runtime_status()
+        live_fanout = runtime_status.get("liveFanout")
+        if isinstance(live_fanout, dict):
+            return dict(live_fanout)
+
+    listener = getattr(request.app.state, "postgres_live_listener", None)
+    bus = getattr(request.app.state, "postgres_live_event_bus", None)
+    listener_status = (
+        listener.status_snapshot()
+        if listener is not None and hasattr(listener, "status_snapshot")
+        else None
+    )
+    publisher_status = (
+        bus.status_snapshot()
+        if bus is not None and hasattr(bus, "status_snapshot")
+        else None
+    )
+    listener_errors = int(listener_status.get("errorCount", 0)) if listener_status else 0
+    publisher_errors = int(publisher_status.get("errorCount", 0)) if publisher_status else 0
+    recent_errors = []
+    if listener_status:
+        recent_errors.extend(
+            dict(error, component="listener") for error in listener_status.get("recentErrors", ())
+        )
+    if publisher_status:
+        recent_errors.extend(
+            dict(error, component="publisher") for error in publisher_status.get("recentErrors", ())
+        )
+    return {
+        "enabled": listener_status is not None or publisher_status is not None,
+        "mode": (
+            "listen"
+            if listener_status is not None
+            else "publish"
+            if publisher_status is not None
+            else "disabled"
+        ),
+        "running": bool(
+            (listener_status and listener_status.get("running"))
+            or (publisher_status and publisher_status.get("running"))
+        ),
+        "connected": bool(
+            (listener_status and listener_status.get("connected"))
+            or (publisher_status and publisher_status.get("connected"))
+        ),
+        "listener": listener_status,
+        "publisher": publisher_status,
+        "errorCount": listener_errors + publisher_errors,
+        "recentErrors": recent_errors[-10:],
     }
 
 

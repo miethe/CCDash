@@ -1,6 +1,6 @@
 # Live Update Platform Developer Reference
 
-Last updated: 2026-03-23
+Last updated: 2026-05-02
 
 This reference documents the shared SSE/live-update platform delivered for execution, sessions, features, tests, and ops surfaces.
 Session transcripts now have an append-first topic as well, gated separately from coarse session invalidation.
@@ -96,7 +96,16 @@ Execution and sessions default on. Transcript append defaults off behind its own
 
 - Append in place when the transcript append event is for the active session, carries a known `entryId`, and advances the stream with a valid monotonic `sequenceNo`.
 - Refetch `GET /api/sessions/{id}` when the stream emits `snapshot_required`, when append identity or ordering is ambiguous, when the active session receives an unsafe invalidation, or when the frontend rollout flag is disabled.
-- Keep polling as the last-resort fallback only when live transport is degraded or closed.
+- Keep polling as the last-resort fallback only when live transport is degraded or closed. This is the browser recovery path for fanout outages: `components/SessionInspector.tsx` forces `getSessionById(..., { force: true })` while the live connection status is `backoff` or `closed`, so persisted transcript rows are recovered through REST even if no live append reaches the tab.
+
+## OBS-004 Recovery Validation
+
+OBS-004 depends on persistence being independent from live fanout and on the browser retaining a REST recovery path.
+
+- Sync persistence: `backend/tests/test_sync_engine_transcript_canonicalization.py` patches `_publish_session_transcript_appends` to return `False` and still verifies transcript rows are written to `session_messages` in enterprise mode and to both `session_messages` and `session_logs` in local mode.
+- SSE recovery signal: `backend/tests/test_live_router.py` covers transcript topic replay and `snapshot_required` when the browser cursor falls out of the broker replay buffer.
+- Browser cursor recovery: `services/__tests__/liveConnectionManager.test.ts` verifies transcript-topic cursors are replayed after reconnect and cleared after `snapshot_required`, which forces the subscriber's REST snapshot handler.
+- Browser REST fallback: `components/SessionInspector.tsx` uses `refreshSelectedSessionDetail` for `snapshot_required`, unsafe invalidations, ambiguous append payloads, and active-session polling while the live connection is in `backoff` or `closed`.
 
 ## Observability
 
