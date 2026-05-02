@@ -8,7 +8,12 @@ from uuid import uuid4
 from fastapi import FastAPI
 
 from backend.adapters.auth import StaticBearerTokenIdentityProvider
-from backend.adapters.live_updates import InMemoryLiveEventBroker
+from backend.adapters.live_updates import (
+    InMemoryLiveEventBroker,
+    PostgresNotifyLiveEventBus,
+    PostgresNotifyLiveEventPublisher,
+)
+from backend.adapters.live_updates.postgres_listener import PostgresLiveNotificationListener
 from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
 from backend.application.context import (
     EnterpriseScope,
@@ -55,6 +60,8 @@ class RuntimeContainer:
         self.job_adapter: RuntimeJobAdapter | None = None
         self.live_event_broker: LiveEventBroker | None = None
         self.live_event_publisher: LiveEventPublisher | None = None
+        self.postgres_live_event_bus: PostgresNotifyLiveEventBus | None = None
+        self.postgres_live_listener: PostgresLiveNotificationListener | None = None
         self.telemetry_exporter: TelemetryExportCoordinator | None = None
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
         self.project_binding: ProjectBinding | None = None
@@ -99,10 +106,17 @@ class RuntimeContainer:
         self.ports = self._build_core_ports()
         app.state.core_ports = self.ports
         self.live_event_broker = InMemoryLiveEventBroker(replay_buffer_size=config.CCDASH_LIVE_REPLAY_BUFFER_SIZE)
-        self.live_event_publisher = BrokerLiveEventPublisher(self.live_event_broker)
+        self.postgres_live_event_bus = self._build_postgres_live_event_bus()
+        self.live_event_publisher = self._build_live_event_publisher()
         set_live_event_publisher(self.live_event_publisher)
         app.state.live_event_broker = self.live_event_broker
         app.state.live_event_publisher = self.live_event_publisher
+        if self.postgres_live_event_bus is not None:
+            app.state.postgres_live_event_bus = self.postgres_live_event_bus
+        self.postgres_live_listener = self._build_postgres_live_listener()
+        if self.postgres_live_listener is not None:
+            await self.postgres_live_listener.start()
+            app.state.postgres_live_listener = self.postgres_live_listener
 
         self.sync = self._build_sync_engine()
         if self.sync is not None:
@@ -145,9 +159,15 @@ class RuntimeContainer:
             await self.job_adapter.stop()
             self.job_adapter = None
         self.lifecycle = None
+        if self.postgres_live_listener is not None:
+            await self.postgres_live_listener.stop()
+            self.postgres_live_listener = None
         if self.live_event_broker is not None:
             await self.live_event_broker.close()
             self.live_event_broker = None
+        if self.postgres_live_event_bus is not None:
+            await self.postgres_live_event_bus.close()
+            self.postgres_live_event_bus = None
         set_live_event_publisher(None)
         self.live_event_publisher = None
 
@@ -170,6 +190,34 @@ class RuntimeContainer:
         if not self._sync_engine_enabled():
             return None
         return sync_engine.SyncEngine(self.db)
+
+    def _build_live_event_publisher(self) -> LiveEventPublisher:
+        if self.postgres_live_event_bus is not None:
+            return PostgresNotifyLiveEventPublisher(self.postgres_live_event_bus)
+        if self.live_event_broker is None:
+            raise RuntimeError("Live event broker is unavailable before publisher initialization.")
+        return BrokerLiveEventPublisher(self.live_event_broker)
+
+    def _build_postgres_live_event_bus(self) -> PostgresNotifyLiveEventBus | None:
+        if self.profile.name not in {"worker", "worker-watch"}:
+            return None
+        if self.storage_profile.profile != "enterprise" or self.storage_profile.db_backend != "postgres":
+            return None
+        if self.db is None:
+            return None
+        return PostgresNotifyLiveEventBus(self.db)
+
+    def _build_postgres_live_listener(self) -> PostgresLiveNotificationListener | None:
+        if self.profile.name != "api":
+            return None
+        if self.storage_profile.profile != "enterprise" or self.storage_profile.db_backend != "postgres":
+            return None
+        if self.db is None or self.live_event_publisher is None:
+            return None
+        return PostgresLiveNotificationListener(
+            db=self.db,
+            publisher=self.live_event_publisher,
+        )
 
     def _sync_engine_enabled(self) -> bool:
         if not self.profile.capabilities.sync:
