@@ -15,7 +15,7 @@ owners: [platform-engineering, security-engineering, fullstack-engineering]
 contributors: [ai-agents]
 audience: [ai-agents, developers, platform-engineering, security-engineering]
 created: 2026-03-20
-updated: 2026-03-24
+updated: 2026-05-02
 tags: [implementation, auth, oidc, rbac, sso, security, skillmeat]
 priority: critical
 risk_level: high
@@ -64,13 +64,26 @@ Introduce a hosted-safe identity and authorization layer for CCDash using a modu
 ## Current Baseline
 
 1. The hexagonal foundation work already introduced `RequestContext`, `Principal`, runtime profiles, and pluggable core ports.
-2. `backend/adapters/auth/local.py` provides a permissive local adapter, but there is no SkillMeat-style pluggable provider system for hosted auth, no first-class Clerk adapter, no generic OIDC adapter, and no deny-capable authorization policy.
-3. `backend/runtime/container.py` already builds request context per request, which is the correct seam for hosted auth.
-4. Several routers and application services accept `RequestContext`, but most business flows still behave as if every caller is the same trusted local operator.
-5. `backend/routers/projects.py` still uses the global `project_manager` singleton directly, and many adjacent routers still rely on active-project/path globals that are incompatible with real request-scoped tenancy.
-6. `contexts/AppSessionContext.tsx` models project switching only; there is no frontend auth/session state or 401/403 handling path.
-7. `services/apiClient.ts` performs plain `fetch()` calls with no auth/session-aware retry or denial semantics, and many protected frontend surfaces still bypass it with direct `fetch()` usage.
-8. The integrations surface has code/test drift and should be stabilized before it becomes an auth-enforcement migration target.
+2. `Principal` already carries email, groups, and hierarchical memberships; Phase 1 should refine hosted issuer/provider semantics, service-account identity, and claim mapping rather than re-adding those core fields.
+3. `RequestContext` already carries `EnterpriseScope`, `TeamScope`, `TenancyContext`, `ScopeBinding`, and `StorageScope`; the remaining work is to make hosted enforcement consistently consume those scopes.
+4. Runtime profiles already compose `StaticBearerTokenIdentityProvider` for the `api` auth capability and `PermitAllAuthorizationPolicy` for permissive local authorization. Hosted auth still needs a provider registry, Clerk/OIDC validation, session flow, and a deny-capable policy.
+5. Identity/audit storage repository ports and local/Postgres stubs already exist, including identity access and privileged-action audit surfaces. Auth implementation should build on those ports instead of introducing a parallel storage abstraction.
+6. `backend/runtime/container.py` already builds request context per request, which is the correct seam for hosted auth.
+7. Several routers and application services accept `RequestContext`, and SkillMeat integration routes are partly request-context aware, but many flows still behave as if every caller is the same trusted local operator.
+8. `backend/routers/projects.py`, GitHub integration helpers, and adjacent routers still rely on active-project/path globals that are incompatible with real request-scoped tenancy.
+9. `contexts/AppSessionContext.tsx` models project switching only; there is no frontend auth/session state or 401/403 handling path.
+10. `services/apiClient.ts` performs plain `fetch()` calls with no auth/session-aware retry or denial semantics, and many protected frontend surfaces still bypass it with direct `fetch()` usage.
+11. The integrations surface has partially improved request-context plumbing, but Phase 0 still needs to validate current tests and helper boundaries before it becomes an auth-enforcement migration target.
+
+## Plan Validation Update
+
+Validation date: 2026-05-02
+
+1. This plan has been refreshed against the current repository baseline before development. Existing `Principal`, `RequestContext`, runtime-profile auth composition, identity/audit storage ports, and SkillMeat request-context work are now treated as baseline, not new scope.
+2. Phase 0 is an execution gate: complete AUTH-090 and AUTH-091 before starting hosted provider work in Phase 1 or Phase 2. AUTH-092 can run alongside those tasks, but hosted provider implementation should not begin until the backend baseline and enforcement inventory are current.
+3. Phase 1 should focus on deltas: hosted issuer/provider metadata, provider configuration, service-account representation, permission vocabulary, claim-to-scope rules, and bootstrap defaults.
+4. The highest remaining baseline risk is uneven tenancy migration: SkillMeat routes are partly request-context aware, while GitHub integration helpers, project selection, and file/path-oriented routers still use active project globals.
+5. Scope remains unchanged at a product level: modular local/Clerk/OIDC auth, hosted-safe RBAC, SkillMeat trust alignment, frontend session UX, auditability, and explicit local no-auth mode.
 
 ## Fixed Decisions
 
@@ -132,7 +145,7 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 ### Sequencing Rationale
 
-1. Stabilize the current integrations/request-scope baseline and inventory the real migration surface before landing auth-specific code.
+1. Execute AUTH-090 and AUTH-091 first to validate the integrations/request-scope baseline and inventory the real migration surface before hosted provider work begins.
 2. Lock the provider abstraction, identity model, and permission vocabulary before implementing provider-specific auth logic.
 3. Land hosted provider/session handling before migrating route enforcement so the policy layer has real principals to evaluate.
 4. Define the 3-tier RBAC matrix before broad router migration to avoid duplicating authorization rules in many endpoints.
@@ -161,15 +174,16 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| AUTH-090 | Integrations Baseline Repair | Resolve the current request-scope/integration drift so auth work does not stack on top of unstable assumptions in `backend/routers/integrations.py` and its tests. | Integrations router code and tests agree on current helper/module boundaries, and the touched request-scoped integration flows are green again. | 2 pts | python-backend-engineer | None |
-| AUTH-091 | Backend Enforcement Surface Inventory | Enumerate routers/services still relying on active-project globals or direct singleton path access, classify them by sensitivity, and map them onto the RBAC/resource model. | The plan has an explicit migration inventory for high-risk router surfaces instead of a partial hot-path list. | 2 pts | backend-architect | None |
+| AUTH-090 | Integrations Baseline Repair | Validate the current partial request-context migration in `backend/routers/integrations.py`, repair any remaining code/test drift, and confirm helper boundaries before auth enforcement is layered on top. | Integrations router code and tests agree on current helper/module boundaries, and the touched request-scoped integration flows are green again. | 2 pts | python-backend-engineer | None |
+| AUTH-091 | Backend Enforcement Surface Inventory | Enumerate routers/services still relying on active-project globals or direct singleton/path access, including project selection, GitHub integration helpers, file-backed routers, and remaining SkillMeat edges; classify them by sensitivity and map them onto the RBAC/resource model. | The plan has an explicit migration inventory for high-risk router/helper surfaces instead of a partial hot-path list, and the inventory reflects the current `RequestContext`/scope baseline. | 2 pts | backend-architect | None |
 | AUTH-092 | Frontend Transport Inventory and Migration Strategy | Inventory direct `fetch()` callers that will need auth/session-aware behavior and define the shared transport abstraction plus migration order for protected surfaces. | Frontend auth work is no longer limited to `services/apiClient.ts`; protected request paths have an explicit migration strategy. | 2 pts | frontend-developer | None |
 
 **Phase 0 Quality Gates**
 
 1. Integrations/request-scope drift is reduced enough that auth work starts from a stable baseline.
-2. The backend enforcement inventory covers singleton-dependent routes beyond `projects.py`.
-3. The frontend transport plan explicitly accounts for protected direct `fetch()` callers.
+2. AUTH-090 and AUTH-091 are complete before Phase 1 hosted provider design or Phase 2 provider implementation begins.
+3. The backend enforcement inventory covers singleton-dependent routes beyond `projects.py`, including GitHub integration helpers and file/path-oriented operational endpoints.
+4. The frontend transport plan explicitly accounts for protected direct `fetch()` callers.
 
 ## Phase 1: Identity Contracts, Provider Abstraction, and Configuration
 
@@ -177,9 +191,9 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| AUTH-001 | Principal Contract Refinement | Extend the existing application identity model to cover issuer/provider metadata, subject, email, groups, hierarchical memberships, auth mode, and service-account identity without breaking local mode. | `Principal` and related request-context contracts can represent local operators plus hosted users resolved through Local, Clerk, or generic OIDC providers. | 3 pts | backend-architect, python-backend-engineer | AUTH-090 |
+| AUTH-001 | Principal Contract Refinement | Refine the existing application identity model for hosted issuer/provider metadata, subject normalization, auth mode, and service-account identity while preserving the already-present email, groups, and hierarchical memberships fields. | `Principal` and related request-context contracts can represent local operators plus hosted users resolved through Local, Clerk, or generic OIDC providers without duplicating existing identity fields. | 3 pts | backend-architect, python-backend-engineer | AUTH-090, AUTH-091 |
 | AUTH-002 | Permission Vocabulary and Resource Matrix | Define the canonical resource/action matrix for projects, documents, sessions, tests, execution, integrations, analytics, admin settings, codebase access, and file-backed maintenance endpoints. | The plan has a documented role-resource matrix that can be implemented without reopening product questions. | 3 pts | security-engineering, backend-architect | AUTH-001, AUTH-091 |
-| AUTH-003 | Hosted Auth Configuration Surface | Define environment/config settings for provider selection, Clerk keys/endpoints, generic issuer URL, audience/client IDs, callback URL, secure cookies, trusted proxy expectations, and explicit local-mode enablement. | Hosted and local runtime configuration is explicit, fail-closed, and documented for composition code across Local, Clerk, and generic OIDC modes. | 2 pts | backend-architect, security-engineering | AUTH-001 |
+| AUTH-003 | Hosted Auth Configuration Surface | Define environment/config settings for provider selection, Clerk keys/endpoints, generic issuer URL, audience/client IDs, callback URL, secure cookies, trusted proxy expectations, and explicit local-mode enablement on top of the existing runtime-profile auth capability composition. | Hosted and local runtime configuration is explicit, fail-closed, and documented for composition code across StaticBearer/local, Clerk, and generic OIDC modes. | 2 pts | backend-architect, security-engineering | AUTH-001 |
 | AUTH-004 | Subject Hierarchy and Ownership Model | Define the authoritative `user`, `team`, and `enterprise` scope model, including how workspace/project bindings inherit from or attach to those tiers. | The plan has an explicit three-tier ownership and binding model aligned with SkillMeat's AAA direction and usable for repository/service enforcement. | 2 pts | backend-architect, security-engineering | AUTH-001, AUTH-091 |
 
 **Phase 1 Quality Gates**
@@ -188,6 +202,7 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 2. The provider model explicitly supports Local, Clerk, and generic OIDC modes through one contract.
 3. Every sensitive V1 action maps to a named permission across user/team/enterprise tiers.
 4. Hosted mode cannot start in an ambiguous partially configured auth state.
+5. Existing `RequestContext` scope objects and identity/audit repository ports are reused rather than replaced.
 
 ## Phase 2: Auth Provider Adapters and Hosted Session Flow
 
