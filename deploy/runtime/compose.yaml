@@ -52,6 +52,30 @@ x-backend-service: &backend-service
       source: "${CCDASH_CODEX_HOME:-~/.codex}"
       target: "${CCDASH_CODEX_CONTAINER_HOME:-/home/ccdash/.codex}"
       read_only: true
+    - type: bind
+      source: "${CCDASH_EXTRA_MOUNT_1_HOST:-./empty-mounts/optional-1}"
+      target: "${CCDASH_EXTRA_MOUNT_1_CONTAINER:-/mnt/ccdash/optional-1}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_EXTRA_MOUNT_2_HOST:-./empty-mounts/optional-2}"
+      target: "${CCDASH_EXTRA_MOUNT_2_CONTAINER:-/mnt/ccdash/optional-2}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_EXTRA_MOUNT_3_HOST:-./empty-mounts/optional-3}"
+      target: "${CCDASH_EXTRA_MOUNT_3_CONTAINER:-/mnt/ccdash/optional-3}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_EXTRA_MOUNT_4_HOST:-./empty-mounts/optional-4}"
+      target: "${CCDASH_EXTRA_MOUNT_4_CONTAINER:-/mnt/ccdash/optional-4}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_EXTRA_MOUNT_5_HOST:-./empty-mounts/optional-5}"
+      target: "${CCDASH_EXTRA_MOUNT_5_CONTAINER:-/mnt/ccdash/optional-5}"
+      read_only: true
+    - type: bind
+      source: "${CCDASH_EXTRA_MOUNT_6_HOST:-./empty-mounts/optional-6}"
+      target: "${CCDASH_EXTRA_MOUNT_6_CONTAINER:-/mnt/ccdash/optional-6}"
+      read_only: true
 
 x-postgres-connection: &postgres-connection
   CCDASH_STORAGE_PROFILE: "${CCDASH_STORAGE_PROFILE:-enterprise}"

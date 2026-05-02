@@ -65,6 +65,48 @@ Required read-only ingest mounts:
 | Claude home | `CCDASH_CLAUDE_HOME=~/.claude` | `CCDASH_CLAUDE_CONTAINER_HOME=/home/ccdash/.claude` | Provides Claude Code project/session metadata for watcher ingest. |
 | Codex home | `CCDASH_CODEX_HOME=~/.codex` | `CCDASH_CODEX_CONTAINER_HOME=/home/ccdash/.codex` | Provides Codex session metadata for watcher ingest. |
 
+### Env-Driven Optional Mounts
+
+`compose.yaml` also exposes six optional read-only bind-mount slots:
+
+| Slot | Host env | Container env |
+| --- | --- | --- |
+| 1 | `CCDASH_EXTRA_MOUNT_1_HOST` | `CCDASH_EXTRA_MOUNT_1_CONTAINER` |
+| 2 | `CCDASH_EXTRA_MOUNT_2_HOST` | `CCDASH_EXTRA_MOUNT_2_CONTAINER` |
+| 3 | `CCDASH_EXTRA_MOUNT_3_HOST` | `CCDASH_EXTRA_MOUNT_3_CONTAINER` |
+| 4 | `CCDASH_EXTRA_MOUNT_4_HOST` | `CCDASH_EXTRA_MOUNT_4_CONTAINER` |
+| 5 | `CCDASH_EXTRA_MOUNT_5_HOST` | `CCDASH_EXTRA_MOUNT_5_CONTAINER` |
+| 6 | `CCDASH_EXTRA_MOUNT_6_HOST` | `CCDASH_EXTRA_MOUNT_6_CONTAINER` |
+
+Unused slots default to checked-in empty directories under `deploy/runtime/empty-mounts/`, so operators can leave them unset and still run `compose config`.
+
+Use optional slots when a project registry entry references a path outside the normal workspace, Claude home, or Codex home roots. If `projects.json` contains absolute host paths, set the container target to the same absolute path:
+
+```env
+CCDASH_EXTRA_MOUNT_1_HOST=/srv/customer-a/workspace
+CCDASH_EXTRA_MOUNT_1_CONTAINER=/srv/customer-a/workspace
+CCDASH_EXTRA_MOUNT_2_HOST=/var/lib/agent-sessions/customer-a
+CCDASH_EXTRA_MOUNT_2_CONTAINER=/var/lib/agent-sessions/customer-a
+```
+
+This keeps path resolution simple: the path in `projects.json` is also the path the worker sees inside the container.
+
+### Per-Watcher Env Files
+
+For one watcher, keep the project id and mount variables in `deploy/runtime/.env`. For multiple watcher workers, keep one small env overlay per watcher and pass it after the shared env file so watcher-specific values win:
+
+```bash
+docker compose \
+  --env-file deploy/runtime/.env \
+  --env-file deploy/runtime/watchers/ccdash.env \
+  -f deploy/runtime/compose.yaml \
+  --profile enterprise --profile postgres --profile live-watch up --build
+```
+
+The repo includes `deploy/runtime/watchers/ccdash.env.example` as a concrete example for this CCDash checkout.
+
+For multi-project deployments, prefer mounting a stable superset root shared by all watcher containers, then vary only `CCDASH_WORKER_PROJECT_ID` and `CCDASH_WORKER_WATCH_PROBE_PORT` per watcher. When projects live on unrelated host roots, use the optional mount slots in each watcher's env overlay. Do not use Compose `--scale worker-watch=N` for v1: each watcher needs a distinct project id and probe port, which requires distinct service/env configuration.
+
 On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, set `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env` and restart it. The shipped compose file passes this variable only to `worker-watch`; keep polling scoped there because it is a compatibility mode for Docker Desktop file sharing, not the default Linux path.
 
 ## Enterprise Live Ingest Smoke
@@ -167,6 +209,7 @@ These examples split environment variables by runtime role. Shared values may li
 | `CCDASH_WORKER_WATCH_PROBE_PORT` | worker-watch | watcher probe listener bind port; defaults to `9466` to avoid `worker` port conflicts |
 | `CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED` | worker-watch | enables filesystem ingest for the watcher worker; defaults to `true` in compose |
 | `WATCHFILES_FORCE_POLLING` | worker-watch | set to `true` on macOS Docker Desktop when bind-mount events do not reach the watcher |
+| `CCDASH_EXTRA_MOUNT_N_HOST` / `CCDASH_EXTRA_MOUNT_N_CONTAINER` | api, worker, worker-watch | optional read-only bind slots for roots outside the shared workspace/home mounts |
 | `CCDASH_TELEMETRY_EXPORT_ENABLED` | worker | must be `true` for the smoke exporter path |
 | `CCDASH_SAM_ENDPOINT` | worker | placeholder sink is acceptable for the zero-queue smoke path |
 | `CCDASH_SAM_API_KEY` | worker | required whenever telemetry export is enabled |
