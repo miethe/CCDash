@@ -11,6 +11,7 @@ from backend import config
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
+from backend.application.services.common import resolve_project
 from backend.application.services.integrations import SkillMeatApplicationService
 from backend.models import (
     GitHubCredentialValidationRequest,
@@ -347,7 +348,12 @@ async def sync_skillmeat(
     )
     source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     warnings = payload.get("warnings", [])
-    project = app_request.project
+    project = resolve_project(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=requested_project_id,
+        required=True,
+    )
     return SkillMeatDefinitionSyncResponse(
         projectId=str(payload.get("projectId") or project.id),
         source=_to_source_dto(source, getattr(project, "skillMeat", None)),
@@ -376,7 +382,12 @@ async def refresh_skillmeat(
         app_request.ports,
         requested_project_id=requested_project_id,
     )
-    project = app_request.project
+    project = resolve_project(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=requested_project_id,
+        required=True,
+    )
     sync_payload = payload.get("sync") if isinstance(payload, dict) else {}
     if not isinstance(sync_payload, dict):
         sync_payload = {}
@@ -434,7 +445,8 @@ async def list_skillmeat_definitions(
         limit=limit,
         offset=offset,
     )
-    normalized_rows = normalize_definitions_for_project(rows, app_request.project)
+    project = resolve_project(app_request.context, app_request.ports, required=True)
+    normalized_rows = normalize_definitions_for_project(rows, project)
     return [_to_definition_dto(row) for row in normalized_rows]
 
 
@@ -458,7 +470,12 @@ async def backfill_skillmeat_observations(
         force_recompute=req.forceRecompute,
     )
     warnings = payload.get("warnings", [])
-    project = app_request.project
+    project = resolve_project(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=req.projectId,
+        required=True,
+    )
     return SkillMeatObservationBackfillResponse(
         projectId=str(payload.get("projectId") or project.id),
         sessionsProcessed=int(payload.get("sessionsProcessed") or 0),
@@ -542,8 +559,14 @@ async def generate_skillmeat_memory_drafts(
         requested_project_id=project_id,
         req=req,
     )
+    project = resolve_project(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=project_id,
+        required=True,
+    )
     return SessionMemoryDraftGenerateResponse(
-        projectId=str(payload.get("projectId") or app_request.project.id),
+        projectId=str(payload.get("projectId") or project.id),
         generatedAt=str(payload.get("generatedAt") or ""),
         sessionsConsidered=int(payload.get("sessionsConsidered") or 0),
         draftsCreated=int(payload.get("draftsCreated") or 0),

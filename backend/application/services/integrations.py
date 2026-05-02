@@ -13,7 +13,7 @@ from backend.models import (
     SessionMemoryDraftReviewRequest,
     SkillMeatConfigValidationRequest,
 )
-from backend.services.integrations.skillmeat_client import SkillMeatClient
+from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
 from backend.services.integrations.skillmeat_memory_drafts import generate_session_memory_drafts
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache
 from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
