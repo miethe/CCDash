@@ -104,6 +104,7 @@ services:
       CCDASH_SAM_ENDPOINT: "${CCDASH_SAM_ENDPOINT:-}"
       CCDASH_SAM_API_KEY: "${CCDASH_SAM_API_KEY:-}"
       CCDASH_TELEMETRY_ALLOW_INSECURE: "${CCDASH_TELEMETRY_ALLOW_INSECURE:-false}"
+      WATCHFILES_FORCE_POLLING: "${WATCHFILES_FORCE_POLLING:-false}"
     depends_on:
       api:
         condition: service_healthy

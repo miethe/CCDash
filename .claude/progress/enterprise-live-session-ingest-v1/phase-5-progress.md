@@ -16,7 +16,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: pending
 total_tasks: 6
-completed_tasks: 3
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -61,7 +61,7 @@ tasks:
 - id: TEST-004
   description: Add or document a compose smoke procedure for enterprise live session
     ingest.
-  status: pending
+  status: completed
   assigned_to:
   - DevOps
   - documentation-writer
@@ -72,7 +72,7 @@ tasks:
 - id: DOC-001
   description: Update `deploy/runtime/README.md` and env examples with live-watch
     setup.
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   - DevOps
@@ -110,7 +110,7 @@ success_criteria:
 - Docs are sufficient for an operator to reproduce setup.
 files_modified:
 - .claude/progress/enterprise-live-session-ingest-v1/phase-5-progress.md
-progress: 50
+progress: 83
 updated: '2026-05-02'
 ---
 

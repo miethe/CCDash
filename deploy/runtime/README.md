@@ -65,7 +65,88 @@ Required read-only ingest mounts:
 | Claude home | `CCDASH_CLAUDE_HOME=~/.claude` | `CCDASH_CLAUDE_CONTAINER_HOME=/home/ccdash/.claude` | Provides Claude Code project/session metadata for watcher ingest. |
 | Codex home | `CCDASH_CODEX_HOME=~/.codex` | `CCDASH_CODEX_CONTAINER_HOME=/home/ccdash/.codex` | Provides Codex session metadata for watcher ingest. |
 
-On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, pass `WATCHFILES_FORCE_POLLING=true` into the watcher container and restart it. Keep polling scoped to `worker-watch`; it is a compatibility mode for Docker Desktop file sharing, not the default Linux path.
+On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, set `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env` and restart it. The shipped compose file passes this variable only to `worker-watch`; keep polling scoped there because it is a compatibility mode for Docker Desktop file sharing, not the default Linux path.
+
+## Enterprise Live Ingest Smoke
+
+Use this smoke when validating `TEST-004` for a real project. It assumes `deploy/runtime/.env` contains a resolvable `CCDASH_WORKER_PROJECT_ID`, the project registry and session roots are mounted read-only, and the bundled Postgres profile is in use.
+
+Start the stack in the background:
+
+```bash
+COMPOSE="docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch"
+$COMPOSE up --build -d
+```
+
+Expected probes:
+
+```bash
+curl -fsS http://localhost:8000/api/health/ready | python3 -m json.tool
+curl -fsS http://localhost:9465/readyz | python3 -m json.tool
+curl -fsS http://localhost:9466/readyz | python3 -m json.tool
+
+curl -fsS http://localhost:9465/detailz | python3 -c 'import json,sys; p=json.load(sys.stdin); print(json.dumps({"runtimeProfile":p.get("runtimeProfile"), "ready":p.get("ready",{}).get("status"), "watcher":p.get("detail",{}).get("watcher"), "workerWatcherDisabled":p.get("detail",{}).get("worker",{}).get("watcherDisabled")}, indent=2))'
+
+curl -fsS http://localhost:9466/detailz | python3 -c 'import json,sys; p=json.load(sys.stdin); d=p.get("detail",{}); w=d.get("watcher",{}); wp=d.get("worker",{}); print(json.dumps({"runtimeProfile":p.get("runtimeProfile"), "ready":p.get("ready",{}).get("status"), "watcherState":w.get("state"), "watchPathCount":w.get("watchPathCount"), "lastChangeSyncAt":w.get("lastChangeSyncAt"), "lastChangeCount":w.get("lastChangeCount"), "lastSyncStatus":w.get("lastSyncStatus"), "workerWatcherDisabled":wp.get("watcherDisabled"), "syncLagSeconds":wp.get("syncLagSeconds"), "backpressure":wp.get("backpressure")}, indent=2))'
+
+curl -fsS http://localhost:8000/api/health/detail | python3 -c 'import json,sys; p=json.load(sys.stdin); f=p.get("detail",{}).get("liveFanout",{}); print(json.dumps({"mode":f.get("mode"), "running":f.get("running"), "connected":f.get("connected"), "errorCount":f.get("errorCount"), "listener":f.get("listener"), "recentErrors":f.get("recentErrors")}, indent=2))'
+```
+
+Expected values:
+
+- API and both workers report readiness `pass`.
+- Default `worker` detail reports watcher state `not_expected` and `workerWatcherDisabled=true`.
+- `worker-watch` detail reports `runtimeProfile=worker-watch`, watcher state `running`, `watchPathCount > 0`, `workerWatcherDisabled=false`, and no backpressure backlog.
+- API detail reports live fanout `mode=listen`, `running=true`, `connected=true`, and a stable `errorCount`. Recent listener errors or increasing `listener.publishErrors` mean Postgres fanout is degraded; persistence can still succeed, but browser SSE delivery may fall back to REST refresh.
+
+Record DB counts before the append:
+
+```bash
+$COMPOSE exec -T postgres psql -U ccdash -d ccdash \
+  -c "select count(*) as sessions_total from sessions; select count(*) as messages_total from session_messages;"
+```
+
+Append one valid JSONL message to a session file that belongs to `CCDASH_WORKER_PROJECT_ID`. Prefer an active Claude Code or Codex session file under the mounted session root. Do not append to a production transcript unless you are intentionally testing against disposable data.
+
+```bash
+SMOKE_SESSION_FILE=/absolute/host/path/to/watched/session.jsonl
+python3 - "$SMOKE_SESSION_FILE" <<'PY'
+import json
+import sys
+import uuid
+from datetime import datetime, timezone
+
+path = sys.argv[1]
+entry = {
+    "type": "user",
+    "uuid": str(uuid.uuid4()),
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "message": {
+        "role": "user",
+        "content": "CCDash live ingest smoke append.",
+    },
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(entry, separators=(",", ":")) + "\n")
+PY
+```
+
+Wait a few seconds, then confirm the watcher saw and synced the change:
+
+```bash
+curl -fsS http://localhost:9466/detailz | python3 -c 'import json,sys; w=json.load(sys.stdin).get("detail",{}).get("watcher",{}); print(json.dumps({"lastChangeSyncAt":w.get("lastChangeSyncAt"), "lastChangeCount":w.get("lastChangeCount"), "lastSyncStatus":w.get("lastSyncStatus"), "lastSyncError":w.get("lastSyncError")}, indent=2))'
+
+$COMPOSE exec -T postgres psql -U ccdash -d ccdash \
+  -c "select count(*) as sessions_total from sessions; select count(*) as messages_total from session_messages;"
+```
+
+Expected result: `lastSyncStatus=succeeded`, `lastChangeSyncAt` advances, and `messages_total` increases. If a brand-new session file was added instead of appending to an existing transcript, `sessions_total` should increase too.
+
+Stop the smoke stack when finished:
+
+```bash
+$COMPOSE down
+```
 
 ## Environment Ownership
 
