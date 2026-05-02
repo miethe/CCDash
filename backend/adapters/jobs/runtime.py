@@ -204,8 +204,10 @@ class RuntimeJobAdapter:
             self.state.watcher_started = False
 
     def status_snapshot(self) -> dict[str, Any]:
+        watcher_detail = self._watcher_probe_detail()
         snapshot: dict[str, Any] = {
-            "watcher": "running" if self.state.watcher_started else "stopped",
+            "watcher": watcher_detail["state"],
+            "watcherDetail": watcher_detail,
             "startupSync": "running" if self.state.sync_task is not None and not self.state.sync_task.done() else "idle",
             "analyticsSnapshots": "running"
             if self.state.analytics_snapshot_task is not None and not self.state.analytics_snapshot_task.done()
@@ -218,18 +220,62 @@ class RuntimeJobAdapter:
             else "idle",
             "jobsEnabled": self.profile.capabilities.jobs,
         }
-        if self.profile.name == "worker":
+        if self.profile.name in {"worker", "worker-watch"}:
             worker_jobs = self._worker_probe_jobs()
             worker_summary = self._worker_probe_summary(worker_jobs)
             snapshot["workerProbe"] = {
                 "schemaVersion": "ops-203-v1",
                 "watcherDisabled": not self.profile.capabilities.watch,
+                "watcher": watcher_detail,
                 "syncLagSeconds": self._worker_probe_sync_lag_seconds(worker_jobs),
                 "backpressure": self._worker_probe_backpressure(worker_jobs),
                 "jobs": worker_jobs,
                 "summary": worker_summary,
             }
         return snapshot
+
+    def _watcher_probe_detail(self) -> dict[str, Any]:
+        if not self.profile.capabilities.watch:
+            return {
+                "state": "not_expected",
+                "expected": False,
+                "enabled": False,
+                "configured": False,
+                "running": False,
+                "watchPathCount": 0,
+                "watchPaths": [],
+                "lastChangeSyncAt": None,
+                "lastChangeCount": None,
+                "lastSyncStatus": None,
+                "lastSyncError": None,
+            }
+
+        watcher_snapshot = file_watcher.snapshot()
+        configured = bool(watcher_snapshot.get("configured", False))
+        running = bool(watcher_snapshot.get("running", False)) or (self.state.watcher_started and not configured)
+        watch_path_count = int(watcher_snapshot.get("watchPathCount", 0) or 0)
+        if running:
+            state = "running"
+        elif configured and watch_path_count == 0:
+            state = "configured_no_paths"
+        elif configured:
+            state = "stopped"
+        else:
+            state = "not_configured"
+
+        return {
+            "state": state,
+            "expected": True,
+            "enabled": True,
+            "configured": configured,
+            "running": running,
+            "watchPathCount": watch_path_count,
+            "watchPaths": list(watcher_snapshot.get("watchPaths") or []),
+            "lastChangeSyncAt": watcher_snapshot.get("lastChangeSyncAt"),
+            "lastChangeCount": watcher_snapshot.get("lastChangeCount"),
+            "lastSyncStatus": watcher_snapshot.get("lastSyncStatus"),
+            "lastSyncError": watcher_snapshot.get("lastSyncError"),
+        }
 
     async def _run_startup_sync_job(
         self,

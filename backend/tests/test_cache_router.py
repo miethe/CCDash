@@ -26,6 +26,22 @@ class _FakeLiveBroker:
         return _FakeLiveBrokerStats()
 
 
+class _FakeRuntimeContainer:
+    def runtime_status(self):
+        return {
+            "liveFanout": {
+                "enabled": True,
+                "mode": "listen",
+                "running": True,
+                "connected": True,
+                "errorCount": 1,
+                "listener": {"publishErrors": 1},
+                "publisher": None,
+                "recentErrors": [{"component": "listener", "phase": "republish"}],
+            }
+        }
+
+
 class _FakeSyncEngine:
     def __init__(self) -> None:
         self.started_ops: list[dict] = []
@@ -161,10 +177,19 @@ class _FakeEntityLinkRepository:
 
 
 class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
-    def _request(self, engine: _FakeSyncEngine | None, live_broker: _FakeLiveBroker | None = None):
+    def _request(
+        self,
+        engine: _FakeSyncEngine | None,
+        live_broker: _FakeLiveBroker | None = None,
+        runtime_container=None,
+    ):
         return types.SimpleNamespace(
             app=types.SimpleNamespace(
-                state=types.SimpleNamespace(sync_engine=engine, live_event_broker=live_broker)
+                state=types.SimpleNamespace(
+                    sync_engine=engine,
+                    live_event_broker=live_broker,
+                    runtime_container=runtime_container,
+                )
             )
         )
 
@@ -204,6 +229,18 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["liveUpdates"]["published_events"], 12)
         self.assertEqual(payload["liveUpdates"]["replay_gaps"], 2)
+
+    async def test_status_includes_live_fanout_health_when_available(self) -> None:
+        engine = _FakeSyncEngine()
+        request = self._request(engine, runtime_container=_FakeRuntimeContainer())
+
+        payload = await cache_router.get_cache_status(request, self._core_ports())
+
+        self.assertEqual(payload["liveFanout"]["mode"], "listen")
+        self.assertTrue(payload["liveFanout"]["running"])
+        self.assertTrue(payload["liveFanout"]["connected"])
+        self.assertEqual(payload["liveFanout"]["errorCount"], 1)
+        self.assertEqual(payload["liveFanout"]["listener"]["publishErrors"], 1)
 
     async def test_status_returns_unavailable_when_sync_engine_missing(self) -> None:
         request = self._request(None)
