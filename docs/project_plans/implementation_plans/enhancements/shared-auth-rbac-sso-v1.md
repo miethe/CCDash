@@ -220,6 +220,41 @@ Sensitivity key: `critical` can mutate credentials, repository state, execution 
 | AUTH-003 | Hosted Auth Configuration Surface | Define environment/config settings for provider selection, Clerk keys/endpoints, generic issuer URL, audience/client IDs, callback URL, secure cookies, trusted proxy expectations, and explicit local-mode enablement on top of the existing runtime-profile auth capability composition. | Hosted and local runtime configuration is explicit, fail-closed, and documented for composition code across StaticBearer/local, Clerk, and generic OIDC modes. | 2 pts | backend-architect, security-engineering | AUTH-001 |
 | AUTH-004 | Subject Hierarchy and Ownership Model | Define the authoritative `user`, `team`, and `enterprise` scope model, including how workspace/project bindings inherit from or attach to those tiers. | The plan has an explicit three-tier ownership and binding model aligned with SkillMeat's AAA direction and usable for repository/service enforcement. | 2 pts | backend-architect, security-engineering | AUTH-001, AUTH-091 |
 
+**Phase 1 Task Status**
+
+1. AUTH-002 matrix drafted on 2026-05-02 from the AUTH-091 inventory. Treat this as the canonical V1 permission vocabulary for implementation planning, pending AUTH-001 principal-contract finalization; do not mark Phase 1 complete from this note alone.
+
+### AUTH-002 Canonical V1 Resource/Action Matrix
+
+Role key: `LO` local operator, `EA` enterprise admin, `TA` team admin, `PM` project maintainer, `PV` project viewer, `IO` integration operator, `XA` execution approver, `AA` analyst/auditor. Grants are scoped by the subject binding: enterprise grants may flow to teams/projects inside that enterprise, team grants may flow to bound workspaces/projects, and project grants apply only to the named project unless AUTH-004 narrows inheritance.
+
+| Resource group | Canonical V1 actions | AUTH-091 inventory mapping | Default role grants |
+|----------------|----------------------|----------------------------|---------------------|
+| Projects | `project:list`, `project:read`, `project:create`, `project:update`, `project:switch` | `backend/routers/projects.py` active project and workspace selection | `LO` all in local mode; `EA` all enterprise projects; `TA` all team projects; `PM` read/update/switch bound projects; `PV`, `AA` list/read/switch bound projects |
+| Documents | `document:read`, `document.link:create`, `document.metadata:read` | document projections, entity-link creation, feature/document detail surfaces | `LO`, `EA`, `TA`, `PM` all; `PV`, `AA` read/metadata only |
+| Tasks | `task:read`, `planning.task:update` | task projections and planning-derived task updates | `LO`, `EA`, `TA`, `PM` all; `PV`, `AA` read only |
+| Sessions | `session:read`, `session.artifact:read`, `session.timeline:read` | feature/session projections, live session views, AAR/report inputs | `LO`, `EA`, `TA`, `PM` all; `PV`, `AA` read only |
+| Tests | `test:read`, `test.metrics:read`, `test.sync:trigger`, `test.run:ingest`, `test.mapping:import`, `test.mapping:backfill` | `backend/routers/test_visualizer.py` read, sync, ingest, import, and backfill paths | `LO`, `EA`, `TA`, `PM` all; `AA` read/metrics; `PV` read only |
+| Execution | `execution:read`, `execution.run:create`, `execution.run:approve`, `execution.run:cancel`, `execution.run:retry`, `execution.launch:prepare`, `execution.launch:start`, `worktree_context:create`, `worktree_context:update` | `backend/routers/execution.py` run, approval, retry/cancel, launch, and worktree-context paths | `LO`, `EA` all; `TA`, `PM` read/create/cancel/retry/prepare and worktree context on bound projects; `XA` approve/start plus read; `AA` read only |
+| Integrations | `integration:read`, `integration.skillmeat:sync`, `integration.skillmeat:backfill`, `integration.skillmeat.memory:generate`, `integration.skillmeat.memory:review`, `integration.skillmeat.memory:publish`, `integration.github:read_settings`, `integration.github:update_settings`, `integration.github:validate`, `integration.github.workspace:refresh`, `integration.github:write_probe` | SkillMeat routes, integration service helpers, GitHub settings store, repo workspace cache helpers | `LO`, `EA` all; `TA` read plus team-scoped settings/update/validate; `IO` all integration actions on assigned scopes; `PM` read and workspace refresh on bound projects |
+| Analytics | `analytics:read`, `analytics.export:prometheus`, `analytics.alert:create`, `analytics.alert:update`, `analytics.alert:delete`, `analytics.notification:read` | `backend/routers/analytics.py` dashboards, exports, alerts, and notifications | `LO`, `EA`, `TA` all; `PM` read/notifications and project alerts; `AA` read/export/notifications; `PV` read only |
+| Admin settings | `admin.settings:read`, `admin.settings:update`, `admin.user:manage`, `admin.role:manage`, `admin.audit:read` | hosted auth setup, bootstrap/admin assignment, audit and operator settings surfaces | `LO` all in local mode; `EA` all; `TA` team-scoped read/user/role management; `AA` audit/read only |
+| Codebase access | `codebase:read_tree`, `codebase:file_read`, `codebase:activity_read` | `backend/routers/codebase.py` tree, file content, details, and activity | `LO`, `EA`, `TA`, `PM` all on bound projects; `PV`, `AA` tree/activity only unless explicitly granted file read |
+| Cache and file-backed maintenance | `cache:read_status`, `cache.operation:read`, `cache.sync:trigger`, `cache.links:rebuild`, `cache.paths:sync`, `entity_link:create`, `link_audit:run` | `backend/routers/cache.py`, file-backed project/cache/link maintenance paths | `LO`, `EA` all; `TA`, `PM` bound project maintenance except cross-project path sync; `AA` status/operation/link audit read |
+| Live topics | `live:subscribe`, `live.execution:subscribe`, `live.session:subscribe`, `live.feature:subscribe`, `live.project:subscribe` | `backend/routers/live.py` topic authorization and replay/subscription helpers | Any role with the matching underlying resource read may subscribe to that topic; execution live topics additionally require `execution:read` |
+| Session mappings | `session_mapping:read`, `session_mapping:diagnose`, `session_mapping:update` | `backend/routers/session_mappings.py` active-project mapping reads, diagnosis, and writes | `LO`, `EA`, `TA`, `PM` all on bound projects; `PV`, `AA` read/diagnose only |
+| Pricing/admin catalog | `admin.pricing:read`, `admin.pricing:update`, `admin.pricing:sync`, `admin.pricing:reset`, `admin.pricing:delete` | `backend/routers/pricing.py` global pricing catalog reads and mutations | `LO`, `EA` all; `AA` read only |
+| Planning/writeback | `feature:read`, `feature.rollup:compute`, `report.aar:generate`, `planning.open_question:resolve`, `planning.writeback:sync` | features/client V1 rollups, AAR reports, planning open-question resolution, planning pending sync/writeback | `LO`, `EA`, `TA`, `PM` all on bound projects; `PV`, `AA` read/report generation only unless granted writeback |
+
+Implementation rules:
+
+1. Permission names are stable API identifiers; router/service code should reference these exact strings through constants, not invent route-local aliases.
+2. Local no-auth mode maps to `LO` through the existing permissive runtime profile only; hosted mode must never infer `LO` from missing identity.
+3. `EA` is the hosted break-glass/admin role for enterprise scope. `TA` can delegate within its team scope but cannot mutate enterprise-wide provider, pricing, or cross-team integration settings.
+4. `PM` owns project operations but not enterprise/team administration. `PV` is read-only except for project switching to bound projects.
+5. `IO`, `XA`, and `AA` are purpose-built roles that may be combined with viewer/maintainer roles; they do not grant broad project write access by themselves.
+6. Denials for write/admin/execute actions must be audited with principal, resource, action, requested scope, and denial reason.
+
 **Phase 1 Quality Gates**
 
 1. Local and hosted principal shapes are both covered by the same request context.
