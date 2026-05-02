@@ -92,6 +92,7 @@ CCDASH_SAM_ARTIFACT_TELEMETRY_ENABLED = _env_bool("CCDASH_SAM_ARTIFACT_TELEMETRY
 CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
 CCDASH_API_BEARER_TOKEN_ENV = "CCDASH_API_BEARER_TOKEN"
 CCDASH_WORKER_PROJECT_ID_ENV = "CCDASH_WORKER_PROJECT_ID"
+CCDASH_RUNTIME_PROFILE_ENV = "CCDASH_RUNTIME_PROFILE"
 # VITE_CCDASH_MEMORY_GUARD_ENABLED (default: true)
 # Frontend feature flag; gates transcript cap, document pagination cap, and in-flight request GC.
 # Improves browser memory efficiency on large datasets.
@@ -100,7 +101,7 @@ VITE_CCDASH_MEMORY_GUARD_ENABLED = _env_bool("VITE_CCDASH_MEMORY_GUARD_ENABLED",
 
 StorageProfileName = Literal["local", "enterprise"]
 StorageIsolationMode = Literal["dedicated", "schema", "tenant"]
-RuntimeProfileName = Literal["local", "api", "worker", "test"]
+RuntimeProfileName = Literal["local", "api", "worker", "worker-watch", "test"]
 DeploymentMode = Literal["local", "hosted"]
 EnvironmentContractScope = Literal["shared", "api_only", "worker_only", "local_only"]
 EnvironmentVariableStatus = Literal["configured", "default", "missing", "not_applicable"]
@@ -330,10 +331,10 @@ def resolve_runtime_environment_contract(
     environ: Mapping[str, str] | None = None,
 ) -> RuntimeEnvironmentContract:
     env = environ or os.environ
-    deployment_mode: DeploymentMode = "hosted" if runtime_profile in {"api", "worker"} else "local"
+    deployment_mode: DeploymentMode = "hosted" if runtime_profile in {"api", "worker", "worker-watch"} else "local"
     hosted_runtime = deployment_mode == "hosted"
     hosted_storage = hosted_runtime and storage_profile.hosted
-    worker_runtime = runtime_profile == "worker"
+    worker_runtime = runtime_profile in {"worker", "worker-watch"}
     api_runtime = runtime_profile == "api"
 
     shared = (

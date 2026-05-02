@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import ExitStack
 import json
 import types
 import unittest
@@ -133,26 +134,54 @@ class RuntimeProfileTests(unittest.TestCase):
     def test_runtime_profiles_cover_expected_modes(self) -> None:
         profiles = {profile.name: profile for profile in iter_runtime_profiles()}
 
-        self.assertEqual(set(profiles), {"local", "api", "worker", "test"})
-        self.assertTrue(profiles["local"].capabilities.watch)
-        self.assertFalse(profiles["api"].capabilities.watch)
-        self.assertFalse(profiles["test"].capabilities.jobs)
-        self.assertTrue(profiles["worker"].capabilities.jobs)
-        self.assertTrue(profiles["worker"].capabilities.sync)
+        self.assertEqual(set(profiles), {"local", "api", "worker", "worker-watch", "test"})
+        capability_matrix = {
+            name: (
+                profile.capabilities.watch,
+                profile.capabilities.sync,
+                profile.capabilities.jobs,
+                profile.capabilities.auth,
+                profile.capabilities.integrations,
+            )
+            for name, profile in profiles.items()
+        }
+        self.assertEqual(
+            capability_matrix,
+            {
+                "local": (True, True, True, False, True),
+                "api": (False, False, False, True, True),
+                "worker": (False, True, True, False, True),
+                "worker-watch": (True, True, True, False, True),
+                "test": (False, False, False, False, False),
+            },
+        )
         self.assertEqual(profiles["local"].recommended_storage_profile, "local")
         self.assertEqual(profiles["api"].recommended_storage_profile, "enterprise")
         self.assertEqual(profiles["worker"].recommended_storage_profile, "enterprise")
+        self.assertEqual(profiles["worker-watch"].recommended_storage_profile, "enterprise")
 
     def test_worker_bootstrap_returns_worker_runtime_container(self) -> None:
-        container = build_worker_runtime()
+        with patch.dict("os.environ", {}, clear=True):
+            container = build_worker_runtime()
 
         self.assertEqual(container.profile, get_runtime_profile("worker"))
+
+    def test_worker_bootstrap_accepts_watcher_worker_runtime_profile(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {config.CCDASH_RUNTIME_PROFILE_ENV: "worker-watch"},
+            clear=True,
+        ):
+            container = build_worker_runtime()
+
+        self.assertEqual(container.profile, get_runtime_profile("worker-watch"))
 
     def test_canonical_runtime_entrypoint_matrix_is_explicit(self) -> None:
         local_app = build_local_app()
         api_app = build_api_app()
         test_app = build_test_app()
-        worker_runtime = build_worker_runtime()
+        with patch.dict("os.environ", {}, clear=True):
+            worker_runtime = build_worker_runtime()
 
         self.assertEqual(local_entrypoint_app.state.runtime_profile, get_runtime_profile("local"))
         self.assertEqual(local_app.state.runtime_profile, get_runtime_profile("local"))
@@ -182,6 +211,7 @@ class RuntimeProfileTests(unittest.TestCase):
                 "local": ("local",),
                 "api": ("enterprise",),
                 "worker": ("enterprise",),
+                "worker-watch": ("enterprise",),
                 "test": ("local", "enterprise"),
             },
         )
@@ -1218,7 +1248,8 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         binding = _project_binding(project, bundle)
         fake_sync = _fake_sync_engine()
         stop_event = asyncio.Event()
-        container = build_worker_runtime()
+        with patch.dict("os.environ", {}, clear=True):
+            container = build_worker_runtime()
         container.storage_profile = config.resolve_storage_profile_config(
             {
                 "CCDASH_STORAGE_PROFILE": "enterprise",
@@ -1274,6 +1305,91 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await task
 
         watcher_stop.assert_not_awaited()
+        close_connection.assert_awaited_once()
+
+    async def test_worker_watch_process_starts_file_watcher(self) -> None:
+        project = _active_project()
+        bundle = _ResolvedBundle()
+        binding = _project_binding(project, bundle)
+        fake_sync = _fake_sync_engine()
+        stop_event = asyncio.Event()
+        with patch.dict(
+            "os.environ",
+            {config.CCDASH_RUNTIME_PROFILE_ENV: "worker-watch"},
+            clear=True,
+        ):
+            container = build_worker_runtime()
+        container.storage_profile = config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://example/test",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "true",
+            }
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("backend.runtime.container.initialize_observability"))
+            stack.enter_context(patch("backend.runtime.container.shutdown_observability"))
+            stack.enter_context(patch("backend.runtime.container.connection.get_connection", AsyncMock(return_value=object())))
+            close_connection = stack.enter_context(
+                patch("backend.runtime.container.connection.close_connection", AsyncMock())
+            )
+            stack.enter_context(patch("backend.runtime.container.migrations.run_migrations", AsyncMock()))
+            stack.enter_context(patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync))
+            stack.enter_context(patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]))
+            stack.enter_context(
+                patch(
+                    "backend.adapters.jobs.runtime.effective_test_flags",
+                    return_value=types.SimpleNamespace(testVisualizerEnabled=False),
+                )
+            )
+            stack.enter_context(patch("backend.adapters.jobs.runtime.skillmeat_refresh_configured", return_value=False))
+            watcher_start = stack.enter_context(
+                patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock())
+            )
+            watcher_stop = stack.enter_context(
+                patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock())
+            )
+            stack.enter_context(patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_DELAY_SECONDS", 0))
+            stack.enter_context(patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True))
+            stack.enter_context(patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False))
+            stack.enter_context(patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0))
+            stack.enter_context(
+                patch(
+                    "backend.runtime.container.config.resolve_worker_binding_config",
+                    return_value=config.WorkerBindingConfig(project_id=project.id),
+                )
+            )
+            stack.enter_context(
+                patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding)
+            )
+            get_active_project = stack.enter_context(
+                patch("backend.runtime_ports.project_manager.get_active_project")
+            )
+            with patch("backend.worker._resolve_probe_binding", return_value=None):
+                task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
+                await asyncio.sleep(0.05)
+                self.assertEqual(container.profile, get_runtime_profile("worker-watch"))
+                self.assertTrue(fake_sync.sync_project.await_count >= 1)
+                self.assertEqual(container.project_binding.project.id, project.id)
+                runtime_status = container.runtime_status()
+                self.assertEqual(runtime_status["profile"], "worker-watch")
+                self.assertEqual(runtime_status["activities"]["watcher"], "running")
+                watcher_start.assert_awaited_once_with(
+                    fake_sync,
+                    project.id,
+                    bundle.as_tuple()[0],
+                    bundle.as_tuple()[1],
+                    bundle.as_tuple()[2],
+                    test_results_dir=None,
+                    test_sources=[],
+                )
+                get_active_project.assert_not_called()
+                stop_event.set()
+                await task
+
+        watcher_stop.assert_awaited_once()
         close_connection.assert_awaited_once()
 
     async def test_worker_profile_requires_explicit_project_binding_before_opening_db(self) -> None:

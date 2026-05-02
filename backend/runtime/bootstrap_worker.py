@@ -1,16 +1,31 @@
 """Worker runtime bootstrap."""
 from __future__ import annotations
 
-from typing import Any
+import os
+from typing import Any, cast
 
 from fastapi import FastAPI, Response
 
+from backend import config
 from backend.runtime.container import RuntimeContainer
-from backend.runtime.profiles import get_runtime_profile
+from backend.runtime.profiles import RuntimeProfileName, get_runtime_profile
+
+
+WORKER_RUNTIME_PROFILES: tuple[RuntimeProfileName, ...] = ("worker", "worker-watch")
 
 
 def build_worker_runtime() -> RuntimeContainer:
-    return RuntimeContainer(profile=get_runtime_profile("worker"))
+    return RuntimeContainer(profile=get_runtime_profile(resolve_worker_runtime_profile()))
+
+
+def resolve_worker_runtime_profile() -> RuntimeProfileName:
+    requested_profile = os.getenv(config.CCDASH_RUNTIME_PROFILE_ENV, "worker").strip() or "worker"
+    if requested_profile not in WORKER_RUNTIME_PROFILES:
+        allowed = ", ".join(WORKER_RUNTIME_PROFILES)
+        raise RuntimeError(
+            f"{config.CCDASH_RUNTIME_PROFILE_ENV} must be one of: {allowed}."
+        )
+    return cast(RuntimeProfileName, requested_profile)
 
 
 def build_worker_probe_app(container: RuntimeContainer | None = None) -> FastAPI:

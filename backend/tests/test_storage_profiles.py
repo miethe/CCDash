@@ -202,6 +202,36 @@ class StorageProfileConfigTests(unittest.TestCase):
             contract.errors,
         )
 
+    def test_worker_watch_environment_contract_requires_project_binding(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "true",
+            }
+        )
+
+        contract = resolve_runtime_environment_contract(
+            "worker-watch",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "true",
+            },
+        )
+
+        self.assertFalse(contract.valid)
+        self.assertEqual(contract.required_variables, ("CCDASH_DATABASE_URL", "CCDASH_WORKER_PROJECT_ID"))
+        self.assertEqual(contract.worker_only[0].name, "CCDASH_WORKER_PROJECT_ID")
+        self.assertEqual(contract.worker_only[0].status, "missing")
+        self.assertIn(
+            "Runtime profile 'worker-watch' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+            contract.errors,
+        )
+
     def test_capability_matrix_freezes_expected_canonical_stores(self) -> None:
         local_profile = resolve_storage_profile_config({"CCDASH_DB_BACKEND": "sqlite"})
         enterprise_profile = resolve_storage_profile_config(
@@ -382,6 +412,46 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertIn("enterprise-postgres", metadata["supportedStorageCompositions"])
         self.assertIn("json_storage", metadata["supportedBackendDifferenceCategories"])
 
+    def test_worker_watch_probe_contract_requires_binding_watcher_and_startup_sync(self) -> None:
+        profile = get_runtime_profile("worker-watch")
+        storage_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "true",
+            }
+        )
+
+        contract = get_runtime_storage_contract(profile)
+        metadata = build_runtime_metadata(profile, storage_profile)
+
+        self.assertEqual(contract.allowed_storage_profiles, ("enterprise",))
+        self.assertEqual(
+            contract.readiness_checks,
+            (
+                "db_connection",
+                "storage_pairing",
+                "migration_governance",
+                "schema_migrations",
+                "worker_binding",
+                "watcher_runtime",
+                "startup_sync",
+            ),
+        )
+        self.assertEqual(metadata["requiredReadinessChecks"], contract.readiness_checks)
+        self.assertEqual(
+            metadata["runtimeCapabilities"],
+            {
+                "watch": True,
+                "sync": True,
+                "jobs": True,
+                "auth": False,
+                "integrations": True,
+            },
+        )
+        self.assertTrue(metadata["filesystemSourceOfTruth"])
+
     def test_migration_governance_metadata_reports_supported_probe_dimensions(self) -> None:
         storage_profile = resolve_storage_profile_config(
             {
@@ -451,6 +521,103 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertFalse(probe["ready"]["ready"])
         self.assertIn("worker_binding", status["degradedReasonCodes"])
         self.assertEqual(probe["detail"]["binding"]["projectId"], None)
+
+    def test_worker_watch_runtime_status_requires_binding_watcher_and_startup_sync(self) -> None:
+        container = RuntimeContainer(profile=get_runtime_profile("worker-watch"))
+        container.storage_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "true",
+            }
+        )
+        container.migration_status = "applied"
+
+        with patch("backend.runtime.container.connection._connection", object()):
+            with patch("backend.runtime.container.config.resolve_worker_binding_config") as binding_config:
+                binding_config.return_value = type(
+                    "BindingConfig",
+                    (),
+                    {"configured": True, "project_id": "project-1"},
+                )()
+                status = container.runtime_status()
+
+        checks = {check["code"]: check for check in status["probeContract"]["ready"]["checks"]}
+
+        self.assertEqual(status["probeReadyState"], "not_ready")
+        self.assertFalse(status["probeReady"])
+        self.assertEqual(checks["worker_binding"]["status"], "fail")
+        self.assertTrue(checks["worker_binding"]["required"])
+        self.assertEqual(checks["worker_binding"]["data"]["bindingRequired"], True)
+        self.assertEqual(checks["watcher_runtime"]["status"], "fail")
+        self.assertTrue(checks["watcher_runtime"]["required"])
+        self.assertEqual(checks["startup_sync"]["status"], "fail")
+        self.assertTrue(checks["startup_sync"]["required"])
+        self.assertIn("worker_binding", status["degradedReasonCodes"])
+        self.assertIn("watcher_runtime", status["degradedReasonCodes"])
+        self.assertIn("startup_sync", status["degradedReasonCodes"])
+
+    def test_worker_watch_startup_binding_requires_project_id(self) -> None:
+        container = RuntimeContainer(profile=get_runtime_profile("worker-watch"))
+        container.storage_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "true",
+            }
+        )
+
+        with patch(
+            "backend.runtime.container.config.resolve_worker_binding_config",
+            return_value=type("BindingConfig", (), {"configured": False, "project_id": ""})(),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'worker-watch' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+            ):
+                container._resolve_startup_project_binding()
+
+    def test_worker_status_does_not_require_watcher_runtime_readiness(self) -> None:
+        container = RuntimeContainer(profile=get_runtime_profile("worker"))
+        container.storage_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+        container.migration_status = "applied"
+        container.project_binding = type(
+            "ProjectBinding",
+            (),
+            {
+                "project": type("Project", (), {"id": "project-1", "name": "Project 1"})(),
+                "paths": type("Paths", (), {"root": type("Root", (), {"path": "/tmp/project"})()})(),
+                "source": "explicit",
+                "requested_project_id": "project-1",
+                "locked": True,
+            },
+        )()
+
+        with patch("backend.runtime.container.connection._connection", object()):
+            with patch("backend.runtime.container.config.resolve_worker_binding_config") as binding_config:
+                binding_config.return_value = type(
+                    "BindingConfig",
+                    (),
+                    {"configured": True, "project_id": "project-1"},
+                )()
+                status = container.runtime_status()
+
+        checks = {check["code"]: check for check in status["probeContract"]["ready"]["checks"]}
+
+        self.assertEqual(status["probeReadyState"], "ready")
+        self.assertTrue(status["probeReady"])
+        self.assertEqual(checks["watcher_runtime"]["status"], "not_applicable")
+        self.assertFalse(checks["watcher_runtime"]["required"])
+        self.assertEqual(checks["startup_sync"]["status"], "pass")
+        self.assertFalse(checks["startup_sync"]["required"])
 
 
 if __name__ == "__main__":
