@@ -14,11 +14,12 @@ started: null
 completed: null
 commit_refs:
 - c6c2923
+- 68c6cdb
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 3
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -60,7 +61,7 @@ tasks:
   description: Add backend unit/integration tests plus frontend interaction coverage
     for login, denial, local mode, protected action scenarios, and migrated transport
     behavior.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   - frontend-developer
@@ -71,10 +72,18 @@ tasks:
   priority: critical
   assigned_model: codex
   model_effort: high
-  started: null
-  completed: null
-  evidence: []
-  verified_by: []
+  started: '2026-05-03T18:00:00Z'
+  completed: '2026-05-03T18:05:35Z'
+  evidence:
+  - test: backend/.venv/bin/python -m pytest backend/tests/test_auth_session_flow.py
+      backend/tests/test_auth_audit_observability.py backend/tests/test_auth_enforcement_guardrails.py
+      -q
+  - test: npm test -- services/__tests__/apiClient.test.ts services/__tests__/protectedTransport.test.ts
+      contexts/__tests__/AuthSessionContext.test.tsx contexts/__tests__/DataContext.test.ts
+      components/__tests__/LayoutAuthShell.test.tsx components/__tests__/ProjectSelectorAuth.test.tsx
+      components/__tests__/AuthPermissionControls.test.ts
+  verified_by:
+  - codex-orchestrator
 - id: AUTH-603
   description: Document issuer setup, runtime flags, local-mode behavior, bootstrap
     admin rules, and staged rollout guidance.
@@ -110,7 +119,7 @@ success_criteria:
 - Automated tests cover both hosted and local runtime behavior.
 - Rollout is staged, reversible, and documented well enough for operators to avoid
   accidental exposure.
-progress: 33
+progress: 66
 updated: '2026-05-03'
 ---
 

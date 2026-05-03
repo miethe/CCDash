@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TaskStatus } from '../../types';
-import { ApiError, createApiClient } from '../apiClient';
+import { ApiError, apiFetch, createApiClient } from '../apiClient';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -162,6 +162,24 @@ describe('apiClient — auth/session foundation', () => {
 
     expect(calledUrl()).toBe('/api/auth/session');
     expect(calledInit().credentials).toBe('same-origin');
+  });
+
+  it('defaults all shared transport calls to same-origin credentials', async () => {
+    stubFetch({ ok: true });
+
+    await apiFetch('/api/execution/runs');
+
+    expect(calledUrl()).toBe('/api/execution/runs');
+    expect(calledInit().credentials).toBe('same-origin');
+  });
+
+  it('preserves an explicit shared transport credentials override', async () => {
+    stubFetch({ ok: true });
+
+    await apiFetch('/api/health', { credentials: 'omit' });
+
+    expect(calledUrl()).toBe('/api/health');
+    expect(calledInit().credentials).toBe('omit');
   });
 
   it('exposes login helper with JSON mode and encoded redirect target', async () => {
