@@ -9,10 +9,13 @@ plan_ref: docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-
 execution_model: batch-parallel
 phase: 4
 title: Scope Mapping and SkillMeat Trust Alignment
-status: in_progress
+status: completed
 started: '2026-05-03'
-completed: null
-commit_refs: []
+completed: '2026-05-03'
+commit_refs:
+- e5d88dd
+- bf7f2df
+- 9411b01
 pr_refs: []
 overall_progress: 100
 completion_estimate: on-track
@@ -100,7 +103,7 @@ blockers: []
 success_criteria:
 - id: SC-1
   description: Claims map cleanly into CCDash and SkillMeat scope identifiers across Local, Clerk, and generic OIDC modes.
-  status: in_progress
+  status: completed
 - id: SC-2
   description: Hosted requests do not inherit another user's active-project state.
   status: completed
