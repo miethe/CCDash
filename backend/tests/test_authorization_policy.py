@@ -1,5 +1,8 @@
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+
+from fastapi import HTTPException
 
 from backend import config
 from backend.application.context import (
@@ -13,10 +16,16 @@ from backend.application.context import (
     TraceContext,
     WorkspaceScope,
 )
-from backend.application.services.authorization import RoleBindingAuthorizationPolicy
+from backend.application.services.authorization import (
+    AuthorizationDenied,
+    RoleBindingAuthorizationPolicy,
+    check_authorization,
+    require_authorization,
+)
 from backend.runtime.profiles import get_runtime_profile
 from backend.runtime_ports import build_core_ports
 from backend.adapters.auth.local import PermitAllAuthorizationPolicy
+from backend.request_scope import require_http_authorization
 
 
 def _enterprise_storage_profile() -> config.StorageProfileConfig:
@@ -247,6 +256,98 @@ class RoleBindingAuthorizationPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.code, "principal_unauthenticated")
+
+
+class AuthorizationHelperTests(unittest.IsolatedAsyncioTestCase):
+    async def test_helper_returns_allowed_decision(self) -> None:
+        policy = RoleBindingAuthorizationPolicy()
+        context = _context(
+            memberships=(
+                PrincipalMembership(
+                    workspace_id="workspace-1",
+                    role="PM",
+                    scope_type="project",
+                    scope_id="project-1",
+                ),
+            )
+        )
+
+        decision = await require_authorization(policy, context, action="project:update")
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.code, "permission_allowed")
+
+    async def test_check_helper_preserves_authorize_call_shape(self) -> None:
+        policy = RoleBindingAuthorizationPolicy()
+        context = _context(scopes=("read:project",))
+
+        decision = await check_authorization(policy, context, action="project:read", resource=None)
+
+        self.assertTrue(decision.allowed)
+
+    async def test_http_helper_maps_unauthenticated_denial_to_401(self) -> None:
+        policy = RoleBindingAuthorizationPolicy()
+        context = _context(scopes=("project:read",), authenticated=False)
+        ports = SimpleNamespace(authorization_policy=policy)
+
+        with self.assertRaises(HTTPException) as raised:
+            await require_http_authorization(context, ports, action="project:read")
+
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertEqual(raised.exception.detail["error"], "unauthorized")
+        self.assertEqual(raised.exception.detail["code"], "principal_unauthenticated")
+
+    async def test_http_helper_maps_authenticated_denial_to_403(self) -> None:
+        policy = RoleBindingAuthorizationPolicy()
+        context = _context()
+        ports = SimpleNamespace(authorization_policy=policy)
+
+        with self.assertRaises(HTTPException) as raised:
+            await require_http_authorization(context, ports, action="admin.settings:update")
+
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertEqual(raised.exception.detail["error"], "forbidden")
+        self.assertEqual(raised.exception.detail["code"], "permission_not_granted")
+
+    async def test_http_helper_propagates_denial_reason_and_code(self) -> None:
+        policy = RoleBindingAuthorizationPolicy()
+        context = _context(
+            memberships=(
+                PrincipalMembership(
+                    workspace_id="workspace-1",
+                    role="deny:project:update",
+                    scope_type="project",
+                    scope_id="project-1",
+                    binding_id="deny-binding",
+                ),
+            )
+        )
+        ports = SimpleNamespace(authorization_policy=policy)
+
+        with self.assertRaises(HTTPException) as raised:
+            await require_http_authorization(
+                context,
+                ports,
+                action="project:update",
+                resource="project:project-1",
+            )
+
+        detail = raised.exception.detail
+        self.assertEqual(detail["code"], "permission_explicitly_denied")
+        self.assertIn("deny-binding", detail["reason"])
+        self.assertEqual(detail["action"], "project:update")
+        self.assertEqual(detail["resource"], "project:project-1")
+
+    async def test_service_helper_denial_remains_transport_neutral(self) -> None:
+        policy = RoleBindingAuthorizationPolicy()
+        context = _context()
+
+        with self.assertRaises(AuthorizationDenied) as raised:
+            await require_authorization(policy, context, action="admin.role:manage")
+
+        self.assertNotIsInstance(raised.exception, HTTPException)
+        self.assertEqual(raised.exception.code, "permission_not_granted")
+        self.assertEqual(raised.exception.action, "admin.role:manage")
 
 
 class AuthorizationCompositionTests(unittest.TestCase):

@@ -12,12 +12,13 @@ title: Authorization Policy and 3-Tier RBAC Matrix
 status: in_progress
 started: '2026-05-02'
 completed: null
-commit_refs: []
+commit_refs:
+- ebb75eb
 pr_refs: []
-overall_progress: 25
+overall_progress: 50
 completion_estimate: at-risk
 total_tasks: 4
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -53,7 +54,7 @@ tasks:
   - Implemented RoleBindingAuthorizationPolicy with role-to-permission expansion, direct principal scopes, explicit deny handling, scope containment for user/team/enterprise/workspace/project/owned_entity, and auth-capable API runtime composition; backend/.venv/bin/python -m pytest backend/tests/test_authorization_policy.py -v passed (13 tests); py_compile for authorization/core/runtime/test modules passed.
 - id: AUTH-202
   description: Add reusable helpers for service-layer authorization, denial reasons, and consistent 401 vs 403 behavior.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -62,10 +63,11 @@ tasks:
   priority: critical
   assigned_model: codex
   model_effort: high
-  started: null
-  completed: null
-  verified_by: null
-  evidence: []
+  started: '2026-05-02'
+  completed: '2026-05-02'
+  verified_by: codex-orchestrator
+  evidence:
+  - Added transport-neutral authorization helpers, AuthorizationDenied denial object, and FastAPI request-scope HTTP mapping for consistent 401/403 responses with reason/code/action/resource propagation; backend/.venv/bin/python -m pytest backend/tests/test_authorization_policy.py -v passed (19 tests); compileall and git diff --check passed.
 - id: AUTH-203
   description: Finalize initial tier-aware roles and bindings for enterprise, team, and user scopes, and define bootstrap/admin assignment rules.
   status: pending
@@ -123,7 +125,7 @@ success_criteria:
   status: completed
 - id: SC-2
   description: 401 and 403 responses are consistent across hosted endpoints.
-  status: pending
+  status: completed
 - id: SC-3
   description: The role matrix covers approvals and integrations separately from generic edit access.
   status: pending

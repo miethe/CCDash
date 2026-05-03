@@ -3,11 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, status
 
 from backend.adapters.auth import RequestAuthenticationError
 from backend.application.context import RequestContext, RequestMetadata
-from backend.application.ports import CorePorts
+from backend.application.services.authorization import (
+    AuthorizationDenied,
+    require_authorization,
+)
+from backend.application.ports import AuthorizationDecision, CorePorts
 
 
 def get_runtime_container(request: Request) -> Any:
@@ -50,3 +54,40 @@ async def get_request_context(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     request.state.request_context = context
     return context
+
+
+def authorization_http_exception(denial: AuthorizationDenied) -> HTTPException:
+    status_code = (
+        status.HTTP_401_UNAUTHORIZED
+        if denial.unauthenticated
+        else status.HTTP_403_FORBIDDEN
+    )
+    error = "unauthorized" if status_code == status.HTTP_401_UNAUTHORIZED else "forbidden"
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "error": error,
+            "code": denial.code,
+            "reason": denial.reason,
+            "action": denial.action,
+            "resource": denial.resource,
+        },
+    )
+
+
+async def require_http_authorization(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    *,
+    action: str,
+    resource: str | None = None,
+) -> AuthorizationDecision:
+    try:
+        return await require_authorization(
+            core_ports.authorization_policy,
+            request_context,
+            action=action,
+            resource=resource,
+        )
+    except AuthorizationDenied as exc:
+        raise authorization_http_exception(exc) from exc

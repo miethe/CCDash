@@ -6,7 +6,7 @@ import re
 from typing import Iterable, Mapping
 
 from backend.application.context import PrincipalMembership, RequestContext
-from backend.application.ports import AuthorizationDecision
+from backend.application.ports import AuthorizationDecision, AuthorizationPolicy
 
 
 PERMISSIONS: frozenset[str] = frozenset(
@@ -339,6 +339,87 @@ class RoleBindingAuthorizationPolicy:
             code="permission_not_granted",
             reason=f"Permission '{permission}' is not granted for the requested scope.",
         )
+
+
+class AuthorizationDenied(PermissionError):
+    """Transport-neutral authorization failure raised by service helpers."""
+
+    def __init__(
+        self,
+        decision: AuthorizationDecision,
+        *,
+        action: str,
+        resource: str | None = None,
+        unauthenticated: bool = False,
+    ) -> None:
+        self.decision = decision
+        self.action = normalize_permission(action)
+        self.resource = resource
+        self._unauthenticated = unauthenticated
+        message = decision.reason or decision.code or "Authorization denied."
+        super().__init__(message)
+
+    @property
+    def code(self) -> str:
+        return self.decision.code
+
+    @property
+    def reason(self) -> str:
+        return self.decision.reason
+
+    @property
+    def unauthenticated(self) -> bool:
+        return self._unauthenticated or is_unauthenticated_denial(self.decision)
+
+
+async def check_authorization(
+    policy: AuthorizationPolicy,
+    context: RequestContext,
+    *,
+    action: str,
+    resource: str | None = None,
+) -> AuthorizationDecision:
+    """Evaluate authorization through the shared policy contract."""
+    return await policy.authorize(
+        context,
+        action=action,
+        resource=resource,
+    )
+
+
+async def require_authorization(
+    policy: AuthorizationPolicy,
+    context: RequestContext,
+    *,
+    action: str,
+    resource: str | None = None,
+) -> AuthorizationDecision:
+    """Return the allow decision or raise a transport-neutral denial."""
+    decision = await check_authorization(
+        policy,
+        context,
+        action=action,
+        resource=resource,
+    )
+    unauthenticated = not context.principal.is_authenticated
+    if decision.allowed and unauthenticated:
+        decision = AuthorizationDecision(
+            allowed=False,
+            code="principal_unauthenticated",
+            reason="Principal is not authenticated.",
+        )
+    if decision.allowed:
+        return decision
+    raise AuthorizationDenied(
+        decision,
+        action=action,
+        resource=resource,
+        unauthenticated=unauthenticated,
+    )
+
+
+def is_unauthenticated_denial(decision: AuthorizationDecision) -> bool:
+    return decision.code == "principal_unauthenticated"
 
 
 def normalize_permission(value: str) -> str:
