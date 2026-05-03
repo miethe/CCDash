@@ -43,7 +43,7 @@ from backend.models import (
     WorkflowEffectivenessResponse,
 )
 from backend.model_identity import canonical_model_name, derive_model_identity, model_family_name
-from backend.request_scope import get_core_ports, get_request_context
+from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
 from backend.services.agentic_intelligence_flags import require_usage_attribution_enabled
 from backend.services.session_usage_analytics import (
@@ -68,6 +68,25 @@ async def _resolve_app_request(
         request_context,
         core_ports,
         core_ports.storage.db,
+    )
+
+
+def _project_resource(request_context: RequestContext) -> str | None:
+    if request_context.project is None:
+        return None
+    return f"project:{request_context.project.project_id}"
+
+
+async def _require_analytics_authorization(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    action: str,
+) -> None:
+    await require_http_authorization(
+        request_context,
+        core_ports,
+        action=action,
+        resource=_project_resource(request_context),
     )
 
 
@@ -1303,6 +1322,7 @@ async def get_metrics(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Legacy metrics endpoint."""
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return []
@@ -1332,6 +1352,7 @@ async def get_overview(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     app_request = await _resolve_app_request(request_context, core_ports)
     return await analytics_overview_service.get_overview(
         app_request.context,
@@ -1354,6 +1375,7 @@ async def get_series(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return {"items": [], "total": 0, "offset": offset, "limit": limit}
@@ -1526,6 +1548,7 @@ async def get_breakdown(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return {"items": [], "total": 0, "offset": offset, "limit": limit}
@@ -1637,6 +1660,7 @@ async def get_correlation(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return {"items": [], "total": 0, "offset": offset, "limit": limit}
@@ -1713,6 +1737,7 @@ async def get_session_cost_calibration(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return SessionCostCalibrationSummary(generatedAt=datetime.now(timezone.utc).isoformat())
@@ -1814,6 +1839,7 @@ async def get_usage_attribution(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
@@ -1842,6 +1868,7 @@ async def get_usage_attribution_drilldown_view(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
@@ -1866,6 +1893,7 @@ async def get_usage_attribution_calibration_view(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
@@ -1890,6 +1918,7 @@ async def search_session_intelligence(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     app_request = await _resolve_app_request(request_context, core_ports)
     return await transcript_search_service.search(
         app_request.context,
@@ -1913,6 +1942,7 @@ async def list_session_intelligence(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     app_request = await _resolve_app_request(request_context, core_ports)
     return await session_intelligence_read_service.list_sessions(
         app_request.context,
@@ -1931,6 +1961,7 @@ async def get_session_intelligence_detail(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     app_request = await _resolve_app_request(request_context, core_ports)
     detail = await session_intelligence_read_service.get_session_detail(
         app_request.context,
@@ -1953,6 +1984,7 @@ async def get_session_intelligence_drilldown(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     app_request = await _resolve_app_request(request_context, core_ports)
     detail = await session_intelligence_read_service.drilldown(
         app_request.context,
@@ -1983,6 +2015,7 @@ async def get_artifacts(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Artifact-centric analytics across all tracked sessions."""
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return {
@@ -2044,6 +2077,7 @@ async def workflow_effectiveness(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return WorkflowEffectivenessResponse(
@@ -2081,6 +2115,7 @@ async def workflow_registry(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return WorkflowRegistryListResponse(
@@ -2115,6 +2150,7 @@ async def workflow_registry_detail(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
@@ -2150,6 +2186,7 @@ async def failure_patterns(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return FailurePatternResponse(
@@ -2180,6 +2217,7 @@ async def get_alerts(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     repo = core_ports.storage.alert_configs()
     project = resolve_project(request_context, core_ports)
     configs = await repo.list_all(project.id if project else None)
@@ -2203,6 +2241,7 @@ async def create_alert(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics.alert:create")
     repo = core_ports.storage.alert_configs()
     project = resolve_project(request_context, core_ports)
     alert_id = payload.id or f"alert-{uuid.uuid4().hex[:8]}"
@@ -2235,6 +2274,7 @@ async def update_alert(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics.alert:update")
     repo = core_ports.storage.alert_configs()
     project = resolve_project(request_context, core_ports)
     configs = await repo.list_all(project.id if project else None)
@@ -2269,6 +2309,7 @@ async def delete_alert(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics.alert:delete")
     _ = request_context
     repo = core_ports.storage.alert_configs()
     await repo.delete(alert_id)
@@ -2281,6 +2322,7 @@ async def get_notifications(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics.notification:read")
     project = resolve_project(request_context, core_ports)
     if not project:
         return []
@@ -2356,6 +2398,7 @@ async def get_trends(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Legacy trends endpoint."""
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
     payload = await get_series(
         metric=metric,
         period=period,
@@ -2376,6 +2419,7 @@ async def export_prometheus(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_analytics_authorization(request_context, core_ports, "analytics.export:prometheus")
     project = resolve_project(request_context, core_ports)
     if not project:
         return Response("", media_type="text/plain")

@@ -17,8 +17,19 @@ class _FakeIdentityProvider:
 
 
 class _FakeAuthorizationPolicy:
+    def __init__(self, denied_action: str | None = None) -> None:
+        self.denied_action = denied_action
+        self.calls: list[dict[str, str | None]] = []
+
     async def authorize(self, context, *, action, resource=None):
-        _ = context, action, resource
+        _ = context
+        self.calls.append({"action": action, "resource": resource})
+        if action == self.denied_action:
+            return AuthorizationDecision(
+                allowed=False,
+                code="permission_not_granted",
+                reason=f"{action} denied in test",
+            )
         return AuthorizationDecision(allowed=True)
 
 
@@ -101,11 +112,20 @@ def _request_context(project_id: str = "project-1") -> RequestContext:
     )
 
 
-def _core_ports(*, project=None, db=None, session_repo=None, session_message_repo=None, link_repo=None, feature_repo=None) -> CorePorts:
+def _core_ports(
+    *,
+    project=None,
+    db=None,
+    session_repo=None,
+    session_message_repo=None,
+    link_repo=None,
+    feature_repo=None,
+    authorization_policy=None,
+) -> CorePorts:
     resolved_project = project or types.SimpleNamespace(id="project-1", name="Project 1")
     return CorePorts(
         identity_provider=_FakeIdentityProvider(),
-        authorization_policy=_FakeAuthorizationPolicy(),
+        authorization_policy=authorization_policy or _FakeAuthorizationPolicy(),
         workspace_registry=_FakeWorkspaceRegistry(resolved_project),
         storage=_FakeStorage(
             db=db,
@@ -1151,6 +1171,22 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(by_feature_id["feat-beta"].isPrimaryLink)
         self.assertEqual(by_feature_id["feat-beta"].confidence, 1.0)
         self.assertFalse(by_feature_id["feat-alpha"].isPrimaryLink)
+
+    async def test_upsert_session_linked_feature_denies_without_entity_link_permission(self) -> None:
+        policy = _FakeAuthorizationPolicy(denied_action="entity_link:create")
+
+        with self.assertRaises(HTTPException) as ctx:
+            await api_router.upsert_session_linked_feature(
+                "S-main",
+                api_router.SessionFeatureLinkMutationRequest(featureId="feat-beta", linkRole="primary"),
+                request_context=_request_context(),
+                core_ports=_core_ports(authorization_policy=policy),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail["action"], "entity_link:create")
+        self.assertEqual(ctx.exception.detail["resource"], "project:project-1")
+        self.assertEqual(policy.calls, [{"action": "entity_link:create", "resource": "project:project-1"}])
 
     async def test_upsert_session_linked_feature_related_sets_full_confidence(self) -> None:
         session_repo = _FakeSessionDetailRepo()

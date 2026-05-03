@@ -1,10 +1,12 @@
 import types
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
+from fastapi import HTTPException
 
 from backend.application.context import (
     AuthProviderMetadata,
@@ -17,6 +19,7 @@ from backend.application.context import (
     TraceContext,
     WorkspaceScope,
 )
+from backend.application.ports import AuthorizationDecision
 from backend.db.factory import get_agentic_intelligence_repository
 from backend.db.sqlite_migrations import run_migrations
 from backend.models import (
@@ -32,6 +35,23 @@ from backend.routers import integrations as integrations_router
 from backend.runtime_ports import build_core_ports
 from backend.services.integrations.github_settings_store import GitHubSettingsStore
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
+
+
+class _DenyAuthorizationPolicy:
+    def __init__(self, denied_action: str) -> None:
+        self.denied_action = denied_action
+        self.calls: list[dict[str, str | None]] = []
+
+    async def authorize(self, context, *, action, resource=None):
+        _ = context
+        self.calls.append({"action": action, "resource": resource})
+        if action == self.denied_action:
+            return AuthorizationDecision(
+                allowed=False,
+                code="permission_not_granted",
+                reason=f"{action} denied in test",
+            )
+        return AuthorizationDecision(allowed=True, code="permission_allowed")
 
 
 class _TestWorkspaceRegistry:
@@ -245,6 +265,25 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bundle.resolutionMetadata["bundleSummary"]["artifactRefs"], ["skill:symbols"])
         self.assertEqual(bundle.sourceUrl, "http://skillmeat-web.local:3000/collection?collection=default")
 
+    async def test_sync_denies_without_skillmeat_sync_permission(self) -> None:
+        policy = _DenyAuthorizationPolicy("integration.skillmeat:sync")
+        denied_ports = replace(self.core_ports, authorization_policy=policy)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await integrations_router.sync_skillmeat(
+                SkillMeatSyncRequest(),
+                request_context=self.request_context,
+                core_ports=denied_ports,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail["action"], "integration.skillmeat:sync")
+        self.assertEqual(ctx.exception.detail["resource"], "project:project-1")
+        self.assertEqual(
+            policy.calls,
+            [{"action": "integration.skillmeat:sync", "resource": "project:project-1"}],
+        )
+
     async def test_list_definitions_hides_links_when_web_app_url_is_unset(self) -> None:
         self.project.skillMeat.webBaseUrl = ""
         repo = get_agentic_intelligence_repository(self.db)
@@ -299,7 +338,9 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                     aaaEnabled=True,
                     apiKey="secret-token",
                     requestTimeoutSeconds=2.0,
-                )
+                ),
+                request_context=self.request_context,
+                core_ports=self.core_ports,
             )
 
         self.assertEqual(payload.baseUrl.state, "success")
@@ -320,7 +361,9 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                     baseUrl="http://skillmeat.local",
                     projectId="missing-project",
                     requestTimeoutSeconds=2.0,
-                )
+                ),
+                request_context=self.request_context,
+                core_ports=self.core_ports,
             )
 
         self.assertEqual(payload.baseUrl.state, "success")
@@ -373,6 +416,7 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                     requestTimeoutSeconds=2.0,
                 ),
                 request_context=hosted_context,
+                core_ports=self.core_ports,
             )
 
         self.assertEqual(payload.auth.state, "success")
@@ -485,9 +529,14 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                         token="ghp_secret_123456",
                         cacheRoot=str(Path(tmpdir) / "cache"),
                         writeEnabled=True,
-                    )
+                    ),
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
                 )
-                fetched = await integrations_router.get_github_settings()
+                fetched = await integrations_router.get_github_settings(
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
+                )
 
         self.assertTrue(payload.tokenConfigured)
         self.assertNotIn("secret", payload.maskedToken.lower())
@@ -531,7 +580,9 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                                 },
                             }
                         )
-                    )
+                    ),
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
                 )
 
         self.assertEqual(payload.status.state, "success")
@@ -567,7 +618,9 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                                 },
                             }
                         )
-                    )
+                    ),
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
                 )
 
         self.assertTrue(payload.canWrite)

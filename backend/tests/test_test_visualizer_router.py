@@ -1,5 +1,6 @@
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
@@ -7,11 +8,58 @@ import aiosqlite
 from fastapi import BackgroundTasks, HTTPException
 
 from backend import config
+from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
+from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.db.repositories.features import SqliteFeatureRepository
 from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.db.sqlite_migrations import run_migrations
 from backend.models import IngestRunResponse
 from backend.routers import test_visualizer as router
+
+
+class _DenyAuthorizationPolicy:
+    def __init__(self, denied_action: str) -> None:
+        self.denied_action = denied_action
+        self.calls: list[dict[str, str | None]] = []
+
+    async def authorize(self, context, *, action, resource=None):
+        _ = context
+        self.calls.append({"action": action, "resource": resource})
+        if action == self.denied_action:
+            return AuthorizationDecision(
+                allowed=False,
+                code="permission_not_granted",
+                reason=f"{action} denied in test",
+            )
+        return AuthorizationDecision(allowed=True, code="permission_allowed")
+
+
+def _request_context(project_id: str = "project-1") -> RequestContext:
+    return RequestContext(
+        principal=Principal(subject="test:operator", display_name="Operator", auth_mode="test"),
+        workspace=None,
+        project=ProjectScope(
+            project_id=project_id,
+            project_name="Project 1",
+            root_path=Path("/tmp/project-1"),
+            sessions_dir=Path("/tmp/project-1/.claude/sessions"),
+            docs_dir=Path("/tmp/project-1/docs"),
+            progress_dir=Path("/tmp/project-1/.claude/progress"),
+        ),
+        runtime_profile="test",
+        trace=TraceContext(request_id="req-tests-deny"),
+    )
+
+
+def _core_ports(policy: _DenyAuthorizationPolicy) -> CorePorts:
+    return CorePorts(
+        identity_provider=object(),
+        authorization_policy=policy,
+        workspace_registry=object(),
+        storage=object(),
+        job_scheduler=object(),
+        integration_client=object(),
+    )
 
 
 class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
@@ -162,6 +210,30 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
             await router.ingest_test_run(request)
 
         self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_ingest_denies_without_test_run_ingest_permission(self) -> None:
+        router.config.CCDASH_TEST_VISUALIZER_ENABLED = True
+        policy = _DenyAuthorizationPolicy("test.run:ingest")
+        request = self._json_request(
+            {
+                "run_id": "run-denied",
+                "project_id": "project-1",
+                "timestamp": "2026-02-28T13:00:00Z",
+                "test_results": [],
+            }
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await router.ingest_test_run(
+                request,
+                request_context=_request_context(),
+                core_ports=_core_ports(policy),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail["action"], "test.run:ingest")
+        self.assertEqual(ctx.exception.detail["resource"], "project:project-1")
+        self.assertEqual(policy.calls, [{"action": "test.run:ingest", "resource": "project:project-1"}])
 
     async def test_ingest_json_calls_service_and_sets_mapping_queue_flag(self) -> None:
         router.config.CCDASH_TEST_VISUALIZER_ENABLED = True

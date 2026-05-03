@@ -51,7 +51,7 @@ from backend.models import (
     SkillMeatSyncWarning,
 )
 from backend.project_manager import project_manager
-from backend.request_scope import get_core_ports, get_request_context
+from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.agentic_intelligence_flags import require_skillmeat_integration_enabled
 from backend.services.integrations.github_settings_store import GitHubSettingsStore
 from backend.services.project_paths.providers.base import PathResolutionError
@@ -67,6 +67,25 @@ integrations_router = APIRouter(prefix="/api/integrations/skillmeat", tags=["int
 github_integrations_router = APIRouter(prefix="/api/integrations/github", tags=["integrations"])
 github_settings_store = GitHubSettingsStore()
 skillmeat_application_service = SkillMeatApplicationService()
+
+
+def _project_resource(request_context: RequestContext) -> str | None:
+    if request_context.project is None:
+        return None
+    return f"project:{request_context.project.project_id}"
+
+
+async def _require_integration_authorization(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    action: str,
+) -> None:
+    await require_http_authorization(
+        request_context,
+        core_ports,
+        action=action,
+        resource=_project_resource(request_context),
+    )
 
 
 def _now_iso() -> str:
@@ -294,12 +313,14 @@ def _resolve_reference_with_settings(
 @integrations_router.post("/validate-config", response_model=SkillMeatConfigValidationResponse)
 async def validate_skillmeat_config(
     req: SkillMeatConfigValidationRequest,
-    request_context: RequestContext | None = Depends(get_request_context),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration:read")
     require_skillmeat_integration_enabled()
     payload = await skillmeat_application_service.validate_config(
         req,
-        context=request_context if isinstance(request_context, RequestContext) else None,
+        context=request_context,
     )
     return SkillMeatConfigValidationResponse(
         baseUrl=_probe_result(
@@ -340,6 +361,7 @@ async def sync_skillmeat(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration.skillmeat:sync")
     require_skillmeat_integration_enabled()
     requested_project_id = str((req.projectId if req else "") or "").strip() or None
     app_request = await _resolve_skillmeat_request(
@@ -376,6 +398,7 @@ async def refresh_skillmeat(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration.skillmeat:sync")
     require_skillmeat_integration_enabled()
     requested_project_id = str((req.projectId if req else "") or "").strip() or None
     app_request = await _resolve_skillmeat_request(
@@ -442,6 +465,7 @@ async def list_skillmeat_definitions(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration:read")
     require_skillmeat_integration_enabled()
     app_request = await _resolve_skillmeat_request(request_context, core_ports)
     rows = await skillmeat_application_service.list_definitions(
@@ -462,6 +486,7 @@ async def backfill_skillmeat_observations(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration.skillmeat:backfill")
     require_skillmeat_integration_enabled()
     app_request = await _resolve_skillmeat_request(
         request_context,
@@ -501,6 +526,7 @@ async def list_skillmeat_observations(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration:read")
     require_skillmeat_integration_enabled()
     app_request = await _resolve_skillmeat_request(request_context, core_ports)
     rows = await skillmeat_application_service.list_observations(
@@ -522,6 +548,7 @@ async def list_skillmeat_memory_drafts(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration:read")
     require_skillmeat_integration_enabled()
     app_request = await _resolve_skillmeat_request(
         request_context,
@@ -553,6 +580,7 @@ async def generate_skillmeat_memory_drafts(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration.skillmeat.memory:generate")
     require_skillmeat_integration_enabled()
     app_request = await _resolve_skillmeat_request(
         request_context,
@@ -590,6 +618,7 @@ async def review_skillmeat_memory_draft(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration.skillmeat.memory:review")
     require_skillmeat_integration_enabled()
     app_request = await _resolve_skillmeat_request(
         request_context,
@@ -616,6 +645,7 @@ async def publish_skillmeat_memory_draft(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
+    await _require_integration_authorization(request_context, core_ports, "integration.skillmeat.memory:publish")
     require_skillmeat_integration_enabled()
     app_request = await _resolve_skillmeat_request(
         request_context,
@@ -640,18 +670,32 @@ async def publish_skillmeat_memory_draft(
 
 
 @github_integrations_router.get("/settings", response_model=GitHubIntegrationSettingsResponse)
-async def get_github_settings():
+async def get_github_settings(
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    await _require_integration_authorization(request_context, core_ports, "integration.github:read_settings")
     return github_settings_store.to_response()
 
 
 @github_integrations_router.put("/settings", response_model=GitHubIntegrationSettingsResponse)
-async def update_github_settings(req: GitHubIntegrationSettingsUpdateRequest):
+async def update_github_settings(
+    req: GitHubIntegrationSettingsUpdateRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    await _require_integration_authorization(request_context, core_ports, "integration.github:update_settings")
     settings = github_settings_store.save(req)
     return github_settings_store.to_response(settings)
 
 
 @github_integrations_router.post("/validate-credential", response_model=GitHubCredentialValidationResponse)
-async def validate_github_credential(req: GitHubCredentialValidationRequest):
+async def validate_github_credential(
+    req: GitHubCredentialValidationRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    await _require_integration_authorization(request_context, core_ports, "integration.github:validate")
     settings = _github_settings_from_request(req.settings)
     if not settings.enabled:
         return GitHubCredentialValidationResponse(
@@ -689,7 +733,12 @@ async def validate_github_credential(req: GitHubCredentialValidationRequest):
 
 
 @github_integrations_router.post("/validate-path", response_model=GitHubPathValidationResponse)
-async def validate_github_path(req: GitHubPathValidationRequest):
+async def validate_github_path(
+    req: GitHubPathValidationRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    await _require_integration_authorization(request_context, core_ports, "integration.github:validate")
     settings = github_settings_store.load()
     project = _project_for_request_or_active(req.projectId) if str(req.projectId or "").strip() else None
     try:
@@ -715,7 +764,12 @@ async def validate_github_path(req: GitHubPathValidationRequest):
 
 
 @github_integrations_router.post("/refresh-workspace", response_model=GitHubWorkspaceRefreshResponse)
-async def refresh_github_workspace(req: GitHubWorkspaceRefreshRequest):
+async def refresh_github_workspace(
+    req: GitHubWorkspaceRefreshRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    await _require_integration_authorization(request_context, core_ports, "integration.github.workspace:refresh")
     settings = github_settings_store.load()
     project = _project_for_request_or_active(req.projectId) if str(req.projectId or "").strip() else None
     reference = req.reference or (project.pathConfig.root if project is not None else None)
@@ -748,7 +802,12 @@ async def refresh_github_workspace(req: GitHubWorkspaceRefreshRequest):
 
 
 @github_integrations_router.post("/check-write-capability", response_model=GitHubWriteCapabilityResponse)
-async def check_github_write_capability(req: GitHubWriteCapabilityRequest):
+async def check_github_write_capability(
+    req: GitHubWriteCapabilityRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    await _require_integration_authorization(request_context, core_ports, "integration.github:write_probe")
     settings = github_settings_store.load()
     project = _project_for_request_or_active(req.projectId) if str(req.projectId or "").strip() else None
     reference = req.reference or (project.pathConfig.root if project is not None else None)

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
@@ -52,8 +52,11 @@ from backend.models import (
     TestSourceStatusDTO,
 )
 from backend.observability import start_span
+from backend.application.context import RequestContext
+from backend.application.ports import CorePorts
 from backend.parsers.test_results import parse_junit_xml
 from backend.project_manager import project_manager
+from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.test_config import (
     effective_test_flags,
     parser_health_map,
@@ -72,6 +75,30 @@ from backend.services.test_ingest import ingest_run
 logger = logging.getLogger("ccdash.test_visualizer")
 test_visualizer_router = APIRouter(prefix="/api/tests", tags=["test-visualizer"])
 _MAPPING_BACKFILL_OPERATION_KIND = "test_mapping_backfill"
+
+
+def _project_resource(request_context: RequestContext, project_id: str | None = None) -> str | None:
+    resolved_project_id = str(project_id or "").strip()
+    if not resolved_project_id and request_context.project is not None:
+        resolved_project_id = request_context.project.project_id
+    return f"project:{resolved_project_id}" if resolved_project_id else None
+
+
+async def _require_test_authorization(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    action: str,
+    *,
+    project_id: str | None = None,
+) -> None:
+    if not isinstance(request_context, RequestContext) or not isinstance(core_ports, CorePorts):
+        return
+    await require_http_authorization(
+        request_context,
+        core_ports,
+        action=action,
+        resource=_project_resource(request_context, project_id),
+    )
 
 
 def _error(status_code: int, *, error: str, message: str, hint: str) -> HTTPException:
@@ -738,7 +765,13 @@ async def _run_backfill_mappings_background(
 
 
 @test_visualizer_router.get("/config", response_model=TestVisualizerConfigDTO)
-async def get_test_config(request: Request, project_id: str | None = None) -> TestVisualizerConfigDTO:
+async def get_test_config(
+    request: Request,
+    project_id: str | None = None,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> TestVisualizerConfigDTO:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     project = _resolve_project(project_id)
     flags = effective_test_flags(project)
     cfg = project.testConfig
@@ -757,13 +790,25 @@ async def get_test_config(request: Request, project_id: str | None = None) -> Te
 
 
 @test_visualizer_router.get("/sources/status", response_model=list[TestSourceStatusDTO])
-async def get_source_status(request: Request, project_id: str | None = None) -> list[TestSourceStatusDTO]:
+async def get_source_status(
+    request: Request,
+    project_id: str | None = None,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> list[TestSourceStatusDTO]:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     project = _resolve_project(project_id)
     return _source_status_rows(project, request)
 
 
 @test_visualizer_router.post("/sync", response_model=SyncTestsResponse)
-async def sync_test_sources_endpoint(request: Request, body: SyncTestsRequest) -> SyncTestsResponse:
+async def sync_test_sources_endpoint(
+    request: Request,
+    body: SyncTestsRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> SyncTestsResponse:
+    await _require_test_authorization(request_context, core_ports, "test.sync:trigger", project_id=body.project_id)
     project, flags = _require_feature_enabled(body.project_id)
     if not flags.testVisualizerEnabled:
         raise _error(
@@ -797,7 +842,13 @@ async def sync_test_sources_endpoint(request: Request, body: SyncTestsRequest) -
 
 
 @test_visualizer_router.get("/metrics/summary", response_model=TestMetricSummaryDTO)
-async def get_metrics_summary(request: Request, project_id: str) -> TestMetricSummaryDTO:
+async def get_metrics_summary(
+    request: Request,
+    project_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> TestMetricSummaryDTO:
+    await _require_test_authorization(request_context, core_ports, "test.metrics:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
     db = await connection.get_connection()
@@ -805,7 +856,11 @@ async def get_metrics_summary(request: Request, project_id: str) -> TestMetricSu
 
 
 @test_visualizer_router.post("/ingest", response_model=IngestRunResponse)
-async def ingest_test_run(request: Request) -> IngestRunResponse:
+async def ingest_test_run(
+    request: Request,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> IngestRunResponse:
     """Ingest test results from JSON payload or multipart JUnit XML upload."""
     _require_env_feature_enabled()
 
@@ -815,6 +870,7 @@ async def ingest_test_run(request: Request) -> IngestRunResponse:
         payload, parser_errors = await _request_payload_from_multipart(request)
     else:
         payload = await _request_payload_from_json(request)
+    await _require_test_authorization(request_context, core_ports, "test.run:ingest", project_id=payload.project_id)
     _, flags = _require_feature_enabled(payload.project_id)
 
     db = await connection.get_connection()
@@ -879,7 +935,10 @@ async def get_domain_health(
     project_id: str,
     since: str | None = None,
     include_children: bool = True,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> list[DomainHealthRollupDTO]:
+    await _require_test_authorization(request_context, core_ports, "test.metrics:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
     db = await connection.get_connection()
@@ -902,7 +961,10 @@ async def get_feature_health(
     since: str | None = None,
     cursor: str | None = None,
     limit: int = Query(50, ge=1, le=200),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> CursorPaginatedResponse[FeatureTestHealthDTO]:
+    await _require_test_authorization(request_context, core_ports, "test.metrics:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
     page = _decode_cursor(cursor)
@@ -942,7 +1004,10 @@ async def get_run_detail(
     run_id: str,
     project_id: str | None = None,
     include_results: bool = True,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> TestRunDetailDTO:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     _ = request
     _require_env_feature_enabled()
     db = await connection.get_connection()
@@ -1019,7 +1084,10 @@ async def list_run_results(
     sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     cursor: str | None = None,
     limit: int = Query(100, ge=1, le=500),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> RunResultPageDTO:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     _ = request
     _require_env_feature_enabled()
     cursor_data = _decode_cursor(cursor)
@@ -1099,7 +1167,11 @@ async def list_run_results(
 
 
 @test_visualizer_router.post("/mappings/import")
-async def import_mappings(request: Request) -> dict[str, Any]:
+async def import_mappings(
+    request: Request,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> dict[str, Any]:
     """Import externally generated semantic mappings."""
     _require_env_feature_enabled()
 
@@ -1122,6 +1194,7 @@ async def import_mappings(request: Request) -> dict[str, Any]:
         )
 
     project_id = str(body.get("project_id") or "").strip()
+    await _require_test_authorization(request_context, core_ports, "test.mapping:import", project_id=project_id)
     mapping_file = body.get("mapping_file")
     if not project_id:
         raise _error(
@@ -1184,7 +1257,13 @@ async def import_mappings(request: Request) -> dict[str, Any]:
 
 
 @test_visualizer_router.post("/mappings/backfill", response_model=BackfillTestMappingsResponse)
-async def backfill_mappings(request: Request, body: BackfillTestMappingsRequest) -> BackfillTestMappingsResponse:
+async def backfill_mappings(
+    request: Request,
+    body: BackfillTestMappingsRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> BackfillTestMappingsResponse:
+    await _require_test_authorization(request_context, core_ports, "test.mapping:backfill", project_id=body.project_id)
     _ = request
     return await _execute_backfill_mappings(body)
 
@@ -1194,7 +1273,10 @@ async def start_backfill_mappings(
     request: Request,
     background_tasks: BackgroundTasks,
     body: BackfillTestMappingsRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> dict[str, Any]:
+    await _require_test_authorization(request_context, core_ports, "test.mapping:backfill", project_id=body.project_id)
     _require_feature_enabled(body.project_id)
     app_state = getattr(getattr(request, "app", None), "state", None)
     sync_engine = getattr(app_state, "sync_engine", None)
@@ -1244,7 +1326,10 @@ async def mapping_resolver_detail(
     request: Request,
     project_id: str,
     run_limit: int = Query(30, ge=1, le=500),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> MappingResolverDetailResponseDTO:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
 
@@ -1304,7 +1389,10 @@ async def list_runs(
     since: str | None = None,
     cursor: str | None = None,
     limit: int = Query(20, ge=1, le=200),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> CursorPaginatedResponse[TestRunDTO]:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
     cursor_data = _decode_cursor(cursor)
@@ -1346,7 +1434,10 @@ async def get_test_history(
     limit: int = Query(50, ge=1, le=200),
     since: str | None = None,
     cursor: str | None = None,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> CursorPaginatedResponse[TestResultHistoryDTO]:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
     cursor_data = _decode_cursor(cursor)
@@ -1390,7 +1481,10 @@ async def get_feature_timeline(
     since: str | None = None,
     until: str | None = None,
     include_signals: bool = True,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> FeatureTimelineResponseDTO:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
     db = await connection.get_connection()
@@ -1426,7 +1520,10 @@ async def list_integrity_alerts(
     agent_session_id: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     cursor: str | None = None,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> CursorPaginatedResponse[TestIntegritySignalDTO]:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
     cursor_data = _decode_cursor(cursor)
@@ -1469,7 +1566,10 @@ async def correlate_run(
     request: Request,
     run_id: str,
     project_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> TestCorrelationResponseDTO:
+    await _require_test_authorization(request_context, core_ports, "test:read", project_id=project_id)
     _ = request
     _require_feature_enabled(project_id)
 

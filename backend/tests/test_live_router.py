@@ -2,6 +2,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import aiosqlite
@@ -16,7 +17,7 @@ from backend.adapters.storage.local import LocalStorageUnitOfWork
 from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext, WorkspaceScope
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveTopicCursor
-from backend.application.ports import CorePorts
+from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.application.live_updates.topics import encode_cursor, session_transcript_topic
 from backend.project_manager import ProjectManager
 from backend.routers.live import stream_live_updates
@@ -42,6 +43,23 @@ def _decode_frame(chunk: bytes) -> dict[str, object]:
     payload["event"] = fields["event"]
     payload["id"] = fields.get("id")
     return payload
+
+
+class _DenyOnlyAuthorizationPolicy:
+    def __init__(self, denied_action: str) -> None:
+        self.denied_action = denied_action
+        self.calls: list[dict[str, str | None]] = []
+
+    async def authorize(self, context, *, action, resource=None):
+        _ = context
+        self.calls.append({"action": action, "resource": resource})
+        if action == self.denied_action:
+            return AuthorizationDecision(
+                allowed=False,
+                code="permission_not_granted",
+                reason=f"{action} denied in test",
+            )
+        return AuthorizationDecision(allowed=True, code="permission_allowed")
 
 
 class LiveRouterTests(unittest.IsolatedAsyncioTestCase):
@@ -164,6 +182,30 @@ class LiveRouterTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(exc_info.exception.status_code, 400)
         self.assertIn("Cursor topics must be part of the subscription", str(exc_info.exception.detail))
+
+    async def test_execution_topic_requires_execution_read_permission(self) -> None:
+        policy = _DenyOnlyAuthorizationPolicy("execution:read")
+        denied_ports = replace(self.core_ports, authorization_policy=policy)
+
+        with self.assertRaises(HTTPException) as exc_info:
+            await stream_live_updates(
+                request=_FakeRequest(),
+                topic=["execution.run.run-1"],
+                cursor=[],
+                request_context=self.request_context,
+                core_ports=denied_ports,
+                live_broker=self.broker,
+            )
+
+        self.assertEqual(exc_info.exception.status_code, 403)
+        self.assertEqual(exc_info.exception.detail["action"], "execution:read")
+        self.assertEqual(
+            policy.calls,
+            [
+                {"action": "live.execution:subscribe", "resource": "project:project-1"},
+                {"action": "execution:read", "resource": "project:project-1"},
+            ],
+        )
 
     async def test_transcript_topic_replay_and_gap_snapshot_required(self) -> None:
         topic = session_transcript_topic("session-123")
