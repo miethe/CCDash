@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AuthSessionResponse } from '../../types';
-import { deriveAuthSessionStatus, evaluateAuthPermission } from '../AuthSessionContext';
+import {
+  deriveAuthSessionStatus,
+  evaluateAuthPermission,
+  isLocalAuthSession,
+  summarizeAuthMembershipContext,
+} from '../AuthSessionContext';
 import { ApiError } from '../../services/apiClient';
 
 const authenticatedSession: AuthSessionResponse = {
@@ -67,5 +72,45 @@ describe('AuthSessionContext helpers', () => {
       requireAll: true,
     })).toBe(false);
     expect(evaluateAuthPermission({ ...authenticatedSession, authenticated: false }, 'project:read')).toBe(false);
+  });
+
+  it('keeps local mode permissive for UI affordances only', () => {
+    const localSession: AuthSessionResponse = {
+      ...authenticatedSession,
+      authenticated: false,
+      groups: [],
+      scopes: [],
+      memberships: [],
+      provider: 'local',
+      authMode: 'local',
+      localMode: true,
+    };
+
+    expect(isLocalAuthSession(localSession)).toBe(true);
+    expect(evaluateAuthPermission(localSession, 'admin.settings:update')).toBe(true);
+    expect(evaluateAuthPermission(localSession, { scopes: ['execution.run:create'] })).toBe(true);
+  });
+
+  it('summarizes enterprise, team, workspace, project, and role context from memberships', () => {
+    const context = summarizeAuthMembershipContext({
+      ...authenticatedSession,
+      memberships: [
+        ...authenticatedSession.memberships,
+        {
+          workspaceId: 'workspace-2',
+          role: 'viewer',
+          scopeType: 'team',
+          scopeId: 'team-1',
+          enterpriseId: 'enterprise-1',
+          teamId: 'team-1',
+        },
+      ],
+    });
+
+    expect(context.enterpriseIds).toEqual(['enterprise-1']);
+    expect(context.teamIds).toEqual(['team-1']);
+    expect(context.workspaceIds).toEqual(['workspace-1', 'workspace-2']);
+    expect(context.projectIds).toEqual(['project-1']);
+    expect(context.roles).toEqual(['owner', 'reviewer', 'viewer']);
   });
 });

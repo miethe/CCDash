@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { LayoutDashboard, ListTodo, Settings, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow, GitBranch, WifiOff, RefreshCw, BookOpen, LogOut, ShieldAlert, ShieldCheck, UserRound } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Settings, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow, GitBranch, WifiOff, RefreshCw, BookOpen, LogOut, ShieldAlert, ShieldCheck, UserRound, Lock } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { useAppRuntime } from '../contexts/AppRuntimeContext';
-import { useAuthSession } from '../contexts/AuthSessionContext';
+import { summarizeAuthMembershipContext, useAuthSession } from '../contexts/AuthSessionContext';
 import { cn } from '../lib/utils';
 import { ProjectSelector } from './ProjectSelector';
 
@@ -12,6 +12,10 @@ const PLANNING_BRAND = 'oklch(75% 0.14 195)';
 const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`;
 const SIDEBAR_LOGO_SRC = assetUrl('/branding/ccdash-logo-primary.png');
 const SIDEBAR_ICON_SRC = assetUrl('/branding/ccdash-app-icon.png');
+const READ_ROLES = ['EA', 'TA', 'PM', 'PV', 'AA', 'owner', 'admin', 'operator', 'viewer', 'member', 'analyst', 'auditor'];
+const OPERATOR_ROLES = ['EA', 'TA', 'PM', 'owner', 'admin', 'operator', 'project_maintainer', 'project-maintainer', 'project:maintainer'];
+const ADMIN_ROLES = ['EA', 'TA', 'enterprise_admin', 'enterprise-admin', 'enterprise:admin', 'team_admin', 'team-admin', 'team:admin'];
+const EXECUTION_ROLES = [...OPERATOR_ROLES, 'XA', 'execution_approver', 'execution-approver', 'execution:approver'];
 
 const runtimeLabelForAuth = (auth: ReturnType<typeof useAuthSession>): string => {
   if (auth.session?.localMode || auth.metadata?.localMode || auth.session?.authMode === 'local' || auth.metadata?.authMode === 'local') {
@@ -35,6 +39,8 @@ const NavItem = ({
   active,
   isCollapsed,
   planningHighlight,
+  restricted,
+  restrictedHint,
 }: {
   to: string;
   icon: any;
@@ -42,6 +48,8 @@ const NavItem = ({
   active: boolean;
   isCollapsed: boolean;
   planningHighlight?: boolean;
+  restricted?: boolean;
+  restrictedHint?: string;
 }) => {
   const brandActiveStyle =
     planningHighlight && active
@@ -56,6 +64,11 @@ const NavItem = ({
   return (
     <Link
       to={to}
+      aria-disabled={restricted && !active ? true : undefined}
+      title={restricted ? restrictedHint : undefined}
+      onClick={(event) => {
+        if (restricted && !active) event.preventDefault();
+      }}
       style={brandActiveStyle}
       className={cn(
         'group relative flex items-center gap-3 rounded-lg border px-4 py-3 transition-all duration-200',
@@ -64,13 +77,17 @@ const NavItem = ({
           : !active
             ? 'border-transparent text-muted-foreground hover:bg-hover/60 hover:text-sidebar-foreground'
             : '',
+        restricted && !active && 'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground',
       )}
     >
       <Icon size={20} className="shrink-0" />
       {!isCollapsed && <span className="font-medium text-sm truncate">{label}</span>}
+      {!isCollapsed && restricted && (
+        <Lock size={13} className="ml-auto shrink-0 text-muted-foreground" aria-label="Permission required" />
+      )}
       {isCollapsed && (
         <div className="absolute left-16 z-50 whitespace-nowrap rounded-lg border border-panel-border bg-surface-overlay px-2 py-1 text-xs text-panel-foreground opacity-0 shadow-lg pointer-events-none transition-opacity group-hover:opacity-100">
-          {label}
+          {restricted ? `${label} - ${restrictedHint}` : label}
         </div>
       )}
     </Link>
@@ -192,6 +209,14 @@ const SessionContextPanel: React.FC<{
   const runtimeLabel = runtimeLabelForAuth(auth);
   const identityLabel = sessionIdentityLabel(auth);
   const isLocal = runtimeLabel === 'Local runtime';
+  const membershipContext = summarizeAuthMembershipContext(auth.session);
+  const contextItems = [
+    ...membershipContext.enterpriseIds.slice(0, 1).map(value => `Enterprise ${value}`),
+    ...membershipContext.teamIds.slice(0, 1).map(value => `Team ${value}`),
+    ...membershipContext.workspaceIds.slice(0, 1).map(value => `Workspace ${value}`),
+    ...membershipContext.projectIds.slice(0, 1).map(value => `Project ${value}`),
+  ];
+  const roleLabel = membershipContext.roles.length > 0 ? membershipContext.roles.slice(0, 2).join(', ') : '';
 
   if (isCollapsed) {
     return (
@@ -209,6 +234,24 @@ const SessionContextPanel: React.FC<{
           <span>{runtimeLabel}</span>
         </div>
         <div className="mt-1 truncate text-sm font-medium text-sidebar-foreground">{identityLabel}</div>
+        {isLocal ? (
+          <div className="mt-2 rounded-md border border-sidebar-border bg-sidebar/80 px-2 py-1 text-xs text-muted-foreground">
+            Local mode keeps workspace actions available.
+          </div>
+        ) : auth.authenticated && (
+          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {contextItems.length > 0 && (
+              <div className="truncate" title={contextItems.join(' / ')}>
+                {contextItems.join(' / ')}
+              </div>
+            )}
+            {roleLabel && (
+              <div className="truncate" title={membershipContext.roles.join(', ')}>
+                Roles: {roleLabel}
+              </div>
+            )}
+          </div>
+        )}
         {!isLocal && auth.authenticated && (
           <button
             type="button"
@@ -232,6 +275,12 @@ const AuthenticatedLayout: React.FC<{ children: React.ReactNode; auth: ReturnTyp
   const unreadCount = notifications.filter(n => !n.isRead).length;
   const isPlanningRoute = location.pathname.startsWith('/planning');
   const authDataError = error?.includes('API error: 401') || error?.includes('API error: 403');
+  const canAccessExecution = auth.hasPermission({ scopes: ['execution:read'], roles: [...READ_ROLES, ...EXECUTION_ROLES] });
+  const canAccessCodebase = auth.hasPermission({ scopes: ['codebase:read_tree', 'codebase:file_read', 'codebase:activity_read'], roles: READ_ROLES });
+  const canAccessSessionMappings = auth.hasPermission({ scopes: ['session_mapping:read', 'session_mapping:diagnose'], roles: READ_ROLES });
+  const canAccessOperations = auth.hasPermission({ scopes: ['cache:read_status', 'cache.operation:read'], roles: READ_ROLES });
+  const canAccessSettings = auth.hasPermission({ scopes: ['admin.settings:read', 'project:update', 'integration:read'], roles: [...ADMIN_ROLES, ...OPERATOR_ROLES, 'IO', 'integration_operator'] });
+  const permissionHint = 'Permission hint only; backend authorization remains authoritative.';
 
   return (
     <div className="flex h-screen overflow-hidden bg-app-background text-app-foreground">
@@ -274,14 +323,14 @@ const AuthenticatedLayout: React.FC<{ children: React.ReactNode; auth: ReturnTyp
           <NavItem to="/dashboard" icon={LayoutDashboard} label="Overview" active={location.pathname === '/dashboard'} isCollapsed={isCollapsed} />
           <NavItem to="/planning" icon={GitBranch} label="Planning" active={location.pathname.startsWith('/planning')} isCollapsed={isCollapsed} planningHighlight />
           <NavItem to="/board" icon={ListTodo} label="Project Board" active={location.pathname === '/board'} isCollapsed={isCollapsed} />
-          <NavItem to="/execution" icon={Command} label="Execution" active={location.pathname === '/execution'} isCollapsed={isCollapsed} />
+          <NavItem to="/execution" icon={Command} label="Execution" active={location.pathname === '/execution'} isCollapsed={isCollapsed} restricted={!canAccessExecution} restrictedHint={permissionHint} />
           <NavItem to="/tests" icon={TestTube2} label="Testing" active={location.pathname === '/tests'} isCollapsed={isCollapsed} />
           <NavItem to="/plans" icon={FileText} label="Documents" active={location.pathname === '/plans'} isCollapsed={isCollapsed} />
           <NavItem to="/docs" icon={BookOpen} label="Docs" active={location.pathname === '/docs'} isCollapsed={isCollapsed} />
           <NavItem to="/sessions" icon={Terminal} label="Session Forensics" active={location.pathname === '/sessions'} isCollapsed={isCollapsed} />
-          <NavItem to="/codebase" icon={FolderTree} label="Codebase Explorer" active={location.pathname === '/codebase'} isCollapsed={isCollapsed} />
-          <NavItem to="/session-mappings" icon={SlidersHorizontal} label="Session Mappings" active={location.pathname === '/session-mappings'} isCollapsed={isCollapsed} />
-          <NavItem to="/ops" icon={Activity} label="Operations" active={location.pathname === '/ops'} isCollapsed={isCollapsed} />
+          <NavItem to="/codebase" icon={FolderTree} label="Codebase Explorer" active={location.pathname === '/codebase'} isCollapsed={isCollapsed} restricted={!canAccessCodebase} restrictedHint={permissionHint} />
+          <NavItem to="/session-mappings" icon={SlidersHorizontal} label="Session Mappings" active={location.pathname === '/session-mappings'} isCollapsed={isCollapsed} restricted={!canAccessSessionMappings} restrictedHint={permissionHint} />
+          <NavItem to="/ops" icon={Activity} label="Operations" active={location.pathname === '/ops'} isCollapsed={isCollapsed} restricted={!canAccessOperations} restrictedHint={permissionHint} />
           <NavItem to="/analytics" icon={LineChart} label="Analytics" active={location.pathname === '/analytics'} isCollapsed={isCollapsed} />
           <NavItem to="/workflows" icon={Workflow} label="Workflows" active={location.pathname.startsWith('/workflows')} isCollapsed={isCollapsed} />
           <NavItem to="/skills" icon={Database} label="SkillMeat Context" active={location.pathname === '/skills'} isCollapsed={isCollapsed} />
@@ -292,11 +341,17 @@ const AuthenticatedLayout: React.FC<{ children: React.ReactNode; auth: ReturnTyp
         <div className="space-y-1 border-t border-sidebar-border p-4">
           <Link
             to="/settings"
+            aria-disabled={!canAccessSettings ? true : undefined}
+            title={!canAccessSettings ? permissionHint : undefined}
+            onClick={(event) => {
+              if (!canAccessSettings && location.pathname !== '/settings') event.preventDefault();
+            }}
             className={cn(
               'group relative flex items-center justify-between rounded-lg border px-4 py-3 transition-colors',
               location.pathname === '/settings'
                 ? 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-sm'
                 : 'border-transparent text-muted-foreground hover:bg-hover/60 hover:text-sidebar-foreground',
+              !canAccessSettings && location.pathname !== '/settings' && 'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground',
             )}
           >
             <div className="flex items-center gap-3">
@@ -309,7 +364,7 @@ const AuthenticatedLayout: React.FC<{ children: React.ReactNode; auth: ReturnTyp
               </span>
             )}
           </Link>
-          <NavItem to="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} isCollapsed={isCollapsed} />
+          <NavItem to="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} isCollapsed={isCollapsed} restricted={!canAccessSettings} restrictedHint={permissionHint} />
         </div>
         <SessionContextPanel auth={auth} isCollapsed={isCollapsed} />
       </aside>

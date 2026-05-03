@@ -11,6 +11,16 @@ const state = vi.hoisted(() => ({
 
 vi.mock('../../contexts/AuthSessionContext', () => ({
   useAuthSession: () => state.auth,
+  summarizeAuthMembershipContext: (session: any) => {
+    const memberships = session?.memberships ?? [];
+    return {
+      enterpriseIds: Array.from(new Set(memberships.map((m: any) => m.enterpriseId || (m.scopeType === 'enterprise' ? m.scopeId : '')).filter(Boolean))).sort(),
+      teamIds: Array.from(new Set(memberships.map((m: any) => m.teamId || (m.scopeType === 'team' ? m.scopeId : '')).filter(Boolean))).sort(),
+      workspaceIds: Array.from(new Set(memberships.map((m: any) => m.workspaceId || (m.scopeType === 'workspace' ? m.scopeId : '')).filter(Boolean))).sort(),
+      projectIds: Array.from(new Set(memberships.map((m: any) => (m.scopeType === 'project' ? m.scopeId : '')).filter(Boolean))).sort(),
+      roles: Array.from(new Set(memberships.map((m: any) => m.role).filter(Boolean))).sort(),
+    };
+  },
 }));
 
 vi.mock('../../contexts/DataContext', () => ({
@@ -170,6 +180,57 @@ describe('Layout auth shell', () => {
     expect(html).toContain('Hosted session');
     expect(html).toContain('User One');
     expect(html).toContain('Sign out');
+  });
+
+  it('renders hosted membership context in the session shell', () => {
+    state.auth = {
+      ...baseAuth(),
+      session: {
+        ...baseAuth().session,
+        memberships: [
+          {
+            workspaceId: 'workspace-1',
+            role: 'PM',
+            scopeType: 'project',
+            scopeId: 'project-1',
+            enterpriseId: 'enterprise-1',
+            teamId: 'team-1',
+          },
+        ],
+      },
+      principal: {
+        ...baseAuth().principal,
+        memberships: [
+          {
+            workspaceId: 'workspace-1',
+            role: 'PM',
+            scopeType: 'project',
+            scopeId: 'project-1',
+            enterpriseId: 'enterprise-1',
+            teamId: 'team-1',
+          },
+        ],
+      },
+    };
+
+    const html = renderLayout();
+
+    expect(html).toContain('Enterprise enterprise-1 / Team team-1 / Workspace workspace-1 / Project project-1');
+    expect(html).toContain('Roles: PM');
+  });
+
+  it('marks protected hosted nav items as permission-gated without blocking the shell', () => {
+    state.auth = {
+      ...baseAuth(),
+      hasPermission: vi.fn(() => false),
+    };
+
+    const html = renderLayout('/dashboard');
+
+    expect(html).toContain('APP CONTENT');
+    expect(html).toContain('Execution');
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('Permission hint only; backend authorization remains authoritative.');
   });
 
   it('renders shell-level messaging for unauthorized hosted sessions', () => {

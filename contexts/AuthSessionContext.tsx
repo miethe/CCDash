@@ -17,6 +17,14 @@ export interface AuthPermissionRequest {
   requireAll?: boolean;
 }
 
+export interface AuthSessionMembershipContext {
+  enterpriseIds: string[];
+  teamIds: string[];
+  workspaceIds: string[];
+  projectIds: string[];
+  roles: string[];
+}
+
 export interface AuthSignInOptions {
   redirectTo?: string;
   redirect?: boolean;
@@ -54,10 +62,46 @@ export function deriveAuthSessionStatus(session: AuthSessionResponse | null, err
   return 'unauthenticated';
 }
 
+export function isLocalAuthSession(session: AuthSessionResponse | null): boolean {
+  return Boolean(session?.localMode || session?.authMode === 'local' || session?.provider === 'local');
+}
+
+export function summarizeAuthMembershipContext(session: AuthSessionResponse | null): AuthSessionMembershipContext {
+  const memberships = session?.memberships ?? [];
+  const enterpriseIds = new Set<string>();
+  const teamIds = new Set<string>();
+  const workspaceIds = new Set<string>();
+  const projectIds = new Set<string>();
+  const roles = new Set<string>();
+
+  memberships.forEach(membership => {
+    if (membership.enterpriseId) enterpriseIds.add(membership.enterpriseId);
+    if (membership.teamId) teamIds.add(membership.teamId);
+    if (membership.workspaceId) workspaceIds.add(membership.workspaceId);
+    if (membership.role) roles.add(membership.role);
+    if (membership.scopeType === 'enterprise' && membership.scopeId) enterpriseIds.add(membership.scopeId);
+    if (membership.scopeType === 'team' && membership.scopeId) teamIds.add(membership.scopeId);
+    if (membership.scopeType === 'workspace' && membership.scopeId) workspaceIds.add(membership.scopeId);
+    if (membership.scopeType === 'project' && membership.scopeId) projectIds.add(membership.scopeId);
+  });
+
+  return {
+    enterpriseIds: Array.from(enterpriseIds).sort(),
+    teamIds: Array.from(teamIds).sort(),
+    workspaceIds: Array.from(workspaceIds).sort(),
+    projectIds: Array.from(projectIds).sort(),
+    roles: Array.from(roles).sort(),
+  };
+}
+
 export function evaluateAuthPermission(
   session: AuthSessionResponse | null,
   request: string | AuthPermissionRequest,
 ): boolean {
+  if (isLocalAuthSession(session)) {
+    return true;
+  }
+
   if (!session?.authenticated) {
     return false;
   }

@@ -1,12 +1,32 @@
 import React, { useState } from 'react';
-import { ChevronDown, FolderPlus, Check } from 'lucide-react';
+import { ChevronDown, FolderPlus, Check, Lock } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
+import { summarizeAuthMembershipContext, useAuthSession } from '../contexts/AuthSessionContext';
 import { AddProjectModal } from './AddProjectModal';
 
-export const ProjectSelector: React.FC = () => {
+const PROJECT_OPERATOR_ROLES = ['EA', 'TA', 'PM', 'owner', 'admin', 'operator', 'project_maintainer', 'project-maintainer', 'project:maintainer'];
+
+export const ProjectSelector: React.FC<{ initialOpen?: boolean }> = ({ initialOpen = false }) => {
     const { projects, activeProject, switchProject } = useData();
-    const [isOpen, setIsOpen] = useState(false);
+    const auth = useAuthSession();
+    const [isOpen, setIsOpen] = useState(initialOpen);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const canCreateProject = auth.hasPermission({
+        scopes: ['project:create'],
+        roles: ['EA', 'TA', ...PROJECT_OPERATOR_ROLES],
+    });
+    const membershipContext = summarizeAuthMembershipContext(auth.session);
+    const activeProjectMembership = (auth.session?.memberships ?? []).find(membership => (
+        membership.scopeType === 'project' && membership.scopeId === activeProject?.id
+    ));
+    const contextLine = auth.session?.localMode || auth.metadata?.localMode
+        ? 'Local workspace controls'
+        : [
+            membershipContext.enterpriseIds[0] ? `Ent ${membershipContext.enterpriseIds[0]}` : '',
+            membershipContext.teamIds[0] ? `Team ${membershipContext.teamIds[0]}` : '',
+            membershipContext.workspaceIds[0] ? `Workspace ${membershipContext.workspaceIds[0]}` : '',
+            activeProjectMembership?.role ? `Role ${activeProjectMembership.role}` : membershipContext.roles[0] ? `Role ${membershipContext.roles[0]}` : '',
+        ].filter(Boolean).join(' / ');
 
     const handleSwitch = async (projectId: string) => {
         if (projectId !== activeProject?.id) {
@@ -44,8 +64,15 @@ export const ProjectSelector: React.FC = () => {
                                     onClick={() => handleSwitch(p.id)}
                                     className="w-full text-left px-3 py-2 hover:bg-slate-700 flex items-center justify-between group transition-colors"
                                 >
-                                    <span className="text-sm text-slate-300 group-hover:text-white truncate">
-                                        {p.name}
+                                    <span className="min-w-0">
+                                        <span className="block text-sm text-slate-300 group-hover:text-white truncate">
+                                            {p.name}
+                                        </span>
+                                        {p.id === activeProject?.id && contextLine && (
+                                            <span className="mt-0.5 block truncate text-[10px] text-slate-500">
+                                                {contextLine}
+                                            </span>
+                                        )}
                                     </span>
                                     {activeProject?.id === p.id && (
                                         <Check size={14} className="text-indigo-400 flex-shrink-0 ml-2" />
@@ -56,13 +83,18 @@ export const ProjectSelector: React.FC = () => {
                         <div className="border-t border-slate-700">
                             <button
                                 onClick={() => {
+                                    if (!canCreateProject) return;
                                     setIsOpen(false);
                                     setIsModalOpen(true);
                                 }}
-                                className="w-full text-left px-3 py-2 hover:bg-slate-700 flex items-center text-indigo-400 hover:text-indigo-300 transition-colors"
+                                disabled={!canCreateProject}
+                                title={!canCreateProject ? 'Permission hint only; backend authorization remains authoritative.' : undefined}
+                                className="w-full text-left px-3 py-2 hover:bg-slate-700 flex items-center text-indigo-400 hover:text-indigo-300 transition-colors disabled:cursor-not-allowed disabled:text-slate-500 disabled:hover:bg-transparent"
                             >
-                                <FolderPlus size={14} className="mr-2" />
-                                <span className="text-sm font-medium">Add New Project</span>
+                                {canCreateProject ? <FolderPlus size={14} className="mr-2" /> : <Lock size={14} className="mr-2" />}
+                                <span className="text-sm font-medium">
+                                    {canCreateProject ? 'Add New Project' : 'Add Project Requires Permission'}
+                                </span>
                             </button>
                         </div>
                     </div>

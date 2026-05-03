@@ -9,17 +9,18 @@ plan_ref: docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-
 execution_model: batch-parallel
 phase: 6
 title: Frontend Session UX and Protected Shell
-status: pending
+status: completed
 started: '2026-05-03'
 completed: null
 commit_refs:
 - b8b96c1
 - 52e231d
+- 78d0da6
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -100,7 +101,7 @@ tasks:
 - id: AUTH-504
   description: Update enterprise/team/workspace/project selection and sensitive UI
     affordances so they reflect backend permissions without relying on UI-only protection.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -110,10 +111,14 @@ tasks:
   priority: high
   assigned_model: codex
   model_effort: medium
-  started: null
-  completed: null
-  evidence: []
-  verified_by: []
+  started: '2026-05-03T17:48:30Z'
+  completed: '2026-05-03T17:59:25Z'
+  evidence:
+  - test: pnpm exec vitest run contexts/__tests__/AuthSessionContext.test.tsx components/__tests__/LayoutAuthShell.test.tsx
+      components/__tests__/ProjectSelectorAuth.test.tsx components/__tests__/FeatureExecutionWorkbenchSurface.test.tsx
+      components/__tests__/FeatureSurfaceRegressionMatrix.test.tsx
+  verified_by:
+  - codex-orchestrator
 parallelization:
   batch_1:
   - AUTH-501
@@ -135,7 +140,7 @@ success_criteria:
 - Protected request paths do not bypass the shared auth-aware transport.
 - Enterprise/team/user context is visible and switchable where appropriate without
   becoming the source of truth for authorization.
-progress: 75
+progress: 100
 updated: '2026-05-03'
 ---
 

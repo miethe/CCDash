@@ -13,6 +13,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
+import { useAuthSession } from '../contexts/AuthSessionContext';
 import {
   CacheStatusResponse,
   LinkAuditResponse,
@@ -37,6 +38,9 @@ import {
 } from '../services/skillmeat';
 
 const API_BASE = '/api';
+const OPS_OPERATOR_ROLES = ['EA', 'TA', 'PM', 'owner', 'admin', 'operator', 'project_maintainer', 'project-maintainer', 'project:maintainer'];
+const OPS_AUDIT_ROLES = [...OPS_OPERATOR_ROLES, 'AA', 'analyst', 'auditor'];
+const OPS_INTEGRATION_ROLES = ['EA', 'TA', 'IO', 'integration_operator', 'integration-operator', 'integration:operator'];
 
 async function fetchJson<T>(path: string): Promise<T> {
   return apiRequestJson<T>(`${API_BASE}${path}`);
@@ -262,6 +266,7 @@ function mappingProgressPercent(operation: SyncOperation | null): number {
 
 export const OpsPanel: React.FC = () => {
   const { projects, activeProject, sessions, sessionTotal, documents, tasks, features, refreshAll } = useData();
+  const auth = useAuthSession();
   const apiClient = useMemo(() => createApiClient(), []);
 
   const [status, setStatus] = useState<CacheStatusResponse | null>(null);
@@ -305,6 +310,17 @@ export const OpsPanel: React.FC = () => {
   const toastTimerIdsRef = useRef<number[]>([]);
   const skillMeatConfig = useMemo(() => normalizeSkillMeatConfig(activeProject), [activeProject]);
   const activeProjectId = status?.projectId || activeProject?.id || '';
+  const canTriggerCacheSync = auth.hasPermission({ scopes: ['cache.sync:trigger'], roles: OPS_OPERATOR_ROLES });
+  const canRebuildLinks = auth.hasPermission({ scopes: ['cache.links:rebuild'], roles: OPS_OPERATOR_ROLES });
+  const canSyncPaths = auth.hasPermission({ scopes: ['cache.paths:sync'], roles: ['EA', 'enterprise_admin', 'enterprise-admin', 'enterprise:admin'] });
+  const canRunLinkAudit = auth.hasPermission({ scopes: ['link_audit:run'], roles: OPS_AUDIT_ROLES });
+  const canRunTestIngest = auth.hasPermission({ scopes: ['test.sync:trigger', 'test.run:ingest'], roles: OPS_OPERATOR_ROLES });
+  const canRunMappingBackfill = auth.hasPermission({ scopes: ['test.mapping:backfill'], roles: OPS_OPERATOR_ROLES });
+  const canRunSkillMeatSync = auth.hasPermission({ scopes: ['integration.skillmeat:sync', 'integration.skillmeat:backfill'], roles: OPS_INTEGRATION_ROLES });
+  const canGenerateMemoryDrafts = auth.hasPermission({ scopes: ['integration.skillmeat.memory:generate'], roles: OPS_INTEGRATION_ROLES });
+  const canReviewMemoryDrafts = auth.hasPermission({ scopes: ['integration.skillmeat.memory:review'], roles: OPS_INTEGRATION_ROLES });
+  const canPublishMemoryDrafts = auth.hasPermission({ scopes: ['integration.skillmeat.memory:publish'], roles: OPS_INTEGRATION_ROLES });
+  const protectedActionHint = 'Permission hint only; backend authorization remains authoritative.';
 
   const loadOverview = async () => {
     const [statusPayload, opsPayload, healthPayload] = await Promise.all([
@@ -323,6 +339,10 @@ export const OpsPanel: React.FC = () => {
   };
 
   const runSync = async (force: boolean) => {
+    if (!canTriggerCacheSync) {
+      setError('Your session does not advertise cache sync permission.');
+      return;
+    }
     setBusyAction('sync');
     setError(null);
     try {
@@ -342,6 +362,10 @@ export const OpsPanel: React.FC = () => {
   };
 
   const runRebuildLinks = async () => {
+    if (!canRebuildLinks) {
+      setError('Your session does not advertise link rebuild permission.');
+      return;
+    }
     setBusyAction('rebuild-links');
     setError(null);
     try {
@@ -361,6 +385,10 @@ export const OpsPanel: React.FC = () => {
   };
 
   const runPathSync = async () => {
+    if (!canSyncPaths) {
+      setError('Your session does not advertise targeted path sync permission.');
+      return;
+    }
     const paths = pathSyncRaw
       .split('\n')
       .map(line => line.trim())
@@ -392,6 +420,10 @@ export const OpsPanel: React.FC = () => {
   };
 
   const runAudit = async () => {
+    if (!canRunLinkAudit) {
+      setError('Your session does not advertise link audit permission.');
+      return;
+    }
     setBusyAction('audit');
     setError(null);
     try {
@@ -491,6 +523,10 @@ export const OpsPanel: React.FC = () => {
   }, [activeProjectId, memoryDraftsLimit, memoryDraftsOffset]);
 
   const generateMemoryDrafts = useCallback(async () => {
+    if (!canGenerateMemoryDrafts) {
+      setError('Your session does not advertise SkillMeat memory generation permission.');
+      return;
+    }
     if (!activeProjectId) {
       setError('No active project selected for memory draft generation.');
       return;
@@ -517,9 +553,13 @@ export const OpsPanel: React.FC = () => {
     } finally {
       setBusyAction(null);
     }
-  }, [activeProjectId, loadMemoryDrafts, memoryDraftsLimit, memoryDraftsSessionId, pushToast]);
+  }, [activeProjectId, canGenerateMemoryDrafts, loadMemoryDrafts, memoryDraftsLimit, memoryDraftsSessionId, pushToast]);
 
   const reviewMemoryDraft = useCallback(async (draft: SessionMemoryDraft, decision: 'approved' | 'rejected') => {
+    if (!canReviewMemoryDrafts) {
+      setError('Your session does not advertise SkillMeat memory review permission.');
+      return;
+    }
     if (!activeProjectId) {
       setError('No active project selected for memory draft review.');
       return;
@@ -550,9 +590,13 @@ export const OpsPanel: React.FC = () => {
     } finally {
       setBusyAction(null);
     }
-  }, [activeProjectId, memoryDraftReviewNotes, pushToast]);
+  }, [activeProjectId, canReviewMemoryDrafts, memoryDraftReviewNotes, pushToast]);
 
   const publishMemoryDraft = useCallback(async (draft: SessionMemoryDraft) => {
+    if (!canPublishMemoryDrafts) {
+      setError('Your session does not advertise SkillMeat memory publish permission.');
+      return;
+    }
     if (!activeProjectId) {
       setError('No active project selected for memory draft publishing.');
       return;
@@ -582,9 +626,13 @@ export const OpsPanel: React.FC = () => {
     } finally {
       setBusyAction(null);
     }
-  }, [activeProjectId, memoryDraftPublishNotes, pushToast]);
+  }, [activeProjectId, canPublishMemoryDrafts, memoryDraftPublishNotes, pushToast]);
 
   const runSkillMeatRefresh = useCallback(async () => {
+    if (!canRunSkillMeatSync) {
+      setError('Your session does not advertise SkillMeat sync permission.');
+      return;
+    }
     const projectId = activeProjectId;
     if (!projectId) {
       setError('No active project selected for SkillMeat refresh.');
@@ -624,7 +672,7 @@ export const OpsPanel: React.FC = () => {
     } finally {
       setBusyAction(null);
     }
-  }, [activeProjectId, activeTab, loadMemoryDrafts, loadOverview, memoryDraftsLimit, pushToast, refreshAll, skillMeatConfig]);
+  }, [activeProjectId, activeTab, canRunSkillMeatSync, loadMemoryDrafts, loadOverview, memoryDraftsLimit, pushToast, refreshAll, skillMeatConfig]);
 
   const loadTelemetryStatus = useCallback(async (quiet = false) => {
     try {
@@ -704,6 +752,10 @@ export const OpsPanel: React.FC = () => {
   const mappingBackfillPct = mappingProgressPercent(trackedBackfillOperation);
 
   const runMappingBackfillOnly = async () => {
+    if (!canRunMappingBackfill) {
+      setError('Your session does not advertise test mapping backfill permission.');
+      return;
+    }
     const projectId = status?.projectId || activeProject?.id || '';
     if (!projectId) {
       setError('No active project selected for mapping backfill.');
@@ -729,6 +781,10 @@ export const OpsPanel: React.FC = () => {
   };
 
   const runTestIngestAndMapping = async () => {
+    if (!canRunTestIngest || !canRunMappingBackfill) {
+      setError('Your session does not advertise test ingestion and mapping permissions.');
+      return;
+    }
     const projectId = status?.projectId || activeProject?.id || '';
     if (!projectId) {
       setError('No active project selected for test ingest/mapping.');
@@ -915,7 +971,8 @@ export const OpsPanel: React.FC = () => {
     { label: 'Tasks', value: String(tasks.length), icon: CheckCircle2 },
     { label: 'Features', value: String(features.length), icon: Gauge },
   ];
-  const disableBackfillActions = busyAction !== null || mappingBackfillRunning;
+  const disableBackfillActions = busyAction !== null || mappingBackfillRunning || !canRunMappingBackfill;
+  const disableTestIngestAndMapping = busyAction !== null || mappingBackfillRunning || !canRunTestIngest || !canRunMappingBackfill;
 
   return (
     <div className="space-y-6">
@@ -958,6 +1015,12 @@ export const OpsPanel: React.FC = () => {
           Integrations
         </button>
       </div>
+
+      {!auth.session?.localMode && !auth.metadata?.localMode && (
+        <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3 text-xs text-slate-400">
+          Protected controls are permission-aware UI affordances only. Backend authorization remains authoritative.
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
@@ -1011,7 +1074,8 @@ export const OpsPanel: React.FC = () => {
           <div className="flex flex-wrap gap-3">
             <button
               onClick={() => runSync(true)}
-              disabled={busyAction !== null}
+              disabled={busyAction !== null || !canTriggerCacheSync}
+              title={!canTriggerCacheSync ? protectedActionHint : undefined}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-60"
             >
               <Play size={14} />
@@ -1019,7 +1083,8 @@ export const OpsPanel: React.FC = () => {
             </button>
             <button
               onClick={() => runSync(false)}
-              disabled={busyAction !== null}
+              disabled={busyAction !== null || !canTriggerCacheSync}
+              title={!canTriggerCacheSync ? protectedActionHint : undefined}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-700 disabled:opacity-60"
             >
               <Play size={14} />
@@ -1027,7 +1092,8 @@ export const OpsPanel: React.FC = () => {
             </button>
             <button
               onClick={runRebuildLinks}
-              disabled={busyAction !== null}
+              disabled={busyAction !== null || !canRebuildLinks}
+              title={!canRebuildLinks ? protectedActionHint : undefined}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-700/80 border border-emerald-500/30 text-emerald-100 hover:bg-emerald-700 disabled:opacity-60"
             >
               <Wrench size={14} />
@@ -1056,7 +1122,8 @@ export const OpsPanel: React.FC = () => {
                 </select>
                 <button
                   onClick={runPathSync}
-                  disabled={busyAction !== null}
+                  disabled={busyAction !== null || !canSyncPaths}
+                  title={!canSyncPaths ? protectedActionHint : undefined}
                   className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-700 disabled:opacity-60"
                 >
                   <Play size={12} />
@@ -1293,7 +1360,8 @@ export const OpsPanel: React.FC = () => {
           <h3 className="text-lg font-semibold text-slate-100">Link Audit</h3>
           <button
             onClick={runAudit}
-            disabled={busyAction !== null}
+            disabled={busyAction !== null || !canRunLinkAudit}
+            title={!canRunLinkAudit ? protectedActionHint : undefined}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-700 disabled:opacity-60"
           >
             <Server size={14} />
@@ -1463,7 +1531,8 @@ export const OpsPanel: React.FC = () => {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={runTestIngestAndMapping}
-                disabled={disableBackfillActions}
+                disabled={disableTestIngestAndMapping}
+                title={(!canRunTestIngest || !canRunMappingBackfill) ? protectedActionHint : undefined}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-700/80 border border-cyan-500/30 text-cyan-100 hover:bg-cyan-700 disabled:opacity-60"
               >
                 <TestTube2 size={14} />
@@ -1472,6 +1541,7 @@ export const OpsPanel: React.FC = () => {
               <button
                 onClick={runMappingBackfillOnly}
                 disabled={disableBackfillActions}
+                title={!canRunMappingBackfill ? protectedActionHint : undefined}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-700/80 border border-indigo-500/30 text-indigo-100 hover:bg-indigo-700 disabled:opacity-60"
               >
                 <Wrench size={14} />
@@ -1618,7 +1688,8 @@ export const OpsPanel: React.FC = () => {
                   </button>
                   <button
                     onClick={() => { void generateMemoryDrafts(); }}
-                    disabled={busyAction !== null}
+                    disabled={busyAction !== null || !canGenerateMemoryDrafts}
+                    title={!canGenerateMemoryDrafts ? protectedActionHint : undefined}
                     className="inline-flex items-center gap-2 rounded-lg border border-fuchsia-500/35 bg-fuchsia-500/15 px-4 py-2 text-sm font-medium text-fuchsia-100 hover:bg-fuchsia-500/20 disabled:opacity-60"
                   >
                     <Play size={14} />
@@ -1819,7 +1890,8 @@ export const OpsPanel: React.FC = () => {
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => { void reviewMemoryDraft(selectedMemoryDraft, 'approved'); }}
-                      disabled={busyAction !== null}
+                      disabled={busyAction !== null || !canReviewMemoryDrafts}
+                      title={!canReviewMemoryDrafts ? protectedActionHint : undefined}
                       className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-60"
                     >
                       <CheckCircle2 size={14} />
@@ -1827,7 +1899,8 @@ export const OpsPanel: React.FC = () => {
                     </button>
                     <button
                       onClick={() => { void reviewMemoryDraft(selectedMemoryDraft, 'rejected'); }}
-                      disabled={busyAction !== null}
+                      disabled={busyAction !== null || !canReviewMemoryDrafts}
+                      title={!canReviewMemoryDrafts ? protectedActionHint : undefined}
                       className="inline-flex items-center gap-2 rounded-lg border border-rose-500/35 bg-rose-500/15 px-4 py-2 text-sm font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
                     >
                       <AlertTriangle size={14} />
@@ -1835,7 +1908,8 @@ export const OpsPanel: React.FC = () => {
                     </button>
                     <button
                       onClick={() => { void publishMemoryDraft(selectedMemoryDraft); }}
-                      disabled={busyAction !== null || selectedMemoryDraft.status !== 'approved'}
+                      disabled={busyAction !== null || selectedMemoryDraft.status !== 'approved' || !canPublishMemoryDrafts}
+                      title={!canPublishMemoryDrafts ? protectedActionHint : undefined}
                       className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-60"
                     >
                       <Server size={14} />
@@ -1877,7 +1951,8 @@ export const OpsPanel: React.FC = () => {
                 </div>
                 <button
                   onClick={() => { void runSkillMeatRefresh(); }}
-                  disabled={busyAction !== null}
+                  disabled={busyAction !== null || !canRunSkillMeatSync}
+                  title={!canRunSkillMeatSync ? protectedActionHint : undefined}
                   className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-60"
                 >
                   <RefreshCw size={14} className={busyAction === 'skillmeat-refresh' ? 'animate-spin' : ''} />
