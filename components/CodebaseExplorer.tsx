@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Folder, FileText, FolderTree, Search, RefreshCw, ExternalLink, Clock, Users, GitBranch, Link as LinkIcon } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { CodebaseFileDetail, CodebaseFileSummary, CodebaseTreeNode } from '../types';
+import { getCodebaseFileDetail, getCodebaseTree, listCodebaseFiles } from '../services/codebase';
 
 const normalizePath = (value: string): string =>
   (value || '').replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '').trim();
@@ -107,9 +108,7 @@ export const CodebaseExplorer: React.FC = () => {
           include_untouched: includeUntouched ? 'true' : 'false',
           search,
         });
-        const res = await fetch(`/api/codebase/tree?${params.toString()}`);
-        if (!res.ok) throw new Error(`Tree load failed (${res.status})`);
-        const data = await res.json();
+        const data = await getCodebaseTree<CodebaseTreeNode>(params);
         if (!cancelled) setTreeNodes(Array.isArray(data.nodes) ? data.nodes : []);
       } catch (error) {
         if (!cancelled) setTreeNodes([]);
@@ -140,9 +139,7 @@ export const CodebaseExplorer: React.FC = () => {
           offset: String(offset),
           limit: String(limit),
         });
-        const res = await fetch(`/api/codebase/files?${params.toString()}`);
-        if (!res.ok) throw new Error(`File list load failed (${res.status})`);
-        const data = await res.json();
+        const data = await listCodebaseFiles<CodebaseFileSummary>(params);
         if (cancelled) return;
         setFileItems(Array.isArray(data.items) ? data.items : []);
         setTotalFiles(Number(data.total) || 0);
@@ -172,10 +169,7 @@ export const CodebaseExplorer: React.FC = () => {
     const load = async () => {
       setLoadingDetail(true);
       try {
-        const encodedPath = path.split('/').map(encodeURIComponent).join('/');
-        const res = await fetch(`/api/codebase/files/${encodedPath}?activity_limit=120`);
-        if (!res.ok) throw new Error(`Detail load failed (${res.status})`);
-        const data = await res.json();
+        const data = await getCodebaseFileDetail<CodebaseFileDetail>(path, { activityLimit: 120 });
         if (!cancelled) setSelectedDetail(data);
       } catch (error) {
         if (!cancelled) setSelectedDetail(null);

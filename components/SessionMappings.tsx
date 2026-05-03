@@ -7,6 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Button } from './ui/button';
 import { SketchPicker, type ColorResult } from 'react-color';
 import { dynamicIconImports } from 'lucide-react/dynamic';
+import { apiRequestJson } from '../services/apiClient';
 
 type MatchScope = 'command' | 'args' | 'command_and_args' | 'message';
 type TranscriptKind = 'command' | 'artifact' | 'action';
@@ -182,23 +183,13 @@ export const SessionMappings: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [mappingsRes, diagnosticsRes] = await Promise.all([
-        fetch('/api/session-mappings'),
-        fetch('/api/session-mappings/diagnostics'),
+      const [mappingsData, diagnosticsData] = await Promise.all([
+        apiRequestJson<SessionMappingRule[]>('/api/session-mappings'),
+        apiRequestJson<SessionMappingsDiagnostics>('/api/session-mappings/diagnostics').catch(() => null),
       ]);
-      if (!mappingsRes.ok) {
-        throw new Error(`Failed to load mappings (${mappingsRes.status})`);
-      }
-      const mappingsData = await mappingsRes.json();
       const loaded = Array.isArray(mappingsData) ? mappingsData : [];
       setRules(loaded);
-
-      if (diagnosticsRes.ok) {
-        const diagData = await diagnosticsRes.json();
-        setDiagnostics(diagData as SessionMappingsDiagnostics);
-      } else {
-        setDiagnostics(null);
-      }
+      setDiagnostics(diagnosticsData);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load mappings');
     } finally {
@@ -440,20 +431,15 @@ export const SessionMappings: React.FC = () => {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch('/api/session-mappings', {
+      const data = await apiRequestJson<SessionMappingRule[]>('/api/session-mappings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mappings: rules }),
       });
-      if (!res.ok) {
-        throw new Error(`Failed to save mappings (${res.status})`);
-      }
-      const data = await res.json();
       setRules(Array.isArray(data) ? data : rules);
-      const diagnosticsRes = await fetch('/api/session-mappings/diagnostics');
-      if (diagnosticsRes.ok) {
-        setDiagnostics(await diagnosticsRes.json());
-      }
+      const diagnosticsData = await apiRequestJson<SessionMappingsDiagnostics>('/api/session-mappings/diagnostics')
+        .catch(() => null);
+      if (diagnosticsData) setDiagnostics(diagnosticsData);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save mappings');
     } finally {

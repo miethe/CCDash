@@ -20,6 +20,7 @@ import {
     SessionUsageDrilldownResponse,
     WorkflowEffectivenessResponse,
 } from '../types';
+import { apiRequestJson } from './apiClient';
 
 const API_BASE = '/api/analytics';
 
@@ -357,30 +358,25 @@ export const analyticsService = {
     },
 
     async createAlert(payload: Omit<AlertConfig, 'id'> & { id?: string }): Promise<AlertConfig> {
-        const res = await fetch(`${API_BASE}/alerts`, {
+        return apiRequestJson<AlertConfig>(`${API_BASE}/alerts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error('Failed to create alert');
-        return res.json();
     },
 
     async updateAlert(alertId: string, payload: Partial<AlertConfig>): Promise<AlertConfig> {
-        const res = await fetch(`${API_BASE}/alerts/${alertId}`, {
+        return apiRequestJson<AlertConfig>(`${API_BASE}/alerts/${alertId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error('Failed to update alert');
-        return res.json();
     },
 
     async deleteAlert(alertId: string): Promise<void> {
-        const res = await fetch(`${API_BASE}/alerts/${alertId}`, {
+        await apiRequestJson<void>(`${API_BASE}/alerts/${alertId}`, {
             method: 'DELETE',
         });
-        if (!res.ok) throw new Error('Failed to delete alert');
     },
 
     async getNotifications(): Promise<Notification[]> {

@@ -9,17 +9,18 @@ plan_ref: docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-
 execution_model: batch-parallel
 phase: 6
 title: Frontend Session UX and Protected Shell
-status: in_progress
+status: pending
 started: '2026-05-03'
 completed: null
 commit_refs:
 - b8b96c1
+- 52e231d
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 2
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -57,7 +58,7 @@ tasks:
   description: Move inventory-defined protected request paths off ad hoc fetch calls
     and onto the shared auth-aware transport, starting with execution, feature detail/modals,
     integrations, analytics mutation paths, and operational panels.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -67,9 +68,14 @@ tasks:
   assigned_model: codex
   model_effort: high
   started: '2026-05-03T17:37:30Z'
-  completed: null
-  evidence: []
-  verified_by: []
+  completed: '2026-05-03T17:48:00Z'
+  evidence:
+  - test: pnpm exec vitest run services/__tests__/protectedTransport.test.ts services/__tests__/apiClient.test.ts
+      services/__tests__/skillmeatMemoryDrafts.test.ts services/__tests__/featureSurface.test.ts
+      services/__tests__/analyticsSessionIntelligence.test.ts services/__tests__/planning.test.ts
+      services/__tests__/planningExtended.test.ts contexts/__tests__/dataArchitecture.test.ts
+  verified_by:
+  - codex-orchestrator
 - id: AUTH-503
   description: Add hosted sign-in/out flows, session-aware app shell behavior, and
     clear local-vs-hosted runtime messaging.
@@ -129,7 +135,7 @@ success_criteria:
 - Protected request paths do not bypass the shared auth-aware transport.
 - Enterprise/team/user context is visible and switchable where appropriate without
   becoming the source of truth for authorization.
-progress: 50
+progress: 75
 updated: '2026-05-03'
 ---
 

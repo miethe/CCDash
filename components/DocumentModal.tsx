@@ -23,6 +23,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { getFeatureStatusStyle } from './featureStatus';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { updateDocument as saveDocument } from '../services/documents';
+import { apiRequestJson } from '../services/apiClient';
 import { resolveContentViewerFrontmatter } from '../lib/contentViewer';
 import { planningFeatureDetailHref, planningFeatureModalHref } from '../services/planningRoutes';
 
@@ -300,13 +301,10 @@ export const DocumentModal = ({
       }
 
       Promise.all([
-         fetch(`/api/documents/${encodeURIComponent(docId)}`),
-         fetch(`/api/documents/${encodeURIComponent(docId)}/links`),
+         apiRequestJson<PlanDocument>(`/api/documents/${encodeURIComponent(docId)}`),
+         apiRequestJson<DocumentLinksResponse>(`/api/documents/${encodeURIComponent(docId)}/links`).catch(() => null),
       ])
-         .then(async ([docRes, linksRes]) => {
-            if (!docRes.ok) throw new Error(`Failed to fetch document (${docRes.status})`);
-            const docPayload = await docRes.json();
-            const linksPayload = linksRes.ok ? await linksRes.json() : null;
+         .then(([docPayload, linksPayload]) => {
             if (cancelled) return;
             setFullDoc(normalizeDoc((docPayload || {}) as Partial<PlanDocument>, initialDoc));
             if (linksPayload && typeof linksPayload === 'object') {

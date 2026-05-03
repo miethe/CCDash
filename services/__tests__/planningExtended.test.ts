@@ -213,7 +213,10 @@ describe('getProjectPlanningGraph (extended)', () => {
 
     await getProjectPlanningGraph({ projectId: 'proj-abc' });
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/agent/planning/graph?project_id=proj-abc');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/agent/planning/graph?project_id=proj-abc',
+      { credentials: 'same-origin' },
+    );
   });
 
   it('adapts node_count and edge_count from wire shape', async () => {
@@ -291,7 +294,7 @@ describe('getFeaturePlanningContext (extended)', () => {
       })),
     ));
 
-    const result = await getFeaturePlanningContext('feat-1');
+    const result = await getFeaturePlanningContext('feat-1', { forceRefresh: true });
 
     expect(result.phases).toHaveLength(1);
     const phase = result.phases[0];
@@ -329,7 +332,7 @@ describe('getFeaturePlanningContext (extended)', () => {
       })),
     ));
 
-    const result = await getFeaturePlanningContext('feat-1');
+    const result = await getFeaturePlanningContext('feat-1', { forceRefresh: true });
     const phase = result.phases[0];
     expect(phase.blockedBatchIds).toEqual(['batch-A', 'batch-B']);
     expect(phase.deferredTasks).toBe(1);

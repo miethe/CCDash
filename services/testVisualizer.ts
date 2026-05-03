@@ -14,6 +14,7 @@ import {
   TestDefinition,
   TestResult,
 } from '../types';
+import { apiFetch } from './apiClient';
 
 const API_BASE = '/api/tests';
 
@@ -130,7 +131,7 @@ const resolveErrorMessage = (payload: unknown, fallback: string): string => {
 };
 
 async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await apiFetch(`${API_BASE}${path}`);
   let payload: unknown = null;
 
   try {
@@ -554,7 +555,7 @@ export async function syncTestSources(
   projectId: string,
   options?: { platforms?: TestPlatformId[]; force?: boolean }
 ): Promise<TestSyncResponse> {
-  const res = await fetch(`${API_BASE}/sync`, {
+  const res = await apiFetch(`${API_BASE}/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

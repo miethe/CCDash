@@ -20,6 +20,7 @@ import { isMemoryGuardEnabled } from '../../lib/featureFlags';
 import { formatPercent, formatTokenCount, formatTokenCountCompact, resolveTokenMetrics } from '../../lib/tokenMetrics';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../../services/featureSurface';
+import { apiRequestJson } from '../../services/apiClient';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -2563,9 +2564,7 @@ export const TranscriptView: React.FC<{
         let cancelled = false;
         const loadMappings = async () => {
             try {
-                const res = await fetch('/api/session-mappings');
-                if (!res.ok) return;
-                const data = await res.json();
+                const data = await apiRequestJson<TranscriptFormattingMappingRule[]>('/api/session-mappings');
                 if (!cancelled && Array.isArray(data)) {
                     setTranscriptMappings(data as TranscriptFormattingMappingRule[]);
                 }

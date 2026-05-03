@@ -25,7 +25,7 @@ import {
   SessionMemoryDraftType,
 } from '../types';
 import { normalizeSkillMeatConfig } from '../services/agenticIntelligence';
-import { createApiClient } from '../services/apiClient';
+import { apiRequestJson, createApiClient } from '../services/apiClient';
 import { normalizeRuntimeStatus, type RuntimeProbeReason, type RuntimeStatus } from '../services/runtimeProfile';
 import { isOpsLiveUpdatesEnabled, projectOpsTopic, useLiveInvalidation } from '../services/live';
 import {
@@ -39,11 +39,7 @@ import {
 const API_BASE = '/api';
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) {
-    throw new Error(`Request failed (${res.status}) for ${path}`);
-  }
-  return res.json() as Promise<T>;
+  return apiRequestJson<T>(`${API_BASE}${path}`);
 }
 
 function formatDate(value?: string): string {
@@ -330,13 +326,11 @@ export const OpsPanel: React.FC = () => {
     setBusyAction('sync');
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/cache/sync`, {
+      const payload = await apiRequestJson<{ operationId?: string }>(`${API_BASE}/cache/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force, background: true, trigger: 'ops-panel' }),
       });
-      if (!res.ok) throw new Error(`Sync request failed (${res.status})`);
-      const payload = await res.json();
       const opId = String(payload.operationId || '');
       if (opId) setSelectedOperationId(opId);
       await loadOverview();
@@ -351,13 +345,11 @@ export const OpsPanel: React.FC = () => {
     setBusyAction('rebuild-links');
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/cache/rebuild-links`, {
+      const payload = await apiRequestJson<{ operationId?: string }>(`${API_BASE}/cache/rebuild-links`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ background: true, captureAnalytics: false, trigger: 'ops-panel' }),
       });
-      if (!res.ok) throw new Error(`Rebuild request failed (${res.status})`);
-      const payload = await res.json();
       const opId = String(payload.operationId || '');
       if (opId) setSelectedOperationId(opId);
       await loadOverview();
@@ -380,7 +372,7 @@ export const OpsPanel: React.FC = () => {
     setBusyAction('sync-paths');
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/cache/sync-paths`, {
+      const payload = await apiRequestJson<{ operationId?: string }>(`${API_BASE}/cache/sync-paths`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -389,8 +381,6 @@ export const OpsPanel: React.FC = () => {
           paths: paths.map(path => ({ path, changeType: pathSyncChangeType })),
         }),
       });
-      if (!res.ok) throw new Error(`Path sync request failed (${res.status})`);
-      const payload = await res.json();
       const opId = String(payload.operationId || '');
       if (opId) setSelectedOperationId(opId);
       await loadOverview();
@@ -446,7 +436,7 @@ export const OpsPanel: React.FC = () => {
   }, []);
 
   const startMappingBackfill = useCallback(async (projectId: string): Promise<string> => {
-    const startRes = await fetch(`${API_BASE}/tests/mappings/backfill/start`, {
+    const startPayload = await apiRequestJson<MappingBackfillStartResponse>(`${API_BASE}/tests/mappings/backfill/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -455,8 +445,6 @@ export const OpsPanel: React.FC = () => {
         source: 'ops-panel',
       }),
     });
-    if (!startRes.ok) throw new Error(`Mapping backfill request failed (${startRes.status})`);
-    const startPayload = await startRes.json() as MappingBackfillStartResponse;
     const operationId = String(startPayload.operationId || '');
     if (!operationId) throw new Error('Mapping backfill started without operation ID.');
     return operationId;
@@ -751,13 +739,11 @@ export const OpsPanel: React.FC = () => {
     setError(null);
     setNotice(null);
     try {
-      const syncRes = await fetch(`${API_BASE}/tests/sync`, {
+      const syncPayload = await apiRequestJson<{ stats?: { synced?: number; errors?: number } }>(`${API_BASE}/tests/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_id: projectId, force: true, platforms: [] }),
       });
-      if (!syncRes.ok) throw new Error(`Test sync failed (${syncRes.status})`);
-      const syncPayload = await syncRes.json() as { stats?: { synced?: number; errors?: number } };
       const operationId = await startMappingBackfill(projectId);
       setMappingBackfillOperationId(operationId);
       handledOperationIdsRef.current.delete(operationId);

@@ -23,6 +23,7 @@ import {
   WorktreeContext,
   WorktreeContextStatus,
 } from '../types';
+import { apiFetch, apiRequestJson } from './apiClient';
 
 const API_BASE = '/api/features';
 const EXECUTION_API_BASE = '/api/execution';
@@ -197,17 +198,15 @@ export interface ExecutionRunRetryRequest {
 }
 
 export async function getFeatureExecutionContext(featureId: string): Promise<FeatureExecutionContext> {
-  const res = await fetch(`${API_BASE}/${encodeURIComponent(featureId)}/execution-context`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch execution context (${res.status})`);
-  }
-  const payload = await res.json() as FeatureExecutionContext;
+  const payload = await apiRequestJson<FeatureExecutionContext>(
+    `${API_BASE}/${encodeURIComponent(featureId)}/execution-context`,
+  );
   return normalizeFeatureExecutionContext(payload);
 }
 
 export async function trackExecutionEvent(payload: ExecutionEventPayload): Promise<void> {
   try {
-    await fetch(`${API_BASE}/execution-events`, {
+    await apiFetch(`${API_BASE}/execution-events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -222,27 +221,19 @@ export async function checkExecutionPolicy(payload: {
   cwd?: string;
   envProfile?: string;
 }): Promise<ExecutionPolicyResult> {
-  const res = await fetch(`${EXECUTION_API_BASE}/policy-check`, {
+  return apiRequestJson<ExecutionPolicyResult>(`${EXECUTION_API_BASE}/policy-check`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to evaluate execution policy (${res.status})`);
-  }
-  return res.json();
 }
 
 export async function createExecutionRun(payload: ExecutionRunRequest): Promise<ExecutionRun> {
-  const res = await fetch(`${EXECUTION_API_BASE}/runs`, {
+  return apiRequestJson<ExecutionRun>(`${EXECUTION_API_BASE}/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to create execution run (${res.status})`);
-  }
-  return res.json();
 }
 
 export async function listExecutionRuns(params?: {
@@ -256,19 +247,11 @@ export async function listExecutionRuns(params?: {
   if (typeof params?.offset === 'number') query.set('offset', String(params.offset));
   const suffix = query.toString() ? `?${query.toString()}` : '';
 
-  const res = await fetch(`${EXECUTION_API_BASE}/runs${suffix}`);
-  if (!res.ok) {
-    throw new Error(`Failed to list execution runs (${res.status})`);
-  }
-  return res.json();
+  return apiRequestJson<ExecutionRun[]>(`${EXECUTION_API_BASE}/runs${suffix}`);
 }
 
 export async function getExecutionRun(runId: string): Promise<ExecutionRun> {
-  const res = await fetch(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch execution run (${res.status})`);
-  }
-  return res.json();
+  return apiRequestJson<ExecutionRun>(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}`);
 }
 
 export async function listExecutionRunEvents(
@@ -279,74 +262,56 @@ export async function listExecutionRunEvents(
   if (typeof params?.afterSequence === 'number') query.set('after_sequence', String(params.afterSequence));
   if (typeof params?.limit === 'number') query.set('limit', String(params.limit));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  const res = await fetch(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}/events${suffix}`);
-  if (!res.ok) {
-    throw new Error(`Failed to list run events (${res.status})`);
-  }
-  return res.json();
+  return apiRequestJson<ExecutionRunEventPage>(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}/events${suffix}`);
 }
 
 export async function approveExecutionRun(
   runId: string,
   payload: ExecutionRunApprovalRequest,
 ): Promise<ExecutionRun> {
-  const res = await fetch(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}/approve`, {
+  return apiRequestJson<ExecutionRun>(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to update execution approval (${res.status})`);
-  }
-  return res.json();
 }
 
 export async function cancelExecutionRun(
   runId: string,
   payload: ExecutionRunCancelRequest,
 ): Promise<ExecutionRun> {
-  const res = await fetch(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}/cancel`, {
+  return apiRequestJson<ExecutionRun>(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to cancel execution run (${res.status})`);
-  }
-  return res.json();
 }
 
 export async function retryExecutionRun(
   runId: string,
   payload: ExecutionRunRetryRequest,
 ): Promise<ExecutionRun> {
-  const res = await fetch(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}/retry`, {
+  return apiRequestJson<ExecutionRun>(`${EXECUTION_API_BASE}/runs/${encodeURIComponent(runId)}/retry`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to retry execution run (${res.status})`);
-  }
-  return res.json();
 }
 
 export async function prepareLaunch(
   payload: LaunchPreparationRequest,
 ): Promise<LaunchPreparation> {
-  const res = await fetch(`${EXECUTION_API_BASE}/launch/prepare`, {
+  return apiRequestJson<LaunchPreparation>(`${EXECUTION_API_BASE}/launch/prepare`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`Failed to prepare launch (${res.status})`);
-  return res.json();
 }
 
 export async function startLaunch(
   payload: LaunchStartRequest,
 ): Promise<LaunchStartResponse> {
-  const res = await fetch(`${EXECUTION_API_BASE}/launch/start`, {
+  const res = await apiFetch(`${EXECUTION_API_BASE}/launch/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -374,9 +339,7 @@ export async function listWorktreeContexts(params?: {
   if (typeof params?.limit === 'number') query.set('limit', String(params.limit));
   if (typeof params?.offset === 'number') query.set('offset', String(params.offset));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  const res = await fetch(`${EXECUTION_API_BASE}/worktree-contexts${suffix}`);
-  if (!res.ok) throw new Error(`Failed to list worktree contexts (${res.status})`);
-  return res.json();
+  return apiRequestJson<{ items: WorktreeContext[]; total: number }>(`${EXECUTION_API_BASE}/worktree-contexts${suffix}`);
 }
 
 export async function createWorktreeContext(payload: {
@@ -392,13 +355,11 @@ export async function createWorktreeContext(payload: {
   metadata?: Record<string, unknown>;
   createdBy?: string;
 }): Promise<WorktreeContext> {
-  const res = await fetch(`${EXECUTION_API_BASE}/worktree-contexts`, {
+  return apiRequestJson<WorktreeContext>(`${EXECUTION_API_BASE}/worktree-contexts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`Failed to create worktree context (${res.status})`);
-  return res.json();
 }
 
 export interface LaunchCapabilities {
@@ -410,7 +371,5 @@ export interface LaunchCapabilities {
 }
 
 export async function getLaunchCapabilities(): Promise<LaunchCapabilities> {
-  const res = await fetch(`${EXECUTION_API_BASE}/launch/capabilities`);
-  if (!res.ok) throw new Error(`Failed to load launch capabilities (${res.status})`);
-  return res.json();
+  return apiRequestJson<LaunchCapabilities>(`${EXECUTION_API_BASE}/launch/capabilities`);
 }

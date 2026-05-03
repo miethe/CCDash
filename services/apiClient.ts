@@ -147,7 +147,7 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
-async function readErrorDetail(res: Response): Promise<unknown> {
+export async function readApiErrorDetail(res: Response): Promise<unknown> {
   const text = await res.text().catch(() => '');
   if (!text) {
     return res.statusText;
@@ -163,26 +163,47 @@ async function readErrorDetail(res: Response): Promise<unknown> {
   }
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = buildApiUrl(path);
+const normalizeApiPath = (path: string): string => {
+  if (path === '/api') return '';
+  if (path.startsWith('/api/')) return path.slice('/api'.length);
+  return path;
+};
+
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const url = buildApiUrl(normalizeApiPath(path));
   const requestInit: RequestInit = {
     ...init,
     credentials: init?.credentials ?? 'same-origin',
   };
-  const res = await fetch(url, requestInit);
+  return fetch(url, requestInit);
+}
+
+export async function createApiErrorFromResponse(res: Response, url: string): Promise<ApiError> {
+  return new ApiError({
+    status: res.status,
+    statusText: res.statusText,
+    url,
+    detail: await readApiErrorDetail(res),
+  });
+}
+
+export async function apiRequestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const url = buildApiUrl(normalizeApiPath(path));
+  const res = await apiFetch(path, init);
   if (!res.ok) {
-    throw new ApiError({
-      status: res.status,
-      statusText: res.statusText,
-      url,
-      detail: await readErrorDetail(res),
-    });
+    throw await createApiErrorFromResponse(res, url);
   }
   if (res.status === 204) {
     return undefined as T;
   }
-  return res.json() as Promise<T>;
+  const text = await res.text();
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
 }
+
+const requestJson = apiRequestJson;
 
 function appendSessionFilters(params: URLSearchParams, filters: SessionFilters): void {
   const scalarKeys: Array<keyof SessionFilters> = [

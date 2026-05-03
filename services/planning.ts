@@ -39,6 +39,7 @@ import type { AgentQueryEnvelope } from '../types';
 import type { PlanningStatusBucket } from './planningRoutes';
 import { subscribeToFeatureWrites } from './featureCacheBus';
 import { emitCacheTelemetry } from './telemetry';
+import { apiFetch } from './apiClient';
 
 const API_BASE = '/api/agent/planning';
 const DEFAULT_PROJECT_CACHE_KEY = '__default__';
@@ -106,7 +107,7 @@ export class PlanningApiError extends Error {
 async function planningFetch<T>(path: string, params?: URLSearchParams): Promise<T> {
   const qs = params?.toString();
   const url = `${API_BASE}${path}${qs ? `?${qs}` : ''}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) {
     throw new PlanningApiError(
       `Planning API error: ${res.status} ${res.statusText} for ${url}`,
@@ -394,7 +395,7 @@ async function planningWriteFetch<T>(
 ): Promise<T> {
   const url = `${base}${path}`;
   const { headers, ...rest } = init;
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     ...rest,
     headers: {
       'Content-Type': 'application/json',
@@ -1458,7 +1459,7 @@ export async function postNextRunPreview(
   const qs = params.toString();
   const url = `${API_BASE}/next-run-preview/${encodeURIComponent(featureId)}${qs ? `?${qs}` : ''}`;
 
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
