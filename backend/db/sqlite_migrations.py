@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -205,7 +205,11 @@ CREATE TABLE IF NOT EXISTS session_messages (
     thread_session_id TEXT DEFAULT '',
     parent_session_id TEXT DEFAULT '',
     source_provenance TEXT NOT NULL DEFAULT 'session_log_projection',
-    metadata_json  TEXT
+    metadata_json  TEXT,
+    input_tokens   INTEGER,
+    output_tokens  INTEGER,
+    cache_read_input_tokens   INTEGER,
+    cache_creation_input_tokens INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_messages_family
@@ -1362,7 +1366,11 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
             thread_session_id TEXT DEFAULT '',
             parent_session_id TEXT DEFAULT '',
             source_provenance TEXT NOT NULL DEFAULT 'session_log_projection',
-            metadata_json  TEXT
+            metadata_json  TEXT,
+            input_tokens   INTEGER,
+            output_tokens  INTEGER,
+            cache_read_input_tokens   INTEGER,
+            cache_creation_input_tokens INTEGER
         )
         """
     )
@@ -1385,6 +1393,10 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "session_messages", "parent_session_id", "TEXT DEFAULT ''")
     await _ensure_column(db, "session_messages", "source_provenance", "TEXT NOT NULL DEFAULT 'session_log_projection'")
     await _ensure_column(db, "session_messages", "metadata_json", "TEXT")
+    await _ensure_column(db, "session_messages", "input_tokens", "INTEGER")
+    await _ensure_column(db, "session_messages", "output_tokens", "INTEGER")
+    await _ensure_column(db, "session_messages", "cache_read_input_tokens", "INTEGER")
+    await _ensure_column(db, "session_messages", "cache_creation_input_tokens", "INTEGER")
     await _ensure_index(
         db,
         "CREATE INDEX IF NOT EXISTS idx_session_messages_family ON session_messages(conversation_family_id, root_session_id, message_index)",

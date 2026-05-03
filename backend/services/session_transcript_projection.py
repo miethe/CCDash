@@ -47,6 +47,23 @@ def project_session_messages(
         metadata.setdefault("sourceProvenance", source_provenance)
         message_id = canonical_message_id(source_log_id, metadata)
         message_type = canonical_message_type_from_log(log, metadata)
+
+        # Extract per-message token usage from metadata (populated by the Claude Code parser).
+        # All four fields must be present (at least as 0) for tokenUsage to be non-null;
+        # if none are present, tokenUsage is None (no data).
+        token_usage: dict[str, int] | None = None
+        _in = metadata.get("inputTokens")
+        _out = metadata.get("outputTokens")
+        _cr = metadata.get("cache_read_input_tokens")
+        _cc = metadata.get("cache_creation_input_tokens")
+        if isinstance(_in, (int, float)) and isinstance(_out, (int, float)):
+            token_usage = {
+                "inputTokens": int(_in),
+                "outputTokens": int(_out),
+                "cacheReadInputTokens": int(_cr) if isinstance(_cr, (int, float)) else 0,
+                "cacheCreationInputTokens": int(_cc) if isinstance(_cc, (int, float)) else 0,
+            }
+
         projected.append(
             {
                 "messageIndex": index,
@@ -69,6 +86,7 @@ def project_session_messages(
                 "parentSessionId": parent_session_id,
                 "sourceProvenance": source_provenance,
                 "metadata": metadata,
+                "tokenUsage": token_usage,
             }
         )
     return projected

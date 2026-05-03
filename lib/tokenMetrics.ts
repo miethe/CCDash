@@ -89,5 +89,22 @@ export const resolveTokenMetrics = (
 export const formatTokenCount = (value: number | null | undefined): string =>
   toNumber(value).toLocaleString();
 
+/**
+ * Compact token count formatter for inline transcript captions.
+ * - Values ≥ 1,000,000 → "1.2M"
+ * - Values ≥ 1,000     → "1.2K"
+ * - Values < 1,000     → raw integer string
+ */
+export const formatTokenCountCompact = (value: number | null | undefined): string => {
+  const n = toNumber(value);
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  if (n >= 1_000) {
+    return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  return `${Math.floor(n)}`;
+};
+
 export const formatPercent = (value: number | null | undefined, digits = 1): string =>
   `${(toNumber(value) * 100).toFixed(digits)}%`;

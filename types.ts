@@ -60,6 +60,13 @@ export interface ToolUsage {
 
 export type LogType = 'message' | 'tool' | 'subagent' | 'skill' | 'thought' | 'system' | 'command' | 'subagent_start';
 
+export interface SessionLogTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+}
+
 export interface SessionLog {
   id: string;
   timestamp: string;
@@ -70,6 +77,7 @@ export interface SessionLog {
   linkedSessionId?: string;
   relatedToolCallId?: string;
   metadata?: Record<string, any>;
+  tokenUsage?: SessionLogTokenUsage | null;
   toolCall?: {
     id?: string;
     name: string;
