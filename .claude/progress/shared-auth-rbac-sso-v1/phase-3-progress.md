@@ -15,12 +15,13 @@ completed: null
 commit_refs:
 - ebb75eb
 - 262d036
+- fd7af48
 pr_refs: []
-overall_progress: 75
+overall_progress: 100
 completion_estimate: at-risk
 total_tasks: 4
-completed_tasks: 3
-in_progress_tasks: 1
+completed_tasks: 4
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -88,7 +89,7 @@ tasks:
   - Added docs/guides/shared-auth-rbac-role-matrix.md documenting canonical role IDs and aliases, binding scopes, bootstrap/admin defaults, local no-auth behavior, lockout prevention, and separate approval/integration operator powers; guide sanity-checked with sed/rg/wc.
 - id: AUTH-204
   description: Define enterprise, team, user, workspace, and project grant inheritance and conflict resolution rules.
-  status: in_progress
+  status: completed
   assigned_to:
   - backend-architect
   - security-engineering
@@ -99,9 +100,10 @@ tasks:
   assigned_model: codex
   model_effort: medium
   started: '2026-05-03'
-  completed: null
-  verified_by: null
-  evidence: []
+  completed: '2026-05-03'
+  verified_by: codex-orchestrator
+  evidence:
+  - Added immutable AUTHORIZATION_SCOPE_RULES artifact and focused inheritance tests covering enterprise/team/workspace/project descent, project non-inheritance upward, direct user self grants, owned entity exact bindings, parent-scope inherited access, explicit deny precedence, and artifact immutability; backend/.venv/bin/python -m pytest backend/tests/test_authorization_scope_inheritance.py backend/tests/test_authorization_policy.py -v passed (30 tests, 5 subtests); py_compile and git diff --check passed.
 parallelization:
   batch_1:
   - AUTH-201
@@ -133,7 +135,7 @@ success_criteria:
   status: completed
 - id: SC-4
   description: User/team/enterprise inheritance rules are explicit enough to implement without reopening the model mid-build.
-  status: pending
+  status: completed
 ---
 
 # Phase 3 Progress: Authorization Policy and 3-Tier RBAC Matrix

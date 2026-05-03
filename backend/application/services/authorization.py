@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from types import MappingProxyType
 from typing import Iterable, Mapping
 
 from backend.application.context import PrincipalMembership, RequestContext
@@ -263,14 +264,52 @@ ROLE_ALIASES: Mapping[str, str] = {
     "analyst-auditor": "AA",
 }
 
-_SCOPE_DEPTH: Mapping[str, int] = {
-    "user": 0,
-    "enterprise": 1,
-    "team": 2,
-    "workspace": 3,
-    "project": 4,
-    "owned_entity": 5,
-}
+
+@dataclass(frozen=True, slots=True)
+class AuthorizationScopeRules:
+    """Code-owned contract for hosted scope inheritance and conflict handling."""
+
+    evaluation_order: tuple[str, ...]
+    resource_scope_order: tuple[str, ...]
+    inherited_descendants: Mapping[str, tuple[str, ...]]
+    direct_user_grant_subject_fields: tuple[str, ...]
+    direct_user_grants_are_additive: bool
+    owned_entity_parent_scopes: tuple[str, ...]
+    owned_entity_direct_bindings_are_exact: bool
+    explicit_deny_overrides_allow: bool
+    allow_resolution: str
+
+
+AUTHORIZATION_SCOPE_RULES = AuthorizationScopeRules(
+    evaluation_order=("enterprise", "team", "user", "workspace", "project", "owned_entity"),
+    resource_scope_order=("enterprise", "team", "workspace", "project", "owned_entity"),
+    inherited_descendants=MappingProxyType(
+        {
+            "enterprise": ("team", "workspace", "project", "owned_entity"),
+            "team": ("workspace", "project", "owned_entity"),
+            "workspace": ("project", "owned_entity"),
+            "project": ("owned_entity",),
+            "owned_entity": (),
+            "user": (),
+        }
+    ),
+    direct_user_grant_subject_fields=("principal.subject", "principal.stable_subject"),
+    direct_user_grants_are_additive=True,
+    owned_entity_parent_scopes=("enterprise", "team", "workspace", "project"),
+    owned_entity_direct_bindings_are_exact=True,
+    explicit_deny_overrides_allow=True,
+    allow_resolution="Most specific matching allow determines scope limits after denies are removed.",
+)
+
+_SCOPE_DEPTH: Mapping[str, int] = MappingProxyType(
+    {
+        "user": 0,
+        **{
+            scope_type: depth
+            for depth, scope_type in enumerate(AUTHORIZATION_SCOPE_RULES.resource_scope_order, start=1)
+        },
+    }
+)
 _RESOURCE_PATTERN = re.compile(
     r"^(?P<scope>user|enterprise|team|workspace|project|owned_entity)[:/](?P<scope_id>[^:/]+)$"
 )
