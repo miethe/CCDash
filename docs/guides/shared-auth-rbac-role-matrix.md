@@ -12,7 +12,7 @@ related: ["../project_plans/implementation_plans/enhancements/shared-auth-rbac-s
 
 # Shared Auth RBAC Role Matrix
 
-This guide documents the initial hosted RBAC roles implemented by `RoleBindingAuthorizationPolicy`. Use it when bootstrapping an enterprise, assigning team/workspace/project access, or reviewing lockout risk.
+This guide documents the initial hosted RBAC roles implemented by `RoleBindingAuthorizationPolicy`. Use it when bootstrapping an enterprise, assigning team/workspace/project access, or reviewing lockout risk. For provider setup, staged validation, and rollback commands, see [Shared Auth RBAC SSO Operator Guide](shared-auth-rbac-sso-operator-guide.md).
 
 Local and test profiles do not use this matrix for enforcement. They use the local no-auth permissive policy so a local operator can continue using CCDash without hosted identity setup.
 
@@ -101,4 +101,3 @@ Before enabling hosted auth or changing provider/group mappings:
 - Stage role removals by adding the replacement binding first, then validating access, then removing the old binding.
 - Use explicit denies sparingly and include an operator-readable reason in the binding record. Denies can override inherited enterprise/team/workspace access.
 - Treat unknown role aliases as no access during migration; confirm imported aliases normalize to the canonical IDs above.
-

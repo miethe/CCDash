@@ -19,6 +19,7 @@ export type DocsPath =
   | 'guides/setup.md'
   | 'guides/runtime-storage-and-performance-quickstart.md'
   | 'guides/storage-profiles-guide.md'
+  | 'guides/shared-auth-rbac-sso-operator-guide.md'
   | 'guides/shared-content-viewer.md'
   | 'guides/cli-user-guide.md'
   | 'guides/standalone-cli-guide.md'
@@ -61,6 +62,12 @@ export const docsGroups: DocsGroup[] = [
         title: 'Storage Profiles Guide',
         description: 'Understand the local, hybrid, and hosted storage profiles.',
         path: 'guides/storage-profiles-guide.md',
+      },
+      {
+        slug: 'shared-auth-rbac-sso-operator-guide',
+        title: 'Shared Auth RBAC SSO Operator Guide',
+        description: 'Roll out hosted auth providers, validate RBAC access, and recover from lockouts.',
+        path: 'guides/shared-auth-rbac-sso-operator-guide.md',
       },
       {
         slug: 'shared-content-viewer',

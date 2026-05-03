@@ -11,6 +11,8 @@ The compose file at `deploy/runtime/compose.yaml` is the primary deployment mani
 
 These examples are operator-focused, not a full deployment product. They do not provision TLS, secrets distribution, registry publication automation, or external supervision beyond the example units and compose file shown here.
 
+For hosted auth provider rollout, RBAC bootstrap expectations, lockout prevention, and rollback commands, see `docs/guides/shared-auth-rbac-sso-operator-guide.md`.
+
 ## Canonical Compose Contract
 
 | Profile | Services | Typical command |
@@ -201,6 +203,12 @@ These examples split environment variables by runtime role. Shared values may li
 | `CCDASH_DATABASE_URL` | api, worker | built from the Postgres values in the compose example |
 | `CCDASH_PROJECT_ROOT` | api, worker | repo root inside the container; defaults to `/app` |
 | `CCDASH_API_BEARER_TOKEN` | api | protects `/api/v1/*` only |
+| `CCDASH_AUTH_PROVIDER` | api | auth provider selector: `static_bearer` by default for API runtime, or `local`, `clerk`, `oidc` |
+| `CCDASH_LOCAL_NO_AUTH_ENABLED` | api, local | explicit local no-auth switch; local/test default to no-auth, hosted API requires explicit opt-in for `CCDASH_AUTH_PROVIDER=local` |
+| `CCDASH_CLERK_PUBLISHABLE_KEY` / `CCDASH_CLERK_SECRET_KEY` / `CCDASH_CLERK_JWT_KEY` | api | Clerk hosted token validation; browser redirect is expected through the Clerk frontend SDK/id-token path |
+| `CCDASH_OIDC_ISSUER` / `CCDASH_OIDC_AUDIENCE` / `CCDASH_OIDC_CLIENT_ID` / `CCDASH_OIDC_CLIENT_SECRET` / `CCDASH_OIDC_CALLBACK_URL` / `CCDASH_OIDC_JWKS_URL` | api | generic OIDC hosted token validation; OAuth authorization-code exchange is not implemented |
+| `CCDASH_SESSION_COOKIE_NAME` / `CCDASH_SESSION_COOKIE_SECURE` / `CCDASH_SESSION_COOKIE_SAMESITE` / `CCDASH_SESSION_COOKIE_DOMAIN` | api | hosted auth session cookie controls |
+| `CCDASH_TRUSTED_PROXY_ENABLED` | api | enables proxy-aware hosted auth/session behavior when deployed behind a trusted reverse proxy |
 | `CCDASH_FRONTEND_ORIGIN` | api | browser origin expected by the hosted API |
 | `CCDASH_WORKER_PROJECT_ID` | worker | required; worker startup fails if the id cannot be resolved |
 | `CCDASH_WORKER_PROBE_HOST` | worker | probe listener bind host |
