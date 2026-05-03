@@ -51,7 +51,7 @@ def build_core_ports(
     )
     return CorePorts(
         identity_provider=resolved_identity_provider,
-        authorization_policy=authorization_policy or PermitAllAuthorizationPolicy(),
+        authorization_policy=authorization_policy or _build_authorization_policy(runtime_profile),
         workspace_registry=workspace_registry or build_workspace_registry(
             runtime_profile=runtime_profile,
             storage_profile=resolved_storage_profile,
@@ -140,6 +140,14 @@ def _build_identity_provider(
         resolved_auth_config = auth_config or config.resolve_auth_provider_config(runtime_profile.name)
         return create_auth_identity_provider(resolved_auth_config)
     return LocalIdentityProvider()
+
+
+def _build_authorization_policy(runtime_profile: RuntimeProfile | None) -> object:
+    if runtime_profile is not None and runtime_profile.capabilities.auth:
+        from backend.application.services.authorization import RoleBindingAuthorizationPolicy
+
+        return RoleBindingAuthorizationPolicy()
+    return PermitAllAuthorizationPolicy()
 
 
 def _build_auth_metadata(

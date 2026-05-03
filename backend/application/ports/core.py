@@ -13,6 +13,7 @@ from backend.services.project_paths.models import ResolvedProjectPaths
 class AuthorizationDecision:
     allowed: bool
     reason: str = ""
+    code: str = ""
 
 
 @dataclass(frozen=True, slots=True)
