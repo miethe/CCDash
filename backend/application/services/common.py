@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from backend.adapters.auth.claims_mapping import select_claim_scope
 from backend.application.context import RequestContext, RequestMetadata, TenancyContext, TraceContext
 from backend.application.ports import CorePorts
 from backend.models import Project
@@ -48,8 +49,17 @@ async def build_compat_request_context(
 ) -> RequestContext:
     metadata = RequestMetadata(headers={}, method="INTERNAL", path="")
     principal = await ports.identity_provider.get_principal(metadata, runtime_profile=runtime_profile)
+    hosted_claim_scope = _principal_has_hosted_claim_scope(principal)
+    claim_scope = select_claim_scope(principal, metadata) if hosted_claim_scope else None
+    effective_project_id = str(requested_project_id or "").strip() or None
+    if effective_project_id is None and claim_scope is not None:
+        effective_project_id = claim_scope.project_id or claim_scope.workspace_id
     try:
-        workspace_scope, project_scope = ports.workspace_registry.resolve_scope(requested_project_id)
+        workspace_scope, project_scope = _resolve_workspace_scope(
+            ports.workspace_registry,
+            effective_project_id,
+            allow_active_fallback=not hosted_claim_scope,
+        )
     except Exception:
         workspace_scope = None
         project_scope = None
@@ -92,6 +102,11 @@ def resolve_project(
         if scoped is not None:
             return scoped
 
+    if _principal_has_hosted_claim_scope(context.principal):
+        if required:
+            raise HTTPException(status_code=404, detail="No project selected for hosted request")
+        return None
+
     project = ports.workspace_registry.get_active_project()
     if project is None and required:
         raise HTTPException(status_code=404, detail="No active project")
@@ -103,3 +118,25 @@ def require_project(context: RequestContext, ports: CorePorts, *, requested_proj
     if project is None:
         raise HTTPException(status_code=404, detail="No active project")
     return project
+
+
+def _principal_has_hosted_claim_scope(principal: Any) -> bool:
+    provider = getattr(principal, "provider", None)
+    return bool(getattr(provider, "hosted", False))
+
+
+def _resolve_workspace_scope(
+    workspace_registry: Any,
+    project_id: str | None,
+    *,
+    allow_active_fallback: bool,
+) -> tuple[Any, Any]:
+    try:
+        return workspace_registry.resolve_scope(
+            project_id,
+            allow_active_fallback=allow_active_fallback,
+        )
+    except TypeError:
+        if not allow_active_fallback and project_id is None:
+            return None, None
+        return workspace_registry.resolve_scope(project_id)

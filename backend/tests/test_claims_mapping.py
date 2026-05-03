@@ -173,6 +173,29 @@ class RuntimeClaimScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.tenancy.enterprise_id, "ent-1")
         self.assertIsNone(context.tenancy.project_id)
 
+    async def test_hosted_context_resolves_explicit_project_header_without_mutating_active_project(self) -> None:
+        principal = principal_from_claims(
+            {
+                "sub": "user-1",
+                "enterprise_id": "ent-1",
+                "team_id": "team-1",
+            },
+            provider_id="oidc",
+            issuer=ISSUER,
+            audience="ccdash-api",
+        )
+
+        context, active_project_id = await self._build_context(
+            principal,
+            headers={"x-ccdash-project-id": "project-2"},
+            include_active_project=True,
+        )
+
+        self.assertIsNotNone(context.project)
+        self.assertEqual(context.project.project_id, "project-2")
+        self.assertEqual(context.tenancy.project_id, "project-2")
+        self.assertEqual(active_project_id, "project-1")
+
     async def test_local_principal_keeps_active_project_fallback(self) -> None:
         principal = Principal(
             subject="local:local-operator",
@@ -186,7 +209,13 @@ class RuntimeClaimScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(context.project)
         self.assertEqual(context.project.project_id, "project-1")
 
-    async def _build_context(self, principal: Principal):
+    async def _build_context(
+        self,
+        principal: Principal,
+        *,
+        headers: dict[str, str] | None = None,
+        include_active_project: bool = False,
+    ):
         enterprise_profile = config.StorageProfileConfig(
             profile="enterprise",
             db_backend="postgres",
@@ -213,13 +242,20 @@ class RuntimeClaimScopeTests(unittest.IsolatedAsyncioTestCase):
                     job_scheduler=InProcessJobScheduler(),
                     integration_client=NoopIntegrationClient(),
                 )
-                return await container.build_request_context(
+                request_headers = {"x-request-id": "req-claims"}
+                if headers:
+                    request_headers.update(headers)
+                context = await container.build_request_context(
                     RequestMetadata(
-                        headers={"x-request-id": "req-claims"},
+                        headers=request_headers,
                         method="GET",
                         path="/api/projects/active",
                     )
                 )
+                if include_active_project:
+                    active = manager.get_active_project()
+                    return context, active.id if active is not None else None
+                return context
             finally:
                 await db.close()
 

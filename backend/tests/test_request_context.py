@@ -1,6 +1,7 @@
 import os
 import asyncio
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -32,6 +33,8 @@ from backend.application.context import (
     TraceContext,
 )
 from backend.application.ports import CorePorts
+from backend.application.services.common import resolve_project
+from backend.models import Project
 from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.project_manager import ProjectManager
 from backend.request_scope import get_core_ports
@@ -383,6 +386,51 @@ class RequestContextTests(unittest.IsolatedAsyncioTestCase):
                 await db.close()
 
         self.assertEqual(ctx.exception.status_code, 401)
+
+    async def test_resolve_project_does_not_use_active_fallback_for_hosted_context_without_project(self) -> None:
+        active_project = Project(id="project-active", name="Active Project", path="/tmp/project-active")
+        context = RequestContext(
+            principal=Principal(
+                subject="oidc:user-1",
+                display_name="User One",
+                auth_mode="oidc",
+                provider=AuthProviderMetadata(provider_id="oidc", issuer="issuer", hosted=True),
+            ),
+            workspace=None,
+            project=None,
+            runtime_profile="api",
+            trace=TraceContext(request_id="req-hosted-no-project"),
+        )
+        ports = types.SimpleNamespace(
+            workspace_registry=types.SimpleNamespace(
+                get_project=lambda project_id: active_project if project_id == active_project.id else None,
+                get_active_project=lambda: active_project,
+            )
+        )
+
+        project = resolve_project(context, ports)
+
+        self.assertIsNone(project)
+
+    async def test_resolve_project_keeps_active_fallback_for_local_context(self) -> None:
+        active_project = Project(id="project-active", name="Active Project", path="/tmp/project-active")
+        context = RequestContext(
+            principal=Principal(subject="local:local-operator", display_name="Local Operator", auth_mode="local"),
+            workspace=None,
+            project=None,
+            runtime_profile="local",
+            trace=TraceContext(request_id="req-local-project"),
+        )
+        ports = types.SimpleNamespace(
+            workspace_registry=types.SimpleNamespace(
+                get_project=lambda project_id: active_project if project_id == active_project.id else None,
+                get_active_project=lambda: active_project,
+            )
+        )
+
+        project = resolve_project(context, ports)
+
+        self.assertEqual(project, active_project)
 
 
 class RequestContextRouteIntegrationTests(unittest.TestCase):

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.models import Project, ProjectResolvedPathDTO, ProjectResolvedPathsDTO
 from backend.request_scope import get_core_ports
+from backend.runtime.dependencies import get_request_context
 
 projects_router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -76,8 +78,19 @@ def update_project(project_id: str, project: Project, core_ports: CorePorts = De
 
 
 @projects_router.get("/active", response_model=Project)
-def get_active_project(core_ports: CorePorts = Depends(get_core_ports)):
+def get_active_project(
+    core_ports: CorePorts = Depends(get_core_ports),
+    request_context: RequestContext | None = Depends(get_request_context),
+):
     """Get the currently active project."""
+    if _request_uses_hosted_project_selection(request_context):
+        if request_context is None or request_context.project is None:
+            raise HTTPException(status_code=404, detail="No project selected for hosted request")
+        project = core_ports.workspace_registry.get_project(request_context.project.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Selected project not found")
+        return project
+
     project = core_ports.workspace_registry.get_active_project()
     if not project:
         raise HTTPException(status_code=404, detail="No active project found")
@@ -85,8 +98,19 @@ def get_active_project(core_ports: CorePorts = Depends(get_core_ports)):
 
 
 @projects_router.get("/active/paths", response_model=ProjectResolvedPathsDTO)
-def get_active_project_paths(core_ports: CorePorts = Depends(get_core_ports)):
+def get_active_project_paths(
+    core_ports: CorePorts = Depends(get_core_ports),
+    request_context: RequestContext | None = Depends(get_request_context),
+):
     """Return resolved local paths for the active project."""
+    if _request_uses_hosted_project_selection(request_context):
+        if request_context is None or request_context.project is None:
+            raise HTTPException(status_code=404, detail="No project selected for hosted request")
+        try:
+            return _to_resolved_dto(core_ports, request_context.project.project_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     project = core_ports.workspace_registry.get_active_project()
     if not project:
         raise HTTPException(status_code=404, detail="No active project found")
@@ -97,8 +121,23 @@ def get_active_project_paths(core_ports: CorePorts = Depends(get_core_ports)):
 
 
 @projects_router.post("/active/{project_id}", response_model=Project)
-def set_active_project(project_id: str, core_ports: CorePorts = Depends(get_core_ports)):
+def set_active_project(
+    project_id: str,
+    core_ports: CorePorts = Depends(get_core_ports),
+    request_context: RequestContext | None = Depends(get_request_context),
+):
     """Switch the active project."""
+    if _request_uses_hosted_project_selection(request_context):
+        if not core_ports.workspace_registry.get_project(project_id):
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Hosted requests must select projects explicitly per request; "
+                "the process-global active project is local-only."
+            ),
+        )
+
     try:
         core_ports.workspace_registry.set_active_project(project_id)
         project = core_ports.workspace_registry.get_active_project()
@@ -118,3 +157,9 @@ def get_project_paths(project_id: str, core_ports: CorePorts = Depends(get_core_
         return _to_resolved_dto(core_ports, project_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _request_uses_hosted_project_selection(request_context: object) -> bool:
+    principal = getattr(request_context, "principal", None)
+    provider = getattr(principal, "provider", None)
+    return bool(getattr(provider, "hosted", False))

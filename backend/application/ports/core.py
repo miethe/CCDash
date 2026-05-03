@@ -81,8 +81,19 @@ class WorkspaceRegistry(Protocol):
     ) -> ProjectBinding | None:
         """Resolve an explicit or active project binding for runtime-owned work."""
 
-    def resolve_scope(self, project_id: str | None = None) -> tuple[WorkspaceScope | None, ProjectScope | None]:
-        """Resolve the workspace and project scope for a request."""
+    def resolve_scope(
+        self,
+        project_id: str | None = None,
+        *,
+        allow_active_fallback: bool = True,
+    ) -> tuple[WorkspaceScope | None, ProjectScope | None]:
+        """Resolve workspace/project scope.
+
+        Local desktop callers may use the process-global active project as a
+        compatibility fallback. Hosted request paths must pass
+        ``allow_active_fallback=False`` and select scope through an explicit
+        request project id or principal-derived project claim.
+        """
 
 
 @runtime_checkable

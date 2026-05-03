@@ -49,8 +49,19 @@ class ProjectManagerWorkspaceRegistry:
             refresh=refresh,
         )
 
-    def resolve_scope(self, project_id: str | None = None) -> tuple[WorkspaceScope | None, ProjectScope | None]:
-        project = self._manager.get_project(project_id) if project_id else self._manager.get_active_project()
+    def resolve_scope(
+        self,
+        project_id: str | None = None,
+        *,
+        allow_active_fallback: bool = True,
+    ) -> tuple[WorkspaceScope | None, ProjectScope | None]:
+        requested_project_id = str(project_id or "").strip() or None
+        if requested_project_id is not None:
+            project = self._manager.get_project(requested_project_id)
+        elif allow_active_fallback:
+            project = self._manager.get_active_project()
+        else:
+            project = None
         if project is None:
             return None, None
 

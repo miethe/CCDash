@@ -236,16 +236,13 @@ class RuntimeContainer:
             metadata,
             runtime_profile=self.profile.name,
         )
-        claim_scope = (
-            select_claim_scope(principal, metadata)
-            if self._principal_has_hosted_claim_scope(principal)
-            else None
-        )
+        hosted_claim_scope = self._principal_has_hosted_claim_scope(principal)
+        claim_scope = select_claim_scope(principal, metadata) if hosted_claim_scope else None
         requested_project_id = self._request_project_id(metadata, claim_scope)
-        if self._principal_has_hosted_claim_scope(principal) and requested_project_id is None:
-            workspace_scope, project_scope = None, None
-        else:
-            workspace_scope, project_scope = ports.workspace_registry.resolve_scope(requested_project_id)
+        workspace_scope, project_scope = ports.workspace_registry.resolve_scope(
+            requested_project_id,
+            allow_active_fallback=not hosted_claim_scope,
+        )
 
         request_id = self._header(metadata, "x-request-id") or self._header(metadata, "x-correlation-id") or str(uuid4())
         correlation_id = self._header(metadata, "x-correlation-id") or request_id

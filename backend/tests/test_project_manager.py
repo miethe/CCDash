@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
 from backend.models import Project, ProjectPathConfig
 from backend.project_manager import ProjectManager
 
@@ -186,6 +187,72 @@ class ProjectManagerTests(unittest.TestCase):
             binding = manager.resolve_project_binding("missing-project", allow_active_fallback=False)
 
             self.assertIsNone(binding)
+
+    def test_workspace_registry_scope_resolution_can_disable_active_project_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage_path = Path(tmpdir) / "projects.json"
+            storage_path.write_text(
+                json.dumps(
+                    {
+                        "activeProjectId": "project-active",
+                        "projects": [
+                            {
+                                "id": "project-active",
+                                "name": "Active Project",
+                                "path": str(Path(tmpdir) / "active"),
+                            },
+                            {
+                                "id": "project-explicit",
+                                "name": "Explicit Project",
+                                "path": str(Path(tmpdir) / "explicit"),
+                            },
+                        ],
+                    }
+                )
+            )
+            registry = ProjectManagerWorkspaceRegistry(ProjectManager(storage_path))
+
+            workspace, project = registry.resolve_scope(allow_active_fallback=False)
+            explicit_workspace, explicit_project = registry.resolve_scope(
+                "project-explicit",
+                allow_active_fallback=False,
+            )
+
+            self.assertIsNone(workspace)
+            self.assertIsNone(project)
+            self.assertIsNotNone(explicit_workspace)
+            self.assertIsNotNone(explicit_project)
+            self.assertEqual(explicit_project.project_id, "project-explicit")
+
+    def test_set_active_project_mutates_persisted_local_active_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage_path = Path(tmpdir) / "projects.json"
+            storage_path.write_text(
+                json.dumps(
+                    {
+                        "activeProjectId": "project-one",
+                        "projects": [
+                            {
+                                "id": "project-one",
+                                "name": "Project One",
+                                "path": str(Path(tmpdir) / "one"),
+                            },
+                            {
+                                "id": "project-two",
+                                "name": "Project Two",
+                                "path": str(Path(tmpdir) / "two"),
+                            },
+                        ],
+                    }
+                )
+            )
+            manager = ProjectManager(storage_path)
+
+            manager.set_active_project("project-two")
+
+            self.assertEqual(manager.get_active_project().id, "project-two")
+            stored = json.loads(storage_path.read_text())
+            self.assertEqual(stored["activeProjectId"], "project-two")
 
 
 if __name__ == "__main__":

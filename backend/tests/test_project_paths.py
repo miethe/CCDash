@@ -3,7 +3,16 @@ import types
 import unittest
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from backend import config
+from backend.application.context import (
+    AuthProviderMetadata,
+    Principal,
+    ProjectScope,
+    RequestContext,
+    TraceContext,
+)
 from backend.models import Project
 from backend.project_manager import ProjectManager
 from backend.services.integrations.github_settings_store import GitHubSettingsStore
@@ -180,6 +189,124 @@ class ProjectPathResolverTests(unittest.TestCase):
 
         self.assertEqual(payload.projectId, "project-1")
         self.assertEqual(payload.planDocs.path, "/tmp/project-1/docs")
+
+    def test_projects_router_uses_hosted_request_project_for_active_paths(self) -> None:
+        active_project = Project.model_validate({"id": "project-1", "name": "Project 1", "path": "/tmp/project-1"})
+        hosted_project = Project.model_validate({"id": "project-2", "name": "Project 2", "path": "/tmp/project-2"})
+        bundles = {
+            "project-1": ResolvedProjectPaths(
+                project_id=active_project.id,
+                root=ResolvedProjectPath(
+                    field="root",
+                    source_kind="filesystem",
+                    requested=active_project.pathConfig.root,
+                    path=Path("/tmp/project-1"),
+                ),
+                plan_docs=ResolvedProjectPath(
+                    field="plan_docs",
+                    source_kind="filesystem",
+                    requested=active_project.pathConfig.planDocs,
+                    path=Path("/tmp/project-1/docs"),
+                ),
+                sessions=ResolvedProjectPath(
+                    field="sessions",
+                    source_kind="filesystem",
+                    requested=active_project.pathConfig.sessions,
+                    path=Path("/tmp/sessions-1"),
+                ),
+                progress=ResolvedProjectPath(
+                    field="progress",
+                    source_kind="filesystem",
+                    requested=active_project.pathConfig.progress,
+                    path=Path("/tmp/project-1/.claude/progress"),
+                ),
+            ),
+            "project-2": ResolvedProjectPaths(
+                project_id=hosted_project.id,
+                root=ResolvedProjectPath(
+                    field="root",
+                    source_kind="filesystem",
+                    requested=hosted_project.pathConfig.root,
+                    path=Path("/tmp/project-2"),
+                ),
+                plan_docs=ResolvedProjectPath(
+                    field="plan_docs",
+                    source_kind="filesystem",
+                    requested=hosted_project.pathConfig.planDocs,
+                    path=Path("/tmp/project-2/docs"),
+                ),
+                sessions=ResolvedProjectPath(
+                    field="sessions",
+                    source_kind="filesystem",
+                    requested=hosted_project.pathConfig.sessions,
+                    path=Path("/tmp/sessions-2"),
+                ),
+                progress=ResolvedProjectPath(
+                    field="progress",
+                    source_kind="filesystem",
+                    requested=hosted_project.pathConfig.progress,
+                    path=Path("/tmp/project-2/.claude/progress"),
+                ),
+            ),
+        }
+        projects = {active_project.id: active_project, hosted_project.id: hosted_project}
+        registry = types.SimpleNamespace(
+            get_active_project=lambda: active_project,
+            get_project=lambda project_id: projects.get(project_id),
+            resolve_project_paths=lambda current_project: bundles[current_project.id],
+        )
+        core_ports = types.SimpleNamespace(workspace_registry=registry)
+        request_context = RequestContext(
+            principal=Principal(
+                subject="oidc:user-1",
+                display_name="User One",
+                auth_mode="oidc",
+                provider=AuthProviderMetadata(provider_id="oidc", issuer="issuer", hosted=True),
+            ),
+            workspace=None,
+            project=ProjectScope(
+                project_id="project-2",
+                project_name="Project 2",
+                root_path=Path("/tmp/project-2"),
+                sessions_dir=Path("/tmp/sessions-2"),
+                docs_dir=Path("/tmp/project-2/docs"),
+                progress_dir=Path("/tmp/project-2/.claude/progress"),
+            ),
+            runtime_profile="api",
+            trace=TraceContext(request_id="req-hosted-project"),
+        )
+
+        payload = projects_router.get_active_project_paths(core_ports, request_context)
+
+        self.assertEqual(payload.projectId, "project-2")
+        self.assertEqual(payload.planDocs.path, "/tmp/project-2/docs")
+
+    def test_projects_router_rejects_hosted_active_project_mutation(self) -> None:
+        project = Project.model_validate({"id": "project-1", "name": "Project 1", "path": "/tmp/project-1"})
+        switched: list[str] = []
+        registry = types.SimpleNamespace(
+            get_project=lambda project_id: project if project_id == project.id else None,
+            set_active_project=lambda project_id: switched.append(project_id),
+        )
+        core_ports = types.SimpleNamespace(workspace_registry=registry)
+        request_context = RequestContext(
+            principal=Principal(
+                subject="oidc:user-1",
+                display_name="User One",
+                auth_mode="oidc",
+                provider=AuthProviderMetadata(provider_id="oidc", issuer="issuer", hosted=True),
+            ),
+            workspace=None,
+            project=None,
+            runtime_profile="api",
+            trace=TraceContext(request_id="req-hosted-switch"),
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            projects_router.set_active_project("project-1", core_ports, request_context)
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(switched, [])
 
     def test_projects_router_lists_projects_from_workspace_registry(self) -> None:
         project = Project.model_validate({"id": "project-1", "name": "Project 1", "path": "/tmp/project-1"})

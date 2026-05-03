@@ -14,10 +14,10 @@ started: '2026-05-03'
 completed: null
 commit_refs: []
 pr_refs: []
-overall_progress: 67
+overall_progress: 100
 completion_estimate: on-track
 total_tasks: 3
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -72,7 +72,7 @@ tasks:
   - Implemented shared CCDash-to-SkillMeat trust metadata headers for hosted Clerk/OIDC principals while preserving local no-auth and explicit API-key behavior; threaded request context through SkillMeat validation, sync, refresh, and memory publish clients; backend/.venv/bin/python -m pytest backend/tests/test_skillmeat_trust.py backend/tests/test_skillmeat_client.py backend/tests/test_integrations_router.py backend/tests/test_skillmeat_memory_drafts.py passed (24 tests).
 - id: AUTH-303
   description: Refine workspace registry behavior so active project selection, project lookup, and scope resolution are compatible with hosted multi-user usage under enterprise/team/user context.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   dependencies:
@@ -81,10 +81,11 @@ tasks:
   priority: high
   assigned_model: codex
   model_effort: high
-  started: null
-  completed: null
-  verified_by: null
-  evidence: []
+  started: '2026-05-03'
+  completed: '2026-05-03'
+  verified_by: codex-orchestrator
+  evidence:
+  - Refined workspace registry scope resolution with explicit active-project fallback control, kept local active-project compatibility, prevented hosted request context and shared project resolution from inheriting process-global active project, and made hosted /api/projects/active* reads request-selected while rejecting hosted active-project mutation; backend/.venv/bin/python -m pytest backend/tests/test_project_manager.py backend/tests/test_project_paths.py backend/tests/test_request_context.py backend/tests/test_claims_mapping.py passed (62 tests); compileall and git diff --check passed.
 parallelization:
   batch_1:
   - AUTH-301
@@ -102,13 +103,13 @@ success_criteria:
   status: in_progress
 - id: SC-2
   description: Hosted requests do not inherit another user's active-project state.
-  status: pending
+  status: completed
 - id: SC-3
   description: Service-to-service integration auth uses the shared trust contract.
   status: completed
 - id: SC-4
   description: User/team/enterprise context resolves consistently before workspace/project access is evaluated.
-  status: in_progress
+  status: completed
 quality_gates:
 - Claims map cleanly into CCDash and SkillMeat scope identifiers across Local, Clerk, and generic OIDC modes.
 - Hosted requests do not inherit another user's active-project state.
