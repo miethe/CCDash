@@ -12,6 +12,7 @@ import type {
 import { AppEntityDataProvider, useAppEntityData } from './AppEntityDataContext';
 import { AppRuntimeProvider, useAppRuntime } from './AppRuntimeContext';
 import { AppSessionProvider, useAppSession } from './AppSessionContext';
+import { AuthSessionProvider } from './AuthSessionContext';
 import { DataClientProvider } from './DataClientContext';
 import {
   hasSessionDetail,
@@ -58,11 +59,13 @@ interface DataContextValue {
 
 const ComposedDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <DataClientProvider>
-    <AppSessionProvider>
-      <AppEntityDataProvider>
-        <AppRuntimeProvider>{children}</AppRuntimeProvider>
-      </AppEntityDataProvider>
-    </AppSessionProvider>
+    <AuthSessionProvider>
+      <AppSessionProvider>
+        <AppEntityDataProvider>
+          <AppRuntimeProvider>{children}</AppRuntimeProvider>
+        </AppEntityDataProvider>
+      </AppSessionProvider>
+    </AuthSessionProvider>
   </DataClientProvider>
 );
 

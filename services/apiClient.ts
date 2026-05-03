@@ -2,6 +2,11 @@ import type {
   AgentSession,
   AlertConfig,
   Feature,
+  AuthErrorClassification,
+  AuthLoginStartResponse,
+  AuthLogoutResponse,
+  AuthProviderMetadataResponse,
+  AuthSessionResponse,
   Notification,
   PlanDocument,
   Project,
@@ -86,6 +91,10 @@ export interface RuntimeProbeContractResponse {
 }
 
 export interface ApiClient {
+  getAuthMetadata(): Promise<AuthProviderMetadataResponse>;
+  getAuthSession(): Promise<AuthSessionResponse>;
+  login(options?: AuthLoginOptions): Promise<AuthLoginStartResponse>;
+  logout(): Promise<AuthLogoutResponse>;
   getHealth(): Promise<RuntimeHealthResponse>;
   getSessions(filters: SessionFilters, options?: { offset?: number; limit?: number }): Promise<PaginatedResponse<AgentSession>>;
   getSession(sessionId: string): Promise<AgentSession>;
@@ -107,11 +116,70 @@ export interface ApiClient {
   triggerTelemetryPushNow(): Promise<TelemetryPushNowResponse>;
 }
 
+export interface AuthLoginOptions {
+  redirectTo?: string;
+  redirect?: boolean;
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly url: string;
+  readonly detail: unknown;
+  readonly authClassification: AuthErrorClassification;
+
+  constructor({ status, statusText, url, detail }: { status: number; statusText: string; url: string; detail: unknown }) {
+    super(`API error: ${status} ${statusText} for ${url}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.url = url;
+    this.detail = detail;
+    this.authClassification = classifyAuthErrorStatus(status);
+  }
+}
+
+export function classifyAuthErrorStatus(status: number): AuthErrorClassification {
+  if (status === 401) return 'unauthenticated';
+  if (status === 403) return 'unauthorized';
+  return null;
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
+
+async function readErrorDetail(res: Response): Promise<unknown> {
+  const text = await res.text().catch(() => '');
+  if (!text) {
+    return res.statusText;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === 'object' && 'detail' in parsed) {
+      return (parsed as { detail: unknown }).detail;
+    }
+    return parsed;
+  } catch {
+    return text;
+  }
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const url = buildApiUrl(path);
-  const res = await fetch(url, init);
+  const requestInit: RequestInit = {
+    ...init,
+    credentials: init?.credentials ?? 'same-origin',
+  };
+  const res = await fetch(url, requestInit);
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText} for ${url}`);
+    throw new ApiError({
+      status: res.status,
+      statusText: res.statusText,
+      url,
+      detail: await readErrorDetail(res),
+    });
+  }
+  if (res.status === 204) {
+    return undefined as T;
   }
   return res.json() as Promise<T>;
 }
@@ -152,6 +220,30 @@ function appendSessionFilters(params: URLSearchParams, filters: SessionFilters):
 
 export function createApiClient(): ApiClient {
   return {
+    async getAuthMetadata() {
+      return requestJson<AuthProviderMetadataResponse>('/auth/metadata');
+    },
+
+    async getAuthSession() {
+      return requestJson<AuthSessionResponse>('/auth/session');
+    },
+
+    async login(options = {}) {
+      const params = new URLSearchParams({
+        redirect: String(options.redirect ?? false),
+      });
+      if (options.redirectTo) {
+        params.set('redirectTo', options.redirectTo);
+      }
+      return requestJson<AuthLoginStartResponse>(`/auth/login/start?${params.toString()}`);
+    },
+
+    async logout() {
+      return requestJson<AuthLogoutResponse>('/auth/logout', {
+        method: 'POST',
+      });
+    },
+
     async getHealth() {
       return requestJson<RuntimeHealthResponse>('/health');
     },

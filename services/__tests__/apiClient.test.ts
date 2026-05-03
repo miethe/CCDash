@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TaskStatus } from '../../types';
-import { createApiClient } from '../apiClient';
+import { ApiError, createApiClient } from '../apiClient';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +28,12 @@ function calledUrl(): string {
   const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
   if (calls.length === 0) throw new Error('fetch was not called');
   return calls[0][0] as string;
+}
+
+function calledInit(): RequestInit {
+  const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
+  if (calls.length === 0) throw new Error('fetch was not called');
+  return (calls[0][1] ?? {}) as RequestInit;
 }
 
 // ── Suite ──────────────────────────────────────────────────────────────────────
@@ -125,5 +131,77 @@ describe('apiClient — URL encoding on write paths (RFC 3986 § 2.2)', () => {
       await client.updateTaskStatus('FEAT-1', 'phase-1', 'T1-001', status);
       expect(calledUrl()).toBe('/api/features/FEAT-1/phases/phase-1/tasks/T1-001/status');
     });
+  });
+});
+
+describe('apiClient — auth/session foundation', () => {
+  let client: ReturnType<typeof createApiClient>;
+
+  beforeEach(() => {
+    client = createApiClient();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends same-origin credentials for cookie-backed auth requests', async () => {
+    stubFetch({
+      authenticated: false,
+      subject: null,
+      displayName: null,
+      groups: [],
+      scopes: [],
+      memberships: [],
+      provider: 'oidc',
+      authMode: 'anonymous',
+      localMode: false,
+    });
+
+    await client.getAuthSession();
+
+    expect(calledUrl()).toBe('/api/auth/session');
+    expect(calledInit().credentials).toBe('same-origin');
+  });
+
+  it('exposes login helper with JSON mode and encoded redirect target', async () => {
+    stubFetch({ authorizationUrl: 'https://issuer.example.test/authorize' });
+
+    await client.login({ redirectTo: '/dashboard?tab=auth' });
+
+    expect(calledUrl()).toBe('/api/auth/login/start?redirect=false&redirectTo=%2Fdashboard%3Ftab%3Dauth');
+    expect(calledInit().credentials).toBe('same-origin');
+  });
+
+  it('exposes logout helper as a POST request', async () => {
+    stubFetch({ ok: true });
+
+    await client.logout();
+
+    expect(calledUrl()).toBe('/api/auth/logout');
+    expect(calledInit().method).toBe('POST');
+    expect(calledInit().credentials).toBe('same-origin');
+  });
+
+  it('classifies 401 responses as unauthenticated and carries response detail', async () => {
+    stubFetch({ detail: { error: 'unauthorized', code: 'principal_unauthenticated' } }, 401);
+
+    await expect(client.getProjects()).rejects.toMatchObject({
+      status: 401,
+      url: '/api/projects',
+      authClassification: 'unauthenticated',
+      detail: { error: 'unauthorized', code: 'principal_unauthenticated' },
+    } satisfies Partial<ApiError>);
+  });
+
+  it('classifies 403 responses as unauthorized and carries response detail', async () => {
+    stubFetch({ detail: { error: 'forbidden', code: 'permission_not_granted' } }, 403);
+
+    await expect(client.getProjects()).rejects.toMatchObject({
+      status: 403,
+      url: '/api/projects',
+      authClassification: 'unauthorized',
+      detail: { error: 'forbidden', code: 'permission_not_granted' },
+    } satisfies Partial<ApiError>);
   });
 });

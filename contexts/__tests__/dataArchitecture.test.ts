@@ -12,6 +12,7 @@ describe('data architecture guardrails', () => {
     const source = readFileSync(dataContextPath, 'utf-8');
 
     expect(source).toContain('<DataClientProvider>');
+    expect(source).toContain('<AuthSessionProvider>');
     expect(source).toContain('<AppSessionProvider>');
     expect(source).toContain('<AppEntityDataProvider>');
     expect(source).toContain('<AppRuntimeProvider>');
@@ -23,6 +24,7 @@ describe('data architecture guardrails', () => {
     const source = readFileSync(apiClientPath, 'utf-8');
 
     expect(source).toContain('export function createApiClient()');
-    expect(source).toContain('fetch(`${API_BASE}${path}`');
+    expect(source).toContain('credentials: init?.credentials ?? \'same-origin\'');
+    expect(source).toContain('fetch(url, requestInit)');
   });
 });
