@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 
 from backend.adapters.auth import StaticBearerTokenIdentityProvider
+from backend.adapters.auth.claims_mapping import ClaimScopeSelection, select_claim_scope
 from backend.adapters.live_updates import (
     InMemoryLiveEventBroker,
     PostgresNotifyLiveEventBus,
@@ -231,12 +232,20 @@ class RuntimeContainer:
 
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()
-        requested_project_id = str(metadata.headers.get("x-ccdash-project-id") or "").strip() or None
         principal = await ports.identity_provider.get_principal(
             metadata,
             runtime_profile=self.profile.name,
         )
-        workspace_scope, project_scope = ports.workspace_registry.resolve_scope(requested_project_id)
+        claim_scope = (
+            select_claim_scope(principal, metadata)
+            if self._principal_has_hosted_claim_scope(principal)
+            else None
+        )
+        requested_project_id = self._request_project_id(metadata, claim_scope)
+        if self._principal_has_hosted_claim_scope(principal) and requested_project_id is None:
+            workspace_scope, project_scope = None, None
+        else:
+            workspace_scope, project_scope = ports.workspace_registry.resolve_scope(requested_project_id)
 
         request_id = self._header(metadata, "x-request-id") or self._header(metadata, "x-correlation-id") or str(uuid4())
         correlation_id = self._header(metadata, "x-correlation-id") or request_id
@@ -261,21 +270,32 @@ class RuntimeContainer:
         # Enterprise scope: present whenever the storage profile is enterprise.
         header_enterprise_id = self._header(metadata, "x-ccdash-enterprise-id")
         resolved_enterprise_id = header_enterprise_id or storage_enterprise_id
+        if claim_scope is not None:
+            resolved_enterprise_id = claim_scope.enterprise_id or header_enterprise_id or storage_enterprise_id
         if resolved_enterprise_id is not None:
             enterprise_scope = EnterpriseScope(
                 enterprise_id=resolved_enterprise_id,
-                display_name=self._header(metadata, "x-ccdash-enterprise-name") or "",
+                display_name=(
+                    (claim_scope.enterprise_name if claim_scope is not None else None)
+                    or self._header(metadata, "x-ccdash-enterprise-name")
+                    or ""
+                ),
             )
 
-        # Team scope: only when an explicit team header is provided within an
-        # enterprise boundary. Follow-on auth work will resolve this from
-        # token claims or membership lookups.
+        # Team scope requires an enterprise boundary and resolves from hosted
+        # claims before falling back to request-local headers.
         header_team_id = self._header(metadata, "x-ccdash-team-id")
+        if claim_scope is not None:
+            header_team_id = claim_scope.team_id or header_team_id
         if header_team_id is not None and resolved_enterprise_id is not None:
             team_scope = TeamScope(
                 team_id=header_team_id,
                 enterprise_id=resolved_enterprise_id,
-                display_name=self._header(metadata, "x-ccdash-team-name") or "",
+                display_name=(
+                    (claim_scope.team_name if claim_scope is not None else None)
+                    or self._header(metadata, "x-ccdash-team-name")
+                    or ""
+                ),
             )
 
         # --- Scope bindings chain: enterprise → team → workspace → project ---
@@ -285,6 +305,11 @@ class RuntimeContainer:
                 ScopeBinding(
                     scope_type="enterprise",
                     scope_id=enterprise_scope.enterprise_id,
+                    role=self._claim_scope_role(principal, "enterprise", enterprise_scope.enterprise_id),
+                    principal_subject=principal.subject,
+                    principal_stable_subject=principal.stable_subject,
+                    provider_id=principal.auth_provider_id,
+                    issuer=principal.issuer,
                 )
             )
         if team_scope is not None:
@@ -294,6 +319,11 @@ class RuntimeContainer:
                     scope_id=team_scope.team_id,
                     parent_scope_type="enterprise",
                     parent_scope_id=enterprise_scope.enterprise_id if enterprise_scope else None,
+                    role=self._claim_scope_role(principal, "team", team_scope.team_id),
+                    principal_subject=principal.subject,
+                    principal_stable_subject=principal.stable_subject,
+                    provider_id=principal.auth_provider_id,
+                    issuer=principal.issuer,
                 )
             )
         if workspace_scope is not None:
@@ -311,6 +341,11 @@ class RuntimeContainer:
                     scope_id=workspace_scope.workspace_id,
                     parent_scope_type=parent_type,
                     parent_scope_id=parent_id,
+                    role=self._claim_scope_role(principal, "workspace", workspace_scope.workspace_id),
+                    principal_subject=principal.subject,
+                    principal_stable_subject=principal.stable_subject,
+                    provider_id=principal.auth_provider_id,
+                    issuer=principal.issuer,
                 )
             )
         if project_scope is not None:
@@ -320,6 +355,11 @@ class RuntimeContainer:
                     scope_id=project_scope.project_id,
                     parent_scope_type="workspace" if workspace_scope is not None else None,
                     parent_scope_id=workspace_scope.workspace_id if workspace_scope is not None else None,
+                    role=self._claim_scope_role(principal, "project", project_scope.project_id),
+                    principal_subject=principal.subject,
+                    principal_stable_subject=principal.stable_subject,
+                    provider_id=principal.auth_provider_id,
+                    issuer=principal.issuer,
                 )
             )
 
@@ -359,6 +399,28 @@ class RuntimeContainer:
             team=team_scope,
             tenancy=tenancy,
         )
+
+    def _principal_has_hosted_claim_scope(self, principal: Any) -> bool:
+        provider = getattr(principal, "provider", None)
+        return bool(getattr(provider, "hosted", False))
+
+    def _request_project_id(
+        self,
+        metadata: RequestMetadata,
+        claim_scope: ClaimScopeSelection | None,
+    ) -> str | None:
+        header_project_id = self._header(metadata, "x-ccdash-project-id")
+        if header_project_id:
+            return header_project_id
+        if claim_scope is None:
+            return None
+        return claim_scope.project_id or claim_scope.workspace_id
+
+    def _claim_scope_role(self, principal: Any, scope_type: str, scope_id: str) -> str | None:
+        for membership in getattr(principal, "memberships", ()):
+            if str(membership.scope_type) == scope_type and membership.effective_scope_id == scope_id:
+                return membership.role
+        return None
 
     def runtime_status(self) -> dict[str, Any]:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)

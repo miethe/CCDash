@@ -17,8 +17,8 @@ from jwt import PyJWKSet
 from jwt.exceptions import PyJWTError
 
 from backend.adapters.auth.bearer import RequestAuthenticationError
+from backend.adapters.auth.claims_mapping import principal_from_claims
 from backend.adapters.auth.providers.base import HostedAuthValidationContext
-from backend.adapters.auth.providers.oidc import principal_from_claims
 
 
 JsonFetcher = Callable[[str], Awaitable[Mapping[str, Any]]]

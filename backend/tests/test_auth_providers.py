@@ -115,10 +115,12 @@ class OIDCProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(principal.provider.hosted)
         self.assertEqual(principal.normalized_subject.subject, "user-123")
         self.assertEqual(principal.normalized_subject.stable_id, "oidc:https://issuer.example.test:user:user-123")
-        self.assertEqual(len(principal.memberships), 1)
-        self.assertEqual(principal.memberships[0].scope_type, "project")
-        self.assertEqual(principal.memberships[0].effective_scope_id, "project-1")
-        self.assertEqual(principal.memberships[0].enterprise_id, "enterprise-1")
+        project_membership = next(m for m in principal.memberships if m.scope_type == "project")
+        self.assertEqual(project_membership.effective_scope_id, "project-1")
+        self.assertEqual(project_membership.enterprise_id, "enterprise-1")
+        team_memberships = {m.effective_scope_id for m in principal.memberships if m.scope_type == "team"}
+        self.assertIn("team-1", team_memberships)
+        self.assertIn("engineering", team_memberships)
 
     async def test_oidc_discovers_jwks_url_from_issuer(self) -> None:
         async def discovery_fetcher(url: str):
