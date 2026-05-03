@@ -17,7 +17,8 @@ related_documents: []
 spike_ref: null
 prd_ref: null
 plan_ref: null
-commit_refs: []
+commit_refs:
+  - 7c78824d729abe781adee740a39bc23bf055806d
 pr_refs: []
 files_affected:
   - backend/db/sqlite_migrations.py
