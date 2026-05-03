@@ -10,16 +10,17 @@ execution_model: batch-parallel
 phase: 3
 title: Authorization Policy and 3-Tier RBAC Matrix
 status: in_progress
-started: '2026-05-02'
+started: '2026-05-03'
 completed: null
 commit_refs:
 - ebb75eb
+- 262d036
 pr_refs: []
-overall_progress: 50
+overall_progress: 75
 completion_estimate: at-risk
 total_tasks: 4
-completed_tasks: 2
-in_progress_tasks: 0
+completed_tasks: 3
+in_progress_tasks: 1
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -47,8 +48,8 @@ tasks:
   priority: critical
   assigned_model: codex
   model_effort: high
-  started: '2026-05-02'
-  completed: '2026-05-02'
+  started: '2026-05-03'
+  completed: '2026-05-03'
   verified_by: codex-orchestrator
   evidence:
   - Implemented RoleBindingAuthorizationPolicy with role-to-permission expansion, direct principal scopes, explicit deny handling, scope containment for user/team/enterprise/workspace/project/owned_entity, and auth-capable API runtime composition; backend/.venv/bin/python -m pytest backend/tests/test_authorization_policy.py -v passed (13 tests); py_compile for authorization/core/runtime/test modules passed.
@@ -63,14 +64,14 @@ tasks:
   priority: critical
   assigned_model: codex
   model_effort: high
-  started: '2026-05-02'
-  completed: '2026-05-02'
+  started: '2026-05-03'
+  completed: '2026-05-03'
   verified_by: codex-orchestrator
   evidence:
   - Added transport-neutral authorization helpers, AuthorizationDenied denial object, and FastAPI request-scope HTTP mapping for consistent 401/403 responses with reason/code/action/resource propagation; backend/.venv/bin/python -m pytest backend/tests/test_authorization_policy.py -v passed (19 tests); compileall and git diff --check passed.
 - id: AUTH-203
   description: Finalize initial tier-aware roles and bindings for enterprise, team, and user scopes, and define bootstrap/admin assignment rules.
-  status: pending
+  status: completed
   assigned_to:
   - security-engineering
   - backend-architect
@@ -80,13 +81,14 @@ tasks:
   priority: high
   assigned_model: codex
   model_effort: medium
-  started: null
-  completed: null
-  verified_by: null
-  evidence: []
+  started: '2026-05-03'
+  completed: '2026-05-03'
+  verified_by: codex-orchestrator
+  evidence:
+  - Added docs/guides/shared-auth-rbac-role-matrix.md documenting canonical role IDs and aliases, binding scopes, bootstrap/admin defaults, local no-auth behavior, lockout prevention, and separate approval/integration operator powers; guide sanity-checked with sed/rg/wc.
 - id: AUTH-204
   description: Define enterprise, team, user, workspace, and project grant inheritance and conflict resolution rules.
-  status: pending
+  status: in_progress
   assigned_to:
   - backend-architect
   - security-engineering
@@ -96,7 +98,7 @@ tasks:
   priority: high
   assigned_model: codex
   model_effort: medium
-  started: null
+  started: '2026-05-03'
   completed: null
   verified_by: null
   evidence: []
@@ -128,7 +130,7 @@ success_criteria:
   status: completed
 - id: SC-3
   description: The role matrix covers approvals and integrations separately from generic edit access.
-  status: pending
+  status: completed
 - id: SC-4
   description: User/team/enterprise inheritance rules are explicit enough to implement without reopening the model mid-build.
   status: pending
