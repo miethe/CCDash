@@ -5,7 +5,32 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, HTTPException
 
+from backend.application.context import (
+    AuthProviderMetadata,
+    Principal,
+    ProjectScope,
+    RequestContext,
+    TenancyContext,
+    TraceContext,
+    WorkspaceScope,
+)
+from backend.application.ports import AuthorizationDecision
+from backend.application.ports.core import ProjectBinding
 from backend.routers import cache as cache_router
+
+
+class _AuthorizationPolicy:
+    def __init__(self, *, allowed: bool = True) -> None:
+        self.allowed = allowed
+        self.calls: list[dict] = []
+
+    async def authorize(self, context, *, action: str, resource: str | None = None):
+        self.calls.append({"action": action, "resource": resource})
+        return AuthorizationDecision(
+            allowed=self.allowed,
+            code="permission_allowed" if self.allowed else "permission_not_granted",
+            reason="test policy",
+        )
 
 
 @dataclass
@@ -126,13 +151,32 @@ class _FakeWorkspaceRegistry:
     def __init__(self, project, bundle: _FakeResolvedProjectPaths) -> None:
         self.project = project
         self.bundle = bundle
+        self.active_calls = 0
+
+    def get_project(self, project_id):
+        return self.project if project_id == self.project.id else None
 
     def get_active_project(self):
+        self.active_calls += 1
         return self.project
 
-    def resolve_project_paths(self, project):
+    def resolve_project_paths(self, project, *, refresh: bool = False):
         self.project = project
         return self.bundle
+
+    def resolve_project_binding(self, project_id=None, *, allow_active_fallback: bool = True, refresh: bool = False):
+        if project_id:
+            project = self.get_project(project_id)
+            source = "explicit"
+        elif allow_active_fallback:
+            project = self.get_active_project()
+            source = "active"
+        else:
+            project = None
+            source = "none"
+        if project is None:
+            return None
+        return ProjectBinding(project=project, paths=self.bundle, source=source, requested_project_id=project_id)
 
 
 class _FakeEntityLinkRepository:
@@ -203,7 +247,37 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         )
         return types.SimpleNamespace(
             workspace_registry=_FakeWorkspaceRegistry(project, bundle),
+            authorization_policy=_AuthorizationPolicy(),
             storage=types.SimpleNamespace(entity_links=lambda: _FakeEntityLinkRepository()),
+        )
+
+    def _request_context(self, *, project_id: str | None = "project-1", hosted: bool = False) -> RequestContext:
+        provider = AuthProviderMetadata(provider_id="oidc", issuer="issuer", hosted=True) if hosted else None
+        workspace = WorkspaceScope(workspace_id=project_id, root_path=Path("/tmp/project")) if project_id else None
+        project = (
+            ProjectScope(
+                project_id=project_id,
+                project_name=project_id,
+                root_path=Path("/tmp/project"),
+                sessions_dir=Path("/tmp/sessions"),
+                docs_dir=Path("/tmp/project/docs"),
+                progress_dir=Path("/tmp/project/progress"),
+            )
+            if project_id
+            else None
+        )
+        return RequestContext(
+            principal=Principal(
+                subject="test-user",
+                display_name="Test User",
+                auth_mode="oidc" if hosted else "local",
+                provider=provider,
+            ),
+            workspace=workspace,
+            project=project,
+            runtime_profile="api" if hosted else "local",
+            trace=TraceContext(request_id="req-1"),
+            tenancy=TenancyContext(workspace_id=project_id, project_id=project_id),
         )
 
     async def test_status_includes_observability(self) -> None:
@@ -211,7 +285,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         request = self._request(engine)
         project = types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
 
-        payload = await cache_router.get_cache_status(request, self._core_ports(project=project))
+        payload = await cache_router.get_cache_status(request, self._request_context(), self._core_ports(project=project))
 
         self.assertEqual(payload["status"], "active")
         self.assertEqual(payload["projectId"], "project-1")
@@ -225,7 +299,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         request = self._request(engine, _FakeLiveBroker())
         project = types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
 
-        payload = await cache_router.get_cache_status(request, self._core_ports(project=project))
+        payload = await cache_router.get_cache_status(request, self._request_context(), self._core_ports(project=project))
 
         self.assertEqual(payload["liveUpdates"]["published_events"], 12)
         self.assertEqual(payload["liveUpdates"]["replay_gaps"], 2)
@@ -234,7 +308,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         engine = _FakeSyncEngine()
         request = self._request(engine, runtime_container=_FakeRuntimeContainer())
 
-        payload = await cache_router.get_cache_status(request, self._core_ports())
+        payload = await cache_router.get_cache_status(request, self._request_context(), self._core_ports())
 
         self.assertEqual(payload["liveFanout"]["mode"], "listen")
         self.assertTrue(payload["liveFanout"]["running"])
@@ -246,7 +320,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         request = self._request(None)
         project = types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
 
-        payload = await cache_router.get_cache_status(request, self._core_ports(project=project))
+        payload = await cache_router.get_cache_status(request, self._request_context(), self._core_ports(project=project))
 
         self.assertEqual(payload["status"], "unavailable")
         self.assertEqual(payload["sync_engine"], "unavailable")
@@ -255,7 +329,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_operations_returns_empty_when_sync_engine_missing(self) -> None:
         request = self._request(None)
 
-        payload = await cache_router.list_cache_operations(request)
+        payload = await cache_router.list_cache_operations(request, request_context=self._request_context(), core_ports=self._core_ports())
 
         self.assertEqual(payload, {"status": "unavailable", "count": 0, "items": []})
 
@@ -269,6 +343,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
             request,
             background,
             cache_router.SyncRequest(force=True, background=True, trigger="api"),
+            self._request_context(),
             self._core_ports(project=project),
         )
 
@@ -286,6 +361,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
             request,
             background,
             cache_router.SyncRequest(force=False, background=False, trigger="manual"),
+            self._request_context(),
             self._core_ports(project=project),
         )
 
@@ -307,6 +383,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
                     paths=[cache_router.ChangedPathSpec(path="../outside.md", changeType="modified")],
                     background=False,
                 ),
+                self._request_context(),
                 self._core_ports(project=project),
             )
 
@@ -326,6 +403,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
                 background=False,
                 trigger="api",
             ),
+            self._request_context(),
             self._core_ports(project=project),
         )
 
@@ -346,6 +424,7 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
             primary_floor=0.6,
             fanout_floor=8,
             limit=10,
+            request_context=self._request_context(),
             core_ports=self._core_ports(project=project),
         )
 
@@ -360,6 +439,31 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["items"][0]["targetType"], "feature")
+
+    async def test_hosted_status_without_project_does_not_use_active_project(self) -> None:
+        engine = _FakeSyncEngine()
+        request = self._request(engine)
+        core_ports = self._core_ports()
+        hosted_context = self._request_context(project_id=None, hosted=True)
+
+        payload = await cache_router.get_cache_status(request, hosted_context, core_ports)
+
+        self.assertEqual(payload["projectId"], "")
+        self.assertEqual(core_ports.workspace_registry.active_calls, 0)
+
+    async def test_operations_require_cache_operation_read_permission(self) -> None:
+        request = self._request(_FakeSyncEngine())
+        core_ports = self._core_ports()
+        core_ports.authorization_policy = _AuthorizationPolicy(allowed=False)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await cache_router.list_cache_operations(
+                request,
+                request_context=self._request_context(),
+                core_ports=core_ports,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
 
 
 if __name__ == "__main__":
