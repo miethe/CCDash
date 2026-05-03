@@ -12,7 +12,7 @@ import type {
 import { AppEntityDataProvider, useAppEntityData } from './AppEntityDataContext';
 import { AppRuntimeProvider, useAppRuntime } from './AppRuntimeContext';
 import { AppSessionProvider, useAppSession } from './AppSessionContext';
-import { AuthSessionProvider } from './AuthSessionContext';
+import { AuthSessionProvider, useAuthSession } from './AuthSessionContext';
 import { DataClientProvider } from './DataClientContext';
 import {
   hasSessionDetail,
@@ -57,14 +57,46 @@ interface DataContextValue {
   getSessionById: (sessionId: string, options?: SessionFetchOptions) => Promise<AgentSession | null>;
 }
 
+interface AppDataProviderGateState {
+  loading: boolean;
+  authenticated: boolean;
+  session?: { localMode?: boolean; authMode?: string | null } | null;
+  metadata?: { localMode?: boolean; authMode?: string | null } | null;
+}
+
+export function shouldMountAppDataProviders(auth: AppDataProviderGateState): boolean {
+  if (auth.loading) {
+    return false;
+  }
+  const localMode = Boolean(
+    auth.session?.localMode
+    || auth.metadata?.localMode
+    || auth.session?.authMode === 'local'
+    || auth.metadata?.authMode === 'local',
+  );
+  return localMode || auth.authenticated;
+}
+
+const AppDataProviderGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const auth = useAuthSession();
+
+  if (!shouldMountAppDataProviders(auth)) {
+    return <>{children}</>;
+  }
+
+  return (
+    <AppSessionProvider>
+      <AppEntityDataProvider>
+        <AppRuntimeProvider>{children}</AppRuntimeProvider>
+      </AppEntityDataProvider>
+    </AppSessionProvider>
+  );
+};
+
 const ComposedDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <DataClientProvider>
     <AuthSessionProvider>
-      <AppSessionProvider>
-        <AppEntityDataProvider>
-          <AppRuntimeProvider>{children}</AppRuntimeProvider>
-        </AppEntityDataProvider>
-      </AppSessionProvider>
+      <AppDataProviderGate>{children}</AppDataProviderGate>
     </AuthSessionProvider>
   </DataClientProvider>
 );

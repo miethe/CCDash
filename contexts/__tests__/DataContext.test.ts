@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentSession } from '../../types';
-import { hasSessionDetail, mergeSessionDetail } from '../DataContext';
+import { hasSessionDetail, mergeSessionDetail, shouldMountAppDataProviders } from '../DataContext';
 
 const buildSession = (overrides: Partial<AgentSession> = {}): AgentSession => ({
     id: 'session-1',
@@ -108,5 +108,48 @@ describe('DataContext session detail helpers', () => {
         const merged = mergeSessionDetail(existing, buildSession({ id: 'missing' }));
 
         expect(merged).toBe(existing);
+    });
+});
+
+describe('DataContext auth provider gate', () => {
+    it('defers app data providers while auth is loading or hosted unauthenticated', () => {
+        expect(shouldMountAppDataProviders({
+            loading: true,
+            authenticated: false,
+            metadata: { localMode: false, authMode: 'oidc' },
+            session: null,
+        })).toBe(false);
+
+        expect(shouldMountAppDataProviders({
+            loading: false,
+            authenticated: false,
+            metadata: { localMode: false, authMode: 'oidc' },
+            session: {
+                localMode: false,
+                authMode: 'anonymous',
+            },
+        })).toBe(false);
+    });
+
+    it('mounts app data providers for local mode and hosted authenticated sessions', () => {
+        expect(shouldMountAppDataProviders({
+            loading: false,
+            authenticated: true,
+            metadata: { localMode: true, authMode: 'local' },
+            session: {
+                localMode: true,
+                authMode: 'local',
+            },
+        })).toBe(true);
+
+        expect(shouldMountAppDataProviders({
+            loading: false,
+            authenticated: true,
+            metadata: { localMode: false, authMode: 'oidc' },
+            session: {
+                localMode: false,
+                authMode: 'oidc',
+            },
+        })).toBe(true);
     });
 });

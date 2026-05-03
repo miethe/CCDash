@@ -9,16 +9,17 @@ plan_ref: docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-
 execution_model: batch-parallel
 phase: 6
 title: Frontend Session UX and Protected Shell
-status: pending
+status: in_progress
 started: '2026-05-03'
 completed: null
-commit_refs: []
+commit_refs:
+- b8b96c1
 pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 1
-in_progress_tasks: 0
+completed_tasks: 2
+in_progress_tasks: 1
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -56,7 +57,7 @@ tasks:
   description: Move inventory-defined protected request paths off ad hoc fetch calls
     and onto the shared auth-aware transport, starting with execution, feature detail/modals,
     integrations, analytics mutation paths, and operational panels.
-  status: pending
+  status: in_progress
   assigned_to:
   - frontend-developer
   dependencies:
@@ -65,14 +66,14 @@ tasks:
   priority: critical
   assigned_model: codex
   model_effort: high
-  started: null
+  started: '2026-05-03T17:37:30Z'
   completed: null
   evidence: []
   verified_by: []
 - id: AUTH-503
   description: Add hosted sign-in/out flows, session-aware app shell behavior, and
     clear local-vs-hosted runtime messaging.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   - frontend-developer
@@ -82,10 +83,14 @@ tasks:
   priority: high
   assigned_model: codex
   model_effort: high
-  started: null
-  completed: null
-  evidence: []
-  verified_by: []
+  started: '2026-05-03T17:37:30Z'
+  completed: '2026-05-03T17:46:21Z'
+  evidence:
+  - test: pnpm exec vitest run contexts/__tests__/DataContext.test.ts contexts/__tests__/dataArchitecture.test.ts
+      components/__tests__/LayoutAuthShell.test.tsx contexts/__tests__/AuthSessionContext.test.tsx
+      services/__tests__/apiClient.test.ts
+  verified_by:
+  - codex-orchestrator
 - id: AUTH-504
   description: Update enterprise/team/workspace/project selection and sensitive UI
     affordances so they reflect backend permissions without relying on UI-only protection.
@@ -124,7 +129,7 @@ success_criteria:
 - Protected request paths do not bypass the shared auth-aware transport.
 - Enterprise/team/user context is visible and switchable where appropriate without
   becoming the source of truth for authorization.
-progress: 25
+progress: 50
 updated: '2026-05-03'
 ---
 

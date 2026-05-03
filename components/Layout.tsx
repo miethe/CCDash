@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { LayoutDashboard, ListTodo, Settings, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow, GitBranch, WifiOff, RefreshCw, BookOpen } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { LayoutDashboard, ListTodo, Settings, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow, GitBranch, WifiOff, RefreshCw, BookOpen, LogOut, ShieldAlert, ShieldCheck, UserRound } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { useAppRuntime } from '../contexts/AppRuntimeContext';
+import { useAuthSession } from '../contexts/AuthSessionContext';
 import { cn } from '../lib/utils';
 import { ProjectSelector } from './ProjectSelector';
 
@@ -11,6 +12,21 @@ const PLANNING_BRAND = 'oklch(75% 0.14 195)';
 const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`;
 const SIDEBAR_LOGO_SRC = assetUrl('/branding/ccdash-logo-primary.png');
 const SIDEBAR_ICON_SRC = assetUrl('/branding/ccdash-app-icon.png');
+
+const runtimeLabelForAuth = (auth: ReturnType<typeof useAuthSession>): string => {
+  if (auth.session?.localMode || auth.metadata?.localMode || auth.session?.authMode === 'local' || auth.metadata?.authMode === 'local') {
+    return 'Local runtime';
+  }
+  return 'Hosted session';
+};
+
+const sessionIdentityLabel = (auth: ReturnType<typeof useAuthSession>): string => {
+  if (auth.principal?.displayName) return auth.principal.displayName;
+  if (auth.principal?.email) return auth.principal.email;
+  if (auth.principal?.subject) return auth.principal.subject;
+  if (auth.session?.localMode || auth.metadata?.localMode) return 'Local operator';
+  return auth.metadata?.provider ? `${auth.metadata.provider} auth` : 'Not signed in';
+};
 
 const NavItem = ({
   to,
@@ -61,13 +77,161 @@ const NavItem = ({
   );
 };
 
-export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const AuthShellState: React.FC<{
+  auth: ReturnType<typeof useAuthSession>;
+}> = ({ auth }) => {
+  const location = useLocation();
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const runtimeLabel = runtimeLabelForAuth(auth);
+  const isUnauthorized = auth.unauthorized;
+  const title = auth.loading
+    ? 'Checking session'
+    : isUnauthorized
+      ? 'Access restricted'
+      : 'Sign in to continue';
+  const message = auth.loading
+    ? 'Validating your CCDash session.'
+    : isUnauthorized
+      ? 'Your session is active, but it does not have access to this CCDash workspace.'
+      : 'Hosted CCDash requires an active browser session.';
+
+  const redirectTo = useMemo(() => {
+    const path = `${location.pathname}${location.search}${location.hash}`;
+    return path && path !== '/' ? path : '/dashboard';
+  }, [location.hash, location.pathname, location.search]);
+
+  const handleSignIn = async () => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await auth.signIn({ redirectTo });
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : 'Sign-in could not be started.';
+      setActionError(detail);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await auth.signOut();
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : 'Sign-out failed.';
+      setActionError(detail);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex h-screen bg-app-background text-app-foreground">
+      <main className="flex min-h-0 flex-1 items-center justify-center px-6 py-10">
+        <section className="w-full max-w-md rounded-lg border border-panel-border bg-surface-elevated p-6 shadow-sm" aria-live="polite">
+          <div className="mb-6 flex items-center gap-3">
+            <img src={SIDEBAR_ICON_SRC} alt="CCDash" className="h-10 w-10 object-contain" />
+            <div>
+              <p className="text-xs font-semibold uppercase text-muted-foreground">{runtimeLabel}</p>
+              <h1 className="text-xl font-semibold text-panel-foreground">{title}</h1>
+            </div>
+          </div>
+          <p className="text-sm leading-6 text-muted-foreground">{message}</p>
+          {actionError && (
+            <div className="mt-4 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+              {actionError}
+            </div>
+          )}
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            {!auth.loading && !isUnauthorized && (
+              <button
+                type="button"
+                onClick={handleSignIn}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-md border border-focus bg-focus px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-focus/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <ShieldCheck size={16} />
+                {busy ? 'Starting...' : 'Sign in'}
+              </button>
+            )}
+            {isUnauthorized && (
+              <>
+                <button
+                  type="button"
+                  onClick={auth.refreshSession}
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-md border border-panel-border bg-surface-overlay px-3 py-2 text-sm font-medium text-panel-foreground transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RefreshCw size={16} />
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-md border border-panel-border bg-surface-overlay px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-hover hover:text-panel-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <LogOut size={16} />
+                  Sign out
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+};
+
+const SessionContextPanel: React.FC<{
+  auth: ReturnType<typeof useAuthSession>;
+  isCollapsed: boolean;
+}> = ({ auth, isCollapsed }) => {
+  const runtimeLabel = runtimeLabelForAuth(auth);
+  const identityLabel = sessionIdentityLabel(auth);
+  const isLocal = runtimeLabel === 'Local runtime';
+
+  if (isCollapsed) {
+    return (
+      <div className="flex justify-center border-t border-sidebar-border p-4 text-muted-foreground" title={`${runtimeLabel}: ${identityLabel}`}>
+        {isLocal ? <Terminal size={18} /> : <UserRound size={18} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-sidebar-border p-4">
+      <div className="rounded-lg border border-sidebar-border bg-sidebar-accent/45 px-3 py-2">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+          {isLocal ? <Terminal size={14} /> : <ShieldCheck size={14} />}
+          <span>{runtimeLabel}</span>
+        </div>
+        <div className="mt-1 truncate text-sm font-medium text-sidebar-foreground">{identityLabel}</div>
+        {!isLocal && auth.authenticated && (
+          <button
+            type="button"
+            onClick={() => void auth.signOut()}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-sidebar-border bg-sidebar px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-hover hover:text-sidebar-foreground"
+          >
+            <LogOut size={13} />
+            Sign out
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const AuthenticatedLayout: React.FC<{ children: React.ReactNode; auth: ReturnType<typeof useAuthSession> }> = ({ children, auth }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const location = useLocation();
-  const { notifications } = useData();
+  const { notifications, error } = useData();
   const { runtimeUnreachable, retryRuntime } = useAppRuntime();
   const unreadCount = notifications.filter(n => !n.isRead).length;
   const isPlanningRoute = location.pathname.startsWith('/planning');
+  const authDataError = error?.includes('API error: 401') || error?.includes('API error: 403');
 
   return (
     <div className="flex h-screen overflow-hidden bg-app-background text-app-foreground">
@@ -147,10 +311,26 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           </Link>
           <NavItem to="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} isCollapsed={isCollapsed} />
         </div>
+        <SessionContextPanel auth={auth} isCollapsed={isCollapsed} />
       </aside>
 
       {/* Main Content */}
       <main className="flex min-w-0 flex-1 flex-col overflow-x-auto overflow-y-hidden bg-app-background">
+        {authDataError && (
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm text-warning">
+            <div className="flex items-center gap-2">
+              <ShieldAlert size={14} className="shrink-0" />
+              <span>Session access changed. Refresh your session or sign in again.</span>
+            </div>
+            <button
+              onClick={auth.refreshSession}
+              className="flex items-center gap-1.5 rounded border border-warning/40 bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/20"
+            >
+              <RefreshCw size={12} />
+              Refresh
+            </button>
+          </div>
+        )}
         {/* FE-104: Backend disconnected banner */}
         {runtimeUnreachable && (
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-danger/30 bg-danger/10 px-4 py-2 text-sm text-danger">
@@ -178,4 +358,19 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       </main>
     </div>
   );
+};
+
+export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const auth = useAuthSession();
+  const isLocalRuntime = auth.session?.localMode || auth.metadata?.localMode || auth.session?.authMode === 'local' || auth.metadata?.authMode === 'local';
+
+  if (auth.loading) {
+    return <AuthShellState auth={auth} />;
+  }
+
+  if (!isLocalRuntime && (auth.unauthenticated || auth.unauthorized)) {
+    return <AuthShellState auth={auth} />;
+  }
+
+  return <AuthenticatedLayout auth={auth}>{children}</AuthenticatedLayout>;
 };
