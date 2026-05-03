@@ -292,9 +292,15 @@ def _resolve_reference_with_settings(
 
 
 @integrations_router.post("/validate-config", response_model=SkillMeatConfigValidationResponse)
-async def validate_skillmeat_config(req: SkillMeatConfigValidationRequest):
+async def validate_skillmeat_config(
+    req: SkillMeatConfigValidationRequest,
+    request_context: RequestContext | None = Depends(get_request_context),
+):
     require_skillmeat_integration_enabled()
-    payload = await skillmeat_application_service.validate_config(req)
+    payload = await skillmeat_application_service.validate_config(
+        req,
+        context=request_context if isinstance(request_context, RequestContext) else None,
+    )
     return SkillMeatConfigValidationResponse(
         baseUrl=_probe_result(
             str(payload["baseUrl"].get("state") or "idle"),

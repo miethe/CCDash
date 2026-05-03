@@ -14,10 +14,10 @@ started: '2026-05-03'
 completed: null
 commit_refs: []
 pr_refs: []
-overall_progress: 33
+overall_progress: 67
 completion_estimate: on-track
 total_tasks: 3
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -53,7 +53,7 @@ tasks:
   - Implemented provider-neutral claim-to-scope mapping for Local/Clerk/OIDC-style claims, wired Clerk/OIDC providers through the mapper, resolved hosted request enterprise/team/workspace/project context from claims before local fallbacks, and prevented hosted principals without project/workspace claims from inheriting global active project state; backend/.venv/bin/python -m unittest backend.tests.test_claims_mapping backend.tests.test_auth_providers backend.tests.test_request_context backend.tests.test_authorization_policy backend.tests.test_authorization_scope_inheritance passed (83 tests); compileall for auth adapters and runtime container passed.
 - id: AUTH-302
   description: Align outbound SkillMeat integration auth with the shared provider/delegation model and remove the need for a separate hosted-only credential story.
-  status: pending
+  status: completed
   assigned_to:
   - integrations
   - security-engineering
@@ -65,10 +65,11 @@ tasks:
   priority: high
   assigned_model: codex
   model_effort: medium
-  started: null
-  completed: null
-  verified_by: null
-  evidence: []
+  started: '2026-05-03'
+  completed: '2026-05-03'
+  verified_by: codex-orchestrator
+  evidence:
+  - Implemented shared CCDash-to-SkillMeat trust metadata headers for hosted Clerk/OIDC principals while preserving local no-auth and explicit API-key behavior; threaded request context through SkillMeat validation, sync, refresh, and memory publish clients; backend/.venv/bin/python -m pytest backend/tests/test_skillmeat_trust.py backend/tests/test_skillmeat_client.py backend/tests/test_integrations_router.py backend/tests/test_skillmeat_memory_drafts.py passed (24 tests).
 - id: AUTH-303
   description: Refine workspace registry behavior so active project selection, project lookup, and scope resolution are compatible with hosted multi-user usage under enterprise/team/user context.
   status: pending
@@ -104,7 +105,7 @@ success_criteria:
   status: pending
 - id: SC-3
   description: Service-to-service integration auth uses the shared trust contract.
-  status: pending
+  status: completed
 - id: SC-4
   description: User/team/enterprise context resolves consistently before workspace/project access is evaluated.
   status: in_progress

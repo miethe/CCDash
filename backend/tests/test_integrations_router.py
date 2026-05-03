@@ -6,7 +6,17 @@ from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 
-from backend.application.context import Principal, ProjectScope, RequestContext, TenancyContext, TraceContext, WorkspaceScope
+from backend.application.context import (
+    AuthProviderMetadata,
+    Principal,
+    PrincipalSubject,
+    ProjectScope,
+    RequestContext,
+    ScopeBinding,
+    TenancyContext,
+    TraceContext,
+    WorkspaceScope,
+)
 from backend.db.factory import get_agentic_intelligence_repository
 from backend.db.sqlite_migrations import run_migrations
 from backend.models import (
@@ -315,6 +325,58 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload.baseUrl.state, "success")
         self.assertEqual(payload.projectMapping.state, "warning")
+
+    async def test_validate_config_accepts_hosted_trust_metadata_without_api_key(self) -> None:
+        hosted_context = RequestContext(
+            principal=Principal(
+                subject="oidc:user-1",
+                display_name="Hosted User",
+                auth_mode="oidc",
+                provider=AuthProviderMetadata(
+                    provider_id="oidc",
+                    issuer="https://issuer.example.test",
+                    audience="ccdash-api",
+                    tenant_id="ent-1",
+                    hosted=True,
+                ),
+                normalized_subject=PrincipalSubject(
+                    subject="user-1",
+                    provider_id="oidc",
+                    issuer="https://issuer.example.test",
+                ),
+                scopes=("integration.skillmeat:sync",),
+            ),
+            workspace=self.request_context.workspace,
+            project=self.request_context.project,
+            runtime_profile="api",
+            trace=TraceContext(request_id="req-hosted"),
+            scope_bindings=(
+                ScopeBinding(scope_type="enterprise", scope_id="ent-1", role="EA"),
+                ScopeBinding(scope_type="project", scope_id="project-1", role="PM"),
+            ),
+            tenancy=TenancyContext(
+                enterprise_id="ent-1",
+                workspace_id="test-workspace",
+                project_id="project-1",
+            ),
+        )
+        with (
+            patch.object(SkillMeatClient, "validate_base_url", AsyncMock(return_value={"items": []})),
+            patch.object(SkillMeatClient, "get_project", AsyncMock(return_value={"id": "sm-project"})),
+        ):
+            payload = await integrations_router.validate_skillmeat_config(
+                SkillMeatConfigValidationRequest(
+                    baseUrl="http://skillmeat.local",
+                    projectId="sm-project",
+                    aaaEnabled=True,
+                    apiKey="",
+                    requestTimeoutSeconds=2.0,
+                ),
+                request_context=hosted_context,
+            )
+
+        self.assertEqual(payload.auth.state, "success")
+        self.assertIn("Hosted trust metadata", payload.auth.message)
 
     async def test_refresh_runs_combined_pipeline_for_requested_project(self) -> None:
         other_project = types.SimpleNamespace(

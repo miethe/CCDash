@@ -26,11 +26,12 @@ async def refresh_skillmeat_cache(
     db: Any,
     project: Any,
     *,
+    context: Any | None = None,
     observation_limit: int = DEFAULT_OBSERVATION_BACKFILL_LIMIT,
     force_observation_recompute: bool = False,
 ) -> dict[str, Any]:
     """Refresh definition cache first, then rebuild stack observations from current definitions."""
-    sync_payload = await sync_skillmeat_definitions(db, project)
+    sync_payload = await sync_skillmeat_definitions(db, project, context=context)
     project_id = str(getattr(project, "id", "") or "")
     repo = get_agentic_intelligence_repository(db)
     cached_definitions = await repo.list_external_definitions(project_id, limit=1, offset=0)

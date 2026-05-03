@@ -17,11 +17,18 @@ from backend.services.integrations.skillmeat_client import SkillMeatClient, Skil
 from backend.services.integrations.skillmeat_memory_drafts import generate_session_memory_drafts
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache
 from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
+from backend.services.integrations.skillmeat_trust import build_skillmeat_trust_metadata
 from backend.services.stack_observations import backfill_session_stack_observations
 
 
 class SkillMeatApplicationService:
-    def _client_for_project(self, project: Any) -> SkillMeatClient:
+    def _client_for_project(
+        self,
+        project: Any,
+        *,
+        context: RequestContext | None = None,
+        delegation_reason: str = "skillmeat.integration",
+    ) -> SkillMeatClient:
         config = getattr(project, "skillMeat", None)
         if config is None or not bool(getattr(config, "enabled", False)):
             raise ValueError("SkillMeat integration is not enabled for this project")
@@ -34,9 +41,18 @@ class SkillMeatApplicationService:
             timeout_seconds=float(getattr(config, "requestTimeoutSeconds", 5.0) or 5.0),
             aaa_enabled=bool(getattr(config, "aaaEnabled", False)),
             api_key=str(getattr(config, "apiKey", "") or ""),
+            trust_metadata=build_skillmeat_trust_metadata(
+                context,
+                delegation_reason=delegation_reason,
+            ),
         )
 
-    async def validate_config(self, req: SkillMeatConfigValidationRequest) -> dict[str, Any]:
+    async def validate_config(
+        self,
+        req: SkillMeatConfigValidationRequest,
+        *,
+        context: RequestContext | None = None,
+    ) -> dict[str, Any]:
         base_url = str(req.baseUrl or "").strip()
         if not base_url:
             return {
@@ -53,11 +69,16 @@ class SkillMeatApplicationService:
                 },
             }
 
+        trust_metadata = build_skillmeat_trust_metadata(
+            context,
+            delegation_reason="skillmeat.config.validate",
+        )
         client = SkillMeatClient(
             base_url=base_url,
             timeout_seconds=float(req.requestTimeoutSeconds or 5.0),
             aaa_enabled=bool(req.aaaEnabled),
             api_key=str(req.apiKey or ""),
+            trust_metadata=trust_metadata,
         )
 
         try:
@@ -82,11 +103,16 @@ class SkillMeatApplicationService:
 
         if req.aaaEnabled:
             api_key = str(req.apiKey or "").strip()
-            auth_status = (
-                {"state": "success", "message": "The configured credential was accepted by SkillMeat.", "httpStatus": None}
-                if api_key
-                else {"state": "warning", "message": "AAA is enabled, but no API key is configured.", "httpStatus": None}
-            )
+            if api_key:
+                auth_status = {"state": "success", "message": "The configured credential was accepted by SkillMeat.", "httpStatus": None}
+            elif trust_metadata is not None:
+                auth_status = {
+                    "state": "success",
+                    "message": "Hosted trust metadata will be delegated to SkillMeat for AAA.",
+                    "httpStatus": None,
+                }
+            else:
+                auth_status = {"state": "warning", "message": "AAA is enabled, but no API key is configured.", "httpStatus": None}
         else:
             auth_status = {"state": "success", "message": "Local no-auth mode is active. No credential is required.", "httpStatus": None}
 
@@ -118,7 +144,11 @@ class SkillMeatApplicationService:
         requested_project_id: str | None = None,
     ) -> dict[str, Any]:
         project = require_project(context, ports, requested_project_id=requested_project_id)
-        return await sync_skillmeat_definitions(ports.storage.db, project)
+        return await sync_skillmeat_definitions(
+            ports.storage.db,
+            project,
+            context=context,
+        )
 
     async def refresh(
         self,
@@ -131,6 +161,7 @@ class SkillMeatApplicationService:
         return await refresh_skillmeat_cache(
             ports.storage.db,
             project,
+            context=context,
             force_observation_recompute=True,
         )
 
@@ -282,7 +313,11 @@ class SkillMeatApplicationService:
 
         project_config = getattr(project, "skillMeat", None)
         project_mapping_id = str(getattr(project_config, "projectId", "") or "").strip()
-        client = self._client_for_project(project)
+        client = self._client_for_project(
+            project,
+            context=context,
+            delegation_reason="skillmeat.memory.publish",
+        )
         modules = await client.list_context_modules(project_id=project_mapping_id)
 
         module_name = str(draft.get("module_name") or "")
