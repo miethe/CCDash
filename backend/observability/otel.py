@@ -38,6 +38,10 @@ _worker_job_freshness_gauge: Any | None = None
 _worker_job_backpressure_gauge: Any | None = None
 _agent_query_cache_hit_counter: Any | None = None
 _agent_query_cache_miss_counter: Any | None = None
+_auth_login_failures_counter: Any | None = None
+_auth_session_errors_counter: Any | None = None
+_auth_authorization_decisions_counter: Any | None = None
+_auth_issuer_health_counter: Any | None = None
 
 # ── Feature-surface hot-path metrics ─────────────────────────────────────────
 _feature_surface_requests_counter: Any | None = None
@@ -80,6 +84,10 @@ _prom_telemetry_export_errors_counter: Any | None = None
 _prom_telemetry_export_disabled_gauge: Any | None = None
 _prom_worker_job_freshness_gauge: Any | None = None
 _prom_worker_job_backpressure_gauge: Any | None = None
+_prom_auth_login_failures_counter: Any | None = None
+_prom_auth_session_errors_counter: Any | None = None
+_prom_auth_authorization_decisions_counter: Any | None = None
+_prom_auth_issuer_health_counter: Any | None = None
 
 _telemetry_queue_depth_state: dict[tuple[str, str, str, str, str], int] = {}
 _telemetry_export_disabled_state = 1
@@ -140,6 +148,25 @@ def _clean_runtime_dimension(value: Any) -> str:
     return clean or "unknown"
 
 
+def _safe_metric_label(value: Any, *, default: str = "unknown") -> str:
+    clean = str(value or "").strip()
+    if not clean:
+        return default
+    normalized = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in clean)
+    return normalized[:120] or default
+
+
+def _resource_metric_label(resource: Any) -> str:
+    text = str(resource or "").strip()
+    if not text:
+        return "none"
+    for separator in (":", "/"):
+        head, sep, _tail = text.partition(separator)
+        if sep:
+            return _safe_metric_label(head)
+    return _safe_metric_label(text)
+
+
 def _metric_prom_labels(
     *,
     project_id: str,
@@ -173,6 +200,8 @@ def initialize(app: FastAPI | None = None) -> None:
     global _telemetry_export_queue_depth_gauge, _telemetry_export_errors_counter
     global _telemetry_export_disabled_gauge, _worker_job_freshness_gauge, _worker_job_backpressure_gauge
     global _agent_query_cache_hit_counter, _agent_query_cache_miss_counter
+    global _auth_login_failures_counter, _auth_session_errors_counter
+    global _auth_authorization_decisions_counter, _auth_issuer_health_counter
     global _feature_surface_requests_counter, _feature_surface_latency_hist
     global _frontend_poll_teardown_counter, _link_rebuild_scope_counter
     global _filesystem_scan_cached_counter, _workflow_detail_batch_rows_hist
@@ -184,6 +213,8 @@ def initialize(app: FastAPI | None = None) -> None:
     global _prom_feature_surface_requests_counter, _prom_feature_surface_latency_hist
     global _prom_telemetry_export_disabled_gauge
     global _prom_worker_job_freshness_gauge, _prom_worker_job_backpressure_gauge
+    global _prom_auth_login_failures_counter, _prom_auth_session_errors_counter
+    global _prom_auth_authorization_decisions_counter, _prom_auth_issuer_health_counter
     global _prom_frontend_poll_teardown_counter, _prom_link_rebuild_scope_counter
     global _prom_filesystem_scan_cached_counter, _prom_workflow_detail_batch_rows_hist
     global _live_fanout_publish_latency_hist, _live_fanout_delivered_counter
@@ -302,6 +333,26 @@ def initialize(app: FastAPI | None = None) -> None:
         "agent_query.cache.miss",
         unit="1",
         description="Agent-query cache miss count",
+    )
+    _auth_login_failures_counter = meter.create_counter(
+        "ccdash_auth_login_failures_total",
+        unit="1",
+        description="Hosted auth login and callback failures by provider and phase",
+    )
+    _auth_session_errors_counter = meter.create_counter(
+        "ccdash_auth_session_errors_total",
+        unit="1",
+        description="Request/session authentication errors by provider",
+    )
+    _auth_authorization_decisions_counter = meter.create_counter(
+        "ccdash_auth_authorization_decisions_total",
+        unit="1",
+        description="Authorization decisions observed through the HTTP authorization seam",
+    )
+    _auth_issuer_health_counter = meter.create_counter(
+        "ccdash_auth_issuer_health_total",
+        unit="1",
+        description="OIDC/hosted issuer health observations from auth flow seams",
     )
     _feature_surface_requests_counter = meter.create_counter(
         "ccdash_feature_surface_requests_total",
@@ -465,6 +516,26 @@ def initialize(app: FastAPI | None = None) -> None:
                 "ccdash_worker_job_backpressure_ratio",
                 "Worker job backlog pressure ratio by job and runtime metadata",
                 ["job", "project", *_RUNTIME_PROM_LABEL_NAMES],
+            )
+            _prom_auth_login_failures_counter = Counter(
+                "ccdash_auth_login_failures_total",
+                "Hosted auth login and callback failures by provider and phase",
+                ["provider", "phase", "status", "reason", "runtime_profile"],
+            )
+            _prom_auth_session_errors_counter = Counter(
+                "ccdash_auth_session_errors_total",
+                "Request/session authentication errors by provider",
+                ["provider", "status", "reason", "runtime_profile"],
+            )
+            _prom_auth_authorization_decisions_counter = Counter(
+                "ccdash_auth_authorization_decisions_total",
+                "Authorization decisions observed through the HTTP authorization seam",
+                ["action", "resource_type", "decision", "status", "provider", "runtime_profile"],
+            )
+            _prom_auth_issuer_health_counter = Counter(
+                "ccdash_auth_issuer_health_total",
+                "OIDC/hosted issuer health observations from auth flow seams",
+                ["provider", "issuer", "status", "runtime_profile"],
             )
             _prom_feature_surface_requests_counter = Counter(
                 "ccdash_feature_surface_requests_total",
@@ -855,6 +926,108 @@ def record_cache_miss(endpoint: str) -> None:
             _agent_query_cache_miss_counter.add(1, {"endpoint": endpoint or "unknown"})
     except Exception:  # never let observability break a request
         logger.debug("cache.miss counter unavailable", exc_info=True)
+
+
+def log_auth_event(event: str, **fields: Any) -> None:
+    """Emit a structured auth observability log entry."""
+    extra = {"event": event or "auth.event"}
+    for key, value in fields.items():
+        extra[key] = "" if value is None else value
+    logger.info("auth observability event", extra=extra)
+
+
+def record_auth_login_failure(
+    *,
+    provider: str,
+    phase: str,
+    status: str,
+    reason: str,
+    runtime_profile: str = "",
+) -> None:
+    labels = {
+        "provider": _safe_metric_label(provider),
+        "phase": _safe_metric_label(phase),
+        "status": _safe_metric_label(status),
+        "reason": _safe_metric_label(reason),
+        "runtime_profile": _safe_metric_label(runtime_profile),
+    }
+    try:
+        if _enabled and _auth_login_failures_counter is not None:
+            _auth_login_failures_counter.add(1, labels)
+        if _prom_enabled and _prom_auth_login_failures_counter is not None:
+            _prom_auth_login_failures_counter.labels(**labels).inc()
+    except Exception:
+        logger.debug("auth.login_failure counter unavailable", exc_info=True)
+
+
+def record_auth_session_error(
+    *,
+    provider: str,
+    status: str,
+    reason: str,
+    runtime_profile: str = "",
+) -> None:
+    labels = {
+        "provider": _safe_metric_label(provider),
+        "status": _safe_metric_label(status),
+        "reason": _safe_metric_label(reason),
+        "runtime_profile": _safe_metric_label(runtime_profile),
+    }
+    try:
+        if _enabled and _auth_session_errors_counter is not None:
+            _auth_session_errors_counter.add(1, labels)
+        if _prom_enabled and _prom_auth_session_errors_counter is not None:
+            _prom_auth_session_errors_counter.labels(**labels).inc()
+    except Exception:
+        logger.debug("auth.session_error counter unavailable", exc_info=True)
+
+
+def record_auth_authorization_decision(
+    *,
+    action: str,
+    resource: str,
+    decision: str,
+    status: str,
+    provider: str,
+    runtime_profile: str = "",
+) -> None:
+    labels = {
+        "action": _safe_metric_label(action),
+        "resource_type": _resource_metric_label(resource),
+        "decision": _safe_metric_label(decision),
+        "status": _safe_metric_label(status),
+        "provider": _safe_metric_label(provider),
+        "runtime_profile": _safe_metric_label(runtime_profile),
+    }
+    try:
+        if _enabled and _auth_authorization_decisions_counter is not None:
+            _auth_authorization_decisions_counter.add(1, labels)
+        if _prom_enabled and _prom_auth_authorization_decisions_counter is not None:
+            _prom_auth_authorization_decisions_counter.labels(**labels).inc()
+    except Exception:
+        logger.debug("auth.authorization_decision counter unavailable", exc_info=True)
+
+
+def record_auth_issuer_health(
+    *,
+    provider: str,
+    issuer: str,
+    status: str,
+    runtime_profile: str = "",
+) -> None:
+    labels = {
+        "provider": _safe_metric_label(provider),
+        "issuer": _safe_metric_label(issuer),
+        "status": _safe_metric_label(status),
+        "runtime_profile": _safe_metric_label(runtime_profile),
+    }
+    try:
+        if _enabled and _auth_issuer_health_counter is not None:
+            _auth_issuer_health_counter.add(1, labels)
+        if _prom_enabled and _prom_auth_issuer_health_counter is not None:
+            _prom_auth_issuer_health_counter.labels(**labels).inc()
+    except Exception:
+        logger.debug("auth.issuer_health counter unavailable", exc_info=True)
 
 
 # ── Runtime-performance-hardening helpers (OBS-401) ──────────────────────────

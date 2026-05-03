@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request
 from backend.adapters.auth import RequestAuthenticationError
 from backend.application.context import RequestContext, RequestMetadata
 from backend.application.ports import CorePorts
+from backend.observability import otel
 from backend.runtime.container import RuntimeContainer
 
 
@@ -46,6 +47,26 @@ async def get_request_context(
     try:
         context = await container.build_request_context(metadata)
     except RequestAuthenticationError as exc:
+        otel.record_auth_session_error(
+            provider="request",
+            status=str(exc.status_code),
+            reason=exc.detail,
+            runtime_profile=_runtime_profile_name(request),
+        )
+        otel.log_auth_event(
+            "auth.request_context.error",
+            provider="request",
+            status=str(exc.status_code),
+            reason=exc.detail,
+            path=request.url.path,
+            client=request.client.host if request.client else "",
+            runtime_profile=_runtime_profile_name(request),
+        )
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     request.state.request_context = context
     return context
+
+
+def _runtime_profile_name(request: Request) -> str:
+    runtime_profile = getattr(request.app.state, "runtime_profile", None)
+    return str(getattr(runtime_profile, "name", runtime_profile or "unknown"))
