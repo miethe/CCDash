@@ -896,7 +896,14 @@ TELEMETRY_EXPORTER_CONFIG = TelemetryExporterConfig(
 )
 STORAGE_PROFILE = resolve_storage_profile_config()
 
+# Source writeback tuning
+INFERRED_STATUS_WRITEBACK_ENABLED = _env_bool(
+    "CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED",
+    STORAGE_PROFILE.profile == "local",
+)
+
 # Startup sync tuning
+STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)
 STARTUP_SYNC_DELAY_SECONDS = _env_int("CCDASH_STARTUP_SYNC_DELAY_SECONDS", 2)
 # CCDASH_STARTUP_SYNC_LIGHT_MODE (default: false)
 # Enables manifest-based scan skip on unchanged filesystem paths. Skips re-scanning entire subtrees

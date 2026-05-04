@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from backend import config
 from backend.models import EntityDates, TimelineEvent
 from backend.parsers.features import scan_features
 
@@ -155,6 +156,62 @@ PRD body
             self.assertEqual(features[0].status, "done")
             self.assertEqual(_frontmatter_status(plan_file), "completed")
             self.assertEqual(_frontmatter_status(prd_file), "inferred_complete")
+
+    def test_inferred_status_writeback_can_be_disabled(self) -> None:
+        original = config.INFERRED_STATUS_WRITEBACK_ENABLED
+        config.INFERRED_STATUS_WRITEBACK_ENABLED = False
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                docs_dir = root / "docs" / "project_plans"
+                progress_dir = root / ".claude" / "progress"
+                (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+                (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+                (progress_dir / "feature-c-v1").mkdir(parents=True, exist_ok=True)
+
+                plan_file = docs_dir / "implementation_plans" / "features" / "feature-c-v1.md"
+                plan_file.write_text(
+                    """---
+title: "Implementation Plan: Feature C"
+status: draft
+---
+Plan body
+""",
+                    encoding="utf-8",
+                )
+
+                prd_file = docs_dir / "PRDs" / "features" / "feature-c-v1.md"
+                prd_file.write_text(
+                    """---
+title: "PRD: Feature C"
+status: draft
+---
+PRD body
+""",
+                    encoding="utf-8",
+                )
+
+                progress_file = progress_dir / "feature-c-v1" / "phase-1-progress.md"
+                progress_file.write_text(
+                    """---
+title: Feature C Phase 1
+status: completed
+phase: 1
+total_tasks: 1
+completed_tasks: 1
+---
+Progress body
+""",
+                    encoding="utf-8",
+                )
+
+                features = scan_features(docs_dir, progress_dir)
+                self.assertEqual(len(features), 1)
+                self.assertEqual(features[0].status, "done")
+                self.assertEqual(_frontmatter_status(plan_file), "draft")
+                self.assertEqual(_frontmatter_status(prd_file), "draft")
+        finally:
+            config.INFERRED_STATUS_WRITEBACK_ENABLED = original
 
     def test_feature_planning_status_preserves_raw_status_when_progress_derives_effective_done(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

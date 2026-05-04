@@ -2829,6 +2829,7 @@ class SyncEngine:
         *,
         rebuild_links: bool = True,
         capture_analytics: bool = True,
+        backfill_session_intelligence: bool = True,
     ) -> dict:
         """Full incremental sync for a project.
 
@@ -2844,6 +2845,8 @@ class SyncEngine:
             "usage_attributions_backfilled": 0,
             "telemetry_backfilled_sessions": 0,
             "telemetry_backfilled_events": 0,
+            "commit_correlations_backfilled_sessions": 0,
+            "commit_correlations_backfilled": 0,
             "documents_synced": 0,
             "documents_skipped": 0,
             "tasks_synced": 0,
@@ -2862,6 +2865,7 @@ class SyncEngine:
                     "force": bool(force),
                     "rebuildLinks": bool(rebuild_links),
                     "captureAnalytics": bool(capture_analytics),
+                    "backfillSessionIntelligence": bool(backfill_session_intelligence),
                     "sessionsDir": str(sessions_dir),
                     "docsDir": str(docs_dir),
                     "progressDir": str(progress_dir),
@@ -2896,20 +2900,21 @@ class SyncEngine:
                 s_stats = await self._sync_sessions(project.id, sessions_dir, force)
                 stats["sessions_synced"] = s_stats["synced"]
                 stats["sessions_skipped"] = s_stats["skipped"]
-                usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
-                stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))
-                observability_backfill_stats = await self._maybe_backfill_session_observability_fields(project.id)
-                stats["session_observability_backfilled"] = int(observability_backfill_stats.get("sessions", 0))
-                usage_event_backfill_stats = await self._maybe_backfill_session_usage_attribution(project.id)
-                stats["usage_event_backfilled_sessions"] = int(usage_event_backfill_stats.get("sessions", 0))
-                stats["usage_events_backfilled"] = int(usage_event_backfill_stats.get("events", 0))
-                stats["usage_attributions_backfilled"] = int(usage_event_backfill_stats.get("attributions", 0))
-                backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
-                stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
-                stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
-                commit_backfill_stats = await self._maybe_backfill_commit_correlations(project.id)
-                stats["commit_correlations_backfilled_sessions"] = int(commit_backfill_stats.get("sessions", 0))
-                stats["commit_correlations_backfilled"] = int(commit_backfill_stats.get("correlations", 0))
+                if backfill_session_intelligence:
+                    usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
+                    stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))
+                    observability_backfill_stats = await self._maybe_backfill_session_observability_fields(project.id)
+                    stats["session_observability_backfilled"] = int(observability_backfill_stats.get("sessions", 0))
+                    usage_event_backfill_stats = await self._maybe_backfill_session_usage_attribution(project.id)
+                    stats["usage_event_backfilled_sessions"] = int(usage_event_backfill_stats.get("sessions", 0))
+                    stats["usage_events_backfilled"] = int(usage_event_backfill_stats.get("events", 0))
+                    stats["usage_attributions_backfilled"] = int(usage_event_backfill_stats.get("attributions", 0))
+                    backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
+                    stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
+                    stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
+                    commit_backfill_stats = await self._maybe_backfill_commit_correlations(project.id)
+                    stats["commit_correlations_backfilled_sessions"] = int(commit_backfill_stats.get("sessions", 0))
+                    stats["commit_correlations_backfilled"] = int(commit_backfill_stats.get("correlations", 0))
                 await self._update_operation(
                     operation_id,
                     phase="documents",
@@ -3084,6 +3089,34 @@ class SyncEngine:
         finally:
             # Clear the per-run memo so the next sync run starts fresh.
             self._rglob_cache = {}
+
+    async def sync_planning_artifacts(
+        self,
+        project_id: str,
+        docs_dir: Path,
+        progress_dir: Path,
+        *,
+        force: bool = False,
+    ) -> dict:
+        """Sync documents, progress tasks, and derived features without session work."""
+        stats = {
+            "documents_synced": 0,
+            "documents_skipped": 0,
+            "tasks_synced": 0,
+            "tasks_skipped": 0,
+            "features_synced": 0,
+        }
+        d_stats = await self._sync_documents(project_id, docs_dir, progress_dir, force)
+        stats["documents_synced"] = d_stats["synced"]
+        stats["documents_skipped"] = d_stats["skipped"]
+
+        t_stats = await self._sync_progress(project_id, progress_dir, force)
+        stats["tasks_synced"] = t_stats["synced"]
+        stats["tasks_skipped"] = t_stats["skipped"]
+
+        f_stats = await self._sync_features(project_id, docs_dir, progress_dir)
+        stats["features_synced"] = f_stats["synced"]
+        return stats
 
     async def rebuild_links(
         self,
@@ -4001,7 +4034,7 @@ class SyncEngine:
                 },
             ):
                 t0 = time.monotonic()
-                session = parse_session_file(path)
+                session = await asyncio.to_thread(parse_session_file, path)
                 parse_ms = int((time.monotonic() - t0) * 1000)
         except Exception:
             observability.record_parser_failure("sessions", project_id=project_id)

@@ -492,6 +492,7 @@ class RuntimeContainer:
         watcher_detail = self._probe_watcher_detail(status)
         watcher_state = str(watcher_detail["state"])
         startup_sync_state = str(status.get("startupSync", "idle"))
+        startup_sync_enabled = bool(status.get("startupSyncEnabled", getattr(config, "STARTUP_SYNC_ENABLED", True)))
         required_checks = set(runtime_contract.readiness_checks)
         worker_binding_required = self.profile.name in {"worker", "worker-watch"}
         watcher_runtime_required = "watcher_runtime" in required_checks
@@ -507,10 +508,14 @@ class RuntimeContainer:
                 watcher_check_status = "warn"
         startup_sync_check_status = "not_applicable"
         if self.profile.capabilities.sync:
-            if startup_sync_required and not sync_provisioned:
+            if startup_sync_required and not startup_sync_enabled:
+                startup_sync_check_status = "fail"
+            elif startup_sync_required and not sync_provisioned:
                 startup_sync_check_status = "fail"
             elif startup_sync_state == "running":
                 startup_sync_check_status = "warn"
+            elif startup_sync_state == "failed":
+                startup_sync_check_status = "fail" if startup_sync_required else "warn"
             else:
                 startup_sync_check_status = "pass"
 
@@ -661,14 +666,22 @@ class RuntimeContainer:
                 summary=(
                     "Startup sync is not expected for this runtime."
                     if not self.profile.capabilities.sync
+                    else "Startup sync is disabled for this runtime."
+                    if not startup_sync_enabled
                     else "Startup sync is not provisioned."
                     if startup_sync_required and not sync_provisioned
+                    else "Startup sync failed."
+                    if startup_sync_state == "failed"
                     else "Startup sync is still catching up."
                     if startup_sync_state == "running"
                     else "Startup sync is idle."
                 ),
                 detail=(
-                    "Watcher-capable worker readiness requires a provisioned startup sync engine."
+                    "Set CCDASH_STARTUP_SYNC_ENABLED=true for runtimes that own startup filesystem sync."
+                    if self.profile.capabilities.sync and not startup_sync_enabled
+                    else "Startup sync failed; inspect the worker probe job details and runtime logs."
+                    if startup_sync_state == "failed"
+                    else "Watcher-capable worker readiness requires a provisioned startup sync engine."
                     if startup_sync_required and not sync_provisioned
                     else "A running startup sync indicates the runtime is live but still reconciling background state."
                     if self.profile.capabilities.sync
@@ -676,6 +689,7 @@ class RuntimeContainer:
                 ),
                 data={
                     "syncEnabled": self.profile.capabilities.sync,
+                    "startupSyncEnabled": startup_sync_enabled,
                     "startupSync": startup_sync_state,
                     "syncProvisioned": sync_provisioned,
                 },

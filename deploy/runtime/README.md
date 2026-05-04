@@ -44,9 +44,11 @@ The worker probe host and port default to `127.0.0.1:9465`. Override them with `
 
 The watcher worker uses the same probe endpoints on a separate default port, `9466`, through `CCDASH_WORKER_WATCH_PROBE_HOST` and `CCDASH_WORKER_WATCH_PROBE_PORT`. Keep the default worker and watcher worker on distinct ports when they co-run.
 
+When `worker` and `worker-watch` co-run, only the watcher worker should own startup filesystem sync. Compose defaults `CCDASH_WORKER_STARTUP_SYNC_ENABLED=false` and `CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED=true` so both processes do not replace the same transcript rows concurrently.
+
 ## Live Watcher Worker
 
-The `worker-watch` service is an opt-in enterprise worker for live filesystem ingest. It is intended to co-run with the default `worker` service: the default worker keeps scheduled jobs and startup sync on probe port `9465`, while `worker-watch` owns filesystem watching on probe port `9466`.
+The `worker-watch` service is an opt-in enterprise worker for live filesystem ingest. It is intended to co-run with the default `worker` service: the default worker keeps scheduled jobs on probe port `9465`, while `worker-watch` owns filesystem watching and startup filesystem sync on probe port `9466`.
 
 Start the bundled Postgres enterprise stack with live watching:
 
@@ -56,7 +58,7 @@ docker compose --env-file deploy/runtime/.env \
   --profile enterprise --profile postgres --profile live-watch up --build
 ```
 
-`worker-watch` binds one project per worker process in v1. Set `CCDASH_WORKER_PROJECT_ID` to a project id that exists in the mounted project registry. To watch more than one project, run another watcher worker instance with a different project id and a different probe port.
+`worker-watch` binds one project per worker process in v1. Set `CCDASH_WORKER_WATCH_PROJECT_ID` to a project id that exists in the mounted project registry; it falls back to `CCDASH_WORKER_PROJECT_ID` when unset. To watch more than one project, run another watcher worker instance with a different project id and a different probe port.
 
 Required read-only ingest mounts:
 
@@ -107,7 +109,7 @@ docker compose \
 
 The repo includes `deploy/runtime/watchers/ccdash.env.example` as a concrete example for this CCDash checkout.
 
-For multi-project deployments, prefer mounting a stable superset root shared by all watcher containers, then vary only `CCDASH_WORKER_PROJECT_ID` and `CCDASH_WORKER_WATCH_PROBE_PORT` per watcher. When projects live on unrelated host roots, use the optional mount slots in each watcher's env overlay. Do not use Compose `--scale worker-watch=N` for v1: each watcher needs a distinct project id and probe port, which requires distinct service/env configuration.
+For multi-project deployments, prefer mounting a stable superset root shared by all watcher containers, then vary only `CCDASH_WORKER_WATCH_PROJECT_ID` and `CCDASH_WORKER_WATCH_PROBE_PORT` per watcher. When projects live on unrelated host roots, use the optional mount slots in each watcher's env overlay. Do not use Compose `--scale worker-watch=N` for v1: each watcher needs a distinct project id and probe port, which requires distinct service/env configuration.
 
 On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, set `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env` and restart it. The shipped compose file passes this variable only to `worker-watch`; keep polling scoped there because it is a compatibility mode for Docker Desktop file sharing, not the default Linux path.
 
@@ -215,7 +217,12 @@ These examples split environment variables by runtime role. Shared values may li
 | `CCDASH_WORKER_PROBE_PORT` | worker | probe listener bind port |
 | `CCDASH_WORKER_WATCH_PROBE_HOST` | worker-watch | watcher probe listener bind host; defaults to `0.0.0.0` in compose |
 | `CCDASH_WORKER_WATCH_PROBE_PORT` | worker-watch | watcher probe listener bind port; defaults to `9466` to avoid `worker` port conflicts |
+| `CCDASH_WORKER_WATCH_PROJECT_ID` | worker-watch | watcher project binding; falls back to `CCDASH_WORKER_PROJECT_ID` when unset |
 | `CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED` | worker-watch | enables filesystem ingest for the watcher worker; defaults to `true` in compose |
+| `CCDASH_WORKER_STARTUP_SYNC_ENABLED` | worker | disables startup filesystem sync for the standard worker when `worker-watch` owns ingest; defaults to `false` in compose |
+| `CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED` | worker-watch | enables startup filesystem sync for the watcher worker; defaults to `true` in compose |
+| `CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED` | api, worker, worker-watch | controls inferred planning-status writes back to markdown; defaults to `false` for enterprise storage and `true` for local storage |
+| `GIT_OPTIONAL_LOCKS` | api, worker, worker-watch | keep `0` when project repositories are mounted read-only so Git metadata reads do not try to refresh indexes |
 | `WATCHFILES_FORCE_POLLING` | worker-watch | set to `true` on macOS Docker Desktop when bind-mount events do not reach the watcher |
 | `CCDASH_EXTRA_MOUNT_N_HOST` / `CCDASH_EXTRA_MOUNT_N_CONTAINER` | api, worker, worker-watch | optional read-only bind slots for roots outside the shared workspace/home mounts |
 | `CCDASH_TELEMETRY_EXPORT_ENABLED` | worker | must be `true` for the smoke exporter path |

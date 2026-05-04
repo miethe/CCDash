@@ -120,8 +120,13 @@ Add `live-watch` when you need enterprise live session ingest from mounted Claud
 ```bash
 CCDASH_WORKER_PROJECT_ID=your-project-id
 CCDASH_WORKER_PROBE_PORT=9465
+CCDASH_WORKER_WATCH_PROJECT_ID=your-project-id
 CCDASH_WORKER_WATCH_PROBE_PORT=9466
 CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED=true
+CCDASH_WORKER_STARTUP_SYNC_ENABLED=false
+CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED=true
+CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED=false
+GIT_OPTIONAL_LOCKS=0
 ```
 
 2. Confirm the required read-only ingest mounts point at host paths Docker can see:
@@ -150,7 +155,7 @@ curl http://localhost:9465/readyz
 curl http://localhost:9466/readyz
 ```
 
-`worker-watch` supports one project id per worker process in v1. Run another watcher worker instance with a unique probe port when you need another project.
+`worker-watch` supports one project id per worker process in v1. It uses `CCDASH_WORKER_WATCH_PROJECT_ID` when set and otherwise falls back to `CCDASH_WORKER_PROJECT_ID`. Run another watcher worker instance with a unique project id and probe port when you need another project.
 
 On macOS Docker Desktop, bind-mounted filesystem events may not arrive. If the watcher starts but does not detect new session JSONL changes, pass `WATCHFILES_FORCE_POLLING=true` into the `worker-watch` container and restart it.
 
@@ -214,8 +219,13 @@ Common variables for container profiles:
 | `CCDASH_FRONTEND_PORT` | All | Frontend port (default 3000) |
 | `CCDASH_API_UPSTREAM` | frontend | Backend upstream for nginx reverse-proxy (default `http://api:8000`) |
 | `CCDASH_WORKER_PROJECT_ID` | enterprise (worker) | Project ID the worker binds to on startup; required for worker container readiness. Default in compose.yaml is `smoke-stack`. |
+| `CCDASH_WORKER_WATCH_PROJECT_ID` | live-watch | Project ID the watcher worker binds to on startup; falls back to `CCDASH_WORKER_PROJECT_ID` when unset. |
 | `CCDASH_WORKER_WATCH_PROBE_PORT` | live-watch | Watcher worker probe port. Default is `9466` so it can co-run with the default worker. |
 | `CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED` | live-watch | Enables filesystem ingest for `worker-watch`; default is `true`. |
+| `CCDASH_WORKER_STARTUP_SYNC_ENABLED` | enterprise (worker) | Keeps the standard worker from racing watcher-owned filesystem startup sync when live-watch is running; default is `false` in compose. |
+| `CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED` | live-watch | Lets the watcher worker own startup filesystem sync; default is `true` in compose. |
+| `CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED` | enterprise/local | Controls inferred planning-status writes back to markdown. Defaults to `false` for enterprise storage and `true` for local storage. |
+| `GIT_OPTIONAL_LOCKS` | enterprise/local | Keep `0` when project repositories are mounted read-only so Git metadata reads do not try to refresh indexes. |
 | `WATCHFILES_FORCE_POLLING` | live-watch | Set to `true` on macOS Docker Desktop when bind-mount events are not delivered. |
 | `POSTGRES_USER` | postgres profile | Bundled Postgres username (default `ccdash`) |
 | `POSTGRES_PASSWORD` | postgres profile | Bundled Postgres password (default `ccdash-dev-password`) |

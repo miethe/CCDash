@@ -1,5 +1,5 @@
 {
-  "activeProjectId": "3da60e0c-a928-4b78-abd7-a74731e995c6",
+  "activeProjectId": "3df0ff70-85fd-402f-a028-83cae8bcedc2",
   "projects": [
     {
       "id": "default-skillmeat",
@@ -333,7 +333,7 @@
         "Claude Code"
       ],
       "planDocsPath": "docs/project_plans/",
-      "sessionsPath": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
+      "sessionsPath": "~/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
       "progressPath": ".claude/progress",
       "pathConfig": {
         "root": {
@@ -355,8 +355,8 @@
         "sessions": {
           "field": "sessions",
           "sourceKind": "filesystem",
-          "displayValue": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
-          "filesystemPath": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
+          "displayValue": "~/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
+          "filesystemPath": "~/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
           "relativePath": "",
           "repoRef": null
         },
@@ -411,7 +411,7 @@
             "id": "coverage",
             "enabled": true,
             "resultsDir": ".",
-            "watch": true,
+            "watch": false,
             "patterns": [
               "**/coverage.xml",
               "**/coverage.json",
@@ -495,7 +495,7 @@
       ],
       "planDocsPath": "docs/project_plans/",
       "sessionsPath": "~/.codex/sessions/",
-      "progressPath": "progress",
+      "progressPath": ".claude/progress",
       "pathConfig": {
         "root": {
           "field": "root",
@@ -524,9 +524,9 @@
         "progress": {
           "field": "progress",
           "sourceKind": "project_root",
-          "displayValue": "progress",
+          "displayValue": ".claude/progress",
           "filesystemPath": "",
-          "relativePath": "progress",
+          "relativePath": ".claude/progress",
           "repoRef": null
         }
       },

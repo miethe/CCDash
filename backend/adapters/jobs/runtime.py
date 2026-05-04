@@ -128,18 +128,31 @@ class RuntimeJobAdapter:
         test_results_dir: Path | None = test_sources[0].resolved_dir if test_sources else None
 
         if active_project and self.profile.capabilities.sync and self.sync is not None:
-            self.state.sync_task = self.ports.job_scheduler.schedule(
-                self._run_startup_sync_job(
-                    active_project=active_project,
-                    sessions_dir=sessions_dir,
-                    docs_dir=docs_dir,
-                    progress_dir=progress_dir,
-                    test_sources=test_sources,
-                    test_results_dir=test_results_dir,
-                    test_flags=flags,
-                ),
-                name=f"ccdash:{self.profile.name}:startup-sync",
-            )
+            if bool(getattr(config, "STARTUP_SYNC_ENABLED", True)):
+                self.state.sync_task = self.ports.job_scheduler.schedule(
+                    self._run_startup_sync_job(
+                        active_project=active_project,
+                        sessions_dir=sessions_dir,
+                        docs_dir=docs_dir,
+                        progress_dir=progress_dir,
+                        test_sources=test_sources,
+                        test_results_dir=test_results_dir,
+                        test_flags=flags,
+                    ),
+                    name=f"ccdash:{self.profile.name}:startup-sync",
+                )
+            else:
+                observation = self.state.job_observations["startupSync"]
+                observation.state = "disabled"
+                observation.last_outcome = "disabled"
+                observation.backlog_count = 0
+                observation.details.update(
+                    {
+                        "projectId": str(getattr(active_project, "id", "") or ""),
+                        "projectName": str(getattr(active_project, "name", "") or ""),
+                        "disabledBy": "CCDASH_STARTUP_SYNC_ENABLED=false",
+                    }
+                )
 
         if active_project and self.profile.capabilities.watch and self.sync is not None:
             await file_watcher.start(
@@ -208,6 +221,7 @@ class RuntimeJobAdapter:
         snapshot: dict[str, Any] = {
             "watcher": watcher_detail["state"],
             "watcherDetail": watcher_detail,
+            "startupSyncEnabled": bool(getattr(config, "STARTUP_SYNC_ENABLED", True)),
             "startupSync": "running" if self.state.sync_task is not None and not self.state.sync_task.done() else "idle",
             "analyticsSnapshots": "running"
             if self.state.analytics_snapshot_task is not None and not self.state.analytics_snapshot_task.done()
@@ -220,6 +234,8 @@ class RuntimeJobAdapter:
             else "idle",
             "jobsEnabled": self.profile.capabilities.jobs,
         }
+        if self.state.sync_task is None:
+            snapshot["startupSync"] = self.state.job_observations["startupSync"].state
         if self.profile.name in {"worker", "worker-watch"}:
             worker_jobs = self._worker_probe_jobs()
             worker_summary = self._worker_probe_summary(worker_jobs)
@@ -543,6 +559,14 @@ class RuntimeJobAdapter:
             await asyncio.sleep(delay)
 
         light_mode = bool(getattr(config, "STARTUP_SYNC_LIGHT_MODE", True))
+        if light_mode and hasattr(self.sync, "sync_planning_artifacts"):
+            planning_stats = await self.sync.sync_planning_artifacts(
+                active_project.id,
+                docs_dir,
+                progress_dir,
+                force=False,
+            )
+            logger.info("Startup planning artifact sync stats: %s", planning_stats)
         await self.sync.sync_project(
             active_project,
             sessions_dir,
@@ -551,6 +575,7 @@ class RuntimeJobAdapter:
             trigger="startup",
             rebuild_links=not light_mode,
             capture_analytics=not light_mode,
+            backfill_session_intelligence=not light_mode,
         )
 
         if test_flags.testVisualizerEnabled and active_project.testConfig.autoSyncOnStartup:
