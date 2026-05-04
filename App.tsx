@@ -71,8 +71,8 @@ const App: React.FC = () => {
             path="/*"
             element={
               <DataProvider>
-                <ModelColorsProvider>
-                  <Layout>
+                <Layout>
+                  <ModelColorsProvider>
                     <React.Suspense fallback={<RoutePending />}>
                       <Routes>
                         <Route path="/dashboard" element={<Dashboard />} />
@@ -96,8 +96,8 @@ const App: React.FC = () => {
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                       </Routes>
                     </React.Suspense>
-                  </Layout>
-                </ModelColorsProvider>
+                  </ModelColorsProvider>
+                </Layout>
               </DataProvider>
             }
           />

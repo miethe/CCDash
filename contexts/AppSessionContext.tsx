@@ -21,11 +21,25 @@ export const AppSessionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const refreshProjects = useCallback(async () => {
     const data = await client.getProjects();
-    setProjects(data.map(project => ({ ...project, testConfig: ensureProjectTestConfig(project.testConfig) })));
+    const normalizedProjects = data.map(project => ({ ...project, testConfig: ensureProjectTestConfig(project.testConfig) }));
+    setProjects(normalizedProjects);
+
+    const scopedProjectId = client.getProjectScope();
+    const scopedProject = scopedProjectId
+      ? normalizedProjects.find(project => project.id === scopedProjectId)
+      : null;
+    if (scopedProject) {
+      setActiveProject(scopedProject);
+      return;
+    }
+
     try {
       const active = await client.getActiveProject();
-      setActiveProject({ ...active, testConfig: ensureProjectTestConfig(active.testConfig) });
+      const normalizedActive = { ...active, testConfig: ensureProjectTestConfig(active.testConfig) };
+      client.setProjectScope(normalizedActive.id);
+      setActiveProject(normalizedActive);
     } catch {
+      client.setProjectScope(null);
       setActiveProject(null);
     }
   }, [client]);
@@ -42,8 +56,12 @@ export const AppSessionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const switchProject = useCallback(async (projectId: string) => {
     await client.switchProject(projectId);
+    const project = projects.find(candidate => candidate.id === projectId);
+    if (project) {
+      setActiveProject(project);
+    }
     await refreshProjects();
-  }, [client, refreshProjects]);
+  }, [client, projects, refreshProjects]);
 
   const contextValue = useMemo(() => ({
     projects,

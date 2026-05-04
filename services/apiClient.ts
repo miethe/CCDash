@@ -105,6 +105,8 @@ export interface ApiClient {
   getFeatures(): Promise<PaginatedResponse<Feature> | Feature[]>;
   getProjects(): Promise<Project[]>;
   getActiveProject(): Promise<Project>;
+  getProjectScope(): string | null;
+  setProjectScope(projectId: string | null | undefined): void;
   addProject(project: Project): Promise<void>;
   updateProject(projectId: string, project: Project): Promise<void>;
   switchProject(projectId: string): Promise<void>;
@@ -169,10 +171,63 @@ const normalizeApiPath = (path: string): string => {
   return path;
 };
 
+const PROJECT_SCOPE_HEADER = 'X-CCDash-Project-Id';
+const PROJECT_SCOPE_STORAGE_KEY = 'ccdash:selected-project-id:v2';
+const LEGACY_PROJECT_SCOPE_STORAGE_KEYS = ['ccdash:selected-project-id:v1'];
+
+let selectedProjectId: string | null = readStoredProjectScope();
+
+function normalizeProjectScope(projectId: string | null | undefined): string | null {
+  const normalized = String(projectId ?? '').trim();
+  return normalized || null;
+}
+
+function readStoredProjectScope(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    LEGACY_PROJECT_SCOPE_STORAGE_KEYS.forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+    return normalizeProjectScope(window.localStorage.getItem(PROJECT_SCOPE_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function persistProjectScope(projectId: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    LEGACY_PROJECT_SCOPE_STORAGE_KEYS.forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+    if (projectId) {
+      window.localStorage.setItem(PROJECT_SCOPE_STORAGE_KEY, projectId);
+    } else {
+      window.localStorage.removeItem(PROJECT_SCOPE_STORAGE_KEY);
+    }
+  } catch {
+    // Local storage is a convenience cache; request headers remain authoritative.
+  }
+}
+
+export function getApiProjectScope(): string | null {
+  return selectedProjectId;
+}
+
+export function setApiProjectScope(projectId: string | null | undefined): void {
+  selectedProjectId = normalizeProjectScope(projectId);
+  persistProjectScope(selectedProjectId);
+}
+
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = buildApiUrl(normalizeApiPath(path));
+  const headers = new Headers(init?.headers);
+  if (selectedProjectId && !headers.has(PROJECT_SCOPE_HEADER)) {
+    headers.set(PROJECT_SCOPE_HEADER, selectedProjectId);
+  }
   const requestInit: RequestInit = {
     ...init,
+    headers,
     credentials: init?.credentials ?? 'same-origin',
   };
   return fetch(url, requestInit);
@@ -312,6 +367,14 @@ export function createApiClient(): ApiClient {
       return requestJson<Project>('/projects/active');
     },
 
+    getProjectScope() {
+      return getApiProjectScope();
+    },
+
+    setProjectScope(projectId) {
+      setApiProjectScope(projectId);
+    },
+
     async addProject(project) {
       await requestJson<Project>('/projects', {
         method: 'POST',
@@ -329,9 +392,22 @@ export function createApiClient(): ApiClient {
     },
 
     async switchProject(projectId) {
-      await requestJson<Project>(`/projects/active/${projectId}`, {
-        method: 'POST',
-      });
+      const previousProjectId = getApiProjectScope();
+      setApiProjectScope(projectId);
+      try {
+        await requestJson<Project>(`/projects/active/${projectId}`, {
+          method: 'POST',
+        });
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          return;
+        }
+        if (error instanceof ApiError && error.status >= 500 && String(error.detail).includes('Read-only file system')) {
+          return;
+        }
+        setApiProjectScope(previousProjectId);
+        throw error;
+      }
     },
 
     // Encode featureId to handle RFC 3986 § 2.2 reserved characters (e.g. #, ?, &, +, space) in path segments.

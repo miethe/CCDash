@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TaskStatus } from '../../types';
-import { ApiError, apiFetch, createApiClient } from '../apiClient';
+import { ApiError, apiFetch, createApiClient, setApiProjectScope } from '../apiClient';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -46,6 +46,7 @@ describe('apiClient — URL encoding on write paths (RFC 3986 § 2.2)', () => {
   });
 
   afterEach(() => {
+    setApiProjectScope(null);
     vi.unstubAllGlobals();
   });
 
@@ -142,6 +143,7 @@ describe('apiClient — auth/session foundation', () => {
   });
 
   afterEach(() => {
+    setApiProjectScope(null);
     vi.unstubAllGlobals();
   });
 
@@ -180,6 +182,45 @@ describe('apiClient — auth/session foundation', () => {
 
     expect(calledUrl()).toBe('/api/health');
     expect(calledInit().credentials).toBe('omit');
+  });
+
+  it('adds the selected project scope header to shared transport requests', async () => {
+    stubFetch({ ok: true });
+    setApiProjectScope('project-1');
+
+    await apiFetch('/api/v1/features');
+
+    expect(calledUrl()).toBe('/api/v1/features');
+    expect(calledInit().headers).toBeInstanceOf(Headers);
+    expect((calledInit().headers as Headers).get('X-CCDash-Project-Id')).toBe('project-1');
+  });
+
+  it('does not overwrite an explicit project scope header', async () => {
+    stubFetch({ ok: true });
+    setApiProjectScope('project-1');
+
+    await apiFetch('/api/v1/features', {
+      headers: { 'X-CCDash-Project-Id': 'project-2' },
+    });
+
+    expect((calledInit().headers as Headers).get('X-CCDash-Project-Id')).toBe('project-2');
+  });
+
+  it('keeps hosted project scope when active-project mutation is rejected', async () => {
+    stubFetch({ detail: 'Hosted requests must select projects explicitly per request' }, 409);
+
+    await client.switchProject('project-2');
+
+    expect(calledUrl()).toBe('/api/projects/active/project-2');
+    expect(client.getProjectScope()).toBe('project-2');
+  });
+
+  it('keeps project scope when container active-project mutation hits read-only registry storage', async () => {
+    stubFetch({ detail: "[Errno 30] Read-only file system: '/app/projects.json'" }, 500);
+
+    await client.switchProject('project-3');
+
+    expect(client.getProjectScope()).toBe('project-3');
   });
 
   it('exposes login helper with JSON mode and encoded redirect target', async () => {

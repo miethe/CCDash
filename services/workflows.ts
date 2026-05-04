@@ -3,6 +3,7 @@ import {
   WorkflowRegistryDetailResponse,
   WorkflowRegistryListResponse,
 } from '../types';
+import { apiFetch } from './apiClient';
 
 const API_BASE = '/api/analytics';
 
@@ -96,7 +97,7 @@ export const workflowRegistryService = {
     if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
     const suffix = search.toString() ? `?${search.toString()}` : '';
 
-    const res = await fetch(`${API_BASE}/workflow-registry${suffix}`);
+    const res = await apiFetch(`${API_BASE}/workflow-registry${suffix}`);
     if (!res.ok) {
       throw await buildWorkflowRegistryApiError(res, 'Failed to fetch workflow registry');
     }
@@ -105,7 +106,7 @@ export const workflowRegistryService = {
 
   async getDetail(registryId: string): Promise<WorkflowRegistryDetailResponse> {
     const search = new URLSearchParams({ registryId });
-    const res = await fetch(`${API_BASE}/workflow-registry/detail?${search.toString()}`);
+    const res = await apiFetch(`${API_BASE}/workflow-registry/detail?${search.toString()}`);
     if (!res.ok) {
       throw await buildWorkflowRegistryApiError(res, 'Failed to fetch workflow detail');
     }

@@ -11,6 +11,7 @@ import {
   sanitizeHexColor,
   toModelBadgeStyle,
 } from '../lib/modelColors';
+import { apiFetch } from '../services/apiClient';
 
 const STORAGE_PREFIX = 'ccdash:model-colors:v1';
 
@@ -90,7 +91,7 @@ export const ModelColorsProvider: React.FC<{ children: React.ReactNode }> = ({ c
   useEffect(() => {
     let cancelled = false;
     setModelFacetsLoading(true);
-    fetch('/api/sessions/facets/models?include_subagents=true')
+    apiFetch('/api/sessions/facets/models?include_subagents=true')
       .then(async (res) => {
         if (!res.ok) throw new Error(`Failed to load model facets (${res.status})`);
         return res.json();

@@ -993,6 +993,21 @@ def _build_session_telemetry_events(
         "source": source,
     }
     events: list[dict[str, Any]] = []
+    source_key_counts: dict[str, int] = {}
+
+    def unique_source_key(source_key: str) -> str:
+        count = source_key_counts.get(source_key, 0)
+        source_key_counts[source_key] = count + 1
+        if count == 0:
+            return source_key
+
+        suffix = count + 1
+        candidate = f"{source_key}:{suffix}"
+        while candidate in source_key_counts:
+            suffix += 1
+            candidate = f"{source_key}:{suffix}"
+        source_key_counts[candidate] = 1
+        return candidate
 
     def push(
         *,
@@ -1024,7 +1039,7 @@ def _build_session_telemetry_events(
                 "cost_usd": max(0.0, cost_usd),
                 "occurred_at": occurred or occurred_at,
                 "sequence_no": max(0, seq),
-                "source_key": source_key,
+                "source_key": unique_source_key(source_key),
                 "payload_json": json.dumps(payload or {}),
             }
         )
@@ -1309,6 +1324,28 @@ class SyncEngine:
                     duration_ms, token_input, token_output, cost_usd, occurred_at, sequence_no,
                     source, source_key, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, source_key) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    root_session_id = excluded.root_session_id,
+                    feature_id = excluded.feature_id,
+                    task_id = excluded.task_id,
+                    commit_hash = excluded.commit_hash,
+                    pr_number = excluded.pr_number,
+                    phase = excluded.phase,
+                    event_type = excluded.event_type,
+                    tool_name = excluded.tool_name,
+                    model = excluded.model,
+                    agent = excluded.agent,
+                    skill = excluded.skill,
+                    status = excluded.status,
+                    duration_ms = excluded.duration_ms,
+                    token_input = excluded.token_input,
+                    token_output = excluded.token_output,
+                    cost_usd = excluded.cost_usd,
+                    occurred_at = excluded.occurred_at,
+                    sequence_no = excluded.sequence_no,
+                    source = excluded.source,
+                    payload_json = excluded.payload_json
             """
             for event in events:
                 await self.db.execute(
@@ -1359,6 +1396,28 @@ class SyncEngine:
                 $15, $16, $17, $18, $19, $20,
                 $21, $22, $23
             )
+            ON CONFLICT (project_id, source_key) DO UPDATE SET
+                session_id = EXCLUDED.session_id,
+                root_session_id = EXCLUDED.root_session_id,
+                feature_id = EXCLUDED.feature_id,
+                task_id = EXCLUDED.task_id,
+                commit_hash = EXCLUDED.commit_hash,
+                pr_number = EXCLUDED.pr_number,
+                phase = EXCLUDED.phase,
+                event_type = EXCLUDED.event_type,
+                tool_name = EXCLUDED.tool_name,
+                model = EXCLUDED.model,
+                agent = EXCLUDED.agent,
+                skill = EXCLUDED.skill,
+                status = EXCLUDED.status,
+                duration_ms = EXCLUDED.duration_ms,
+                token_input = EXCLUDED.token_input,
+                token_output = EXCLUDED.token_output,
+                cost_usd = EXCLUDED.cost_usd,
+                occurred_at = EXCLUDED.occurred_at,
+                sequence_no = EXCLUDED.sequence_no,
+                source = EXCLUDED.source,
+                payload_json = EXCLUDED.payload_json
         """
         for event in events:
             await self.db.execute(

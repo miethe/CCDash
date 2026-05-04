@@ -130,6 +130,23 @@ class LocalAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(principal.auth_mode, "anonymous")
         self.assertFalse(principal.is_authenticated)
 
+    async def test_bearer_identity_provider_accepts_optional_token_on_unprotected_api_path(self) -> None:
+        provider = StaticBearerTokenIdentityProvider()
+
+        with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": "secret-token"}):
+            principal = await provider.get_principal(
+                RequestMetadata(
+                    headers={"authorization": "Bearer secret-token"},
+                    method="GET",
+                    path="/api/analytics/overview",
+                    client_host="127.0.0.1",
+                ),
+                runtime_profile="api",
+            )
+
+        self.assertEqual(principal.auth_mode, "bearer")
+        self.assertTrue(principal.is_authenticated)
+
     async def test_bearer_identity_provider_allows_probe_routes_without_token(self) -> None:
         provider = StaticBearerTokenIdentityProvider()
 

@@ -182,6 +182,40 @@ describe('Layout auth shell', () => {
     expect(html).toContain('Sign out');
   });
 
+  it('passes static-bearer container sessions through without hosted sign-in friction', () => {
+    state.auth = {
+      ...baseAuth(),
+      status: 'unauthenticated',
+      authenticated: false,
+      unauthenticated: true,
+      metadata: {
+        provider: 'static_bearer',
+        runtimeProfile: 'api',
+        authMode: 'oidc',
+        hosted: false,
+        localMode: false,
+      },
+      session: {
+        ...baseAuth().session,
+        authenticated: false,
+        subject: null,
+        displayName: null,
+        email: null,
+        provider: 'static_bearer',
+        authMode: 'anonymous',
+        localMode: false,
+      },
+      principal: null,
+    };
+
+    const html = renderLayout();
+
+    expect(html).toContain('APP CONTENT');
+    expect(html).toContain('Bearer-proxied runtime');
+    expect(html).toContain('Container operator');
+    expect(html).not.toContain('Sign in');
+  });
+
   it('renders hosted membership context in the session shell', () => {
     state.auth = {
       ...baseAuth(),

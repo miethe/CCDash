@@ -17,9 +17,23 @@ const OPERATOR_ROLES = ['EA', 'TA', 'PM', 'owner', 'admin', 'operator', 'project
 const ADMIN_ROLES = ['EA', 'TA', 'enterprise_admin', 'enterprise-admin', 'enterprise:admin', 'team_admin', 'team-admin', 'team:admin'];
 const EXECUTION_ROLES = [...OPERATOR_ROLES, 'XA', 'execution_approver', 'execution-approver', 'execution:approver'];
 
+const isLocalRuntimeAuth = (auth: ReturnType<typeof useAuthSession>): boolean => Boolean(
+  auth.session?.localMode
+  || auth.metadata?.localMode
+  || auth.session?.authMode === 'local'
+  || auth.metadata?.authMode === 'local'
+);
+
+const isStaticBearerRuntimeAuth = (auth: ReturnType<typeof useAuthSession>): boolean => (
+  auth.session?.provider === 'static_bearer' || auth.metadata?.provider === 'static_bearer'
+);
+
 const runtimeLabelForAuth = (auth: ReturnType<typeof useAuthSession>): string => {
-  if (auth.session?.localMode || auth.metadata?.localMode || auth.session?.authMode === 'local' || auth.metadata?.authMode === 'local') {
+  if (isLocalRuntimeAuth(auth)) {
     return 'Local runtime';
+  }
+  if (isStaticBearerRuntimeAuth(auth)) {
+    return 'Bearer-proxied runtime';
   }
   return 'Hosted session';
 };
@@ -28,7 +42,8 @@ const sessionIdentityLabel = (auth: ReturnType<typeof useAuthSession>): string =
   if (auth.principal?.displayName) return auth.principal.displayName;
   if (auth.principal?.email) return auth.principal.email;
   if (auth.principal?.subject) return auth.principal.subject;
-  if (auth.session?.localMode || auth.metadata?.localMode) return 'Local operator';
+  if (isLocalRuntimeAuth(auth)) return 'Local operator';
+  if (isStaticBearerRuntimeAuth(auth)) return 'Container operator';
   return auth.metadata?.provider ? `${auth.metadata.provider} auth` : 'Not signed in';
 };
 
@@ -272,14 +287,15 @@ const AuthenticatedLayout: React.FC<{ children: React.ReactNode; auth: ReturnTyp
   const location = useLocation();
   const { notifications, error } = useData();
   const { runtimeUnreachable, retryRuntime } = useAppRuntime();
+  const isStaticBearerRuntime = isStaticBearerRuntimeAuth(auth);
   const unreadCount = notifications.filter(n => !n.isRead).length;
   const isPlanningRoute = location.pathname.startsWith('/planning');
   const authDataError = error?.includes('API error: 401') || error?.includes('API error: 403');
-  const canAccessExecution = auth.hasPermission({ scopes: ['execution:read'], roles: [...READ_ROLES, ...EXECUTION_ROLES] });
-  const canAccessCodebase = auth.hasPermission({ scopes: ['codebase:read_tree', 'codebase:file_read', 'codebase:activity_read'], roles: READ_ROLES });
-  const canAccessSessionMappings = auth.hasPermission({ scopes: ['session_mapping:read', 'session_mapping:diagnose'], roles: READ_ROLES });
-  const canAccessOperations = auth.hasPermission({ scopes: ['cache:read_status', 'cache.operation:read'], roles: READ_ROLES });
-  const canAccessSettings = auth.hasPermission({ scopes: ['admin.settings:read', 'project:update', 'integration:read'], roles: [...ADMIN_ROLES, ...OPERATOR_ROLES, 'IO', 'integration_operator'] });
+  const canAccessExecution = isStaticBearerRuntime || auth.hasPermission({ scopes: ['execution:read'], roles: [...READ_ROLES, ...EXECUTION_ROLES] });
+  const canAccessCodebase = isStaticBearerRuntime || auth.hasPermission({ scopes: ['codebase:read_tree', 'codebase:file_read', 'codebase:activity_read'], roles: READ_ROLES });
+  const canAccessSessionMappings = isStaticBearerRuntime || auth.hasPermission({ scopes: ['session_mapping:read', 'session_mapping:diagnose'], roles: READ_ROLES });
+  const canAccessOperations = isStaticBearerRuntime || auth.hasPermission({ scopes: ['cache:read_status', 'cache.operation:read'], roles: READ_ROLES });
+  const canAccessSettings = isStaticBearerRuntime || auth.hasPermission({ scopes: ['admin.settings:read', 'project:update', 'integration:read'], roles: [...ADMIN_ROLES, ...OPERATOR_ROLES, 'IO', 'integration_operator'] });
   const permissionHint = 'Permission hint only; backend authorization remains authoritative.';
 
   return (
@@ -417,13 +433,13 @@ const AuthenticatedLayout: React.FC<{ children: React.ReactNode; auth: ReturnTyp
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const auth = useAuthSession();
-  const isLocalRuntime = auth.session?.localMode || auth.metadata?.localMode || auth.session?.authMode === 'local' || auth.metadata?.authMode === 'local';
+  const canUseRuntimeWithoutHostedLogin = isLocalRuntimeAuth(auth) || isStaticBearerRuntimeAuth(auth);
 
   if (auth.loading) {
     return <AuthShellState auth={auth} />;
   }
 
-  if (!isLocalRuntime && (auth.unauthenticated || auth.unauthorized)) {
+  if (!canUseRuntimeWithoutHostedLogin && (auth.unauthenticated || auth.unauthorized)) {
     return <AuthShellState auth={auth} />;
   }
 

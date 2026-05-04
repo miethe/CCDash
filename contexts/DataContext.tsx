@@ -60,8 +60,8 @@ interface DataContextValue {
 interface AppDataProviderGateState {
   loading: boolean;
   authenticated: boolean;
-  session?: { localMode?: boolean; authMode?: string | null } | null;
-  metadata?: { localMode?: boolean; authMode?: string | null } | null;
+  session?: { localMode?: boolean; authMode?: string | null; provider?: string | null } | null;
+  metadata?: { localMode?: boolean; authMode?: string | null; provider?: string | null } | null;
 }
 
 export function shouldMountAppDataProviders(auth: AppDataProviderGateState): boolean {
@@ -74,7 +74,8 @@ export function shouldMountAppDataProviders(auth: AppDataProviderGateState): boo
     || auth.session?.authMode === 'local'
     || auth.metadata?.authMode === 'local',
   );
-  return localMode || auth.authenticated;
+  const staticBearerMode = auth.session?.provider === 'static_bearer' || auth.metadata?.provider === 'static_bearer';
+  return localMode || staticBearerMode || auth.authenticated;
 }
 
 const AppDataProviderGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {

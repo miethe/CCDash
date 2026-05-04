@@ -131,7 +131,7 @@ describe('DataContext auth provider gate', () => {
         })).toBe(false);
     });
 
-    it('mounts app data providers for local mode and hosted authenticated sessions', () => {
+    it('mounts app data providers for local mode, static bearer, and hosted authenticated sessions', () => {
         expect(shouldMountAppDataProviders({
             loading: false,
             authenticated: true,
@@ -139,6 +139,17 @@ describe('DataContext auth provider gate', () => {
             session: {
                 localMode: true,
                 authMode: 'local',
+            },
+        })).toBe(true);
+
+        expect(shouldMountAppDataProviders({
+            loading: false,
+            authenticated: false,
+            metadata: { localMode: false, authMode: 'oidc', provider: 'static_bearer' },
+            session: {
+                localMode: false,
+                authMode: 'anonymous',
+                provider: 'static_bearer',
             },
         })).toBe(true);
 
