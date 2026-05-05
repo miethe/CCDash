@@ -10,10 +10,14 @@ status: completed
 started: '2026-05-05'
 completed: '2026-05-05'
 created: '2026-05-04'
-updated: '2026-05-04'
+updated: '2026-05-05'
 prd_ref: null
 plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-source-path-canonicalization-hardening-v1.md
-commit_refs: []
+commit_refs:
+- d609db2
+- ebc2a45
+- b64024b
+- 36effc0
 pr_refs: []
 execution_model: task-scoped
 overall_progress: 100
@@ -94,7 +98,7 @@ Validate startup idempotence, idle resource behavior, Postgres churn, and regres
 
 ## Current Status
 
-Phase 5 is in progress. VAL-001 completed live startup idempotence smoke against the compose enterprise/postgres/live-watch stack.
+Phase 5 is complete. Live startup/idempotence, idle resource, Postgres churn, and focused regression validation evidence has been recorded.
 
 ## VAL-001 Evidence
 

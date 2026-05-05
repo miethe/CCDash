@@ -8,12 +8,15 @@ phase_title: Runtime Guardrails And Operator Docs
 title: 'live-ingest-source-path-canonicalization-hardening-v1 - Phase 4: Runtime Guardrails And Operator Docs'
 status: completed
 started: '2026-05-04'
-completed: null
+completed: '2026-05-04'
 created: '2026-05-04'
-updated: '2026-05-04'
+updated: '2026-05-05'
 prd_ref: null
 plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-source-path-canonicalization-hardening-v1.md
-commit_refs: []
+commit_refs:
+- b637d43
+- a311f79
+- e6a6baf
 pr_refs: []
 execution_model: task-scoped
 overall_progress: 100

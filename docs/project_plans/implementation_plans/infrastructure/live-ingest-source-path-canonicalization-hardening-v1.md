@@ -3,14 +3,14 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: implementation_plan
 doc_subtype: hardening_plan
-status: in-progress
+status: completed
 category: infrastructure
 title: Live Ingest Source Path Canonicalization Hardening V1 - Implementation Plan
 description: Hardening plan to stop worker-watch container path drift from causing duplicate session ingestion and excessive Postgres startup churn.
 summary: Canonicalize filesystem-derived session source identity across host and container runtimes, migrate duplicate sync state safely, and add operator validation for startup CPU, memory, and Postgres write amplification.
 author: codex
 created: 2026-05-04
-updated: 2026-05-04
+updated: 2026-05-05
 audience:
   - ai-agents
   - developers
@@ -53,6 +53,18 @@ commit_refs:
   - 7e57c7f
   - 0577e4c
   - f0c106a
+  - 31c9c92
+  - b637d43
+  - a311f79
+  - e6a6baf
+  - 148b098
+  - 200eb00
+  - 07d8d73
+  - 015e0a8
+  - d609db2
+  - ebc2a45
+  - b64024b
+  - 36effc0
 pr_refs: []
 files_affected:
   - backend/db/sync_engine.py
@@ -60,6 +72,9 @@ files_affected:
   - backend/tests/test_file_watcher.py
   - backend/tests/test_sync_engine_linking.py
   - backend/tests/test_source_identity.py
+  - backend/scripts/source_alias_duplicate_audit.py
+  - backend/tests/test_source_alias_duplicate_audit.py
+  - deploy/runtime/README.md
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-1-progress.md
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-2-progress.md
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-3-progress.md
