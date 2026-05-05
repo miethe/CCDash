@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from pathlib import PurePosixPath
 
@@ -9,10 +10,15 @@ from backend.scripts.source_alias_duplicate_audit import (
     SessionSourceCandidate,
     SourceAuditRow,
     SyncStateCandidate,
+    apply_source_collapse_plans,
     build_duplicate_audit_report,
     build_source_collapse_plans,
+    collapse_apply_result_as_dict,
+    collapse_plans_as_dict,
     choose_session_source_survivor,
     choose_sync_state_survivor,
+    render_collapse_apply_result,
+    render_collapse_plan_report,
     render_text_report,
     report_as_dict,
 )
@@ -32,6 +38,20 @@ def _policy() -> SourceIdentityPolicy:
             ),
         )
     )
+
+
+class _FakePostgresConnection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    async def execute(self, sql: str, *args: object) -> str:
+        self.calls.append((sql, args))
+        command = sql.strip().split()[0].upper()
+        if command == "UPDATE":
+            return "UPDATE 2"
+        if command == "DELETE":
+            return "DELETE 2"
+        return "INSERT 0 1"
 
 
 class SourceAliasDuplicateAuditTests(unittest.TestCase):
@@ -207,6 +227,129 @@ class SourceAliasDuplicateAuditTests(unittest.TestCase):
         self.assertIn("explicit project id", COLLAPSE_STRATEGY)
         self.assertIn("dry-run", COLLAPSE_STRATEGY)
         self.assertIn("Rollback", COLLAPSE_STRATEGY)
+
+    def test_collapse_plan_rendering_includes_survivor_and_actions(self) -> None:
+        plans = build_source_collapse_plans(
+            project_id="project-1",
+            policy=_policy(),
+            sync_state_candidates=[
+                SyncStateCandidate(
+                    "/Users/miethe/.claude/projects/foo/session.jsonl",
+                    "host-hash",
+                    10.0,
+                    "2026-05-04T10:00:00Z",
+                    100,
+                ),
+                SyncStateCandidate(
+                    "/home/ccdash/.claude/projects/foo/session.jsonl",
+                    "container-hash",
+                    20.0,
+                    "2026-05-04T11:00:00Z",
+                    200,
+                ),
+            ],
+            session_candidates=[],
+        )
+
+        payload = collapse_plans_as_dict(plans)
+        text = render_collapse_plan_report(plans)
+
+        self.assertEqual(payload[0]["syncStateSurvivor"]["fileHash"], "container-hash")
+        self.assertIn("Source alias collapse dry run", text)
+        self.assertIn("syncStateSurvivor=/home/ccdash/.claude/projects/foo/session.jsonl", text)
+
+    def test_apply_source_collapse_plans_is_dry_run_by_default(self) -> None:
+        conn = _FakePostgresConnection()
+        plans = build_source_collapse_plans(
+            project_id="project-1",
+            policy=_policy(),
+            sync_state_candidates=[
+                SyncStateCandidate(
+                    "/Users/miethe/.claude/projects/foo/session.jsonl",
+                    "host-hash",
+                    10.0,
+                    "2026-05-04T10:00:00Z",
+                    100,
+                ),
+                SyncStateCandidate(
+                    "/home/ccdash/.claude/projects/foo/session.jsonl",
+                    "container-hash",
+                    20.0,
+                    "2026-05-04T11:00:00Z",
+                    200,
+                ),
+            ],
+            session_candidates=[
+                SessionSourceCandidate(
+                    "/home/ccdash/.claude/projects/foo/session.jsonl",
+                    session_count=3,
+                    updated_at="2026-05-04T11:00:00Z",
+                ),
+            ],
+        )
+
+        result = asyncio.run(
+            apply_source_collapse_plans(
+                conn,
+                project_id="project-1",
+                plans=plans,
+                apply=False,
+            )
+        )
+
+        self.assertFalse(result.applied)
+        self.assertEqual(result.planned_groups, 1)
+        self.assertEqual(result.sync_state_upserts, 1)
+        self.assertEqual(result.session_updates, 3)
+        self.assertEqual(conn.calls, [])
+
+    def test_apply_source_collapse_plans_updates_canonical_sources(self) -> None:
+        conn = _FakePostgresConnection()
+        plans = build_source_collapse_plans(
+            project_id="project-1",
+            policy=_policy(),
+            sync_state_candidates=[
+                SyncStateCandidate(
+                    "/Users/miethe/.claude/projects/foo/session.jsonl",
+                    "host-hash",
+                    10.0,
+                    "2026-05-04T10:00:00Z",
+                    100,
+                ),
+                SyncStateCandidate(
+                    "/home/ccdash/.claude/projects/foo/session.jsonl",
+                    "container-hash",
+                    20.0,
+                    "2026-05-04T11:00:00Z",
+                    200,
+                ),
+            ],
+            session_candidates=[],
+        )
+
+        result = asyncio.run(
+            apply_source_collapse_plans(
+                conn,
+                project_id="project-1",
+                plans=plans,
+                apply=True,
+            )
+        )
+
+        self.assertTrue(result.applied)
+        self.assertEqual(result.sync_state_upserts, 1)
+        self.assertEqual(result.sync_state_deletes, 2)
+        self.assertEqual(result.session_updates, 2)
+        self.assertEqual(result.relationship_updates, 2)
+        rendered = render_collapse_apply_result(result)
+        payload = collapse_apply_result_as_dict(result)
+        self.assertIn("Mode: applied", rendered)
+        self.assertEqual(payload["sessionUpdates"], 2)
+        self.assertEqual(len(conn.calls), 4)
+        self.assertEqual(
+            conn.calls[0][1][0],
+            "ccdash-source:v1/project-1/session/claude_home/projects/foo/session.jsonl",
+        )
 
 
 if __name__ == "__main__":

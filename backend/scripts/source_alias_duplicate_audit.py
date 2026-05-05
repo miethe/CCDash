@@ -119,6 +119,17 @@ class SourceCollapsePlan:
         return tuple(path for path in self.source_paths if path not in survivor_paths)
 
 
+@dataclass(frozen=True, slots=True)
+class CollapseApplyResult:
+    project_id: str
+    planned_groups: int
+    sync_state_upserts: int
+    sync_state_deletes: int
+    session_updates: int
+    relationship_updates: int
+    applied: bool
+
+
 COLLAPSE_STRATEGY = """
 Source alias collapse strategy:
 
@@ -566,6 +577,219 @@ def build_source_collapse_plans(
     return plans
 
 
+def collapse_plans_as_dict(plans: Iterable[SourceCollapsePlan]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for plan in plans:
+        payload.append(
+            {
+                "sourceKey": plan.source_key,
+                "sourcePaths": list(plan.source_paths),
+                "syncStateSurvivor": (
+                    {
+                        "sourcePath": plan.sync_state_survivor.source_path,
+                        "fileHash": plan.sync_state_survivor.file_hash,
+                        "fileMtime": plan.sync_state_survivor.file_mtime,
+                        "lastSynced": plan.sync_state_survivor.last_synced,
+                        "parseMs": plan.sync_state_survivor.parse_ms,
+                    }
+                    if plan.sync_state_survivor
+                    else None
+                ),
+                "sessionSurvivor": (
+                    {
+                        "sourcePath": plan.session_survivor.source_path,
+                        "sessionCount": plan.session_survivor.session_count,
+                        "updatedAt": plan.session_survivor.updated_at,
+                        "canonicalMessageCount": plan.session_survivor.canonical_message_count,
+                        "usageEventCount": plan.session_survivor.usage_event_count,
+                        "telemetryEventCount": plan.session_survivor.telemetry_event_count,
+                        "lineageCompleteCount": plan.session_survivor.lineage_complete_count,
+                    }
+                    if plan.session_survivor
+                    else None
+                ),
+                "actions": list(plan.actions),
+            }
+        )
+    return payload
+
+
+def render_collapse_plan_report(plans: Iterable[SourceCollapsePlan], *, limit: int = 50) -> str:
+    items = list(plans)
+    lines = [
+        "Source alias collapse dry run",
+        f"Planned groups: {len(items)}",
+        "",
+        COLLAPSE_STRATEGY,
+    ]
+    if not items:
+        lines.extend(["", "No duplicate source alias groups require collapse."])
+        return "\n".join(lines)
+
+    safe_limit = max(1, int(limit or 50))
+    lines.extend(["", "Planned source groups:"])
+    for idx, plan in enumerate(items[:safe_limit], start=1):
+        lines.append(f"  {idx:02d}. {plan.source_key}")
+        for path in plan.source_paths:
+            lines.append(f"      sourcePath={path}")
+        if plan.sync_state_survivor:
+            lines.append(
+                "      syncStateSurvivor="
+                f"{plan.sync_state_survivor.source_path} "
+                f"mtime={plan.sync_state_survivor.file_mtime} "
+                f"lastSynced={plan.sync_state_survivor.last_synced}"
+            )
+        if plan.session_survivor:
+            lines.append(
+                "      sessionSurvivor="
+                f"{plan.session_survivor.source_path} "
+                f"sessions={plan.session_survivor.session_count} "
+                f"messages={plan.session_survivor.canonical_message_count}"
+            )
+    remaining = len(items) - safe_limit
+    if remaining > 0:
+        lines.append(f"  ... {remaining} more groups omitted by --limit")
+    return "\n".join(lines)
+
+
+def _parse_execute_count(result: str) -> int:
+    try:
+        return int(str(result).split()[-1])
+    except (IndexError, ValueError):
+        return 0
+
+
+async def apply_source_collapse_plans(
+    conn: Any,
+    *,
+    project_id: str,
+    plans: Iterable[SourceCollapsePlan],
+    apply: bool,
+) -> CollapseApplyResult:
+    items = list(plans)
+    if not apply:
+        return CollapseApplyResult(
+            project_id=project_id,
+            planned_groups=len(items),
+            sync_state_upserts=sum(1 for item in items if item.sync_state_survivor is not None),
+            sync_state_deletes=sum(
+                len([path for path in item.source_paths if path != item.source_key])
+                for item in items
+            ),
+            session_updates=sum(
+                item.session_survivor.session_count if item.session_survivor else 0
+                for item in items
+            ),
+            relationship_updates=0,
+            applied=False,
+        )
+
+    sync_state_upserts = 0
+    sync_state_deletes = 0
+    session_updates = 0
+    relationship_updates = 0
+    for plan in items:
+        alias_paths = [path for path in plan.source_paths if path != plan.source_key]
+        if plan.sync_state_survivor is not None:
+            await conn.execute(
+                """
+                INSERT INTO sync_state (
+                    file_path, file_hash, file_mtime, entity_type,
+                    project_id, last_synced, parse_ms
+                ) VALUES ($1, $2, $3, 'session', $4, $5, $6)
+                ON CONFLICT(file_path) DO UPDATE SET
+                    file_hash = EXCLUDED.file_hash,
+                    file_mtime = EXCLUDED.file_mtime,
+                    entity_type = EXCLUDED.entity_type,
+                    project_id = EXCLUDED.project_id,
+                    last_synced = EXCLUDED.last_synced,
+                    parse_ms = EXCLUDED.parse_ms
+                """,
+                plan.source_key,
+                plan.sync_state_survivor.file_hash,
+                float(plan.sync_state_survivor.file_mtime),
+                project_id,
+                plan.sync_state_survivor.last_synced,
+                int(plan.sync_state_survivor.parse_ms),
+            )
+            sync_state_upserts += 1
+        if alias_paths:
+            deleted = await conn.execute(
+                """
+                DELETE FROM sync_state
+                WHERE project_id = $1
+                  AND entity_type = 'session'
+                  AND file_path = ANY($2::text[])
+                """,
+                project_id,
+                alias_paths,
+            )
+            sync_state_deletes += _parse_execute_count(deleted)
+            updated_sessions = await conn.execute(
+                """
+                UPDATE sessions
+                SET source_file = $1
+                WHERE project_id = $2
+                  AND source_file = ANY($3::text[])
+                  AND source_file <> $1
+                """,
+                plan.source_key,
+                project_id,
+                alias_paths,
+            )
+            session_updates += _parse_execute_count(updated_sessions)
+            updated_relationships = await conn.execute(
+                """
+                UPDATE session_relationships
+                SET source_file = $1
+                WHERE project_id = $2
+                  AND source_file = ANY($3::text[])
+                  AND source_file <> $1
+                """,
+                plan.source_key,
+                project_id,
+                alias_paths,
+            )
+            relationship_updates += _parse_execute_count(updated_relationships)
+
+    return CollapseApplyResult(
+        project_id=project_id,
+        planned_groups=len(items),
+        sync_state_upserts=sync_state_upserts,
+        sync_state_deletes=sync_state_deletes,
+        session_updates=session_updates,
+        relationship_updates=relationship_updates,
+        applied=True,
+    )
+
+
+def collapse_apply_result_as_dict(result: CollapseApplyResult) -> dict[str, Any]:
+    return {
+        "projectId": result.project_id,
+        "plannedGroups": result.planned_groups,
+        "syncStateUpserts": result.sync_state_upserts,
+        "syncStateDeletes": result.sync_state_deletes,
+        "sessionUpdates": result.session_updates,
+        "relationshipUpdates": result.relationship_updates,
+        "applied": result.applied,
+    }
+
+
+def render_collapse_apply_result(result: CollapseApplyResult) -> str:
+    mode = "applied" if result.applied else "dry-run"
+    return "\n".join(
+        [
+            f"Project: {result.project_id}",
+            f"Mode: {mode}",
+            f"Planned groups: {result.planned_groups}",
+            f"sync_state upserts: {result.sync_state_upserts}",
+            f"sync_state deletes: {result.sync_state_deletes}",
+            f"sessions updated: {result.session_updates}",
+            f"session_relationships updated: {result.relationship_updates}",
+        ]
+    )
+
+
 def report_as_dict(report: DuplicateAuditReport) -> dict[str, Any]:
     return {
         "projectId": report.project_id,
@@ -666,6 +890,158 @@ async def fetch_audit_rows(database_url: str, project_id: str) -> list[SourceAud
         await conn.close()
 
 
+async def fetch_collapse_candidates(conn: Any, project_id: str) -> tuple[list[SyncStateCandidate], list[SessionSourceCandidate]]:
+    sync_rows = await conn.fetch(
+        """
+        SELECT
+            file_path,
+            file_hash,
+            file_mtime,
+            last_synced,
+            parse_ms,
+            COUNT(*)::bigint AS row_count
+        FROM sync_state
+        WHERE project_id = $1
+          AND entity_type = 'session'
+          AND COALESCE(file_path, '') != ''
+        GROUP BY file_path, file_hash, file_mtime, last_synced, parse_ms
+        """,
+        project_id,
+    )
+    session_rows = await conn.fetch(
+        """
+        WITH sessions_by_source AS (
+            SELECT
+                source_file,
+                COUNT(*)::bigint AS session_count,
+                MAX(updated_at) AS updated_at,
+                SUM(
+                    CASE
+                        WHEN COALESCE(thread_kind, '') != ''
+                         AND COALESCE(conversation_family_id, '') != ''
+                        THEN 1 ELSE 0
+                    END
+                )::bigint AS lineage_complete_count
+            FROM sessions
+            WHERE project_id = $1
+              AND COALESCE(source_file, '') != ''
+            GROUP BY source_file
+        ),
+        messages_by_source AS (
+            SELECT s.source_file, COUNT(sm.*)::bigint AS canonical_message_count
+            FROM sessions s
+            JOIN session_messages sm ON sm.session_id = s.id
+            WHERE s.project_id = $1
+              AND COALESCE(s.source_file, '') != ''
+            GROUP BY s.source_file
+        ),
+        usage_by_source AS (
+            SELECT s.source_file, COUNT(sue.*)::bigint AS usage_event_count
+            FROM sessions s
+            JOIN session_usage_events sue ON sue.session_id = s.id
+            WHERE s.project_id = $1
+              AND COALESCE(s.source_file, '') != ''
+            GROUP BY s.source_file
+        ),
+        telemetry_by_source AS (
+            SELECT s.source_file, COUNT(te.*)::bigint AS telemetry_event_count
+            FROM sessions s
+            JOIN telemetry_events te ON te.session_id = s.id
+            WHERE s.project_id = $1
+              AND COALESCE(s.source_file, '') != ''
+            GROUP BY s.source_file
+        )
+        SELECT
+            s.source_file,
+            s.session_count,
+            COALESCE(s.updated_at, '') AS updated_at,
+            COALESCE(m.canonical_message_count, 0)::bigint AS canonical_message_count,
+            COALESCE(u.usage_event_count, 0)::bigint AS usage_event_count,
+            COALESCE(t.telemetry_event_count, 0)::bigint AS telemetry_event_count,
+            COALESCE(s.lineage_complete_count, 0)::bigint AS lineage_complete_count
+        FROM sessions_by_source s
+        LEFT JOIN messages_by_source m ON m.source_file = s.source_file
+        LEFT JOIN usage_by_source u ON u.source_file = s.source_file
+        LEFT JOIN telemetry_by_source t ON t.source_file = s.source_file
+        """,
+        project_id,
+    )
+    return (
+        [
+            SyncStateCandidate(
+                source_path=str(row["file_path"]),
+                file_hash=str(row["file_hash"] or ""),
+                file_mtime=float(row["file_mtime"] or 0.0),
+                last_synced=str(row["last_synced"] or ""),
+                parse_ms=int(row["parse_ms"] or 0),
+                row_count=int(row["row_count"] or 0),
+            )
+            for row in sync_rows
+        ],
+        [
+            SessionSourceCandidate(
+                source_path=str(row["source_file"]),
+                session_count=int(row["session_count"] or 0),
+                updated_at=str(row["updated_at"] or ""),
+                canonical_message_count=int(row["canonical_message_count"] or 0),
+                usage_event_count=int(row["usage_event_count"] or 0),
+                telemetry_event_count=int(row["telemetry_event_count"] or 0),
+                lineage_complete_count=int(row["lineage_complete_count"] or 0),
+            )
+            for row in session_rows
+        ],
+    )
+
+
+async def fetch_collapse_plans(
+    *,
+    database_url: str,
+    project_id: str,
+    policy: SourceIdentityPolicy,
+) -> list[SourceCollapsePlan]:
+    import asyncpg
+
+    conn = await asyncpg.connect(database_url)
+    try:
+        sync_candidates, session_candidates = await fetch_collapse_candidates(conn, project_id)
+        return build_source_collapse_plans(
+            project_id=project_id,
+            policy=policy,
+            sync_state_candidates=sync_candidates,
+            session_candidates=session_candidates,
+        )
+    finally:
+        await conn.close()
+
+
+async def apply_collapse_to_database(
+    *,
+    database_url: str,
+    project_id: str,
+    policy: SourceIdentityPolicy,
+) -> CollapseApplyResult:
+    import asyncpg
+
+    conn = await asyncpg.connect(database_url)
+    try:
+        async with conn.transaction():
+            sync_candidates, session_candidates = await fetch_collapse_candidates(conn, project_id)
+            plans = build_source_collapse_plans(
+                project_id=project_id,
+                policy=policy,
+                sync_state_candidates=sync_candidates,
+                session_candidates=session_candidates,
+            )
+            return await apply_source_collapse_plans(
+                conn,
+                project_id=project_id,
+                plans=plans,
+                apply=True,
+            )
+    finally:
+        await conn.close()
+
+
 async def _run(args: argparse.Namespace) -> int:
     env: Mapping[str, str] = os.environ
     if args.env_file:
@@ -673,18 +1049,59 @@ async def _run(args: argparse.Namespace) -> int:
         values.update(load_env_file(args.env_file))
         env = values
 
+    if args.strategy:
+        print(COLLAPSE_STRATEGY)
+        return 0
+
     database_url = args.database_url or env.get("CCDASH_DATABASE_URL") or ""
     if not database_url:
         print("Missing database URL. Set CCDASH_DATABASE_URL or pass --database-url.")
         return 1
 
     try:
+        policy = source_identity_policy_from_env(env)
+        if args.collapse_plan or args.apply_collapse:
+            if args.apply_collapse:
+                result = await apply_collapse_to_database(
+                    database_url=database_url,
+                    project_id=args.project,
+                    policy=policy,
+                )
+                if args.json:
+                    print(json.dumps(collapse_apply_result_as_dict(result), indent=2))
+                else:
+                    print(render_collapse_apply_result(result))
+                return 0
+
+            plans = await fetch_collapse_plans(
+                database_url=database_url,
+                project_id=args.project,
+                policy=policy,
+            )
+            dry_run = await apply_source_collapse_plans(
+                None,
+                project_id=args.project,
+                plans=plans,
+                apply=False,
+            )
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "apply": collapse_apply_result_as_dict(dry_run),
+                            "plans": collapse_plans_as_dict(plans),
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                print(render_collapse_apply_result(dry_run))
+                print("")
+                print(render_collapse_plan_report(plans, limit=args.limit))
+            return 0
+
         rows = await fetch_audit_rows(database_url, args.project)
-        report = build_duplicate_audit_report(
-            project_id=args.project,
-            rows=rows,
-            policy=source_identity_policy_from_env(env),
-        )
+        report = build_duplicate_audit_report(project_id=args.project, rows=rows, policy=policy)
     except Exception as exc:
         print(f"Duplicate audit query failed: {exc}")
         return 1
@@ -703,6 +1120,9 @@ def main() -> int:
     parser.add_argument("--env-file", default="", help="Optional env file with source alias root settings.")
     parser.add_argument("--limit", type=int, default=50, help="Maximum duplicate groups to print in text output.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument("--strategy", action="store_true", help="Print the collapse strategy and exit.")
+    parser.add_argument("--collapse-plan", action="store_true", help="Print dry-run source alias collapse actions.")
+    parser.add_argument("--apply-collapse", action="store_true", help="Apply source alias collapse in one transaction.")
     args = parser.parse_args()
     return asyncio.run(_run(args))
 

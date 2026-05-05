@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 50
-completion_estimate: 2 tasks remaining
+overall_progress: 75
+completion_estimate: 1 task remaining
 total_tasks: 4
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -49,7 +49,7 @@ tasks:
   priority: high
 - id: MIG-003
   description: Implement a project-scoped dry-run/apply command for duplicate source identity collapse.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -88,7 +88,7 @@ files_modified:
 - backend/scripts/source_alias_duplicate_audit.py
 - backend/tests/test_source_alias_duplicate_audit.py
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-3-progress.md
-progress: 50
+progress: 75
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 3
@@ -99,4 +99,4 @@ Add project-scoped duplicate source identity audit and collapse tooling for host
 
 ## Current Status
 
-Phase 3 is in progress. MIG-001 added the audit script; MIG-002 added survivor selection and dry-run collapse strategy coverage.
+Phase 3 is in progress. MIG-001 added the audit script, MIG-002 added survivor selection, and MIG-003 added dry-run/apply collapse commands.
