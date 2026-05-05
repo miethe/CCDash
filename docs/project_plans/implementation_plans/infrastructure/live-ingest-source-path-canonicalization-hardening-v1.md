@@ -45,7 +45,14 @@ related_documents:
   - backend/db/repositories/postgres/runtime_state.py
   - backend/db/repositories/postgres/sessions.py
   - backend/db/repositories/postgres/session_messages.py
-commit_refs: []
+commit_refs:
+  - 60d5b4a
+  - 79ad357
+  - 462019e
+  - 9196922
+  - 7e57c7f
+  - 0577e4c
+  - f0c106a
 pr_refs: []
 files_affected:
   - backend/db/sync_engine.py

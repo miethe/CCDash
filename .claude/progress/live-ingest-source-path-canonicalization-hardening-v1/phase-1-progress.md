@@ -13,7 +13,10 @@ created: '2026-05-04'
 updated: '2026-05-04'
 prd_ref: null
 plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-source-path-canonicalization-hardening-v1.md
-commit_refs: []
+commit_refs:
+- 60d5b4a
+- 79ad357
+- 462019e
 pr_refs: []
 execution_model: task-scoped
 overall_progress: 100
