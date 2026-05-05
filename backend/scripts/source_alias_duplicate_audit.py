@@ -80,6 +80,64 @@ class DuplicateAuditReport:
         return len(self.duplicate_groups)
 
 
+@dataclass(frozen=True, slots=True)
+class SyncStateCandidate:
+    source_path: str
+    file_hash: str
+    file_mtime: float
+    last_synced: str
+    parse_ms: int
+    row_count: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class SessionSourceCandidate:
+    source_path: str
+    session_count: int
+    updated_at: str
+    canonical_message_count: int = 0
+    usage_event_count: int = 0
+    telemetry_event_count: int = 0
+    lineage_complete_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SourceCollapsePlan:
+    source_key: str
+    source_paths: tuple[str, ...]
+    sync_state_survivor: SyncStateCandidate | None
+    session_survivor: SessionSourceCandidate | None
+    actions: tuple[str, ...]
+
+    @property
+    def loser_paths(self) -> tuple[str, ...]:
+        survivor_paths = {
+            candidate.source_path
+            for candidate in (self.sync_state_survivor, self.session_survivor)
+            if candidate is not None
+        }
+        return tuple(path for path in self.source_paths if path not in survivor_paths)
+
+
+COLLAPSE_STRATEGY = """
+Source alias collapse strategy:
+
+1. Scope every run by explicit project id and the same SourceIdentityPolicy used
+   by live ingest. Never collapse by suffix-only path matching.
+2. Group legacy host/container source paths by canonical source key.
+3. Choose the sync_state survivor by newest file_mtime, then newest
+   last_synced, then highest parse_ms. Preserve that row's file_hash and mtime
+   when upserting the canonical source key.
+4. Choose the session survivor by transcript completeness first
+   (canonical_message_count), then usage/telemetry evidence, lineage
+   completeness, session_count, and updated_at. The apply path updates source
+   fields to the canonical source key before deleting duplicate sync_state rows.
+5. Apply must run inside one transaction after a dry-run review. Rollback is
+   restoring the Postgres volume backup or transaction snapshot captured before
+   apply.
+""".strip()
+
+
 AUDIT_QUERY_SPECS: tuple[AuditQuerySpec, ...] = (
     AuditQuerySpec(
         table_name="sync_state",
@@ -400,6 +458,112 @@ def build_duplicate_audit_report(
         alias_path_summaries=alias_path_summaries,
         table_totals=dict(sorted(table_totals.items())),
     )
+
+
+def _candidate_canonical_key(
+    *,
+    project_id: str,
+    source_path: str,
+    policy: SourceIdentityPolicy,
+) -> str:
+    return _canonical_source_key(
+        project_id=project_id,
+        source_path=source_path,
+        policy=policy,
+    )
+
+
+def _sync_state_sort_key(candidate: SyncStateCandidate) -> tuple[float, str, int, int, str]:
+    return (
+        float(candidate.file_mtime or 0.0),
+        str(candidate.last_synced or ""),
+        int(candidate.parse_ms or 0),
+        int(candidate.row_count or 0),
+        candidate.source_path,
+    )
+
+
+def _session_source_sort_key(candidate: SessionSourceCandidate) -> tuple[int, int, int, int, int, str, str]:
+    return (
+        int(candidate.canonical_message_count or 0),
+        int(candidate.usage_event_count or 0),
+        int(candidate.telemetry_event_count or 0),
+        int(candidate.lineage_complete_count or 0),
+        int(candidate.session_count or 0),
+        str(candidate.updated_at or ""),
+        candidate.source_path,
+    )
+
+
+def choose_sync_state_survivor(candidates: Iterable[SyncStateCandidate]) -> SyncStateCandidate | None:
+    items = list(candidates)
+    if not items:
+        return None
+    return max(items, key=_sync_state_sort_key)
+
+
+def choose_session_source_survivor(
+    candidates: Iterable[SessionSourceCandidate],
+) -> SessionSourceCandidate | None:
+    items = list(candidates)
+    if not items:
+        return None
+    return max(items, key=_session_source_sort_key)
+
+
+def build_source_collapse_plans(
+    *,
+    project_id: str,
+    policy: SourceIdentityPolicy,
+    sync_state_candidates: Iterable[SyncStateCandidate],
+    session_candidates: Iterable[SessionSourceCandidate],
+) -> list[SourceCollapsePlan]:
+    grouped_sync: dict[str, list[SyncStateCandidate]] = {}
+    grouped_sessions: dict[str, list[SessionSourceCandidate]] = {}
+    source_paths_by_key: dict[str, set[str]] = {}
+
+    for candidate in sync_state_candidates:
+        source_key = _candidate_canonical_key(
+            project_id=project_id,
+            source_path=candidate.source_path,
+            policy=policy,
+        )
+        grouped_sync.setdefault(source_key, []).append(candidate)
+        source_paths_by_key.setdefault(source_key, set()).add(candidate.source_path)
+
+    for candidate in session_candidates:
+        source_key = _candidate_canonical_key(
+            project_id=project_id,
+            source_path=candidate.source_path,
+            policy=policy,
+        )
+        grouped_sessions.setdefault(source_key, []).append(candidate)
+        source_paths_by_key.setdefault(source_key, set()).add(candidate.source_path)
+
+    plans: list[SourceCollapsePlan] = []
+    for source_key, source_paths in source_paths_by_key.items():
+        if len(source_paths) <= 1:
+            continue
+        sync_survivor = choose_sync_state_survivor(grouped_sync.get(source_key, []))
+        session_survivor = choose_session_source_survivor(grouped_sessions.get(source_key, []))
+        ordered_paths = tuple(sorted(source_paths))
+        actions = [
+            "upsert canonical sync_state survivor and delete alias sync_state rows",
+            "update sessions.source_file to canonical source key",
+            "update session_relationships.source_file to canonical source key",
+            "preserve child rows through session_id foreign keys and regenerate telemetry/commit facts on next ingest if needed",
+        ]
+        plans.append(
+            SourceCollapsePlan(
+                source_key=source_key,
+                source_paths=ordered_paths,
+                sync_state_survivor=sync_survivor,
+                session_survivor=session_survivor,
+                actions=tuple(actions),
+            )
+        )
+    plans.sort(key=lambda plan: plan.source_key)
+    return plans
 
 
 def report_as_dict(report: DuplicateAuditReport) -> dict[str, Any]:

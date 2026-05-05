@@ -5,8 +5,14 @@ from pathlib import PurePosixPath
 
 from backend.scripts.source_alias_duplicate_audit import (
     AUDIT_QUERY_SPECS,
+    COLLAPSE_STRATEGY,
+    SessionSourceCandidate,
     SourceAuditRow,
+    SyncStateCandidate,
     build_duplicate_audit_report,
+    build_source_collapse_plans,
+    choose_session_source_survivor,
+    choose_sync_state_survivor,
     render_text_report,
     report_as_dict,
 )
@@ -114,6 +120,93 @@ class SourceAliasDuplicateAuditTests(unittest.TestCase):
         self.assertIn("session_usage_attributions", spec_names)
         for spec in AUDIT_QUERY_SPECS:
             self.assertIn("$1", spec.sql, spec.table_name)
+
+    def test_sync_state_survivor_prefers_newest_mtime_then_synced_evidence(self) -> None:
+        survivor = choose_sync_state_survivor(
+            [
+                SyncStateCandidate("/host/session.jsonl", "old", 10.0, "2026-05-04T10:00:00Z", 500),
+                SyncStateCandidate("/container/session.jsonl", "new", 20.0, "2026-05-04T09:00:00Z", 100),
+                SyncStateCandidate("/other/session.jsonl", "tie", 20.0, "2026-05-04T11:00:00Z", 10),
+            ]
+        )
+
+        self.assertIsNotNone(survivor)
+        self.assertEqual(survivor.source_path, "/other/session.jsonl")
+        self.assertEqual(survivor.file_hash, "tie")
+
+    def test_session_survivor_prefers_transcript_and_derived_evidence(self) -> None:
+        survivor = choose_session_source_survivor(
+            [
+                SessionSourceCandidate(
+                    "/host/session.jsonl",
+                    session_count=2,
+                    updated_at="2026-05-04T12:00:00Z",
+                    canonical_message_count=4,
+                    usage_event_count=5,
+                ),
+                SessionSourceCandidate(
+                    "/container/session.jsonl",
+                    session_count=1,
+                    updated_at="2026-05-04T09:00:00Z",
+                    canonical_message_count=12,
+                    telemetry_event_count=3,
+                ),
+            ]
+        )
+
+        self.assertIsNotNone(survivor)
+        self.assertEqual(survivor.source_path, "/container/session.jsonl")
+
+    def test_build_source_collapse_plans_requires_alias_groups_and_project_scope(self) -> None:
+        plans = build_source_collapse_plans(
+            project_id="project-1",
+            policy=_policy(),
+            sync_state_candidates=[
+                SyncStateCandidate(
+                    "/Users/miethe/.claude/projects/foo/session.jsonl",
+                    "host-hash",
+                    10.0,
+                    "2026-05-04T10:00:00Z",
+                    100,
+                ),
+                SyncStateCandidate(
+                    "/home/ccdash/.claude/projects/foo/session.jsonl",
+                    "container-hash",
+                    20.0,
+                    "2026-05-04T11:00:00Z",
+                    200,
+                ),
+            ],
+            session_candidates=[
+                SessionSourceCandidate(
+                    "/Users/miethe/.claude/projects/foo/session.jsonl",
+                    session_count=1,
+                    updated_at="2026-05-04T10:00:00Z",
+                    canonical_message_count=1,
+                ),
+                SessionSourceCandidate(
+                    "/home/ccdash/.claude/projects/foo/session.jsonl",
+                    session_count=1,
+                    updated_at="2026-05-04T11:00:00Z",
+                    canonical_message_count=2,
+                ),
+            ],
+        )
+
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual(
+            plan.source_key,
+            "ccdash-source:v1/project-1/session/claude_home/projects/foo/session.jsonl",
+        )
+        self.assertEqual(plan.sync_state_survivor.source_path, "/home/ccdash/.claude/projects/foo/session.jsonl")
+        self.assertEqual(plan.session_survivor.source_path, "/home/ccdash/.claude/projects/foo/session.jsonl")
+        self.assertIn("update sessions.source_file", "\n".join(plan.actions))
+
+    def test_collapse_strategy_documents_dry_run_project_scope_and_rollback(self) -> None:
+        self.assertIn("explicit project id", COLLAPSE_STRATEGY)
+        self.assertIn("dry-run", COLLAPSE_STRATEGY)
+        self.assertIn("Rollback", COLLAPSE_STRATEGY)
 
 
 if __name__ == "__main__":
