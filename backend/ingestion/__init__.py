@@ -8,11 +8,13 @@ from backend.ingestion.models import (
     SessionIngestResult,
     SourceProvenance,
 )
+from backend.ingestion.session_ingest_service import SessionIngestService
 
 __all__ = [
     "IngestSource",
     "MergePolicy",
     "NormalizedSessionEnvelope",
+    "SessionIngestService",
     "SessionIngestResult",
     "SourceProvenance",
 ]
