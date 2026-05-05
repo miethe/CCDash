@@ -45,7 +45,7 @@ tasks:
   - backend/tests
 - id: P2-T3
   title: Preserve repository construction and database profile selection
-  status: pending
+  status: completed
   assigned_to:
   - data-platform
   dependencies:
@@ -84,10 +84,10 @@ parallelization:
   - P2-T4
   - P2-T5
 total_tasks: 5
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 40
+progress: 60
 validation:
   required:
   - backend/.venv/bin/python -m pytest backend/tests/test_sessions_parser.py backend/tests/test_sessions_codex_parser.py -v
@@ -111,3 +111,4 @@ P2-T1 is complete. The complete JSONL persistence path now flows through `Sessio
 
 - `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_session_ingest_service.py backend/tests/test_session_ingest_contract.py backend/tests/test_sync_engine_linking.py::SyncEngineSessionBackfillTests backend/tests/test_sync_engine_transcript_canonicalization.py backend/tests/test_sync_engine_session_intelligence.py backend/tests/test_file_watcher.py::JsonlAppendIncrementalSyncTests backend/tests/test_sync_engine_transcript_live_updates.py -q` passed: 20 passed in 2.83s.
 - `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_sync_engine_session_ingest_boundaries.py -q` passed: 2 passed in 1.17s.
+- `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_sync_engine_session_ingest_repository_wiring.py -q` passed: 2 passed in 0.66s.
