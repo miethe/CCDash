@@ -69,6 +69,27 @@ Required read-only ingest mounts:
 | Claude home | `CCDASH_CLAUDE_HOME=~/.claude` | `CCDASH_CLAUDE_CONTAINER_HOME=/home/ccdash/.claude` | Provides Claude Code project/session metadata for watcher ingest. |
 | Codex home | `CCDASH_CODEX_HOME=~/.codex` | `CCDASH_CODEX_CONTAINER_HOME=/home/ccdash/.codex` | Provides Codex session metadata for watcher ingest. |
 
+### Watch Scope And Startup Cost
+
+`worker-watch` resolves its watch scope from the selected project entry. Existing `sessionsPath` / `pathConfig.sessions`, plan-docs, progress, enabled test-result sources, and any filesystem paths made visible by the workspace, `.claude`, `.codex`, or optional mounts can become part of the startup sync and live-watch corpus.
+
+The biggest cost driver is usually the session tree:
+
+- `sessionsPath` is the direct session-corpus pointer. A project-specific directory keeps startup reconciliation bounded. A broad path such as all of `~/.codex/sessions` or all of `~/.claude/projects` asks the watcher to discover and reconcile every visible JSONL transcript under that root.
+- `.claude` mounts are required when project entries point at Claude Code session data, usually under `~/.claude/projects/...`. Mount the home only when those paths are intentional, and prefer a project-specific `sessionsPath` when possible.
+- `.codex` mounts are required when project entries point at Codex session data, commonly under `~/.codex/sessions/...`. Global Codex session roots can include old and unrelated conversations, so they should not be treated as a cheap default.
+- Workspace roots make project docs, progress files, and repository-relative session paths visible. Set `CCDASH_WORKSPACE_HOST_ROOT` to the smallest stable root that still contains the projects referenced by `projects.json`; mounting an entire development tree can add unrelated repositories and high-churn files to startup scans.
+- Optional mounts add additional readable roots for projects that live outside the shared workspace or agent homes. Unused optional slots point at empty directories and have negligible cost. When a slot is used, avoid broad cache, build-output, or archive roots unless the project registry explicitly needs them.
+
+`watchPathCount` in `/detailz` counts resolved top-level watch roots, not the number of files below them. A small `watchPathCount` can still represent thousands of JSONL files and a large startup write workload. Broad global session roots should be an intentional operator choice, especially before enabling startup sync against long-lived `.claude` or `.codex` homes.
+
+Estimate session scope before restarting a watcher:
+
+```bash
+find "${CCDASH_CLAUDE_HOME:-$HOME/.claude}/projects" -name '*.jsonl' -type f 2>/dev/null | wc -l
+find "${CCDASH_CODEX_HOME:-$HOME/.codex}/sessions" -name '*.jsonl' -type f 2>/dev/null | wc -l
+```
+
 ### Env-Driven Optional Mounts
 
 `compose.yaml` also exposes six optional read-only bind-mount slots:

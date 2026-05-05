@@ -6,7 +6,7 @@ feature_slug: live-ingest-source-path-canonicalization-hardening
 phase: 4
 phase_title: Runtime Guardrails And Operator Docs
 title: 'live-ingest-source-path-canonicalization-hardening-v1 - Phase 4: Runtime Guardrails And Operator Docs'
-status: in-progress
+status: completed
 started: '2026-05-04'
 completed: null
 created: '2026-05-04'
@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 67
-completion_estimate: 1 task remaining
+overall_progress: 100
+completion_estimate: complete
 total_tasks: 3
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -47,7 +47,7 @@ tasks:
   priority: medium
 - id: OPS-003
   description: Document how sessionsPath, .claude, .codex, workspace roots, and optional mounts affect watch size and startup cost.
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   dependencies:
@@ -71,7 +71,7 @@ success_criteria:
 files_modified:
 - deploy/runtime/README.md
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-4-progress.md
-progress: 67
+progress: 100
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 4
@@ -82,4 +82,4 @@ Add runtime operator guardrails for live-watch startup, polling fallback, port v
 
 ## Current Status
 
-Phase 4 is in progress. OPS-001 and OPS-002 are complete; OPS-003 remains pending.
+Phase 4 is complete. Runtime docs now cover polling load, port conflict checks, and watch scope startup cost.
