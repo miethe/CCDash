@@ -77,6 +77,13 @@ Why this matters:
 
 Do not use the local runtime profile as a substitute for enterprise validation.
 
+For containerized deployments, prepare the mounted project registry before
+starting the stack. `projects.json.activeProjectId`, `CCDASH_WORKER_PROJECT_ID`,
+and any `CCDASH_WORKER_WATCH_PROJECT_ID` values should refer to container-visible
+project entries. See [containerized-deployment-quickstart.md](containerized-deployment-quickstart.md)
+and [deploy/runtime/README.md](../../deploy/runtime/README.md) for the registry,
+session-path, and per-watcher env-overlay flow.
+
 ## 3. Verify that the runtime is healthy
 
 For the API, check:

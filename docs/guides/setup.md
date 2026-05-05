@@ -260,7 +260,9 @@ Those examples mirror the current runtime contract and the canonical `deploy/run
 
 Use the hosted smoke profile set when you want one repeatable runtime check for split startup, probes, migrations, one background-job control path, and the shipped CLI/MCP adapters.
 
-1. Edit [`deploy/runtime/compose.hosted.env.example`](../deploy/runtime/compose.hosted.env.example) and replace `CCDASH_WORKER_PROJECT_ID` with a project id the workspace registry can resolve.
+The canonical operator path is still `deploy/runtime/compose.yaml`; the `docker:hosted:smoke:*` scripts are narrow validation wrappers over that compose contract. Prepare `projects.json` with container-visible paths before running them. For live filesystem ingest, add the `live-watch` profile and a per-watcher env overlay as described in [`containerized-deployment-quickstart.md`](containerized-deployment-quickstart.md) and [`deploy/runtime/README.md`](../../deploy/runtime/README.md).
+
+1. Edit [`deploy/runtime/compose.hosted.env.example`](../deploy/runtime/compose.hosted.env.example) or your own env file and replace `CCDASH_WORKER_PROJECT_ID` with a project id the mounted workspace registry can resolve.
 2. Render and start the stack:
 
 ```bash

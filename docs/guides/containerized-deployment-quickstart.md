@@ -40,6 +40,59 @@ What you get:
 - Frontend nginx container on port 3000
 - SQLite database persisted in named volume `ccdash-local-data`
 
+## Prepare Projects For Containers
+
+Every enterprise and live-watch deployment resolves projects from the mounted `projects.json` registry. The paths in that registry must be visible from inside the containers, not only on the host. A healthy API, worker, and Postgres stack can still show no sessions, plans, or features when the active project id points at a host-only path or a project different from the watcher binding.
+
+Use the helper when you want a repeatable bootstrap:
+
+```bash
+python3 backend/scripts/container_project_onboarding.py \
+  --projects-file projects.json \
+  --project-id my-project \
+  --name "My Project" \
+  --root-container /workspace/my-project \
+  --plan-docs docs/project_plans/ \
+  --sessions-container /home/ccdash/.codex/sessions \
+  --progress progress \
+  --watcher-env deploy/runtime/watchers/my-project.env \
+  --workspace-host-root /absolute/host/workspace \
+  --workspace-container-root /workspace \
+  --codex-home "$HOME/.codex" \
+  --codex-container-home /home/ccdash/.codex
+```
+
+The helper updates or inserts the project, sets it active by default, and writes a watcher env overlay. If you prepare `projects.json` manually, the minimum project entry is:
+
+```json
+{
+  "activeProjectId": "my-project",
+  "projects": [
+    {
+      "id": "my-project",
+      "name": "My Project",
+      "path": "/workspace/my-project",
+      "description": "",
+      "repoUrl": "",
+      "agentPlatforms": ["Claude Code"],
+      "planDocsPath": "docs/project_plans/",
+      "sessionsPath": "/home/ccdash/.codex/sessions",
+      "progressPath": "progress"
+    }
+  ]
+}
+```
+
+For container deployments, prefer a stable project id. The standard worker uses `CCDASH_WORKER_PROJECT_ID`; `worker-watch` uses `CCDASH_WORKER_WATCH_PROJECT_ID`. In v1, a watcher worker binds one project id for the life of that container, so UI project switching does not rebind live ingest.
+
+Path setup rules:
+
+- `path` / `pathConfig.root`: container-visible project root, commonly below `CCDASH_WORKSPACE_CONTAINER_ROOT`.
+- `planDocsPath`: relative directory for PRDs, implementation plans, and design specs.
+- `progressPath`: relative directory for progress trackers and task files.
+- `sessionsPath`: container-visible JSONL session root. A project-specific session directory is cheaper than all of `~/.codex/sessions` or all of `~/.claude/projects`.
+- `activeProjectId`: project the UI/API use by default in local-mode requests.
+
 ## Enterprise Profile (External Postgres)
 
 Use `enterprise` when you want split API and worker containers with an external Postgres database.
@@ -86,9 +139,9 @@ CCDASH_STORAGE_PROFILE=enterprise
 CCDASH_DB_BACKEND=postgres
 
 # Optional: customize Postgres credentials (defaults: user=ccdash, db=ccdash)
-POSTGRES_USER=ccdash
-POSTGRES_PASSWORD=secure-password-here
-POSTGRES_DB=ccdash
+CCDASH_POSTGRES_USER=ccdash
+CCDASH_POSTGRES_PASSWORD=secure-password-here
+CCDASH_POSTGRES_DB=ccdash
 ```
 
 2. Start with both profiles:
@@ -159,6 +212,24 @@ curl http://localhost:9466/readyz
 
 On macOS Docker Desktop, bind-mounted filesystem events may not arrive. If the watcher starts but does not detect new session JSONL changes, pass `WATCHFILES_FORCE_POLLING=true` into the `worker-watch` container and restart it.
 
+## Data Visibility Checks
+
+After health probes pass, verify the project data path before treating the deployment as usable:
+
+```bash
+curl -fsS http://localhost:8000/api/projects/active | python3 -m json.tool
+curl -fsS 'http://localhost:8000/api/v1/features?view=cards&limit=5' | python3 -m json.tool
+curl -fsS http://localhost:9466/detailz | python3 -m json.tool
+```
+
+Expected results:
+
+- `/api/projects/active` returns the project id you intended to serve.
+- Feature, document, and session surfaces return data after startup sync or a manual sync has completed.
+- `worker-watch` detail shows `runtimeProfile=worker-watch`, a running watcher state, a non-zero `watchPathCount` for projects with configured paths, and `lastSyncStatus=succeeded` after a live change.
+
+If health passes but data is empty, inspect `activeProjectId`, `CCDASH_WORKER_PROJECT_ID`, `CCDASH_WORKER_WATCH_PROJECT_ID`, and whether every registry path resolves inside the container.
+
 ## Rootless Podman Configuration
 
 The stack is validated for rootless Podman >= 4.6 and `podman-compose` >= 1.5. Use the same `docker compose` commands with `podman-compose`:
@@ -227,9 +298,9 @@ Common variables for container profiles:
 | `CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED` | enterprise/local | Controls inferred planning-status writes back to markdown. Defaults to `false` for enterprise storage and `true` for local storage. |
 | `GIT_OPTIONAL_LOCKS` | enterprise/local | Keep `0` when project repositories are mounted read-only so Git metadata reads do not try to refresh indexes. |
 | `WATCHFILES_FORCE_POLLING` | live-watch | Set to `true` on macOS Docker Desktop when bind-mount events are not delivered. |
-| `POSTGRES_USER` | postgres profile | Bundled Postgres username (default `ccdash`) |
-| `POSTGRES_PASSWORD` | postgres profile | Bundled Postgres password (default `ccdash-dev-password`) |
-| `POSTGRES_DB` | postgres profile | Bundled database name (default `ccdash`) |
+| `CCDASH_POSTGRES_USER` | postgres profile | Bundled Postgres username (default `ccdash`) |
+| `CCDASH_POSTGRES_PASSWORD` | postgres profile | Bundled Postgres password (default `ccdash`) |
+| `CCDASH_POSTGRES_DB` | postgres profile | Bundled database name (default `ccdash`) |
 | `CCDASH_API_BEARER_TOKEN` | All | Optional bearer token for `/api/v1/*` endpoints |
 
 For the complete reference, see `deploy/runtime/.env.example` and `docs/guides/setup.md`.

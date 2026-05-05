@@ -24,6 +24,7 @@ related_documents:
 - deploy/runtime/frontend/Dockerfile
 - deploy/runtime/frontend/default.conf.template
 - docs/guides/runtime-storage-and-performance-quickstart.md
+- docs/project_plans/design-specs/container-project-onboarding-and-watchers-v1.md
 references:
   user_docs:
   - docs/setup-user-guide.md

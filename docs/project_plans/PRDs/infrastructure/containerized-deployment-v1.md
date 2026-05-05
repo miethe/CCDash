@@ -12,6 +12,7 @@ plan_ref: null
 related_documents:
   - docs/guides/runtime-storage-and-performance-quickstart.md
   - docs/project_plans/meta_plans/performance-and-reliability-v1.md
+  - docs/project_plans/design-specs/container-project-onboarding-and-watchers-v1.md
   - docs/setup-user-guide.md
   - deploy/runtime/compose.hosted.yml
   - deploy/runtime/api/Dockerfile
@@ -24,7 +25,8 @@ references:
   context:
     - backend/runtime/profiles.py
     - backend/config.py
-  specs: []
+  specs:
+    - docs/project_plans/design-specs/container-project-onboarding-and-watchers-v1.md
   related_prds: []
 spike_ref: null
 adr_refs: []

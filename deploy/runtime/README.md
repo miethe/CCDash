@@ -69,6 +69,38 @@ Required read-only ingest mounts:
 | Claude home | `CCDASH_CLAUDE_HOME=~/.claude` | `CCDASH_CLAUDE_CONTAINER_HOME=/home/ccdash/.claude` | Provides Claude Code project/session metadata for watcher ingest. |
 | Codex home | `CCDASH_CODEX_HOME=~/.codex` | `CCDASH_CODEX_CONTAINER_HOME=/home/ccdash/.codex` | Provides Codex session metadata for watcher ingest. |
 
+### Project Registry Setup
+
+`projects.json` is the deployment registry for all container roles. The API can list projects from it, the standard worker resolves `CCDASH_WORKER_PROJECT_ID` from it, and `worker-watch` resolves `CCDASH_WORKER_WATCH_PROJECT_ID` from it. In the canonical enterprise compose path the registry bind mount is read-only, so add or edit projects on the host before restarting containers.
+
+Prepare or update a registry entry with the helper:
+
+```bash
+python3 backend/scripts/container_project_onboarding.py \
+  --projects-file projects.json \
+  --project-id my-project \
+  --name "My Project" \
+  --root-container /workspace/my-project \
+  --plan-docs docs/project_plans/ \
+  --sessions-container /home/ccdash/.codex/sessions \
+  --progress progress \
+  --watcher-env deploy/runtime/watchers/my-project.env \
+  --workspace-host-root /srv/workspaces \
+  --workspace-container-root /workspace \
+  --codex-home "$HOME/.codex" \
+  --codex-container-home /home/ccdash/.codex
+```
+
+Manual registry entries must satisfy the same rules:
+
+- `activeProjectId` should match the project you expect the UI and local-mode API requests to show by default.
+- Project `id` must match `CCDASH_WORKER_PROJECT_ID` for the standard worker and `CCDASH_WORKER_WATCH_PROJECT_ID` for the watcher assigned to that project.
+- `path`, `pathConfig.root`, `planDocsPath`, `sessionsPath`, and `progressPath` must resolve inside the container.
+- `planDocsPath` and `progressPath` are normally project-root-relative paths.
+- `sessionsPath` should be as narrow as practical. A project-specific JSONL directory gives faster startup than global Claude or Codex session roots.
+
+Adding a project in the browser calls `POST /api/projects` and writes the configured registry file. That works only when the API process has write access to the registry. For the read-only enterprise compose path, use host-side registry edits plus container restart instead of relying on in-app creation.
+
 ### Watch Scope And Startup Cost
 
 `worker-watch` resolves its watch scope from the selected project entry. Existing `sessionsPath` / `pathConfig.sessions`, plan-docs, progress, enabled test-result sources, and any filesystem paths made visible by the workspace, `.claude`, `.codex`, or optional mounts can become part of the startup sync and live-watch corpus.
@@ -131,6 +163,17 @@ docker compose \
 The repo includes `deploy/runtime/watchers/ccdash.env.example` as a concrete example for this CCDash checkout.
 
 For multi-project deployments, prefer mounting a stable superset root shared by all watcher containers, then vary only `CCDASH_WORKER_WATCH_PROJECT_ID` and `CCDASH_WORKER_WATCH_PROBE_PORT` per watcher. When projects live on unrelated host roots, use the optional mount slots in each watcher's env overlay. Do not use Compose `--scale worker-watch=N` for v1: each watcher needs a distinct project id and probe port, which requires distinct service/env configuration.
+
+To run several project watchers at once, define separate services or separate compose invocations that use different env overlays. A per-project overlay should at least set:
+
+```env
+CCDASH_WORKER_PROJECT_ID=my-project
+CCDASH_WORKER_WATCH_PROJECT_ID=my-project
+CCDASH_WORKER_WATCH_PROBE_PORT=9466
+CCDASH_WORKER_STARTUP_SYNC_ENABLED=false
+CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED=true
+CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED=true
+```
 
 On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, set `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env` and restart it. The shipped compose file passes this variable only to `worker-watch`; keep polling scoped there because it is a compatibility mode for Docker Desktop file sharing, not the default Linux path. Do not copy `WATCHFILES_FORCE_POLLING` into shared backend, API, or default worker environment blocks.
 
@@ -201,6 +244,16 @@ Expected values:
 - Default `worker` detail reports watcher state `not_expected` and `workerWatcherDisabled=true`.
 - `worker-watch` detail reports `runtimeProfile=worker-watch`, watcher state `running`, `watchPathCount > 0`, `workerWatcherDisabled=false`, and no backpressure backlog.
 - API detail reports live fanout `mode=listen`, `running=true`, `connected=true`, and a stable `errorCount`. Recent listener errors or increasing `listener.publishErrors` mean Postgres fanout is degraded; persistence can still succeed, but browser SSE delivery may fall back to REST refresh.
+
+Also verify project visibility through the API:
+
+```bash
+curl -fsS http://127.0.0.1:3131/api/projects/active | python3 -m json.tool
+curl -fsS 'http://127.0.0.1:3131/api/v1/features?view=cards&limit=5' | python3 -m json.tool
+curl -fsS 'http://127.0.0.1:3131/api/sessions?limit=5' | python3 -m json.tool
+```
+
+If these return the wrong project or no data while probes are healthy, fix the registry and watcher binding first: `activeProjectId`, `CCDASH_WORKER_PROJECT_ID`, `CCDASH_WORKER_WATCH_PROJECT_ID`, and container-visible path mappings.
 
 Record DB counts before the append:
 

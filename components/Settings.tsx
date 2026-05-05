@@ -366,6 +366,18 @@ const buildEditableProject = (project: Project): Project => (
   )
 );
 
+const buildWatcherEnvOverlay = (project: Project): string => [
+  `CCDASH_WORKER_PROJECT_ID=${project.id}`,
+  `CCDASH_WORKER_WATCH_PROJECT_ID=${project.id}`,
+  'CCDASH_WORKER_WATCH_PROBE_PORT=9466',
+  'CCDASH_WORKER_STARTUP_SYNC_ENABLED=false',
+  'CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED=true',
+  'CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED=true',
+  'CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED=false',
+  'GIT_OPTIONAL_LOCKS=0',
+  'CCDASH_STARTUP_SYNC_LIGHT_MODE=true',
+].join('\n');
+
 const DEFAULT_PRICING_PLATFORM = 'Claude Code';
 const PRICING_PLATFORMS = ['Claude Code', 'Codex'] as const;
 
@@ -1182,6 +1194,7 @@ const ProjectsTab: React.FC = () => {
   const [generatedScript, setGeneratedScript] = useState('');
   const [generatedScriptName, setGeneratedScriptName] = useState('');
   const [scriptCopied, setScriptCopied] = useState(false);
+  const [watcherEnvCopied, setWatcherEnvCopied] = useState(false);
   const savingRef = React.useRef(false);
 
   useEffect(() => {
@@ -1206,6 +1219,7 @@ const ProjectsTab: React.FC = () => {
     setGeneratedScript('');
     setGeneratedScriptName('');
     setScriptCopied(false);
+    setWatcherEnvCopied(false);
 
     void getProjectResolvedPaths(project.id)
       .then(setResolvedPaths)
@@ -1422,6 +1436,18 @@ const ProjectsTab: React.FC = () => {
     }
   };
 
+  const handleCopyWatcherEnv = async () => {
+    if (!editData) return;
+    try {
+      await navigator.clipboard.writeText(buildWatcherEnvOverlay(editData));
+      setWatcherEnvCopied(true);
+      setTestingActionInfo('Watcher env overlay copied to clipboard.');
+      setTestingActionError(null);
+    } catch (e: any) {
+      setTestingActionError(e?.message || 'Failed to copy watcher env overlay');
+    }
+  };
+
   const handleDownloadScript = () => {
     if (!generatedScript) return;
     try {
@@ -1590,6 +1616,70 @@ const ProjectsTab: React.FC = () => {
                     />
                   );
                 })}
+              </div>
+            </div>
+
+            <div className="border-t border-slate-800 pt-5 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-300 mb-1 flex items-center gap-2">
+                    <Monitor size={14} className="text-indigo-400" />
+                    Live Ingest Binding
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Watcher workers bind to one project id at startup.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyWatcherEnv}
+                  className="inline-flex items-center gap-1 rounded border border-indigo-500/35 bg-indigo-500/10 px-2 py-1 text-[11px] font-semibold text-indigo-300 hover:bg-indigo-500/20"
+                >
+                  <Copy size={12} />
+                  {watcherEnvCopied ? 'Copied' : 'Copy Env'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
+                <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
+                  <p className="mb-2 text-xs font-semibold text-slate-300">Resolved Watch Scope</p>
+                  <dl className="space-y-2 text-xs">
+                    <div>
+                      <dt className="text-slate-500">Project id</dt>
+                      <dd className="font-mono text-slate-200 break-all">{editData.id}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">Root</dt>
+                      <dd className="font-mono text-slate-200 break-all">{resolvedPaths?.root.path || editData.path || 'Not resolved yet'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">Plans</dt>
+                      <dd className="font-mono text-slate-200 break-all">{resolvedPaths?.planDocs.path || editData.planDocsPath || 'Not resolved yet'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">Sessions</dt>
+                      <dd className="font-mono text-slate-200 break-all">{resolvedPaths?.sessions.path || editData.sessionsPath || 'Not resolved yet'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">Progress</dt>
+                      <dd className="font-mono text-slate-200 break-all">{resolvedPaths?.progress.path || editData.progressPath || 'Not resolved yet'}</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-slate-300">Watcher Env Overlay</p>
+                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">
+                      Restart required
+                    </span>
+                  </div>
+                  <textarea
+                    value={buildWatcherEnvOverlay(editData)}
+                    readOnly
+                    className="h-44 w-full resize-y rounded border border-slate-800 bg-slate-900 p-2 font-mono text-[11px] text-slate-200"
+                  />
+                </div>
               </div>
             </div>
 
