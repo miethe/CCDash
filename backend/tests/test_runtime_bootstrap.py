@@ -10,7 +10,13 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from backend.application.ports.core import ProjectBinding
-from backend.adapters.auth import LocalIdentityProvider, StaticBearerTokenIdentityProvider
+from backend.adapters.auth import (
+    ClerkJWTProvider,
+    GenericOIDCProvider,
+    HostedBearerTokenIdentityProvider,
+    LocalIdentityProvider,
+    StaticBearerTokenIdentityProvider,
+)
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
 from backend.db import connection
@@ -131,6 +137,27 @@ def _local_storage_profile() -> config.StorageProfileConfig:
         isolation_mode="dedicated",
         schema_name="ccdash",
     )
+
+
+def _auth_provider_config(provider: config.AuthProviderName, **overrides: object) -> config.AuthProviderConfig:
+    values: dict[str, object] = {
+        "provider": provider,
+        "runtime_profile": "api",
+        "deployment_mode": "hosted",
+        "api_bearer_token": "secret-token",
+        "local_no_auth_enabled": provider == "local",
+        "clerk_publishable_key": "pk_test_example",
+        "clerk_secret_key": "sk_test_example",
+        "clerk_jwt_key": "-----BEGIN PUBLIC KEY-----\nexample\n-----END PUBLIC KEY-----",
+        "oidc_issuer": "https://issuer.example.com",
+        "oidc_audience": "ccdash-api",
+        "oidc_client_id": "client-id",
+        "oidc_client_secret": "client-secret",
+        "oidc_callback_url": "https://ccdash.example.com/auth/callback",
+        "oidc_jwks_url": "https://issuer.example.com/.well-known/jwks.json",
+    }
+    values.update(overrides)
+    return config.AuthProviderConfig(**values)
 
 
 def _health_payload(app: object) -> dict[str, object]:
@@ -417,6 +444,65 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertTrue(ports.storage.audit_security().privileged_action_audit_records().describe_capability().authoritative)
         self.assertIs(ports.storage.db, marker)
 
+    def test_build_core_ports_uses_static_bearer_auth_provider_for_api_default(self) -> None:
+        ports = build_core_ports(
+            object(),
+            runtime_profile=get_runtime_profile("api"),
+            storage_profile=_enterprise_storage_profile(),
+            auth_config=_auth_provider_config("static_bearer"),
+        )
+
+        self.assertIsInstance(ports.identity_provider, StaticBearerTokenIdentityProvider)
+
+    def test_build_core_ports_uses_oidc_hosted_auth_provider_for_api(self) -> None:
+        ports = build_core_ports(
+            object(),
+            runtime_profile=get_runtime_profile("api"),
+            storage_profile=_enterprise_storage_profile(),
+            auth_config=_auth_provider_config("oidc"),
+        )
+
+        self.assertIsInstance(ports.identity_provider, HostedBearerTokenIdentityProvider)
+        self.assertIsInstance(ports.identity_provider.provider, GenericOIDCProvider)
+
+    def test_build_core_ports_uses_clerk_hosted_auth_provider_for_api(self) -> None:
+        ports = build_core_ports(
+            object(),
+            runtime_profile=get_runtime_profile("api"),
+            storage_profile=_enterprise_storage_profile(),
+            auth_config=_auth_provider_config("clerk"),
+        )
+
+        self.assertIsInstance(ports.identity_provider, HostedBearerTokenIdentityProvider)
+        self.assertIsInstance(ports.identity_provider.provider, ClerkJWTProvider)
+
+    def test_build_core_ports_allows_explicit_local_auth_provider_for_api(self) -> None:
+        ports = build_core_ports(
+            object(),
+            runtime_profile=get_runtime_profile("api"),
+            storage_profile=_enterprise_storage_profile(),
+            auth_config=_auth_provider_config("local"),
+        )
+
+        self.assertIsInstance(ports.identity_provider, LocalIdentityProvider)
+
+    def test_build_core_ports_keeps_non_auth_profiles_local_despite_hosted_auth_config(self) -> None:
+        local_ports = build_core_ports(
+            object(),
+            runtime_profile=get_runtime_profile("local"),
+            storage_profile=_local_storage_profile(),
+            auth_config=_auth_provider_config("oidc", runtime_profile="local", deployment_mode="local"),
+        )
+        worker_ports = build_core_ports(
+            object(),
+            runtime_profile=get_runtime_profile("worker"),
+            storage_profile=_enterprise_storage_profile(),
+            auth_config=_auth_provider_config("oidc", runtime_profile="worker"),
+        )
+
+        self.assertIsInstance(local_ports.identity_provider, LocalIdentityProvider)
+        self.assertIsInstance(worker_ports.identity_provider, LocalIdentityProvider)
+
     def test_health_endpoint_reports_local_sqlite_composition(self) -> None:
         app = build_local_app()
         app.state.runtime_container.storage_profile = _local_storage_profile()
@@ -693,7 +779,7 @@ class RuntimeProfileTests(unittest.TestCase):
 
         with (
             patch.object(connection, "_connection", object()),
-            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=None),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=""),
         ):
             status_code, payload = _probe_payload(app, "/api/health/live")
 
@@ -711,7 +797,7 @@ class RuntimeProfileTests(unittest.TestCase):
 
         with (
             patch.object(connection, "_connection", object()),
-            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=None),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=""),
         ):
             status_code, payload = _probe_payload(app, "/api/health/ready")
 
@@ -738,6 +824,29 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(check_states["schema_migrations"], "pass")
         self.assertEqual(check_states["storage_pairing"], "pass")
         self.assertEqual(check_states["auth_contract"], "fail")
+
+    def test_detail_probe_reports_selected_oidc_auth_provider_without_bearer_guardrail(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+        app.state.runtime_container.auth_config = _auth_provider_config("oidc")
+
+        with patch.object(connection, "_connection", object()):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["ready"]["status"], "pass")
+        auth_detail = payload["detail"]["auth"]
+        self.assertEqual(auth_detail["provider"], "oidc")
+        self.assertTrue(auth_detail["configured"])
+        self.assertEqual(auth_detail["missingRequiredVariables"], [])
+        self.assertEqual(auth_detail["guardrail"]["mode"], "hosted_token_provider")
+        self.assertEqual(auth_detail["guardrail"]["provider"], "oidc")
+        self.assertFalse(auth_detail["guardrail"]["anonymousFallbackEnabled"])
+        self.assertEqual(payload["detail"]["warningCodes"], [])
+        checks = {check["code"]: check for check in payload["detail"]["checks"]}
+        self.assertEqual(checks["auth_contract"]["status"], "pass")
+        self.assertEqual(checks["auth_contract"]["data"]["provider"], "oidc")
 
     def test_ready_probe_endpoint_returns_503_for_pending_migrations(self) -> None:
         app = build_api_app()

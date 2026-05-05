@@ -17,8 +17,10 @@ import { getInlineContentViewerPayload, getTranscriptContentViewerPayload } from
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../../lib/sessionBlockInsights';
 import { isMemoryGuardEnabled } from '../../lib/featureFlags';
-import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../../lib/tokenMetrics';
+import { formatPercent, formatTokenCount, formatTokenCountCompact, resolveTokenMetrics } from '../../lib/tokenMetrics';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../../services/featureSurface';
+import { apiRequestJson } from '../../services/apiClient';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -1208,6 +1210,82 @@ const buildSessionThreadForest = (sessions: AgentSession[]): SessionThreadNode[]
 
 // --- Sub-Components ---
 
+/**
+ * TokenUsageCaption renders a muted compact caption beneath an assistant message
+ * showing total tokens (and cache hit when present). On hover/focus, a popover
+ * reveals the full per-turn breakdown.
+ */
+const TokenUsageCaption: React.FC<{
+    tokenUsage: NonNullable<SessionLog['tokenUsage']>;
+    toolCallCount?: number;
+    toolNames?: string[];
+}> = ({ tokenUsage, toolCallCount = 0, toolNames = [] }) => {
+    const { inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens } = tokenUsage;
+    const total = inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+    const totalLabel = formatTokenCountCompact(total);
+    const cacheLabel = cacheReadInputTokens > 0 ? ` · cached ${formatTokenCountCompact(cacheReadInputTokens)}` : '';
+
+    return (
+        <Popover>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    onClick={(e) => e.stopPropagation()}
+                    className="mt-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus rounded"
+                    aria-label={`Token usage: ${totalLabel} total. Click for breakdown.`}
+                >
+                    {totalLabel} tok{cacheLabel}
+                </button>
+            </PopoverTrigger>
+            <PopoverContent
+                className="w-56 p-3 text-xs space-y-1.5"
+                side="bottom"
+                align="start"
+                onOpenAutoFocus={(e) => e.preventDefault()}
+            >
+                <div className="font-semibold text-foreground mb-2">Token Breakdown</div>
+                <div className="flex justify-between">
+                    <span className="text-muted-foreground">Input</span>
+                    <span className="font-mono">{formatTokenCountCompact(inputTokens)}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-muted-foreground">Output</span>
+                    <span className="font-mono">{formatTokenCountCompact(outputTokens)}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cache read</span>
+                    <span className="font-mono">{formatTokenCountCompact(cacheReadInputTokens)}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cache write</span>
+                    <span className="font-mono">{formatTokenCountCompact(cacheCreationInputTokens)}</span>
+                </div>
+                <div className="flex justify-between border-t border-panel-border pt-1.5 mt-1">
+                    <span className="text-muted-foreground font-semibold">Total</span>
+                    <span className="font-mono font-semibold">{formatTokenCountCompact(total)}</span>
+                </div>
+                {toolCallCount > 0 && (
+                    <div className="border-t border-panel-border pt-1.5 mt-1">
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Tool calls</span>
+                            <span className="font-mono">{toolCallCount}</span>
+                        </div>
+                        {toolNames.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                                {toolNames.map((name, i) => (
+                                    <span key={i} className="text-[9px] font-mono px-1 py-0.5 rounded bg-panel border border-panel-border text-muted-foreground">
+                                        {name}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </PopoverContent>
+        </Popover>
+    );
+};
+
 const LogItemBlurb: React.FC<{
     log: SessionLog;
     formattedMessage?: TranscriptFormattedMessage;
@@ -1351,6 +1429,13 @@ const LogItemBlurb: React.FC<{
                         }`}>
                         {renderMessagePreview()}
                     </div>
+                    {isAgent && log.tokenUsage && (
+                        <TokenUsageCaption
+                            tokenUsage={log.tokenUsage}
+                            toolCallCount={log.subagentThread ? 0 : 0}
+                            toolNames={[]}
+                        />
+                    )}
                     <div className="mt-2 flex items-center gap-2">
                         {isForkStartEvent && log.linkedSessionId && (
                             <button
@@ -2479,9 +2564,7 @@ export const TranscriptView: React.FC<{
         let cancelled = false;
         const loadMappings = async () => {
             try {
-                const res = await fetch('/api/session-mappings');
-                if (!res.ok) return;
-                const data = await res.json();
+                const data = await apiRequestJson<TranscriptFormattingMappingRule[]>('/api/session-mappings');
                 if (!cancelled && Array.isArray(data)) {
                     setTranscriptMappings(data as TranscriptFormattingMappingRule[]);
                 }

@@ -126,13 +126,13 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     const task = (async () => {
       try {
+        await session.refreshProjects();
         const tasksToRun: Promise<unknown>[] = [
           entity.refreshSessions(),
           entity.refreshDocuments(),
           entity.refreshTasks(),
           entity.refreshAlerts(),
           entity.refreshNotifications(),
-          session.refreshProjects(),
           client.getHealth().then(payload => {
             // FE-104: successful health response resets the failure counter
             consecutiveFailuresRef.current = 0;

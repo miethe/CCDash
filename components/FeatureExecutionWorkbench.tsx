@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 
 import { useData } from '../contexts/DataContext';
+import { useAuthSession } from '../contexts/AuthSessionContext';
 import {
   AgentSession,
   ExecutionPolicyResult,
@@ -102,6 +103,8 @@ import { computeActivePhase, PLANNING_NODE_TYPE_ORDER } from '../lib/planningHel
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
+const EXECUTION_OPERATOR_ROLES = ['EA', 'TA', 'PM', 'owner', 'admin', 'operator', 'project_maintainer', 'project-maintainer', 'project:maintainer'];
+const EXECUTION_APPROVER_ROLES = [...EXECUTION_OPERATOR_ROLES, 'XA', 'execution_approver', 'execution-approver', 'execution:approver'];
 
 type WorkbenchTab = 'overview' | 'runs' | 'phases' | 'documents' | 'sessions' | 'artifacts' | 'history' | 'analytics' | 'test-status';
 type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'relations' | 'sessions' | 'history';
@@ -595,6 +598,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeProject, documents, getSessionById, runtimeStatus } = useData();
+  const auth = useAuthSession();
 
   // ── Feature surface: bounded list + rollup, replaces DataContext features fan-out ──
   // The workbench only needs the feature list for the sidebar picker; rollup fields
@@ -657,6 +661,11 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [reviewPolicy, setReviewPolicy] = useState<ExecutionPolicyResult | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalRun, setApprovalRun] = useState<ExecutionRun | null>(null);
+  const canCreateExecutionRun = auth.hasPermission({ scopes: ['execution.run:create'], roles: EXECUTION_OPERATOR_ROLES });
+  const canCancelExecutionRun = auth.hasPermission({ scopes: ['execution.run:cancel'], roles: EXECUTION_OPERATOR_ROLES });
+  const canRetryExecutionRun = auth.hasPermission({ scopes: ['execution.run:retry'], roles: EXECUTION_OPERATOR_ROLES });
+  const canApproveExecutionRun = auth.hasPermission({ scopes: ['execution.run:approve'], roles: EXECUTION_APPROVER_ROLES });
+  const protectedActionHint = 'Permission hint only; backend authorization remains authoritative.';
   const selectedRunNextSequenceRef = useRef(0);
   const initialHasQueryFeatureRef = useRef(Boolean(searchParams.get('feature')));
   const blockedStateTelemetryKeyRef = useRef('');
@@ -904,6 +913,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   }, [executionLiveEnabled, recoverSelectedRunLiveState, selectedRun, upsertExecutionRun]);
 
   const openRunReview = useCallback(async (command: string, ruleId: string) => {
+    if (!canCreateExecutionRun) {
+      setRunActionError('Your session does not advertise execution run creation permission.');
+      return;
+    }
     setReviewCommand(command);
     setReviewRuleId(ruleId);
     setReviewPolicy(null);
@@ -923,7 +936,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     } finally {
       setReviewLoading(false);
     }
-  }, [reviewCwd, reviewEnvProfile]);
+  }, [canCreateExecutionRun, reviewCwd, reviewEnvProfile]);
 
   const recheckReviewPolicy = useCallback(async () => {
     if (!reviewCommand.trim()) return;
@@ -945,6 +958,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   }, [reviewCommand, reviewCwd, reviewEnvProfile]);
 
   const handleLaunchReviewRun = useCallback(async () => {
+    if (!canCreateExecutionRun) {
+      setRunActionError('Your session does not advertise execution run creation permission.');
+      return;
+    }
     if (!reviewCommand.trim() || !context?.feature.id) return;
     if (reviewPolicy?.verdict === 'deny') {
       setRunActionError('Command is denied by execution policy. Update command or working directory before running.');
@@ -977,9 +994,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     } finally {
       setRunActionLoading(false);
     }
-  }, [context?.feature.id, refreshExecutionRuns, reviewCommand, reviewCwd, reviewEnvProfile, reviewPolicy?.verdict, reviewRuleId, upsertExecutionRun]);
+  }, [canCreateExecutionRun, context?.feature.id, refreshExecutionRuns, reviewCommand, reviewCwd, reviewEnvProfile, reviewPolicy?.verdict, reviewRuleId, upsertExecutionRun]);
 
   const handleApprovalSubmit = useCallback(async (decision: 'approved' | 'denied', reason: string) => {
+    if (!canApproveExecutionRun) {
+      setRunActionError('Your session does not advertise execution approval permission.');
+      return;
+    }
     if (!approvalRun) return;
     setRunActionLoading(true);
     try {
@@ -998,9 +1019,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     } finally {
       setRunActionLoading(false);
     }
-  }, [approvalRun, context?.feature.id, refreshExecutionRuns, upsertExecutionRun]);
+  }, [approvalRun, canApproveExecutionRun, context?.feature.id, refreshExecutionRuns, upsertExecutionRun]);
 
   const handleCancelRun = useCallback(async (run: ExecutionRun) => {
+    if (!canCancelExecutionRun) {
+      setRunActionError('Your session does not advertise execution cancel permission.');
+      return;
+    }
     setRunActionLoading(true);
     try {
       const updated = await cancelExecutionRun(run.id, { reason: 'Canceled from workbench', actor: 'user' });
@@ -1011,9 +1036,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     } finally {
       setRunActionLoading(false);
     }
-  }, [upsertExecutionRun]);
+  }, [canCancelExecutionRun, upsertExecutionRun]);
 
   const handleRetryRun = useCallback(async (run: ExecutionRun) => {
+    if (!canRetryExecutionRun) {
+      setRunActionError('Your session does not advertise execution retry permission.');
+      return;
+    }
     if (run.status === 'failed') {
       const confirmed = window.confirm('Retry failed run? This will launch a new execution run.');
       if (!confirmed) return;
@@ -1038,7 +1067,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     } finally {
       setRunActionLoading(false);
     }
-  }, [context?.feature.id, refreshExecutionRuns, upsertExecutionRun]);
+  }, [canRetryExecutionRun, context?.feature.id, refreshExecutionRuns, upsertExecutionRun]);
 
   useEffect(() => {
     if (!selectedFeatureId) {
@@ -2252,7 +2281,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => void openRunReview(context.recommendations.primary.command, context.recommendations.primary.ruleId)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 text-xs font-semibold hover:bg-emerald-500/30"
+                    disabled={!canCreateExecutionRun}
+                    title={!canCreateExecutionRun ? protectedActionHint : undefined}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 text-xs font-semibold hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Play size={14} />
                     Run in Workbench
@@ -2287,7 +2318,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => void openRunReview(option.command, option.ruleId)}
-                              className="text-[11px] text-emerald-300 hover:text-emerald-200"
+                              disabled={!canCreateExecutionRun}
+                              title={!canCreateExecutionRun ? protectedActionHint : undefined}
+                              className="text-[11px] text-emerald-300 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Run
                             </button>
@@ -3328,7 +3361,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 </button>
                 <button
                   onClick={() => { void handleLaunchReviewRun(); }}
-                  disabled={runActionLoading || reviewLoading || !reviewCommand.trim() || reviewPolicy?.verdict === 'deny'}
+                  disabled={runActionLoading || reviewLoading || !reviewCommand.trim() || reviewPolicy?.verdict === 'deny' || !canCreateExecutionRun}
+                  title={!canCreateExecutionRun ? protectedActionHint : undefined}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-100 text-xs disabled:opacity-50"
                 >
                   {runActionLoading ? <Loader2 size={12} className="animate-spin" /> : <Play size={13} />}

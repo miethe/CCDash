@@ -58,6 +58,19 @@ class _WorkspaceRegistry:
     def get_active_project(self):
         return self._project
 
+    def resolve_project_binding(self):
+        if self._project is None:
+            return None
+        bundle = SimpleNamespace(
+            root=SimpleNamespace(path=Path("/tmp/warm")),
+            as_tuple=lambda: (
+                Path("/tmp/warm/sessions"),
+                Path("/tmp/warm/docs"),
+                Path("/tmp/warm/progress"),
+            ),
+        )
+        return SimpleNamespace(project=self._project, paths=bundle)
+
     def resolve_scope(self, project_id=None):
         if self._project is None:
             return None, None
@@ -91,11 +104,11 @@ def _make_ports(project) -> MagicMock:
     return ports
 
 
-def _make_profile(jobs: bool = True) -> MagicMock:
+def _make_profile(jobs: bool = True, sync: bool = False) -> MagicMock:
     profile = MagicMock()
     profile.name = "worker"
     profile.capabilities.jobs = jobs
-    profile.capabilities.sync = False
+    profile.capabilities.sync = sync
     profile.capabilities.watch = False
     profile.capabilities.integrations = False
     return profile
@@ -139,6 +152,73 @@ class TestCacheWarmingDisabledWhenIntervalZero(unittest.TestCase):
             mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
             result = adapter._start_cache_warming_task()
         self.assertIsNone(result)
+
+
+class TestStartupSyncOwnership(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_sync_disabled_does_not_schedule_filesystem_sync(self) -> None:
+        project = _make_project()
+        ports = _make_ports(project)
+        sync_engine = MagicMock()
+        sync_engine.sync_planning_artifacts = AsyncMock(return_value={})
+        sync_engine.sync_project = AsyncMock()
+        adapter = RuntimeJobAdapter(
+            profile=_make_profile(jobs=False, sync=True),
+            ports=ports,
+            sync_engine=sync_engine,
+            project_binding=None,
+            telemetry_exporter_job=None,
+        )
+
+        with (
+            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_ENABLED", False),
+            patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]),
+            patch(
+                "backend.adapters.jobs.runtime.effective_test_flags",
+                return_value=SimpleNamespace(testVisualizerEnabled=False),
+            ),
+        ):
+            await adapter.start()
+
+        self.assertIsNone(adapter.state.sync_task)
+        self.assertEqual(adapter.status_snapshot()["startupSync"], "disabled")
+        self.assertEqual(
+            adapter.state.job_observations["startupSync"].details["disabledBy"],
+            "CCDASH_STARTUP_SYNC_ENABLED=false",
+        )
+        sync_engine.sync_project.assert_not_awaited()
+
+    async def test_light_mode_startup_sync_skips_session_intelligence_backfills(self) -> None:
+        project = _make_project()
+        ports = _make_ports(project)
+        sync_engine = MagicMock()
+        sync_engine.sync_planning_artifacts = AsyncMock(return_value={})
+        sync_engine.sync_project = AsyncMock()
+        adapter = RuntimeJobAdapter(
+            profile=_make_profile(jobs=False, sync=True),
+            ports=ports,
+            sync_engine=sync_engine,
+            project_binding=None,
+            telemetry_exporter_job=None,
+        )
+
+        with (
+            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_ENABLED", True),
+            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_DELAY_SECONDS", 0),
+            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
+            patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
+            patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]),
+            patch(
+                "backend.adapters.jobs.runtime.effective_test_flags",
+                return_value=SimpleNamespace(testVisualizerEnabled=False),
+            ),
+        ):
+            await adapter.start()
+            assert adapter.state.sync_task is not None
+            await adapter.state.sync_task
+
+        sync_engine.sync_planning_artifacts.assert_awaited_once()
+        sync_engine.sync_project.assert_awaited_once()
+        self.assertFalse(sync_engine.sync_project.await_args.kwargs["backfill_session_intelligence"])
 
 
 # ---------------------------------------------------------------------------

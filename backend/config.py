@@ -93,6 +93,8 @@ CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
 CCDASH_API_BEARER_TOKEN_ENV = "CCDASH_API_BEARER_TOKEN"
 CCDASH_WORKER_PROJECT_ID_ENV = "CCDASH_WORKER_PROJECT_ID"
 CCDASH_RUNTIME_PROFILE_ENV = "CCDASH_RUNTIME_PROFILE"
+CCDASH_AUTH_PROVIDER_ENV = "CCDASH_AUTH_PROVIDER"
+CCDASH_LOCAL_NO_AUTH_ENABLED_ENV = "CCDASH_LOCAL_NO_AUTH_ENABLED"
 # VITE_CCDASH_MEMORY_GUARD_ENABLED (default: true)
 # Frontend feature flag; gates transcript cap, document pagination cap, and in-flight request GC.
 # Improves browser memory efficiency on large datasets.
@@ -105,6 +107,8 @@ RuntimeProfileName = Literal["local", "api", "worker", "worker-watch", "test"]
 DeploymentMode = Literal["local", "hosted"]
 EnvironmentContractScope = Literal["shared", "api_only", "worker_only", "local_only"]
 EnvironmentVariableStatus = Literal["configured", "default", "missing", "not_applicable"]
+AuthProviderName = Literal["local", "static_bearer", "clerk", "oidc"]
+SessionCookieSameSite = Literal["lax", "strict", "none"]
 
 
 class StorageProfileConfig(BaseModel):
@@ -201,6 +205,137 @@ def resolve_storage_profile_config(environ: Mapping[str, str] | None = None) -> 
 def resolve_api_bearer_token(environ: Mapping[str, str] | None = None) -> str:
     env = environ or os.environ
     return str(env.get(CCDASH_API_BEARER_TOKEN_ENV, "")).strip()
+
+
+def _csv_env(environ: Mapping[str, str], name: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in str(environ.get(name, "")).split(",") if part.strip())
+
+
+class AuthProviderConfig(BaseModel):
+    """Operator-facing auth provider configuration surface."""
+
+    provider: AuthProviderName
+    invalid_provider: str = ""
+    runtime_profile: RuntimeProfileName
+    deployment_mode: DeploymentMode
+    api_bearer_token: str = ""
+    local_no_auth_enabled: bool = False
+    clerk_publishable_key: str = ""
+    clerk_secret_key: str = ""
+    clerk_jwt_key: str = ""
+    clerk_authorized_parties: tuple[str, ...] = ()
+    clerk_audience: str = ""
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_callback_url: str = ""
+    oidc_jwks_url: str = ""
+    session_cookie_name: str = "ccdash_session"
+    session_cookie_secure: bool = True
+    session_cookie_samesite: SessionCookieSameSite = "lax"
+    session_cookie_domain: str = ""
+    trusted_proxy_enabled: bool = False
+
+    @property
+    def required_variables(self) -> tuple[str, ...]:
+        if self.provider == "local":
+            if self.deployment_mode == "hosted" and self.runtime_profile == "api":
+                return (CCDASH_LOCAL_NO_AUTH_ENABLED_ENV,)
+            return ()
+        if self.provider == "static_bearer":
+            return (CCDASH_API_BEARER_TOKEN_ENV,)
+        if self.provider == "clerk":
+            return (
+                "CCDASH_CLERK_PUBLISHABLE_KEY",
+                "CCDASH_CLERK_SECRET_KEY",
+                "CCDASH_CLERK_JWT_KEY",
+            )
+        if self.provider == "oidc":
+            return (
+                "CCDASH_OIDC_ISSUER",
+                "CCDASH_OIDC_AUDIENCE",
+                "CCDASH_OIDC_CLIENT_ID",
+                "CCDASH_OIDC_CLIENT_SECRET",
+                "CCDASH_OIDC_CALLBACK_URL",
+                "CCDASH_OIDC_JWKS_URL",
+            )
+        return ()
+
+    @property
+    def secret_variables(self) -> tuple[str, ...]:
+        if self.provider == "static_bearer":
+            return (CCDASH_API_BEARER_TOKEN_ENV,)
+        if self.provider == "clerk":
+            return ("CCDASH_CLERK_SECRET_KEY", "CCDASH_CLERK_JWT_KEY")
+        if self.provider == "oidc":
+            return ("CCDASH_OIDC_CLIENT_SECRET",)
+        return ()
+
+    @property
+    def missing_required_variables(self) -> tuple[str, ...]:
+        values = {
+            CCDASH_LOCAL_NO_AUTH_ENABLED_ENV: "true" if self.local_no_auth_enabled else "",
+            CCDASH_API_BEARER_TOKEN_ENV: self.api_bearer_token,
+            "CCDASH_CLERK_PUBLISHABLE_KEY": self.clerk_publishable_key,
+            "CCDASH_CLERK_SECRET_KEY": self.clerk_secret_key,
+            "CCDASH_CLERK_JWT_KEY": self.clerk_jwt_key,
+            "CCDASH_OIDC_ISSUER": self.oidc_issuer,
+            "CCDASH_OIDC_AUDIENCE": self.oidc_audience,
+            "CCDASH_OIDC_CLIENT_ID": self.oidc_client_id,
+            "CCDASH_OIDC_CLIENT_SECRET": self.oidc_client_secret,
+            "CCDASH_OIDC_CALLBACK_URL": self.oidc_callback_url,
+            "CCDASH_OIDC_JWKS_URL": self.oidc_jwks_url,
+        }
+        return tuple(name for name in self.required_variables if not str(values.get(name, "")).strip())
+
+    @property
+    def hosted_no_auth_enabled(self) -> bool:
+        return self.provider == "local" and self.deployment_mode == "hosted" and self.local_no_auth_enabled
+
+
+def resolve_auth_provider_config(
+    runtime_profile: RuntimeProfileName,
+    environ: Mapping[str, str] | None = None,
+) -> AuthProviderConfig:
+    env = environ or os.environ
+    deployment_mode: DeploymentMode = "hosted" if runtime_profile in {"api", "worker", "worker-watch"} else "local"
+    requested_provider = str(env.get(CCDASH_AUTH_PROVIDER_ENV, "")).strip().lower()
+    provider: AuthProviderName = "static_bearer" if runtime_profile == "api" else "local"
+    invalid_provider = ""
+    if requested_provider in {"local", "static_bearer", "clerk", "oidc"}:
+        provider = requested_provider  # type: ignore[assignment]
+    elif requested_provider:
+        invalid_provider = requested_provider
+
+    same_site = str(env.get("CCDASH_SESSION_COOKIE_SAMESITE", "lax")).strip().lower() or "lax"
+    if same_site not in {"lax", "strict", "none"}:
+        same_site = "lax"
+
+    return AuthProviderConfig(
+        provider=provider,
+        invalid_provider=invalid_provider,
+        runtime_profile=runtime_profile,
+        deployment_mode=deployment_mode,
+        api_bearer_token=resolve_api_bearer_token(env),
+        local_no_auth_enabled=_env_bool_from(env, CCDASH_LOCAL_NO_AUTH_ENABLED_ENV, runtime_profile in {"local", "test"}),
+        clerk_publishable_key=str(env.get("CCDASH_CLERK_PUBLISHABLE_KEY", "")).strip(),
+        clerk_secret_key=str(env.get("CCDASH_CLERK_SECRET_KEY", "")).strip(),
+        clerk_jwt_key=str(env.get("CCDASH_CLERK_JWT_KEY", "")).strip(),
+        clerk_authorized_parties=_csv_env(env, "CCDASH_CLERK_AUTHORIZED_PARTIES"),
+        clerk_audience=str(env.get("CCDASH_CLERK_AUDIENCE", "")).strip(),
+        oidc_issuer=str(env.get("CCDASH_OIDC_ISSUER", "")).strip(),
+        oidc_audience=str(env.get("CCDASH_OIDC_AUDIENCE", "")).strip(),
+        oidc_client_id=str(env.get("CCDASH_OIDC_CLIENT_ID", "")).strip(),
+        oidc_client_secret=str(env.get("CCDASH_OIDC_CLIENT_SECRET", "")).strip(),
+        oidc_callback_url=str(env.get("CCDASH_OIDC_CALLBACK_URL", "")).strip(),
+        oidc_jwks_url=str(env.get("CCDASH_OIDC_JWKS_URL", "")).strip(),
+        session_cookie_name=str(env.get("CCDASH_SESSION_COOKIE_NAME", "ccdash_session")).strip() or "ccdash_session",
+        session_cookie_secure=_env_bool_from(env, "CCDASH_SESSION_COOKIE_SECURE", True),
+        session_cookie_samesite=same_site,  # type: ignore[arg-type]
+        session_cookie_domain=str(env.get("CCDASH_SESSION_COOKIE_DOMAIN", "")).strip(),
+        trusted_proxy_enabled=_env_bool_from(env, "CCDASH_TRUSTED_PROXY_ENABLED", False),
+    )
 
 
 class WorkerBindingConfig(BaseModel):
@@ -336,6 +471,9 @@ def resolve_runtime_environment_contract(
     hosted_storage = hosted_runtime and storage_profile.hosted
     worker_runtime = runtime_profile in {"worker", "worker-watch"}
     api_runtime = runtime_profile == "api"
+    auth_config = resolve_auth_provider_config(runtime_profile, env)
+    selected_auth_required = set(auth_config.required_variables)
+    selected_auth_secrets = set(auth_config.secret_variables)
 
     shared = (
         _build_env_contract_entry(
@@ -426,9 +564,154 @@ def resolve_runtime_environment_contract(
             name=CCDASH_API_BEARER_TOKEN_ENV,
             scope="api_only",
             environ=env,
-            required=api_runtime,
+            required=api_runtime and CCDASH_API_BEARER_TOKEN_ENV in selected_auth_required,
+            secret=CCDASH_API_BEARER_TOKEN_ENV in selected_auth_secrets,
+            active=api_runtime and auth_config.provider == "static_bearer",
+            notes="Static bearer authentication secret; required when CCDASH_AUTH_PROVIDER=static_bearer.",
+        ),
+        _build_env_contract_entry(
+            name=CCDASH_AUTH_PROVIDER_ENV,
+            scope="api_only",
+            environ=env,
+            default_when_missing=True,
+            active=api_runtime,
+            notes="Hosted auth provider selector: static_bearer by default, or clerk/oidc/local when explicitly selected.",
+        ),
+        _build_env_contract_entry(
+            name=CCDASH_LOCAL_NO_AUTH_ENABLED_ENV,
+            scope="api_only",
+            environ=env,
+            required=api_runtime and CCDASH_LOCAL_NO_AUTH_ENABLED_ENV in selected_auth_required,
+            active=api_runtime and auth_config.provider == "local",
+            notes="Explicit local no-auth escape hatch; local/test default to no-auth without requiring this in hosted API.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_CLERK_PUBLISHABLE_KEY",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_CLERK_PUBLISHABLE_KEY" in selected_auth_required,
+            active=api_runtime and auth_config.provider == "clerk",
+            notes="Clerk publishable key for hosted authentication metadata.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_CLERK_SECRET_KEY",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_CLERK_SECRET_KEY" in selected_auth_required,
             secret=True,
-            notes="Hosted API authentication secret; required before the API should serve protected traffic.",
+            active=api_runtime and auth_config.provider == "clerk",
+            notes="Clerk secret key for server-side hosted auth validation.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_CLERK_JWT_KEY",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_CLERK_JWT_KEY" in selected_auth_required,
+            secret=True,
+            active=api_runtime and auth_config.provider == "clerk",
+            notes="Clerk JWT verification key for fail-closed hosted token validation.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_CLERK_AUTHORIZED_PARTIES",
+            scope="api_only",
+            environ=env,
+            active=api_runtime and auth_config.provider == "clerk",
+            notes="Comma-separated Clerk authorized parties accepted in hosted auth claims.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_CLERK_AUDIENCE",
+            scope="api_only",
+            environ=env,
+            active=api_runtime and auth_config.provider == "clerk",
+            notes="Optional Clerk JWT audience constraint.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_OIDC_ISSUER",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_OIDC_ISSUER" in selected_auth_required,
+            active=api_runtime and auth_config.provider == "oidc",
+            notes="Generic OIDC issuer URL for hosted authentication.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_OIDC_AUDIENCE",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_OIDC_AUDIENCE" in selected_auth_required,
+            active=api_runtime and auth_config.provider == "oidc",
+            notes="Expected OIDC token audience.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_OIDC_CLIENT_ID",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_OIDC_CLIENT_ID" in selected_auth_required,
+            active=api_runtime and auth_config.provider == "oidc",
+            notes="OIDC client ID for hosted sign-in flows.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_OIDC_CLIENT_SECRET",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_OIDC_CLIENT_SECRET" in selected_auth_required,
+            secret=True,
+            active=api_runtime and auth_config.provider == "oidc",
+            notes="OIDC client secret for hosted sign-in flows.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_OIDC_CALLBACK_URL",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_OIDC_CALLBACK_URL" in selected_auth_required,
+            active=api_runtime and auth_config.provider == "oidc",
+            notes="OIDC callback URL registered with the provider.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_OIDC_JWKS_URL",
+            scope="api_only",
+            environ=env,
+            required=api_runtime and "CCDASH_OIDC_JWKS_URL" in selected_auth_required,
+            active=api_runtime and auth_config.provider == "oidc",
+            notes="JWKS URL used to verify hosted OIDC tokens.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_SESSION_COOKIE_NAME",
+            scope="api_only",
+            environ=env,
+            default_when_missing=True,
+            active=api_runtime and auth_config.provider in {"clerk", "oidc"},
+            notes="Hosted auth session cookie name.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_SESSION_COOKIE_SECURE",
+            scope="api_only",
+            environ=env,
+            default_when_missing=True,
+            active=api_runtime and auth_config.provider in {"clerk", "oidc"},
+            notes="Whether hosted auth session cookies require HTTPS.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_SESSION_COOKIE_SAMESITE",
+            scope="api_only",
+            environ=env,
+            default_when_missing=True,
+            active=api_runtime and auth_config.provider in {"clerk", "oidc"},
+            notes="Hosted auth session cookie SameSite policy: lax, strict, or none.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_SESSION_COOKIE_DOMAIN",
+            scope="api_only",
+            environ=env,
+            active=api_runtime and auth_config.provider in {"clerk", "oidc"},
+            notes="Optional hosted auth session cookie domain.",
+        ),
+        _build_env_contract_entry(
+            name="CCDASH_TRUSTED_PROXY_ENABLED",
+            scope="api_only",
+            environ=env,
+            default_when_missing=True,
+            active=api_runtime,
+            notes="Enables hosted proxy-aware auth/session behavior when the API is behind a trusted reverse proxy.",
         ),
     )
     worker_only = (
@@ -489,6 +772,14 @@ def resolve_runtime_environment_contract(
             active=runtime_profile in {"local", "test"},
             notes="Inline local override for session mappings during development and test harnesses.",
         ),
+        _build_env_contract_entry(
+            name=CCDASH_LOCAL_NO_AUTH_ENABLED_ENV,
+            scope="local_only",
+            environ=env,
+            default_when_missing=True,
+            active=runtime_profile in {"local", "test"},
+            notes="Local/test no-auth mode is enabled by default and can be made explicit for operator review.",
+        ),
     )
 
     errors: list[str] = []
@@ -497,10 +788,26 @@ def resolve_runtime_environment_contract(
             f"Runtime profile '{runtime_profile}' requires an explicit non-placeholder "
             "CCDASH_DATABASE_URL before serving hosted traffic."
         )
-    if api_runtime and not resolve_api_bearer_token(env):
+    if (
+        api_runtime
+        and not auth_config.invalid_provider
+        and auth_config.provider == "static_bearer"
+        and not resolve_api_bearer_token(env)
+    ):
         errors.append(
             f"Runtime profile '{runtime_profile}' requires a non-empty "
             f"{CCDASH_API_BEARER_TOKEN_ENV} before serving traffic."
+        )
+    if api_runtime and auth_config.invalid_provider:
+        errors.append(
+            f"Runtime profile '{runtime_profile}' has unsupported {CCDASH_AUTH_PROVIDER_ENV}="
+            f"'{auth_config.invalid_provider}'. Supported providers: local, static_bearer, clerk, oidc."
+        )
+    if api_runtime and auth_config.provider != "static_bearer" and auth_config.missing_required_variables:
+        missing = ", ".join(auth_config.missing_required_variables)
+        errors.append(
+            f"Runtime profile '{runtime_profile}' auth provider '{auth_config.provider}' "
+            f"requires non-empty environment variables before serving traffic: {missing}."
         )
     if worker_runtime and not resolve_worker_binding_config(env).configured:
         errors.append(
@@ -512,6 +819,10 @@ def resolve_runtime_environment_contract(
     if hosted_runtime and storage_profile.filesystem_source_of_truth:
         warnings.append(
             "Hosted storage contract enables CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED; keep filesystem ingestion scoped intentionally."
+        )
+    if api_runtime and auth_config.hosted_no_auth_enabled:
+        warnings.append(
+            "Hosted API is explicitly configured for local no-auth; only use this behind an external trusted authentication boundary."
         )
 
     return RuntimeEnvironmentContract(
@@ -585,7 +896,14 @@ TELEMETRY_EXPORTER_CONFIG = TelemetryExporterConfig(
 )
 STORAGE_PROFILE = resolve_storage_profile_config()
 
+# Source writeback tuning
+INFERRED_STATUS_WRITEBACK_ENABLED = _env_bool(
+    "CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED",
+    STORAGE_PROFILE.profile == "local",
+)
+
 # Startup sync tuning
+STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)
 STARTUP_SYNC_DELAY_SECONDS = _env_int("CCDASH_STARTUP_SYNC_DELAY_SECONDS", 2)
 # CCDASH_STARTUP_SYNC_LIGHT_MODE (default: false)
 # Enables manifest-based scan skip on unchanged filesystem paths. Skips re-scanning entire subtrees

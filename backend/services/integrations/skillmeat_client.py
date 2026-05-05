@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib import error, parse, request
 
+from backend.services.integrations.skillmeat_trust import SkillMeatTrustMetadata
+
 
 _ARTIFACT_PAGE_LIMIT = 200
 _CONTEXT_MODULE_PAGE_LIMIT = 100
@@ -42,6 +44,7 @@ class SkillMeatClient:
     timeout_seconds: float = 5.0
     aaa_enabled: bool = False
     api_key: str = ""
+    trust_metadata: SkillMeatTrustMetadata | None = None
 
     async def fetch_definitions(
         self,
@@ -268,6 +271,8 @@ class SkillMeatClient:
         url = f"{base}{endpoint}{suffix}"
 
         headers = {"Accept": "application/json"}
+        if self.trust_metadata is not None:
+            headers.update(self.trust_metadata.as_headers())
         token = str(self.api_key or "").strip()
         if self.aaa_enabled and token:
             headers["Authorization"] = f"Bearer {token}"

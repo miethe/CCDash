@@ -37,6 +37,7 @@ import {
     type LiveConnectionStatus,
 } from '../services/live';
 import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../services/featureSurface';
+import { apiFetch } from '../services/apiClient';
 import { isMemoryGuardEnabled } from '../lib/featureFlags';
 import { SessionFeaturesView, TranscriptView } from './SessionInspector/TranscriptView';
 
@@ -3982,7 +3983,7 @@ const SessionFilterBar: React.FC = () => {
                 const params = new URLSearchParams({
                     include_subagents: localFilters.include_subagents === false ? 'false' : 'true',
                 });
-                const response = await fetch(`/api/sessions/facets/models?${params.toString()}`);
+                const response = await apiFetch(`/api/sessions/facets/models?${params.toString()}`);
                 if (!response.ok) {
                     throw new Error(`Failed to load session model facets (${response.status})`);
                 }
@@ -4023,7 +4024,7 @@ const SessionFilterBar: React.FC = () => {
                 const params = new URLSearchParams({
                     include_subagents: localFilters.include_subagents === false ? 'false' : 'true',
                 });
-                const response = await fetch(`/api/sessions/facets/platforms?${params.toString()}`);
+                const response = await apiFetch(`/api/sessions/facets/platforms?${params.toString()}`);
                 if (!response.ok) {
                     throw new Error(`Failed to load session platform facets (${response.status})`);
                 }
@@ -4548,7 +4549,7 @@ const SessionFilterBar: React.FC = () => {
                         try {
                             const btn = document.getElementById('force-sync-btn');
                             if (btn) btn.classList.add('animate-spin');
-                            await fetch('/api/cache/rescan', { method: 'POST' });
+                            await apiFetch('/api/cache/rescan', { method: 'POST' });
                             setTimeout(() => {
                                 window.location.reload();
                             }, 2000);
@@ -4619,7 +4620,7 @@ const SessionDetail: React.FC<{
                 } else {
                     params.set('root_session_id', fallbackRootSessionId);
                 }
-                const res = await fetch(`/api/sessions?${params.toString()}`);
+                const res = await apiFetch(`/api/sessions?${params.toString()}`);
                 if (!res.ok) return;
                 const data = await res.json();
                 if (!cancelled) {
@@ -4683,7 +4684,7 @@ const SessionDetail: React.FC<{
         let cancelled = false;
         const load = async () => {
             try {
-                const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`);
+                const res = await apiFetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`);
                 if (!res.ok) throw new Error(`Failed to load linked features (${res.status})`);
                 const data = await res.json();
                 if (!cancelled) {
@@ -4788,7 +4789,7 @@ const SessionDetail: React.FC<{
         setFeatureLinkMutationInFlight(true);
         setFeatureLinkMutationError(null);
         try {
-            const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`, {
+            const res = await apiFetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -4819,7 +4820,7 @@ const SessionDetail: React.FC<{
         setFeatureLinkMutationInFlight(true);
         setFeatureLinkMutationError(null);
         try {
-            const res = await fetch(
+            const res = await apiFetch(
                 `/api/sessions/${encodeURIComponent(session.id)}/linked-features/${encodeURIComponent(normalizedFeatureId)}`,
                 { method: 'DELETE' }
             );

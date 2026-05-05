@@ -4,6 +4,7 @@ Scan Implementation Plans → PRDs → Progress dirs and merge into Feature obje
 """
 from __future__ import annotations
 
+import errno
 import logging
 import re
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any, Optional
 
 import yaml
 
+from backend import config
 from backend.models import (
     EntityDates,
     FeatureDocumentCoverage,
@@ -2213,12 +2215,27 @@ def _reconcile_completion_equivalence(features: list[Feature], project_root: Pat
             absolute_path = project_root / normalized
             if not absolute_path.exists():
                 continue
+            if not bool(getattr(config, "INFERRED_STATUS_WRITEBACK_ENABLED", True)):
+                logger.debug(
+                    "Skipping inferred status write for %s because inferred status writeback is disabled",
+                    absolute_path,
+                )
+                continue
             try:
                 update_frontmatter_field(absolute_path, "status", _INFERRED_COMPLETE_STATUS)
                 status_cache[normalized] = _INFERRED_COMPLETE_STATUS
                 write_updates += 1
             except FrontmatterParseError as exc:
                 logger.warning("Skipping inferred status write for %s: %s", absolute_path, exc)
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EPERM, errno.EROFS}:
+                    logger.warning(
+                        "Skipping inferred status write for %s because the filesystem is not writable: %s",
+                        absolute_path,
+                        exc,
+                    )
+                    continue
+                logger.exception("Failed to write inferred status for %s", absolute_path)
             except Exception:
                 logger.exception("Failed to write inferred status for %s", absolute_path)
 

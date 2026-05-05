@@ -3,6 +3,73 @@ export type TaskStatus = 'todo' | 'backlog' | 'in-progress' | 'review' | 'done' 
 
 export type DateConfidence = 'high' | 'medium' | 'low';
 
+export type AuthSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'unauthorized';
+
+export type AuthErrorClassification = 'unauthenticated' | 'unauthorized' | null;
+
+export interface AuthProviderMetadataResponse {
+  provider: string;
+  runtimeProfile: string;
+  authMode: string;
+  hosted: boolean;
+  localMode: boolean;
+  issuer?: string | null;
+  clientId?: string | null;
+  callbackUrl?: string | null;
+  publishableKeyConfigured?: boolean;
+  frontendApiHost?: string | null;
+}
+
+export interface AuthSessionProviderMetadata {
+  providerId: string;
+  issuer?: string | null;
+  audience?: string | null;
+  tenantId?: string | null;
+  hosted: boolean;
+}
+
+export interface AuthSessionNormalizedSubject {
+  subject: string;
+  kind: string;
+  providerId?: string | null;
+  issuer?: string | null;
+}
+
+export interface AuthSessionMembership {
+  workspaceId: string;
+  role: string;
+  scopeType: 'enterprise' | 'team' | 'workspace' | 'project' | 'owned_entity' | string;
+  scopeId?: string | null;
+  enterpriseId?: string | null;
+  teamId?: string | null;
+  bindingId?: string | null;
+  source?: string | null;
+}
+
+export interface AuthSessionResponse {
+  authenticated: boolean;
+  subject: string | null;
+  displayName: string | null;
+  email?: string | null;
+  groups: string[];
+  scopes: string[];
+  memberships: AuthSessionMembership[];
+  provider: string | AuthSessionProviderMetadata | null;
+  authMode: string;
+  localMode: boolean;
+  kind?: string | null;
+  normalizedSubject?: AuthSessionNormalizedSubject | null;
+  expiresAt?: number;
+}
+
+export interface AuthLoginStartResponse {
+  authorizationUrl: string;
+}
+
+export interface AuthLogoutResponse {
+  ok: boolean;
+}
+
 export interface DateValue {
   value: string;
   confidence: DateConfidence;
@@ -60,6 +127,13 @@ export interface ToolUsage {
 
 export type LogType = 'message' | 'tool' | 'subagent' | 'skill' | 'thought' | 'system' | 'command' | 'subagent_start';
 
+export interface SessionLogTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+}
+
 export interface SessionLog {
   id: string;
   timestamp: string;
@@ -70,6 +144,7 @@ export interface SessionLog {
   linkedSessionId?: string;
   relatedToolCallId?: string;
   metadata?: Record<string, any>;
+  tokenUsage?: SessionLogTokenUsage | null;
   toolCall?: {
     id?: string;
     name: string;

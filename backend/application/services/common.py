@@ -7,16 +7,24 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from backend.adapters.auth.claims_mapping import select_claim_scope
 from backend.application.context import RequestContext, RequestMetadata, TenancyContext, TraceContext
 from backend.application.ports import CorePorts
 from backend.models import Project
 from backend.runtime_ports import build_core_ports
+from backend.services.project_paths.models import ResolvedProjectPaths
 
 
 @dataclass(frozen=True, slots=True)
 class ApplicationRequest:
     context: RequestContext
     ports: CorePorts
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectBundle:
+    project: Project
+    paths: ResolvedProjectPaths
 
 
 async def resolve_application_request(
@@ -48,8 +56,17 @@ async def build_compat_request_context(
 ) -> RequestContext:
     metadata = RequestMetadata(headers={}, method="INTERNAL", path="")
     principal = await ports.identity_provider.get_principal(metadata, runtime_profile=runtime_profile)
+    hosted_claim_scope = _principal_has_hosted_claim_scope(principal)
+    claim_scope = select_claim_scope(principal, metadata) if hosted_claim_scope else None
+    effective_project_id = str(requested_project_id or "").strip() or None
+    if effective_project_id is None and claim_scope is not None:
+        effective_project_id = claim_scope.project_id or claim_scope.workspace_id
     try:
-        workspace_scope, project_scope = ports.workspace_registry.resolve_scope(requested_project_id)
+        workspace_scope, project_scope = _resolve_workspace_scope(
+            ports.workspace_registry,
+            effective_project_id,
+            allow_active_fallback=not hosted_claim_scope,
+        )
     except Exception:
         workspace_scope = None
         project_scope = None
@@ -92,6 +109,11 @@ def resolve_project(
         if scoped is not None:
             return scoped
 
+    if _principal_has_hosted_claim_scope(context.principal):
+        if required:
+            raise HTTPException(status_code=404, detail="No project selected for hosted request")
+        return None
+
     project = ports.workspace_registry.get_active_project()
     if project is None and required:
         raise HTTPException(status_code=404, detail="No active project")
@@ -103,3 +125,83 @@ def require_project(context: RequestContext, ports: CorePorts, *, requested_proj
     if project is None:
         raise HTTPException(status_code=404, detail="No active project")
     return project
+
+
+def resolve_project_bundle(
+    context: RequestContext,
+    ports: CorePorts,
+    *,
+    requested_project_id: str | None = None,
+    refresh: bool = False,
+) -> ProjectBundle | None:
+    project_id = str(requested_project_id or "").strip() or None
+    if project_id is None and context.project is not None:
+        project_id = context.project.project_id
+
+    allow_active_fallback = not _principal_has_hosted_claim_scope(context.principal)
+    registry = ports.workspace_registry
+    if hasattr(registry, "resolve_project_binding"):
+        try:
+            binding = registry.resolve_project_binding(
+                project_id,
+                allow_active_fallback=allow_active_fallback,
+                refresh=refresh,
+            )
+        except TypeError:
+            if not allow_active_fallback and project_id is None:
+                binding = None
+            else:
+                binding = registry.resolve_project_binding(project_id)
+        if binding is not None:
+            return ProjectBundle(project=binding.project, paths=binding.paths)
+
+    project = resolve_project(context, ports, requested_project_id=project_id)
+    if project is None:
+        return None
+    try:
+        paths = registry.resolve_project_paths(project, refresh=refresh)
+    except TypeError:
+        paths = registry.resolve_project_paths(project)
+    return ProjectBundle(project=project, paths=paths)
+
+
+def require_project_bundle(
+    context: RequestContext,
+    ports: CorePorts,
+    *,
+    requested_project_id: str | None = None,
+    refresh: bool = False,
+) -> ProjectBundle:
+    bundle = resolve_project_bundle(
+        context,
+        ports,
+        requested_project_id=requested_project_id,
+        refresh=refresh,
+    )
+    if bundle is not None:
+        return bundle
+    if _principal_has_hosted_claim_scope(context.principal):
+        raise HTTPException(status_code=404, detail="No project selected for hosted request")
+    raise HTTPException(status_code=404, detail="No active project")
+
+
+def _principal_has_hosted_claim_scope(principal: Any) -> bool:
+    provider = getattr(principal, "provider", None)
+    return bool(getattr(provider, "hosted", False))
+
+
+def _resolve_workspace_scope(
+    workspace_registry: Any,
+    project_id: str | None,
+    *,
+    allow_active_fallback: bool,
+) -> tuple[Any, Any]:
+    try:
+        return workspace_registry.resolve_scope(
+            project_id,
+            allow_active_fallback=allow_active_fallback,
+        )
+    except TypeError:
+        if not allow_active_fallback and project_id is None:
+            return None, None
+        return workspace_registry.resolve_scope(project_id)

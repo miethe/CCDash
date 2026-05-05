@@ -1,0 +1,237 @@
+"""Generic OIDC JWT validation provider."""
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+import aiohttp
+import jwt
+from cachetools import TTLCache
+from jwt import PyJWKSet
+from jwt.exceptions import PyJWTError
+
+from backend.adapters.auth.bearer import RequestAuthenticationError
+from backend.adapters.auth.claims_mapping import principal_from_claims
+from backend.adapters.auth.providers.base import HostedAuthValidationContext
+from backend.application.context import Principal
+
+
+JsonFetcher = Callable[[str], Awaitable[Mapping[str, Any]]]
+
+
+@dataclass(frozen=True, slots=True)
+class OIDCProviderSettings:
+    provider_id: str
+    issuer: str
+    audience: str | tuple[str, ...]
+    jwks_url: str = ""
+    allowed_algorithms: tuple[str, ...] = ("RS256",)
+    allowed_authorized_parties: tuple[str, ...] = ()
+    jwks_cache_ttl_seconds: int = 300
+    discovery_cache_ttl_seconds: int = 3600
+    fetch_timeout_seconds: float = 5.0
+
+
+class GenericOIDCProvider:
+    """Validate OIDC-style JWTs against issuer discovery and JWKS keys."""
+
+    def __init__(
+        self,
+        settings: OIDCProviderSettings,
+        *,
+        discovery_fetcher: JsonFetcher | None = None,
+        jwks_fetcher: JsonFetcher | None = None,
+    ) -> None:
+        self._settings = settings
+        self._discovery_fetcher = discovery_fetcher or self._fetch_json
+        self._jwks_fetcher = jwks_fetcher or self._fetch_json
+        self._discovery_cache: TTLCache[str, Mapping[str, Any]] = TTLCache(
+            maxsize=8,
+            ttl=max(settings.discovery_cache_ttl_seconds, 1),
+        )
+        self._jwks_cache: TTLCache[str, Mapping[str, Any]] = TTLCache(
+            maxsize=8,
+            ttl=max(settings.jwks_cache_ttl_seconds, 1),
+        )
+
+    @property
+    def provider_id(self) -> str:
+        return self._settings.provider_id
+
+    async def resolve(
+        self,
+        token: str | None,
+        *,
+        validation_context: HostedAuthValidationContext | None = None,
+    ) -> Principal:
+        return await self.verify(token, validation_context=validation_context)
+
+    async def verify(
+        self,
+        token: str | None,
+        *,
+        validation_context: HostedAuthValidationContext | None = None,
+    ) -> Principal:
+        self._validate_metadata()
+        raw_token = str(token or "").strip()
+        if not raw_token:
+            raise RequestAuthenticationError(401, "Hosted auth token required.")
+
+        claims = await self._decode(raw_token)
+        self._validate_claims(claims, validation_context or HostedAuthValidationContext())
+        return principal_from_claims(
+            claims,
+            provider_id=self.provider_id,
+            issuer=str(claims.get("iss") or self._settings.issuer).strip(),
+            audience=",".join(_audiences(self._settings.audience)),
+        )
+
+    def _validate_metadata(self) -> None:
+        if not self.provider_id.strip():
+            raise RequestAuthenticationError(503, "OIDC provider metadata is missing provider_id.")
+        if not self._settings.issuer.strip():
+            raise RequestAuthenticationError(503, "OIDC provider metadata is missing issuer.")
+        if not _audiences(self._settings.audience):
+            raise RequestAuthenticationError(503, "OIDC provider metadata is missing audience.")
+        if not self._settings.allowed_algorithms:
+            raise RequestAuthenticationError(503, "OIDC provider metadata is missing allowed algorithms.")
+
+    async def _decode(self, token: str) -> Mapping[str, Any]:
+        try:
+            header = jwt.get_unverified_header(token)
+        except PyJWTError as exc:
+            raise RequestAuthenticationError(401, "Hosted auth token header is invalid.") from exc
+
+        algorithm = str(header.get("alg") or "").strip()
+        if algorithm not in self._settings.allowed_algorithms:
+            raise RequestAuthenticationError(401, "Hosted auth token algorithm is not allowed.")
+
+        key = await self._resolve_signing_key(header)
+        try:
+            return jwt.decode(
+                token,
+                key=key,
+                algorithms=list(self._settings.allowed_algorithms),
+                audience=list(_audiences(self._settings.audience)),
+                issuer=self._settings.issuer,
+                options={"require": ["exp", "iss", "aud", "sub"]},
+            )
+        except PyJWTError as exc:
+            raise RequestAuthenticationError(401, "Hosted auth token rejected.") from exc
+
+    async def _resolve_signing_key(self, header: Mapping[str, Any]) -> Any:
+        kid = str(header.get("kid") or "").strip()
+        if not kid:
+            raise RequestAuthenticationError(401, "Hosted auth token is missing key id.")
+
+        jwks_url = await self._resolve_jwks_url()
+        jwks = await self._get_jwks(jwks_url)
+        key = self._find_key(jwks, kid)
+        if key is None:
+            jwks = await self._get_jwks(jwks_url, force_refresh=True)
+            key = self._find_key(jwks, kid)
+        if key is None:
+            raise RequestAuthenticationError(401, "Hosted auth token signing key was not found.")
+        return key
+
+    async def _resolve_jwks_url(self) -> str:
+        configured = self._settings.jwks_url.strip()
+        if configured:
+            return configured
+
+        issuer = self._settings.issuer.rstrip("/")
+        discovery_url = f"{issuer}/.well-known/openid-configuration"
+        discovery = self._discovery_cache.get(discovery_url)
+        if discovery is None:
+            discovery = await self._discovery_fetcher(discovery_url)
+            self._discovery_cache[discovery_url] = discovery
+
+        discovered_issuer = str(discovery.get("issuer") or "").strip()
+        if discovered_issuer != self._settings.issuer:
+            raise RequestAuthenticationError(503, "OIDC discovery issuer does not match provider metadata.")
+        jwks_url = str(discovery.get("jwks_uri") or "").strip()
+        if not jwks_url:
+            raise RequestAuthenticationError(503, "OIDC discovery metadata is missing jwks_uri.")
+        return jwks_url
+
+    async def _get_jwks(self, jwks_url: str, *, force_refresh: bool = False) -> Mapping[str, Any]:
+        if not force_refresh:
+            cached = self._jwks_cache.get(jwks_url)
+            if cached is not None:
+                return cached
+
+        jwks = await self._jwks_fetcher(jwks_url)
+        if not isinstance(jwks.get("keys"), list):
+            raise RequestAuthenticationError(503, "OIDC JWKS metadata is invalid.")
+        self._jwks_cache[jwks_url] = jwks
+        return jwks
+
+    async def _fetch_json(self, url: str) -> Mapping[str, Any]:
+        timeout = aiohttp.ClientTimeout(total=self._settings.fetch_timeout_seconds)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as response:
+                    if response.status >= 400:
+                        raise RequestAuthenticationError(503, "OIDC provider metadata fetch failed.")
+                    payload = await response.json()
+        except RequestAuthenticationError:
+            raise
+        except Exception as exc:
+            raise RequestAuthenticationError(503, "OIDC provider metadata fetch failed.") from exc
+        if not isinstance(payload, Mapping):
+            raise RequestAuthenticationError(503, "OIDC provider metadata response is invalid.")
+        return payload
+
+    def _find_key(self, jwks: Mapping[str, Any], kid: str) -> Any | None:
+        try:
+            keyset = PyJWKSet.from_dict(dict(jwks))
+            return keyset[kid].key
+        except Exception:
+            return None
+
+    def _validate_claims(
+        self,
+        claims: Mapping[str, Any],
+        validation_context: HostedAuthValidationContext,
+    ) -> None:
+        subject = str(claims.get("sub") or "").strip()
+        if not subject:
+            raise RequestAuthenticationError(401, "Hosted auth token is missing subject.")
+
+        if validation_context.expected_nonce is not None:
+            nonce = str(claims.get("nonce") or "")
+            if nonce != validation_context.expected_nonce:
+                raise RequestAuthenticationError(401, "Hosted auth token nonce rejected.")
+
+        if validation_context.expected_state is not None:
+            presented_state = (
+                validation_context.presented_state
+                if validation_context.presented_state is not None
+                else claims.get("state")
+            )
+            if str(presented_state or "") != validation_context.expected_state:
+                raise RequestAuthenticationError(401, "Hosted auth state rejected.")
+
+        if validation_context.authorized_party is not None:
+            authorized_party = str(claims.get("azp") or claims.get("authorized_party") or "")
+            if authorized_party != validation_context.authorized_party:
+                raise RequestAuthenticationError(401, "Hosted auth authorized party rejected.")
+
+        if self._settings.allowed_authorized_parties:
+            authorized_party = str(claims.get("azp") or claims.get("authorized_party") or "")
+            if authorized_party not in self._settings.allowed_authorized_parties:
+                raise RequestAuthenticationError(401, "Hosted auth authorized party rejected.")
+
+
+def _audiences(audience: str | tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(audience, str):
+        return (audience.strip(),) if audience.strip() else ()
+    return tuple(part.strip() for part in audience if str(part).strip())
+
+
+__all__ = [
+    "GenericOIDCProvider",
+    "OIDCProviderSettings",
+    "principal_from_claims",
+]

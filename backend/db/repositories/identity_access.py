@@ -46,8 +46,12 @@ class LocalRoleBindingRepository(_LocalEnterpriseOnlyRepository):
 
 
 class LocalPrivilegedActionAuditRepository(_LocalEnterpriseOnlyRepository):
-    pass
+    async def record_privileged_action(self, _record: dict[str, Any]) -> None:
+        """No-op in local mode; enterprise audit storage is not authoritative here."""
+        return None
 
 
 class LocalAccessDecisionLogRepository(_LocalEnterpriseOnlyRepository):
-    pass
+    async def record_access_decision(self, _record: dict[str, Any]) -> None:
+        """No-op in local mode; enterprise audit storage is not authoritative here."""
+        return None

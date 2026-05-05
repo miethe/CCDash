@@ -20,6 +20,8 @@ import {
     SessionUsageDrilldownResponse,
     WorkflowEffectivenessResponse,
 } from '../types';
+import { apiFetch } from './apiClient';
+import { apiRequestJson } from './apiClient';
 
 const API_BASE = '/api/analytics';
 
@@ -71,7 +73,7 @@ const buildAnalyticsApiError = async (res: Response, fallbackMessage: string): P
 
 export const analyticsService = {
     async getMetrics(): Promise<AnalyticsMetric[]> {
-        const res = await fetch(`${API_BASE}/metrics`);
+        const res = await apiFetch(`${API_BASE}/metrics`);
         if (!res.ok) throw new Error('Failed to fetch metrics');
         return res.json();
     },
@@ -86,7 +88,7 @@ export const analyticsService = {
         if (start) params.append('start', start);
         if (end) params.append('end', end);
 
-        const res = await fetch(`${API_BASE}/trends?${params.toString()}`);
+        const res = await apiFetch(`${API_BASE}/trends?${params.toString()}`);
         if (!res.ok) throw new Error('Failed to fetch trends');
         return res.json();
     },
@@ -96,7 +98,7 @@ export const analyticsService = {
         if (start) params.append('start', start);
         if (end) params.append('end', end);
         const qs = params.toString();
-        const res = await fetch(`${API_BASE}/overview${qs ? `?${qs}` : ''}`);
+        const res = await apiFetch(`${API_BASE}/overview${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch analytics overview');
         return res.json();
     },
@@ -121,7 +123,7 @@ export const analyticsService = {
         if (params.end) search.append('end', params.end);
         if (params.groupBy) search.append('group_by', params.groupBy);
         if (params.sessionId) search.append('session_id', params.sessionId);
-        const res = await fetch(`${API_BASE}/series?${search.toString()}`);
+        const res = await apiFetch(`${API_BASE}/series?${search.toString()}`);
         if (!res.ok) throw new Error('Failed to fetch analytics series');
         return res.json();
     },
@@ -134,13 +136,13 @@ export const analyticsService = {
         const search = new URLSearchParams({ dimension });
         if (start) search.append('start', start);
         if (end) search.append('end', end);
-        const res = await fetch(`${API_BASE}/breakdown?${search.toString()}`);
+        const res = await apiFetch(`${API_BASE}/breakdown?${search.toString()}`);
         if (!res.ok) throw new Error('Failed to fetch analytics breakdown');
         return res.json();
     },
 
     async getCorrelation(): Promise<{ items: AnalyticsCorrelationItem[]; total: number; offset: number; limit: number }> {
-        const res = await fetch(`${API_BASE}/correlation`);
+        const res = await apiFetch(`${API_BASE}/correlation`);
         if (!res.ok) throw new Error('Failed to fetch analytics correlation');
         return res.json();
     },
@@ -165,7 +167,7 @@ export const analyticsService = {
         if (params?.featureId) search.append('feature_id', params.featureId);
         if (params?.limit) search.append('limit', String(params.limit));
         const qs = search.toString();
-        const res = await fetch(`${API_BASE}/artifacts${qs ? `?${qs}` : ''}`);
+        const res = await apiFetch(`${API_BASE}/artifacts${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch artifact analytics');
         return res.json();
     },
@@ -186,7 +188,7 @@ export const analyticsService = {
         if (typeof params?.offset === 'number') search.append('offset', String(params.offset));
         if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
         const qs = search.toString();
-        const res = await fetch(`${API_BASE}/usage-attribution${qs ? `?${qs}` : ''}`);
+        const res = await apiFetch(`${API_BASE}/usage-attribution${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch usage attribution analytics');
         return res.json();
     },
@@ -207,7 +209,7 @@ export const analyticsService = {
         if (params.end) search.append('end', params.end);
         if (typeof params.offset === 'number') search.append('offset', String(params.offset));
         if (typeof params.limit === 'number') search.append('limit', String(params.limit));
-        const res = await fetch(`${API_BASE}/usage-attribution/drilldown?${search.toString()}`);
+        const res = await apiFetch(`${API_BASE}/usage-attribution/drilldown?${search.toString()}`);
         if (!res.ok) throw new Error('Failed to fetch usage attribution drilldown');
         return res.json();
     },
@@ -217,7 +219,7 @@ export const analyticsService = {
         if (start) search.append('start', start);
         if (end) search.append('end', end);
         const qs = search.toString();
-        const res = await fetch(`${API_BASE}/usage-attribution/calibration${qs ? `?${qs}` : ''}`);
+        const res = await apiFetch(`${API_BASE}/usage-attribution/calibration${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch usage attribution calibration');
         return res.json();
     },
@@ -227,7 +229,7 @@ export const analyticsService = {
         if (start) search.append('start', start);
         if (end) search.append('end', end);
         const qs = search.toString();
-        const res = await fetch(`${API_BASE}/session-cost-calibration${qs ? `?${qs}` : ''}`);
+        const res = await apiFetch(`${API_BASE}/session-cost-calibration${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch session cost calibration');
         return res.json();
     },
@@ -254,7 +256,7 @@ export const analyticsService = {
         if (typeof params?.offset === 'number') search.append('offset', String(params.offset));
         if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
         const qs = search.toString();
-        const res = await fetch(`${API_BASE}/workflow-effectiveness${qs ? `?${qs}` : ''}`);
+        const res = await apiFetch(`${API_BASE}/workflow-effectiveness${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch workflow effectiveness');
         return res.json();
     },
@@ -277,7 +279,7 @@ export const analyticsService = {
         if (typeof params?.offset === 'number') search.append('offset', String(params.offset));
         if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
         const qs = search.toString();
-        const res = await fetch(`${API_BASE}/failure-patterns${qs ? `?${qs}` : ''}`);
+        const res = await apiFetch(`${API_BASE}/failure-patterns${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch failure patterns');
         return res.json();
     },
@@ -298,7 +300,7 @@ export const analyticsService = {
         if (params.featureId) search.append('feature_id', params.featureId);
         if (params.rootSessionId) search.append('root_session_id', params.rootSessionId);
         if (params.sessionId) search.append('session_id', params.sessionId);
-        const res = await fetch(`${API_BASE}/session-intelligence/search?${search.toString()}`);
+        const res = await apiFetch(`${API_BASE}/session-intelligence/search?${search.toString()}`);
         if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch transcript intelligence search');
         return res.json();
     },
@@ -317,14 +319,14 @@ export const analyticsService = {
         if (params?.featureId) search.append('feature_id', params.featureId);
         if (params?.rootSessionId) search.append('root_session_id', params.rootSessionId);
         if (params?.sessionId) search.append('session_id', params.sessionId);
-        const res = await fetch(`${API_BASE}/session-intelligence?${search.toString()}`);
+        const res = await apiFetch(`${API_BASE}/session-intelligence?${search.toString()}`);
         if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch session intelligence rollups');
         return res.json();
     },
 
     async getSessionIntelligenceDetail(sessionId: string): Promise<SessionIntelligenceDetailResponse> {
         const search = new URLSearchParams({ session_id: sessionId });
-        const res = await fetch(`${API_BASE}/session-intelligence/detail?${search.toString()}`);
+        const res = await apiFetch(`${API_BASE}/session-intelligence/detail?${search.toString()}`);
         if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch session intelligence detail');
         return res.json();
     },
@@ -345,46 +347,41 @@ export const analyticsService = {
         if (params.featureId) search.append('feature_id', params.featureId);
         if (params.rootSessionId) search.append('root_session_id', params.rootSessionId);
         if (params.sessionId) search.append('session_id', params.sessionId);
-        const res = await fetch(`${API_BASE}/session-intelligence/drilldown?${search.toString()}`);
+        const res = await apiFetch(`${API_BASE}/session-intelligence/drilldown?${search.toString()}`);
         if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch session intelligence drilldown');
         return res.json();
     },
 
     async getAlerts(): Promise<AlertConfig[]> {
-        const res = await fetch(`${API_BASE}/alerts`);
+        const res = await apiFetch(`${API_BASE}/alerts`);
         if (!res.ok) throw new Error('Failed to fetch alerts');
         return res.json();
     },
 
     async createAlert(payload: Omit<AlertConfig, 'id'> & { id?: string }): Promise<AlertConfig> {
-        const res = await fetch(`${API_BASE}/alerts`, {
+        return apiRequestJson<AlertConfig>(`${API_BASE}/alerts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error('Failed to create alert');
-        return res.json();
     },
 
     async updateAlert(alertId: string, payload: Partial<AlertConfig>): Promise<AlertConfig> {
-        const res = await fetch(`${API_BASE}/alerts/${alertId}`, {
+        return apiRequestJson<AlertConfig>(`${API_BASE}/alerts/${alertId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error('Failed to update alert');
-        return res.json();
     },
 
     async deleteAlert(alertId: string): Promise<void> {
-        const res = await fetch(`${API_BASE}/alerts/${alertId}`, {
+        await apiRequestJson<void>(`${API_BASE}/alerts/${alertId}`, {
             method: 'DELETE',
         });
-        if (!res.ok) throw new Error('Failed to delete alert');
     },
 
     async getNotifications(): Promise<Notification[]> {
-        const res = await fetch(`${API_BASE}/notifications`);
+        const res = await apiFetch(`${API_BASE}/notifications`);
         if (!res.ok) throw new Error('Failed to fetch notifications');
         return res.json();
     },

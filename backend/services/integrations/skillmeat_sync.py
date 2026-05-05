@@ -15,6 +15,7 @@ from backend.services.integrations.skillmeat_contracts import (
     resolve_workflow_context_modules,
 )
 from backend.services.integrations.skillmeat_routes import attach_stable_definition_source
+from backend.services.integrations.skillmeat_trust import build_skillmeat_trust_metadata
 
 
 _MAX_WORKFLOW_DETAIL_CALLS = 50
@@ -63,7 +64,12 @@ async def _store_definitions(
         )
 
 
-async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
+async def sync_skillmeat_definitions(
+    db: Any,
+    project: Any,
+    *,
+    context: Any | None = None,
+) -> dict[str, Any]:
     repo = get_agentic_intelligence_repository(db)
     config = getattr(project, "skillMeat", None)
     project_id = str(getattr(project, "id", "") or "")
@@ -154,6 +160,10 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
         timeout_seconds=float(getattr(config, "requestTimeoutSeconds", 5.0) or 5.0),
         aaa_enabled=bool(getattr(config, "aaaEnabled", False)),
         api_key=str(getattr(config, "apiKey", "") or ""),
+        trust_metadata=build_skillmeat_trust_metadata(
+            context,
+            delegation_reason="skillmeat.definition.sync",
+        ),
     )
 
     configured_project_id = str(getattr(config, "projectId", "") or "")

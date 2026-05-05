@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in-progress
 category: enhancements
 title: "Implementation Plan: Shared Auth, RBAC, and SSO V1"
 description: "Implement modular shared auth with local, Clerk, and generic OIDC providers, hierarchical RBAC, and SkillMeat trust alignment while preserving an explicit local no-auth runtime."
@@ -15,7 +15,7 @@ owners: [platform-engineering, security-engineering, fullstack-engineering]
 contributors: [ai-agents]
 audience: [ai-agents, developers, platform-engineering, security-engineering]
 created: 2026-03-20
-updated: 2026-03-24
+updated: 2026-05-02
 tags: [implementation, auth, oidc, rbac, sso, security, skillmeat]
 priority: critical
 risk_level: high
@@ -64,13 +64,26 @@ Introduce a hosted-safe identity and authorization layer for CCDash using a modu
 ## Current Baseline
 
 1. The hexagonal foundation work already introduced `RequestContext`, `Principal`, runtime profiles, and pluggable core ports.
-2. `backend/adapters/auth/local.py` provides a permissive local adapter, but there is no SkillMeat-style pluggable provider system for hosted auth, no first-class Clerk adapter, no generic OIDC adapter, and no deny-capable authorization policy.
-3. `backend/runtime/container.py` already builds request context per request, which is the correct seam for hosted auth.
-4. Several routers and application services accept `RequestContext`, but most business flows still behave as if every caller is the same trusted local operator.
-5. `backend/routers/projects.py` still uses the global `project_manager` singleton directly, and many adjacent routers still rely on active-project/path globals that are incompatible with real request-scoped tenancy.
-6. `contexts/AppSessionContext.tsx` models project switching only; there is no frontend auth/session state or 401/403 handling path.
-7. `services/apiClient.ts` performs plain `fetch()` calls with no auth/session-aware retry or denial semantics, and many protected frontend surfaces still bypass it with direct `fetch()` usage.
-8. The integrations surface has code/test drift and should be stabilized before it becomes an auth-enforcement migration target.
+2. `Principal` already carries email, groups, and hierarchical memberships; Phase 1 should refine hosted issuer/provider semantics, service-account identity, and claim mapping rather than re-adding those core fields.
+3. `RequestContext` already carries `EnterpriseScope`, `TeamScope`, `TenancyContext`, `ScopeBinding`, and `StorageScope`; the remaining work is to make hosted enforcement consistently consume those scopes.
+4. Runtime profiles already compose `StaticBearerTokenIdentityProvider` for the `api` auth capability and `PermitAllAuthorizationPolicy` for permissive local authorization. Hosted auth still needs a provider registry, Clerk/OIDC validation, session flow, and a deny-capable policy.
+5. Identity/audit storage repository ports and local/Postgres stubs already exist, including identity access and privileged-action audit surfaces. Auth implementation should build on those ports instead of introducing a parallel storage abstraction.
+6. `backend/runtime/container.py` already builds request context per request, which is the correct seam for hosted auth.
+7. Several routers and application services accept `RequestContext`, and SkillMeat integration routes are partly request-context aware, but many flows still behave as if every caller is the same trusted local operator.
+8. `backend/routers/projects.py`, GitHub integration helpers, and adjacent routers still rely on active-project/path globals that are incompatible with real request-scoped tenancy.
+9. `contexts/AppSessionContext.tsx` models project switching only; there is no frontend auth/session state or 401/403 handling path.
+10. `services/apiClient.ts` performs plain `fetch()` calls with no auth/session-aware retry or denial semantics, and many protected frontend surfaces still bypass it with direct `fetch()` usage.
+11. The integrations surface has partially improved request-context plumbing, but Phase 0 still needs to validate current tests and helper boundaries before it becomes an auth-enforcement migration target.
+
+## Plan Validation Update
+
+Validation date: 2026-05-02
+
+1. This plan has been refreshed against the current repository baseline before development. Existing `Principal`, `RequestContext`, runtime-profile auth composition, identity/audit storage ports, and SkillMeat request-context work are now treated as baseline, not new scope.
+2. Phase 0 is an execution gate: complete AUTH-090 and AUTH-091 before starting hosted provider work in Phase 1 or Phase 2. AUTH-092 can run alongside those tasks, but hosted provider implementation should not begin until the backend baseline and enforcement inventory are current.
+3. Phase 1 should focus on deltas: hosted issuer/provider metadata, provider configuration, service-account representation, permission vocabulary, claim-to-scope rules, and bootstrap defaults.
+4. The highest remaining baseline risk is uneven tenancy migration: SkillMeat routes are partly request-context aware, while GitHub integration helpers, project selection, and file/path-oriented routers still use active project globals.
+5. Scope remains unchanged at a product level: modular local/Clerk/OIDC auth, hosted-safe RBAC, SkillMeat trust alignment, frontend session UX, auditability, and explicit local no-auth mode.
 
 ## Fixed Decisions
 
@@ -132,7 +145,7 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 ### Sequencing Rationale
 
-1. Stabilize the current integrations/request-scope baseline and inventory the real migration surface before landing auth-specific code.
+1. Execute AUTH-090 and AUTH-091 first to validate the integrations/request-scope baseline and inventory the real migration surface before hosted provider work begins.
 2. Lock the provider abstraction, identity model, and permission vocabulary before implementing provider-specific auth logic.
 3. Land hosted provider/session handling before migrating route enforcement so the policy layer has real principals to evaluate.
 4. Define the 3-tier RBAC matrix before broad router migration to avoid duplicating authorization rules in many endpoints.
@@ -161,15 +174,40 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| AUTH-090 | Integrations Baseline Repair | Resolve the current request-scope/integration drift so auth work does not stack on top of unstable assumptions in `backend/routers/integrations.py` and its tests. | Integrations router code and tests agree on current helper/module boundaries, and the touched request-scoped integration flows are green again. | 2 pts | python-backend-engineer | None |
-| AUTH-091 | Backend Enforcement Surface Inventory | Enumerate routers/services still relying on active-project globals or direct singleton path access, classify them by sensitivity, and map them onto the RBAC/resource model. | The plan has an explicit migration inventory for high-risk router surfaces instead of a partial hot-path list. | 2 pts | backend-architect | None |
+| AUTH-090 | Integrations Baseline Repair | Validate the current partial request-context migration in `backend/routers/integrations.py`, repair any remaining code/test drift, and confirm helper boundaries before auth enforcement is layered on top. | Integrations router code and tests agree on current helper/module boundaries, and the touched request-scoped integration flows are green again. | 2 pts | python-backend-engineer | None |
+| AUTH-091 | Backend Enforcement Surface Inventory | Enumerate routers/services still relying on active-project globals or direct singleton/path access, including project selection, GitHub integration helpers, file-backed routers, and remaining SkillMeat edges; classify them by sensitivity and map them onto the RBAC/resource model. | The plan has an explicit migration inventory for high-risk router/helper surfaces instead of a partial hot-path list, and the inventory reflects the current `RequestContext`/scope baseline. | 2 pts | backend-architect | None |
 | AUTH-092 | Frontend Transport Inventory and Migration Strategy | Inventory direct `fetch()` callers that will need auth/session-aware behavior and define the shared transport abstraction plus migration order for protected surfaces. | Frontend auth work is no longer limited to `services/apiClient.ts`; protected request paths have an explicit migration strategy. | 2 pts | frontend-developer | None |
+
+**Phase 0 Task Status**
+
+1. AUTH-091 inventory captured on 2026-05-02 against the current backend router/service baseline; downstream enforcement work remains in Phase 5 and must not be treated as complete.
+
+### AUTH-091 Backend Enforcement Surface Inventory
+
+Sensitivity key: `critical` can mutate credentials, repository state, execution state, or cross-tenant project selection; `high` can trigger privileged processing, write records, or expose broad project data; `medium` is project-scoped read or diagnostics that still needs tenancy enforcement.
+
+| Surface | Current direct access / active-project dependency | Sensitivity | Proposed RBAC resource/action | Migration priority |
+|---------|---------------------------------------------------|-------------|-------------------------------|--------------------|
+| `backend/routers/projects.py` | Uses `core_ports.workspace_registry` but still exposes process-global active project selection through `GET /active`, `GET /active/paths`, and `POST /active/{project_id}`. | critical | `project:list`, `project:read`, `project:create`, `project:update`, `project:switch` scoped under user/team/enterprise workspace bindings. | P0: replace global active-project mutation with request-scoped workspace/project selection before hosted rollout. |
+| `backend/routers/integrations.py` SkillMeat routes and `backend/application/services/integrations.py` | SkillMeat routes now resolve `RequestContext`, but config validation still has standalone helper behavior; sync, refresh, observation backfill, memory draft generate/review/publish mutate integration-derived state and call external SkillMeat. | critical | `integration.skillmeat:read`, `integration.skillmeat:sync`, `integration.skillmeat:backfill`, `integration.skillmeat.memory:generate`, `integration.skillmeat.memory:review`, `integration.skillmeat.memory:publish`. | P0/P1: enforce service-layer checks on sync/backfill/publish first, then read checks on definitions/observations/drafts. |
+| GitHub integration helpers: `backend/routers/integrations.py`, `backend/services/integrations/github_settings_store.py`, `backend/services/repo_workspaces/*` | GitHub settings are file-backed global state; helpers read/write token/cache settings, clone/fetch workspaces under configured cache roots, and validate write capability without request-scoped tenancy. | critical | `integration.github:read_settings`, `integration.github:update_settings`, `integration.github:validate`, `integration.github.workspace:refresh`, `integration.github:write_probe`. | P0: move settings and workspace cache ownership under enterprise/team scope before enabling hosted admin access. |
+| `backend/routers/execution.py` and `backend/application/services/execution.py` | Router uses `RequestContext`, but run creation, approval, cancel, retry, launch prepare/start, and worktree context create/update require named authorization; launch paths can affect local worktrees and execution state. | critical | `execution:read`, `execution.run:create`, `execution.run:approve`, `execution.run:cancel`, `execution.run:retry`, `execution.launch:prepare`, `execution.launch:start`, `worktree_context:create`, `worktree_context:update`. | P0/P1: enforce approve/start/create before read-only history; keep checks in application service as well as route dependency. |
+| `backend/routers/live.py` and live topic helpers | Already calls `authorization_policy.authorize` per normalized topic, but `topic_authorization()` maps generic topic prefixes and only includes project id from context when present. | high | `live:subscribe` with resource-specific aliases: `live.execution:subscribe`, `live.session:subscribe`, `live.feature:subscribe`, `live.project:subscribe`. | P1: tighten topic-to-resource mapping and require project/session ownership before replay or subscription. |
+| Features and planning: `backend/routers/features.py`, `backend/routers/client_v1.py`, `backend/routers/_client_v1_features.py`, `backend/routers/planning.py` | Client V1 feature surfaces mostly resolve `RequestContext`; `POST /api/client/v1/features/rollups`, `POST /api/client/v1/reports/aar`, and `PATCH /api/planning/features/{feature_id}/open-questions/{oq_id}` trigger compute/writeback or pending sync. | high | `feature:read`, `feature.rollup:compute`, `report.aar:generate`, `planning.open_question:resolve`, `document:read`, `task:read`. | P1: guard planning writeback and report/rollup compute; apply read checks to feature modal/document/session projections. |
+| Analytics exports and mutations: `backend/routers/analytics.py` | Uses `RequestContext` plus `resolve_project`, but alert create/update/delete, notification reads, workflow analytics, and Prometheus export expose or mutate project-wide telemetry. | high | `analytics:read`, `analytics.export:prometheus`, `analytics.alert:create`, `analytics.alert:update`, `analytics.alert:delete`, `analytics.notification:read`. | P1: protect alert mutations and exports first; read dashboards can follow with scoped project checks. |
+| `backend/routers/codebase.py` and `backend/services/codebase_explorer.py` | Directly imports `project_manager`, resolves active project and filesystem root, and serves tree, file lists, file content, and file details. | high | `codebase:read_tree`, `codebase:file_read`, `codebase:activity_read`. | P0/P1: migrate off direct singleton and enforce project path ownership before serving file content. |
+| Cache, links, and maintenance: `backend/routers/cache.py` | Uses app-state `sync_engine` plus active project from workspace registry; sync/rescan/rebuild/sync-paths can scan local paths; manual link creation writes entity links. | critical | `cache:read_status`, `cache.operation:read`, `cache.sync:trigger`, `cache.links:rebuild`, `cache.paths:sync`, `entity_link:create`, `link_audit:run`. | P0: enforce trigger/rebuild/sync-paths and manual link creation; then scope read operations and operation history. |
+| `backend/routers/session_mappings.py` | Directly imports `project_manager`, reads active project, and persists project-specific session mapping rules through global active state. | high | `session_mapping:read`, `session_mapping:diagnose`, `session_mapping:update`. | P0/P1: migrate to request-scoped project and require update permission for mapping writes. |
+| `backend/routers/test_visualizer.py` | Direct `project_manager` lookup and fallback project construction; sync, ingest, import mappings, and mapping backfill use app-state sync engine / DB repositories and can write large test datasets. | high | `test:read`, `test.sync:trigger`, `test.run:ingest`, `test.mapping:import`, `test.mapping:backfill`, `test.metrics:read`. | P1: enforce ingest/import/backfill/sync first; then protect metrics, run details, and health reads by project. |
+| Pricing/admin: `backend/routers/pricing.py` | Pricing catalog is global DB state; router imports `project_manager` but mutations do not currently bind to request context or admin authorization. | critical | `admin.pricing:read`, `admin.pricing:update`, `admin.pricing:sync`, `admin.pricing:reset`, `admin.pricing:delete`. | P0: admin-only guard all catalog mutations and remove unused active-project coupling. |
+| Documents/task mutation paths | `backend/application/services/documents.py` is read-oriented, but planning open-question resolution, entity-link creation, feature rollup compute, and document/task metadata projections touch document/task-derived state. No standalone document write router is visible in this baseline. | high | `document:read`, `document.link:create`, `task:read`, `planning.task:update`, `planning.open_question:resolve`. | P1: guard existing mutation paths; revisit if a dedicated document/task write router is added. |
 
 **Phase 0 Quality Gates**
 
 1. Integrations/request-scope drift is reduced enough that auth work starts from a stable baseline.
-2. The backend enforcement inventory covers singleton-dependent routes beyond `projects.py`.
-3. The frontend transport plan explicitly accounts for protected direct `fetch()` callers.
+2. AUTH-090 and AUTH-091 are complete before Phase 1 hosted provider design or Phase 2 provider implementation begins.
+3. The backend enforcement inventory covers singleton-dependent routes beyond `projects.py`, including GitHub integration helpers and file/path-oriented operational endpoints.
+4. The frontend transport plan explicitly accounts for protected direct `fetch()` callers.
 
 ## Phase 1: Identity Contracts, Provider Abstraction, and Configuration
 
@@ -177,10 +215,100 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| AUTH-001 | Principal Contract Refinement | Extend the existing application identity model to cover issuer/provider metadata, subject, email, groups, hierarchical memberships, auth mode, and service-account identity without breaking local mode. | `Principal` and related request-context contracts can represent local operators plus hosted users resolved through Local, Clerk, or generic OIDC providers. | 3 pts | backend-architect, python-backend-engineer | AUTH-090 |
+| AUTH-001 | Principal Contract Refinement | Refine the existing application identity model for hosted issuer/provider metadata, subject normalization, auth mode, and service-account identity while preserving the already-present email, groups, and hierarchical memberships fields. | `Principal` and related request-context contracts can represent local operators plus hosted users resolved through Local, Clerk, or generic OIDC providers without duplicating existing identity fields. | 3 pts | backend-architect, python-backend-engineer | AUTH-090, AUTH-091 |
 | AUTH-002 | Permission Vocabulary and Resource Matrix | Define the canonical resource/action matrix for projects, documents, sessions, tests, execution, integrations, analytics, admin settings, codebase access, and file-backed maintenance endpoints. | The plan has a documented role-resource matrix that can be implemented without reopening product questions. | 3 pts | security-engineering, backend-architect | AUTH-001, AUTH-091 |
-| AUTH-003 | Hosted Auth Configuration Surface | Define environment/config settings for provider selection, Clerk keys/endpoints, generic issuer URL, audience/client IDs, callback URL, secure cookies, trusted proxy expectations, and explicit local-mode enablement. | Hosted and local runtime configuration is explicit, fail-closed, and documented for composition code across Local, Clerk, and generic OIDC modes. | 2 pts | backend-architect, security-engineering | AUTH-001 |
+| AUTH-003 | Hosted Auth Configuration Surface | Define environment/config settings for provider selection, Clerk keys/endpoints, generic issuer URL, audience/client IDs, callback URL, secure cookies, trusted proxy expectations, and explicit local-mode enablement on top of the existing runtime-profile auth capability composition. | Hosted and local runtime configuration is explicit, fail-closed, and documented for composition code across StaticBearer/local, Clerk, and generic OIDC modes. | 2 pts | backend-architect, security-engineering | AUTH-001 |
 | AUTH-004 | Subject Hierarchy and Ownership Model | Define the authoritative `user`, `team`, and `enterprise` scope model, including how workspace/project bindings inherit from or attach to those tiers. | The plan has an explicit three-tier ownership and binding model aligned with SkillMeat's AAA direction and usable for repository/service enforcement. | 2 pts | backend-architect, security-engineering | AUTH-001, AUTH-091 |
+
+**Phase 1 Task Status**
+
+1. AUTH-001, AUTH-002, AUTH-003, and AUTH-004 are complete as of 2026-05-02.
+
+Completion note: Phase 1 is complete based on the refined `Principal` contract in `backend/application/context.py` with focused request-context tests, the documented permission matrix below, the hosted auth configuration contract added in `backend/config.py` with storage profile tests, and the documented subject hierarchy and ownership model below.
+
+### AUTH-002 Canonical V1 Resource/Action Matrix
+
+Role key: `LO` local operator, `EA` enterprise admin, `TA` team admin, `PM` project maintainer, `PV` project viewer, `IO` integration operator, `XA` execution approver, `AA` analyst/auditor. Grants are scoped by the subject binding: enterprise grants may flow to teams/projects inside that enterprise, team grants may flow to bound workspaces/projects, and project grants apply only to the named project unless AUTH-004 narrows inheritance.
+
+| Resource group | Canonical V1 actions | AUTH-091 inventory mapping | Default role grants |
+|----------------|----------------------|----------------------------|---------------------|
+| Projects | `project:list`, `project:read`, `project:create`, `project:update`, `project:switch` | `backend/routers/projects.py` active project and workspace selection | `LO` all in local mode; `EA` all enterprise projects; `TA` all team projects; `PM` read/update/switch bound projects; `PV`, `AA` list/read/switch bound projects |
+| Documents | `document:read`, `document.link:create`, `document.metadata:read` | document projections, entity-link creation, feature/document detail surfaces | `LO`, `EA`, `TA`, `PM` all; `PV`, `AA` read/metadata only |
+| Tasks | `task:read`, `planning.task:update` | task projections and planning-derived task updates | `LO`, `EA`, `TA`, `PM` all; `PV`, `AA` read only |
+| Sessions | `session:read`, `session.artifact:read`, `session.timeline:read` | feature/session projections, live session views, AAR/report inputs | `LO`, `EA`, `TA`, `PM` all; `PV`, `AA` read only |
+| Tests | `test:read`, `test.metrics:read`, `test.sync:trigger`, `test.run:ingest`, `test.mapping:import`, `test.mapping:backfill` | `backend/routers/test_visualizer.py` read, sync, ingest, import, and backfill paths | `LO`, `EA`, `TA`, `PM` all; `AA` read/metrics; `PV` read only |
+| Execution | `execution:read`, `execution.run:create`, `execution.run:approve`, `execution.run:cancel`, `execution.run:retry`, `execution.launch:prepare`, `execution.launch:start`, `worktree_context:create`, `worktree_context:update` | `backend/routers/execution.py` run, approval, retry/cancel, launch, and worktree-context paths | `LO`, `EA` all; `TA`, `PM` read/create/cancel/retry/prepare and worktree context on bound projects; `XA` approve/start plus read; `AA` read only |
+| Integrations | `integration:read`, `integration.skillmeat:sync`, `integration.skillmeat:backfill`, `integration.skillmeat.memory:generate`, `integration.skillmeat.memory:review`, `integration.skillmeat.memory:publish`, `integration.github:read_settings`, `integration.github:update_settings`, `integration.github:validate`, `integration.github.workspace:refresh`, `integration.github:write_probe` | SkillMeat routes, integration service helpers, GitHub settings store, repo workspace cache helpers | `LO`, `EA` all; `TA` read plus team-scoped settings/update/validate; `IO` all integration actions on assigned scopes; `PM` read and workspace refresh on bound projects |
+| Analytics | `analytics:read`, `analytics.export:prometheus`, `analytics.alert:create`, `analytics.alert:update`, `analytics.alert:delete`, `analytics.notification:read` | `backend/routers/analytics.py` dashboards, exports, alerts, and notifications | `LO`, `EA`, `TA` all; `PM` read/notifications and project alerts; `AA` read/export/notifications; `PV` read only |
+| Admin settings | `admin.settings:read`, `admin.settings:update`, `admin.user:manage`, `admin.role:manage`, `admin.audit:read` | hosted auth setup, bootstrap/admin assignment, audit and operator settings surfaces | `LO` all in local mode; `EA` all; `TA` team-scoped read/user/role management; `AA` audit/read only |
+| Codebase access | `codebase:read_tree`, `codebase:file_read`, `codebase:activity_read` | `backend/routers/codebase.py` tree, file content, details, and activity | `LO`, `EA`, `TA`, `PM` all on bound projects; `PV`, `AA` tree/activity only unless explicitly granted file read |
+| Cache and file-backed maintenance | `cache:read_status`, `cache.operation:read`, `cache.sync:trigger`, `cache.links:rebuild`, `cache.paths:sync`, `entity_link:create`, `link_audit:run` | `backend/routers/cache.py`, file-backed project/cache/link maintenance paths | `LO`, `EA` all; `TA`, `PM` bound project maintenance except cross-project path sync; `AA` status/operation/link audit read |
+| Live topics | `live:subscribe`, `live.execution:subscribe`, `live.session:subscribe`, `live.feature:subscribe`, `live.project:subscribe` | `backend/routers/live.py` topic authorization and replay/subscription helpers | Any role with the matching underlying resource read may subscribe to that topic; execution live topics additionally require `execution:read` |
+| Session mappings | `session_mapping:read`, `session_mapping:diagnose`, `session_mapping:update` | `backend/routers/session_mappings.py` active-project mapping reads, diagnosis, and writes | `LO`, `EA`, `TA`, `PM` all on bound projects; `PV`, `AA` read/diagnose only |
+| Pricing/admin catalog | `admin.pricing:read`, `admin.pricing:update`, `admin.pricing:sync`, `admin.pricing:reset`, `admin.pricing:delete` | `backend/routers/pricing.py` global pricing catalog reads and mutations | `LO`, `EA` all; `AA` read only |
+| Planning/writeback | `feature:read`, `feature.rollup:compute`, `report.aar:generate`, `planning.open_question:resolve`, `planning.writeback:sync` | features/client V1 rollups, AAR reports, planning open-question resolution, planning pending sync/writeback | `LO`, `EA`, `TA`, `PM` all on bound projects; `PV`, `AA` read/report generation only unless granted writeback |
+
+Implementation rules:
+
+1. Permission names are stable API identifiers; router/service code should reference these exact strings through constants, not invent route-local aliases.
+2. Local no-auth mode maps to `LO` through the existing permissive runtime profile only; hosted mode must never infer `LO` from missing identity.
+3. `EA` is the hosted break-glass/admin role for enterprise scope. `TA` can delegate within its team scope but cannot mutate enterprise-wide provider, pricing, or cross-team integration settings.
+4. `PM` owns project operations but not enterprise/team administration. `PV` is read-only except for project switching to bound projects.
+5. `IO`, `XA`, and `AA` are purpose-built roles that may be combined with viewer/maintainer roles; they do not grant broad project write access by themselves.
+6. Denials for write/admin/execute actions must be audited with principal, resource, action, requested scope, and denial reason.
+
+### AUTH-004 Subject Hierarchy and Ownership Model
+
+V1 uses `enterprise > team > workspace > project` as the resource hierarchy, with `user` as an assignable subject that can receive direct bindings at any resource level. `workspace` and `project` are resource scopes, not identity tiers; their access is always evaluated through `user`, `team`, or `enterprise` bindings plus explicit workspace/project ownership metadata.
+
+Authoritative identifiers and stable subject keys:
+
+| Entity | Authoritative ID | Stable key format | Notes |
+|--------|------------------|-------------------|-------|
+| User | Provider subject plus issuer: `issuer_id` + `provider_subject` | `user:{issuer_id}:{provider_subject}` | Email is display/search metadata only and must not be used as the durable key. Local mode may use `user:local:operator`. |
+| Team | CCDash team UUID or external org/group mapping ID after claim normalization | `team:{enterprise_id}:{team_id}` | Provider group names are aliases until mapped; renamed groups must keep the same normalized team ID. |
+| Enterprise | CCDash enterprise UUID or configured hosted tenant/org ID | `enterprise:{enterprise_id}` | Every hosted subject resolves under exactly one enterprise per request. Local mode may use `enterprise:local`. |
+| Workspace | CCDash workspace UUID from the workspace registry | `workspace:{enterprise_id}:{workspace_id}` | A workspace has one owning enterprise and optional owning team/user. |
+| Project | CCDash project UUID or registry ID | `project:{enterprise_id}:{workspace_id}:{project_id}` | A project belongs to one workspace and inherits that workspace's owner bindings unless narrowed. |
+
+Ownership and binding rules:
+
+1. Enterprise owns all teams, workspaces, and projects under its ID. Enterprise bindings may grant access across descendant teams/workspaces/projects.
+2. A team-owned workspace attaches to one owning `team` and one owning `enterprise`. Team bindings flow to descendant projects unless the project has an explicit narrower binding set.
+3. A user-owned workspace attaches to one owning `user` and one owning `enterprise`; it does not inherit team grants unless a team is explicitly bound to that workspace or project.
+4. A project attaches to exactly one workspace and inherits the workspace owner chain. Additional project-level bindings may grant, narrow, or deny access for specific users/teams.
+5. Workspace/project ownership is stored as metadata on the resource; authorization bindings are separate records keyed by stable subject key, role, resource key, and effect.
+
+Inheritance, overrides, and narrowing:
+
+1. Evaluation starts at enterprise scope, then team/user direct bindings, then workspace, then project. The requested action must be granted at a scope that contains the requested resource.
+2. More specific resource bindings can narrow inherited access by replacing inherited role grants for that subject/resource pair or by adding an explicit deny.
+3. Explicit deny wins over any inherited or direct allow at the same or broader scope and must include a reason for audit/operator review.
+4. User direct bindings are additive with team bindings unless a project/workspace deny targets that user. Team membership removal stops future inherited team access but does not remove separately assigned user bindings.
+5. Cross-enterprise access is denied by default. A subject key from one enterprise can access another enterprise only through an explicit delegated binding created by an enterprise admin in the target enterprise.
+
+Conflict resolution:
+
+1. No authenticated subject, unknown enterprise, unknown workspace, or unknown project resolves to `401` or `403` before policy evaluation, depending on whether identity or authorization is missing.
+2. For multiple allows, the most specific matching binding determines scope limits; role permissions are unioned only within that same resource boundary.
+3. For allow plus deny, deny wins. For equal-specificity conflicting role assignments, the evaluator keeps the least-privilege permission set and records a configuration warning.
+4. Local no-auth mode bypasses hosted conflict resolution only through the explicit `LO` permissive profile; hosted mode must never fall back to local ownership.
+
+Bootstrap and admin assignment:
+
+1. Hosted first-run requires an explicit configured bootstrap enterprise and at least one bootstrap admin subject key or verified provider claim. Missing bootstrap configuration is fail-closed.
+2. Bootstrap admin receives `EA` on the bootstrap enterprise only. Additional `EA`, `TA`, and service-account bindings must be created through audited admin operations.
+3. `TA` can manage team-scoped users and roles but cannot assign `EA`, mutate provider configuration, or change cross-team/cross-enterprise ownership.
+4. Service accounts use stable `service:{issuer_id}:{client_id}` subject keys and can receive only the minimum integration/execution permissions required for the configured trust path.
+5. Admin and ownership changes require `admin.role:manage` or `admin.user:manage` at the containing scope and must emit privileged-action audit records.
+
+SkillMeat AAA alignment assumptions:
+
+1. CCDash and SkillMeat share the same issuer/audience trust assumptions or an explicit delegated token exchange; neither side should invent app-local identities for hosted requests.
+2. Enterprise, team, workspace, and project IDs exchanged with SkillMeat must be stable normalized IDs, not display names or filesystem paths.
+3. CCDash may pass the resolved principal subject key, resource key, permissions, and delegation reason to SkillMeat, but SkillMeat remains responsible for enforcing its own AAA policy on its resources.
+4. Workspace/project mappings are one-to-one for V1 unless a documented migration record maps legacy IDs to normalized keys.
+5. Denial/audit semantics should stay compatible: privileged SkillMeat actions initiated from CCDash must preserve the original user or service-account subject key.
 
 **Phase 1 Quality Gates**
 
@@ -188,6 +316,7 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 2. The provider model explicitly supports Local, Clerk, and generic OIDC modes through one contract.
 3. Every sensitive V1 action maps to a named permission across user/team/enterprise tiers.
 4. Hosted mode cannot start in an ambiguous partially configured auth state.
+5. Existing `RequestContext` scope objects and identity/audit repository ports are reused rather than replaced.
 
 ## Phase 2: Auth Provider Adapters and Hosted Session Flow
 

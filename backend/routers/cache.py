@@ -10,11 +10,11 @@ from typing import Any, Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
+from backend.application.services.common import ProjectBundle, require_project_bundle, resolve_project_bundle
 from backend.db.file_watcher import file_watcher
-from backend.models import Project
-from backend.request_scope import get_core_ports
-from backend.services.project_paths.models import ResolvedProjectPaths
+from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 
 logger = logging.getLogger("ccdash.cache")
 
@@ -96,11 +96,29 @@ def _optional_sync_engine(request: Request):
     return getattr(request.app.state, "sync_engine", None)
 
 
-def _get_active_project_context(core_ports: CorePorts) -> tuple[Project, ResolvedProjectPaths]:
-    project = core_ports.workspace_registry.get_active_project()
-    if not project:
-        raise HTTPException(status_code=400, detail="No active project")
-    return project, core_ports.workspace_registry.resolve_project_paths(project)
+def _project_resource(bundle: ProjectBundle | None) -> str | None:
+    return f"project:{bundle.project.id}" if bundle is not None else None
+
+
+async def _resolve_cache_project_context(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    *,
+    action: str,
+    required: bool,
+) -> ProjectBundle | None:
+    bundle = (
+        require_project_bundle(request_context, core_ports)
+        if required
+        else resolve_project_bundle(request_context, core_ports)
+    )
+    await require_http_authorization(
+        request_context,
+        core_ports,
+        action=action,
+        resource=_project_resource(bundle),
+    )
+    return bundle
 
 
 def _is_under(path: Path, root: Path) -> bool:
@@ -201,14 +219,21 @@ async def get_entity_tree(
 @cache_router.get("/status")
 async def get_cache_status(
     request: Request,
+    request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return sync engine + watcher status, including live operations."""
     sync_engine = _optional_sync_engine(request)
     live_broker = getattr(request.app.state, "live_event_broker", None)
     live_fanout = _live_fanout_status(request)
-    project = core_ports.workspace_registry.get_active_project()
-    bundle = core_ports.workspace_registry.resolve_project_paths(project) if project else None
+    project_bundle = await _resolve_cache_project_context(
+        request_context,
+        core_ports,
+        action="cache:read_status",
+        required=False,
+    )
+    project = project_bundle.project if project_bundle else None
+    paths = project_bundle.paths if project_bundle else None
     if not sync_engine:
         return {
             "status": "unavailable",
@@ -217,9 +242,9 @@ async def get_cache_status(
             "projectId": getattr(project, "id", ""),
             "projectName": getattr(project, "name", ""),
             "activePaths": {
-                "sessionsDir": str(bundle.sessions.path) if bundle else "",
-                "docsDir": str(bundle.plan_docs.path) if bundle else "",
-                "progressDir": str(bundle.progress.path) if bundle else "",
+                "sessionsDir": str(paths.sessions.path) if paths else "",
+                "docsDir": str(paths.plan_docs.path) if paths else "",
+                "progressDir": str(paths.progress.path) if paths else "",
             },
             "operations": {
                 "activeOperationCount": 0,
@@ -238,9 +263,9 @@ async def get_cache_status(
         "projectId": getattr(project, "id", ""),
         "projectName": getattr(project, "name", ""),
         "activePaths": {
-            "sessionsDir": str(bundle.sessions.path) if bundle else "",
-            "docsDir": str(bundle.plan_docs.path) if bundle else "",
-            "progressDir": str(bundle.progress.path) if bundle else "",
+            "sessionsDir": str(paths.sessions.path) if paths else "",
+            "docsDir": str(paths.plan_docs.path) if paths else "",
+            "progressDir": str(paths.progress.path) if paths else "",
         },
         "operations": observability,
         "liveUpdates": asdict(live_broker.stats()) if live_broker and hasattr(live_broker, "stats") else None,
@@ -304,8 +329,14 @@ def _live_fanout_status(request: Request) -> dict[str, Any]:
 
 
 @cache_router.get("/operations")
-async def list_cache_operations(request: Request, limit: int = Query(20, ge=1, le=200)):
+async def list_cache_operations(
+    request: Request,
+    limit: int = Query(20, ge=1, le=200),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """List recent sync/rebuild operations."""
+    await require_http_authorization(request_context, core_ports, action="cache.operation:read")
     sync_engine = _optional_sync_engine(request)
     if not sync_engine:
         return {"status": "unavailable", "count": 0, "items": []}
@@ -314,8 +345,14 @@ async def list_cache_operations(request: Request, limit: int = Query(20, ge=1, l
 
 
 @cache_router.get("/operations/{operation_id}")
-async def get_cache_operation(request: Request, operation_id: str):
+async def get_cache_operation(
+    request: Request,
+    operation_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Get one sync/rebuild operation by ID."""
+    await require_http_authorization(request_context, core_ports, action="cache.operation:read")
     sync_engine = _get_sync_engine(request)
     operation = await sync_engine.get_operation(operation_id)
     if not operation:
@@ -328,11 +365,20 @@ async def trigger_sync(
     request: Request,
     background_tasks: BackgroundTasks,
     body: SyncRequest,
+    request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Trigger full project sync with operation tracking."""
     sync_engine = _get_sync_engine(request)
-    project, bundle = _get_active_project_context(core_ports)
+    project_bundle = await _resolve_cache_project_context(
+        request_context,
+        core_ports,
+        action="cache.sync:trigger",
+        required=True,
+    )
+    assert project_bundle is not None
+    project = project_bundle.project
+    bundle = project_bundle.paths
 
     if body.background:
         operation_id = await sync_engine.start_operation(
@@ -379,12 +425,19 @@ async def trigger_sync(
 
 
 @cache_router.post("/rescan")
-async def trigger_rescan(request: Request, background_tasks: BackgroundTasks):
+async def trigger_rescan(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Backward-compatible alias for full force sync in background."""
     return await trigger_sync(
         request,
         background_tasks,
         SyncRequest(force=True, background=True, trigger="api"),
+        request_context,
+        core_ports,
     )
 
 
@@ -393,11 +446,20 @@ async def trigger_rebuild_links(
     request: Request,
     background_tasks: BackgroundTasks,
     body: RebuildLinksRequest,
+    request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Trigger entity-link rebuild with operation tracking."""
     sync_engine = _get_sync_engine(request)
-    project, bundle = _get_active_project_context(core_ports)
+    project_bundle = await _resolve_cache_project_context(
+        request_context,
+        core_ports,
+        action="cache.links:rebuild",
+        required=True,
+    )
+    assert project_bundle is not None
+    project = project_bundle.project
+    bundle = project_bundle.paths
 
     if body.background:
         operation_id = await sync_engine.start_operation(
@@ -446,6 +508,7 @@ async def trigger_sync_paths(
     request: Request,
     background_tasks: BackgroundTasks,
     body: SyncPathsRequest,
+    request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Sync a targeted set of changed files (supports project-relative paths)."""
@@ -453,7 +516,15 @@ async def trigger_sync_paths(
         raise HTTPException(status_code=400, detail="No paths provided")
 
     sync_engine = _get_sync_engine(request)
-    project, bundle = _get_active_project_context(core_ports)
+    project_bundle = await _resolve_cache_project_context(
+        request_context,
+        core_ports,
+        action="cache.paths:sync",
+        required=True,
+    )
+    assert project_bundle is not None
+    project = project_bundle.project
+    bundle = project_bundle.paths
     project_root = bundle.root.path
     changed_files: list[tuple[str, Path]] = []
     for item in body.paths:
@@ -510,11 +581,19 @@ async def get_links_audit(
     primary_floor: float = Query(0.55, ge=0.0, le=1.0),
     fanout_floor: int = Query(10, ge=1, le=1000),
     limit: int = Query(50, ge=1, le=500),
+    request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Run link-audit heuristics against feature->session links for active project."""
     sync_engine = _get_sync_engine(request)
-    project, _ = _get_active_project_context(core_ports)
+    project_bundle = await _resolve_cache_project_context(
+        request_context,
+        core_ports,
+        action="link_audit:run",
+        required=True,
+    )
+    assert project_bundle is not None
+    project = project_bundle.project
     payload = await sync_engine.run_link_audit(
         project.id,
         feature_id=feature_id,

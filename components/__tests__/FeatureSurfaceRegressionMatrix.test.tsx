@@ -140,6 +140,14 @@ vi.mock('../../contexts/DataContext', () => ({
   }),
 }));
 
+vi.mock('../../contexts/AuthSessionContext', () => ({
+  useAuthSession: () => ({
+    session: { localMode: true, authMode: 'local', authenticated: true },
+    metadata: { localMode: true, authMode: 'local' },
+    hasPermission: vi.fn(() => true),
+  }),
+}));
+
 vi.mock('../../services/live', () => ({
   executionRunTopic: vi.fn(() => 'execution-run-topic'),
   featureTopic: vi.fn(() => 'feature-topic'),

@@ -207,6 +207,14 @@ vi.mock('../../contexts/DataContext', () => ({
   }),
 }));
 
+vi.mock('../../contexts/AuthSessionContext', () => ({
+  useAuthSession: () => ({
+    session: { localMode: true, authMode: 'local', authenticated: true },
+    metadata: { localMode: true, authMode: 'local' },
+    hasPermission: vi.fn(() => true),
+  }),
+}));
+
 vi.mock('../../services/execution', () => ({
   getFeatureExecutionContext: vi.fn().mockResolvedValue(null),
   checkExecutionPolicy: vi.fn().mockResolvedValue(null),

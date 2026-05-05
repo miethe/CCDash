@@ -147,6 +147,34 @@ class SessionTranscriptService:
             metadata.setdefault("parentUuid", row.get("parent_entry_uuid"))
         if row.get("message_id"):
             metadata.setdefault("rawMessageId", row.get("message_id"))
+
+        # Build tokenUsage from dedicated columns first; fall back to metadata for
+        # rows written before the per-message token migration.
+        token_usage: dict[str, int] | None = None
+        _in = row.get("input_tokens")
+        _out = row.get("output_tokens")
+        if isinstance(_in, (int, float)) and isinstance(_out, (int, float)):
+            _cr = row.get("cache_read_input_tokens")
+            _cc = row.get("cache_creation_input_tokens")
+            token_usage = {
+                "inputTokens": int(_in),
+                "outputTokens": int(_out),
+                "cacheReadInputTokens": int(_cr) if isinstance(_cr, (int, float)) else 0,
+                "cacheCreationInputTokens": int(_cc) if isinstance(_cc, (int, float)) else 0,
+            }
+        elif isinstance(metadata.get("inputTokens"), (int, float)) and isinstance(metadata.get("outputTokens"), (int, float)):
+            # Legacy rows: token data stored only in metadata_json (pre-migration).
+            _m_in = metadata.get("inputTokens")
+            _m_out = metadata.get("outputTokens")
+            _m_cr = metadata.get("cache_read_input_tokens")
+            _m_cc = metadata.get("cache_creation_input_tokens")
+            token_usage = {
+                "inputTokens": int(_m_in),  # type: ignore[arg-type]
+                "outputTokens": int(_m_out),  # type: ignore[arg-type]
+                "cacheReadInputTokens": int(_m_cr) if isinstance(_m_cr, (int, float)) else 0,
+                "cacheCreationInputTokens": int(_m_cc) if isinstance(_m_cc, (int, float)) else 0,
+            }
+
         return {
             "id": row.get("source_log_id") or f"log-{row.get('message_index', 0)}",
             "timestamp": row.get("event_timestamp", ""),
@@ -157,6 +185,7 @@ class SessionTranscriptService:
             "linkedSessionId": row.get("linked_session_id"),
             "relatedToolCallId": row.get("related_tool_call_id"),
             "metadata": metadata,
+            "tokenUsage": token_usage,
             "toolCall": self._tool_call_payload(
                 name=row.get("tool_name"),
                 tool_call_id=row.get("tool_call_id"),

@@ -993,6 +993,21 @@ def _build_session_telemetry_events(
         "source": source,
     }
     events: list[dict[str, Any]] = []
+    source_key_counts: dict[str, int] = {}
+
+    def unique_source_key(source_key: str) -> str:
+        count = source_key_counts.get(source_key, 0)
+        source_key_counts[source_key] = count + 1
+        if count == 0:
+            return source_key
+
+        suffix = count + 1
+        candidate = f"{source_key}:{suffix}"
+        while candidate in source_key_counts:
+            suffix += 1
+            candidate = f"{source_key}:{suffix}"
+        source_key_counts[candidate] = 1
+        return candidate
 
     def push(
         *,
@@ -1024,7 +1039,7 @@ def _build_session_telemetry_events(
                 "cost_usd": max(0.0, cost_usd),
                 "occurred_at": occurred or occurred_at,
                 "sequence_no": max(0, seq),
-                "source_key": source_key,
+                "source_key": unique_source_key(source_key),
                 "payload_json": json.dumps(payload or {}),
             }
         )
@@ -1309,6 +1324,28 @@ class SyncEngine:
                     duration_ms, token_input, token_output, cost_usd, occurred_at, sequence_no,
                     source, source_key, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, source_key) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    root_session_id = excluded.root_session_id,
+                    feature_id = excluded.feature_id,
+                    task_id = excluded.task_id,
+                    commit_hash = excluded.commit_hash,
+                    pr_number = excluded.pr_number,
+                    phase = excluded.phase,
+                    event_type = excluded.event_type,
+                    tool_name = excluded.tool_name,
+                    model = excluded.model,
+                    agent = excluded.agent,
+                    skill = excluded.skill,
+                    status = excluded.status,
+                    duration_ms = excluded.duration_ms,
+                    token_input = excluded.token_input,
+                    token_output = excluded.token_output,
+                    cost_usd = excluded.cost_usd,
+                    occurred_at = excluded.occurred_at,
+                    sequence_no = excluded.sequence_no,
+                    source = excluded.source,
+                    payload_json = excluded.payload_json
             """
             for event in events:
                 await self.db.execute(
@@ -1359,6 +1396,28 @@ class SyncEngine:
                 $15, $16, $17, $18, $19, $20,
                 $21, $22, $23
             )
+            ON CONFLICT (project_id, source_key) DO UPDATE SET
+                session_id = EXCLUDED.session_id,
+                root_session_id = EXCLUDED.root_session_id,
+                feature_id = EXCLUDED.feature_id,
+                task_id = EXCLUDED.task_id,
+                commit_hash = EXCLUDED.commit_hash,
+                pr_number = EXCLUDED.pr_number,
+                phase = EXCLUDED.phase,
+                event_type = EXCLUDED.event_type,
+                tool_name = EXCLUDED.tool_name,
+                model = EXCLUDED.model,
+                agent = EXCLUDED.agent,
+                skill = EXCLUDED.skill,
+                status = EXCLUDED.status,
+                duration_ms = EXCLUDED.duration_ms,
+                token_input = EXCLUDED.token_input,
+                token_output = EXCLUDED.token_output,
+                cost_usd = EXCLUDED.cost_usd,
+                occurred_at = EXCLUDED.occurred_at,
+                sequence_no = EXCLUDED.sequence_no,
+                source = EXCLUDED.source,
+                payload_json = EXCLUDED.payload_json
         """
         for event in events:
             await self.db.execute(
@@ -2770,6 +2829,7 @@ class SyncEngine:
         *,
         rebuild_links: bool = True,
         capture_analytics: bool = True,
+        backfill_session_intelligence: bool = True,
     ) -> dict:
         """Full incremental sync for a project.
 
@@ -2785,6 +2845,8 @@ class SyncEngine:
             "usage_attributions_backfilled": 0,
             "telemetry_backfilled_sessions": 0,
             "telemetry_backfilled_events": 0,
+            "commit_correlations_backfilled_sessions": 0,
+            "commit_correlations_backfilled": 0,
             "documents_synced": 0,
             "documents_skipped": 0,
             "tasks_synced": 0,
@@ -2803,6 +2865,7 @@ class SyncEngine:
                     "force": bool(force),
                     "rebuildLinks": bool(rebuild_links),
                     "captureAnalytics": bool(capture_analytics),
+                    "backfillSessionIntelligence": bool(backfill_session_intelligence),
                     "sessionsDir": str(sessions_dir),
                     "docsDir": str(docs_dir),
                     "progressDir": str(progress_dir),
@@ -2837,20 +2900,21 @@ class SyncEngine:
                 s_stats = await self._sync_sessions(project.id, sessions_dir, force)
                 stats["sessions_synced"] = s_stats["synced"]
                 stats["sessions_skipped"] = s_stats["skipped"]
-                usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
-                stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))
-                observability_backfill_stats = await self._maybe_backfill_session_observability_fields(project.id)
-                stats["session_observability_backfilled"] = int(observability_backfill_stats.get("sessions", 0))
-                usage_event_backfill_stats = await self._maybe_backfill_session_usage_attribution(project.id)
-                stats["usage_event_backfilled_sessions"] = int(usage_event_backfill_stats.get("sessions", 0))
-                stats["usage_events_backfilled"] = int(usage_event_backfill_stats.get("events", 0))
-                stats["usage_attributions_backfilled"] = int(usage_event_backfill_stats.get("attributions", 0))
-                backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
-                stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
-                stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
-                commit_backfill_stats = await self._maybe_backfill_commit_correlations(project.id)
-                stats["commit_correlations_backfilled_sessions"] = int(commit_backfill_stats.get("sessions", 0))
-                stats["commit_correlations_backfilled"] = int(commit_backfill_stats.get("correlations", 0))
+                if backfill_session_intelligence:
+                    usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
+                    stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))
+                    observability_backfill_stats = await self._maybe_backfill_session_observability_fields(project.id)
+                    stats["session_observability_backfilled"] = int(observability_backfill_stats.get("sessions", 0))
+                    usage_event_backfill_stats = await self._maybe_backfill_session_usage_attribution(project.id)
+                    stats["usage_event_backfilled_sessions"] = int(usage_event_backfill_stats.get("sessions", 0))
+                    stats["usage_events_backfilled"] = int(usage_event_backfill_stats.get("events", 0))
+                    stats["usage_attributions_backfilled"] = int(usage_event_backfill_stats.get("attributions", 0))
+                    backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
+                    stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
+                    stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
+                    commit_backfill_stats = await self._maybe_backfill_commit_correlations(project.id)
+                    stats["commit_correlations_backfilled_sessions"] = int(commit_backfill_stats.get("sessions", 0))
+                    stats["commit_correlations_backfilled"] = int(commit_backfill_stats.get("correlations", 0))
                 await self._update_operation(
                     operation_id,
                     phase="documents",
@@ -3025,6 +3089,34 @@ class SyncEngine:
         finally:
             # Clear the per-run memo so the next sync run starts fresh.
             self._rglob_cache = {}
+
+    async def sync_planning_artifacts(
+        self,
+        project_id: str,
+        docs_dir: Path,
+        progress_dir: Path,
+        *,
+        force: bool = False,
+    ) -> dict:
+        """Sync documents, progress tasks, and derived features without session work."""
+        stats = {
+            "documents_synced": 0,
+            "documents_skipped": 0,
+            "tasks_synced": 0,
+            "tasks_skipped": 0,
+            "features_synced": 0,
+        }
+        d_stats = await self._sync_documents(project_id, docs_dir, progress_dir, force)
+        stats["documents_synced"] = d_stats["synced"]
+        stats["documents_skipped"] = d_stats["skipped"]
+
+        t_stats = await self._sync_progress(project_id, progress_dir, force)
+        stats["tasks_synced"] = t_stats["synced"]
+        stats["tasks_skipped"] = t_stats["skipped"]
+
+        f_stats = await self._sync_features(project_id, docs_dir, progress_dir)
+        stats["features_synced"] = f_stats["synced"]
+        return stats
 
     async def rebuild_links(
         self,
@@ -3942,7 +4034,7 @@ class SyncEngine:
                 },
             ):
                 t0 = time.monotonic()
-                session = parse_session_file(path)
+                session = await asyncio.to_thread(parse_session_file, path)
                 parse_ms = int((time.monotonic() - t0) * 1000)
         except Exception:
             observability.record_parser_failure("sessions", project_id=project_id)

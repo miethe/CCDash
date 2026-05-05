@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 
 from backend.adapters.auth import StaticBearerTokenIdentityProvider
+from backend.adapters.auth.claims_mapping import ClaimScopeSelection, select_claim_scope
 from backend.adapters.live_updates import (
     InMemoryLiveEventBroker,
     PostgresNotifyLiveEventBus,
@@ -53,6 +54,7 @@ class RuntimeContainer:
     def __init__(self, *, profile: RuntimeProfile) -> None:
         self.profile = profile
         self.storage_profile = config.STORAGE_PROFILE
+        self.auth_config: config.AuthProviderConfig | None = None
         self.db: Any | None = None
         self.sync: Any | None = None
         self.ports: CorePorts | None = None
@@ -70,6 +72,7 @@ class RuntimeContainer:
     async def startup(self, app: FastAPI) -> None:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
         validate_migration_governance_contract()
+        self.auth_config = config.resolve_auth_provider_config(self.profile.name)
         config.validate_runtime_environment_contract(self.profile.name, self.storage_profile)
         self.project_binding = self._resolve_startup_project_binding()
         startup_metadata = self._runtime_metadata()
@@ -184,6 +187,7 @@ class RuntimeContainer:
             self.db,
             runtime_profile=self.profile,
             storage_profile=self.storage_profile,
+            auth_config=self._resolved_auth_config(),
         )
 
     def _build_sync_engine(self) -> Any | None:
@@ -228,12 +232,17 @@ class RuntimeContainer:
 
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()
-        requested_project_id = str(metadata.headers.get("x-ccdash-project-id") or "").strip() or None
         principal = await ports.identity_provider.get_principal(
             metadata,
             runtime_profile=self.profile.name,
         )
-        workspace_scope, project_scope = ports.workspace_registry.resolve_scope(requested_project_id)
+        hosted_claim_scope = self._principal_has_hosted_claim_scope(principal)
+        claim_scope = select_claim_scope(principal, metadata) if hosted_claim_scope else None
+        requested_project_id = self._request_project_id(metadata, claim_scope)
+        workspace_scope, project_scope = ports.workspace_registry.resolve_scope(
+            requested_project_id,
+            allow_active_fallback=not hosted_claim_scope,
+        )
 
         request_id = self._header(metadata, "x-request-id") or self._header(metadata, "x-correlation-id") or str(uuid4())
         correlation_id = self._header(metadata, "x-correlation-id") or request_id
@@ -258,21 +267,32 @@ class RuntimeContainer:
         # Enterprise scope: present whenever the storage profile is enterprise.
         header_enterprise_id = self._header(metadata, "x-ccdash-enterprise-id")
         resolved_enterprise_id = header_enterprise_id or storage_enterprise_id
+        if claim_scope is not None:
+            resolved_enterprise_id = claim_scope.enterprise_id or header_enterprise_id or storage_enterprise_id
         if resolved_enterprise_id is not None:
             enterprise_scope = EnterpriseScope(
                 enterprise_id=resolved_enterprise_id,
-                display_name=self._header(metadata, "x-ccdash-enterprise-name") or "",
+                display_name=(
+                    (claim_scope.enterprise_name if claim_scope is not None else None)
+                    or self._header(metadata, "x-ccdash-enterprise-name")
+                    or ""
+                ),
             )
 
-        # Team scope: only when an explicit team header is provided within an
-        # enterprise boundary. Follow-on auth work will resolve this from
-        # token claims or membership lookups.
+        # Team scope requires an enterprise boundary and resolves from hosted
+        # claims before falling back to request-local headers.
         header_team_id = self._header(metadata, "x-ccdash-team-id")
+        if claim_scope is not None:
+            header_team_id = claim_scope.team_id or header_team_id
         if header_team_id is not None and resolved_enterprise_id is not None:
             team_scope = TeamScope(
                 team_id=header_team_id,
                 enterprise_id=resolved_enterprise_id,
-                display_name=self._header(metadata, "x-ccdash-team-name") or "",
+                display_name=(
+                    (claim_scope.team_name if claim_scope is not None else None)
+                    or self._header(metadata, "x-ccdash-team-name")
+                    or ""
+                ),
             )
 
         # --- Scope bindings chain: enterprise → team → workspace → project ---
@@ -282,6 +302,11 @@ class RuntimeContainer:
                 ScopeBinding(
                     scope_type="enterprise",
                     scope_id=enterprise_scope.enterprise_id,
+                    role=self._claim_scope_role(principal, "enterprise", enterprise_scope.enterprise_id),
+                    principal_subject=principal.subject,
+                    principal_stable_subject=principal.stable_subject,
+                    provider_id=principal.auth_provider_id,
+                    issuer=principal.issuer,
                 )
             )
         if team_scope is not None:
@@ -291,6 +316,11 @@ class RuntimeContainer:
                     scope_id=team_scope.team_id,
                     parent_scope_type="enterprise",
                     parent_scope_id=enterprise_scope.enterprise_id if enterprise_scope else None,
+                    role=self._claim_scope_role(principal, "team", team_scope.team_id),
+                    principal_subject=principal.subject,
+                    principal_stable_subject=principal.stable_subject,
+                    provider_id=principal.auth_provider_id,
+                    issuer=principal.issuer,
                 )
             )
         if workspace_scope is not None:
@@ -308,6 +338,11 @@ class RuntimeContainer:
                     scope_id=workspace_scope.workspace_id,
                     parent_scope_type=parent_type,
                     parent_scope_id=parent_id,
+                    role=self._claim_scope_role(principal, "workspace", workspace_scope.workspace_id),
+                    principal_subject=principal.subject,
+                    principal_stable_subject=principal.stable_subject,
+                    provider_id=principal.auth_provider_id,
+                    issuer=principal.issuer,
                 )
             )
         if project_scope is not None:
@@ -317,6 +352,11 @@ class RuntimeContainer:
                     scope_id=project_scope.project_id,
                     parent_scope_type="workspace" if workspace_scope is not None else None,
                     parent_scope_id=workspace_scope.workspace_id if workspace_scope is not None else None,
+                    role=self._claim_scope_role(principal, "project", project_scope.project_id),
+                    principal_subject=principal.subject,
+                    principal_stable_subject=principal.stable_subject,
+                    provider_id=principal.auth_provider_id,
+                    issuer=principal.issuer,
                 )
             )
 
@@ -357,6 +397,28 @@ class RuntimeContainer:
             tenancy=tenancy,
         )
 
+    def _principal_has_hosted_claim_scope(self, principal: Any) -> bool:
+        provider = getattr(principal, "provider", None)
+        return bool(getattr(provider, "hosted", False))
+
+    def _request_project_id(
+        self,
+        metadata: RequestMetadata,
+        claim_scope: ClaimScopeSelection | None,
+    ) -> str | None:
+        header_project_id = self._header(metadata, "x-ccdash-project-id")
+        if header_project_id:
+            return header_project_id
+        if claim_scope is None:
+            return None
+        return claim_scope.project_id or claim_scope.workspace_id
+
+    def _claim_scope_role(self, principal: Any, scope_type: str, scope_id: str) -> str | None:
+        for membership in getattr(principal, "memberships", ()):
+            if str(membership.scope_type) == scope_type and membership.effective_scope_id == scope_id:
+                return membership.role
+        return None
+
     def runtime_status(self) -> dict[str, Any]:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
         validate_migration_governance_contract()
@@ -368,6 +430,7 @@ class RuntimeContainer:
             object(),
             runtime_profile=self.profile,
             storage_profile=self.storage_profile,
+            auth_config=self._resolved_auth_config(),
         )
         audit_capability = (
             storage_probe.storage.audit_security().privileged_action_audit_records().describe_capability()
@@ -421,16 +484,15 @@ class RuntimeContainer:
         runtime_contract = get_runtime_storage_contract(self.profile)
         db_connected = bool(connection._connection)
         migration_status = str(status.get("migrationStatus", "unknown"))
-        auth_configured = bool(config.resolve_api_bearer_token())
-        auth_guardrail = StaticBearerTokenIdentityProvider.describe_runtime_guardrail(
-            runtime_profile=self.profile.name,
-            bearer_token_configured=auth_configured,
-        )
+        auth_state = self._auth_probe_state()
+        auth_configured = bool(auth_state["configured"])
+        auth_guardrail = auth_state["guardrail"]
         detail_warnings = list(auth_guardrail["warnings"])
         worker_binding_config = config.resolve_worker_binding_config()
         watcher_detail = self._probe_watcher_detail(status)
         watcher_state = str(watcher_detail["state"])
         startup_sync_state = str(status.get("startupSync", "idle"))
+        startup_sync_enabled = bool(status.get("startupSyncEnabled", getattr(config, "STARTUP_SYNC_ENABLED", True)))
         required_checks = set(runtime_contract.readiness_checks)
         worker_binding_required = self.profile.name in {"worker", "worker-watch"}
         watcher_runtime_required = "watcher_runtime" in required_checks
@@ -446,10 +508,14 @@ class RuntimeContainer:
                 watcher_check_status = "warn"
         startup_sync_check_status = "not_applicable"
         if self.profile.capabilities.sync:
-            if startup_sync_required and not sync_provisioned:
+            if startup_sync_required and not startup_sync_enabled:
+                startup_sync_check_status = "fail"
+            elif startup_sync_required and not sync_provisioned:
                 startup_sync_check_status = "fail"
             elif startup_sync_state == "running":
                 startup_sync_check_status = "warn"
+            elif startup_sync_state == "failed":
+                startup_sync_check_status = "fail" if startup_sync_required else "warn"
             else:
                 startup_sync_check_status = "pass"
 
@@ -528,21 +594,13 @@ class RuntimeContainer:
                     else "pass" if auth_configured else "fail"
                 ),
                 required="auth_contract" in required_checks,
-                summary=(
-                    "Request authentication is not required for this runtime."
-                    if not self.profile.capabilities.auth
-                    else "Hosted auth contract is configured."
-                    if auth_configured
-                    else "Hosted auth contract is missing its bearer token."
-                ),
-                detail=(
-                    "This runtime does not serve authenticated HTTP traffic."
-                    if not self.profile.capabilities.auth
-                    else f"{config.CCDASH_API_BEARER_TOKEN_ENV} must be set before the API runtime is ready."
-                ),
+                summary=str(auth_state["summary"]),
+                detail=str(auth_state["detail"]),
                 data={
                     "authEnabled": self.profile.capabilities.auth,
+                    "provider": auth_state["provider"],
                     "configured": auth_configured,
+                    "missingRequiredVariables": list(auth_state["missingRequiredVariables"]),
                 },
             ),
             self._probe_check(
@@ -608,14 +666,22 @@ class RuntimeContainer:
                 summary=(
                     "Startup sync is not expected for this runtime."
                     if not self.profile.capabilities.sync
+                    else "Startup sync is disabled for this runtime."
+                    if not startup_sync_enabled
                     else "Startup sync is not provisioned."
                     if startup_sync_required and not sync_provisioned
+                    else "Startup sync failed."
+                    if startup_sync_state == "failed"
                     else "Startup sync is still catching up."
                     if startup_sync_state == "running"
                     else "Startup sync is idle."
                 ),
                 detail=(
-                    "Watcher-capable worker readiness requires a provisioned startup sync engine."
+                    "Set CCDASH_STARTUP_SYNC_ENABLED=true for runtimes that own startup filesystem sync."
+                    if self.profile.capabilities.sync and not startup_sync_enabled
+                    else "Startup sync failed; inspect the worker probe job details and runtime logs."
+                    if startup_sync_state == "failed"
+                    else "Watcher-capable worker readiness requires a provisioned startup sync engine."
                     if startup_sync_required and not sync_provisioned
                     else "A running startup sync indicates the runtime is live but still reconciling background state."
                     if self.profile.capabilities.sync
@@ -623,6 +689,7 @@ class RuntimeContainer:
                 ),
                 data={
                     "syncEnabled": self.profile.capabilities.sync,
+                    "startupSyncEnabled": startup_sync_enabled,
                     "startupSync": startup_sync_state,
                     "syncProvisioned": sync_provisioned,
                 },
@@ -717,7 +784,9 @@ class RuntimeContainer:
                 },
                 "auth": {
                     "enabled": bool(status.get("authEnabled", False)),
+                    "provider": status.get("authProvider"),
                     "configured": auth_configured,
+                    "missingRequiredVariables": list(status.get("authProviderMissingRequiredVariables", ())),
                     "behavior": status.get("runtimeAuthBehavior"),
                     "guardrail": auth_guardrail,
                 },
@@ -888,7 +957,11 @@ class RuntimeContainer:
         observability.set_telemetry_export_disabled(disabled)
 
     def _runtime_metadata(self) -> dict[str, Any]:
-        metadata = build_runtime_metadata(self.profile, self.storage_profile)
+        metadata = build_runtime_metadata(
+            self.profile,
+            self.storage_profile,
+            auth_config=self._resolved_auth_config(),
+        )
         storage_contract = get_storage_capability_contract(self.storage_profile)
         environment_contract = config.resolve_runtime_environment_contract(
             self.profile.name,
@@ -926,6 +999,103 @@ class RuntimeContainer:
             }
         )
         return metadata
+
+    def _resolved_auth_config(self) -> config.AuthProviderConfig | None:
+        if not self.profile.capabilities.auth:
+            return None
+        if self.auth_config is None:
+            self.auth_config = config.resolve_auth_provider_config(self.profile.name)
+        return self.auth_config
+
+    def _auth_probe_state(self) -> dict[str, Any]:
+        if not self.profile.capabilities.auth:
+            return {
+                "provider": "local",
+                "configured": False,
+                "missingRequiredVariables": [],
+                "summary": "Request authentication is not required for this runtime.",
+                "detail": "This runtime does not serve authenticated HTTP traffic.",
+                "guardrail": self._auth_guardrail(
+                    provider="local",
+                    configured=False,
+                    missing_required_variables=(),
+                ),
+            }
+
+        auth_config = self._resolved_auth_config()
+        if auth_config is None:
+            raise RuntimeError("Auth-capable runtime is missing auth provider configuration.")
+
+        missing = tuple(auth_config.missing_required_variables)
+        configured = not bool(auth_config.invalid_provider or missing)
+        if configured:
+            summary = "Hosted auth contract is configured."
+            detail = f"Auth provider '{auth_config.provider}' has the required runtime configuration."
+        elif auth_config.provider == "static_bearer":
+            summary = "Hosted auth contract is missing its bearer token."
+            detail = f"{config.CCDASH_API_BEARER_TOKEN_ENV} must be set before the API runtime is ready."
+        elif auth_config.invalid_provider:
+            summary = "Hosted auth contract selects an unsupported provider."
+            detail = (
+                f"{config.CCDASH_AUTH_PROVIDER_ENV}='{auth_config.invalid_provider}' is not supported."
+            )
+        else:
+            summary = "Hosted auth contract is missing provider settings."
+            detail = "Missing required auth variables: " + ", ".join(missing)
+
+        return {
+            "provider": auth_config.provider,
+            "configured": configured,
+            "missingRequiredVariables": list(missing),
+            "summary": summary,
+            "detail": detail,
+            "guardrail": self._auth_guardrail(
+                provider=auth_config.provider,
+                configured=configured,
+                missing_required_variables=missing,
+            ),
+        }
+
+    def _auth_guardrail(
+        self,
+        *,
+        provider: str,
+        configured: bool,
+        missing_required_variables: tuple[str, ...],
+    ) -> dict[str, Any]:
+        if provider == "static_bearer":
+            return StaticBearerTokenIdentityProvider.describe_runtime_guardrail(
+                runtime_profile=self.profile.name,
+                bearer_token_configured=configured,
+            )
+
+        applies = self.profile.capabilities.auth
+        if provider == "local" and applies:
+            mode = "explicit_hosted_no_auth"
+            summary = (
+                "Hosted API auth is explicitly configured for local no-auth; use only behind a trusted boundary."
+            )
+        elif applies:
+            mode = "hosted_token_provider"
+            summary = f"Hosted API auth is delegated to the configured '{provider}' token provider."
+        else:
+            mode = "not_applicable"
+            summary = "This runtime does not serve authenticated HTTP traffic."
+
+        return {
+            "mode": mode,
+            "applies": applies,
+            "provider": provider,
+            "configured": configured if applies else False,
+            "missingRequiredVariables": list(missing_required_variables) if applies else [],
+            "bearerTokenConfigured": False,
+            "bearerProtectedPathPrefix": None,
+            "anonymousFallbackEnabled": provider == "local" and applies,
+            "anonymousFallbackReasonCode": None,
+            "summary": summary,
+            "warnings": [],
+            "warningCodes": [],
+        }
 
     def _resolve_startup_project_binding(self) -> ProjectBinding | None:
         if self.profile.name not in {"worker", "worker-watch"}:

@@ -11,17 +11,12 @@ import {
   GitHubWriteCapabilityResponse,
   ProjectResolvedPathsDTO,
 } from '../types';
+import { apiRequestJson } from './apiClient';
 
 const GITHUB_API_BASE = '/api/integrations/github';
 const PROJECT_API_BASE = '/api/projects';
 
-async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, init);
-  if (!res.ok) {
-    throw new Error(`Request failed (${res.status})`);
-  }
-  return res.json();
-}
+const requestJson = apiRequestJson;
 
 export const getGitHubSettings = (): Promise<GitHubIntegrationSettingsResponse> => (
   requestJson<GitHubIntegrationSettingsResponse>(`${GITHUB_API_BASE}/settings`)

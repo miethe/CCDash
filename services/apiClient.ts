@@ -2,6 +2,11 @@ import type {
   AgentSession,
   AlertConfig,
   Feature,
+  AuthErrorClassification,
+  AuthLoginStartResponse,
+  AuthLogoutResponse,
+  AuthProviderMetadataResponse,
+  AuthSessionResponse,
   Notification,
   PlanDocument,
   Project,
@@ -86,6 +91,10 @@ export interface RuntimeProbeContractResponse {
 }
 
 export interface ApiClient {
+  getAuthMetadata(): Promise<AuthProviderMetadataResponse>;
+  getAuthSession(): Promise<AuthSessionResponse>;
+  login(options?: AuthLoginOptions): Promise<AuthLoginStartResponse>;
+  logout(): Promise<AuthLogoutResponse>;
   getHealth(): Promise<RuntimeHealthResponse>;
   getSessions(filters: SessionFilters, options?: { offset?: number; limit?: number }): Promise<PaginatedResponse<AgentSession>>;
   getSession(sessionId: string): Promise<AgentSession>;
@@ -96,6 +105,8 @@ export interface ApiClient {
   getFeatures(): Promise<PaginatedResponse<Feature> | Feature[]>;
   getProjects(): Promise<Project[]>;
   getActiveProject(): Promise<Project>;
+  getProjectScope(): string | null;
+  setProjectScope(projectId: string | null | undefined): void;
   addProject(project: Project): Promise<void>;
   updateProject(projectId: string, project: Project): Promise<void>;
   switchProject(projectId: string): Promise<void>;
@@ -107,14 +118,147 @@ export interface ApiClient {
   triggerTelemetryPushNow(): Promise<TelemetryPushNowResponse>;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = buildApiUrl(path);
-  const res = await fetch(url, init);
-  if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText} for ${url}`);
-  }
-  return res.json() as Promise<T>;
+export interface AuthLoginOptions {
+  redirectTo?: string;
+  redirect?: boolean;
 }
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly url: string;
+  readonly detail: unknown;
+  readonly authClassification: AuthErrorClassification;
+
+  constructor({ status, statusText, url, detail }: { status: number; statusText: string; url: string; detail: unknown }) {
+    super(`API error: ${status} ${statusText} for ${url}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.url = url;
+    this.detail = detail;
+    this.authClassification = classifyAuthErrorStatus(status);
+  }
+}
+
+export function classifyAuthErrorStatus(status: number): AuthErrorClassification {
+  if (status === 401) return 'unauthenticated';
+  if (status === 403) return 'unauthorized';
+  return null;
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
+
+export async function readApiErrorDetail(res: Response): Promise<unknown> {
+  const text = await res.text().catch(() => '');
+  if (!text) {
+    return res.statusText;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === 'object' && 'detail' in parsed) {
+      return (parsed as { detail: unknown }).detail;
+    }
+    return parsed;
+  } catch {
+    return text;
+  }
+}
+
+const normalizeApiPath = (path: string): string => {
+  if (path === '/api') return '';
+  if (path.startsWith('/api/')) return path.slice('/api'.length);
+  return path;
+};
+
+const PROJECT_SCOPE_HEADER = 'X-CCDash-Project-Id';
+const PROJECT_SCOPE_STORAGE_KEY = 'ccdash:selected-project-id:v2';
+const LEGACY_PROJECT_SCOPE_STORAGE_KEYS = ['ccdash:selected-project-id:v1'];
+
+let selectedProjectId: string | null = readStoredProjectScope();
+
+function normalizeProjectScope(projectId: string | null | undefined): string | null {
+  const normalized = String(projectId ?? '').trim();
+  return normalized || null;
+}
+
+function readStoredProjectScope(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    LEGACY_PROJECT_SCOPE_STORAGE_KEYS.forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+    return normalizeProjectScope(window.localStorage.getItem(PROJECT_SCOPE_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function persistProjectScope(projectId: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    LEGACY_PROJECT_SCOPE_STORAGE_KEYS.forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+    if (projectId) {
+      window.localStorage.setItem(PROJECT_SCOPE_STORAGE_KEY, projectId);
+    } else {
+      window.localStorage.removeItem(PROJECT_SCOPE_STORAGE_KEY);
+    }
+  } catch {
+    // Local storage is a convenience cache; request headers remain authoritative.
+  }
+}
+
+export function getApiProjectScope(): string | null {
+  return selectedProjectId;
+}
+
+export function setApiProjectScope(projectId: string | null | undefined): void {
+  selectedProjectId = normalizeProjectScope(projectId);
+  persistProjectScope(selectedProjectId);
+}
+
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const url = buildApiUrl(normalizeApiPath(path));
+  const headers = new Headers(init?.headers);
+  if (selectedProjectId && !headers.has(PROJECT_SCOPE_HEADER)) {
+    headers.set(PROJECT_SCOPE_HEADER, selectedProjectId);
+  }
+  const requestInit: RequestInit = {
+    ...init,
+    headers,
+    credentials: init?.credentials ?? 'same-origin',
+  };
+  return fetch(url, requestInit);
+}
+
+export async function createApiErrorFromResponse(res: Response, url: string): Promise<ApiError> {
+  return new ApiError({
+    status: res.status,
+    statusText: res.statusText,
+    url,
+    detail: await readApiErrorDetail(res),
+  });
+}
+
+export async function apiRequestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const url = buildApiUrl(normalizeApiPath(path));
+  const res = await apiFetch(path, init);
+  if (!res.ok) {
+    throw await createApiErrorFromResponse(res, url);
+  }
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  const text = await res.text();
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
+}
+
+const requestJson = apiRequestJson;
 
 function appendSessionFilters(params: URLSearchParams, filters: SessionFilters): void {
   const scalarKeys: Array<keyof SessionFilters> = [
@@ -152,6 +296,30 @@ function appendSessionFilters(params: URLSearchParams, filters: SessionFilters):
 
 export function createApiClient(): ApiClient {
   return {
+    async getAuthMetadata() {
+      return requestJson<AuthProviderMetadataResponse>('/auth/metadata');
+    },
+
+    async getAuthSession() {
+      return requestJson<AuthSessionResponse>('/auth/session');
+    },
+
+    async login(options = {}) {
+      const params = new URLSearchParams({
+        redirect: String(options.redirect ?? false),
+      });
+      if (options.redirectTo) {
+        params.set('redirectTo', options.redirectTo);
+      }
+      return requestJson<AuthLoginStartResponse>(`/auth/login/start?${params.toString()}`);
+    },
+
+    async logout() {
+      return requestJson<AuthLogoutResponse>('/auth/logout', {
+        method: 'POST',
+      });
+    },
+
     async getHealth() {
       return requestJson<RuntimeHealthResponse>('/health');
     },
@@ -199,6 +367,14 @@ export function createApiClient(): ApiClient {
       return requestJson<Project>('/projects/active');
     },
 
+    getProjectScope() {
+      return getApiProjectScope();
+    },
+
+    setProjectScope(projectId) {
+      setApiProjectScope(projectId);
+    },
+
     async addProject(project) {
       await requestJson<Project>('/projects', {
         method: 'POST',
@@ -216,9 +392,22 @@ export function createApiClient(): ApiClient {
     },
 
     async switchProject(projectId) {
-      await requestJson<Project>(`/projects/active/${projectId}`, {
-        method: 'POST',
-      });
+      const previousProjectId = getApiProjectScope();
+      setApiProjectScope(projectId);
+      try {
+        await requestJson<Project>(`/projects/active/${projectId}`, {
+          method: 'POST',
+        });
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          return;
+        }
+        if (error instanceof ApiError && error.status >= 500 && String(error.detail).includes('Read-only file system')) {
+          return;
+        }
+        setApiProjectScope(previousProjectId);
+        throw error;
+      }
     },
 
     // Encode featureId to handle RFC 3986 § 2.2 reserved characters (e.g. #, ?, &, +, space) in path segments.

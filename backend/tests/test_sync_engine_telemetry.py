@@ -202,6 +202,27 @@ class SyncEngineTelemetryTests(unittest.TestCase):
         self.assertEqual(message["token_input"], 2)
         self.assertEqual(message["token_output"], 3)
 
+    def test_build_session_telemetry_events_disambiguates_duplicate_source_keys(self) -> None:
+        session_payload = {"id": "S-dup", "startedAt": "2026-02-22T11:00:00Z"}
+        logs = [
+            {"log_index": 3, "type": "message", "timestamp": "2026-02-22T11:00:01Z"},
+            {"log_index": 3, "type": "message", "timestamp": "2026-02-22T11:00:02Z"},
+        ]
+
+        events = _build_session_telemetry_events(
+            "project-2",
+            session_payload,
+            logs,
+            tools=[],
+            files=[],
+            artifacts=[],
+            source="backfill",
+        )
+
+        message_keys = [event["source_key"] for event in events if event["event_type"] == "log.message"]
+        self.assertEqual(message_keys, ["log:S-dup:3", "log:S-dup:3:2"])
+        self.assertEqual(len(message_keys), len(set(message_keys)))
+
     def test_build_session_commit_correlations_assigns_windows_to_commits(self) -> None:
         session_payload = {
             "id": "S-500",

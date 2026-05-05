@@ -126,7 +126,7 @@ describe('getProjectPlanningSummary', () => {
 
     await getProjectPlanningSummary();
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/agent/planning/summary');
+    expect(fetchMock).toHaveBeenCalledWith('/api/agent/planning/summary', { credentials: 'same-origin' });
   });
 
   it('appends project_id query param when provided', async () => {
@@ -152,7 +152,10 @@ describe('getProjectPlanningSummary', () => {
 
     const result = await getProjectPlanningSummary('my-project');
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/agent/planning/summary?project_id=my-project');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/agent/planning/summary?project_id=my-project',
+      { credentials: 'same-origin' },
+    );
     // Verify camelCase adaptation
     expect(result.projectId).toBe('my-project');
     expect(result.projectName).toBe('My Project');
@@ -316,7 +319,7 @@ describe('getProjectPlanningGraph', () => {
 
     await getProjectPlanningGraph();
 
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/agent/planning/graph');
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/agent/planning/graph', { credentials: 'same-origin' });
   });
 
   it('wires feature_id and depth query params', async () => {
@@ -326,6 +329,7 @@ describe('getProjectPlanningGraph', () => {
 
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       '/api/agent/planning/graph?feature_id=feat-1&depth=2',
+      { credentials: 'same-origin' },
     );
     expect(result.featureId).toBe('feat-1');
   });
@@ -366,7 +370,7 @@ describe('getFeaturePlanningContext', () => {
 
     await getFeaturePlanningContext('feat-1');
 
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/agent/planning/features/feat-1');
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/agent/planning/features/feat-1', { credentials: 'same-origin' });
   });
 
   it('encodes special characters in featureId', async () => {
@@ -374,7 +378,10 @@ describe('getFeaturePlanningContext', () => {
 
     await getFeaturePlanningContext('feat/special');
 
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/agent/planning/features/feat%2Fspecial');
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      '/api/agent/planning/features/feat%2Fspecial',
+      { credentials: 'same-origin' },
+    );
   });
 
   it('adapts snake_case fields to camelCase', async () => {
@@ -430,6 +437,7 @@ describe('getFeaturePlanningContext', () => {
 
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       '/api/agent/planning/features/feat-1?project_id=proj-42',
+      { credentials: 'same-origin' },
     );
   });
 
@@ -485,6 +493,7 @@ describe('getPhaseOperations', () => {
 
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       '/api/agent/planning/features/feat-1/phases/2',
+      { credentials: 'same-origin' },
     );
   });
 
@@ -526,6 +535,7 @@ describe('getPhaseOperations', () => {
 
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       '/api/agent/planning/features/feat-1/phases/2?project_id=proj-x',
+      { credentials: 'same-origin' },
     );
   });
 });

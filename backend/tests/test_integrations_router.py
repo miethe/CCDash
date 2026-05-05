@@ -1,11 +1,25 @@
 import types
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
+from fastapi import HTTPException
 
+from backend.application.context import (
+    AuthProviderMetadata,
+    Principal,
+    PrincipalSubject,
+    ProjectScope,
+    RequestContext,
+    ScopeBinding,
+    TenancyContext,
+    TraceContext,
+    WorkspaceScope,
+)
+from backend.application.ports import AuthorizationDecision
 from backend.db.factory import get_agentic_intelligence_repository
 from backend.db.sqlite_migrations import run_migrations
 from backend.models import (
@@ -18,8 +32,55 @@ from backend.models import (
     SkillMeatSyncRequest,
 )
 from backend.routers import integrations as integrations_router
+from backend.runtime_ports import build_core_ports
 from backend.services.integrations.github_settings_store import GitHubSettingsStore
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
+
+
+class _DenyAuthorizationPolicy:
+    def __init__(self, denied_action: str) -> None:
+        self.denied_action = denied_action
+        self.calls: list[dict[str, str | None]] = []
+
+    async def authorize(self, context, *, action, resource=None):
+        _ = context
+        self.calls.append({"action": action, "resource": resource})
+        if action == self.denied_action:
+            return AuthorizationDecision(
+                allowed=False,
+                code="permission_not_granted",
+                reason=f"{action} denied in test",
+            )
+        return AuthorizationDecision(allowed=True, code="permission_allowed")
+
+
+class _TestWorkspaceRegistry:
+    def __init__(self, active_project):
+        self.projects = {active_project.id: active_project}
+        self.active_project_id = active_project.id
+
+    def get_project(self, project_id: str):
+        return self.projects.get(project_id)
+
+    def get_active_project(self):
+        return self.projects.get(self.active_project_id)
+
+    def resolve_scope(self, project_id: str | None = None):
+        project = self.get_project(project_id) if project_id else self.get_active_project()
+        if project is None:
+            return None, None
+        root_path = Path(getattr(project, "path", ".")).resolve(strict=False)
+        return (
+            WorkspaceScope(workspace_id="test-workspace", root_path=root_path),
+            ProjectScope(
+                project_id=str(project.id),
+                project_name=str(getattr(project, "name", project.id)),
+                root_path=root_path,
+                sessions_dir=root_path / ".claude" / "sessions",
+                docs_dir=root_path / "docs",
+                progress_dir=root_path / ".claude" / "progress",
+            ),
+        )
 
 
 class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
@@ -29,6 +90,8 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         await run_migrations(self.db)
         self.project = types.SimpleNamespace(
             id="project-1",
+            name="Project One",
+            path=str(Path.cwd()),
             skillMeat=SkillMeatProjectConfig(
                 enabled=True,
                 baseUrl="http://skillmeat.local/api/v1",
@@ -40,22 +103,32 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                 requestTimeoutSeconds=2.0,
             ),
         )
+        self.workspace_registry = _TestWorkspaceRegistry(self.project)
+        self.core_ports = build_core_ports(self.db, workspace_registry=self.workspace_registry)
+        self.request_context = RequestContext(
+            principal=Principal(subject="test-user", display_name="Test User", auth_mode="local"),
+            workspace=WorkspaceScope(workspace_id="test-workspace", root_path=Path.cwd()),
+            project=ProjectScope(
+                project_id=self.project.id,
+                project_name=self.project.name,
+                root_path=Path.cwd(),
+                sessions_dir=Path.cwd() / ".claude" / "sessions",
+                docs_dir=Path.cwd() / "docs",
+                progress_dir=Path.cwd() / ".claude" / "progress",
+            ),
+            runtime_profile="local",
+            trace=TraceContext(request_id="test-request", correlation_id="test-request", path="", method="TEST"),
+            tenancy=TenancyContext(workspace_id="test-workspace", project_id=self.project.id),
+        )
         self.project_patch = patch.object(
             integrations_router.project_manager,
             "get_active_project",
             return_value=self.project,
         )
-        self.conn_patch = patch.object(
-            integrations_router.connection,
-            "get_connection",
-            new=AsyncMock(return_value=self.db),
-        )
         self.project_patch.start()
-        self.conn_patch.start()
 
     async def asyncTearDown(self) -> None:
         self.project_patch.stop()
-        self.conn_patch.stop()
         await self.db.close()
 
     async def test_sync_and_list_definitions(self) -> None:
@@ -134,10 +207,26 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
             return []
 
         with patch.object(SkillMeatClient, "_request_json", side_effect=fake_request):
-            payload = await integrations_router.sync_skillmeat(SkillMeatSyncRequest())
+            payload = await integrations_router.sync_skillmeat(
+                SkillMeatSyncRequest(),
+                request_context=self.request_context,
+                core_ports=self.core_ports,
+            )
 
-        definitions = await integrations_router.list_skillmeat_definitions(definition_type=None, limit=500, offset=0)
-        workflow_definitions = await integrations_router.list_skillmeat_definitions(definition_type="workflow", limit=500, offset=0)
+        definitions = await integrations_router.list_skillmeat_definitions(
+            definition_type=None,
+            limit=500,
+            offset=0,
+            request_context=self.request_context,
+            core_ports=self.core_ports,
+        )
+        workflow_definitions = await integrations_router.list_skillmeat_definitions(
+            definition_type="workflow",
+            limit=500,
+            offset=0,
+            request_context=self.request_context,
+            core_ports=self.core_ports,
+        )
 
         self.assertEqual(payload.totalDefinitions, 5)
         self.assertEqual(payload.countsByType["artifact"], 1)
@@ -176,6 +265,25 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bundle.resolutionMetadata["bundleSummary"]["artifactRefs"], ["skill:symbols"])
         self.assertEqual(bundle.sourceUrl, "http://skillmeat-web.local:3000/collection?collection=default")
 
+    async def test_sync_denies_without_skillmeat_sync_permission(self) -> None:
+        policy = _DenyAuthorizationPolicy("integration.skillmeat:sync")
+        denied_ports = replace(self.core_ports, authorization_policy=policy)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await integrations_router.sync_skillmeat(
+                SkillMeatSyncRequest(),
+                request_context=self.request_context,
+                core_ports=denied_ports,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail["action"], "integration.skillmeat:sync")
+        self.assertEqual(ctx.exception.detail["resource"], "project:project-1")
+        self.assertEqual(
+            policy.calls,
+            [{"action": "integration.skillmeat:sync", "resource": "project:project-1"}],
+        )
+
     async def test_list_definitions_hides_links_when_web_app_url_is_unset(self) -> None:
         self.project.skillMeat.webBaseUrl = ""
         repo = get_agentic_intelligence_repository(self.db)
@@ -206,7 +314,13 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        definitions = await integrations_router.list_skillmeat_definitions(definition_type=None, limit=500, offset=0)
+        definitions = await integrations_router.list_skillmeat_definitions(
+            definition_type=None,
+            limit=500,
+            offset=0,
+            request_context=self.request_context,
+            core_ports=self.core_ports,
+        )
         workflow = next(item for item in definitions if item.definitionType == "workflow")
 
         self.assertEqual(workflow.sourceUrl, "")
@@ -224,7 +338,9 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                     aaaEnabled=True,
                     apiKey="secret-token",
                     requestTimeoutSeconds=2.0,
-                )
+                ),
+                request_context=self.request_context,
+                core_ports=self.core_ports,
             )
 
         self.assertEqual(payload.baseUrl.state, "success")
@@ -245,15 +361,72 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                     baseUrl="http://skillmeat.local",
                     projectId="missing-project",
                     requestTimeoutSeconds=2.0,
-                )
+                ),
+                request_context=self.request_context,
+                core_ports=self.core_ports,
             )
 
         self.assertEqual(payload.baseUrl.state, "success")
         self.assertEqual(payload.projectMapping.state, "warning")
 
+    async def test_validate_config_accepts_hosted_trust_metadata_without_api_key(self) -> None:
+        hosted_context = RequestContext(
+            principal=Principal(
+                subject="oidc:user-1",
+                display_name="Hosted User",
+                auth_mode="oidc",
+                provider=AuthProviderMetadata(
+                    provider_id="oidc",
+                    issuer="https://issuer.example.test",
+                    audience="ccdash-api",
+                    tenant_id="ent-1",
+                    hosted=True,
+                ),
+                normalized_subject=PrincipalSubject(
+                    subject="user-1",
+                    provider_id="oidc",
+                    issuer="https://issuer.example.test",
+                ),
+                scopes=("integration.skillmeat:sync",),
+            ),
+            workspace=self.request_context.workspace,
+            project=self.request_context.project,
+            runtime_profile="api",
+            trace=TraceContext(request_id="req-hosted"),
+            scope_bindings=(
+                ScopeBinding(scope_type="enterprise", scope_id="ent-1", role="EA"),
+                ScopeBinding(scope_type="project", scope_id="project-1", role="PM"),
+            ),
+            tenancy=TenancyContext(
+                enterprise_id="ent-1",
+                workspace_id="test-workspace",
+                project_id="project-1",
+            ),
+        )
+        with (
+            patch.object(SkillMeatClient, "validate_base_url", AsyncMock(return_value={"items": []})),
+            patch.object(SkillMeatClient, "get_project", AsyncMock(return_value={"id": "sm-project"})),
+        ):
+            payload = await integrations_router.validate_skillmeat_config(
+                SkillMeatConfigValidationRequest(
+                    baseUrl="http://skillmeat.local",
+                    projectId="sm-project",
+                    aaaEnabled=True,
+                    apiKey="",
+                    requestTimeoutSeconds=2.0,
+                ),
+                request_context=hosted_context,
+                core_ports=self.core_ports,
+            )
+
+        self.assertEqual(payload.auth.state, "success")
+        self.assertIn("Hosted trust metadata", payload.auth.message)
+
     async def test_refresh_runs_combined_pipeline_for_requested_project(self) -> None:
         other_project = types.SimpleNamespace(
             id="project-2",
+            name="Project Two",
+            path=str(Path.cwd()),
             skillMeat=SkillMeatProjectConfig(
                 enabled=True,
                 baseUrl="http://skillmeat-2.local",
@@ -264,6 +437,7 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                 requestTimeoutSeconds=2.0,
             ),
         )
+        self.workspace_registry.projects[other_project.id] = other_project
         payload = {
             "sync": {
                 "projectId": "project-2",
@@ -300,10 +474,16 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(integrations_router.project_manager, "get_project", return_value=other_project),
-            patch.object(integrations_router, "refresh_skillmeat_cache", AsyncMock(return_value=payload)) as refresh_mock,
+            patch.object(
+                integrations_router.skillmeat_application_service,
+                "refresh",
+                AsyncMock(return_value=payload),
+            ) as refresh_mock,
         ):
             response = await integrations_router.refresh_skillmeat(
-                SkillMeatSyncRequest(projectId="project-2")
+                SkillMeatSyncRequest(projectId="project-2"),
+                request_context=self.request_context,
+                core_ports=self.core_ports,
             )
 
         refresh_mock.assert_awaited_once()
@@ -313,7 +493,12 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.backfill.observationsStored, 4)
 
     async def test_list_observations_returns_empty_without_backfill(self) -> None:
-        observations = await integrations_router.list_skillmeat_observations(limit=200, offset=0)
+        observations = await integrations_router.list_skillmeat_observations(
+            limit=200,
+            offset=0,
+            request_context=self.request_context,
+            core_ports=self.core_ports,
+        )
 
         self.assertEqual(observations, [])
 
@@ -324,7 +509,11 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
             side_effect=integrations_router.HTTPException(status_code=503, detail="disabled"),
         ):
             with self.assertRaises(integrations_router.HTTPException) as ctx:
-                await integrations_router.sync_skillmeat(SkillMeatSyncRequest())
+                await integrations_router.sync_skillmeat(
+                    SkillMeatSyncRequest(),
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
+                )
 
         self.assertEqual(ctx.exception.status_code, 503)
 
@@ -340,9 +529,14 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                         token="ghp_secret_123456",
                         cacheRoot=str(Path(tmpdir) / "cache"),
                         writeEnabled=True,
-                    )
+                    ),
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
                 )
-                fetched = await integrations_router.get_github_settings()
+                fetched = await integrations_router.get_github_settings(
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
+                )
 
         self.assertTrue(payload.tokenConfigured)
         self.assertNotIn("secret", payload.maskedToken.lower())
@@ -386,7 +580,9 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                                 },
                             }
                         )
-                    )
+                    ),
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
                 )
 
         self.assertEqual(payload.status.state, "success")
@@ -422,7 +618,9 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                                 },
                             }
                         )
-                    )
+                    ),
+                    request_context=self.request_context,
+                    core_ports=self.core_ports,
                 )
 
         self.assertTrue(payload.canWrite)

@@ -70,8 +70,10 @@ class StaticBearerTokenIdentityProvider:
             if workspace_id
             else ()
         )
+        bearer_required = self._requires_bearer_auth(metadata, runtime_profile=runtime_profile)
+        presented_token = self._extract_bearer_token(metadata)
 
-        if not self._requires_bearer_auth(metadata, runtime_profile=runtime_profile):
+        if not bearer_required and presented_token is None:
             return Principal(
                 subject=f"{runtime_profile}:anonymous-api-client",
                 display_name="Anonymous API Client",
@@ -88,11 +90,15 @@ class StaticBearerTokenIdentityProvider:
                 f"API bearer auth is enabled but {self._token_env_var} is not configured.",
             )
 
-        presented_token = self._extract_bearer_token(metadata)
         if presented_token is None:
             raise RequestAuthenticationError(401, "Bearer token required for /api/v1 requests.")
         if presented_token != expected_token:
-            raise RequestAuthenticationError(403, "Bearer token rejected for /api/v1 request.")
+            detail = (
+                "Bearer token rejected for /api/v1 request."
+                if bearer_required
+                else "Bearer token rejected for API request."
+            )
+            raise RequestAuthenticationError(403, detail)
 
         return Principal(
             subject="api:bearer-client",

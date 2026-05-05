@@ -33,7 +33,7 @@ from backend.models import (
     WorktreeContextListResponse,
     WorktreeContextUpdateRequest,
 )
-from backend.request_scope import get_core_ports, get_request_context
+from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.launch_providers import default_provider_catalog
 
 
@@ -113,12 +113,32 @@ async def _resolve_request(
     return await resolve_application_request(request_context, core_ports, core_ports.storage.db)
 
 
+def _project_resource(request_context: RequestContext) -> str | None:
+    if request_context.project is None:
+        return None
+    return f"project:{request_context.project.project_id}"
+
+
+async def _require_execution_authorization(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    action: str,
+) -> None:
+    await require_http_authorization(
+        request_context,
+        core_ports,
+        action=action,
+        resource=_project_resource(request_context),
+    )
+
+
 @execution_router.post("/policy-check", response_model=ExecutionPolicyResultDTO)
 async def check_execution_policy(
     req: ExecutionPolicyCheckRequest,
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ExecutionPolicyResultDTO:
+    await _require_execution_authorization(request_context, core_ports, "execution.run:create")
     app_request = await _resolve_request(request_context, core_ports)
     policy = await execution_application_service.check_policy(app_request.context, app_request.ports, req)
     return _to_policy_dto(policy)
@@ -130,6 +150,7 @@ async def create_execution_run(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ExecutionRunDTO:
+    await _require_execution_authorization(request_context, core_ports, "execution.run:create")
     app_request = await _resolve_request(request_context, core_ports)
     created = await execution_application_service.create_run(app_request.context, app_request.ports, req)
     return _to_run_dto(created)
@@ -143,6 +164,7 @@ async def list_execution_runs(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> list[ExecutionRunDTO]:
+    await _require_execution_authorization(request_context, core_ports, "execution:read")
     app_request = await _resolve_request(request_context, core_ports)
     rows = await execution_application_service.list_runs(
         app_request.context,
@@ -160,6 +182,7 @@ async def get_execution_run(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ExecutionRunDTO:
+    await _require_execution_authorization(request_context, core_ports, "execution:read")
     app_request = await _resolve_request(request_context, core_ports)
     row = await execution_application_service.get_run(app_request.context, app_request.ports, run_id)
     return _to_run_dto(row)
@@ -173,6 +196,7 @@ async def list_execution_run_events(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ExecutionRunEventPageDTO:
+    await _require_execution_authorization(request_context, core_ports, "execution:read")
     app_request = await _resolve_request(request_context, core_ports)
     rows = await execution_application_service.list_events(
         app_request.context,
@@ -194,6 +218,7 @@ async def approve_execution_run(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ExecutionRunDTO:
+    await _require_execution_authorization(request_context, core_ports, "execution.run:approve")
     app_request = await _resolve_request(request_context, core_ports)
     row = await execution_application_service.approve_run(app_request.context, app_request.ports, run_id, req)
     return _to_run_dto(row)
@@ -206,6 +231,7 @@ async def cancel_execution_run(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ExecutionRunDTO:
+    await _require_execution_authorization(request_context, core_ports, "execution.run:cancel")
     app_request = await _resolve_request(request_context, core_ports)
     row = await execution_application_service.cancel_run(app_request.context, app_request.ports, run_id, req)
     return _to_run_dto(row)
@@ -218,6 +244,7 @@ async def retry_execution_run(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ExecutionRunDTO:
+    await _require_execution_authorization(request_context, core_ports, "execution.run:retry")
     app_request = await _resolve_request(request_context, core_ports)
     row = await execution_application_service.retry_run(app_request.context, app_request.ports, run_id, req)
     return _to_run_dto(row)
@@ -275,6 +302,7 @@ async def prepare_launch(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> LaunchPreparationDTO:
+    await _require_execution_authorization(request_context, core_ports, "execution.launch:prepare")
     with otel.start_span(
         "launch.prepare",
         {
@@ -298,6 +326,7 @@ async def start_launch(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> LaunchStartResponse:
+    await _require_execution_authorization(request_context, core_ports, "execution.launch:start")
     with otel.start_span(
         "launch.start",
         {
@@ -326,6 +355,7 @@ async def list_worktree_contexts(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> WorktreeContextListResponse:
+    await _require_execution_authorization(request_context, core_ports, "execution:read")
     app_request = await _resolve_request(request_context, core_ports)
     project = require_project(app_request.context, app_request.ports)
     repo = app_request.ports.storage.worktree_contexts()
@@ -359,6 +389,7 @@ async def create_worktree_context(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> WorktreeContextDTO:
+    await _require_execution_authorization(request_context, core_ports, "worktree_context:create")
     app_request = await _resolve_request(request_context, core_ports)
     project = require_project(app_request.context, app_request.ports)
     repo = app_request.ports.storage.worktree_contexts()
@@ -392,6 +423,7 @@ async def update_worktree_context(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> WorktreeContextDTO:
+    await _require_execution_authorization(request_context, core_ports, "worktree_context:update")
     app_request = await _resolve_request(request_context, core_ports)
     project = require_project(app_request.context, app_request.ports)
     repo = app_request.ports.storage.worktree_contexts()

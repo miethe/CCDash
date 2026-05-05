@@ -88,8 +88,19 @@ class _FakeIdentityProvider:
 
 
 class _FakeAuthorizationPolicy:
+    def __init__(self, denied_action: str | None = None) -> None:
+        self.denied_action = denied_action
+        self.calls: list[dict[str, str | None]] = []
+
     async def authorize(self, context, *, action, resource=None):
-        _ = context, action, resource
+        _ = context
+        self.calls.append({"action": action, "resource": resource})
+        if action == self.denied_action:
+            return AuthorizationDecision(
+                allowed=False,
+                code="permission_not_granted",
+                reason=f"{action} denied in test",
+            )
         return AuthorizationDecision(allowed=True)
 
 
@@ -184,11 +195,12 @@ def _core_ports(
     link_repo=None,
     feature_repo=None,
     alert_repo=None,
+    authorization_policy=None,
 ) -> CorePorts:
     resolved_project = project or types.SimpleNamespace(id="project-1", name="Project 1")
     return CorePorts(
         identity_provider=_FakeIdentityProvider(),
-        authorization_policy=_FakeAuthorizationPolicy(),
+        authorization_policy=authorization_policy or _FakeAuthorizationPolicy(),
         workspace_registry=_FakeWorkspaceRegistry(resolved_project),
         storage=_FakeStorage(
             db=db,
@@ -205,6 +217,30 @@ def _core_ports(
 
 
 class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_create_alert_denies_without_alert_create_permission(self) -> None:
+        policy = _FakeAuthorizationPolicy(denied_action="analytics.alert:create")
+        ports = _core_ports(alert_repo=_FakeAlertRepo(), authorization_policy=policy)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await analytics_router.create_alert(
+                analytics_router.AlertConfigCreate(
+                    name="Denied",
+                    metric="session_cost",
+                    operator=">",
+                    threshold=1.0,
+                ),
+                request_context=_request_context(),
+                core_ports=ports,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail["action"], "analytics.alert:create")
+        self.assertEqual(ctx.exception.detail["resource"], "project:project-1")
+        self.assertEqual(
+            policy.calls,
+            [{"action": "analytics.alert:create", "resource": "project:project-1"}],
+        )
+
     async def test_session_intelligence_search_endpoint_returns_typed_payload(self) -> None:
         project = types.SimpleNamespace(id="project-1")
         with patch.object(

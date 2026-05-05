@@ -33,7 +33,7 @@ describe('skillmeat memory draft helpers', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/integrations/skillmeat/memory-drafts?projectId=project-1&offset=0&limit=8&sessionId=session-1&status=approved',
-      undefined,
+      { credentials: 'same-origin' },
     );
   });
 
@@ -138,6 +138,7 @@ describe('skillmeat memory draft helpers', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: 'session-1', limit: 5, actor: 'ops-panel' }),
+        credentials: 'same-origin',
       }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -147,6 +148,7 @@ describe('skillmeat memory draft helpers', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision: 'approved', actor: 'ops-panel', notes: 'Looks good' }),
+        credentials: 'same-origin',
       }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -156,6 +158,7 @@ describe('skillmeat memory draft helpers', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actor: 'ops-panel', notes: 'Publish it' }),
+        credentials: 'same-origin',
       }),
     );
   });

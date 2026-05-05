@@ -8,9 +8,9 @@ from backend import config
 from backend.adapters.live_updates.sse_stream import iter_live_sse_stream
 from backend.application.context import RequestContext
 from backend.application.live_updates import LiveEventBroker, LiveReplayRequest
-from backend.application.live_updates.topics import normalize_topics, parse_cursor_map, topic_authorization
+from backend.application.live_updates.topics import normalize_topics, parse_cursor_map
 from backend.application.ports import CorePorts
-from backend.request_scope import get_core_ports, get_request_context
+from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 
 
 live_router = APIRouter(prefix="/api/live", tags=["live"])
@@ -29,16 +29,35 @@ async def _authorize_topics(
     core_ports: CorePorts,
     topics: tuple[str, ...],
 ) -> None:
-    project_id = request_context.project.project_id if request_context.project is not None else None
+    resource = f"project:{request_context.project.project_id}" if request_context.project is not None else None
     for topic in topics:
-        authorization = topic_authorization(topic, project_id=project_id)
-        decision = await core_ports.authorization_policy.authorize(
+        action = _subscription_action_for_topic(topic)
+        await require_http_authorization(
             request_context,
-            action=authorization.action,
-            resource=authorization.resource,
+            core_ports,
+            action=action,
+            resource=resource,
         )
-        if not decision.allowed:
-            raise HTTPException(status_code=403, detail=f"Live subscription denied for topic '{topic}'")
+        if topic.startswith("execution."):
+            await require_http_authorization(
+                request_context,
+                core_ports,
+                action="execution:read",
+                resource=resource,
+            )
+
+
+def _subscription_action_for_topic(topic: str) -> str:
+    prefix = topic.split(".", 1)[0]
+    if prefix == "execution":
+        return "live.execution:subscribe"
+    if prefix == "session":
+        return "live.session:subscribe"
+    if prefix == "feature":
+        return "live.feature:subscribe"
+    if prefix == "project":
+        return "live.project:subscribe"
+    return "live:subscribe"
 
 
 @live_router.get("/stream")

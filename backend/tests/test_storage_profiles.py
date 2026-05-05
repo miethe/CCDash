@@ -153,6 +153,158 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(contract.shared[2].status, "configured")
         self.assertEqual(contract.api_only[0].status, "configured")
 
+    def test_api_auth_contract_defaults_to_static_bearer_provider(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        contract = resolve_runtime_environment_contract(
+            "api",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_API_BEARER_TOKEN": "secret-token",
+            },
+        )
+
+        self.assertTrue(contract.valid)
+        self.assertEqual(contract.api_only[0].name, "CCDASH_API_BEARER_TOKEN")
+        self.assertEqual(contract.api_only[0].status, "configured")
+        self.assertEqual(contract.api_only[1].name, "CCDASH_AUTH_PROVIDER")
+        self.assertEqual(contract.api_only[1].status, "default")
+        self.assertEqual(contract.required_variables, ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"))
+
+    def test_api_auth_contract_requires_clerk_provider_secrets(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        contract = resolve_runtime_environment_contract(
+            "api",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_AUTH_PROVIDER": "clerk",
+            },
+        )
+
+        self.assertFalse(contract.valid)
+        self.assertEqual(
+            contract.required_variables,
+            (
+                "CCDASH_DATABASE_URL",
+                "CCDASH_CLERK_PUBLISHABLE_KEY",
+                "CCDASH_CLERK_SECRET_KEY",
+                "CCDASH_CLERK_JWT_KEY",
+            ),
+        )
+        self.assertEqual(
+            contract.secret_variables,
+            ("CCDASH_DATABASE_URL", "CCDASH_CLERK_SECRET_KEY", "CCDASH_CLERK_JWT_KEY"),
+        )
+        self.assertIn(
+            "Runtime profile 'api' auth provider 'clerk' requires non-empty environment variables before serving traffic: "
+            "CCDASH_CLERK_PUBLISHABLE_KEY, CCDASH_CLERK_SECRET_KEY, CCDASH_CLERK_JWT_KEY.",
+            contract.errors,
+        )
+
+    def test_api_auth_contract_requires_oidc_provider_settings(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        contract = resolve_runtime_environment_contract(
+            "api",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_AUTH_PROVIDER": "oidc",
+            },
+        )
+
+        self.assertFalse(contract.valid)
+        self.assertEqual(
+            contract.required_variables,
+            (
+                "CCDASH_DATABASE_URL",
+                "CCDASH_OIDC_ISSUER",
+                "CCDASH_OIDC_AUDIENCE",
+                "CCDASH_OIDC_CLIENT_ID",
+                "CCDASH_OIDC_CLIENT_SECRET",
+                "CCDASH_OIDC_CALLBACK_URL",
+                "CCDASH_OIDC_JWKS_URL",
+            ),
+        )
+        self.assertEqual(contract.secret_variables, ("CCDASH_DATABASE_URL", "CCDASH_OIDC_CLIENT_SECRET"))
+        self.assertIn(
+            "Runtime profile 'api' auth provider 'oidc' requires non-empty environment variables before serving traffic: "
+            "CCDASH_OIDC_ISSUER, CCDASH_OIDC_AUDIENCE, CCDASH_OIDC_CLIENT_ID, CCDASH_OIDC_CLIENT_SECRET, "
+            "CCDASH_OIDC_CALLBACK_URL, CCDASH_OIDC_JWKS_URL.",
+            contract.errors,
+        )
+
+    def test_api_local_no_auth_provider_requires_explicit_enablement(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        missing_contract = resolve_runtime_environment_contract(
+            "api",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_AUTH_PROVIDER": "local",
+            },
+        )
+        explicit_contract = resolve_runtime_environment_contract(
+            "api",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_AUTH_PROVIDER": "local",
+                "CCDASH_LOCAL_NO_AUTH_ENABLED": "true",
+            },
+        )
+
+        self.assertFalse(missing_contract.valid)
+        self.assertIn(
+            "Runtime profile 'api' auth provider 'local' requires non-empty environment variables before serving traffic: "
+            "CCDASH_LOCAL_NO_AUTH_ENABLED.",
+            missing_contract.errors,
+        )
+        self.assertTrue(explicit_contract.valid)
+        self.assertEqual(explicit_contract.required_variables, ("CCDASH_DATABASE_URL", "CCDASH_LOCAL_NO_AUTH_ENABLED"))
+        self.assertIn(
+            "Hosted API is explicitly configured for local no-auth; only use this behind an external trusted authentication boundary.",
+            explicit_contract.warnings,
+        )
+
     def test_hosted_environment_contract_rejects_local_database_url_placeholder(self) -> None:
         profile = resolve_storage_profile_config(
             {

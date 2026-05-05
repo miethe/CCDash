@@ -14,6 +14,7 @@ from backend.db import connection
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.routers.analytics import analytics_router
 from backend.routers.agent import agent_router
+from backend.routers.auth import auth_router
 from backend.routers.client_v1 import client_v1_router
 from backend.routers.api import documents_router, sessions_router, tasks_router
 from backend.routers.cache import cache_router, links_router
@@ -167,6 +168,12 @@ def _build_health_payload(
         "syncProvisioned": bool(runtime_status.get("syncProvisioned", False)),
         "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
         "authEnabled": bool(runtime_status.get("authEnabled", False)),
+        "authProvider": str(runtime_status.get("authProvider", "")),
+        "authProviderConfigured": bool(runtime_status.get("authProviderConfigured", False)),
+        "authProviderMissingRequiredVariables": list(
+            runtime_status.get("authProviderMissingRequiredVariables", ())
+        ),
+        "authGuardrail": dict(runtime_status.get("authGuardrail", {})),
         "integrationsEnabled": bool(runtime_status.get("integrationsEnabled", False)),
         # Feature surface v2 rollout flag — readable by the FE from /api/health
         # to decide which data path to activate.  Defaults to True (v2 enabled).
@@ -213,6 +220,8 @@ def _build_health_payload(
         "degradedReasonCodes": [
             str(reason["code"]) for reason in probe_contract["ready"]["reasons"]
         ],
+        "probeDetailWarnings": list(runtime_status.get("probeDetailWarnings", ())),
+        "probeDetailWarningCodes": list(runtime_status.get("probeDetailWarningCodes", ())),
     }
 
 
@@ -279,6 +288,10 @@ def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any
             "runtime": dict(detail.get("runtime", {})),
             "storage": dict(detail.get("storage", {})),
             "database": dict(detail.get("database", {})),
+            "environment": dict(detail.get("environment", {})),
+            "auth": dict(detail.get("auth", {})),
+            "warningCodes": list(detail.get("warningCodes", ())),
+            "warnings": list(detail.get("warnings", ())),
             "binding": dict(detail.get("binding", {})),
             "activities": dict(detail.get("activities", {})),
             "watcher": dict(detail.get("watcher", {})),
@@ -326,6 +339,7 @@ def _serialize_storage_profile_validation_matrix(entries: object) -> list[dict[s
 
 
 def _register_routers(app: FastAPI) -> None:
+    app.include_router(auth_router)
     app.include_router(sessions_router)
     app.include_router(documents_router)
     app.include_router(tasks_router)

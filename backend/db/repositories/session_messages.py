@@ -16,6 +16,20 @@ class SqliteSessionMessageRepository:
         for message in messages:
             metadata = message.get("metadata")
             metadata_json = json.dumps(metadata) if isinstance(metadata, dict) else None
+            token_usage = message.get("tokenUsage")
+            input_tokens: int | None = None
+            output_tokens: int | None = None
+            cache_read_input_tokens: int | None = None
+            cache_creation_input_tokens: int | None = None
+            if isinstance(token_usage, dict):
+                _in = token_usage.get("inputTokens")
+                _out = token_usage.get("outputTokens")
+                _cr = token_usage.get("cacheReadInputTokens")
+                _cc = token_usage.get("cacheCreationInputTokens")
+                input_tokens = int(_in) if isinstance(_in, (int, float)) else None
+                output_tokens = int(_out) if isinstance(_out, (int, float)) else None
+                cache_read_input_tokens = int(_cr) if isinstance(_cr, (int, float)) else None
+                cache_creation_input_tokens = int(_cc) if isinstance(_cc, (int, float)) else None
             await self.db.execute(
                 """
                 INSERT INTO session_messages (
@@ -23,8 +37,9 @@ class SqliteSessionMessageRepository:
                     content, event_timestamp, agent_name, tool_name, tool_call_id,
                     related_tool_call_id, linked_session_id, entry_uuid, parent_entry_uuid,
                     root_session_id, conversation_family_id, thread_session_id,
-                    parent_session_id, source_provenance, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    parent_session_id, source_provenance, metadata_json,
+                    input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -48,6 +63,10 @@ class SqliteSessionMessageRepository:
                     str(message.get("parentSessionId", "") or ""),
                     str(message.get("sourceProvenance", "session_log_projection") or "session_log_projection"),
                     metadata_json,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_input_tokens,
+                    cache_creation_input_tokens,
                 ),
             )
         await self.db.commit()

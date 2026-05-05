@@ -44,7 +44,7 @@ from backend.services.integrations.github_settings_store import GitHubSettingsSt
 from backend.services.repo_workspaces.cache import RepoWorkspaceCache
 from backend.services.repo_workspaces.manager import RepoWorkspaceError, RepoWorkspaceManager
 from backend.services.session_usage_analytics import get_session_usage_attribution_details
-from backend.request_scope import get_core_ports, get_request_context
+from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
@@ -79,6 +79,27 @@ async def _resolve_app_request(
         request_context,
         core_ports,
         core_ports.storage.db,
+    )
+
+
+def _project_resource(request_context: RequestContext) -> str | None:
+    if request_context.project is None:
+        return None
+    return f"project:{request_context.project.project_id}"
+
+
+async def _require_api_authorization(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    action: str,
+) -> None:
+    if not isinstance(request_context, RequestContext) or getattr(core_ports, "authorization_policy", None) is None:
+        return
+    await require_http_authorization(
+        request_context,
+        core_ports,
+        action=action,
+        resource=_project_resource(request_context),
     )
 
 
@@ -1260,6 +1281,7 @@ async def upsert_session_linked_feature(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Create/update a manual session↔feature link as primary or related."""
+    await _require_api_authorization(request_context, core_ports, "entity_link:create")
     session_repo = core_ports.storage.sessions()
     session_row = await session_repo.get_by_id(session_id)
     if not session_row:
@@ -1359,6 +1381,7 @@ async def delete_session_linked_feature(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Remove a session↔feature link."""
+    await _require_api_authorization(request_context, core_ports, "entity_link:create")
     session_repo = core_ports.storage.sessions()
     session_row = await session_repo.get_by_id(session_id)
     if not session_row:
@@ -1775,6 +1798,7 @@ async def update_document(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Update a plan document through the local path or managed GitHub workspace."""
+    await _require_api_authorization(request_context, core_ports, "planning.writeback:sync")
     active_project = resolve_project(request_context, core_ports, required=True)
     repo = core_ports.storage.documents()
 

@@ -10,6 +10,8 @@
 
 // ── Base URL ──────────────────────────────────────────────────────────────────
 
+import { apiFetch } from './apiClient';
+
 const API_V1_BASE = '/api/v1';
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -35,7 +37,7 @@ export class FeatureSurfaceApiError extends Error {
 async function v1Fetch<T>(path: string, params?: URLSearchParams): Promise<T> {
   const qs = params?.toString();
   const url = `${API_V1_BASE}${path}${qs ? `?${qs}` : ''}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) {
     throw new FeatureSurfaceApiError(
       `Feature-surface API error: ${res.status} ${res.statusText} for ${url}`,
@@ -58,7 +60,7 @@ async function v1PostFetch<TBody, TResponse>(
   body: TBody,
 ): Promise<TResponse> {
   const url = `${API_V1_BASE}${path}`;
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1051,7 +1053,7 @@ export async function getFeatureLinkedSessionPage(
 const API_LEGACY_FEATURES_BASE = '/api/features';
 
 async function legacyFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_LEGACY_FEATURES_BASE}${path}`, init);
+  const res = await apiFetch(`${API_LEGACY_FEATURES_BASE}${path}`, init);
   if (!res.ok) {
     throw new FeatureSurfaceApiError(
       `Legacy feature API error: ${res.status} ${res.statusText} for ${API_LEGACY_FEATURES_BASE}${path}`,
@@ -1097,7 +1099,7 @@ export async function getLegacyFeatureLinkedSessions<T = unknown[]>(featureId: s
  */
 export async function getFeatureTaskSource(sourceFile: string): Promise<{ content: string }> {
   const params = new URLSearchParams({ file: sourceFile });
-  const res = await fetch(`${API_LEGACY_FEATURES_BASE}/task-source?${params.toString()}`);
+  const res = await apiFetch(`${API_LEGACY_FEATURES_BASE}/task-source?${params.toString()}`);
   if (!res.ok) {
     throw new FeatureSurfaceApiError(
       `Feature task-source error: ${res.status} ${res.statusText}`,
