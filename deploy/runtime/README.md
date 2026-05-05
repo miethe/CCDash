@@ -154,8 +154,16 @@ $COMPOSE up --build -d
 
 Expected probes:
 
+Before using the API host port, confirm `127.0.0.1:8000` belongs to this stack. Another dev server can occupy that address and make host-port probes misleading:
+
 ```bash
-curl -fsS http://localhost:8000/api/health/ready | python3 -m json.tool
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+```
+
+When `8000` is already bound by another process, validate the stack through the frontend proxy at `127.0.0.1:3131` or from inside the Compose network against the API service name.
+
+```bash
+curl -fsS http://127.0.0.1:3131/api/health/ready | python3 -m json.tool
 curl -fsS http://localhost:9465/readyz | python3 -m json.tool
 curl -fsS http://localhost:9466/readyz | python3 -m json.tool
 
@@ -163,7 +171,7 @@ curl -fsS http://localhost:9465/detailz | python3 -c 'import json,sys; p=json.lo
 
 curl -fsS http://localhost:9466/detailz | python3 -c 'import json,sys; p=json.load(sys.stdin); d=p.get("detail",{}); w=d.get("watcher",{}); wp=d.get("worker",{}); print(json.dumps({"runtimeProfile":p.get("runtimeProfile"), "ready":p.get("ready",{}).get("status"), "watcherState":w.get("state"), "watchPathCount":w.get("watchPathCount"), "lastChangeSyncAt":w.get("lastChangeSyncAt"), "lastChangeCount":w.get("lastChangeCount"), "lastSyncStatus":w.get("lastSyncStatus"), "workerWatcherDisabled":wp.get("watcherDisabled"), "syncLagSeconds":wp.get("syncLagSeconds"), "backpressure":wp.get("backpressure")}, indent=2))'
 
-curl -fsS http://localhost:8000/api/health/detail | python3 -c 'import json,sys; p=json.load(sys.stdin); f=p.get("detail",{}).get("liveFanout",{}); print(json.dumps({"mode":f.get("mode"), "running":f.get("running"), "connected":f.get("connected"), "errorCount":f.get("errorCount"), "listener":f.get("listener"), "recentErrors":f.get("recentErrors")}, indent=2))'
+curl -fsS http://127.0.0.1:3131/api/health/detail | python3 -c 'import json,sys; p=json.load(sys.stdin); f=p.get("detail",{}).get("liveFanout",{}); print(json.dumps({"mode":f.get("mode"), "running":f.get("running"), "connected":f.get("connected"), "errorCount":f.get("errorCount"), "listener":f.get("listener"), "recentErrors":f.get("recentErrors")}, indent=2))'
 ```
 
 Expected values:
@@ -269,6 +277,7 @@ Common hosted-smoke failures and what they mean:
 | --- | --- | --- |
 | `worker` exits during startup | `CCDASH_WORKER_PROJECT_ID` is unset or unresolved | choose a real project id and rerun |
 | API readiness fails | migrations or DB connectivity failed | inspect `docker compose logs api postgres` and correct the Postgres config before retrying |
+| `127.0.0.1:8000` responds but stack validation looks wrong | another local dev server is bound to the API host port | run `lsof -nP -iTCP:8000 -sTCP:LISTEN`; use `127.0.0.1:3131/api/health/ready` or a container-internal API probe for this stack |
 | worker readiness fails | worker binding, startup sync, or probe binding failed | inspect `docker compose logs worker`; confirm `CCDASH_WORKER_PROBE_*` and project binding |
 | telemetry exporter checks fail in an enterprise stack | telemetry exporter env is incomplete or disabled | set `CCDASH_TELEMETRY_EXPORT_ENABLED=true`, `CCDASH_SAM_ENDPOINT`, and `CCDASH_SAM_API_KEY` |
 | telemetry exporter checks return a retry or abandoned error with non-zero batch size | the stack has real queued telemetry rows but the sink is not valid | point the exporter at a real sink or clear the queue before rerunning |

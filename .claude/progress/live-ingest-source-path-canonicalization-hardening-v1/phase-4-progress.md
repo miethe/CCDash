@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 33
-completion_estimate: 2 tasks remaining
+overall_progress: 67
+completion_estimate: 1 task remaining
 total_tasks: 3
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -39,7 +39,7 @@ tasks:
   priority: medium
 - id: OPS-002
   description: Document host port 8000 conflict checks and safer stack validation through frontend proxy or container probes.
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   dependencies: []
@@ -71,7 +71,7 @@ success_criteria:
 files_modified:
 - deploy/runtime/README.md
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-4-progress.md
-progress: 33
+progress: 67
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 4
@@ -82,4 +82,4 @@ Add runtime operator guardrails for live-watch startup, polling fallback, port v
 
 ## Current Status
 
-Phase 4 is in progress. OPS-001 is complete; OPS-002 and OPS-003 remain pending.
+Phase 4 is in progress. OPS-001 and OPS-002 are complete; OPS-003 remains pending.
