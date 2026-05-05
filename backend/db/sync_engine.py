@@ -48,6 +48,14 @@ from backend.services.session_sentiment_facts import build_session_sentiment_fac
 from backend.services.session_churn_facts import build_session_code_churn_facts
 from backend.services.session_scope_drift import build_session_scope_drift_facts
 from backend.services.session_transcript_projection import project_session_messages
+from backend.services.source_identity import (
+    ProjectId,
+    SourceArtifactKind,
+    SourceIdentityInput,
+    SourceIdentityPolicy,
+    resolve_source_identity,
+    source_identity_policy_from_env,
+)
 from backend.document_linking import (
     alias_tokens_from_path,
     canonical_project_path,
@@ -1260,6 +1268,7 @@ class SyncEngine:
         self._linking_logic_version = str(getattr(config, "LINKING_LOGIC_VERSION", "1")).strip() or "1"
         self._test_source_errors: dict[str, str] = {}
         self._test_source_synced_at: dict[str, str] = {}
+        self._source_identity_policy = source_identity_policy_from_env()
 
     # ── Per-run filesystem traversal cache ─────────────────────────────────
     def _rglob(self, root: Path | str, pattern: str) -> tuple[Path, ...]:
@@ -1276,6 +1285,24 @@ class SyncEngine:
         if key not in self._rglob_cache:
             self._rglob_cache[key] = tuple(root_path.rglob(pattern))
         return self._rglob_cache[key]
+
+    def _canonical_source_key(
+        self,
+        project_id: str,
+        path: Path,
+        artifact_kind: SourceArtifactKind,
+        *,
+        policy: SourceIdentityPolicy | None = None,
+    ) -> str:
+        identity = resolve_source_identity(
+            SourceIdentityInput(
+                project_id=ProjectId(project_id),
+                artifact_kind=artifact_kind,
+                observed_path=path,
+            ),
+            policy or getattr(self, "_source_identity_policy", source_identity_policy_from_env()),
+        )
+        return str(identity.source_key)
 
     def _enterprise_canonical_transcript_authoritative(self) -> bool:
         storage_profile = getattr(config, "STORAGE_PROFILE", None)
@@ -3573,11 +3600,12 @@ class SyncEngine:
         force: bool = False,
     ) -> dict[str, Any]:
         file_path = str(path)
+        sync_file_path = self._canonical_source_key(project_id, path, "test")
         mtime = path.stat().st_mtime
         state_key = self._source_state_key(source)
 
         if not force:
-            cached = await self.sync_repo.get_sync_state(file_path)
+            cached = await self.sync_repo.get_sync_state(sync_file_path)
             if cached and cached["file_mtime"] == mtime:
                 return {"synced": False, "metrics": 0, "errors": []}
 
@@ -3611,7 +3639,7 @@ class SyncEngine:
 
         await self.sync_repo.upsert_sync_state(
             {
-                "file_path": file_path,
+                "file_path": sync_file_path,
                 "file_hash": file_hash,
                 "file_mtime": mtime,
                 "entity_type": f"test_result:{source.platform_id}",
@@ -3821,7 +3849,17 @@ class SyncEngine:
             for index, (change_type, path) in enumerate(changed_files, start=1):
                 if change_type == "deleted":
                     # Remove sync state and associated entities
-                    await self.sync_repo.delete_sync_state(str(path))
+                    if path.suffix == ".jsonl":
+                        sync_state_key = self._canonical_source_key(project_id, path, "session")
+                    elif self._match_source_for_path(resolved_test_sources, path):
+                        sync_state_key = self._canonical_source_key(project_id, path, "test")
+                    elif path.suffix == ".md" and progress_dir in path.parents:
+                        sync_state_key = self._canonical_source_key(project_id, path, "progress")
+                    elif path.suffix == ".md":
+                        sync_state_key = self._canonical_source_key(project_id, path, "document")
+                    else:
+                        sync_state_key = str(path)
+                    await self.sync_repo.delete_sync_state(sync_state_key)
                     if path.suffix == ".jsonl":
                         await self.session_repo.delete_by_source(str(path))
                         stats["sessions"] += 1
@@ -4014,12 +4052,13 @@ class SyncEngine:
     async def _sync_single_session(self, project_id: str, path: Path, force: bool = False) -> bool:
         """Parse and upsert a single session file. Returns True if actually synced."""
         file_path = str(path)
+        sync_file_path = self._canonical_source_key(project_id, path, "session")
         mtime = path.stat().st_mtime
 
         if not force:
-            cached = await self.sync_repo.get_sync_state(file_path)
+            cached = await self.sync_repo.get_sync_state(sync_file_path)
             if cached and cached["file_mtime"] == mtime:
-                needs_lineage_backfill = await self._session_source_needs_lineage_backfill(file_path)
+                needs_lineage_backfill = await self._session_source_needs_lineage_backfill(sync_file_path)
                 if not needs_lineage_backfill:
                     return False  # unchanged
                 logger.info("Session lineage backfill triggered for unchanged file: %s", file_path)
@@ -4049,8 +4088,8 @@ class SyncEngine:
                 "ccdash.file_path": file_path,
             },
         ):
-            await self.session_repo.delete_by_source(file_path)
-            await self.session_repo.delete_relationships_for_source(project_id, file_path)
+            await self.session_repo.delete_by_source(sync_file_path)
+            await self.session_repo.delete_relationships_for_source(project_id, sync_file_path)
 
             if session:
                 all_relationships: list[dict[str, Any]] = []
@@ -4064,7 +4103,12 @@ class SyncEngine:
                         for row in relationship_rows:
                             if isinstance(row, dict):
                                 all_relationships.append(dict(row))
-                    session_payload["sourceFile"] = file_path
+                    session_payload["sourceFile"] = sync_file_path
+                    session_forensics = session_payload.get("sessionForensics")
+                    if not isinstance(session_forensics, dict):
+                        session_forensics = {}
+                    session_forensics.setdefault("observedSourceFile", file_path)
+                    session_payload["sessionForensics"] = session_forensics
                     _apply_claude_usage_fields(session_payload)
                     pending_sessions.append(session_payload)
                     if isinstance(derived_sessions, list):
@@ -4230,13 +4274,13 @@ class SyncEngine:
                 if deduped_relationships:
                     await self.session_repo.upsert_relationships(
                         project_id,
-                        file_path,
+                        sync_file_path,
                         list(deduped_relationships.values()),
                     )
 
         # Update sync state
         await self.sync_repo.upsert_sync_state({
-            "file_path": file_path,
+            "file_path": sync_file_path,
             "file_hash": _file_hash(path),
             "file_mtime": mtime,
             "entity_type": "session",
@@ -4393,10 +4437,11 @@ class SyncEngine:
         dirty_paths: set[str] | None = None,
     ) -> bool:
         file_path = str(path)
+        sync_file_path = self._canonical_source_key(project_id, path, "document")
         mtime = path.stat().st_mtime
 
         if not force:
-            cached = await self.sync_repo.get_sync_state(file_path)
+            cached = await self.sync_repo.get_sync_state(sync_file_path)
             if cached and cached["file_mtime"] == mtime:
                 return False
 
@@ -4437,7 +4482,7 @@ class SyncEngine:
                     await self.tag_repo.tag_entity("document", doc.id, tag_id)
 
         await self.sync_repo.upsert_sync_state({
-            "file_path": file_path,
+            "file_path": sync_file_path,
             "file_hash": _file_hash(path),
             "file_mtime": mtime,
             "entity_type": "document",
@@ -4486,11 +4531,12 @@ class SyncEngine:
         self, project_id: str, path: Path, progress_dir: Path, force: bool = False,
     ) -> bool:
         file_path = str(path)
+        sync_file_path = self._canonical_source_key(project_id, path, "progress")
         canonical_source = _canonical_task_source(path, progress_dir)
         mtime = path.stat().st_mtime
 
         if not force:
-            cached = await self.sync_repo.get_sync_state(file_path)
+            cached = await self.sync_repo.get_sync_state(sync_file_path)
             if cached and cached["file_mtime"] == mtime:
                 return False
 
@@ -4528,7 +4574,7 @@ class SyncEngine:
                     await self.tag_repo.tag_entity("task", task.id, tag_id)
 
         await self.sync_repo.upsert_sync_state({
-            "file_path": file_path,
+            "file_path": sync_file_path,
             "file_hash": _file_hash(path),
             "file_mtime": mtime,
             "entity_type": "task",

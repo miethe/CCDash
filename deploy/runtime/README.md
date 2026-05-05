@@ -69,6 +69,27 @@ Required read-only ingest mounts:
 | Claude home | `CCDASH_CLAUDE_HOME=~/.claude` | `CCDASH_CLAUDE_CONTAINER_HOME=/home/ccdash/.claude` | Provides Claude Code project/session metadata for watcher ingest. |
 | Codex home | `CCDASH_CODEX_HOME=~/.codex` | `CCDASH_CODEX_CONTAINER_HOME=/home/ccdash/.codex` | Provides Codex session metadata for watcher ingest. |
 
+### Watch Scope And Startup Cost
+
+`worker-watch` resolves its watch scope from the selected project entry. Existing `sessionsPath` / `pathConfig.sessions`, plan-docs, progress, enabled test-result sources, and any filesystem paths made visible by the workspace, `.claude`, `.codex`, or optional mounts can become part of the startup sync and live-watch corpus.
+
+The biggest cost driver is usually the session tree:
+
+- `sessionsPath` is the direct session-corpus pointer. A project-specific directory keeps startup reconciliation bounded. A broad path such as all of `~/.codex/sessions` or all of `~/.claude/projects` asks the watcher to discover and reconcile every visible JSONL transcript under that root.
+- `.claude` mounts are required when project entries point at Claude Code session data, usually under `~/.claude/projects/...`. Mount the home only when those paths are intentional, and prefer a project-specific `sessionsPath` when possible.
+- `.codex` mounts are required when project entries point at Codex session data, commonly under `~/.codex/sessions/...`. Global Codex session roots can include old and unrelated conversations, so they should not be treated as a cheap default.
+- Workspace roots make project docs, progress files, and repository-relative session paths visible. Set `CCDASH_WORKSPACE_HOST_ROOT` to the smallest stable root that still contains the projects referenced by `projects.json`; mounting an entire development tree can add unrelated repositories and high-churn files to startup scans.
+- Optional mounts add additional readable roots for projects that live outside the shared workspace or agent homes. Unused optional slots point at empty directories and have negligible cost. When a slot is used, avoid broad cache, build-output, or archive roots unless the project registry explicitly needs them.
+
+`watchPathCount` in `/detailz` counts resolved top-level watch roots, not the number of files below them. A small `watchPathCount` can still represent thousands of JSONL files and a large startup write workload. Broad global session roots should be an intentional operator choice, especially before enabling startup sync against long-lived `.claude` or `.codex` homes.
+
+Estimate session scope before restarting a watcher:
+
+```bash
+find "${CCDASH_CLAUDE_HOME:-$HOME/.claude}/projects" -name '*.jsonl' -type f 2>/dev/null | wc -l
+find "${CCDASH_CODEX_HOME:-$HOME/.codex}/sessions" -name '*.jsonl' -type f 2>/dev/null | wc -l
+```
+
 ### Env-Driven Optional Mounts
 
 `compose.yaml` also exposes six optional read-only bind-mount slots:
@@ -111,7 +132,35 @@ The repo includes `deploy/runtime/watchers/ccdash.env.example` as a concrete exa
 
 For multi-project deployments, prefer mounting a stable superset root shared by all watcher containers, then vary only `CCDASH_WORKER_WATCH_PROJECT_ID` and `CCDASH_WORKER_WATCH_PROBE_PORT` per watcher. When projects live on unrelated host roots, use the optional mount slots in each watcher's env overlay. Do not use Compose `--scale worker-watch=N` for v1: each watcher needs a distinct project id and probe port, which requires distinct service/env configuration.
 
-On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, set `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env` and restart it. The shipped compose file passes this variable only to `worker-watch`; keep polling scoped there because it is a compatibility mode for Docker Desktop file sharing, not the default Linux path.
+On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, set `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env` and restart it. The shipped compose file passes this variable only to `worker-watch`; keep polling scoped there because it is a compatibility mode for Docker Desktop file sharing, not the default Linux path. Do not copy `WATCHFILES_FORCE_POLLING` into shared backend, API, or default worker environment blocks.
+
+### Startup Sync And Polling Load
+
+`worker-watch` has two different load profiles:
+
+- Startup sync load happens when `CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED=true` and the worker is reconciling the mounted corpus before it settles into live watching. High worker CPU, Postgres CPU, and Postgres I/O can be expected during this window, especially for broad `.claude`, `.codex`, or workspace mounts with thousands of JSONL files.
+- Idle polling load is sustained `worker-watch` CPU after startup sync is complete and no watched files are changing. With `WATCHFILES_FORCE_POLLING=false`, idle CPU should settle low outside event bursts. With `WATCHFILES_FORCE_POLLING=true`, idle CPU can remain higher because the watcher periodically scans bind mounts; disable it again after Docker Desktop event delivery is confirmed.
+
+Use these commands to separate startup sync from idle polling:
+
+```bash
+COMPOSE="docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch"
+
+$COMPOSE ps
+
+curl -fsS http://localhost:9466/detailz | python3 -c 'import json,sys; p=json.load(sys.stdin); d=p.get("detail",{}); w=d.get("watcher",{}); worker=d.get("worker",{}); print(json.dumps({"runtimeProfile":p.get("runtimeProfile"), "ready":p.get("ready",{}).get("status"), "startupSync":worker.get("jobs",{}).get("startupSync"), "watcherState":w.get("state"), "watchPathCount":w.get("watchPathCount"), "lastChangeSyncAt":w.get("lastChangeSyncAt"), "lastSyncStatus":w.get("lastSyncStatus"), "backpressure":worker.get("backpressure")}, indent=2))'
+
+$COMPOSE stats --no-stream worker-watch postgres
+
+$COMPOSE exec -T postgres psql -U ccdash -d ccdash \
+  -c "select relname, n_live_tup, n_dead_tup, n_tup_ins, n_tup_del from pg_stat_user_tables where relname in ('sessions','session_messages','telemetry_events','session_usage_attributions','sync_state') order by relname;"
+```
+
+Interpretation:
+
+- If `startupSync` is `running` or reports backlog, CPU and write I/O are startup reconciliation load. Wait for the startup job to finish before judging idle watcher cost.
+- If startup sync is complete, no files are changing, and `worker-watch` CPU remains high across repeated `stats --no-stream` samples, treat it as idle polling or watch-scope load. First confirm whether `WATCHFILES_FORCE_POLLING=true`; then reduce watch scope or disable polling after event delivery works.
+- If table counters grow on an unchanged second startup, that indicates re-ingest/write amplification and should be investigated separately from polling CPU.
 
 ## Enterprise Live Ingest Smoke
 
@@ -126,8 +175,16 @@ $COMPOSE up --build -d
 
 Expected probes:
 
+Before using the API host port, confirm `127.0.0.1:8000` belongs to this stack. Another dev server can occupy that address and make host-port probes misleading:
+
 ```bash
-curl -fsS http://localhost:8000/api/health/ready | python3 -m json.tool
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+```
+
+When `8000` is already bound by another process, validate the stack through the frontend proxy at `127.0.0.1:3131` or from inside the Compose network against the API service name.
+
+```bash
+curl -fsS http://127.0.0.1:3131/api/health/ready | python3 -m json.tool
 curl -fsS http://localhost:9465/readyz | python3 -m json.tool
 curl -fsS http://localhost:9466/readyz | python3 -m json.tool
 
@@ -135,7 +192,7 @@ curl -fsS http://localhost:9465/detailz | python3 -c 'import json,sys; p=json.lo
 
 curl -fsS http://localhost:9466/detailz | python3 -c 'import json,sys; p=json.load(sys.stdin); d=p.get("detail",{}); w=d.get("watcher",{}); wp=d.get("worker",{}); print(json.dumps({"runtimeProfile":p.get("runtimeProfile"), "ready":p.get("ready",{}).get("status"), "watcherState":w.get("state"), "watchPathCount":w.get("watchPathCount"), "lastChangeSyncAt":w.get("lastChangeSyncAt"), "lastChangeCount":w.get("lastChangeCount"), "lastSyncStatus":w.get("lastSyncStatus"), "workerWatcherDisabled":wp.get("watcherDisabled"), "syncLagSeconds":wp.get("syncLagSeconds"), "backpressure":wp.get("backpressure")}, indent=2))'
 
-curl -fsS http://localhost:8000/api/health/detail | python3 -c 'import json,sys; p=json.load(sys.stdin); f=p.get("detail",{}).get("liveFanout",{}); print(json.dumps({"mode":f.get("mode"), "running":f.get("running"), "connected":f.get("connected"), "errorCount":f.get("errorCount"), "listener":f.get("listener"), "recentErrors":f.get("recentErrors")}, indent=2))'
+curl -fsS http://127.0.0.1:3131/api/health/detail | python3 -c 'import json,sys; p=json.load(sys.stdin); f=p.get("detail",{}).get("liveFanout",{}); print(json.dumps({"mode":f.get("mode"), "running":f.get("running"), "connected":f.get("connected"), "errorCount":f.get("errorCount"), "listener":f.get("listener"), "recentErrors":f.get("recentErrors")}, indent=2))'
 ```
 
 Expected values:
@@ -241,6 +298,7 @@ Common hosted-smoke failures and what they mean:
 | --- | --- | --- |
 | `worker` exits during startup | `CCDASH_WORKER_PROJECT_ID` is unset or unresolved | choose a real project id and rerun |
 | API readiness fails | migrations or DB connectivity failed | inspect `docker compose logs api postgres` and correct the Postgres config before retrying |
+| `127.0.0.1:8000` responds but stack validation looks wrong | another local dev server is bound to the API host port | run `lsof -nP -iTCP:8000 -sTCP:LISTEN`; use `127.0.0.1:3131/api/health/ready` or a container-internal API probe for this stack |
 | worker readiness fails | worker binding, startup sync, or probe binding failed | inspect `docker compose logs worker`; confirm `CCDASH_WORKER_PROBE_*` and project binding |
 | telemetry exporter checks fail in an enterprise stack | telemetry exporter env is incomplete or disabled | set `CCDASH_TELEMETRY_EXPORT_ENABLED=true`, `CCDASH_SAM_ENDPOINT`, and `CCDASH_SAM_API_KEY` |
 | telemetry exporter checks return a retry or abandoned error with non-zero batch size | the stack has real queued telemetry rows but the sink is not valid | point the exporter at a real sink or clear the queue before rerunning |

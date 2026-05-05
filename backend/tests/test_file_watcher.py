@@ -15,6 +15,7 @@ from backend.db.sqlite_migrations import run_migrations
 from backend.db.sync_engine import SyncEngine
 from backend.runtime.profiles import get_runtime_profile
 from backend.runtime.storage_contract import get_runtime_storage_contract
+from backend.services.source_identity import SourceIdentityPolicy, SourceRootAlias, SourceRootId
 from backend.services.test_config import ResolvedTestSource
 
 
@@ -212,7 +213,7 @@ class JsonlAppendIncrementalSyncTests(unittest.IsolatedAsyncioTestCase):
             messages = await engine.session_message_repo.list_by_session(session_id)
             async with self.db.execute(
                 "SELECT file_mtime FROM sync_state WHERE file_path = ?",
-                (str(session_path),),
+                (engine._canonical_source_key("project-1", session_path, "session"),),
             ) as cur:
                 sync_state = await cur.fetchone()
 
@@ -221,6 +222,84 @@ class JsonlAppendIncrementalSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([message["content"] for message in messages], ["Start the work", "Finished the first step"])
         self.assertIsNotNone(sync_state)
         self.assertGreater(float(sync_state["file_mtime"]), 0)
+
+    async def test_alias_session_reingest_keeps_replace_scoped_tables_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            host_sessions = root / "host-sessions"
+            host_sessions.mkdir()
+            container_sessions = root / "container-sessions"
+            container_sessions.symlink_to(host_sessions, target_is_directory=True)
+            docs_dir = root / "docs"
+            progress_dir = root / "progress"
+            docs_dir.mkdir()
+            progress_dir.mkdir()
+
+            session_path = host_sessions / "alias-session.jsonl"
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "timestamp": "2026-05-02T10:00:00Z",
+                        "uuid": "u1",
+                        "message": {"role": "user", "content": "Start alias work"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            alias_path = container_sessions / "alias-session.jsonl"
+
+            engine = SyncEngine(self.db)
+            engine._source_identity_policy = SourceIdentityPolicy(
+                aliases=(
+                    SourceRootAlias(
+                        root_id=SourceRootId("session_mount"),
+                        alias_path=host_sessions,
+                    ),
+                    SourceRootAlias(
+                        root_id=SourceRootId("session_mount"),
+                        alias_path=container_sessions,
+                    ),
+                )
+            )
+
+            first = await engine._sync_single_session("project-1", session_path)
+            counts_after_first = await self._table_counts(
+                "sessions",
+                "session_messages",
+                "telemetry_events",
+                "session_usage_attributions",
+                "sync_state",
+            )
+            second = await engine._sync_single_session("project-1", alias_path, force=True)
+            counts_after_second = await self._table_counts(
+                "sessions",
+                "session_messages",
+                "telemetry_events",
+                "session_usage_attributions",
+                "sync_state",
+            )
+            source_files = await self._session_source_files()
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        self.assertEqual(counts_after_first, counts_after_second)
+        self.assertEqual(len(source_files), 1)
+        self.assertIn("ccdash-source:v1/project-1/session/session_mount/alias-session.jsonl", source_files)
+
+    async def _table_counts(self, *table_names: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for table_name in table_names:
+            async with self.db.execute(f"SELECT COUNT(*) AS count FROM {table_name}") as cur:
+                row = await cur.fetchone()
+                counts[table_name] = int(row["count"])
+        return counts
+
+    async def _session_source_files(self) -> set[str]:
+        async with self.db.execute("SELECT source_file FROM sessions") as cur:
+            rows = await cur.fetchall()
+        return {str(row["source_file"]) for row in rows}
 
 
 if __name__ == "__main__":
