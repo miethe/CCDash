@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 50
-completion_estimate: 2 tasks remaining
+overall_progress: 75
+completion_estimate: 1 task remaining
 total_tasks: 4
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -49,7 +49,7 @@ tasks:
   priority: medium
 - id: VAL-003
   description: Capture table stats before and after second startup to ensure unchanged rows and dead tuples do not grow materially.
-  status: pending
+  status: completed
   assigned_to:
   - performance-engineer
   dependencies:
@@ -83,7 +83,7 @@ success_criteria:
 - Focused regression tests pass or caveats are recorded with exact command output.
 files_modified:
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-5-progress.md
-progress: 50
+progress: 75
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 5
@@ -113,3 +113,15 @@ Phase 5 is in progress. VAL-001 completed live startup idempotence smoke against
 - `worker-watch` CPU stayed sustained but bounded in the polling range, roughly `12.01%` to `22.30%`.
 - `worker-watch` RSS rose from about `164 MiB` to about `267 MiB` early in the idle window, then remained flat near `266-269 MiB`; no monotonic growth across the full window.
 - Postgres CPU was mostly `0.00-0.10%` after startup, with brief samples at `2.64-2.78%`; Postgres RSS dropped from about `353 MiB` to about `300 MiB`.
+
+## VAL-003 Evidence
+
+- Before second restart table stats:
+  - `session_messages n_tup_ins=926289 n_tup_del=495089`
+  - `session_usage_attributions n_tup_ins=3058160 n_tup_del=1484582`
+  - `sessions n_tup_ins=9003 n_tup_del=2072`
+  - `sync_state n_tup_ins=14382 n_tup_del=37`
+  - `telemetry_events n_tup_ins=1488890 n_tup_del=794202`
+- Immediately after second startup, the same table counters were unchanged.
+- After the 10-minute idle window, the same table counters were still unchanged.
+- `worker-watch /detailz` remained `ready=pass`, `startupSync=succeeded`, backlog `0`, publisher `published=11`, `publishErrors=0`.
