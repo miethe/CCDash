@@ -6,9 +6,9 @@ feature_slug: live-ingest-source-path-canonicalization-hardening
 phase: 1
 phase_title: Source Identity Contract
 title: 'live-ingest-source-path-canonicalization-hardening-v1 - Phase 1: Source Identity Contract'
-status: in_progress
+status: completed
 started: '2026-05-04'
-completed: null
+completed: '2026-05-04'
 created: '2026-05-04'
 updated: '2026-05-04'
 prd_ref: null
@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 67
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: complete
 total_tasks: 3
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -50,7 +50,7 @@ tasks:
   priority: high
 - id: SRC-003
   description: Cover symlinks, non-mounted paths, optional mount slots, unrelated projects, and paths outside known roots.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - data-layer-expert
@@ -80,7 +80,7 @@ files_modified:
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-1-progress.md
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-2-progress.md
 - docs/project_plans/implementation_plans/infrastructure/live-ingest-source-path-canonicalization-hardening-v1.md
-progress: 67
+progress: 100
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 1
@@ -91,4 +91,4 @@ Define the canonical filesystem source identity contract before implementing ali
 
 ## Current Status
 
-`SRC-001` and `SRC-002` are complete. `SRC-003` remains pending and no sync engine wiring has been added.
+Phase 1 is complete. The source identity contract, helper, and alias/collision tests are in place; no sync engine wiring has been added.
