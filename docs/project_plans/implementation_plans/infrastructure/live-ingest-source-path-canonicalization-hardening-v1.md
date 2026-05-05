@@ -48,7 +48,9 @@ related_documents:
 commit_refs: []
 pr_refs: []
 files_affected:
+  - backend/db/sync_engine.py
   - backend/services/source_identity.py
+  - backend/tests/test_sync_engine_linking.py
   - backend/tests/test_source_identity.py
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-1-progress.md
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-2-progress.md

@@ -10,6 +10,7 @@ from backend.db.sync_engine import (
     _select_linking_commands,
     _select_preferred_command_event,
 )
+from backend.services.source_identity import SourceIdentityPolicy, SourceRootAlias, SourceRootId
 
 
 class SyncEngineLinkingTests(unittest.TestCase):
@@ -229,15 +230,26 @@ class SyncEngineSessionBackfillTests(unittest.IsolatedAsyncioTestCase):
             engine.session_repo.list_by_source = AsyncMock(return_value=[{"id": "S-1", "thread_kind": "", "conversation_family_id": ""}])
             engine.session_repo.delete_by_source = AsyncMock()
             engine.session_repo.delete_relationships_for_source = AsyncMock()
+            engine._source_identity_policy = SourceIdentityPolicy(
+                aliases=(
+                    SourceRootAlias(
+                        root_id=SourceRootId("sessions_root"),
+                        alias_path=path.parent,
+                    ),
+                )
+            )
+            sync_key = engine._canonical_source_key("project-1", path, "session")
 
             with patch("backend.db.sync_engine.parse_session_file", return_value=None) as parse_mock, patch("backend.db.sync_engine.observability.start_span", return_value=nullcontext()), patch("backend.db.sync_engine.observability.record_ingestion"):
                 synced = await SyncEngine._sync_single_session(engine, "project-1", path, force=False)
 
             self.assertTrue(synced)
+            engine.sync_repo.get_sync_state.assert_awaited_once_with(sync_key)
             parse_mock.assert_called_once_with(path)
             engine.session_repo.delete_by_source.assert_awaited_once()
             engine.session_repo.delete_relationships_for_source.assert_awaited_once_with("project-1", str(path))
             engine.sync_repo.upsert_sync_state.assert_awaited_once()
+            self.assertEqual(engine.sync_repo.upsert_sync_state.await_args.args[0]["file_path"], sync_key)
 
     async def test_sync_single_session_skips_unchanged_file_when_lineage_present(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -253,11 +265,21 @@ class SyncEngineSessionBackfillTests(unittest.IsolatedAsyncioTestCase):
             engine.session_repo.list_by_source = AsyncMock(return_value=[{"id": "S-1", "thread_kind": "root", "conversation_family_id": "S-1"}])
             engine.session_repo.delete_by_source = AsyncMock()
             engine.session_repo.delete_relationships_for_source = AsyncMock()
+            engine._source_identity_policy = SourceIdentityPolicy(
+                aliases=(
+                    SourceRootAlias(
+                        root_id=SourceRootId("sessions_root"),
+                        alias_path=path.parent,
+                    ),
+                )
+            )
+            sync_key = engine._canonical_source_key("project-1", path, "session")
 
             with patch("backend.db.sync_engine.parse_session_file") as parse_mock:
                 synced = await SyncEngine._sync_single_session(engine, "project-1", path, force=False)
 
             self.assertFalse(synced)
+            engine.sync_repo.get_sync_state.assert_awaited_once_with(sync_key)
             parse_mock.assert_not_called()
             engine.session_repo.delete_by_source.assert_not_awaited()
             engine.sync_repo.upsert_sync_state.assert_not_awaited()

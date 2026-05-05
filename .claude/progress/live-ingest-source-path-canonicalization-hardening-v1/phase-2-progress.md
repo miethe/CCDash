@@ -6,8 +6,8 @@ feature_slug: live-ingest-source-path-canonicalization-hardening
 phase: 2
 phase_title: Ingest Path Canonicalization
 title: 'live-ingest-source-path-canonicalization-hardening-v1 - Phase 2: Ingest Path Canonicalization'
-status: pending
-started: null
+status: in_progress
+started: '2026-05-04'
 completed: null
 created: '2026-05-04'
 updated: '2026-05-04'
@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 0
-completion_estimate: not-started
+overall_progress: 25
+completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 1
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -30,7 +30,7 @@ contributors: []
 tasks:
 - id: ING-001
   description: Update sync state lookup, upsert, and delete usage sites so startup sync checks canonical source identity before deciding a file is new.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   - data-layer-expert
@@ -82,14 +82,16 @@ parallelization:
   - ING-001
   - ING-003
   - ING-004
-blockers:
-- Phase 2 depends on SRC-002 helper implementation, which is intentionally pending after SRC-001.
+blockers: []
 success_criteria:
 - A second startup under container paths skips files already synced under host paths when content/mtime is unchanged.
 - Existing local SQLite tests still pass.
 - Existing Postgres repository tests still pass.
-files_modified: []
-progress: 0
+files_modified:
+- backend/db/sync_engine.py
+- backend/tests/test_sync_engine_linking.py
+- .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-2-progress.md
+progress: 25
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 2
@@ -100,4 +102,4 @@ Apply canonical source keys at ingest lookup/write/delete boundaries after the P
 
 ## Current Status
 
-Phase 2 has not started.
+`ING-001` is complete. Sync-state lookup, upsert, and delete boundaries now use canonical source identity keys; session source persistence remains pending for `ING-002`.
