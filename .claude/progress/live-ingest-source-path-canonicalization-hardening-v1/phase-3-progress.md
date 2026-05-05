@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 0
-completion_estimate: pending
+overall_progress: 25
+completion_estimate: 3 tasks remaining
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 1
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -30,7 +30,7 @@ contributors: []
 tasks:
 - id: MIG-001
   description: Add repeatable SQL or a CLI/admin script that reports host/container alias duplicates in sync_state, sessions, and derived tables.
-  status: pending
+  status: completed
   assigned_to:
   - data-layer-expert
   dependencies:
@@ -84,8 +84,11 @@ success_criteria:
 - The audit script reports duplicate alias counts and exits non-zero only on query failure.
 - Migration requires an explicit project id and supports dry-run review before apply.
 - Duplicate cleanup is restart-safe, idempotent, and preserves newer sync/session evidence.
-files_modified: []
-progress: 0
+files_modified:
+- backend/scripts/source_alias_duplicate_audit.py
+- backend/tests/test_source_alias_duplicate_audit.py
+- .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-3-progress.md
+progress: 25
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 3
@@ -96,4 +99,4 @@ Add project-scoped duplicate source identity audit and collapse tooling for host
 
 ## Current Status
 
-Phase 3 is in progress. Phases 1 and 2 completed the canonical identity helper and ingest write-boundary usage.
+Phase 3 is in progress. MIG-001 added the project-scoped source alias duplicate audit script and unit coverage.
