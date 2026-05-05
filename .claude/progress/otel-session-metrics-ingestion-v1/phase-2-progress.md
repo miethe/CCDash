@@ -6,7 +6,7 @@ prd: otel-session-metrics-ingestion-v1
 feature_slug: otel-session-metrics-ingestion-v1
 phase: 2
 phase_title: Shared Persistence Refactor
-status: in-progress
+status: completed
 started: '2026-05-05'
 updated: '2026-05-05'
 prd_ref: docs/project_plans/PRDs/integrations/otel-session-metrics-ingestion-v1.md
@@ -66,7 +66,7 @@ tasks:
   - backend/tests
 - id: P2-T5
   title: Add source dimension to ingestion metrics
-  status: pending
+  status: completed
   assigned_to:
   - observability
   dependencies:
@@ -84,10 +84,10 @@ parallelization:
   - P2-T4
   - P2-T5
 total_tasks: 5
-completed_tasks: 4
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 80
+progress: 100
 validation:
   required:
   - backend/.venv/bin/python -m pytest backend/tests/test_sessions_parser.py backend/tests/test_sessions_codex_parser.py -v
@@ -113,3 +113,9 @@ P2-T1 is complete. The complete JSONL persistence path now flows through `Sessio
 - `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_sync_engine_session_ingest_boundaries.py -q` passed: 2 passed in 1.17s.
 - `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_sync_engine_session_ingest_repository_wiring.py -q` passed: 2 passed in 0.66s.
 - `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_sync_engine_jsonl_persistence_regressions.py -q` passed: 1 passed in 0.90s.
+- `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_observability_ingestion_metrics.py -q` passed: 3 passed in 1.01s.
+- `ruff check backend/observability/otel.py backend/db/sync_engine.py backend/tests/test_observability_ingestion_metrics.py` passed.
+
+## Closeout
+
+Phase 2 is complete. JSONL session sync delegates persistence to `SessionIngestService`, keeps file/source lifecycle responsibilities in `SyncEngine`, preserves SQLite/Postgres repository selection, retains JSONL sync regression coverage, and emits ingestion metrics with `source=jsonl`.

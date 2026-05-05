@@ -4207,6 +4207,7 @@ class SyncEngine:
             "success" if session else "empty",
             (time.monotonic() - overall_t0) * 1000.0,
             project_id=project_id,
+            source="jsonl",
         )
 
         return True

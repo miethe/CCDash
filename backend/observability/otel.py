@@ -451,12 +451,12 @@ def initialize(app: FastAPI | None = None) -> None:
             _prom_ingestion_counter = Counter(
                 "ccdash_ingestion_events_total",
                 "Count of telemetry ingestion operations",
-                ["entity", "result", "project"],
+                ["entity", "result", "project", "source"],
             )
             _prom_ingestion_latency_hist = Histogram(
                 "ccdash_ingestion_latency_ms",
                 "Latency for parser and sync ingestion operations",
-                ["entity", "result", "project"],
+                ["entity", "result", "project", "source"],
             )
             _prom_parser_failure_counter = Counter(
                 "ccdash_parser_failures_total",
@@ -637,21 +637,39 @@ def start_span(
         yield span
 
 
-def record_ingestion(entity: str, result: str, duration_ms: float, *, project_id: str) -> None:
+def record_ingestion(
+    entity: str,
+    result: str,
+    duration_ms: float,
+    *,
+    project_id: str,
+    source: str | None = None,
+) -> None:
     labels = {
         "entity": entity or "unknown",
         "result": result or "unknown",
         "project_id": project_id or "unknown",
+        "source": source or "unknown",
     }
     if _enabled and _ingestion_counter is not None:
         _ingestion_counter.add(1, labels)
     if _enabled and _ingestion_latency_hist is not None:
         _ingestion_latency_hist.record(max(0.0, float(duration_ms)), labels)
     if _prom_enabled and _prom_ingestion_counter is not None:
-        prom = _prom_labels(project_id=project_id, entity=entity, result=result)
+        prom = _prom_labels(
+            project_id=project_id,
+            entity=entity,
+            result=result,
+            source=source or "unknown",
+        )
         _prom_ingestion_counter.labels(**prom).inc()
     if _prom_enabled and _prom_ingestion_latency_hist is not None:
-        prom = _prom_labels(project_id=project_id, entity=entity, result=result)
+        prom = _prom_labels(
+            project_id=project_id,
+            entity=entity,
+            result=result,
+            source=source or "unknown",
+        )
         _prom_ingestion_latency_hist.labels(**prom).observe(max(0.0, float(duration_ms)))
 
 
