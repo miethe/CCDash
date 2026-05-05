@@ -49,6 +49,7 @@ commit_refs: []
 pr_refs: []
 files_affected:
   - backend/services/source_identity.py
+  - backend/tests/test_source_identity.py
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-1-progress.md
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-2-progress.md
   - docs/project_plans/implementation_plans/infrastructure/live-ingest-source-path-canonicalization-hardening-v1.md

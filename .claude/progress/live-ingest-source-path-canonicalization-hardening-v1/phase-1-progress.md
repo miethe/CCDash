@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 33
+overall_progress: 67
 completion_estimate: on-track
 total_tasks: 3
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -40,7 +40,7 @@ tasks:
   priority: high
 - id: SRC-002
   description: Add a helper that maps host and container aliases to a stable source key before repository lookup/write.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - data-layer-expert
@@ -76,10 +76,11 @@ success_criteria:
 - The helper does not require a live container runtime.
 files_modified:
 - backend/services/source_identity.py
+- backend/tests/test_source_identity.py
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-1-progress.md
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-2-progress.md
 - docs/project_plans/implementation_plans/infrastructure/live-ingest-source-path-canonicalization-hardening-v1.md
-progress: 33
+progress: 67
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 1
@@ -90,4 +91,4 @@ Define the canonical filesystem source identity contract before implementing ali
 
 ## Current Status
 
-`SRC-001` is complete. `SRC-002` and `SRC-003` remain pending and no sync engine wiring has been added.
+`SRC-001` and `SRC-002` are complete. `SRC-003` remains pending and no sync engine wiring has been added.
