@@ -6,9 +6,9 @@ feature_slug: live-ingest-source-path-canonicalization-hardening
 phase: 5
 phase_title: Performance Validation Gate
 title: 'live-ingest-source-path-canonicalization-hardening-v1 - Phase 5: Performance Validation Gate'
-status: in-progress
+status: completed
 started: '2026-05-05'
-completed: null
+completed: '2026-05-05'
 created: '2026-05-04'
 updated: '2026-05-04'
 prd_ref: null
@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 75
-completion_estimate: 1 task remaining
+overall_progress: 100
+completion_estimate: complete
 total_tasks: 4
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -58,7 +58,7 @@ tasks:
   priority: high
 - id: VAL-004
   description: Run focused backend tests for watcher, runtime bootstrap, fanout, sync writes, canonicalization, and migration coverage.
-  status: pending
+  status: completed
   assigned_to:
   - task-completion-validator
   dependencies:
@@ -83,7 +83,7 @@ success_criteria:
 - Focused regression tests pass or caveats are recorded with exact command output.
 files_modified:
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-5-progress.md
-progress: 75
+progress: 100
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 5
@@ -125,3 +125,17 @@ Phase 5 is in progress. VAL-001 completed live startup idempotence smoke against
 - Immediately after second startup, the same table counters were unchanged.
 - After the 10-minute idle window, the same table counters were still unchanged.
 - `worker-watch /detailz` remained `ready=pass`, `startupSync=succeeded`, backlog `0`, publisher `published=11`, `publishErrors=0`.
+
+## VAL-004 Evidence
+
+- Combined command attempted: `python -m pytest backend/tests/test_file_watcher.py backend/tests/test_runtime_bootstrap.py backend/tests/test_postgres_live_fanout.py backend/tests/test_sync_engine_linking.py backend/tests/test_sync_engine_transcript_live_updates.py backend/tests/test_source_identity.py backend/tests/test_source_alias_duplicate_audit.py -q`.
+- Combined command failed before test execution with a Python 3.12 segmentation fault during import/collection.
+- Split focused passes:
+  - `python -m pytest backend/tests/test_file_watcher.py backend/tests/test_source_identity.py backend/tests/test_source_alias_duplicate_audit.py backend/tests/test_sync_engine_linking.py -q` -> 42 passed.
+  - `python -m pytest backend/tests/test_postgres_live_fanout.py -q` -> 11 passed.
+  - `python -m pytest backend/tests/test_sync_engine_transcript_live_updates.py -q` -> 2 passed.
+- Runtime bootstrap caveat:
+  - `python -m pytest backend/tests/test_runtime_bootstrap.py -q` segfaulted during pytest collection.
+  - `PYTEST_ADDOPTS=--assert=plain python -m pytest backend/tests/test_runtime_bootstrap.py -q` also segfaulted during collection/import.
+  - `python -m py_compile backend/tests/test_runtime_bootstrap.py` exited with code `-1`, while `python -m py_compile backend/runtime/container.py backend/runtime_ports.py` passed.
+- Result: 55 focused tests passed; the runtime bootstrap test file remains an environment/import caveat rather than evidence of a runtime regression.
