@@ -4,14 +4,14 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in-progress
 category: integrations
 title: "Implementation Plan: OTel Session Metrics Ingestion V1"
 description: "Phased implementation plan for inbound OpenTelemetry session metrics ingestion with a reusable normalized session-ingest module."
 summary: "Refactor CCDash session ingestion so local JSONL transcripts, Claude Code OTLP telemetry, and future agent platforms feed the same AgentSession, session_messages, usage attribution, analytics, and live update pipeline."
 author: codex
 created: 2026-05-02
-updated: 2026-05-02
+updated: 2026-05-05
 priority: high
 risk_level: high
 complexity: high
@@ -322,4 +322,3 @@ export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:8000/api/ingest/otel/
 ```
 
 Content-bearing variables such as `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_TOOL_CONTENT`, and `OTEL_LOG_RAW_API_BODIES` must stay off unless the operator explicitly approves storage of that data.
-
