@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 25
-completion_estimate: 3 tasks remaining
+overall_progress: 50
+completion_estimate: 2 tasks remaining
 total_tasks: 4
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -40,7 +40,7 @@ tasks:
   priority: high
 - id: VAL-002
   description: Sample worker-watch CPU and memory every 30 seconds for 10 minutes after startup completes with no file changes.
-  status: pending
+  status: completed
   assigned_to:
   - performance-engineer
   dependencies:
@@ -83,7 +83,7 @@ success_criteria:
 - Focused regression tests pass or caveats are recorded with exact command output.
 files_modified:
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-5-progress.md
-progress: 25
+progress: 50
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 5
@@ -104,3 +104,12 @@ Phase 5 is in progress. VAL-001 completed live startup idempotence smoke against
 - `docker-compose ... restart worker-watch` triggered a second startup sync.
 - Second startup sync completed at `2026-05-05T03:07:32Z`: `startupSync=succeeded`, backlog `0`, readiness `pass`, `lastDurationMs=112252`, `published=11`, `publishErrors=0`.
 - The second startup did not bulk re-publish the corpus and completed materially faster than the first startup.
+
+## VAL-002 Evidence
+
+- `for i in $(seq 1 20); do date -u +sample=%Y-%m-%dT%H:%M:%SZ; docker-compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch stats --no-stream | awk 'NR==1 || /ccdash-worker-watch-1|ccdash-postgres-1/'; sleep 30; done`
+- Window: `2026-05-05T03:08:09Z` through `2026-05-05T03:18:30Z`, 20 samples.
+- `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env`.
+- `worker-watch` CPU stayed sustained but bounded in the polling range, roughly `12.01%` to `22.30%`.
+- `worker-watch` RSS rose from about `164 MiB` to about `267 MiB` early in the idle window, then remained flat near `266-269 MiB`; no monotonic growth across the full window.
+- Postgres CPU was mostly `0.00-0.10%` after startup, with brief samples at `2.64-2.78%`; Postgres RSS dropped from about `353 MiB` to about `300 MiB`.
