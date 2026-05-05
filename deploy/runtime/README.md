@@ -111,7 +111,35 @@ The repo includes `deploy/runtime/watchers/ccdash.env.example` as a concrete exa
 
 For multi-project deployments, prefer mounting a stable superset root shared by all watcher containers, then vary only `CCDASH_WORKER_WATCH_PROJECT_ID` and `CCDASH_WORKER_WATCH_PROBE_PORT` per watcher. When projects live on unrelated host roots, use the optional mount slots in each watcher's env overlay. Do not use Compose `--scale worker-watch=N` for v1: each watcher needs a distinct project id and probe port, which requires distinct service/env configuration.
 
-On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, set `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env` and restart it. The shipped compose file passes this variable only to `worker-watch`; keep polling scoped there because it is a compatibility mode for Docker Desktop file sharing, not the default Linux path.
+On macOS Docker Desktop, bind-mounted filesystem events can be unreliable. If `worker-watch` starts but does not see new JSONL changes, set `WATCHFILES_FORCE_POLLING=true` in `deploy/runtime/.env` and restart it. The shipped compose file passes this variable only to `worker-watch`; keep polling scoped there because it is a compatibility mode for Docker Desktop file sharing, not the default Linux path. Do not copy `WATCHFILES_FORCE_POLLING` into shared backend, API, or default worker environment blocks.
+
+### Startup Sync And Polling Load
+
+`worker-watch` has two different load profiles:
+
+- Startup sync load happens when `CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED=true` and the worker is reconciling the mounted corpus before it settles into live watching. High worker CPU, Postgres CPU, and Postgres I/O can be expected during this window, especially for broad `.claude`, `.codex`, or workspace mounts with thousands of JSONL files.
+- Idle polling load is sustained `worker-watch` CPU after startup sync is complete and no watched files are changing. With `WATCHFILES_FORCE_POLLING=false`, idle CPU should settle low outside event bursts. With `WATCHFILES_FORCE_POLLING=true`, idle CPU can remain higher because the watcher periodically scans bind mounts; disable it again after Docker Desktop event delivery is confirmed.
+
+Use these commands to separate startup sync from idle polling:
+
+```bash
+COMPOSE="docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch"
+
+$COMPOSE ps
+
+curl -fsS http://localhost:9466/detailz | python3 -c 'import json,sys; p=json.load(sys.stdin); d=p.get("detail",{}); w=d.get("watcher",{}); worker=d.get("worker",{}); print(json.dumps({"runtimeProfile":p.get("runtimeProfile"), "ready":p.get("ready",{}).get("status"), "startupSync":worker.get("jobs",{}).get("startupSync"), "watcherState":w.get("state"), "watchPathCount":w.get("watchPathCount"), "lastChangeSyncAt":w.get("lastChangeSyncAt"), "lastSyncStatus":w.get("lastSyncStatus"), "backpressure":worker.get("backpressure")}, indent=2))'
+
+$COMPOSE stats --no-stream worker-watch postgres
+
+$COMPOSE exec -T postgres psql -U ccdash -d ccdash \
+  -c "select relname, n_live_tup, n_dead_tup, n_tup_ins, n_tup_del from pg_stat_user_tables where relname in ('sessions','session_messages','telemetry_events','session_usage_attributions','sync_state') order by relname;"
+```
+
+Interpretation:
+
+- If `startupSync` is `running` or reports backlog, CPU and write I/O are startup reconciliation load. Wait for the startup job to finish before judging idle watcher cost.
+- If startup sync is complete, no files are changing, and `worker-watch` CPU remains high across repeated `stats --no-stream` samples, treat it as idle polling or watch-scope load. First confirm whether `WATCHFILES_FORCE_POLLING=true`; then reduce watch scope or disable polling after event delivery works.
+- If table counters grow on an unchanged second startup, that indicates re-ingest/write amplification and should be investigated separately from polling CPU.
 
 ## Enterprise Live Ingest Smoke
 

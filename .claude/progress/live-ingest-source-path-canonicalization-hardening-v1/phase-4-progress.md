@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 0
-completion_estimate: pending
+overall_progress: 33
+completion_estimate: 2 tasks remaining
 total_tasks: 3
-completed_tasks: 0
+completed_tasks: 1
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -30,7 +30,7 @@ contributors: []
 tasks:
 - id: OPS-001
   description: Document startup sync load versus idle polling load and explain WATCHFILES_FORCE_POLLING as a worker-watch compatibility fallback.
-  status: in-progress
+  status: completed
   assigned_to:
   - DevOps
   - documentation-writer
@@ -68,8 +68,10 @@ success_criteria:
 - Runtime docs use docker-compose for this environment and do not assume standalone docker.
 - Docs include expected CPU/RAM interpretation rather than only commands.
 - Docs do not present polling mode as a default performance setting.
-files_modified: []
-progress: 0
+files_modified:
+- deploy/runtime/README.md
+- .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-4-progress.md
+progress: 33
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 4
@@ -80,4 +82,4 @@ Add runtime operator guardrails for live-watch startup, polling fallback, port v
 
 ## Current Status
 
-Phase 4 is in progress. OPS-001 has been delegated; OPS-002 and OPS-003 remain pending.
+Phase 4 is in progress. OPS-001 is complete; OPS-002 and OPS-003 remain pending.
