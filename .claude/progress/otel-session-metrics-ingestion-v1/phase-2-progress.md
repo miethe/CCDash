@@ -35,7 +35,7 @@ tasks:
   - backend/ingestion/session_ingest_service.py
 - id: P2-T2
   title: Keep sync-state and delete-by-source responsibilities in SyncEngine
-  status: pending
+  status: completed
   assigned_to:
   - backend-platform
   dependencies:
@@ -84,10 +84,10 @@ parallelization:
   - P2-T4
   - P2-T5
 total_tasks: 5
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 20
+progress: 40
 validation:
   required:
   - backend/.venv/bin/python -m pytest backend/tests/test_sessions_parser.py backend/tests/test_sessions_codex_parser.py -v
@@ -110,3 +110,4 @@ P2-T1 is complete. The complete JSONL persistence path now flows through `Sessio
 ## Validation Notes
 
 - `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_session_ingest_service.py backend/tests/test_session_ingest_contract.py backend/tests/test_sync_engine_linking.py::SyncEngineSessionBackfillTests backend/tests/test_sync_engine_transcript_canonicalization.py backend/tests/test_sync_engine_session_intelligence.py backend/tests/test_file_watcher.py::JsonlAppendIncrementalSyncTests backend/tests/test_sync_engine_transcript_live_updates.py -q` passed: 20 passed in 2.83s.
+- `PYTHONPATH=. backend/.venv/bin/python -m pytest backend/tests/test_sync_engine_session_ingest_boundaries.py -q` passed: 2 passed in 1.17s.
