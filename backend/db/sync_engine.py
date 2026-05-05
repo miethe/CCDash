@@ -4058,7 +4058,7 @@ class SyncEngine:
         if not force:
             cached = await self.sync_repo.get_sync_state(sync_file_path)
             if cached and cached["file_mtime"] == mtime:
-                needs_lineage_backfill = await self._session_source_needs_lineage_backfill(file_path)
+                needs_lineage_backfill = await self._session_source_needs_lineage_backfill(sync_file_path)
                 if not needs_lineage_backfill:
                     return False  # unchanged
                 logger.info("Session lineage backfill triggered for unchanged file: %s", file_path)
@@ -4088,8 +4088,8 @@ class SyncEngine:
                 "ccdash.file_path": file_path,
             },
         ):
-            await self.session_repo.delete_by_source(file_path)
-            await self.session_repo.delete_relationships_for_source(project_id, file_path)
+            await self.session_repo.delete_by_source(sync_file_path)
+            await self.session_repo.delete_relationships_for_source(project_id, sync_file_path)
 
             if session:
                 all_relationships: list[dict[str, Any]] = []
@@ -4103,7 +4103,12 @@ class SyncEngine:
                         for row in relationship_rows:
                             if isinstance(row, dict):
                                 all_relationships.append(dict(row))
-                    session_payload["sourceFile"] = file_path
+                    session_payload["sourceFile"] = sync_file_path
+                    session_forensics = session_payload.get("sessionForensics")
+                    if not isinstance(session_forensics, dict):
+                        session_forensics = {}
+                    session_forensics.setdefault("observedSourceFile", file_path)
+                    session_payload["sessionForensics"] = session_forensics
                     _apply_claude_usage_fields(session_payload)
                     pending_sessions.append(session_payload)
                     if isinstance(derived_sessions, list):
@@ -4269,7 +4274,7 @@ class SyncEngine:
                 if deduped_relationships:
                     await self.session_repo.upsert_relationships(
                         project_id,
-                        file_path,
+                        sync_file_path,
                         list(deduped_relationships.values()),
                     )
 

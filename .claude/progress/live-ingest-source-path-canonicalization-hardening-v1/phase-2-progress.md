@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 25
+overall_progress: 50
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -40,7 +40,7 @@ tasks:
   priority: high
 - id: ING-002
   description: Normalize sessions.source_file at write boundaries or add an explicit canonical source column while preserving display/debug compatibility.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   - data-layer-expert
@@ -91,7 +91,7 @@ files_modified:
 - backend/db/sync_engine.py
 - backend/tests/test_sync_engine_linking.py
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-2-progress.md
-progress: 25
+progress: 50
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 2
@@ -102,4 +102,4 @@ Apply canonical source keys at ingest lookup/write/delete boundaries after the P
 
 ## Current Status
 
-`ING-001` is complete. Sync-state lookup, upsert, and delete boundaries now use canonical source identity keys; session source persistence remains pending for `ING-002`.
+`ING-001` and `ING-002` are complete. Sync-state and session source-file boundaries now use canonical source identity keys while preserving the observed source path in session forensics.

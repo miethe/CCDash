@@ -246,8 +246,8 @@ class SyncEngineSessionBackfillTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(synced)
             engine.sync_repo.get_sync_state.assert_awaited_once_with(sync_key)
             parse_mock.assert_called_once_with(path)
-            engine.session_repo.delete_by_source.assert_awaited_once()
-            engine.session_repo.delete_relationships_for_source.assert_awaited_once_with("project-1", str(path))
+            engine.session_repo.delete_by_source.assert_awaited_once_with(sync_key)
+            engine.session_repo.delete_relationships_for_source.assert_awaited_once_with("project-1", sync_key)
             engine.sync_repo.upsert_sync_state.assert_awaited_once()
             self.assertEqual(engine.sync_repo.upsert_sync_state.await_args.args[0]["file_path"], sync_key)
 
