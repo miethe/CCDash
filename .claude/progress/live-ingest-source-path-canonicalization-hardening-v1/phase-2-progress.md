@@ -6,9 +6,9 @@ feature_slug: live-ingest-source-path-canonicalization-hardening
 phase: 2
 phase_title: Ingest Path Canonicalization
 title: 'live-ingest-source-path-canonicalization-hardening-v1 - Phase 2: Ingest Path Canonicalization'
-status: in_progress
+status: completed
 started: '2026-05-04'
-completed: null
+completed: '2026-05-04'
 created: '2026-05-04'
 updated: '2026-05-04'
 prd_ref: null
@@ -16,10 +16,10 @@ plan_ref: docs/project_plans/implementation_plans/infrastructure/live-ingest-sou
 commit_refs: []
 pr_refs: []
 execution_model: task-scoped
-overall_progress: 75
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: complete
 total_tasks: 4
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -61,7 +61,7 @@ tasks:
   priority: high
 - id: ING-004
   description: Confirm publish counts reflect real changed sessions, not alias re-ingestion.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   - data-layer-expert
@@ -92,7 +92,7 @@ files_modified:
 - backend/tests/test_file_watcher.py
 - backend/tests/test_sync_engine_linking.py
 - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-2-progress.md
-progress: 75
+progress: 100
 ---
 
 # live-ingest-source-path-canonicalization-hardening-v1 - Phase 2
@@ -103,4 +103,4 @@ Apply canonical source keys at ingest lookup/write/delete boundaries after the P
 
 ## Current Status
 
-`ING-001`, `ING-002`, and `ING-003` are complete. Alias-path session reingest now keeps replace-scoped tables stable with canonical source identity keys.
+Phase 2 is complete. Alias-path unchanged sessions skip parsing and live fanout when canonical sync state and lineage are already current.

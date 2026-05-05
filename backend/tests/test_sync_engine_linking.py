@@ -275,12 +275,18 @@ class SyncEngineSessionBackfillTests(unittest.IsolatedAsyncioTestCase):
             )
             sync_key = engine._canonical_source_key("project-1", path, "session")
 
-            with patch("backend.db.sync_engine.parse_session_file") as parse_mock:
+            with (
+                patch("backend.db.sync_engine.parse_session_file") as parse_mock,
+                patch("backend.db.sync_engine._publish_session_transcript_appends") as append_publish_mock,
+                patch("backend.db.sync_engine.publish_session_snapshot") as snapshot_publish_mock,
+            ):
                 synced = await SyncEngine._sync_single_session(engine, "project-1", path, force=False)
 
             self.assertFalse(synced)
             engine.sync_repo.get_sync_state.assert_awaited_once_with(sync_key)
             parse_mock.assert_not_called()
+            append_publish_mock.assert_not_called()
+            snapshot_publish_mock.assert_not_called()
             engine.session_repo.delete_by_source.assert_not_awaited()
             engine.sync_repo.upsert_sync_state.assert_not_awaited()
 
