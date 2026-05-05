@@ -5,7 +5,7 @@ prd: otel-session-metrics-ingestion-v1
 phase: 1
 phase_title: Ingest Contract
 status: in_progress
-progress: 25
+progress: 50
 plan: docs/project_plans/implementation_plans/integrations/otel-session-metrics-ingestion-v1.md
 updated: '2026-05-05'
 tasks:
@@ -17,14 +17,14 @@ tasks:
   dependencies: []
 - id: P1-T2
   title: Define IngestSourceAdapter protocol
-  status: pending
+  status: completed
   assigned_to:
   - backend-platform
   dependencies:
   - P1-T1
 - id: P1-T3
   title: Add source key and idempotency helpers
-  status: pending
+  status: in_progress
   assigned_to:
   - data-platform
   dependencies:
@@ -51,8 +51,8 @@ validation:
   - "backend/.venv/bin/python -m pytest backend/tests/test_session_ingest_contract.py -v"
   - "backend/.venv/bin/python -m pytest backend/tests/test_sessions_parser.py backend/tests/test_sessions_codex_parser.py -v"
 total_tasks: 4
-completed_tasks: 1
-in_progress_tasks: 0
+completed_tasks: 2
+in_progress_tasks: 1
 blocked_tasks: 0
 ---
 
