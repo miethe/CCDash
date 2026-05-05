@@ -4,8 +4,8 @@ schema_version: 2
 prd: otel-session-metrics-ingestion-v1
 phase: 1
 phase_title: Ingest Contract
-status: pending
-progress: 75
+status: completed
+progress: 100
 plan: docs/project_plans/implementation_plans/integrations/otel-session-metrics-ingestion-v1.md
 updated: '2026-05-05'
 tasks:
@@ -31,7 +31,7 @@ tasks:
   - P1-T1
 - id: P1-T4
   title: Add envelope validation and source key tests
-  status: pending
+  status: completed
   assigned_to:
   - testing
   dependencies:
@@ -51,7 +51,7 @@ validation:
   - "backend/.venv/bin/python -m pytest backend/tests/test_session_ingest_contract.py -v"
   - "backend/.venv/bin/python -m pytest backend/tests/test_sessions_parser.py backend/tests/test_sessions_codex_parser.py -v"
 total_tasks: 4
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 ---
@@ -64,4 +64,6 @@ Create source-neutral ingestion contracts before moving persistence code.
 
 ## Validation Notes
 
-- Pending.
+- `backend/.venv/bin/python -m pytest backend/tests/test_session_ingest_contract.py -v` passed: 9 passed in 0.23s.
+- `backend/.venv/bin/python -m pytest backend/tests/test_sessions_parser.py backend/tests/test_sessions_codex_parser.py -v` passed: 41 passed in 0.65s.
+- `backend/.venv/bin/python -m pytest backend/tests/test_architecture_boundaries.py -v` failed on an existing `backend/routers/analytics.py` direct `backend.db.factory` import; Phase 1 did not touch router code.
