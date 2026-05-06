@@ -24,7 +24,7 @@ contributors:
 tasks:
 - id: P0-001
   title: Inventory planning consumers of forensics/token/session evidence
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - documentation-writer
@@ -74,10 +74,10 @@ parallelization:
   batch_2:
   - P0-003
 total_tasks: 5
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 40
+progress: 60
 ---
 
 # Phase 0: Contract Inventory And Guardrails
