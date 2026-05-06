@@ -33,7 +33,7 @@ tasks:
   evidence: []
 - id: P0-002
   title: Inventory feature/session frontend consumers
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -74,10 +74,10 @@ parallelization:
   batch_2:
   - P0-003
 total_tasks: 5
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 60
+progress: 80
 ---
 
 # Phase 0: Contract Inventory And Guardrails
