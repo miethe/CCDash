@@ -256,6 +256,15 @@ class WorkflowDiagnosticsDTO(AgentQueryEnvelope):
     problem_workflows: list[WorkflowDiagnostic] = Field(default_factory=list)
 
 
+class SnapshotDiagnosticsDTO(AgentQueryEnvelope):
+    project_id: str
+    snapshot_age_seconds: int | None = None
+    artifact_count: int = 0
+    resolved_count: int = 0
+    unresolved_count: int = 0
+    is_stale: bool = True
+
+
 class AARReportDTO(AgentQueryEnvelope):
     feature_id: str
     feature_slug: str = ""

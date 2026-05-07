@@ -7,7 +7,9 @@ from typing import Any
 
 import aiosqlite
 
+from backend import config
 from backend.models import SkillMeatArtifactSnapshot, SnapshotFreshnessMeta
+from backend.models import SnapshotDiagnostics
 
 
 def _utc_now() -> datetime:
@@ -63,6 +65,54 @@ def _freshness_from_row(row: Any | None) -> SnapshotFreshnessMeta:
         snapshotSource="skillmeat",
         sourceGeneratedAt=_row_value(row, "generated_at"),
         fetchedAt=_row_value(row, "fetched_at"),
+    )
+
+
+def _utc_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    else:
+        return None
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _int_row_value(row: Any | None, key: str, default: int = 0) -> int:
+    if row is None:
+        return default
+    try:
+        value = row[key]
+    except (KeyError, TypeError, IndexError):
+        return default
+    return int(value or default)
+
+
+def _diagnostics_from_rows(
+    project_id: str,
+    snapshot_row: Any | None,
+    identity_count_row: Any | None,
+) -> SnapshotDiagnostics:
+    fetched_at = _utc_datetime(_row_value(snapshot_row, "fetched_at")) if snapshot_row else None
+    if fetched_at is None:
+        snapshot_age_seconds = None
+    else:
+        snapshot_age_seconds = max(int((_utc_now() - fetched_at).total_seconds()), 0)
+
+    is_stale = snapshot_age_seconds is None or (
+        snapshot_age_seconds > config.CCDASH_SNAPSHOT_FRESHNESS_MAX_AGE_SECONDS
+    )
+    return SnapshotDiagnostics(
+        projectId=project_id,
+        snapshotAgeSeconds=snapshot_age_seconds,
+        artifactCount=_int_row_value(snapshot_row, "artifact_count"),
+        resolvedCount=_int_row_value(identity_count_row, "resolved_count"),
+        unresolvedCount=_int_row_value(identity_count_row, "unresolved_count"),
+        isStale=is_stale,
     )
 
 
@@ -134,6 +184,31 @@ class SqliteArtifactSnapshotRepository:
         ) as cur:
             row = await cur.fetchone()
         return int(row["count"] or 0) if row else 0
+
+    async def get_snapshot_diagnostics(self, project_id: str) -> SnapshotDiagnostics:
+        async with self.db.execute(
+            """
+            SELECT artifact_count, fetched_at
+            FROM artifact_snapshot_cache
+            WHERE project_id = ?
+            ORDER BY fetched_at DESC, id DESC
+            LIMIT 1
+            """,
+            (project_id,),
+        ) as cur:
+            snapshot_row = await cur.fetchone()
+        async with self.db.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN match_tier = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved_count,
+                COALESCE(SUM(CASE WHEN match_tier != 'unresolved' THEN 1 ELSE 0 END), 0) AS resolved_count
+            FROM artifact_identity_map
+            WHERE project_id = ?
+            """,
+            (project_id,),
+        ) as cur:
+            identity_count_row = await cur.fetchone()
+        return _diagnostics_from_rows(project_id, snapshot_row, identity_count_row)
 
     async def save_identity_mapping(self, mapping: dict[str, Any]) -> None:
         await self.db.execute(

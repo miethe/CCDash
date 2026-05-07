@@ -1,5 +1,7 @@
 import json
 import unittest
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 import aiosqlite
 
@@ -158,12 +160,107 @@ class ArtifactSnapshotRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.repo.get_unresolved_identity_count("project-2"), 1)
         self.assertEqual(await self.repo.get_unresolved_identity_count("missing-project"), 0)
 
+    async def test_save_identity_mapping_replaces_existing_mapping_and_lists_rows(self) -> None:
+        await self.repo.save_identity_mapping(
+            {
+                "project_id": "project-1",
+                "ccdash_name": "frontend-design",
+                "ccdash_type": "skill",
+                "skillmeat_uuid": "old-uuid",
+                "content_hash": "",
+                "match_tier": "unresolved",
+                "confidence": None,
+                "resolved_at": "",
+                "unresolved_reason": "not_in_snapshot",
+            }
+        )
+        await self.repo.save_identity_mapping(
+            {
+                "project_id": "project-1",
+                "ccdash_name": "frontend-design",
+                "ccdash_type": "skill",
+                "skillmeat_uuid": "new-uuid",
+                "content_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "match_tier": "tier-1",
+                "confidence": 1.0,
+                "resolved_at": "2026-05-07T10:00:00Z",
+                "unresolved_reason": "",
+            }
+        )
+
+        mappings = await self.repo.list_identity_mappings("project-1")
+
+        self.assertEqual(len(mappings), 1)
+        self.assertEqual(mappings[0]["skillmeat_uuid"], "new-uuid")
+        self.assertEqual(mappings[0]["match_tier"], "tier-1")
+        self.assertEqual(mappings[0]["confidence"], 1.0)
+
+    async def test_get_snapshot_diagnostics_returns_latest_counts_and_staleness(self) -> None:
+        await self.repo.save_snapshot(
+            _snapshot(
+                generated_at="2026-05-07T10:00:00Z",
+                fetched_at="2026-05-07T10:01:00Z",
+            )
+        )
+        await self.db.executemany(
+            """
+            INSERT INTO artifact_identity_map (
+                project_id, ccdash_name, ccdash_type, match_tier, unresolved_reason
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                ("project-1", "frontend-design", "skill", "uuid", ""),
+                ("project-1", "symbols", "skill", "hash", ""),
+                ("project-1", "planning", "skill", "unresolved", "not_in_snapshot"),
+                ("project-2", "frontend-design", "skill", "unresolved", "not_in_snapshot"),
+            ],
+        )
+        await self.db.commit()
+
+        with patch(
+            "backend.db.repositories.artifact_snapshot_repository._utc_now",
+            return_value=datetime(2026, 5, 7, 10, 31, tzinfo=timezone.utc),
+        ), patch(
+            "backend.db.repositories.artifact_snapshot_repository.config.CCDASH_SNAPSHOT_FRESHNESS_MAX_AGE_SECONDS",
+            3600,
+        ):
+            diagnostics = await self.repo.get_snapshot_diagnostics("project-1")
+
+        self.assertEqual(diagnostics.project_id, "project-1")
+        self.assertEqual(diagnostics.snapshot_age_seconds, 1800)
+        self.assertEqual(diagnostics.artifact_count, 1)
+        self.assertEqual(diagnostics.resolved_count, 2)
+        self.assertEqual(diagnostics.unresolved_count, 1)
+        self.assertFalse(diagnostics.is_stale)
+
+        with patch(
+            "backend.db.repositories.artifact_snapshot_repository._utc_now",
+            return_value=datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc),
+        ), patch(
+            "backend.db.repositories.artifact_snapshot_repository.config.CCDASH_SNAPSHOT_FRESHNESS_MAX_AGE_SECONDS",
+            3600,
+        ):
+            stale = await self.repo.get_snapshot_diagnostics("project-1")
+
+        self.assertTrue(stale.is_stale)
+
+    async def test_get_snapshot_diagnostics_for_missing_project_is_stale_empty_payload(self) -> None:
+        diagnostics = await self.repo.get_snapshot_diagnostics("missing-project")
+
+        self.assertEqual(diagnostics.project_id, "missing-project")
+        self.assertIsNone(diagnostics.snapshot_age_seconds)
+        self.assertEqual(diagnostics.artifact_count, 0)
+        self.assertEqual(diagnostics.resolved_count, 0)
+        self.assertEqual(diagnostics.unresolved_count, 0)
+        self.assertTrue(diagnostics.is_stale)
+
 
 class _FakePostgresConnection:
     def __init__(self):
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
         self.fetchrow_results: list[dict | None] = []
         self.fetchval_results: list[object] = []
+        self.fetch_results: list[list[dict]] = []
 
     async def execute(self, query: str, *args):
         self.execute_calls.append((query, args))
@@ -175,6 +272,10 @@ class _FakePostgresConnection:
     async def fetchval(self, query: str, *args):
         self.execute_calls.append((query, args))
         return self.fetchval_results.pop(0)
+
+    async def fetch(self, query: str, *args):
+        self.execute_calls.append((query, args))
+        return self.fetch_results.pop(0)
 
 
 class PostgresArtifactSnapshotRepositoryTests(unittest.IsolatedAsyncioTestCase):
@@ -227,3 +328,71 @@ class PostgresArtifactSnapshotRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(freshness.fetched_at.isoformat(), "2026-05-07T10:01:00+00:00")
         self.assertEqual(count, 3)
         self.assertEqual(conn.execute_calls[-1][1], ("project-1",))
+
+    async def test_postgres_snapshot_diagnostics_queries_latest_snapshot_and_identity_counts(self) -> None:
+        conn = _FakePostgresConnection()
+        conn.fetchrow_results.extend(
+            [
+                {"artifact_count": 4, "fetched_at": "2026-05-07T10:00:00Z"},
+                {"resolved_count": 3, "unresolved_count": 1},
+            ]
+        )
+        repo = PostgresArtifactSnapshotRepository(conn)  # type: ignore[arg-type]
+
+        with patch(
+            "backend.db.repositories.artifact_snapshot_repository._utc_now",
+            return_value=datetime(2026, 5, 7, 10, 10, tzinfo=timezone.utc),
+        ), patch(
+            "backend.db.repositories.artifact_snapshot_repository.config.CCDASH_SNAPSHOT_FRESHNESS_MAX_AGE_SECONDS",
+            1200,
+        ):
+            diagnostics = await repo.get_snapshot_diagnostics("project-1")
+
+        self.assertEqual(diagnostics.snapshot_age_seconds, 600)
+        self.assertEqual(diagnostics.artifact_count, 4)
+        self.assertEqual(diagnostics.resolved_count, 3)
+        self.assertEqual(diagnostics.unresolved_count, 1)
+        self.assertFalse(diagnostics.is_stale)
+        self.assertIn("artifact_snapshot_cache", conn.execute_calls[0][0])
+        self.assertIn("artifact_identity_map", conn.execute_calls[1][0])
+        self.assertEqual(conn.execute_calls[0][1], ("project-1",))
+        self.assertEqual(conn.execute_calls[1][1], ("project-1",))
+
+    async def test_postgres_identity_mapping_write_and_list_queries(self) -> None:
+        conn = _FakePostgresConnection()
+        conn.fetch_results.append(
+            [
+                {
+                    "project_id": "project-1",
+                    "ccdash_name": "frontend-design",
+                    "ccdash_type": "skill",
+                    "skillmeat_uuid": "uuid-1",
+                    "content_hash": "",
+                    "match_tier": "tier-2",
+                    "confidence": 0.91,
+                    "resolved_at": "2026-05-07T10:00:00Z",
+                    "unresolved_reason": "",
+                }
+            ]
+        )
+        repo = PostgresArtifactSnapshotRepository(conn)  # type: ignore[arg-type]
+
+        await repo.save_identity_mapping(
+            {
+                "project_id": "project-1",
+                "ccdash_name": "frontend-design",
+                "ccdash_type": "skill",
+                "skillmeat_uuid": "uuid-1",
+                "content_hash": "",
+                "match_tier": "tier-2",
+                "confidence": 0.91,
+                "resolved_at": "2026-05-07T10:00:00Z",
+                "unresolved_reason": "",
+            }
+        )
+        mappings = await repo.list_identity_mappings("project-1")
+
+        self.assertIn("DELETE FROM artifact_identity_map", conn.execute_calls[0][0])
+        self.assertIn("INSERT INTO artifact_identity_map", conn.execute_calls[1][0])
+        self.assertEqual(conn.execute_calls[0][1], ("project-1", "frontend-design", "skill"))
+        self.assertEqual(mappings[0]["match_tier"], "tier-2")

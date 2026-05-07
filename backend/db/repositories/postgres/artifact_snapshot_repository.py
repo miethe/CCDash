@@ -2,19 +2,20 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import asyncpg
 
 from backend.db.repositories.artifact_snapshot_repository import (
+    _diagnostics_from_rows,
     _freshness_from_row,
     _iso_utc,
     _payload_from_raw,
     _snapshot_from_row,
     _utc_now,
 )
-from backend.models import SkillMeatArtifactSnapshot, SnapshotFreshnessMeta
+from backend.models import SkillMeatArtifactSnapshot, SnapshotDiagnostics, SnapshotFreshnessMeta
 
 
 def _snapshot_payload(snapshot: SkillMeatArtifactSnapshot, fetched_at: datetime) -> dict[str, Any]:
@@ -94,6 +95,29 @@ class PostgresArtifactSnapshotRepository:
             project_id,
         )
         return int(count or 0)
+
+    async def get_snapshot_diagnostics(self, project_id: str) -> SnapshotDiagnostics:
+        snapshot_row = await self.db.fetchrow(
+            """
+            SELECT artifact_count, fetched_at
+            FROM artifact_snapshot_cache
+            WHERE project_id = $1
+            ORDER BY fetched_at DESC, id DESC
+            LIMIT 1
+            """,
+            project_id,
+        )
+        identity_count_row = await self.db.fetchrow(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN match_tier = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved_count,
+                COALESCE(SUM(CASE WHEN match_tier != 'unresolved' THEN 1 ELSE 0 END), 0) AS resolved_count
+            FROM artifact_identity_map
+            WHERE project_id = $1
+            """,
+            project_id,
+        )
+        return _diagnostics_from_rows(project_id, snapshot_row, identity_count_row)
 
     async def save_identity_mapping(self, mapping: dict[str, Any]) -> None:
         await self.db.execute(

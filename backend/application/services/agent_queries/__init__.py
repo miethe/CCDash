@@ -44,6 +44,7 @@ from backend.application.services.agent_queries.models import (
     QueryStatus,
     SessionRef,
     SessionSummary,
+    SnapshotDiagnosticsDTO,
     TaskRef,
     TimelineData,
     TokenUsageByModel,
@@ -53,6 +54,7 @@ from backend.application.services.agent_queries.models import (
     WorkflowObservation,
     WorkflowSummary,
 )
+from backend.application.services.agent_queries.artifact_intelligence import ArtifactIntelligenceQueryService
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
 from backend.application.services.agent_queries.feature_evidence_summary import FeatureEvidenceSummaryService
 from backend.application.services.agent_queries.planning import PlanningQueryService
@@ -82,12 +84,14 @@ __all__ = [
     "FeatureEvidenceSummary",
     "FeatureEvidenceSummaryService",
     "FeatureForensicsDTO",
+    "ArtifactIntelligenceQueryService",
     "KeyMetrics",
     "ProjectStatusDTO",
     "ProjectStatusQueryService",
     "QueryStatus",
     "SessionRef",
     "SessionSummary",
+    "SnapshotDiagnosticsDTO",
     "TaskRef",
     "TimelineData",
     "TurningPoint",

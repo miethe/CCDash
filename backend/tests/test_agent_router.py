@@ -8,6 +8,7 @@ from backend.application.services.agent_queries import (
     AARReportDTO,
     FeatureForensicsDTO,
     ProjectStatusDTO,
+    SnapshotDiagnosticsDTO,
     WorkflowDiagnosticsDTO,
 )
 from backend.routers import agent as agent_router
@@ -22,10 +23,12 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/api/agent/project-status", paths)
         self.assertIn("/api/agent/feature-forensics/{feature_id}", paths)
         self.assertIn("/api/agent/workflow-diagnostics", paths)
+        self.assertIn("/api/agent/artifact-intelligence/snapshot-diagnostics", paths)
         self.assertIn("/api/agent/reports/aar", paths)
         self.assertIn("get", paths["/api/agent/project-status"])
         self.assertIn("get", paths["/api/agent/feature-forensics/{feature_id}"])
         self.assertIn("get", paths["/api/agent/workflow-diagnostics"])
+        self.assertIn("get", paths["/api/agent/artifact-intelligence/snapshot-diagnostics"])
         self.assertIn("post", paths["/api/agent/reports/aar"])
 
     async def test_get_project_status_delegates_once_and_returns_dto_unchanged(self) -> None:
@@ -110,6 +113,38 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
             app_request.context,
             app_request.ports,
             feature_id="feature-2",
+            bypass_cache=False,
+        )
+
+    async def test_get_artifact_snapshot_diagnostics_delegates_once_and_returns_dto_unchanged(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = SnapshotDiagnosticsDTO(project_id="project-1", snapshot_age_seconds=120, source_refs=["project-1"])
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)) as resolve_mock:
+            with patch.object(
+                agent_router.artifact_intelligence_query_service,
+                "get_snapshot_diagnostics",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_artifact_snapshot_diagnostics(
+                    project_id="project-1",
+                    bypass_cache=False,
+                    request_context=request_context,
+                    core_ports=core_ports,
+                )
+
+        self.assertIs(result, dto)
+        resolve_mock.assert_awaited_once_with(
+            request_context,
+            core_ports,
+            requested_project_id="project-1",
+        )
+        service_mock.assert_awaited_once_with(
+            app_request.context,
+            app_request.ports,
+            project_id_override="project-1",
             bypass_cache=False,
         )
 

@@ -15,10 +15,10 @@ plan_ref: docs/project_plans/implementation_plans/integrations/skillmeat-artifac
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
-overall_progress: 67
+overall_progress: 83
 completion_estimate: on_track
 total_tasks: 6
-completed_tasks: 4
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -79,7 +79,7 @@ tasks:
 - id: T2-005
   title: Snapshot diagnostics query
   description: Add get_snapshot_diagnostics and register an agent query returning snapshot age, artifact counts, resolved/unresolved counts, and staleness.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -130,7 +130,7 @@ success_criteria:
   status: completed
 - id: SC-4
   description: Snapshot diagnostics return snapshot age and unresolved identity count.
-  status: pending
+  status: completed
 - id: SC-5
   description: Fetch, store, resolve, and query integration coverage passes with the seeded SkillMeat fixture.
   status: pending
@@ -155,7 +155,7 @@ Build the persistence, fetch, identity mapping, diagnostics, and integration-tes
 
 ## Current Status
 
-Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 through T2-004 are complete. T2-005 through T2-006 remain pending.
+Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 through T2-005 are complete. T2-006 remains pending.
 
 ## Validation Evidence
 
@@ -169,6 +169,8 @@ Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, an
 - 2026-05-07 T2-004 repository regression: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_snapshot_repository.py -q` -> 12 passed in 1.24s.
 - 2026-05-07 T2-004 focused combined check: `backend/.venv/bin/python -m pytest backend/tests/test_identity_resolver.py backend/tests/test_artifact_snapshot_repository.py -q` -> 19 passed in 2.60s.
 - 2026-05-07 T2-004 lint: `ruff check backend/services/identity_resolver.py backend/db/repositories/artifact_snapshot_repository.py backend/db/repositories/postgres/artifact_snapshot_repository.py backend/tests/test_identity_resolver.py backend/tests/test_artifact_snapshot_repository.py backend/config.py` -> All checks passed.
+- 2026-05-07 T2-005 focused diagnostics/repository/agent query check: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_snapshot_repository.py backend/tests/test_agent_queries_artifact_intelligence.py backend/tests/test_agent_router.py -q` -> 20 passed in 3.57s.
+- 2026-05-07 T2-005 lint: `ruff check backend/config.py backend/models.py backend/db/repositories/base.py backend/db/repositories/artifact_snapshot_repository.py backend/db/repositories/postgres/artifact_snapshot_repository.py backend/application/services/agent_queries/artifact_intelligence.py backend/application/services/agent_queries/models.py backend/application/services/agent_queries/__init__.py backend/routers/agent.py backend/tests/test_artifact_snapshot_repository.py backend/tests/test_agent_queries_artifact_intelligence.py backend/tests/test_agent_router.py` -> All checks passed.
 
 ## Notes
 
@@ -178,3 +180,4 @@ Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, an
 - T2-002 intentionally did not edit repository/storage files so concurrent T2-003 repository work remains isolated.
 - T2-003 added SQLite and Postgres ArtifactSnapshotRepository implementations and exposed them through the integration snapshot storage/factory surface; it did not edit SkillMeat client files.
 - T2-004 added ArtifactIdentityMapper with tier-1 UUID/hash matching, tier-2 alias fuzzy matching controlled by `CCDASH_IDENTITY_FUZZY_THRESHOLD` (default 0.85), unresolved quarantine metadata, and repository-backed identity map persistence.
+- T2-005 added snapshot diagnostics on SQLite/Postgres repositories plus a transport-neutral artifact intelligence agent query and REST `/api/agent/artifact-intelligence/snapshot-diagnostics` surface.

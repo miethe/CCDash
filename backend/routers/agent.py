@@ -10,6 +10,7 @@ from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.agent_queries import (
     AARReportDTO,
+    ArtifactIntelligenceQueryService,
     FeatureEvidenceSummary,
     FeatureEvidenceSummaryService,
     FeatureForensicsDTO,
@@ -26,6 +27,7 @@ from backend.application.services.agent_queries import (
     ProjectStatusQueryService,
     PromptContextSelection,
     ReportingQueryService,
+    SnapshotDiagnosticsDTO,
     WorkflowDiagnosticsDTO,
     WorkflowDiagnosticsQueryService,
 )
@@ -65,6 +67,7 @@ feature_forensics_query_service = FeatureForensicsQueryService()
 feature_evidence_summary_service = FeatureEvidenceSummaryService()
 workflow_diagnostics_query_service = WorkflowDiagnosticsQueryService()
 reporting_query_service = ReportingQueryService()
+artifact_intelligence_query_service = ArtifactIntelligenceQueryService()
 # PCP-202: planning query surface — one singleton for the whole process lifetime.
 planning_query_service = PlanningQueryService()
 # PASB-102: planning session board query surface.
@@ -159,6 +162,27 @@ async def get_workflow_diagnostics(
         app_request.context,
         app_request.ports,
         feature_id=feature_id,
+        bypass_cache=bypass_cache,
+    )
+
+
+@agent_router.get("/artifact-intelligence/snapshot-diagnostics", response_model=SnapshotDiagnosticsDTO)
+async def get_artifact_snapshot_diagnostics(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Reserved for parity with cached agent queries."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> SnapshotDiagnosticsDTO:
+    """Return SkillMeat artifact snapshot diagnostics for the current project scope."""
+    app_request = await _resolve_app_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    return await artifact_intelligence_query_service.get_snapshot_diagnostics(
+        app_request.context,
+        app_request.ports,
+        project_id_override=project_id,
         bypass_cache=bypass_cache,
     )
 

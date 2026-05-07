@@ -392,6 +392,17 @@ class SnapshotFreshnessMeta(BaseModel):
         return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+class SnapshotDiagnostics(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    project_id: str = Field(alias="projectId", min_length=1)
+    snapshot_age_seconds: Optional[int] = Field(default=None, alias="snapshotAgeSeconds", ge=0)
+    artifact_count: int = Field(default=0, alias="artifactCount", ge=0)
+    resolved_count: int = Field(default=0, alias="resolvedCount", ge=0)
+    unresolved_count: int = Field(default=0, alias="unresolvedCount", ge=0)
+    is_stale: bool = Field(default=True, alias="isStale")
+
+
 class SnapshotArtifact(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
