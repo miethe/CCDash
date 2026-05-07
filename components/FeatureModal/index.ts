@@ -23,3 +23,11 @@ export type {
   ShellSectionStateMap,
   FeatureDetailShellProps,
 } from './types';
+
+// ── Execution-domain components (P4-005) ──────────────────────────────────────
+
+export { TestStatusTab } from './TestStatusTab';
+export type { TestStatusTabProps } from './TestStatusTab';
+
+export { ExecutionGateCard } from './ExecutionGateCard';
+export type { ExecutionGateCardProps } from './ExecutionGateCard';
