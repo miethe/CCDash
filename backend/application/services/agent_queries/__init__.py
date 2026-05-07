@@ -22,6 +22,7 @@ from backend.application.services.agent_queries.models import (
     Bottleneck,
     CostSummary,
     DocumentRef,
+    FeatureEvidenceSummary,
     FeatureForensicsDTO,
     FeaturePlanningContextDTO,
     FeatureSummaryItem,
@@ -53,6 +54,7 @@ from backend.application.services.agent_queries.models import (
     WorkflowSummary,
 )
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
+from backend.application.services.agent_queries.feature_evidence_summary import FeatureEvidenceSummaryService
 from backend.application.services.agent_queries.planning import PlanningQueryService
 from backend.application.services.agent_queries.project_status import ProjectStatusQueryService
 from backend.application.services.agent_queries.reporting import ReportingQueryService
@@ -77,6 +79,8 @@ __all__ = [
     "Bottleneck",
     "CostSummary",
     "DocumentRef",
+    "FeatureEvidenceSummary",
+    "FeatureEvidenceSummaryService",
     "FeatureForensicsDTO",
     "KeyMetrics",
     "ProjectStatusDTO",
