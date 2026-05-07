@@ -568,6 +568,77 @@ class ArtifactRecommendationEmbed(BaseModel):
         return value
 
 
+class ArtifactRankingRow(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    project_id: str = Field(alias="projectId", min_length=1)
+    collection_id: Optional[str] = Field(default=None, alias="collectionId")
+    user_scope: Optional[str] = Field(default=None, alias="userScope")
+    artifact_type: Optional[str] = Field(default=None, alias="artifactType")
+    artifact_id: str = Field(alias="artifactId", min_length=1)
+    artifact_uuid: Optional[str] = Field(default=None, alias="artifactUuid")
+    version_id: Optional[str] = Field(default=None, alias="versionId")
+    workflow_id: Optional[str] = Field(default=None, alias="workflowId")
+    period: str
+    exclusive_tokens: int = Field(default=0, alias="exclusiveTokens", ge=0)
+    supporting_tokens: int = Field(default=0, alias="supportingTokens", ge=0)
+    cost_usd: float = Field(default=0.0, alias="costUsd", ge=0.0)
+    session_count: int = Field(default=0, alias="sessionCount", ge=0)
+    workflow_count: int = Field(default=0, alias="workflowCount", ge=0)
+    last_observed_at: Optional[str] = Field(default=None, alias="lastObservedAt")
+    avg_confidence: Optional[float] = Field(default=None, alias="avgConfidence", ge=0.0, le=1.0)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    success_score: Optional[float] = Field(default=None, alias="successScore", ge=0.0, le=1.0)
+    efficiency_score: Optional[float] = Field(default=None, alias="efficiencyScore", ge=0.0, le=1.0)
+    quality_score: Optional[float] = Field(default=None, alias="qualityScore", ge=0.0, le=1.0)
+    risk_score: Optional[float] = Field(default=None, alias="riskScore", ge=0.0, le=1.0)
+    context_pressure: Optional[float] = Field(default=None, alias="contextPressure", ge=0.0, le=1.0)
+    sample_size: int = Field(default=0, alias="sampleSize", ge=0)
+    identity_confidence: Optional[float] = Field(default=None, alias="identityConfidence", ge=0.0, le=1.0)
+    snapshot_fetched_at: Optional[str] = Field(default=None, alias="snapshotFetchedAt")
+    recommendation_types: list[ArtifactRecommendationType] = Field(default_factory=list, alias="recommendationTypes")
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    computed_at: str = Field(alias="computedAt")
+
+
+class ArtifactRecommendation(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    recommendation_type: ArtifactRecommendationType = Field(alias="type")
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    rationale_code: str = Field(alias="rationaleCode", min_length=1)
+    next_action: str = Field(alias="nextAction", min_length=1)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    affected_artifact_ids: list[str] = Field(default_factory=list, alias="affectedArtifactIds")
+    scope: str = Field(min_length=1)
+    project_id: str = Field(alias="projectId", min_length=1)
+    collection_id: Optional[str] = Field(default=None, alias="collectionId")
+    user_scope: Optional[str] = Field(default=None, alias="userScope")
+    workflow_id: Optional[str] = Field(default=None, alias="workflowId")
+    period: str
+
+
+class ArtifactRankingResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    project_id: str = Field(alias="projectId", min_length=1)
+    period: Optional[str] = None
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    next_cursor: Optional[str] = Field(default=None, alias="nextCursor")
+    rows: list[ArtifactRankingRow] = Field(default_factory=list)
+
+
+class ArtifactRecommendationResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    project_id: str = Field(alias="projectId", min_length=1)
+    period: Optional[str] = None
+    total: int = Field(ge=0)
+    recommendations: list[ArtifactRecommendation] = Field(default_factory=list)
+
+
 class ArtifactUsageRollup(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

@@ -18,6 +18,7 @@ from backend.db.repositories.tasks import SqliteTaskRepository
 from backend.db.repositories.analytics import SqliteAnalyticsRepository
 from backend.db.repositories.usage_attribution import SqliteSessionUsageRepository
 from backend.db.repositories.artifact_snapshot_repository import SqliteArtifactSnapshotRepository
+from backend.db.repositories.artifact_ranking_repository import SqliteArtifactRankingRepository
 from backend.db.repositories.test_runs import SqliteTestRunRepository
 from backend.db.repositories.test_definitions import SqliteTestDefinitionRepository
 from backend.db.repositories.test_results import SqliteTestResultRepository
@@ -96,6 +97,12 @@ def get_artifact_snapshot_repository(db: Any):
         return SqliteArtifactSnapshotRepository(db)
     from backend.db.repositories.postgres.artifact_snapshot_repository import PostgresArtifactSnapshotRepository
     return PostgresArtifactSnapshotRepository(db)
+
+def get_artifact_ranking_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteArtifactRankingRepository(db)
+    from backend.db.repositories.postgres.artifact_ranking_repository import PostgresArtifactRankingRepository
+    return PostgresArtifactRankingRepository(db)
 
 def get_entity_link_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):

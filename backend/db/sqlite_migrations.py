@@ -762,6 +762,54 @@ CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_hash
 CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_match_tier
     ON artifact_identity_map(project_id, match_tier);
 
+CREATE TABLE IF NOT EXISTS artifact_ranking (
+    id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id                TEXT NOT NULL,
+    collection_id             TEXT DEFAULT '',
+    user_scope                TEXT DEFAULT '',
+    artifact_type             TEXT DEFAULT '',
+    artifact_id               TEXT NOT NULL,
+    artifact_uuid             TEXT DEFAULT '',
+    version_id                TEXT DEFAULT '',
+    workflow_id               TEXT DEFAULT '',
+    period                    TEXT NOT NULL,
+    exclusive_tokens          INTEGER NOT NULL DEFAULT 0,
+    supporting_tokens         INTEGER NOT NULL DEFAULT 0,
+    cost_usd                  REAL NOT NULL DEFAULT 0.0,
+    session_count             INTEGER NOT NULL DEFAULT 0,
+    workflow_count            INTEGER NOT NULL DEFAULT 0,
+    last_observed_at          TEXT DEFAULT '',
+    avg_confidence            REAL,
+    confidence                REAL,
+    success_score             REAL,
+    efficiency_score          REAL,
+    quality_score             REAL,
+    risk_score                REAL,
+    context_pressure          REAL,
+    sample_size               INTEGER NOT NULL DEFAULT 0,
+    identity_confidence       REAL,
+    snapshot_fetched_at       TEXT DEFAULT '',
+    recommendation_types_json TEXT NOT NULL DEFAULT '[]',
+    evidence_json             TEXT NOT NULL DEFAULT '{}',
+    computed_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, collection_id, user_scope, artifact_id, artifact_uuid, version_id, workflow_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_project_period
+    ON artifact_ranking(project_id, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_artifact_period
+    ON artifact_ranking(artifact_uuid, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_workflow_period
+    ON artifact_ranking(workflow_id, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_collection_period
+    ON artifact_ranking(project_id, collection_id, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_user_period
+    ON artifact_ranking(project_id, user_scope, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_version_period
+    ON artifact_ranking(artifact_uuid, version_id, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_recommendations
+    ON artifact_ranking(recommendation_types_json);
+
 CREATE TABLE IF NOT EXISTS pricing_catalog_entries (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id         TEXT NOT NULL,
@@ -1755,6 +1803,71 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_index(
         db,
         "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_match_tier ON artifact_identity_map(project_id, match_tier)",
+    )
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS artifact_ranking (
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id                TEXT NOT NULL,
+            collection_id             TEXT DEFAULT '',
+            user_scope                TEXT DEFAULT '',
+            artifact_type             TEXT DEFAULT '',
+            artifact_id               TEXT NOT NULL,
+            artifact_uuid             TEXT DEFAULT '',
+            version_id                TEXT DEFAULT '',
+            workflow_id               TEXT DEFAULT '',
+            period                    TEXT NOT NULL,
+            exclusive_tokens          INTEGER NOT NULL DEFAULT 0,
+            supporting_tokens         INTEGER NOT NULL DEFAULT 0,
+            cost_usd                  REAL NOT NULL DEFAULT 0.0,
+            session_count             INTEGER NOT NULL DEFAULT 0,
+            workflow_count            INTEGER NOT NULL DEFAULT 0,
+            last_observed_at          TEXT DEFAULT '',
+            avg_confidence            REAL,
+            confidence                REAL,
+            success_score             REAL,
+            efficiency_score          REAL,
+            quality_score             REAL,
+            risk_score                REAL,
+            context_pressure          REAL,
+            sample_size               INTEGER NOT NULL DEFAULT 0,
+            identity_confidence       REAL,
+            snapshot_fetched_at       TEXT DEFAULT '',
+            recommendation_types_json TEXT NOT NULL DEFAULT '[]',
+            evidence_json             TEXT NOT NULL DEFAULT '{}',
+            computed_at               TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, collection_id, user_scope, artifact_id, artifact_uuid, version_id, workflow_id, period)
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_project_period ON artifact_ranking(project_id, period)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_artifact_period ON artifact_ranking(artifact_uuid, period)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_workflow_period ON artifact_ranking(workflow_id, period)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_collection_period ON artifact_ranking(project_id, collection_id, period)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_user_period ON artifact_ranking(project_id, user_scope, period)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_version_period ON artifact_ranking(artifact_uuid, version_id, period)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_recommendations ON artifact_ranking(recommendation_types_json)",
     )
     await _ensure_index(
         db,

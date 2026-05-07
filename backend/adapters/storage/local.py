@@ -5,6 +5,7 @@ from typing import Any
 
 from backend.adapters.storage.base import RepositoryBackedStorageUnitOfWork
 from backend.db.repositories.analytics import SqliteAnalyticsRepository
+from backend.db.repositories.artifact_ranking_repository import SqliteArtifactRankingRepository
 from backend.db.repositories.artifact_snapshot_repository import SqliteArtifactSnapshotRepository
 from backend.db.repositories.documents import SqliteDocumentRepository
 from backend.db.repositories.execution import SqliteExecutionRepository
@@ -57,6 +58,7 @@ class LocalStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "sync_state": SqliteSyncStateRepository,
                 "alert_configs": SqliteAlertConfigRepository,
                 "artifact_snapshots": SqliteArtifactSnapshotRepository,
+                "artifact_rankings": SqliteArtifactRankingRepository,
                 "pricing_catalog": SqlitePricingCatalogRepository,
                 "test_runs": SqliteTestRunRepository,
                 "test_definitions": SqliteTestDefinitionRepository,

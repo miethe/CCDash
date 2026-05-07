@@ -222,6 +222,7 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
             "pricing_catalog_entries",
             "artifact_snapshot_cache",
             "artifact_identity_map",
+            "artifact_ranking",
         ),
         kind="table",
         domain="integration_snapshots",

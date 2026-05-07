@@ -265,6 +265,20 @@ class SnapshotDiagnosticsDTO(AgentQueryEnvelope):
     is_stale: bool = True
 
 
+class ArtifactRankingsDTO(AgentQueryEnvelope):
+    project_id: str
+    period: str = "30d"
+    total: int = 0
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ArtifactRecommendationsDTO(AgentQueryEnvelope):
+    project_id: str
+    period: str = "30d"
+    total: int = 0
+    recommendations: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class AARReportDTO(AgentQueryEnvelope):
     feature_id: str
     feature_slug: str = ""

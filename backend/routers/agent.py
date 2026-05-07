@@ -10,6 +10,8 @@ from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.agent_queries import (
     AARReportDTO,
+    ArtifactRankingsDTO,
+    ArtifactRecommendationsDTO,
     ArtifactIntelligenceQueryService,
     FeatureEvidenceSummary,
     FeatureEvidenceSummaryService,
@@ -183,6 +185,82 @@ async def get_artifact_snapshot_diagnostics(
         app_request.context,
         app_request.ports,
         project_id_override=project_id,
+        bypass_cache=bypass_cache,
+    )
+
+
+@agent_router.get("/artifact-intelligence/rankings", response_model=ArtifactRankingsDTO)
+async def get_artifact_rankings(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    period: str = Query(default="30d", description="Ranking period."),
+    collection_id: str | None = Query(default=None, description="Collection id filter."),
+    user_scope: str | None = Query(default=None, description="User scope filter."),
+    artifact_uuid: str | None = Query(default=None, description="Artifact UUID filter."),
+    artifact_id: str | None = Query(default=None, description="Observed artifact id filter."),
+    version_id: str | None = Query(default=None, description="Version id filter."),
+    workflow_id: str | None = Query(default=None, description="Workflow id filter."),
+    artifact_type: str | None = Query(default=None, description="Artifact type filter."),
+    recommendation_type: str | None = Query(default=None, description="Recommendation type filter."),
+    limit: int = Query(default=25, ge=1, le=100),
+    bypass_cache: bool = Query(default=False, description="Reserved for parity with cached agent queries."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ArtifactRankingsDTO:
+    """Return artifact ranking rows for agent consumers."""
+    app_request = await _resolve_app_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    return await artifact_intelligence_query_service.get_rankings(
+        app_request.context,
+        app_request.ports,
+        project_id_override=project_id,
+        period=period,
+        collection_id=collection_id,
+        user_scope=user_scope,
+        artifact_uuid=artifact_uuid,
+        artifact_id=artifact_id,
+        version_id=version_id,
+        workflow_id=workflow_id,
+        artifact_type=artifact_type,
+        recommendation_type=recommendation_type,
+        limit=limit,
+        bypass_cache=bypass_cache,
+    )
+
+
+@agent_router.get("/artifact-intelligence/recommendations", response_model=ArtifactRecommendationsDTO)
+async def get_artifact_recommendations(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    period: str = Query(default="30d", description="Ranking period."),
+    collection_id: str | None = Query(default=None, description="Collection id filter."),
+    user_scope: str | None = Query(default=None, description="User scope filter."),
+    workflow_id: str | None = Query(default=None, description="Workflow id filter."),
+    recommendation_type: str | None = Query(default=None, description="Recommendation type filter."),
+    min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
+    limit: int = Query(default=100, ge=1, le=500),
+    bypass_cache: bool = Query(default=False, description="Reserved for parity with cached agent queries."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ArtifactRecommendationsDTO:
+    """Return advisory artifact recommendations for agent consumers."""
+    app_request = await _resolve_app_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    return await artifact_intelligence_query_service.get_recommendations(
+        app_request.context,
+        app_request.ports,
+        project_id_override=project_id,
+        period=period,
+        collection_id=collection_id,
+        user_scope=user_scope,
+        workflow_id=workflow_id,
+        recommendation_type=recommendation_type,
+        min_confidence=min_confidence,
+        limit=limit,
         bypass_cache=bypass_cache,
     )
 

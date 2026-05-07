@@ -22,9 +22,11 @@ from backend.application.services.session_intelligence import (
 from backend.models import (
     AlertConfig,
     AnalyticsMetric,
+    ArtifactRankingResponse,
+    ArtifactRecommendationResponse,
     FailurePatternResponse,
-    SessionIntelligenceCapability,
-    SessionSemanticSearchMatch,
+    SessionIntelligenceCapability,  # noqa: F401 - re-exported for existing router tests
+    SessionSemanticSearchMatch,  # noqa: F401 - re-exported for existing router tests
     SessionCostCalibrationGroup,
     SessionCostCalibrationMismatchBand,
     SessionCostCalibrationProvenanceCount,
@@ -42,6 +44,7 @@ from backend.models import (
     WorkflowRegistryListResponse,
     WorkflowEffectivenessResponse,
 )
+from backend.db.factory import get_artifact_ranking_repository
 from backend.model_identity import canonical_model_name, derive_model_identity, model_family_name
 from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
@@ -51,6 +54,8 @@ from backend.services.session_usage_analytics import (
     get_usage_attribution_drilldown,
     get_usage_attribution_rollup,
 )
+from backend.services.artifact_ranking_service import ArtifactRankingService
+from backend.services.artifact_recommendation_service import ArtifactRecommendationService
 from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
 from backend.services.workflow_registry import get_workflow_registry_detail, list_workflow_registry
 
@@ -58,6 +63,19 @@ analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 analytics_overview_service = AnalyticsOverviewService()
 transcript_search_service = TranscriptSearchService()
 session_intelligence_read_service = SessionIntelligenceReadService()
+artifact_ranking_service = ArtifactRankingService()
+artifact_recommendation_service = ArtifactRecommendationService()
+
+_ARTIFACT_RECOMMENDATION_TYPES = {
+    "disable_candidate",
+    "load_on_demand",
+    "workflow_specific_swap",
+    "optimization_target",
+    "version_regression",
+    "identity_reconciliation",
+    "insufficient_data",
+}
+_ARTIFACT_PERIODS = {"7d", "30d", "90d", "daily", "weekly"}
 
 
 async def _resolve_app_request(
@@ -116,6 +134,13 @@ def _safe_json_list(value: Any) -> list[Any]:
         except json.JSONDecodeError:
             return []
     return []
+
+
+def _validate_artifact_intelligence_filters(period: str | None, recommendation_type: str | None) -> None:
+    if period is not None and period not in _ARTIFACT_PERIODS:
+        raise HTTPException(status_code=400, detail="Invalid period filter")
+    if recommendation_type is not None and recommendation_type not in _ARTIFACT_RECOMMENDATION_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid recommendation_type filter")
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -1905,6 +1930,137 @@ async def get_usage_attribution_calibration_view(
         end=end,
     )
     return SessionUsageCalibrationSummary(**payload)
+
+
+@analytics_router.get("/artifact-rankings", response_model=ArtifactRankingResponse)
+async def get_artifact_rankings(
+    project: str | None = Query(default=None, description="Project id override."),
+    collection: str | None = Query(default=None, description="Collection id filter."),
+    user: str | None = Query(default=None, description="User scope filter."),
+    period: str = Query(default="30d", description="Ranking period."),
+    artifact: str | None = Query(default=None, description="Artifact UUID or observed artifact id filter."),
+    version: str | None = Query(default=None, description="Artifact version filter."),
+    workflow: str | None = Query(default=None, description="Workflow id filter."),
+    artifact_type: str | None = Query(default=None, description="Artifact type filter."),
+    recommendation_type: str | None = Query(default=None, description="Recommendation type filter."),
+    refresh: bool = Query(default=False, description="Recompute rankings before reading."),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
+    _validate_artifact_intelligence_filters(period, recommendation_type)
+    active_project = resolve_project(request_context, core_ports)
+    project_id = project or (active_project.id if active_project else "")
+    if not project_id:
+        raise HTTPException(status_code=404, detail="No active project")
+    if refresh:
+        await artifact_ranking_service.compute_rankings(
+            core_ports.storage.db,
+            project_id=project_id,
+            period=period,
+            collection_id=collection,
+            user_scope=user or "all",
+            persist=True,
+        )
+    repo = get_artifact_ranking_repository(core_ports.storage.db)
+    payload = await repo.list_rankings(
+        project_id=project_id,
+        period=period,
+        collection_id=collection,
+        user_scope=user,
+        artifact_uuid=artifact,
+        version_id=version,
+        workflow_id=workflow,
+        artifact_type=artifact_type,
+        recommendation_type=recommendation_type,
+        offset=offset,
+        limit=limit,
+        cursor=cursor,
+    )
+    rows = payload["rows"]
+    if artifact and not rows:
+        payload = await repo.list_rankings(
+            project_id=project_id,
+            period=period,
+            collection_id=collection,
+            user_scope=user,
+            artifact_id=artifact,
+            version_id=version,
+            workflow_id=workflow,
+            artifact_type=artifact_type,
+            recommendation_type=recommendation_type,
+            offset=offset,
+            limit=limit,
+            cursor=cursor,
+        )
+        rows = payload["rows"]
+    if recommendation_type:
+        if not rows:
+            fallback = await repo.list_rankings(
+                project_id=project_id,
+                period=period,
+                collection_id=collection,
+                user_scope=user,
+                artifact_uuid=artifact,
+                version_id=version,
+                workflow_id=workflow,
+                artifact_type=artifact_type,
+                offset=offset,
+                limit=limit,
+                cursor=cursor,
+            )
+            recommendations = artifact_recommendation_service.generate_recommendations(
+                fallback["rows"],
+                recommendation_type=recommendation_type,
+            )
+            affected = {artifact_id for rec in recommendations for artifact_id in rec.affected_artifact_ids}
+            rows = [row for row in fallback["rows"] if str(row.get("artifact_uuid") or row.get("artifact_id") or "") in affected]
+            payload = {**fallback, "rows": rows, "total": len(rows), "next_cursor": None}
+    return ArtifactRankingResponse(project_id=project_id, period=period, **payload)
+
+
+@analytics_router.get("/artifact-recommendations", response_model=ArtifactRecommendationResponse)
+async def get_artifact_recommendations(
+    project: str | None = Query(default=None, description="Project id override."),
+    recommendation_type: str | None = Query(default=None, description="Recommendation type filter."),
+    min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
+    period: str = Query(default="30d", description="Ranking period."),
+    collection: str | None = Query(default=None, description="Collection id filter."),
+    user: str | None = Query(default=None, description="User scope filter."),
+    workflow: str | None = Query(default=None, description="Workflow id filter."),
+    limit: int = Query(100, ge=1, le=500),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
+    _validate_artifact_intelligence_filters(period, recommendation_type)
+    active_project = resolve_project(request_context, core_ports)
+    project_id = project or (active_project.id if active_project else "")
+    if not project_id:
+        raise HTTPException(status_code=404, detail="No active project")
+    repo = get_artifact_ranking_repository(core_ports.storage.db)
+    payload = await repo.list_rankings(
+        project_id=project_id,
+        period=period,
+        collection_id=collection,
+        user_scope=user,
+        workflow_id=workflow,
+        limit=limit,
+    )
+    recommendations = artifact_recommendation_service.generate_recommendations(
+        payload["rows"],
+        recommendation_type=recommendation_type,
+        min_confidence=min_confidence,
+    )
+    return ArtifactRecommendationResponse(
+        project_id=project_id,
+        period=period,
+        total=len(recommendations),
+        recommendations=recommendations,
+    )
 
 
 @analytics_router.get("/session-intelligence/search", response_model=SessionSemanticSearchResponse)

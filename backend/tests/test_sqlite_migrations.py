@@ -107,6 +107,60 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
             }.issubset(identity_indexes)
         )
 
+    async def test_run_migrations_creates_artifact_ranking_table_and_indexes(self) -> None:
+        db = await aiosqlite.connect(":memory:")
+        self.addAsyncCleanup(db.close)
+
+        await sqlite_migrations.run_migrations(db)
+
+        async with db.execute("PRAGMA table_info(artifact_ranking)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+        self.assertTrue(
+            {
+                "project_id",
+                "collection_id",
+                "user_scope",
+                "artifact_type",
+                "artifact_id",
+                "artifact_uuid",
+                "version_id",
+                "workflow_id",
+                "period",
+                "exclusive_tokens",
+                "supporting_tokens",
+                "cost_usd",
+                "session_count",
+                "workflow_count",
+                "avg_confidence",
+                "confidence",
+                "success_score",
+                "efficiency_score",
+                "quality_score",
+                "risk_score",
+                "context_pressure",
+                "sample_size",
+                "identity_confidence",
+                "snapshot_fetched_at",
+                "recommendation_types_json",
+                "evidence_json",
+                "computed_at",
+            }.issubset(columns)
+        )
+
+        async with db.execute("PRAGMA index_list(artifact_ranking)") as cur:
+            indexes = {row[1] for row in await cur.fetchall()}
+        self.assertTrue(
+            {
+                "idx_artifact_ranking_project_period",
+                "idx_artifact_ranking_artifact_period",
+                "idx_artifact_ranking_workflow_period",
+                "idx_artifact_ranking_collection_period",
+                "idx_artifact_ranking_user_period",
+                "idx_artifact_ranking_version_period",
+                "idx_artifact_ranking_recommendations",
+            }.issubset(indexes)
+        )
+
     async def test_run_migrations_upgrades_legacy_session_logs_before_bootstrap_indexes(self) -> None:
         db = await aiosqlite.connect(":memory:")
         self.addAsyncCleanup(db.close)

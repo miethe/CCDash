@@ -5,6 +5,7 @@ from typing import Any
 
 from backend.adapters.storage.base import RepositoryBackedStorageUnitOfWork
 from backend.db.repositories.postgres.analytics import PostgresAnalyticsRepository
+from backend.db.repositories.postgres.artifact_ranking_repository import PostgresArtifactRankingRepository
 from backend.db.repositories.postgres.artifact_snapshot_repository import PostgresArtifactSnapshotRepository
 from backend.db.repositories.postgres.documents import PostgresDocumentRepository
 from backend.db.repositories.postgres.execution import PostgresExecutionRepository
@@ -60,6 +61,7 @@ class EnterpriseStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "sync_state": PostgresSyncStateRepository,
                 "alert_configs": PostgresAlertConfigRepository,
                 "artifact_snapshots": PostgresArtifactSnapshotRepository,
+                "artifact_rankings": PostgresArtifactRankingRepository,
                 "pricing_catalog": PostgresPricingCatalogRepository,
                 "test_runs": PostgresTestRunRepository,
                 "test_definitions": PostgresTestDefinitionRepository,

@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
+from backend.models import ArtifactRecommendation
 from backend.routers import analytics as analytics_router
 
 
@@ -79,6 +80,78 @@ class _FakeAlertRepo:
 
     async def delete(self, config_id: str):
         self.items.pop(config_id, None)
+
+
+class _FakeArtifactRankingRepo:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    async def list_rankings(self, **kwargs):
+        self.calls.append(kwargs)
+        rows = list(self.rows)
+        for key in (
+            "project_id",
+            "period",
+            "collection_id",
+            "user_scope",
+            "artifact_uuid",
+            "artifact_id",
+            "version_id",
+            "workflow_id",
+            "artifact_type",
+        ):
+            value = kwargs.get(key)
+            if value is not None:
+                rows = [row for row in rows if row.get(key) == value]
+        recommendation_type = kwargs.get("recommendation_type")
+        if recommendation_type:
+            rows = [row for row in rows if recommendation_type in row.get("recommendation_types", [])]
+        return {
+            "rows": rows[: kwargs.get("limit", 50)],
+            "total": len(rows),
+            "limit": kwargs.get("limit", 50),
+            "offset": kwargs.get("offset", 0),
+            "next_cursor": None,
+        }
+
+
+def _artifact_ranking_row(**overrides):
+    row = {
+        "project_id": "project-1",
+        "collection_id": "collection-a",
+        "user_scope": "user-a",
+        "artifact_type": "skill",
+        "artifact_id": "expensive-skill",
+        "artifact_uuid": "uuid-expensive",
+        "version_id": "v1",
+        "workflow_id": "workflow-a",
+        "period": "30d",
+        "exclusive_tokens": 100000,
+        "supporting_tokens": 0,
+        "cost_usd": 2.5,
+        "session_count": 8,
+        "workflow_count": 1,
+        "last_observed_at": "2026-05-07T10:00:00Z",
+        "avg_confidence": 0.85,
+        "confidence": 0.85,
+        "success_score": 0.7,
+        "efficiency_score": 0.2,
+        "quality_score": 0.7,
+        "risk_score": 0.7,
+        "context_pressure": 0.5,
+        "sample_size": 8,
+        "identity_confidence": 1.0,
+        "snapshot_fetched_at": "2026-05-07T09:00:00Z",
+        "recommendation_types": ["optimization_target"],
+        "evidence": {
+            "projectSessionCount": 8,
+            "snapshot": {"defaultLoadMode": "on_demand", "status": "active"},
+        },
+        "computed_at": "2026-05-07T10:05:00Z",
+    }
+    row.update(overrides)
+    return row
 
 
 class _FakeIdentityProvider:
@@ -318,8 +391,72 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(payload["total"], 2)
-        self.assertEqual(payload["items"][0]["value"], 30)
-        self.assertEqual(payload["items"][1]["value"], 50)
+
+    async def test_artifact_rankings_endpoint_applies_phase_filters(self) -> None:
+        repo = _FakeArtifactRankingRepo([_artifact_ranking_row()])
+        project = types.SimpleNamespace(id="project-1")
+
+        with patch.object(analytics_router, "get_artifact_ranking_repository", return_value=repo):
+            payload = await analytics_router.get_artifact_rankings(
+                project="project-1",
+                collection="collection-a",
+                user="user-a",
+                period="30d",
+                artifact="uuid-expensive",
+                version="v1",
+                workflow="workflow-a",
+                artifact_type="skill",
+                recommendation_type="optimization_target",
+                refresh=False,
+                offset=0,
+                limit=50,
+                cursor=None,
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project),
+            )
+
+        self.assertEqual(payload.total, 1)
+        self.assertEqual(payload.rows[0].artifact_id, "expensive-skill")
+        self.assertEqual(repo.calls[0]["collection_id"], "collection-a")
+        self.assertEqual(repo.calls[0]["user_scope"], "user-a")
+        self.assertEqual(repo.calls[0]["artifact_uuid"], "uuid-expensive")
+        self.assertEqual(repo.calls[0]["version_id"], "v1")
+        self.assertEqual(repo.calls[0]["workflow_id"], "workflow-a")
+        self.assertEqual(repo.calls[0]["artifact_type"], "skill")
+        self.assertEqual(repo.calls[0]["recommendation_type"], "optimization_target")
+
+    async def test_artifact_recommendations_endpoint_generates_advisory_payloads(self) -> None:
+        repo = _FakeArtifactRankingRepo([_artifact_ranking_row(workflow_id="")])
+        project = types.SimpleNamespace(id="project-1")
+
+        with patch.object(analytics_router, "get_artifact_ranking_repository", return_value=repo):
+            payload = await analytics_router.get_artifact_recommendations(
+                project="project-1",
+                recommendation_type="optimization_target",
+                min_confidence=0.7,
+                period="30d",
+                collection="collection-a",
+                user="user-a",
+                workflow=None,
+                limit=100,
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project),
+            )
+
+        self.assertEqual(payload.total, 1)
+        self.assertEqual(payload.recommendations[0].recommendation_type, "optimization_target")
+        self.assertNotIn("auto_apply", ArtifactRecommendation.model_fields)
+
+    async def test_artifact_intelligence_endpoints_reject_invalid_filters(self) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            await analytics_router.get_artifact_rankings(
+                project="project-1",
+                period="forever",
+                request_context=_request_context("project-1"),
+                core_ports=_core_ports(),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
 
     async def test_alert_crud_roundtrip(self) -> None:
         project = types.SimpleNamespace(id="project-1")

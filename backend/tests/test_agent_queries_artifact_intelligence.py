@@ -117,3 +117,65 @@ class ArtifactIntelligenceQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.unresolved_count, 1)
         self.assertFalse(result.is_stale)
         self.assertIn("project-1", result.source_refs)
+
+    async def test_rankings_and_recommendations_return_repository_backed_artifact_intelligence(self) -> None:
+        await self.ports.storage.integration_snapshots().artifact_rankings().upsert_rankings(
+            [
+                {
+                    "project_id": "project-1",
+                    "collection_id": "collection-a",
+                    "user_scope": "user-a",
+                    "artifact_type": "skill",
+                    "artifact_id": "expensive-skill",
+                    "artifact_uuid": "uuid-expensive",
+                    "version_id": "v1",
+                    "workflow_id": "",
+                    "period": "30d",
+                    "exclusive_tokens": 100000,
+                    "supporting_tokens": 0,
+                    "cost_usd": 2.5,
+                    "session_count": 8,
+                    "workflow_count": 2,
+                    "last_observed_at": "2026-05-07T10:00:00Z",
+                    "avg_confidence": 0.85,
+                    "confidence": 0.85,
+                    "success_score": 0.7,
+                    "efficiency_score": 0.2,
+                    "quality_score": 0.7,
+                    "risk_score": 0.7,
+                    "context_pressure": 0.5,
+                    "sample_size": 8,
+                    "identity_confidence": 1.0,
+                    "snapshot_fetched_at": "2026-05-07T09:00:00Z",
+                    "recommendation_types": ["optimization_target"],
+                    "evidence": {
+                        "projectSessionCount": 8,
+                        "snapshot": {"defaultLoadMode": "on_demand", "status": "active"},
+                    },
+                    "computed_at": "2026-05-07T10:05:00Z",
+                }
+            ]
+        )
+
+        rankings = await self.service.get_rankings(
+            self.context,
+            self.ports,
+            period="30d",
+            collection_id="collection-a",
+            user_scope="user-a",
+            artifact_uuid="uuid-expensive",
+            recommendation_type="optimization_target",
+        )
+        recommendations = await self.service.get_recommendations(
+            self.context,
+            self.ports,
+            period="30d",
+            recommendation_type="optimization_target",
+        )
+
+        self.assertEqual(rankings.status, "ok")
+        self.assertEqual(rankings.total, 1)
+        self.assertEqual(rankings.rows[0]["artifact_id"], "expensive-skill")
+        self.assertEqual(recommendations.status, "ok")
+        self.assertEqual(recommendations.total, 1)
+        self.assertEqual(recommendations.recommendations[0]["type"], "optimization_target")

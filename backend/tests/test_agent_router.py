@@ -6,6 +6,8 @@ from fastapi import HTTPException
 
 from backend.application.services.agent_queries import (
     AARReportDTO,
+    ArtifactRankingsDTO,
+    ArtifactRecommendationsDTO,
     FeatureForensicsDTO,
     ProjectStatusDTO,
     SnapshotDiagnosticsDTO,
@@ -24,11 +26,15 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/api/agent/feature-forensics/{feature_id}", paths)
         self.assertIn("/api/agent/workflow-diagnostics", paths)
         self.assertIn("/api/agent/artifact-intelligence/snapshot-diagnostics", paths)
+        self.assertIn("/api/agent/artifact-intelligence/rankings", paths)
+        self.assertIn("/api/agent/artifact-intelligence/recommendations", paths)
         self.assertIn("/api/agent/reports/aar", paths)
         self.assertIn("get", paths["/api/agent/project-status"])
         self.assertIn("get", paths["/api/agent/feature-forensics/{feature_id}"])
         self.assertIn("get", paths["/api/agent/workflow-diagnostics"])
         self.assertIn("get", paths["/api/agent/artifact-intelligence/snapshot-diagnostics"])
+        self.assertIn("get", paths["/api/agent/artifact-intelligence/rankings"])
+        self.assertIn("get", paths["/api/agent/artifact-intelligence/recommendations"])
         self.assertIn("post", paths["/api/agent/reports/aar"])
 
     async def test_get_project_status_delegates_once_and_returns_dto_unchanged(self) -> None:
@@ -145,6 +151,100 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
             app_request.context,
             app_request.ports,
             project_id_override="project-1",
+            bypass_cache=False,
+        )
+
+    async def test_get_artifact_rankings_delegates_once_and_returns_dto_unchanged(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = ArtifactRankingsDTO(project_id="project-1", total=1, rows=[{"artifact_id": "skill-a"}])
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)) as resolve_mock:
+            with patch.object(
+                agent_router.artifact_intelligence_query_service,
+                "get_rankings",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_artifact_rankings(
+                    project_id="project-1",
+                    period="30d",
+                    collection_id="collection-a",
+                    user_scope="user-a",
+                    artifact_uuid="uuid-a",
+                    artifact_id=None,
+                    version_id="v1",
+                    workflow_id="workflow-a",
+                    artifact_type="skill",
+                    recommendation_type="optimization_target",
+                    limit=25,
+                    bypass_cache=False,
+                    request_context=request_context,
+                    core_ports=core_ports,
+                )
+
+        self.assertIs(result, dto)
+        resolve_mock.assert_awaited_once_with(request_context, core_ports, requested_project_id="project-1")
+        service_mock.assert_awaited_once_with(
+            app_request.context,
+            app_request.ports,
+            project_id_override="project-1",
+            period="30d",
+            collection_id="collection-a",
+            user_scope="user-a",
+            artifact_uuid="uuid-a",
+            artifact_id=None,
+            version_id="v1",
+            workflow_id="workflow-a",
+            artifact_type="skill",
+            recommendation_type="optimization_target",
+            limit=25,
+            bypass_cache=False,
+        )
+
+    async def test_get_artifact_recommendations_delegates_once_and_returns_dto_unchanged(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = ArtifactRecommendationsDTO(
+            project_id="project-1",
+            total=1,
+            recommendations=[{"type": "optimization_target"}],
+        )
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)) as resolve_mock:
+            with patch.object(
+                agent_router.artifact_intelligence_query_service,
+                "get_recommendations",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_artifact_recommendations(
+                    project_id="project-1",
+                    period="30d",
+                    collection_id="collection-a",
+                    user_scope="user-a",
+                    workflow_id="workflow-a",
+                    recommendation_type="optimization_target",
+                    min_confidence=0.7,
+                    limit=50,
+                    bypass_cache=False,
+                    request_context=request_context,
+                    core_ports=core_ports,
+                )
+
+        self.assertIs(result, dto)
+        resolve_mock.assert_awaited_once_with(request_context, core_ports, requested_project_id="project-1")
+        service_mock.assert_awaited_once_with(
+            app_request.context,
+            app_request.ports,
+            project_id_override="project-1",
+            period="30d",
+            collection_id="collection-a",
+            user_scope="user-a",
+            workflow_id="workflow-a",
+            recommendation_type="optimization_target",
+            min_confidence=0.7,
+            limit=50,
             bypass_cache=False,
         )
 

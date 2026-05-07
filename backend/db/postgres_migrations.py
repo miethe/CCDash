@@ -765,6 +765,54 @@ CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_hash
 CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_match_tier
     ON artifact_identity_map(project_id, match_tier);
 
+CREATE TABLE IF NOT EXISTS artifact_ranking (
+    id                        BIGSERIAL PRIMARY KEY,
+    project_id                TEXT NOT NULL,
+    collection_id             TEXT DEFAULT '',
+    user_scope                TEXT DEFAULT '',
+    artifact_type             TEXT DEFAULT '',
+    artifact_id               TEXT NOT NULL,
+    artifact_uuid             TEXT DEFAULT '',
+    version_id                TEXT DEFAULT '',
+    workflow_id               TEXT DEFAULT '',
+    period                    TEXT NOT NULL,
+    exclusive_tokens          INTEGER NOT NULL DEFAULT 0,
+    supporting_tokens         INTEGER NOT NULL DEFAULT 0,
+    cost_usd                  DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    session_count             INTEGER NOT NULL DEFAULT 0,
+    workflow_count            INTEGER NOT NULL DEFAULT 0,
+    last_observed_at          TEXT DEFAULT '',
+    avg_confidence            DOUBLE PRECISION,
+    confidence                DOUBLE PRECISION,
+    success_score             DOUBLE PRECISION,
+    efficiency_score          DOUBLE PRECISION,
+    quality_score             DOUBLE PRECISION,
+    risk_score                DOUBLE PRECISION,
+    context_pressure          DOUBLE PRECISION,
+    sample_size               INTEGER NOT NULL DEFAULT 0,
+    identity_confidence       DOUBLE PRECISION,
+    snapshot_fetched_at       TEXT DEFAULT '',
+    recommendation_types_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    evidence_json             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    computed_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(project_id, collection_id, user_scope, artifact_id, artifact_uuid, version_id, workflow_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_project_period
+    ON artifact_ranking(project_id, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_artifact_period
+    ON artifact_ranking(artifact_uuid, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_workflow_period
+    ON artifact_ranking(workflow_id, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_collection_period
+    ON artifact_ranking(project_id, collection_id, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_user_period
+    ON artifact_ranking(project_id, user_scope, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_version_period
+    ON artifact_ranking(artifact_uuid, version_id, period);
+CREATE INDEX IF NOT EXISTS idx_artifact_ranking_recommendations
+    ON artifact_ranking USING GIN (recommendation_types_json);
+
 CREATE TABLE IF NOT EXISTS pricing_catalog_entries (
     id                  BIGSERIAL PRIMARY KEY,
     project_id          TEXT NOT NULL,
@@ -1877,6 +1925,63 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_match_tier ON artifact_identity_map(project_id, match_tier)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artifact_ranking (
+            id                        BIGSERIAL PRIMARY KEY,
+            project_id                TEXT NOT NULL,
+            collection_id             TEXT DEFAULT '',
+            user_scope                TEXT DEFAULT '',
+            artifact_type             TEXT DEFAULT '',
+            artifact_id               TEXT NOT NULL,
+            artifact_uuid             TEXT DEFAULT '',
+            version_id                TEXT DEFAULT '',
+            workflow_id               TEXT DEFAULT '',
+            period                    TEXT NOT NULL,
+            exclusive_tokens          INTEGER NOT NULL DEFAULT 0,
+            supporting_tokens         INTEGER NOT NULL DEFAULT 0,
+            cost_usd                  DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+            session_count             INTEGER NOT NULL DEFAULT 0,
+            workflow_count            INTEGER NOT NULL DEFAULT 0,
+            last_observed_at          TEXT DEFAULT '',
+            avg_confidence            DOUBLE PRECISION,
+            confidence                DOUBLE PRECISION,
+            success_score             DOUBLE PRECISION,
+            efficiency_score          DOUBLE PRECISION,
+            quality_score             DOUBLE PRECISION,
+            risk_score                DOUBLE PRECISION,
+            context_pressure          DOUBLE PRECISION,
+            sample_size               INTEGER NOT NULL DEFAULT 0,
+            identity_confidence       DOUBLE PRECISION,
+            snapshot_fetched_at       TEXT DEFAULT '',
+            recommendation_types_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+            evidence_json             JSONB NOT NULL DEFAULT '{}'::jsonb,
+            computed_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            UNIQUE(project_id, collection_id, user_scope, artifact_id, artifact_uuid, version_id, workflow_id, period)
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_project_period ON artifact_ranking(project_id, period)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_artifact_period ON artifact_ranking(artifact_uuid, period)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_workflow_period ON artifact_ranking(workflow_id, period)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_collection_period ON artifact_ranking(project_id, collection_id, period)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_user_period ON artifact_ranking(project_id, user_scope, period)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_version_period ON artifact_ranking(artifact_uuid, version_id, period)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_ranking_recommendations ON artifact_ranking USING GIN (recommendation_types_json)"
     )
     await db.execute(
         """
