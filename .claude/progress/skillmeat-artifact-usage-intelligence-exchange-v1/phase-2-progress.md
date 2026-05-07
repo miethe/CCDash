@@ -15,10 +15,10 @@ plan_ref: docs/project_plans/implementation_plans/integrations/skillmeat-artifac
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
-overall_progress: 50
+overall_progress: 67
 completion_estimate: on_track
 total_tasks: 6
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -67,7 +67,7 @@ tasks:
 - id: T2-004
   title: ArtifactIdentityMapper service
   description: Implement three-tier identity resolution using UUID/content-hash exact matching, alias fuzzy matching, and unresolved quarantine with recommendation flagging.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -127,7 +127,7 @@ success_criteria:
   status: completed
 - id: SC-3
   description: Identity mapping for UUID, hash, alias, and unresolved cases is stored and queryable.
-  status: pending
+  status: completed
 - id: SC-4
   description: Snapshot diagnostics return snapshot age and unresolved identity count.
   status: pending
@@ -155,7 +155,7 @@ Build the persistence, fetch, identity mapping, diagnostics, and integration-tes
 
 ## Current Status
 
-Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 through T2-003 are complete. T2-004 through T2-006 remain pending.
+Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 through T2-004 are complete. T2-005 through T2-006 remain pending.
 
 ## Validation Evidence
 
@@ -165,6 +165,10 @@ Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, an
 - 2026-05-07 T2-002 feature flag check: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_intelligence_feature_flag.py -q` -> 4 passed in 0.38s.
 - 2026-05-07 T2-003: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_snapshot_repository.py -q` -> 7 passed in 0.83s.
 - 2026-05-07 T2-003 focused repository/storage/migration sweep: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_snapshot_repository.py backend/tests/test_storage_adapter_composition.py backend/tests/test_sqlite_migrations.py backend/tests/test_migration_governance.py -q` -> 29 passed in 1.63s.
+- 2026-05-07 T2-004: `backend/.venv/bin/python -m pytest backend/tests/test_identity_resolver.py -q` -> 7 passed in 1.17s.
+- 2026-05-07 T2-004 repository regression: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_snapshot_repository.py -q` -> 12 passed in 1.24s.
+- 2026-05-07 T2-004 focused combined check: `backend/.venv/bin/python -m pytest backend/tests/test_identity_resolver.py backend/tests/test_artifact_snapshot_repository.py -q` -> 19 passed in 2.60s.
+- 2026-05-07 T2-004 lint: `ruff check backend/services/identity_resolver.py backend/db/repositories/artifact_snapshot_repository.py backend/db/repositories/postgres/artifact_snapshot_repository.py backend/tests/test_identity_resolver.py backend/tests/test_artifact_snapshot_repository.py backend/config.py` -> All checks passed.
 
 ## Notes
 
@@ -173,3 +177,4 @@ Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, an
 - T2-002 kept SkillMeat base URL ownership in project SkillMeat settings via the existing `SkillMeatClient(base_url=...)` convention; no `CCDASH_SKILLMEAT_API_URL` setting was added.
 - T2-002 intentionally did not edit repository/storage files so concurrent T2-003 repository work remains isolated.
 - T2-003 added SQLite and Postgres ArtifactSnapshotRepository implementations and exposed them through the integration snapshot storage/factory surface; it did not edit SkillMeat client files.
+- T2-004 added ArtifactIdentityMapper with tier-1 UUID/hash matching, tier-2 alias fuzzy matching controlled by `CCDASH_IDENTITY_FUZZY_THRESHOLD` (default 0.85), unresolved quarantine metadata, and repository-backed identity map persistence.

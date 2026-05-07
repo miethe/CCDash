@@ -134,3 +134,50 @@ class SqliteArtifactSnapshotRepository:
         ) as cur:
             row = await cur.fetchone()
         return int(row["count"] or 0) if row else 0
+
+    async def save_identity_mapping(self, mapping: dict[str, Any]) -> None:
+        await self.db.execute(
+            """
+            DELETE FROM artifact_identity_map
+            WHERE project_id = ? AND ccdash_name = ? AND ccdash_type = ?
+            """,
+            (
+                mapping["project_id"],
+                mapping["ccdash_name"],
+                mapping.get("ccdash_type") or "",
+            ),
+        )
+        await self.db.execute(
+            """
+            INSERT INTO artifact_identity_map (
+                project_id, ccdash_name, ccdash_type, skillmeat_uuid,
+                content_hash, match_tier, confidence, resolved_at, unresolved_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                mapping["project_id"],
+                mapping["ccdash_name"],
+                mapping.get("ccdash_type") or "",
+                mapping.get("skillmeat_uuid") or "",
+                mapping.get("content_hash") or "",
+                mapping["match_tier"],
+                mapping.get("confidence"),
+                mapping.get("resolved_at") or "",
+                mapping.get("unresolved_reason") or "",
+            ),
+        )
+        await self.db.commit()
+
+    async def list_identity_mappings(self, project_id: str) -> list[dict[str, Any]]:
+        async with self.db.execute(
+            """
+            SELECT project_id, ccdash_name, ccdash_type, skillmeat_uuid,
+                   content_hash, match_tier, confidence, resolved_at, unresolved_reason
+            FROM artifact_identity_map
+            WHERE project_id = ?
+            ORDER BY ccdash_name, ccdash_type
+            """,
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(row) for row in rows]

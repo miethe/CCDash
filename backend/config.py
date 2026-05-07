@@ -23,6 +23,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 def _env_bool_from(environ: Mapping[str, str], name: str, default: bool = False) -> bool:
     value = environ.get(name)
     if value is None:
@@ -62,6 +72,7 @@ CCDASH_AGENTIC_WORKFLOW_ANALYTICS_ENABLED = _env_bool("CCDASH_AGENTIC_WORKFLOW_A
 CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED = _env_bool("CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED", True)
 CCDASH_SESSION_BLOCK_INSIGHTS_ENABLED = _env_bool("CCDASH_SESSION_BLOCK_INSIGHTS_ENABLED", True)
 CCDASH_ARTIFACT_INTELLIGENCE_ENABLED = _env_bool("CCDASH_ARTIFACT_INTELLIGENCE_ENABLED", False)
+CCDASH_IDENTITY_FUZZY_THRESHOLD = _env_float("CCDASH_IDENTITY_FUZZY_THRESHOLD", 0.85)
 CCDASH_LAUNCH_PREP_ENABLED = _env_bool("CCDASH_LAUNCH_PREP_ENABLED", False)
 CCDASH_PLANNING_CONTROL_PLANE_ENABLED = _env_bool("CCDASH_PLANNING_CONTROL_PLANE_ENABLED", True)
 CCDASH_FEATURE_SURFACE_V2_ENABLED = _env_bool("CCDASH_FEATURE_SURFACE_V2_ENABLED", True)

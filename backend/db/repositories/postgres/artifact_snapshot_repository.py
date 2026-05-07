@@ -94,3 +94,44 @@ class PostgresArtifactSnapshotRepository:
             project_id,
         )
         return int(count or 0)
+
+    async def save_identity_mapping(self, mapping: dict[str, Any]) -> None:
+        await self.db.execute(
+            """
+            DELETE FROM artifact_identity_map
+            WHERE project_id = $1 AND ccdash_name = $2 AND ccdash_type = $3
+            """,
+            mapping["project_id"],
+            mapping["ccdash_name"],
+            mapping.get("ccdash_type") or "",
+        )
+        await self.db.execute(
+            """
+            INSERT INTO artifact_identity_map (
+                project_id, ccdash_name, ccdash_type, skillmeat_uuid,
+                content_hash, match_tier, confidence, resolved_at, unresolved_reason
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            mapping["project_id"],
+            mapping["ccdash_name"],
+            mapping.get("ccdash_type") or "",
+            mapping.get("skillmeat_uuid") or "",
+            mapping.get("content_hash") or "",
+            mapping["match_tier"],
+            mapping.get("confidence"),
+            mapping.get("resolved_at") or "",
+            mapping.get("unresolved_reason") or "",
+        )
+
+    async def list_identity_mappings(self, project_id: str) -> list[dict[str, Any]]:
+        rows = await self.db.fetch(
+            """
+            SELECT project_id, ccdash_name, ccdash_type, skillmeat_uuid,
+                   content_hash, match_tier, confidence, resolved_at, unresolved_reason
+            FROM artifact_identity_map
+            WHERE project_id = $1
+            ORDER BY ccdash_name, ccdash_type
+            """,
+            project_id,
+        )
+        return [dict(row) for row in rows]
