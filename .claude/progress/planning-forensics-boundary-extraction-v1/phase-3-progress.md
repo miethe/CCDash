@@ -6,7 +6,7 @@ prd: planning-forensics-boundary-extraction-v1
 feature_slug: planning-forensics-boundary-extraction-v1
 phase: 3
 phase_name: Session-Feature Correlation Extraction
-status: in_progress
+status: completed
 created: '2026-05-06'
 updated: '2026-05-06'
 prd_ref: docs/project_plans/PRDs/refactors/planning-forensics-boundary-extraction-v1.md
@@ -19,18 +19,21 @@ owners:
 contributors:
 - backend-architect
 - python-backend-engineer
-
 tasks:
 - id: P3-001
   title: Extract shared correlation helper/query
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   assigned_model: sonnet
   dependencies: []
+  started: '2026-05-06T19:00:00Z'
+  completed: '2026-05-06T19:20:00Z'
+  evidence:
+  - commit: 45d7b65
 - id: P3-002
   title: Migrate planning session board to shared correlation
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -38,7 +41,7 @@ tasks:
   - P3-001
 - id: P3-003
   title: Make evidence summary use shared correlation where needed
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -46,7 +49,7 @@ tasks:
   - P3-001
 - id: P3-004
   title: Add regression fixtures
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -54,7 +57,10 @@ tasks:
   - P3-001
   - P3-002
   - P3-003
-
+  started: '2026-05-06T19:30:00Z'
+  completed: '2026-05-06T19:45:00Z'
+  evidence:
+  - commit: d68d030
 parallelization:
   batch_1:
   - P3-001
@@ -63,6 +69,11 @@ parallelization:
   - P3-003
   batch_3:
   - P3-004
+total_tasks: 4
+completed_tasks: 4
+in_progress_tasks: 0
+blocked_tasks: 0
+progress: 100
 ---
 
 ## Phase 3: Session-Feature Correlation Extraction
