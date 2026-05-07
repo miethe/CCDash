@@ -43,14 +43,6 @@ function getTabActivationLoadEffect(source: string): string {
   return source.slice(idx, idx + 1200);
 }
 
-/** Extracts the useFeatureModalData call site in the modal component. */
-function getModalDataHookCallSite(source: string): string {
-  const marker = '  // P4-010: per-section hook for typed, lazy modal data loading.';
-  const idx = source.indexOf(marker);
-  if (idx === -1) return '';
-  return source.slice(idx, idx + 500);
-}
-
 // ── 1. No raw /api/features/ interpolations in components/ ───────────────────
 
 describe('P4-010 — No raw /api/features/ interpolations in ProjectBoard.tsx', () => {
