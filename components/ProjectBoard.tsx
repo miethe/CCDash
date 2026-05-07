@@ -2373,6 +2373,7 @@ export const ProjectBoardFeatureModal = ({
       },
       {
         id: 'sessions',
+        // P4-004: prefer server-reported total
         label: `Sessions (${modalSections.sessionPagination.serverTotal > 0 ? modalSections.sessionPagination.serverTotal : linkedSessions.length})`,
         icon: Terminal,
         domain: 'forensics',
