@@ -6,7 +6,7 @@ prd: planning-forensics-boundary-extraction-v1
 feature_slug: planning-forensics-boundary-extraction-v1
 phase: 2
 phase_name: Planning Query Migration
-status: pending
+status: completed
 created: '2026-05-06'
 updated: '2026-05-06'
 prd_ref: docs/project_plans/PRDs/refactors/planning-forensics-boundary-extraction-v1.md
@@ -33,12 +33,16 @@ tasks:
   - commit: aded90a
 - id: P2-002
   title: Migrate _client_v1_features.py consumer
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
   dependencies:
   - P2-001
+  started: '2026-05-06T18:20:00Z'
+  completed: '2026-05-06T18:30:00Z'
+  evidence:
+  - commit: 884af9f
 - id: P2-003
   title: Preserve response compatibility
   status: completed
@@ -49,7 +53,7 @@ tasks:
   - P2-001
 - id: P2-004
   title: Add compatibility tests
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   assigned_model: sonnet
@@ -57,6 +61,10 @@ tasks:
   - P2-001
   - P2-002
   - P2-003
+  started: '2026-05-06T18:35:00Z'
+  completed: '2026-05-06T18:50:00Z'
+  evidence:
+  - commit: 157b2dd
 - id: P2-005
   title: Review next-run preview context selection
   status: completed
@@ -75,10 +83,10 @@ parallelization:
   batch_3:
   - P2-004
 total_tasks: 5
-completed_tasks: 3
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 60
+progress: 100
 ---
 
 # Phase 2: Planning Query Migration
