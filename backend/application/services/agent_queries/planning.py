@@ -41,7 +41,7 @@ from backend.services.feature_execution import (
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
 from .cache import clear_cache, memoized_query
-from .feature_forensics import FeatureForensicsQueryService
+from .feature_evidence_summary import FeatureEvidenceSummaryService
 from .models import (
     FeaturePlanningContextDTO,
     FeatureSummaryItem,
@@ -66,7 +66,18 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
-_feature_forensics_query_service = FeatureForensicsQueryService()
+
+
+def _get_evidence_summary_service() -> FeatureEvidenceSummaryService:
+    """Lazily construct the evidence summary service on first use.
+
+    Deferred construction avoids import-time singleton side effects and makes
+    test isolation straightforward: tests that need a clean instance simply
+    call this function after patching ``FeatureEvidenceSummaryService``.
+    """
+    return FeatureEvidenceSummaryService()
+
+
 _PROMOTION_READY_STATUSES = {
     "ready",
     "ready-for-promotion",
@@ -1402,14 +1413,14 @@ class PlanningQueryService:
         )
 
         try:
-            forensics = await _feature_forensics_query_service.get_forensics(
+            evidence = await _get_evidence_summary_service().get_summary(
                 context,
                 ports,
                 feature_id,
             )
-            token_usage = _coerce_token_usage_by_model(forensics.token_usage_by_model)
-            total_tokens = _safe_int(forensics.total_tokens)
-            if forensics.status == "partial":
+            token_usage = _coerce_token_usage_by_model(evidence.token_usage_by_model)
+            total_tokens = _safe_int(evidence.total_tokens)
+            if evidence.status == "partial":
                 partial = True
         except Exception:
             token_usage = TokenUsageByModel()
