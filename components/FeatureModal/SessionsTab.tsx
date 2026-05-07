@@ -267,6 +267,10 @@ const getSessionPhaseNumbers = (session: FeatureSessionLink): number[] => {
     const parsed = parsePhaseNumber(String(phase || ''), true);
     if (parsed !== null) candidates.push(parsed);
   });
+  (session.relatedTasks || []).forEach(task => {
+    const parsed = parsePhaseNumber(String(task.phase || task.phaseId || ''), true);
+    if (parsed !== null) candidates.push(parsed);
+  });
   [session.title || '', ...session.commands].forEach(value => {
     const parsed = parsePhaseNumber(value, false);
     if (parsed !== null) candidates.push(parsed);

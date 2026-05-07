@@ -210,6 +210,22 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
             },
             cls._PROJECT_ID,
         )
+        await storage.sessions().upsert_logs(
+            cls._SESSION_ID,
+            [
+                {
+                    "id": "log-command-1",
+                    "timestamp": "2026-04-23T10:00:10Z",
+                    "speaker": "user",
+                    "type": "command",
+                    "content": "/dev:execute-phase",
+                    "metadata": {
+                        "args": "1 docs/project_plans/implementation_plans/features/example-v1.md",
+                        "parsedCommand": {"phases": ["1"]},
+                    },
+                }
+            ],
+        )
         await storage.entity_links().upsert(
             {
                 "source_type": "feature",
@@ -375,6 +391,12 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
         self.assertIsInstance(data["items"], list)
         self.assertGreaterEqual(len(data["items"]), 1)
         self.assertEqual(data["items"][0].get("sessionId"), self._SESSION_ID)
+        self.assertEqual(data["items"][0].get("title"), "Phased Execution - Phase 1")
+        self.assertEqual(data["items"][0].get("workflowType"), "Execution")
+        self.assertEqual(data["items"][0].get("commands"), ["/dev:execute-phase"])
+        self.assertTrue(data["items"][0].get("isPrimaryLink"))
+        self.assertTrue(data["enrichment"].get("logsRead"))
+        self.assertTrue(data["enrichment"].get("commandCountIncluded"))
         self.assertIn("total", data)
         self.assertIn("hasMore", data)
 

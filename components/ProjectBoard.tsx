@@ -1149,7 +1149,9 @@ export const ProjectBoardFeatureModal = ({
             isSubthread: dto.isSubthread,
             isPrimaryLink: dto.isPrimaryLink,
             workflowType: dto.workflowType,
-            relatedPhases: [],
+            relatedPhases: Array.from(
+              new Set((dto.relatedTasks ?? []).map(t => t.phase).filter(Boolean)),
+            ),
             relatedTasks: (dto.relatedTasks ?? []).map(t => ({
               taskId: t.taskId,
               taskTitle: t.taskTitle,
@@ -1240,7 +1242,9 @@ export const ProjectBoardFeatureModal = ({
           isSubthread: dto.isSubthread,
           isPrimaryLink: dto.isPrimaryLink,
           workflowType: dto.workflowType,
-          relatedPhases: [],
+          relatedPhases: Array.from(
+            new Set((dto.relatedTasks ?? []).map(t => t.phase).filter(Boolean)),
+          ),
           relatedTasks: (dto.relatedTasks ?? []).map(t => ({
             taskId: t.taskId,
             taskTitle: t.taskTitle,

@@ -185,6 +185,7 @@ describe('P4-004 — Source-level: accumulator merge effect', () => {
     expect(block).toContain('isPrimaryLink');
     expect(block).toContain('isSubthread');
     expect(block).toContain('relatedTasks');
+    expect(block).toContain('relatedPhases: Array.from');
   });
 
   it('prevAccumulatedCountRef is reset on feature change', () => {
@@ -193,6 +194,13 @@ describe('P4-004 — Source-level: accumulator merge effect', () => {
     expect(idx).toBeGreaterThan(-1);
     const snippet = SOURCE.slice(idx, idx + 150);
     expect(snippet).toContain('prevAccumulatedCountRef.current = 0');
+  });
+});
+
+describe('Feature modal sessions grouping inputs', () => {
+  it('phase grouping considers related task phase metadata', () => {
+    expect(SESSIONS_TAB_SOURCE).toContain('session.relatedTasks');
+    expect(SESSIONS_TAB_SOURCE).toContain('task.phase || task.phaseId');
   });
 });
 
