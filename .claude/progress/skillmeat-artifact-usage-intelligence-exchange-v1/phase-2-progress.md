@@ -7,7 +7,7 @@ feature_slug: skillmeat-artifact-usage-intelligence-exchange-v1
 phase: 2
 phase_title: Snapshot Ingestion & Storage
 title: "skillmeat-artifact-usage-intelligence-exchange-v1 - Phase 2: Snapshot Ingestion & Storage"
-status: in_progress
+status: completed
 created: '2026-05-07'
 updated: '2026-05-07'
 prd_ref: docs/project_plans/PRDs/integrations/skillmeat-artifact-usage-intelligence-exchange-v1.md
@@ -15,10 +15,10 @@ plan_ref: docs/project_plans/implementation_plans/integrations/skillmeat-artifac
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
-overall_progress: 83
-completion_estimate: on_track
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 6
-completed_tasks: 5
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -90,7 +90,7 @@ tasks:
 - id: T2-006
   title: "Integration test: fetch -> store -> query"
   description: Add an end-to-end integration test covering mock SkillMeat snapshot fetch, repository storage, identity mapping, freshness query, and unresolved count assertions.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -121,7 +121,7 @@ blockers: []
 success_criteria:
 - id: SC-1
   description: CCDash fetches and stores a SkillMeat artifact snapshot for a configured project or collection.
-  status: pending
+  status: completed
 - id: SC-2
   description: Snapshot freshness metadata is queryable from the repository.
   status: completed
@@ -133,7 +133,7 @@ success_criteria:
   status: completed
 - id: SC-5
   description: Fetch, store, resolve, and query integration coverage passes with the seeded SkillMeat fixture.
-  status: pending
+  status: completed
 - id: SC-6
   description: Existing skillmeat_client.py behavior remains unaffected.
   status: completed
@@ -155,7 +155,7 @@ Build the persistence, fetch, identity mapping, diagnostics, and integration-tes
 
 ## Current Status
 
-Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 through T2-005 are complete. T2-006 remains pending.
+Phase 2 is complete. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 through T2-006 are complete.
 
 ## Validation Evidence
 
@@ -171,6 +171,8 @@ Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, an
 - 2026-05-07 T2-004 lint: `ruff check backend/services/identity_resolver.py backend/db/repositories/artifact_snapshot_repository.py backend/db/repositories/postgres/artifact_snapshot_repository.py backend/tests/test_identity_resolver.py backend/tests/test_artifact_snapshot_repository.py backend/config.py` -> All checks passed.
 - 2026-05-07 T2-005 focused diagnostics/repository/agent query check: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_snapshot_repository.py backend/tests/test_agent_queries_artifact_intelligence.py backend/tests/test_agent_router.py -q` -> 20 passed in 3.57s.
 - 2026-05-07 T2-005 lint: `ruff check backend/config.py backend/models.py backend/db/repositories/base.py backend/db/repositories/artifact_snapshot_repository.py backend/db/repositories/postgres/artifact_snapshot_repository.py backend/application/services/agent_queries/artifact_intelligence.py backend/application/services/agent_queries/models.py backend/application/services/agent_queries/__init__.py backend/routers/agent.py backend/tests/test_artifact_snapshot_repository.py backend/tests/test_agent_queries_artifact_intelligence.py backend/tests/test_agent_router.py` -> All checks passed.
+- 2026-05-07 T2-006 integration test: `backend/.venv/bin/python -m pytest backend/tests/test_snapshot_ingestion.py -q` -> 1 passed in 1.35s.
+- 2026-05-07 T2-006 focused Phase 2 sweep: `backend/.venv/bin/python -m pytest backend/tests/test_snapshot_ingestion.py backend/tests/test_skillmeat_client.py backend/tests/test_artifact_intelligence_feature_flag.py backend/tests/test_artifact_snapshot_repository.py backend/tests/test_identity_resolver.py backend/tests/test_agent_queries_artifact_intelligence.py backend/tests/test_agent_router.py -q` -> 45 passed in 6.68s.
 
 ## Notes
 
@@ -181,3 +183,4 @@ Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, an
 - T2-003 added SQLite and Postgres ArtifactSnapshotRepository implementations and exposed them through the integration snapshot storage/factory surface; it did not edit SkillMeat client files.
 - T2-004 added ArtifactIdentityMapper with tier-1 UUID/hash matching, tier-2 alias fuzzy matching controlled by `CCDASH_IDENTITY_FUZZY_THRESHOLD` (default 0.85), unresolved quarantine metadata, and repository-backed identity map persistence.
 - T2-005 added snapshot diagnostics on SQLite/Postgres repositories plus a transport-neutral artifact intelligence agent query and REST `/api/agent/artifact-intelligence/snapshot-diagnostics` surface.
+- T2-006 added end-to-end integration coverage for SkillMeat snapshot fetch, repository storage, identity mapping over seven seeded CCDash observed artifacts, freshness metadata, diagnostics, unresolved counts, and disabled artifact mapping metadata.
