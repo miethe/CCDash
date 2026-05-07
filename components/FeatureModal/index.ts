@@ -31,3 +31,11 @@ export type { TestStatusTabProps } from './TestStatusTab';
 
 export { ExecutionGateCard } from './ExecutionGateCard';
 export type { ExecutionGateCardProps } from './ExecutionGateCard';
+
+// ── Forensics-domain components (P4-004) ──────────────────────────────────────
+
+export { SessionsTab } from './SessionsTab';
+export type { SessionsTabProps, FeatureSessionLink } from './SessionsTab';
+
+export { HistoryTab } from './HistoryTab';
+export type { HistoryTabProps } from './HistoryTab';
