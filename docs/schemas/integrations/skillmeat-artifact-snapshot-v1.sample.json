@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "skillmeat-artifact-snapshot-v1",
+  "generatedAt": "2026-05-06T00:00:00Z",
+  "projectId": "skillmeat-project-id",
+  "collectionId": "collection-id",
+  "artifacts": [
+    {
+      "definitionType": "skill",
+      "externalId": "skill:frontend-design",
+      "artifactUuid": "artifact-uuid",
+      "displayName": "frontend-design",
+      "versionId": "version-id",
+      "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "collectionIds": ["collection-id"],
+      "deploymentProfileIds": ["claude-code", "codex"],
+      "defaultLoadMode": "always",
+      "workflowRefs": ["workflow-id"],
+      "tags": ["frontend", "design"],
+      "status": "active"
+    }
+  ],
+  "freshness": {
+    "snapshotSource": "skillmeat",
+    "sourceGeneratedAt": "2026-05-06T00:00:00Z",
+    "fetchedAt": "2026-05-06T00:00:01Z",
+    "warnings": []
+  }
+}

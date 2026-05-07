@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ccdash.local/schemas/integrations/skillmeat-artifact-snapshot-v1.schema.json",
+  "title": "SkillMeat Artifact Snapshot",
+  "description": "Project-scoped SkillMeat artifact inventory snapshot consumed by CCDash artifact intelligence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "projectId", "artifacts"],
+  "properties": {
+    "schemaVersion": {
+      "const": "skillmeat-artifact-snapshot-v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "collectionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/snapshotArtifact"
+      }
+    },
+    "freshness": {
+      "$ref": "#/$defs/snapshotFreshnessMeta"
+    }
+  },
+  "$defs": {
+    "snapshotArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "definitionType",
+        "externalId",
+        "artifactUuid",
+        "displayName",
+        "versionId",
+        "contentHash",
+        "defaultLoadMode",
+        "status"
+      ],
+      "properties": {
+        "definitionType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "externalId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifactUuid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "versionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentHash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "collectionIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "deploymentProfileIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "defaultLoadMode": {
+          "enum": ["always", "on_demand", "workflow_scoped", "disabled"]
+        },
+        "workflowRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "status": {
+          "enum": ["active", "deprecated", "disabled", "unresolved"]
+        }
+      }
+    },
+    "snapshotFreshnessMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshotSource": {
+          "enum": ["skillmeat", "composed"],
+          "default": "skillmeat"
+        },
+        "sourceGeneratedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fetchedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "staleAfter": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}

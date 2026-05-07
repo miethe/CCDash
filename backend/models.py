@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Generic, Literal, Optional, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 T = TypeVar("T")
 
@@ -363,6 +363,103 @@ class ArtifactVersionOutcomePayload(ArtifactOutcomePayload):
         if not self.content_hash:
             raise ValueError("content_hash is required for ArtifactVersionOutcomePayload")
         return self
+
+
+SKILLMEAT_ARTIFACT_SNAPSHOT_SCHEMA_VERSION = "skillmeat-artifact-snapshot-v1"
+
+
+class SnapshotFreshnessMeta(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    snapshot_source: Literal["skillmeat", "composed"] = Field(default="skillmeat", alias="snapshotSource")
+    source_generated_at: Optional[datetime] = Field(default=None, alias="sourceGeneratedAt")
+    fetched_at: Optional[datetime] = Field(default=None, alias="fetchedAt")
+    stale_after: Optional[datetime] = Field(default=None, alias="staleAfter")
+    warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("source_generated_at", "fetched_at", "stale_after")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("datetime fields must include timezone information")
+        return value.astimezone(timezone.utc)
+
+    @field_serializer("source_generated_at", "fetched_at", "stale_after", when_used="json-unless-none")
+    def serialize_datetime(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class SnapshotArtifact(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    definition_type: str = Field(alias="definitionType", min_length=1)
+    external_id: str = Field(alias="externalId", min_length=1)
+    artifact_uuid: str = Field(alias="artifactUuid", min_length=1)
+    display_name: str = Field(alias="displayName", min_length=1)
+    version_id: str = Field(alias="versionId", min_length=1)
+    content_hash: str = Field(alias="contentHash", min_length=1)
+    collection_ids: list[str] = Field(default_factory=list, alias="collectionIds")
+    deployment_profile_ids: list[str] = Field(default_factory=list, alias="deploymentProfileIds")
+    default_load_mode: Literal["always", "on_demand", "workflow_scoped", "disabled"] = Field(alias="defaultLoadMode")
+    workflow_refs: list[str] = Field(default_factory=list, alias="workflowRefs")
+    tags: list[str] = Field(default_factory=list)
+    status: Literal["active", "deprecated", "disabled", "unresolved"]
+
+    @field_validator(
+        "definition_type",
+        "external_id",
+        "artifact_uuid",
+        "display_name",
+        "version_id",
+        "content_hash",
+        mode="before",
+    )
+    @classmethod
+    def strip_required_strings(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class SkillMeatArtifactSnapshot(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    schema_version: Literal["skillmeat-artifact-snapshot-v1"] = Field(alias="schemaVersion")
+    generated_at: datetime = Field(alias="generatedAt")
+    project_id: str = Field(alias="projectId", min_length=1)
+    collection_id: Optional[str] = Field(default=None, alias="collectionId", min_length=1)
+    artifacts: list[SnapshotArtifact]
+    freshness: SnapshotFreshnessMeta = Field(default_factory=SnapshotFreshnessMeta)
+
+    @field_validator("project_id", "collection_id", mode="before")
+    @classmethod
+    def strip_strings(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("generated_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("generatedAt must include timezone information")
+        return value.astimezone(timezone.utc)
+
+    @field_serializer("generated_at")
+    def serialize_generated_at(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    @model_validator(mode="after")
+    def default_freshness_source_timestamp(self) -> "SkillMeatArtifactSnapshot":
+        if self.freshness.source_generated_at is None:
+            self.freshness.source_generated_at = self.generated_at
+        return self
+
+    def snapshot_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 SessionUsageTokenFamily = Literal[
