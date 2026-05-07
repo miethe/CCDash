@@ -12,6 +12,8 @@ import {
     AnalyticsBreakdownItem,
     AnalyticsCorrelationItem,
     AnalyticsArtifactsResponse,
+    ArtifactRankingRow,
+    ArtifactRecommendationType,
     EffectivenessScopeType,
     FailurePatternResponse,
     SessionSemanticSearchResponse,
@@ -24,6 +26,38 @@ import { apiFetch } from './apiClient';
 import { apiRequestJson } from './apiClient';
 
 const API_BASE = '/api/analytics';
+
+export interface ArtifactRankingsResponse {
+    projectId: string;
+    period?: string | null;
+    total: number;
+    limit: number;
+    offset: number;
+    nextCursor?: string | null;
+    rows: ArtifactRankingRow[];
+}
+
+export interface ArtifactRecommendationItem {
+    type?: ArtifactRecommendationType | null;
+    confidence?: number | null;
+    rationaleCode?: string | null;
+    nextAction?: string | null;
+    evidence?: Record<string, unknown> | string[] | null;
+    affectedArtifactIds?: string[];
+    scope?: string | null;
+    projectId?: string | null;
+    collectionId?: string | null;
+    userScope?: string | null;
+    workflowId?: string | null;
+    period?: string | null;
+}
+
+export interface ArtifactRecommendationsResponse {
+    projectId: string;
+    period?: string | null;
+    total: number;
+    recommendations: ArtifactRecommendationItem[];
+}
 
 export class AnalyticsApiError extends Error {
     status: number;
@@ -169,6 +203,58 @@ export const analyticsService = {
         const qs = search.toString();
         const res = await apiFetch(`${API_BASE}/artifacts${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch artifact analytics');
+        return res.json();
+    },
+
+    async fetchArtifactRankings(params?: {
+        project?: string;
+        collection?: string;
+        user?: string;
+        period?: string;
+        artifactType?: string;
+        workflow?: string;
+        recommendationType?: string;
+        offset?: number;
+        limit?: number;
+    }): Promise<ArtifactRankingsResponse> {
+        const search = new URLSearchParams();
+        if (params?.project) search.append('project', params.project);
+        if (params?.collection) search.append('collection', params.collection);
+        if (params?.user) search.append('user', params.user);
+        if (params?.period) search.append('period', params.period);
+        if (params?.artifactType) search.append('artifact_type', params.artifactType);
+        if (params?.workflow) search.append('workflow', params.workflow);
+        if (params?.recommendationType) search.append('recommendation_type', params.recommendationType);
+        if (typeof params?.offset === 'number') search.append('offset', String(params.offset));
+        if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
+        const qs = search.toString();
+        const res = await apiFetch(`${API_BASE}/artifact-rankings${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch artifact rankings');
+        return res.json();
+    },
+
+    async fetchArtifactRecommendations(params?: {
+        project?: string;
+        recommendationType?: ArtifactRecommendationType;
+        minConfidence?: number;
+        period?: string;
+        collection?: string;
+        user?: string;
+        workflow?: string;
+        limit?: number;
+    }): Promise<ArtifactRecommendationsResponse> {
+        const search = new URLSearchParams();
+        if (params?.project) search.append('project', params.project);
+        if (params?.recommendationType) search.append('recommendation_type', params.recommendationType);
+        if (typeof params?.minConfidence === 'number') search.append('min_confidence', String(params.minConfidence));
+        if (params?.period) search.append('period', params.period);
+        if (params?.collection) search.append('collection', params.collection);
+        if (params?.user) search.append('user', params.user);
+        if (params?.workflow) search.append('workflow', params.workflow);
+        if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
+        const qs = search.toString();
+        const res = await apiFetch(`${API_BASE}/artifact-recommendations${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch artifact recommendations');
         return res.json();
     },
 

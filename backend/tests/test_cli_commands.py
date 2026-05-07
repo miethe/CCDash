@@ -34,9 +34,38 @@ class _WorkflowPayload(BaseModel):
     problem_workflows: list[_WorkflowProblem] = Field(default_factory=list)
 
 
+class _ArtifactRankingsPayload(BaseModel):
+    status: str
+    project_id: str
+    period: str = "7d"
+    total: int = 0
+    rows: list[dict] = Field(default_factory=list)
+
+
+class _ArtifactRecommendationsPayload(BaseModel):
+    status: str
+    project_id: str
+    period: str = "30d"
+    total: int = 0
+    recommendations: list[dict] = Field(default_factory=list)
+
+
 class CliCommandsTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = CliRunner()
+
+    def test_root_help_lists_artifact_commands(self) -> None:
+        result = self.runner.invoke(app, ["--help"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("artifact", result.output)
+
+    def test_artifact_help_lists_rankings_and_recommendations(self) -> None:
+        result = self.runner.invoke(app, ["artifact", "--help"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("rankings", result.output)
+        self.assertIn("recommendations", result.output)
 
     def test_status_project_renders_human_output(self) -> None:
         payload = _CliPayload(
@@ -163,6 +192,90 @@ class CliCommandsTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 2)
         self.assertIn("Feature 'missing-feature' was not found in project 'project-1'.", result.output)
+
+    def test_artifact_rankings_renders_json_output(self) -> None:
+        payload = _ArtifactRankingsPayload(
+            status="ok",
+            project_id="project-1",
+            period="7d",
+            total=1,
+            rows=[
+                {
+                    "artifact_id": "planning",
+                    "artifact_type": "skill",
+                    "exclusive_tokens": 1200,
+                    "confidence": 0.88,
+                }
+            ],
+        )
+
+        with patch(
+            "backend.cli.commands.artifact.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(
+                app,
+                ["artifact", "rankings", "--project", "project-1", "--period", "7d", "--json"],
+            )
+
+        self.assertEqual(result.exit_code, 0)
+        output = json.loads(result.output)
+        self.assertEqual(output["project_id"], "project-1")
+        self.assertEqual(output["period"], "7d")
+        self.assertEqual(output["rows"][0]["artifact_id"], "planning")
+
+    def test_artifact_rankings_handles_empty_rows(self) -> None:
+        payload = _ArtifactRankingsPayload(status="ok", project_id="project-1", period="7d")
+
+        with patch(
+            "backend.cli.commands.artifact.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(app, ["artifact", "rankings", "--project", "project-1"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.output, "\n")
+
+    def test_artifact_recommendations_renders_markdown_summary(self) -> None:
+        payload = _ArtifactRecommendationsPayload(
+            status="ok",
+            project_id="project-1",
+            total=1,
+            recommendations=[
+                {
+                    "type": "optimization_target",
+                    "confidence": 0.91,
+                    "nextAction": "Review before optimizing.",
+                    "affectedArtifactIds": ["planning"],
+                }
+            ],
+        )
+
+        with patch(
+            "backend.cli.commands.artifact.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(
+                app,
+                ["artifact", "recommendations", "--project", "project-1", "--min-confidence", "0.7", "--md"],
+            )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("Artifact recommendations for project-1", result.output)
+        self.assertIn("planning", result.output)
+        self.assertIn("optimization_target", result.output)
+
+    def test_artifact_recommendations_handles_empty_data(self) -> None:
+        payload = _ArtifactRecommendationsPayload(status="ok", project_id="project-1")
+
+        with patch(
+            "backend.cli.commands.artifact.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(app, ["artifact", "recommendations", "--project", "project-1"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("No recommendations available", result.output)
 
 
 class _ForensicsPayload(_CliPayload):

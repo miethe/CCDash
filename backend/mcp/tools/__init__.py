@@ -50,6 +50,7 @@ def build_envelope(result: BaseModel, *, identifiers: Iterable[str] = IDENTIFIER
 
 
 def register_tools(mcp: Any) -> None:
+    from backend.mcp.tools.artifacts import register_artifact_tools
     from backend.mcp.tools.features import register_feature_tools
     from backend.mcp.tools.project import register_project_tools
     from backend.mcp.tools.reports import register_report_tools
@@ -59,6 +60,7 @@ def register_tools(mcp: Any) -> None:
     register_feature_tools(mcp)
     register_workflow_tools(mcp)
     register_report_tools(mcp)
+    register_artifact_tools(mcp)
 
 
 __all__ = ["build_envelope", "register_tools"]

@@ -9,6 +9,7 @@ import {
   WorkflowEffectivenessResponse,
   WorkflowEffectivenessRollup,
 } from '../../types';
+import { ArtifactContributionPanel } from '../execution/ArtifactContributionPanel';
 import { ArtifactReferenceModal } from '../execution/ArtifactReferenceModal';
 
 type PeriodPreset = '7d' | '30d' | '90d';
@@ -135,6 +136,9 @@ const weightedAverage = (items: WorkflowEffectivenessRollup[], key: keyof Workfl
 
 const scopeLabelFor = (scopeType: EffectivenessScopeType): string =>
   SCOPE_OPTIONS.find(option => option.value === scopeType)?.label || scopeType.replace(/_/g, ' ');
+
+const supportsArtifactContributions = (item: WorkflowEffectivenessRollup): boolean =>
+  item.scopeType === 'workflow' || item.scopeType === 'effective_workflow';
 
 const ScoreBar: React.FC<{ label: string; value: number; kind: 'success' | 'efficiency' | 'quality' | 'risk' }> = ({
   label,
@@ -520,6 +524,13 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
                       )}
                     </div>
                   </div>
+
+                  {supportsArtifactContributions(item) && (
+                    <ArtifactContributionPanel
+                      workflowId={item.scopeId}
+                      period={periodPreset}
+                    />
+                  )}
 
                   <div className="min-w-0 rounded-2xl border border-slate-800/80 bg-slate-950/75 p-4">
                     <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Representative Sessions</div>

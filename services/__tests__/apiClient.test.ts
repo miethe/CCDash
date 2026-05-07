@@ -264,3 +264,54 @@ describe('apiClient — auth/session foundation', () => {
     } satisfies Partial<ApiError>);
   });
 });
+
+describe('apiClient — artifact intelligence diagnostics', () => {
+  let client: ReturnType<typeof createApiClient>;
+
+  beforeEach(() => {
+    client = createApiClient();
+  });
+
+  afterEach(() => {
+    setApiProjectScope(null);
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches and normalizes snapshot diagnostics from the agent query endpoint', async () => {
+    stubFetch({
+      status: 'ok',
+      data_freshness: '2026-05-07T12:00:00Z',
+      project_id: 'project-1',
+      snapshot_age_seconds: 7200,
+      artifact_count: 12,
+      resolved_count: 10,
+      unresolved_count: 2,
+      is_stale: false,
+    });
+
+    await expect(client.fetchSnapshotDiagnostics('project-1')).resolves.toEqual({
+      projectId: 'project-1',
+      snapshotAgeSeconds: 7200,
+      artifactCount: 12,
+      resolvedCount: 10,
+      unresolvedCount: 2,
+      isStale: false,
+      sourceGeneratedAt: null,
+      fetchedAt: '2026-05-07T12:00:00Z',
+      staleAfter: null,
+      lastRollupExportedAt: null,
+      warnings: [],
+    });
+    expect(calledUrl()).toBe('/api/agent/artifact-intelligence/snapshot-diagnostics?project_id=project-1');
+  });
+
+  it('returns null for an agent-query error envelope so Settings can show the no-data state', async () => {
+    stubFetch({
+      status: 'error',
+      project_id: 'missing-project',
+      snapshot_age_seconds: null,
+    });
+
+    await expect(client.fetchSnapshotDiagnostics('missing-project')).resolves.toBeNull();
+  });
+});

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette, Bot, GitBranch } from 'lucide-react';
+import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette, Bot, GitBranch, Info } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useModelColors } from '../contexts/ModelColorsContext';
 import {
@@ -15,6 +15,7 @@ import {
   ProjectPathReference,
   ProjectResolvedPathsDTO,
   ProjectTestPlatformConfig,
+  SnapshotHealth,
   SkillMeatConfigValidationResponse,
   SkillMeatProbeResult,
   TelemetryExportStatus,
@@ -446,6 +447,32 @@ const pricingEntryMeta = (entry: PricingCatalogEntry): string => {
   }
   return parts.join(' · ');
 };
+
+const formatRelativeAge = (seconds?: number | null): string => {
+  if (seconds == null) return 'Unknown';
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'} ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+};
+
+const formatOptionalTimestamp = (value?: string | null): string => {
+  if (!value) return 'Unavailable';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+};
+
+const formatOptionalCount = (value?: number | null): string => (
+  value == null ? 'Unavailable' : value.toLocaleString()
+);
+
+const hasSnapshotData = (health?: SnapshotHealth | null): boolean => (
+  Boolean(health && health.snapshotAgeSeconds != null)
+);
 
 // ── Tab Button ─────────────────────────────────────────────────────
 
@@ -1700,7 +1727,7 @@ const ProjectsTab: React.FC = () => {
                     <span className="text-sm text-slate-200">{label}</span>
                     <input
                       type="checkbox"
-                      checked={(editData.testConfig?.flags as Record<string, boolean>)?.[key] ?? false}
+                      checked={(editData.testConfig?.flags as unknown as Record<string, boolean>)?.[key] ?? false}
                       onChange={event => updateFlag(key as keyof Project['testConfig']['flags'], event.target.checked)}
                       className="h-4 w-4"
                     />
@@ -1950,6 +1977,9 @@ const IntegrationsTab: React.FC = () => {
   const [telemetrySaving, setTelemetrySaving] = useState(false);
   const [telemetryMessage, setTelemetryMessage] = useState<string | null>(null);
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
+  const [snapshotHealth, setSnapshotHealth] = useState<SnapshotHealth | null>(null);
+  const [snapshotHealthLoading, setSnapshotHealthLoading] = useState(false);
+  const [snapshotHealthError, setSnapshotHealthError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedProjectId && activeProject) {
@@ -1965,6 +1995,8 @@ const IntegrationsTab: React.FC = () => {
     setSkillMeatValidationError(null);
     setSkillMeatMessage(null);
     setSkillMeatError(null);
+    setSnapshotHealth(null);
+    setSnapshotHealthError(null);
     setCredentialValidation(null);
     setWriteCapability(null);
   }, [projects, selectedProjectId]);
@@ -2005,6 +2037,25 @@ const IntegrationsTab: React.FC = () => {
   useEffect(() => {
     void loadTelemetryStatus();
   }, [loadTelemetryStatus]);
+
+  const loadSnapshotDiagnostics = React.useCallback(async (projectId: string) => {
+    if (!projectId) return;
+    setSnapshotHealthLoading(true);
+    setSnapshotHealthError(null);
+    try {
+      const response = await apiClient.fetchSnapshotDiagnostics(projectId);
+      setSnapshotHealth(response);
+    } catch (loadError: any) {
+      setSnapshotHealthError(loadError?.message || 'Failed to load artifact intelligence diagnostics');
+    } finally {
+      setSnapshotHealthLoading(false);
+    }
+  }, [apiClient]);
+
+  useEffect(() => {
+    if (subtab !== 'skillmeat' || !selectedProjectId) return;
+    void loadSnapshotDiagnostics(selectedProjectId);
+  }, [loadSnapshotDiagnostics, selectedProjectId, subtab]);
 
   const updateSkillMeatConfig = (updater: (prev: Project['skillMeat']) => Project['skillMeat']) => {
     setEditData(current => {
@@ -2050,6 +2101,7 @@ const IntegrationsTab: React.FC = () => {
       } else {
         setSkillMeatMessage('SkillMeat settings saved.');
       }
+      void loadSnapshotDiagnostics(editData.id);
     } catch (saveError: any) {
       setSkillMeatError(saveError?.message || 'Failed to save SkillMeat settings');
     } finally {
@@ -2172,6 +2224,15 @@ const IntegrationsTab: React.FC = () => {
         : telemetryStatus?.configured
           ? 'Configured but off'
           : 'Not configured';
+  const snapshotDataAvailable = hasSnapshotData(snapshotHealth);
+  const snapshotWarnings = [
+    ...(snapshotHealth?.warnings ?? []),
+    editData && !editData.skillMeat?.enabled ? 'Project SkillMeat integration is disabled, so snapshot ingestion will not run for this project.' : null,
+    snapshotHealth?.isStale ? 'The latest artifact snapshot is stale or has not been fetched yet.' : null,
+    snapshotHealth && snapshotHealth.lastRollupExportedAt == null
+      ? 'Rollup export freshness is not reported by the current diagnostics API.'
+      : null,
+  ].filter((warning): warning is string => Boolean(warning));
 
   return (
     <div className="space-y-6">
@@ -2368,7 +2429,7 @@ const IntegrationsTab: React.FC = () => {
                   </div>
                   <input
                     type="checkbox"
-                    checked={(editData.skillMeat?.featureFlags as Record<string, boolean>)?.[key] ?? true}
+                    checked={(editData.skillMeat?.featureFlags as unknown as Record<string, boolean>)?.[key] ?? true}
                     onChange={event => updateSkillMeatConfig(prev => ({
                       ...prev,
                       featureFlags: {
@@ -2381,6 +2442,127 @@ const IntegrationsTab: React.FC = () => {
                   />
                 </label>
               ))}
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="mb-2">
+                    <ConnectionStatusBadge
+                      label={editData.skillMeat?.enabled ? 'Project enabled' : 'Project disabled'}
+                      state={editData.skillMeat?.enabled ? 'success' : 'warning'}
+                    />
+                  </div>
+                  <h4 className="text-sm font-semibold text-slate-300 mb-1">SkillMeat Artifact Intelligence</h4>
+                  <p className="text-xs text-slate-500">
+                    Snapshot diagnostics for artifact rankings, recommendations, and identity reconciliation.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadSnapshotDiagnostics(editData.id)}
+                  disabled={snapshotHealthLoading}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={snapshotHealthLoading ? 'animate-spin' : ''} />
+                  {snapshotHealthLoading ? 'Fetching...' : 'Fetch Now'}
+                </button>
+              </div>
+
+              {snapshotHealthError && (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                  {snapshotHealthError}
+                </div>
+              )}
+
+              {!snapshotHealthError && !snapshotHealthLoading && !snapshotDataAvailable && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>No snapshot data. Last fetched: Unknown.</span>
+                    <button
+                      type="button"
+                      onClick={() => void loadSnapshotDiagnostics(editData.id)}
+                      className="inline-flex items-center gap-1 rounded border border-amber-400/40 px-2 py-1 text-[11px] font-semibold text-amber-100 hover:bg-amber-400/10"
+                    >
+                      <RefreshCw size={11} />
+                      Fetch Now
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <span className="block text-xs text-slate-400 mb-1">Snapshot Age</span>
+                  <p className="text-sm text-slate-200">{formatRelativeAge(snapshotHealth?.snapshotAgeSeconds)}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Last fetched: {formatOptionalTimestamp(snapshotHealth?.fetchedAt)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <span className="block text-xs text-slate-400 mb-1">Artifact Count</span>
+                  <p className="text-sm text-slate-200">{formatOptionalCount(snapshotHealth?.artifactCount)}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Resolved: {formatOptionalCount(snapshotHealth?.resolvedCount)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <span
+                    className="mb-1 flex items-center gap-1 text-xs text-slate-400"
+                    title="Unresolved identities are observed CCDash artifact references that could not be mapped to the current SkillMeat artifact snapshot."
+                  >
+                    <span>Unresolved Identities</span>
+                    <Info
+                      size={12}
+                      className="text-slate-500"
+                      aria-label="Identity reconciliation help"
+                    />
+                  </span>
+                  <p
+                    className="text-sm text-slate-200"
+                    title="Unresolved identities are observed CCDash artifact references that could not be mapped to the current SkillMeat artifact snapshot."
+                  >
+                    {snapshotHealth?.unresolvedCount == null
+                      ? 'Identity mapping: Unavailable'
+                      : snapshotHealth.unresolvedCount.toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <span className="block text-xs text-slate-400 mb-1">Export Freshness</span>
+                  <p className="text-sm text-slate-200">{formatOptionalTimestamp(snapshotHealth?.lastRollupExportedAt)}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {snapshotHealth?.lastRollupExportedAt ? 'Last rollup export' : 'Not reported by diagnostics'}
+                  </p>
+                </div>
+              </div>
+
+              <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                <div>
+                  <span className="block text-sm text-slate-200">Artifact intelligence runtime flag</span>
+                  <span className="block text-xs text-slate-500">
+                    `CCDASH_ARTIFACT_INTELLIGENCE_ENABLED` is managed by backend environment configuration. Settings has no safe write endpoint for this flag.
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={false}
+                  disabled
+                  readOnly
+                  className="h-4 w-4"
+                  aria-label="Artifact intelligence runtime flag is environment-managed"
+                />
+              </label>
+
+              {snapshotWarnings.length > 0 && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  <p className="mb-1 font-semibold">Warnings</p>
+                  <ul className="list-disc space-y-1 pl-4">
+                    {snapshotWarnings.map(warning => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-4">

@@ -4,6 +4,7 @@ from __future__ import annotations
 import typer
 
 from backend.cli import runtime
+from backend.cli.commands.artifact import artifact_app
 from backend.cli.commands.feature import feature_app
 from backend.cli.commands.report import report_app
 from backend.cli.commands.status import status_app
@@ -38,4 +39,4 @@ app.add_typer(status_app, name="status", help="Show status snapshots.")
 app.add_typer(feature_app, name="feature", help="Feature forensics commands.")
 app.add_typer(workflow_app, name="workflow", help="Workflow diagnostics commands.")
 app.add_typer(report_app, name="report", help="Reporting commands.")
-
+app.add_typer(artifact_app, name="artifact", help="Artifact intelligence commands.")

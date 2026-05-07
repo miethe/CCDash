@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { TrendChart } from './TrendChart';
+import { ArtifactRankingsView } from './ArtifactRankingsView';
 import { analyticsService } from '../../services/analytics';
 import { useModelColors } from '../../contexts/ModelColorsContext';
 import { useData } from '../../contexts/DataContext';
@@ -24,6 +25,7 @@ import {
     RefreshCcw,
     Sparkles,
     Shapes,
+    Trophy,
     Wrench,
 } from 'lucide-react';
 import {
@@ -47,12 +49,13 @@ import { costProvenanceLabel } from '../../lib/sessionSemantics';
 import { chartTheme, getChartSeriesColor } from '../../lib/chartTheme';
 import { cn } from '../../lib/utils';
 
-type AnalyticsTab = 'overview' | 'attribution' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
+type AnalyticsTab = 'overview' | 'attribution' | 'artifact_rankings' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
 
 const TAB_LABELS: Array<{ id: AnalyticsTab; label: string; icon: any }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'attribution', label: 'Attribution', icon: Sparkles },
     { id: 'workflow_intelligence', label: 'Workflow Intel', icon: Sparkles },
+    { id: 'artifact_rankings', label: 'Rankings', icon: Trophy },
     { id: 'artifacts', label: 'Artifacts', icon: Shapes },
     { id: 'models_tools', label: 'Models + Tools', icon: Network },
     { id: 'features', label: 'Features', icon: Layers3 },
@@ -100,10 +103,11 @@ const EntityLinkButton: React.FC<{ label: string; onClick: () => void; mono?: bo
 export const AnalyticsDashboard: React.FC = () => {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
+    const tabParam = searchParams.get('tab');
+    const searchParamsString = searchParams.toString();
     const { getColorForModel, getBadgeStyleForModel } = useModelColors();
     const { activeProject } = useData();
     const [activeTab, setActiveTab] = useState<AnalyticsTab>(() => {
-        const tabParam = searchParams.get('tab');
         return isAnalyticsTab(tabParam) ? tabParam : 'overview';
     });
     const [modelGrouping, setModelGrouping] = useState<'model' | 'family'>('model');
@@ -180,23 +184,22 @@ export const AnalyticsDashboard: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        const tabParam = searchParams.get('tab');
         if (isAnalyticsTab(tabParam)) {
             setActiveTab(prev => (prev === tabParam ? prev : tabParam));
         }
-    }, [searchParams]);
+    }, [tabParam]);
 
     useEffect(() => {
-        const nextParams = new URLSearchParams(searchParams);
+        const nextParams = new URLSearchParams(searchParamsString);
         if (activeTab === 'overview') {
             nextParams.delete('tab');
         } else {
             nextParams.set('tab', activeTab);
         }
-        if (nextParams.toString() !== searchParams.toString()) {
+        if (nextParams.toString() !== searchParamsString) {
             setSearchParams(nextParams, { replace: true });
         }
-    }, [activeTab, searchParams, setSearchParams]);
+    }, [activeTab, searchParamsString, setSearchParams]);
 
     useEffect(() => {
         if (!selectedUsageEntity?.entityType || !selectedUsageEntity?.entityId) {
@@ -706,6 +709,10 @@ export const AnalyticsDashboard: React.FC = () => {
                         </p>
                     </div>
                 )
+            )}
+
+            {!loading && !error && activeTab === 'artifact_rankings' && (
+                <ArtifactRankingsView defaultProjectId={activeProject?.id} />
             )}
 
             {!loading && !error && activeTab === 'artifacts' && (

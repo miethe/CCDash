@@ -75,6 +75,7 @@ import { TestStatusView } from './TestVisualizer/TestStatusView';
 import { ExecutionApprovalDialog } from './execution/ExecutionApprovalDialog';
 import { RecommendedStackCard } from './execution/RecommendedStackCard';
 import { RecommendedStackPreviewCard } from './execution/RecommendedStackPreviewCard';
+import { ExecutionWorkbenchRecommendations } from './execution/ExecutionWorkbenchRecommendations';
 import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
 import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
 import { WorkflowEffectivenessSurface } from './Workflows/WorkflowEffectivenessSurface';
@@ -3153,6 +3154,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       onOpenSession={openSession}
                       className="mb-4"
                     />
+
+                    <div className="mb-4">
+                      <ExecutionWorkbenchRecommendations projectId={activeProject?.id} />
+                    </div>
 
                     {workflowAnalyticsAvailable ? (
                       <WorkflowEffectivenessSurface

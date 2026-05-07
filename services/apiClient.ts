@@ -11,6 +11,7 @@ import type {
   PlanDocument,
   Project,
   ProjectTask,
+  SnapshotHealth,
   TaskStatus,
   TelemetryExportSettingsUpdateRequest,
   TelemetryExportStatus,
@@ -107,6 +108,7 @@ export interface ApiClient {
   getActiveProject(): Promise<Project>;
   getProjectScope(): string | null;
   setProjectScope(projectId: string | null | undefined): void;
+  fetchSnapshotDiagnostics(projectId?: string | null): Promise<SnapshotHealth | null>;
   addProject(project: Project): Promise<void>;
   updateProject(projectId: string, project: Project): Promise<void>;
   switchProject(projectId: string): Promise<void>;
@@ -260,6 +262,58 @@ export async function apiRequestJson<T>(path: string, init?: RequestInit): Promi
 
 const requestJson = apiRequestJson;
 
+interface SnapshotDiagnosticsWire {
+  status?: 'ok' | 'partial' | 'error';
+  data_freshness?: string;
+  generated_at?: string;
+  source_refs?: string[];
+  project_id?: string | null;
+  projectId?: string | null;
+  snapshot_age_seconds?: number | null;
+  snapshotAgeSeconds?: number | null;
+  artifact_count?: number | null;
+  artifactCount?: number | null;
+  resolved_count?: number | null;
+  resolvedCount?: number | null;
+  unresolved_count?: number | null;
+  unresolvedCount?: number | null;
+  is_stale?: boolean | null;
+  isStale?: boolean | null;
+  source_generated_at?: string | null;
+  sourceGeneratedAt?: string | null;
+  fetched_at?: string | null;
+  fetchedAt?: string | null;
+  stale_after?: string | null;
+  staleAfter?: string | null;
+  last_rollup_exported_at?: string | null;
+  lastRollupExportedAt?: string | null;
+  warnings?: string[];
+}
+
+function coalesce<T>(...values: Array<T | null | undefined>): T | null {
+  for (const value of values) {
+    if (value !== null && value !== undefined) return value;
+  }
+  return null;
+}
+
+function adaptSnapshotDiagnostics(wire: SnapshotDiagnosticsWire | null | undefined): SnapshotHealth | null {
+  if (!wire || wire.status === 'error') return null;
+  return {
+    projectId: coalesce(wire.projectId, wire.project_id),
+    snapshotAgeSeconds: coalesce(wire.snapshotAgeSeconds, wire.snapshot_age_seconds),
+    artifactCount: coalesce(wire.artifactCount, wire.artifact_count),
+    resolvedCount: coalesce(wire.resolvedCount, wire.resolved_count),
+    unresolvedCount: coalesce(wire.unresolvedCount, wire.unresolved_count),
+    isStale: coalesce(wire.isStale, wire.is_stale),
+    sourceGeneratedAt: coalesce(wire.sourceGeneratedAt, wire.source_generated_at),
+    fetchedAt: coalesce(wire.fetchedAt, wire.fetched_at, wire.data_freshness),
+    staleAfter: coalesce(wire.staleAfter, wire.stale_after),
+    lastRollupExportedAt: coalesce(wire.lastRollupExportedAt, wire.last_rollup_exported_at),
+    warnings: wire.warnings ?? [],
+  };
+}
+
 function appendSessionFilters(params: URLSearchParams, filters: SessionFilters): void {
   const scalarKeys: Array<keyof SessionFilters> = [
     'status',
@@ -373,6 +427,19 @@ export function createApiClient(): ApiClient {
 
     setProjectScope(projectId) {
       setApiProjectScope(projectId);
+    },
+
+    async fetchSnapshotDiagnostics(projectId) {
+      const params = new URLSearchParams();
+      const normalizedProjectId = normalizeProjectScope(projectId);
+      if (normalizedProjectId) {
+        params.set('project_id', normalizedProjectId);
+      }
+      const query = params.toString();
+      const wire = await requestJson<SnapshotDiagnosticsWire>(
+        `/agent/artifact-intelligence/snapshot-diagnostics${query ? `?${query}` : ''}`,
+      );
+      return adaptSnapshotDiagnostics(wire);
     },
 
     async addProject(project) {

@@ -19,6 +19,13 @@ def _decode_tool_result(result) -> dict:
     return json.loads(text_blocks[0])
 
 
+def _tool_text(result) -> str:
+    text_blocks = [item.text for item in result.content if getattr(item, "text", None)]
+    if not text_blocks:
+        raise AssertionError("Expected at least one text response block from MCP tool call.")
+    return text_blocks[0]
+
+
 class MCPServerTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -35,9 +42,13 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 if os.environ.get("CCDASH_MCP_TEST_MODE") == "1":
                     from backend.application.services.agent_queries import (
                         AARReportDTO,
+                        ArtifactRecommendationsDTO,
                         FeatureForensicsDTO,
                         ProjectStatusDTO,
                         WorkflowDiagnosticsDTO,
+                    )
+                    from backend.application.services.agent_queries.artifact_intelligence import (
+                        ArtifactIntelligenceQueryService,
                     )
                     from backend.application.services.agent_queries.feature_forensics import (
                         FeatureForensicsQueryService,
@@ -87,10 +98,43 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                             source_refs=[feature_id],
                         )
 
+                    async def artifact_recommendations(
+                        self,
+                        context,
+                        ports,
+                        project_id_override=None,
+                        *,
+                        period="30d",
+                        collection_id=None,
+                        user_scope=None,
+                        workflow_id=None,
+                        recommendation_type=None,
+                        min_confidence=None,
+                        limit=100,
+                        bypass_cache=False,
+                    ):
+                        project_id = project_id_override or "test-project"
+                        return ArtifactRecommendationsDTO(
+                            status="ok",
+                            project_id=project_id,
+                            period=period,
+                            total=1,
+                            recommendations=[
+                                {
+                                    "type": "optimization_target",
+                                    "confidence": min_confidence or 0.82,
+                                    "nextAction": "Review prompt context before the next optimization pass.",
+                                    "affectedArtifactIds": ["artifact-alpha"],
+                                }
+                            ],
+                            source_refs=[project_id],
+                        )
+
                     ProjectStatusQueryService.get_status = project_status
                     FeatureForensicsQueryService.get_forensics = feature_forensics
                     WorkflowDiagnosticsQueryService.get_diagnostics = workflow_diagnostics
                     ReportingQueryService.generate_aar = generate_aar
+                    ArtifactIntelligenceQueryService.get_recommendations = artifact_recommendations
                 """
             ).strip()
             + "\n",
@@ -131,6 +175,17 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 )
         return _decode_tool_result(result)
 
+    async def _call_tool_text(self, name: str, arguments: dict | None = None) -> str:
+        async with stdio_client(self._server_parameters()) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    name,
+                    arguments or {},
+                    read_timeout_seconds=timedelta(seconds=15),
+                )
+        return _tool_text(result)
+
     async def test_list_tools_exposes_expected_mcp_surface(self) -> None:
         async with stdio_client(self._server_parameters()) as (read, write):
             async with ClientSession(read, write) as session:
@@ -144,6 +199,7 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 "ccdash_feature_forensics",
                 "ccdash_workflow_failure_patterns",
                 "ccdash_generate_aar",
+                "artifact_recommendations",
             },
         )
 
@@ -187,6 +243,16 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["data"]["feature_id"], "missing-feature")
         self.assertEqual(payload["meta"]["feature_id"], "missing-feature")
+
+    async def test_artifact_recommendations_tool_returns_markdown_summary(self) -> None:
+        payload = await self._call_tool_text(
+            "artifact_recommendations",
+            {"project_id": "test-project", "min_confidence": 0.7, "limit": 5},
+        )
+
+        self.assertIn("Artifact recommendations for test-project", payload)
+        self.assertIn("artifact-alpha", payload)
+        self.assertIn("optimization_target", payload)
 
 
 if __name__ == "__main__":
