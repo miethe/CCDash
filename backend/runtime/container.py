@@ -15,7 +15,7 @@ from backend.adapters.live_updates import (
     PostgresNotifyLiveEventPublisher,
 )
 from backend.adapters.live_updates.postgres_listener import PostgresLiveNotificationListener
-from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
+from backend.adapters.jobs import ArtifactRollupExportJob, RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
 from backend.application.context import (
     EnterpriseScope,
     RequestContext,
@@ -129,6 +129,7 @@ class RuntimeContainer:
             repository=get_telemetry_queue_repository(self.db),
             settings_store=self.telemetry_settings_store,
             runtime_config=config.TELEMETRY_EXPORTER_CONFIG,
+            db=self.db,
         )
         app.state.telemetry_settings_store = self.telemetry_settings_store
         app.state.telemetry_exporter = self.telemetry_exporter
@@ -144,6 +145,14 @@ class RuntimeContainer:
                 if self.profile.name == "worker" and self.telemetry_exporter is not None
                 else None
             ),
+            artifact_rollup_export_job=(
+                ArtifactRollupExportJob(
+                    self.telemetry_exporter,
+                    project=self.project_binding.project if self.project_binding is not None else None,
+                )
+                if self.profile.name == "worker" and self.telemetry_exporter is not None
+                else None
+            ),
         )
         self.lifecycle = await self.job_adapter.start()
         app.state.runtime_jobs = self.job_adapter
@@ -154,6 +163,8 @@ class RuntimeContainer:
             app.state.analytics_snapshot_task = self.lifecycle.analytics_snapshot_task
         if self.lifecycle.telemetry_export_task is not None:
             app.state.telemetry_export_task = self.lifecycle.telemetry_export_task
+        if self.lifecycle.artifact_rollup_export_task is not None:
+            app.state.artifact_rollup_export_task = self.lifecycle.artifact_rollup_export_task
 
     async def shutdown(self, app: FastAPI) -> None:
         logger.info("CCDash backend shutting down (profile=%s)", self.profile.name)

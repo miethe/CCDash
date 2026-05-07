@@ -10,7 +10,7 @@ from urllib import error, parse, request
 
 from pydantic import ValidationError
 
-from backend.models import SkillMeatArtifactSnapshot
+from backend.models import ArtifactUsageRollup, SkillMeatArtifactSnapshot
 from backend.services import agentic_intelligence_flags
 from backend.services.integrations.skillmeat_trust import SkillMeatTrustMetadata
 
@@ -163,6 +163,17 @@ class SkillMeatClient:
         if last_rate_limit_error is not None:
             raise last_rate_limit_error
         return None
+
+    async def post_artifact_usage_rollup(self, rollup: ArtifactUsageRollup) -> dict[str, Any]:
+        """POST a CCDash artifact usage rollup to SkillMeat analytics ingestion."""
+        payload = await asyncio.to_thread(
+            self._request_json,
+            "/api/v1/analytics/artifact-usage-rollups",
+            None,
+            method="POST",
+            body=rollup.rollup_dict(),
+        )
+        return payload if isinstance(payload, dict) else {}
 
     async def list_artifacts(self, *, collection_id: str = "") -> list[dict[str, Any]]:
         query: dict[str, Any] = {"limit": _ARTIFACT_PAGE_LIMIT}

@@ -38,6 +38,110 @@ class AnonymizationError(ValueError):
     """Raised when telemetry payloads appear to contain sensitive content."""
 
 
+class PrivacyViolationError(AnonymizationError):
+    """Raised when an outbound rollup payload violates the export privacy allowlist."""
+
+
+_ROLLUP_ALLOWED_FIELDS = {
+    "schemaVersion",
+    "schema_version",
+    "generatedAt",
+    "generated_at",
+    "projectSlug",
+    "project_slug",
+    "skillmeatProjectId",
+    "skillmeat_project_id",
+    "collectionId",
+    "collection_id",
+    "userScope",
+    "user_scope",
+    "period",
+    "artifact",
+    "definitionType",
+    "definition_type",
+    "externalId",
+    "external_id",
+    "artifactUuid",
+    "artifact_uuid",
+    "versionId",
+    "version_id",
+    "contentHash",
+    "content_hash",
+    "usage",
+    "exclusiveTokens",
+    "exclusive_tokens",
+    "supportingTokens",
+    "supporting_tokens",
+    "attributedTokens",
+    "attributed_tokens",
+    "tokenInput",
+    "token_input",
+    "tokenOutput",
+    "token_output",
+    "costUsd",
+    "cost_usd",
+    "costUsdModelIO",
+    "cost_usd_model_io",
+    "sessionCount",
+    "session_count",
+    "workflowCount",
+    "workflow_count",
+    "executionCount",
+    "execution_count",
+    "successCount",
+    "success_count",
+    "failureCount",
+    "failure_count",
+    "durationMs",
+    "duration_ms",
+    "lastObservedAt",
+    "last_observed_at",
+    "averageConfidence",
+    "average_confidence",
+    "contextPressure",
+    "context_pressure",
+    "effectiveness",
+    "successScore",
+    "success_score",
+    "efficiencyScore",
+    "efficiency_score",
+    "qualityScore",
+    "quality_score",
+    "riskScore",
+    "risk_score",
+    "confidence",
+    "sampleSize",
+    "sample_size",
+    "recommendations",
+    "type",
+    "rationaleCode",
+    "rationale_code",
+    "nextAction",
+    "next_action",
+    "evidence",
+    "affectedArtifactIds",
+    "affected_artifact_ids",
+    "scope",
+}
+_ROLLUP_PROHIBITED_FIELD_TOKENS = {
+    "rawprompt",
+    "raw_prompt",
+    "prompt",
+    "transcript",
+    "transcripttext",
+    "transcript_text",
+    "code",
+    "absolutepath",
+    "absolute_path",
+    "path",
+    "unhashedusername",
+    "unhashed_username",
+    "username",
+    "email",
+}
+_CODE_LIKE_PATTERN = re.compile(r"(```|\bdef\s+\w+\s*\(|\bfunction\s+\w+\s*\(|\bclass\s+\w+[:({])")
+
+
 def _safe_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -226,6 +330,55 @@ class AnonymizationVerifier:
             raise AnonymizationError(f"stack trace blocked at {'.'.join(path)}")
         if ".".join(path).endswith("last_error") and _STATUS_ERROR_PATTERN.search(text):
             raise AnonymizationError(f"raw error text blocked at {'.'.join(path)}")
+
+    @staticmethod
+    def verify_rollup_payload(payload: Any) -> bool:
+        """Verify `ccdash-artifact-usage-rollup-v1` using an explicit field allowlist.
+
+        Allowed fields are schema/dimension identifiers, aggregate usage/effectiveness
+        metrics, artifact identity, and recommendation metadata. Raw prompts,
+        transcripts, code, absolute paths, and unhashed username fields are rejected.
+        """
+        if hasattr(payload, "rollup_dict"):
+            payload_dict = payload.rollup_dict()
+        elif isinstance(payload, dict):
+            payload_dict = payload
+        else:
+            raise PrivacyViolationError("rollup payload must be a dict-like object")
+        AnonymizationVerifier._walk_rollup(payload_dict, [])
+        return True
+
+    @staticmethod
+    def _walk_rollup(value: Any, path: list[str]) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key_text = str(key)
+                normalized_key = key_text.replace("-", "_").lower()
+                compact_key = normalized_key.replace("_", "")
+                if key_text not in _ROLLUP_ALLOWED_FIELDS:
+                    raise PrivacyViolationError(f"rollup field not allowlisted at {'.'.join(path + [key_text])}")
+                if any(token in normalized_key or token in compact_key for token in _ROLLUP_PROHIBITED_FIELD_TOKENS):
+                    if key_text not in {"userScope", "user_scope", "rationaleCode", "rationale_code"}:
+                        raise PrivacyViolationError(f"prohibited rollup field at {'.'.join(path + [key_text])}")
+                AnonymizationVerifier._walk_rollup(item, path + [key_text])
+            return
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                AnonymizationVerifier._walk_rollup(item, path + [str(index)])
+            return
+        if not isinstance(value, str):
+            return
+
+        text = value.strip()
+        if not text:
+            return
+        path_text = ".".join(path)
+        if _EMAIL_PATTERN.search(text):
+            raise PrivacyViolationError(f"email-like content blocked at {path_text}")
+        if _UNIX_PATH_PATTERN.match(text) or _WINDOWS_PATH_PATTERN.match(text):
+            raise PrivacyViolationError(f"absolute path blocked at {path_text}")
+        if _STACK_TRACE_PATTERNS[0].search(text) or _CODE_LIKE_PATTERN.search(text):
+            raise PrivacyViolationError(f"code-like content blocked at {path_text}")
 
 
 class TelemetryTransformer:

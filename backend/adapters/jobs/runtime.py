@@ -15,6 +15,7 @@ from backend.application.ports.core import ProjectBinding
 from backend.db.file_watcher import file_watcher
 from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
+from backend.adapters.jobs.artifact_rollup_export_job import ArtifactRollupExportJob
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
 from backend.services.test_config import effective_test_flags, resolve_test_sources
@@ -70,6 +71,7 @@ class RuntimeJobState:
     sync_task: asyncio.Task[None] | None = None
     analytics_snapshot_task: asyncio.Task[None] | None = None
     telemetry_export_task: asyncio.Task[None] | None = None
+    artifact_rollup_export_task: asyncio.Task[None] | None = None
     cache_warming_task: asyncio.Task[None] | None = None
     watcher_started: bool = False
     job_observations: dict[str, RuntimeJobObservation] = field(default_factory=dict)
@@ -86,18 +88,21 @@ class RuntimeJobAdapter:
         sync_engine: Any | None,
         project_binding: ProjectBinding | None = None,
         telemetry_exporter_job: TelemetryExporterJob | None = None,
+        artifact_rollup_export_job: ArtifactRollupExportJob | None = None,
     ) -> None:
         self.profile = profile
         self.ports = ports
         self.sync = sync_engine
         self.project_binding = project_binding
         self.telemetry_exporter_job = telemetry_exporter_job
+        self.artifact_rollup_export_job = artifact_rollup_export_job
         self.state = RuntimeJobState()
         self.state.job_observations.update(
             {
                 "startupSync": RuntimeJobObservation(backlog_count=0, backlog_unit="runs"),
                 "analyticsSnapshots": RuntimeJobObservation(backlog_count=0, backlog_unit="runs"),
                 "telemetryExports": RuntimeJobObservation(backlog_count=0, backlog_unit="events"),
+                "artifactRollupExports": RuntimeJobObservation(backlog_count=0, backlog_unit="rollups"),
                 "cacheWarming": RuntimeJobObservation(backlog_count=0, backlog_unit="runs"),
             }
         )
@@ -173,6 +178,9 @@ class RuntimeJobAdapter:
             telemetry_task = self._start_telemetry_export_task()
             if telemetry_task is not None:
                 self.state.telemetry_export_task = telemetry_task
+            artifact_rollup_task = self._start_artifact_rollup_export_task()
+            if artifact_rollup_task is not None:
+                self.state.artifact_rollup_export_task = artifact_rollup_task
             cache_warming_task = self._start_cache_warming_task()
             if cache_warming_task is not None:
                 self.state.cache_warming_task = cache_warming_task
@@ -204,6 +212,14 @@ class RuntimeJobAdapter:
                 pass
             self.state.telemetry_export_task = None
 
+        if self.state.artifact_rollup_export_task is not None:
+            self.state.artifact_rollup_export_task.cancel()
+            try:
+                await self.state.artifact_rollup_export_task
+            except asyncio.CancelledError:
+                pass
+            self.state.artifact_rollup_export_task = None
+
         if self.state.cache_warming_task is not None:
             self.state.cache_warming_task.cancel()
             try:
@@ -228,6 +244,9 @@ class RuntimeJobAdapter:
             else "idle",
             "telemetryExports": "running"
             if self.state.telemetry_export_task is not None and not self.state.telemetry_export_task.done()
+            else "idle",
+            "artifactRollupExports": "running"
+            if self.state.artifact_rollup_export_task is not None and not self.state.artifact_rollup_export_task.done()
             else "idle",
             "cacheWarming": "running"
             if self.state.cache_warming_task is not None and not self.state.cache_warming_task.done()
@@ -420,6 +439,7 @@ class RuntimeJobAdapter:
             "startupSync": self.state.sync_task,
             "analyticsSnapshots": self.state.analytics_snapshot_task,
             "telemetryExports": self.state.telemetry_export_task,
+            "artifactRollupExports": self.state.artifact_rollup_export_task,
             "cacheWarming": self.state.cache_warming_task,
         }
         jobs: dict[str, Any] = {}
@@ -862,4 +882,50 @@ class RuntimeJobAdapter:
         return self.ports.job_scheduler.schedule(
             _run_periodic_telemetry_exports(),
             name=f"ccdash:{self.profile.name}:telemetry-export",
+        )
+
+    def _start_artifact_rollup_export_task(self) -> asyncio.Task[None] | None:
+        if self.profile.name != "worker" or self.artifact_rollup_export_job is None:
+            return None
+        interval_seconds = max(60, int(getattr(config, "CCDASH_ARTIFACT_ROLLUP_EXPORT_INTERVAL_SECONDS", 3600)))
+        self.state.job_observations["artifactRollupExports"].interval_seconds = interval_seconds
+
+        async def _run_periodic_artifact_rollup_exports() -> None:
+            while True:
+                started = self._mark_job_started("artifactRollupExports")
+                try:
+                    result = await self.artifact_rollup_export_job.execute()
+                    self._mark_job_success(
+                        "artifactRollupExports",
+                        started,
+                        outcome=str(getattr(result, "outcome", "success") or "success"),
+                        backlog_count=int(getattr(result, "failed_count", 0) or 0),
+                        details={
+                            "rollupCount": int(getattr(result, "rollup_count", 0) or 0),
+                            "successCount": int(getattr(result, "success_count", 0) or 0),
+                            "skippedCount": int(getattr(result, "skipped_count", 0) or 0),
+                            "failedCount": int(getattr(result, "failed_count", 0) or 0),
+                            "projectId": self.project_binding.project.id if self.project_binding is not None else None,
+                        },
+                    )
+                except asyncio.CancelledError:
+                    self._mark_job_cancelled("artifactRollupExports", started)
+                    raise
+                except Exception:
+                    self._mark_job_failure(
+                        "artifactRollupExports",
+                        started,
+                        RuntimeError("artifact_rollup_export_failed"),
+                    )
+                    logger.exception("Periodic artifact rollup export failed")
+                await asyncio.sleep(interval_seconds)
+
+        logger.info(
+            "Started periodic artifact rollup export job (profile=%s interval=%ss)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_artifact_rollup_exports(),
+            name=f"ccdash:{self.profile.name}:artifact-rollup-export",
         )

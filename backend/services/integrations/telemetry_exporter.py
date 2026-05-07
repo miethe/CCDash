@@ -14,6 +14,7 @@ from backend import config
 from backend.db.repositories.base import TelemetryQueueRepository
 from backend.models import (
     ArtifactOutcomePayload,
+    ArtifactUsageRollup,
     ArtifactVersionOutcomePayload,
     ExecutionOutcomePayload,
     PushNowResponse,
@@ -22,8 +23,11 @@ from backend.models import (
     TelemetryQueueStatsResponse,
 )
 from backend.observability import otel as observability
+from backend.services.rollup_payload_builder import RollupPayloadBuilder
 from backend.services.integrations.sam_telemetry_client import SAMTelemetryClient
+from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
 from backend.services.integrations.telemetry_settings_store import TelemetrySettingsStore
+from backend.services.telemetry_transformer import AnonymizationVerifier, PrivacyViolationError
 
 logger = logging.getLogger("ccdash.telemetry.exporter")
 MAX_EXPORT_RETRY_ATTEMPTS = 10
@@ -51,6 +55,17 @@ class TelemetryExportOutcome:
         )
 
 
+@dataclass(slots=True)
+class ArtifactRollupExportOutcome:
+    success: bool
+    outcome: str
+    rollup_count: int = 0
+    success_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    error: str | None = None
+
+
 class TelemetryExportCoordinator:
     def __init__(
         self,
@@ -58,15 +73,126 @@ class TelemetryExportCoordinator:
         repository: TelemetryQueueRepository,
         settings_store: TelemetrySettingsStore,
         runtime_config: config.TelemetryExporterConfig,
+        db: Any | None = None,
+        rollup_payload_builder: RollupPayloadBuilder | None = None,
     ) -> None:
         self.repository = repository
         self.settings_store = settings_store
         self.runtime_config = runtime_config
+        self.db = db if db is not None else getattr(repository, "db", None)
+        self.rollup_payload_builder = rollup_payload_builder or RollupPayloadBuilder()
         self._lock = asyncio.Lock()
         self._client: SAMTelemetryClient | None = None
 
     def settings(self) -> TelemetryExportSettings:
         return self.settings_store.load()
+
+    async def export_artifact_usage_rollups(
+        self,
+        *,
+        project_id: str,
+        period: str,
+        skillmeat_client: SkillMeatClient,
+        skillmeat_project_id: str | None = None,
+        collection_id: str | None = None,
+        hosted: bool | None = None,
+    ) -> ArtifactRollupExportOutcome:
+        if not bool(getattr(config, "CCDASH_ARTIFACT_INTELLIGENCE_ENABLED", False)):
+            return ArtifactRollupExportOutcome(success=True, outcome="disabled")
+        if self.db is None:
+            logger.critical("Artifact rollup export refused: database handle is unavailable")
+            return ArtifactRollupExportOutcome(success=False, outcome="not_configured", error="database_unavailable")
+
+        try:
+            rollups = await self.rollup_payload_builder.build_rollups(
+                self.db,
+                project_id=project_id,
+                period=period,
+                skillmeat_project_id=skillmeat_project_id,
+                collection_id=collection_id,
+                hosted=hosted,
+            )
+        except Exception as exc:
+            logger.exception("Artifact rollup export failed while building payloads")
+            return ArtifactRollupExportOutcome(success=False, outcome="build_failed", error=str(exc) or exc.__class__.__name__)
+
+        success_count = 0
+        skipped_count = 0
+        failed_count = 0
+        first_error: str | None = None
+        for rollup in rollups:
+            try:
+                AnonymizationVerifier.verify_rollup_payload(rollup)
+            except PrivacyViolationError as exc:
+                skipped_count += 1
+                first_error = first_error or str(exc)
+                logger.warning(
+                    "Artifact rollup skipped by privacy guard",
+                    extra={
+                        "project_id": project_id,
+                        "period": period,
+                        "artifact": _rollup_artifact_id(rollup),
+                        "error": str(exc),
+                    },
+                )
+                continue
+
+            try:
+                await skillmeat_client.post_artifact_usage_rollup(rollup)
+                success_count += 1
+            except SkillMeatClientError as exc:
+                failed_count += 1
+                first_error = first_error or exc.detail
+                logger.warning(
+                    "Artifact rollup export request failed",
+                    extra={
+                        "project_id": project_id,
+                        "period": period,
+                        "artifact": _rollup_artifact_id(rollup),
+                        "endpoint": exc.endpoint,
+                        "status_code": exc.status_code,
+                        "error": exc.detail,
+                    },
+                )
+            except Exception as exc:
+                failed_count += 1
+                first_error = first_error or (str(exc) or exc.__class__.__name__)
+                logger.warning(
+                    "Artifact rollup export request failed",
+                    extra={
+                        "project_id": project_id,
+                        "period": period,
+                        "artifact": _rollup_artifact_id(rollup),
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                )
+
+        outcome = "success"
+        if failed_count:
+            outcome = "partial_failure" if success_count or skipped_count else "failed"
+        elif skipped_count:
+            outcome = "privacy_skipped" if not success_count else "success_with_skips"
+        logger.info(
+            "Artifact usage rollup export complete",
+            extra={
+                "project_id": project_id,
+                "period": period,
+                "rollup_count": len(rollups),
+                "success_count": success_count,
+                "skipped_count": skipped_count,
+                "failed_count": failed_count,
+                "outcome": outcome,
+            },
+        )
+        return ArtifactRollupExportOutcome(
+            success=failed_count == 0,
+            outcome=outcome,
+            rollup_count=len(rollups),
+            success_count=success_count,
+            skipped_count=skipped_count,
+            failed_count=failed_count,
+            error=first_error,
+        )
 
     async def status(self) -> TelemetryExportStatusResponse:
         settings = self.settings()
@@ -439,6 +565,12 @@ def _sam_base_url(endpoint_url: str) -> str:
         return str(endpoint_url or "").strip()
     port_part = f":{parsed.port}" if parsed.port else ""
     return f"{parsed.scheme}://{parsed.hostname}{port_part}"
+
+
+def _rollup_artifact_id(rollup: ArtifactUsageRollup) -> str:
+    if rollup.artifact is None:
+        return ""
+    return rollup.artifact.artifact_uuid or rollup.artifact.external_id or ""
 
 
 async def emit_artifact_outcomes(
