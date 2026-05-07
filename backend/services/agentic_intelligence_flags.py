@@ -1,11 +1,14 @@
 """Feature-flag helpers for the agentic SDLC intelligence surface."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import HTTPException
 
 from backend import config
+
+logger = logging.getLogger("ccdash.artifact_intelligence")
 
 
 DEFAULT_PROJECT_FEATURE_FLAGS = {
@@ -33,6 +36,22 @@ def _project_feature_flags(project: Any) -> dict[str, bool]:
 
 def skillmeat_integration_enabled() -> bool:
     return bool(config.CCDASH_SKILLMEAT_INTEGRATION_ENABLED)
+
+
+def artifact_intelligence_enabled() -> bool:
+    return bool(config.CCDASH_ARTIFACT_INTELLIGENCE_ENABLED)
+
+
+def report_artifact_intelligence_disabled(context: str = "") -> dict[str, str | bool]:
+    if artifact_intelligence_enabled():
+        return {"enabled": True, "reason": "", "context": context}
+
+    logger.info("artifact intelligence disabled; context=%s", context or "unspecified")
+    return {
+        "enabled": False,
+        "reason": "artifact intelligence disabled",
+        "context": context,
+    }
 
 
 def stack_recommendations_enabled(project: Any | None) -> bool:

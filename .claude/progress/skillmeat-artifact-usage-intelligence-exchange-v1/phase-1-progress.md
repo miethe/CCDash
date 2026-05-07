@@ -7,7 +7,7 @@ feature_slug: skillmeat-artifact-usage-intelligence-exchange-v1
 phase: 1
 phase_title: Contract & Schema Foundation
 title: "skillmeat-artifact-usage-intelligence-exchange-v1 - Phase 1: Contract & Schema Foundation"
-status: in_progress
+status: completed
 created: '2026-05-07'
 updated: '2026-05-07'
 prd_ref: docs/project_plans/PRDs/integrations/skillmeat-artifact-usage-intelligence-exchange-v1.md
@@ -15,10 +15,10 @@ plan_ref: docs/project_plans/implementation_plans/integrations/skillmeat-artifac
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
-overall_progress: 80
+overall_progress: 100
 completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 4
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -93,7 +93,7 @@ tasks:
 - id: T1-005
   title: Feature flag wiring
   description: Add CCDASH_ARTIFACT_INTELLIGENCE_ENABLED to backend config with default false, document it, and gate future snapshot fetch/export behavior behind the flag.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -101,6 +101,10 @@ tasks:
   estimated_effort: 0.5 pts
   assigned_model: sonnet
   model_effort: low
+  completed_at: '2026-05-07'
+  validation:
+  - "/usr/bin/python3 -m pytest backend/tests/test_artifact_intelligence_feature_flag.py - failed: No module named pytest"
+  - "/Users/miethe/.local/bin/uv run --no-project --with pytest --with 'pydantic>=2.0' --with fastapi pytest backend/tests/test_artifact_intelligence_feature_flag.py - 4 passed"
 parallelization:
   batch_1:
   - T1-001
@@ -130,7 +134,7 @@ success_criteria:
   status: completed
 - id: SC-5
   description: CCDASH_ARTIFACT_INTELLIGENCE_ENABLED is present, defaults false, and is documented.
-  status: pending
+  status: completed
 validation:
   required:
   - JSON schema validation for skillmeat-artifact-snapshot-v1 sample payload
@@ -148,4 +152,4 @@ Define the contract and schema foundation for the SkillMeat artifact usage intel
 
 ## Current Status
 
-Phase 1 is in progress. T1-001 is complete: the SkillMeat artifact snapshot DTOs, JSON schema, sample payload, and focused validation are in place. T1-002 is complete: the CCDash artifact usage rollup DTOs, JSON schema, sample payload, and focused compatibility validation are in place. T1-003 is complete: the TypeScript artifact intelligence contracts and safe fallback stub consumer are in place. T1-004 is complete: the consolidated artifact intelligence schema tests cover JSON schema sample validation, Pydantic round-trip/default/mismatch/invalid-payload behavior, and existing ArtifactOutcomePayload compatibility. T1-005 remains pending.
+Phase 1 is complete. T1-001 is complete: the SkillMeat artifact snapshot DTOs, JSON schema, sample payload, and focused validation are in place. T1-002 is complete: the CCDash artifact usage rollup DTOs, JSON schema, sample payload, and focused compatibility validation are in place. T1-003 is complete: the TypeScript artifact intelligence contracts and safe fallback stub consumer are in place. T1-004 is complete: the consolidated artifact intelligence schema tests cover JSON schema sample validation, Pydantic round-trip/default/mismatch/invalid-payload behavior, and existing ArtifactOutcomePayload compatibility. T1-005 is complete: the artifact intelligence env flag defaults false, is documented, and has a disabled-state helper with focused import/config tests.
