@@ -2790,30 +2790,7 @@ export const ProjectBoardFeatureModal = ({
     );
   };
 
-  const renderSessionGridNode = (node: FeatureSessionTreeNode, depth = 0): React.ReactNode => {
-    const hasChildren = node.children.length > 0;
-    const isExpanded = expandedSubthreadsBySessionId.has(node.session.sessionId);
-    return (
-      <div key={`grid-${node.session.sessionId}`} className="space-y-3">
-        {renderCompactSessionCard(node.session, hasChildren ? {
-          expanded: isExpanded,
-          childCount: countThreadNodes(node.children),
-          onToggle: () => toggleSubthreads(node.session.sessionId),
-        } : undefined)}
-        {hasChildren && isExpanded && (
-          <div className={`grid grid-cols-1 gap-3 ${depth > 0 ? 'pl-3' : ''} md:grid-cols-2 xl:grid-cols-3`}>
-            {node.children.map(child => renderSessionGridNode(child, depth + 1))}
-          </div>
-        )}
-      </div>
-    );
-  };
 
-  const renderSessionGrid = (roots: FeatureSessionTreeNode[]) => (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {roots.map(node => renderSessionGridNode(node))}
-    </div>
-  );
 
   // ── P4-006: FeatureDetailShell tab configuration ─────────────────────────────
 
