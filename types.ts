@@ -250,6 +250,124 @@ export interface SessionArtifact {
   sourceToolName?: string;
 }
 
+export type ArtifactSnapshotSchemaVersion = 'skillmeat-artifact-snapshot-v1';
+export type ArtifactUsageRollupSchemaVersion = 'ccdash-artifact-usage-rollup-v1';
+export type ArtifactSnapshotLoadMode = 'always' | 'on_demand' | 'workflow_scoped' | 'disabled';
+export type ArtifactSnapshotStatus = 'active' | 'deprecated' | 'disabled' | 'unresolved';
+export type ArtifactSnapshotSource = 'skillmeat' | 'composed';
+export type ArtifactRecommendationType =
+  | 'disable_candidate'
+  | 'load_on_demand'
+  | 'workflow_specific_swap'
+  | 'optimization_target'
+  | 'version_regression'
+  | 'identity_reconciliation'
+  | 'insufficient_data';
+
+export interface ArtifactSnapshotFreshness {
+  snapshotSource?: ArtifactSnapshotSource;
+  sourceGeneratedAt?: string | null;
+  fetchedAt?: string | null;
+  staleAfter?: string | null;
+  warnings?: string[];
+}
+
+export interface ArtifactSnapshotItem {
+  definitionType: string;
+  externalId: string;
+  artifactUuid: string;
+  displayName: string;
+  versionId: string;
+  contentHash: string;
+  collectionIds?: string[];
+  deploymentProfileIds?: string[];
+  defaultLoadMode: ArtifactSnapshotLoadMode;
+  workflowRefs?: string[];
+  tags?: string[];
+  status: ArtifactSnapshotStatus;
+}
+
+export interface ArtifactSnapshot {
+  schemaVersion: ArtifactSnapshotSchemaVersion;
+  generatedAt: string;
+  projectId: string;
+  collectionId?: string | null;
+  artifacts: ArtifactSnapshotItem[];
+  freshness?: ArtifactSnapshotFreshness;
+}
+
+export interface ArtifactRecommendation {
+  type?: ArtifactRecommendationType | null;
+  confidence?: number | null;
+  rationaleCode?: string | null;
+  nextAction?: string | null;
+  evidence?: string[];
+  affectedArtifactIds?: string[];
+  scope?: string | null;
+}
+
+export interface ArtifactRankingRow {
+  id?: string | number | null;
+  projectId?: string | null;
+  collectionId?: string | null;
+  userScope?: string | null;
+  artifactId?: string | null;
+  artifactUuid?: string | null;
+  definitionType?: string | null;
+  externalId?: string | null;
+  displayName?: string | null;
+  artifactName?: string | null;
+  artifactType?: string | null;
+  versionId?: string | null;
+  contentHash?: string | null;
+  workflowId?: string | null;
+  workflowLabel?: string | null;
+  period?: string | null;
+  exclusiveTokens?: number | null;
+  supportingTokens?: number | null;
+  attributedTokens?: number | null;
+  tokenInput?: number | null;
+  tokenOutput?: number | null;
+  costUsd?: number | null;
+  costUsdModelIO?: number | null;
+  sessionCount?: number | null;
+  workflowCount?: number | null;
+  executionCount?: number | null;
+  successCount?: number | null;
+  failureCount?: number | null;
+  durationMs?: number | null;
+  lastObservedAt?: string | null;
+  averageConfidence?: number | null;
+  successScore?: number | null;
+  efficiencyScore?: number | null;
+  qualityScore?: number | null;
+  riskScore?: number | null;
+  confidence?: number | null;
+  sampleSize?: number | null;
+  contextPressure?: number | null;
+  identityConfidence?: number | null;
+  snapshotFetchedAt?: string | null;
+  computedAt?: string | null;
+  recommendation?: ArtifactRecommendation | null;
+  recommendations?: ArtifactRecommendation[];
+}
+
+export interface SnapshotHealth {
+  enabled?: boolean | null;
+  projectId?: string | null;
+  collectionId?: string | null;
+  snapshotAgeSeconds?: number | null;
+  artifactCount?: number | null;
+  resolvedCount?: number | null;
+  unresolvedCount?: number | null;
+  isStale?: boolean | null;
+  sourceGeneratedAt?: string | null;
+  fetchedAt?: string | null;
+  staleAfter?: string | null;
+  lastRollupExportedAt?: string | null;
+  warnings?: string[];
+}
+
 export interface SessionRelationship {
   id?: string;
   relationshipType: string;
