@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "ccdash-artifact-usage-rollup-v1",
+  "generatedAt": "2026-05-06T00:05:00Z",
+  "projectSlug": "ccdash-project-id",
+  "skillmeatProjectId": "skillmeat-project-id",
+  "collectionId": "collection-id",
+  "userScope": "hosted-principal-or-pseudonymous-local-scope",
+  "period": "7d",
+  "artifact": {
+    "definitionType": "skill",
+    "externalId": "skill:frontend-design",
+    "artifactUuid": "artifact-uuid",
+    "versionId": "version-id",
+    "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "usage": {
+    "exclusiveTokens": 12000,
+    "supportingTokens": 24000,
+    "attributedTokens": 36000,
+    "tokenInput": 30000,
+    "tokenOutput": 6000,
+    "costUsd": 0.55,
+    "costUsdModelIO": 0.42,
+    "sessionCount": 8,
+    "workflowCount": 3,
+    "executionCount": 10,
+    "successCount": 8,
+    "failureCount": 2,
+    "durationMs": 480000,
+    "lastObservedAt": "2026-05-06T00:00:00Z",
+    "averageConfidence": 0.83,
+    "contextPressure": 0.31
+  },
+  "effectiveness": {
+    "successScore": 0.78,
+    "efficiencyScore": 0.64,
+    "qualityScore": 0.72,
+    "riskScore": 0.22,
+    "confidence": 0.8,
+    "sampleSize": 8
+  },
+  "recommendations": [
+    {
+      "type": "load_on_demand",
+      "confidence": 0.81,
+      "rationaleCode": "low_recency_high_context_pressure",
+      "nextAction": "Review before changing deployment profile defaults.",
+      "evidence": ["narrow workflow usage", "high context pressure"],
+      "affectedArtifactIds": ["artifact-uuid"],
+      "scope": "project"
+    }
+  ]
+}

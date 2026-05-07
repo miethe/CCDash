@@ -15,10 +15,10 @@ plan_ref: docs/project_plans/implementation_plans/integrations/skillmeat-artifac
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
-overall_progress: 20
+overall_progress: 40
 completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -44,13 +44,18 @@ tasks:
 - id: T1-002
   title: Rollup schema & Pydantic DTOs
   description: Author ccdash-artifact-usage-rollup-v1 JSON schema and Pydantic models for ArtifactUsageRollup, ArtifactUsageStats, ArtifactEffectivenessStats, and ArtifactRecommendationEmbed.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies: []
   estimated_effort: 2 pts
   assigned_model: sonnet
   model_effort: medium
+  completed_at: '2026-05-07'
+  validation:
+  - "/Users/miethe/.local/bin/uv run --no-project --with 'pydantic>=2.0' --with pytest pytest backend/tests/test_ccdash_artifact_usage_rollup_contract.py backend/tests/test_artifact_outcome_payload.py - 37 passed"
+  - "/Users/miethe/.local/bin/uv run --no-project --with jsonschema python schema/sample validator - rollup schema ok; sample valid"
+  - "/Users/miethe/.local/bin/uv run --no-project --with 'pydantic>=2.0' --with pytest pytest backend/tests/test_skillmeat_artifact_snapshot_contract.py backend/tests/test_ccdash_artifact_usage_rollup_contract.py backend/tests/test_artifact_outcome_payload.py - 43 passed"
 - id: T1-003
   title: TypeScript interfaces
   description: Add TypeScript interfaces for artifact snapshot, ranking, recommendation, and snapshot health response shapes with optional backend fields marked explicitly.
@@ -104,16 +109,16 @@ blockers: []
 success_criteria:
 - id: SC-1
   description: Snapshot and rollup JSON schemas parse and validate sample payloads.
-  status: pending
+  status: completed
 - id: SC-2
   description: Pydantic DTOs round-trip serialize and deserialize without data loss.
-  status: pending
+  status: completed
 - id: SC-3
   description: TypeScript interfaces compile and force missing-field handling for frontend consumers.
   status: pending
 - id: SC-4
   description: Backward-compatibility assertion confirms existing artifact outcome payload schema is unchanged.
-  status: pending
+  status: completed
 - id: SC-5
   description: CCDASH_ARTIFACT_INTELLIGENCE_ENABLED is present, defaults false, and is documented.
   status: pending
@@ -134,4 +139,4 @@ Define the contract and schema foundation for the SkillMeat artifact usage intel
 
 ## Current Status
 
-Phase 1 is in progress. T1-001 is complete: the SkillMeat artifact snapshot DTOs, JSON schema, sample payload, and focused validation are in place. T1-002 through T1-005 remain pending.
+Phase 1 is in progress. T1-001 is complete: the SkillMeat artifact snapshot DTOs, JSON schema, sample payload, and focused validation are in place. T1-002 is complete: the CCDash artifact usage rollup DTOs, JSON schema, sample payload, and focused compatibility validation are in place. T1-003 through T1-005 remain pending.

@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ccdash.local/schemas/integrations/ccdash-artifact-usage-rollup-v1.schema.json",
+  "title": "CCDash Artifact Usage Rollup",
+  "description": "Project-scoped CCDash artifact usage, effectiveness, and recommendation rollup exported to SkillMeat.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": {
+      "const": "ccdash-artifact-usage-rollup-v1"
+    },
+    "generatedAt": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "projectSlug": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "skillmeatProjectId": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "collectionId": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "userScope": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "period": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "artifact": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/artifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/usageStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "effectiveness": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/effectivenessStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/recommendationEmbed"
+      },
+      "default": []
+    }
+  },
+  "$defs": {
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "definitionType": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "externalId": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "artifactUuid": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "versionId": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "contentHash": {
+          "type": ["string", "null"],
+          "minLength": 1
+        }
+      }
+    },
+    "usageStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exclusiveTokens": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "supportingTokens": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "attributedTokens": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "tokenInput": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "tokenOutput": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "costUsd": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "costUsdModelIO": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "sessionCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "workflowCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "executionCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "successCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "failureCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "durationMs": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "lastObservedAt": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "averageConfidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "contextPressure": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "effectivenessStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "successScore": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "efficiencyScore": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "qualityScore": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "riskScore": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "sampleSize": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "recommendationEmbed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "disable_candidate",
+            "load_on_demand",
+            "workflow_specific_swap",
+            "optimization_target",
+            "version_regression",
+            "identity_reconciliation",
+            "insufficient_data",
+            null
+          ]
+        },
+        "confidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rationaleCode": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "nextAction": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "affectedArtifactIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "scope": {
+          "type": ["string", "null"],
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -366,6 +366,7 @@ class ArtifactVersionOutcomePayload(ArtifactOutcomePayload):
 
 
 SKILLMEAT_ARTIFACT_SNAPSHOT_SCHEMA_VERSION = "skillmeat-artifact-snapshot-v1"
+CCDASH_ARTIFACT_USAGE_ROLLUP_SCHEMA_VERSION = "ccdash-artifact-usage-rollup-v1"
 
 
 class SnapshotFreshnessMeta(BaseModel):
@@ -459,6 +460,140 @@ class SkillMeatArtifactSnapshot(BaseModel):
         return self
 
     def snapshot_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+class ArtifactUsageRollupArtifactRef(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    definition_type: Optional[str] = Field(default=None, alias="definitionType", min_length=1)
+    external_id: Optional[str] = Field(default=None, alias="externalId", min_length=1)
+    artifact_uuid: Optional[str] = Field(default=None, alias="artifactUuid", min_length=1)
+    version_id: Optional[str] = Field(default=None, alias="versionId", min_length=1)
+    content_hash: Optional[str] = Field(default=None, alias="contentHash", min_length=1)
+
+    @field_validator("definition_type", "external_id", "artifact_uuid", "version_id", "content_hash", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class ArtifactUsageStats(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    exclusive_tokens: Optional[int] = Field(default=None, alias="exclusiveTokens", ge=0)
+    supporting_tokens: Optional[int] = Field(default=None, alias="supportingTokens", ge=0)
+    attributed_tokens: Optional[int] = Field(default=None, alias="attributedTokens", ge=0)
+    token_input: Optional[int] = Field(default=None, alias="tokenInput", ge=0)
+    token_output: Optional[int] = Field(default=None, alias="tokenOutput", ge=0)
+    cost_usd: Optional[float] = Field(default=None, alias="costUsd", ge=0.0)
+    cost_usd_model_io: Optional[float] = Field(default=None, alias="costUsdModelIO", ge=0.0)
+    session_count: Optional[int] = Field(default=None, alias="sessionCount", ge=0)
+    workflow_count: Optional[int] = Field(default=None, alias="workflowCount", ge=0)
+    execution_count: Optional[int] = Field(default=None, alias="executionCount", ge=0)
+    success_count: Optional[int] = Field(default=None, alias="successCount", ge=0)
+    failure_count: Optional[int] = Field(default=None, alias="failureCount", ge=0)
+    duration_ms: Optional[int] = Field(default=None, alias="durationMs", ge=0)
+    last_observed_at: Optional[datetime] = Field(default=None, alias="lastObservedAt")
+    average_confidence: Optional[float] = Field(default=None, alias="averageConfidence", ge=0.0, le=1.0)
+    context_pressure: Optional[float] = Field(default=None, alias="contextPressure", ge=0.0)
+
+    @field_validator("last_observed_at")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("lastObservedAt must include timezone information")
+        return value.astimezone(timezone.utc)
+
+    @field_serializer("last_observed_at", when_used="json-unless-none")
+    def serialize_last_observed_at(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class ArtifactEffectivenessStats(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    success_score: Optional[float] = Field(default=None, alias="successScore", ge=0.0, le=1.0)
+    efficiency_score: Optional[float] = Field(default=None, alias="efficiencyScore", ge=0.0, le=1.0)
+    quality_score: Optional[float] = Field(default=None, alias="qualityScore", ge=0.0, le=1.0)
+    risk_score: Optional[float] = Field(default=None, alias="riskScore", ge=0.0, le=1.0)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    sample_size: Optional[int] = Field(default=None, alias="sampleSize", ge=0)
+
+
+ArtifactRecommendationType = Literal[
+    "disable_candidate",
+    "load_on_demand",
+    "workflow_specific_swap",
+    "optimization_target",
+    "version_regression",
+    "identity_reconciliation",
+    "insufficient_data",
+]
+
+
+class ArtifactRecommendationEmbed(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    recommendation_type: Optional[ArtifactRecommendationType] = Field(default=None, alias="type")
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    rationale_code: Optional[str] = Field(default=None, alias="rationaleCode", min_length=1)
+    next_action: Optional[str] = Field(default=None, alias="nextAction", min_length=1)
+    evidence: list[str] = Field(default_factory=list)
+    affected_artifact_ids: list[str] = Field(default_factory=list, alias="affectedArtifactIds")
+    scope: Optional[str] = Field(default=None, min_length=1)
+
+    @field_validator("rationale_code", "next_action", "scope", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class ArtifactUsageRollup(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    schema_version: Literal["ccdash-artifact-usage-rollup-v1"] = Field(alias="schemaVersion")
+    generated_at: Optional[datetime] = Field(default=None, alias="generatedAt")
+    project_slug: Optional[str] = Field(default=None, alias="projectSlug", min_length=1)
+    skillmeat_project_id: Optional[str] = Field(default=None, alias="skillmeatProjectId", min_length=1)
+    collection_id: Optional[str] = Field(default=None, alias="collectionId", min_length=1)
+    user_scope: Optional[str] = Field(default=None, alias="userScope", min_length=1)
+    period: Optional[str] = Field(default=None, min_length=1)
+    artifact: Optional[ArtifactUsageRollupArtifactRef] = None
+    usage: Optional[ArtifactUsageStats] = None
+    effectiveness: Optional[ArtifactEffectivenessStats] = None
+    recommendations: list[ArtifactRecommendationEmbed] = Field(default_factory=list)
+
+    @field_validator("project_slug", "skillmeat_project_id", "collection_id", "user_scope", "period", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("generated_at")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("generatedAt must include timezone information")
+        return value.astimezone(timezone.utc)
+
+    @field_serializer("generated_at", when_used="json-unless-none")
+    def serialize_generated_at(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def rollup_dict(self) -> dict[str, object]:
         return self.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
