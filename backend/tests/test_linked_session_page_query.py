@@ -33,6 +33,7 @@ import aiosqlite
 
 from backend.db.repositories.feature_queries import LinkedSessionQuery, ThreadExpansionMode, SortDirection
 from backend.db.repositories.feature_sessions import SqliteFeatureSessionRepository
+from backend.db.repositories.postgres.feature_sessions import PostgresFeatureSessionRepository
 from backend.db.sqlite_migrations import run_migrations, _TEST_VISUALIZER_TABLES
 
 # ---------------------------------------------------------------------------
@@ -218,6 +219,7 @@ class TestLinkedSessionPageQuery(unittest.TestCase):
             finally:
                 await db.close()
         self._run(go())
+
 
     def test_none_expansion_page2_returns_last_row(self):
         async def go():
@@ -527,6 +529,51 @@ class TestLinkedSessionPageQuery(unittest.TestCase):
                     "total must remain 3 regardless of limit (no in-memory filtering)")
             finally:
                 await db.close()
+        self._run(go())
+
+
+class _PostgresCaptureDB:
+    def __init__(self) -> None:
+        self.fetch_calls: list[tuple[str, tuple[Any, ...]]] = []
+        self.fetchval_calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def fetch(self, sql: str, *params: Any) -> list[dict[str, Any]]:
+        self.fetch_calls.append((sql, params))
+        return []
+
+    async def fetchval(self, sql: str, *params: Any) -> int:
+        self.fetchval_calls.append((sql, params))
+        return 0
+
+
+class TestPostgresLinkedSessionPageQuery(unittest.TestCase):
+    def _run(self, coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_inherited_thread_query_uses_distinct_limit_placeholders(self) -> None:
+        async def go():
+            db = _PostgresCaptureDB()
+            repo = PostgresFeatureSessionRepository(db)  # type: ignore[arg-type]
+            query = LinkedSessionQuery(
+                feature_id="feature-A",
+                thread_expansion=ThreadExpansionMode.INHERITED_THREADS,
+                sort_by="started_at",
+                sort_direction=SortDirection.DESC,
+                limit=20,
+                offset=40,
+            )
+
+            await repo.list_feature_session_refs(PROJECT_ID, query)
+
+            sql, params = db.fetch_calls[0]
+            self.assertIn("el2.source_id = $2", sql)
+            self.assertIn("LIMIT $3 OFFSET $4", sql)
+            self.assertEqual(params, (PROJECT_ID, "feature-A", 20, 40))
+
         self._run(go())
 
 

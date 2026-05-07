@@ -18,6 +18,7 @@ from backend.db.repositories.postgres.identity_access import (
 )
 from backend.db.repositories.postgres.intelligence import PostgresAgenticIntelligenceRepository
 from backend.db.repositories.postgres.entity_graph import PostgresEntityLinkRepository, PostgresTagRepository
+from backend.db.repositories.postgres.feature_sessions import PostgresFeatureSessionRepository
 from backend.db.repositories.postgres.pricing import PostgresPricingCatalogRepository
 from backend.db.repositories.postgres.runtime_state import (
     PostgresAlertConfigRepository,
@@ -52,6 +53,7 @@ class EnterpriseStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "analytics": PostgresAnalyticsRepository,
                 "session_usage": PostgresSessionUsageRepository,
                 "entity_links": PostgresEntityLinkRepository,
+                "feature_sessions": PostgresFeatureSessionRepository,
                 "tags": PostgresTagRepository,
                 "features": PostgresFeatureRepository,
                 "sync_state": PostgresSyncStateRepository,

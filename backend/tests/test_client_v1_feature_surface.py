@@ -122,7 +122,7 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
             registry,
         )
         registry.resolve_scope = types.MethodType(
-            lambda self, project_id=None: (
+            lambda self, project_id=None, **_: (
                 (cls._workspace_scope, cls._project_scope)
                 if project_id in (None, cls._PROJECT_ID)
                 else (None, None)

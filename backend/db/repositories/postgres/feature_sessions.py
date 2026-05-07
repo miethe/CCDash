@@ -158,7 +158,7 @@ class PostgresFeatureSessionRepository:
         else:
             # Build subquery for direct session IDs
             direct_sub, direct_sub_params, next_idx = self._direct_refs_subquery(
-                feature_id, root_id, start_idx=2
+                feature_id, root_id, start_idx=3
             )
             # Subquery for linked roots (re-uses feature_id already at $1)
             root_filter, root_extra, next_idx2 = self._root_filter(root_id, start_idx=next_idx)
@@ -209,7 +209,7 @@ class PostgresFeatureSessionRepository:
             params: list[Any] = [feature_id, project_id, *extra_params]
         else:
             direct_sub, direct_sub_params, next_idx = self._direct_refs_subquery(
-                feature_id, root_id, start_idx=2
+                feature_id, root_id, start_idx=3
             )
             root_filter, root_extra, _ = self._root_filter(root_id, start_idx=next_idx)
             sql = f"""
