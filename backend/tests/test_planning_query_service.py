@@ -807,7 +807,7 @@ class FeaturePlanningContextTests(unittest.IsolatedAsyncioTestCase):
             get_by_id=AsyncMock(return_value=row),
         )
         ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
-        forensics = types.SimpleNamespace(
+        evidence = types.SimpleNamespace(
             status="ok",
             total_tokens=240,
             token_usage_by_model=types.SimpleNamespace(opus=120, sonnet=120, haiku=0, other=0, total=240),
@@ -818,8 +818,8 @@ class FeaturePlanningContextTests(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=feat.linkedDocs),
         ):
             with patch(
-                "backend.application.services.agent_queries.planning._feature_forensics_query_service.get_forensics",
-                new=AsyncMock(return_value=forensics),
+                "backend.application.services.agent_queries.feature_evidence_summary.FeatureEvidenceSummaryService.get_summary",
+                new=AsyncMock(return_value=evidence),
             ):
                 result = await PlanningQueryService().get_feature_planning_context(
                     _context(), ports, feature_id="feat-contract"

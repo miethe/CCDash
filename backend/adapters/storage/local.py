@@ -18,6 +18,7 @@ from backend.db.repositories.identity_access import (
     LocalScopeIdentifierRepository,
 )
 from backend.db.repositories.entity_graph import SqliteEntityLinkRepository, SqliteTagRepository
+from backend.db.repositories.feature_sessions import SqliteFeatureSessionRepository
 from backend.db.repositories.pricing import SqlitePricingCatalogRepository
 from backend.db.repositories.runtime_state import SqliteAlertConfigRepository, SqliteSyncStateRepository
 from backend.db.repositories.session_embeddings import SqliteSessionEmbeddingRepository
@@ -49,6 +50,7 @@ class LocalStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "analytics": SqliteAnalyticsRepository,
                 "session_usage": SqliteSessionUsageRepository,
                 "entity_links": SqliteEntityLinkRepository,
+                "feature_sessions": SqliteFeatureSessionRepository,
                 "tags": SqliteTagRepository,
                 "features": SqliteFeatureRepository,
                 "sync_state": SqliteSyncStateRepository,

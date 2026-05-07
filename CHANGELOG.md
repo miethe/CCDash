@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Planning / Forensics Boundary Extraction**: Separated planning and execution workflows from session forensics and metrics through bounded shared evidence contracts. Key changes:
+  - Added `FeatureEvidenceSummary` as a transport-neutral backend service/DTO providing bounded session counts, token totals, workflow mix, and freshness metadata without transcript-log enrichment.
+  - Planning queries now consume the bounded evidence summary instead of full `FeatureForensicsQueryService` forensic detail, eliminating import-time singleton coupling in `planning.py`.
+  - Extracted shared session-feature correlation logic into `session_correlation.py`, reconciling implementations from `planning_sessions.py` and `planning.py`.
+  - Frontend feature detail modal split into domain-owned modules: shared shell (`FeatureDetailShell`), planning-owned tabs, forensics/session-owned tabs, and execution/test-owned tabs with preserved cache invalidation bus semantics.
+  - `WorkflowEffectivenessSurface` moved from `components/execution/` to `components/Workflows/` — workflow diagnostics is now a product module; Analytics retains discoverability via the Workflow Intel tab.
+  - CLI v1 feature contract (`/api/v1/features/*`) and existing planning/forensics API response shapes remain stable.
+
 ### Added
 
 - **Per-message token usage in session transcript**: Every assistant message in the session inspector now shows a compact token caption (e.g. `1.2K tok · cached 800`) beneath the message body. Hovering or clicking the caption opens a popover with the full per-turn breakdown: input, output, cache read, cache creation, total, and tool-call count. User messages and messages without usage data render no caption.

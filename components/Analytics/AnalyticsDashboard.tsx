@@ -38,7 +38,7 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
-import { WorkflowEffectivenessSurface } from '../execution/WorkflowEffectivenessSurface';
+import { WorkflowEffectivenessSurface } from '../Workflows/WorkflowEffectivenessSurface';
 import { Badge, ModelBadge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { AlertSurface, Surface } from '../ui/surface';

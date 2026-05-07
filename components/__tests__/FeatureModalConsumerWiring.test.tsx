@@ -1,5 +1,5 @@
 /**
- * P4-010: Feature Modal Consumer Wiring
+ * P4-010 / P4-006: Feature Modal Consumer Wiring
  *
  * Asserts that:
  *   1. ProjectBoardFeatureModal imports and calls useFeatureModalData — no raw
@@ -8,6 +8,8 @@
  *      via the typed client (modalSections.phases.load()).
  *   3. Error state in a section renders the TabStateView error branch with a
  *      retry button; clicking retry re-invokes the section.
+ *   4. P4-006: ProjectBoard mounts FeatureDetailShell with shellSectionStates
+ *      so that TabStateView wiring is delegated to the shell (not inline).
  *
  * Testing strategy:
  *   Source-level structural proofs (zero-runtime, always stable) + a pure
@@ -39,14 +41,6 @@ function getTabActivationLoadEffect(source: string): string {
   const idx = source.indexOf(marker);
   if (idx === -1) return '';
   return source.slice(idx, idx + 1200);
-}
-
-/** Extracts the useFeatureModalData call site in the modal component. */
-function getModalDataHookCallSite(source: string): string {
-  const marker = '  // P4-010: per-section hook for typed, lazy modal data loading.';
-  const idx = source.indexOf(marker);
-  if (idx === -1) return '';
-  return source.slice(idx, idx + 500);
 }
 
 // ── 1. No raw /api/features/ interpolations in components/ ───────────────────
@@ -116,12 +110,35 @@ describe('P4-010 — useFeatureModalData hook wired in modal component', () => {
     expect(PROJECTBOARD_SRC).toContain('useFeatureModalData(feature.id,');
   });
 
-  it('TabStateView is imported and used in the modal', () => {
-    expect(PROJECTBOARD_SRC).toContain("import { TabStateView } from './FeatureModal/TabStateView'");
-    // Should appear for every required tab
-    const count = (PROJECTBOARD_SRC.match(/<TabStateView/g) ?? []).length;
-    // 6 tabs: phases, docs, relations, sessions, test-status, history
-    expect(count).toBeGreaterThanOrEqual(6);
+  it('P4-006: FeatureDetailShell is imported and used as the modal adapter', () => {
+    // P4-006: ProjectBoard is now a thin adapter — inline TabStateView blocks replaced
+    // by FeatureDetailShell which delegates TabStateView rendering for each tab.
+    expect(PROJECTBOARD_SRC).toContain("import { FeatureDetailShell } from './FeatureModal/FeatureDetailShell'");
+    expect(PROJECTBOARD_SRC).toContain('<FeatureDetailShell');
+  });
+
+  it('P4-006: ProjectBoard passes sectionStates (shellSectionStates) to FeatureDetailShell', () => {
+    // The adapter assembles ShellSectionStateMap from modalSections and passes it to the shell.
+    // The shell then internally wires TabStateView per tab using section.status / section.error.
+    expect(PROJECTBOARD_SRC).toContain('sectionStates={shellSectionStates}');
+    expect(PROJECTBOARD_SRC).toContain('const shellSectionStates = useMemo');
+  });
+
+  it('P4-006: shellSectionStates includes all 7 ModalTabId keys', () => {
+    // All section entries must be present so the shell can render TabStateView for every tab.
+    expect(PROJECTBOARD_SRC).toContain('overview: modalSections.overview');
+    expect(PROJECTBOARD_SRC).toContain('phases: modalSections.phases');
+    expect(PROJECTBOARD_SRC).toContain('docs: modalSections.docs');
+    expect(PROJECTBOARD_SRC).toContain('relations: modalSections.relations');
+    expect(PROJECTBOARD_SRC).toContain('sessions: modalSections.sessions');
+    expect(PROJECTBOARD_SRC).toContain("'test-status': modalSections['test-status']");
+    expect(PROJECTBOARD_SRC).toContain('history: modalSections.history');
+  });
+
+  it('P4-006: TabStateView is still imported (used inside domain tab components)', () => {
+    // TabStateView is still imported in ProjectBoard for legacy use (StatusDropdown etc.),
+    // but the per-tab wiring is now delegated to FeatureDetailShell.
+    expect(PROJECTBOARD_SRC).toContain("TabStateView");
   });
 });
 
@@ -159,35 +176,41 @@ describe('P4-010 — Tab-activation effect loads sections via typed client', () 
   });
 });
 
-// ── 4. TabStateView props per section (source-level) ─────────────────────────
+// ── 4. TabStateView props per section (P4-006 adapter source-level) ─────────────
+//
+// P4-006: ProjectBoard is now a thin adapter. Section state is passed as a map
+// (shellSectionStates → ShellSectionStateMap) to FeatureDetailShell, which
+// delegates TabStateView rendering for each tab internally.
+// The assertions below verify the adapter correctly assembles the section state map.
 
-describe('P4-010 — TabStateView wired with correct section state per tab', () => {
-  it('phases tab passes modalSections.phases.status as status prop', () => {
-    expect(PROJECTBOARD_SRC).toContain('status={modalSections.phases.status}');
+describe('P4-006 — Shell section state adapter: correct per-section wiring', () => {
+  it('shellSectionStates assembles from modalSections for all tabs', () => {
+    // Each of the 7 ModalTabId keys must appear in the shellSectionStates map.
+    expect(PROJECTBOARD_SRC).toContain('overview: modalSections.overview');
+    expect(PROJECTBOARD_SRC).toContain('phases: modalSections.phases');
+    expect(PROJECTBOARD_SRC).toContain('docs: modalSections.docs');
+    expect(PROJECTBOARD_SRC).toContain('relations: modalSections.relations');
+    expect(PROJECTBOARD_SRC).toContain('sessions: modalSections.sessions');
+    expect(PROJECTBOARD_SRC).toContain("'test-status': modalSections['test-status']");
+    expect(PROJECTBOARD_SRC).toContain('history: modalSections.history');
   });
 
-  it('phases tab wires onRetry to modalSections.phases.retry', () => {
-    expect(PROJECTBOARD_SRC).toContain('onRetry={modalSections.phases.retry}');
+  it('FeatureDetailShell receives sectionStates from shellSectionStates', () => {
+    // The shell surfaces status/error/retry from ShellSectionStateMap internally.
+    // Verify the binding is present.
+    expect(PROJECTBOARD_SRC).toContain('sectionStates={shellSectionStates}');
   });
 
-  it('docs tab passes modalSections.docs.status as status prop', () => {
-    expect(PROJECTBOARD_SRC).toContain('status={modalSections.docs.status}');
-  });
-
-  it('relations tab passes modalSections.relations.status as status prop', () => {
-    expect(PROJECTBOARD_SRC).toContain('status={modalSections.relations.status}');
-  });
-
-  it('sessions tab passes modalSections.sessions.status as status prop', () => {
-    expect(PROJECTBOARD_SRC).toContain('status={modalSections.sessions.status}');
-  });
-
-  it("test-status tab passes modalSections['test-status'].status as status prop", () => {
-    expect(PROJECTBOARD_SRC).toContain("status={modalSections['test-status'].status}");
-  });
-
-  it('history tab passes modalSections.history.status as status prop', () => {
-    expect(PROJECTBOARD_SRC).toContain('status={modalSections.history.status}');
+  it('FeatureDetailShell source internally uses section.status for TabStateView', () => {
+    // The contract is that FeatureDetailShell passes section.status to TabStateView.
+    // This is tested via the shell source (not ProjectBoard).
+    const SHELL_SRC = fs.readFileSync(
+      path.resolve(__dirname, '../FeatureModal/FeatureDetailShell.tsx'),
+      'utf-8',
+    );
+    expect(SHELL_SRC).toContain('status={section.status}');
+    expect(SHELL_SRC).toContain('error={section.error?.message');
+    expect(SHELL_SRC).toContain('onRetry={section.retry}');
   });
 });
 
@@ -304,11 +327,20 @@ describe('P4-010 — TabStateView retry callback: error state triggers re-invoke
     expect(TAB_STATE_VIEW_SRC).toContain("isEmpty && status === 'success'");
   });
 
-  it('each tab section wires error?.message to TabStateView error prop (source proof)', () => {
-    // All six tabs must pass error?.message (not just error) to avoid
-    // "[object Object]" displayed to the user.
-    const errorPropsCount = (PROJECTBOARD_SRC.match(/error=\{modalSections[^}]*\.error\?\.message\}/g) ?? []).length;
-    // 6 tabs
-    expect(errorPropsCount).toBeGreaterThanOrEqual(6);
+  it('P4-006: TabStateView error prop wiring is delegated to FeatureDetailShell (source proof)', () => {
+    // P4-006: ProjectBoard no longer directly passes error?.message to TabStateView.
+    // The shell receives ShellSectionStateMap and internally wires section.error?.message
+    // to TabStateView. Verify the shell source contains this wiring.
+    const SHELL_SRC = fs.readFileSync(
+      path.resolve(__dirname, '../FeatureModal/FeatureDetailShell.tsx'),
+      'utf-8',
+    );
+    // The shell must use optional chaining on error?.message to avoid [object Object] display.
+    expect(SHELL_SRC).toContain('error?.message');
+    // ProjectBoard must NOT be doing its own per-section error wiring outside shellSectionStates.
+    // (The old direct wiring pattern no longer appears.)
+    const oldDirectWiring = (PROJECTBOARD_SRC.match(/error=\{modalSections[^}]*\.error\?\.message\}/g) ?? []).length;
+    // After P4-006, direct wiring inside ProjectBoard return JSX is 0 (shell owns it).
+    expect(oldDirectWiring).toBe(0);
   });
 });

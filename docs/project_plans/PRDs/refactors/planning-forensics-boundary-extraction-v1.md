@@ -3,19 +3,23 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: refactor_prd
-status: draft
+status: completed
 category: refactors
-title: "PRD: Planning / Forensics Boundary Extraction V1"
-description: "Refactor planning and execution workflows away from full session-forensics dependencies by introducing shared bounded evidence contracts and clearer product-domain ownership."
-summary: "Separate planning/execution from session forensics at read-contract and frontend ownership boundaries while preserving one shared evidence substrate and canonical session-ingest path."
+title: 'PRD: Planning / Forensics Boundary Extraction V1'
+description: Refactor planning and execution workflows away from full session-forensics
+  dependencies by introducing shared bounded evidence contracts and clearer product-domain
+  ownership.
+summary: Separate planning/execution from session forensics at read-contract and frontend
+  ownership boundaries while preserving one shared evidence substrate and canonical
+  session-ingest path.
 author: codex
 created: 2026-05-06
-updated: 2026-05-06
+updated: '2026-05-07'
 priority: high
 risk_level: high
 complexity: high
 track: Planning / Forensics / Architecture
-timeline_estimate: "2-4 engineering weeks across 6 phases"
+timeline_estimate: 2-4 engineering weeks across 6 phases
 feature_slug: planning-forensics-boundary-extraction-v1
 feature_family: planning-forensics-boundary-extraction
 feature_version: v1
@@ -25,42 +29,44 @@ lineage_parent:
   kind: builds_on
 lineage_children: []
 lineage_type: refactor
-problem_statement: "Planning and execution currently need session-derived evidence, but some paths depend on full session-forensics DTOs and planning-specific correlation logic, making product boundaries unclear and increasing regression risk."
+problem_statement: Planning and execution currently need session-derived evidence,
+  but some paths depend on full session-forensics DTOs and planning-specific correlation
+  logic, making product boundaries unclear and increasing regression risk.
 owner: platform-engineering
 owners:
-  - platform-engineering
-  - backend-platform
+- platform-engineering
+- backend-platform
 contributors:
-  - ai-agents
+- ai-agents
 audience:
-  - ai-agents
-  - developers
-  - platform-engineering
+- ai-agents
+- developers
+- platform-engineering
 tags:
-  - prd
-  - refactor
-  - planning
-  - execution
-  - forensics
-  - sessions
-  - metrics
-  - api-contracts
+- prd
+- refactor
+- planning
+- execution
+- forensics
+- sessions
+- metrics
+- api-contracts
 related_documents:
-  - docs/project_plans/reports/planning-forensics-split-refactor-assessment-2026-05-06.md
-  - docs/project_plans/implementation_plans/refactors/planning-forensics-boundary-extraction-v1.md
-  - docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
-  - docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
-  - docs/project_plans/PRDs/integrations/otel-session-metrics-ingestion-v1.md
+- docs/project_plans/reports/planning-forensics-split-refactor-assessment-2026-05-06.md
+- docs/project_plans/implementation_plans/refactors/planning-forensics-boundary-extraction-v1.md
+- docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
+- docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
+- docs/project_plans/PRDs/integrations/otel-session-metrics-ingestion-v1.md
 context_files:
-  - backend/application/services/agent_queries/planning.py
-  - backend/application/services/agent_queries/feature_forensics.py
-  - backend/application/services/agent_queries/planning_sessions.py
-  - backend/routers/agent.py
-  - backend/ingestion/models.py
-  - backend/ingestion/session_ingest_service.py
-  - backend/services/feature_execution.py
-  - components/ProjectBoard.tsx
-  - services/featureSurface.ts
+- backend/application/services/agent_queries/planning.py
+- backend/application/services/agent_queries/feature_forensics.py
+- backend/application/services/agent_queries/planning_sessions.py
+- backend/routers/agent.py
+- backend/ingestion/models.py
+- backend/ingestion/session_ingest_service.py
+- backend/services/feature_execution.py
+- components/ProjectBoard.tsx
+- services/featureSurface.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/refactors/planning-forensics-boundary-extraction-v1.md
 ---
 

@@ -9,7 +9,7 @@ import {
   WorkflowEffectivenessResponse,
   WorkflowEffectivenessRollup,
 } from '../../types';
-import { ArtifactReferenceModal } from './ArtifactReferenceModal';
+import { ArtifactReferenceModal } from '../execution/ArtifactReferenceModal';
 
 type PeriodPreset = '7d' | '30d' | '90d';
 
