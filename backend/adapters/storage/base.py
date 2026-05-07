@@ -68,6 +68,9 @@ class _IntegrationSnapshotView(_RepositoryDomainView):
     def pricing_catalog(self) -> Any:
         return self._repo("pricing_catalog")
 
+    def artifact_snapshots(self) -> Any:
+        return self._repo("artifact_snapshots")
+
 
 class _OperationalStateView(_RepositoryDomainView):
     def analytics(self) -> Any:
@@ -146,7 +149,7 @@ class RepositoryBackedStorageUnitOfWork:
             ),
         )
         self._ingestion_state_view = _IngestionStateView(self, ("sync_state",))
-        self._integration_snapshot_view = _IntegrationSnapshotView(self, ("pricing_catalog",))
+        self._integration_snapshot_view = _IntegrationSnapshotView(self, ("pricing_catalog", "artifact_snapshots"))
         self._operational_state_view = _OperationalStateView(
             self,
             (
@@ -253,6 +256,9 @@ class RepositoryBackedStorageUnitOfWork:
 
     def pricing_catalog(self) -> Any:
         return self._repo("pricing_catalog")
+
+    def artifact_snapshots(self) -> Any:
+        return self._repo("artifact_snapshots")
 
     def test_runs(self) -> Any:
         return self._repo("test_runs")

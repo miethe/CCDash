@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable, Any
 
+from backend.models import SkillMeatArtifactSnapshot, SnapshotFreshnessMeta
+
 
 # ── Session Repository ──────────────────────────────────────────────
 
@@ -204,6 +206,14 @@ class PricingCatalogRepository(Protocol):
     async def get_entry(self, project_id: str, platform_type: str, model_id: str = "") -> dict | None: ...
     async def upsert_entry(self, entry_data: dict[str, Any], project_id: str) -> dict[str, Any]: ...
     async def delete_entry(self, project_id: str, platform_type: str, model_id: str = "") -> None: ...
+
+
+@runtime_checkable
+class ArtifactSnapshotRepository(Protocol):
+    async def save_snapshot(self, snapshot: SkillMeatArtifactSnapshot) -> None: ...
+    async def get_latest_snapshot(self, project_id: str) -> SkillMeatArtifactSnapshot | None: ...
+    async def get_snapshot_freshness(self, project_id: str) -> SnapshotFreshnessMeta: ...
+    async def get_unresolved_identity_count(self, project_id: str) -> int: ...
 
 
 @runtime_checkable

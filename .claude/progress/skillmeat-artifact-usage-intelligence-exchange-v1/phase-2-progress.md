@@ -15,10 +15,10 @@ plan_ref: docs/project_plans/implementation_plans/integrations/skillmeat-artifac
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
-overall_progress: 33
+overall_progress: 50
 completion_estimate: on_track
 total_tasks: 6
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -56,7 +56,7 @@ tasks:
 - id: T2-003
   title: ArtifactSnapshotRepository
   description: Add repository methods for saving snapshots, retrieving the latest snapshot, querying freshness, and counting unresolved identities.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -124,7 +124,7 @@ success_criteria:
   status: pending
 - id: SC-2
   description: Snapshot freshness metadata is queryable from the repository.
-  status: pending
+  status: completed
 - id: SC-3
   description: Identity mapping for UUID, hash, alias, and unresolved cases is stored and queryable.
   status: pending
@@ -155,7 +155,7 @@ Build the persistence, fetch, identity mapping, diagnostics, and integration-tes
 
 ## Current Status
 
-Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 through T2-002 are complete. T2-003 through T2-006 remain pending.
+Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 through T2-003 are complete. T2-004 through T2-006 remain pending.
 
 ## Validation Evidence
 
@@ -163,6 +163,8 @@ Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, an
 - 2026-05-07 T2-001 ownership follow-up: `backend/.venv/bin/python -m pytest backend/tests/test_data_domain_layout.py backend/tests/test_data_domain_ownership.py -q` -> failed on unrelated contract drift outside T2-001 scope (`feature_sessions`, `session_memory_drafts`, `planning_worktree_contexts`, `filesystem_scan_manifest`); new artifact snapshot tables were classified.
 - 2026-05-07 T2-002: `backend/.venv/bin/python -m pytest backend/tests/test_skillmeat_client.py -q` -> 13 passed in 0.51s.
 - 2026-05-07 T2-002 feature flag check: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_intelligence_feature_flag.py -q` -> 4 passed in 0.38s.
+- 2026-05-07 T2-003: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_snapshot_repository.py -q` -> 7 passed in 0.83s.
+- 2026-05-07 T2-003 focused repository/storage/migration sweep: `backend/.venv/bin/python -m pytest backend/tests/test_artifact_snapshot_repository.py backend/tests/test_storage_adapter_composition.py backend/tests/test_sqlite_migrations.py backend/tests/test_migration_governance.py -q` -> 29 passed in 1.63s.
 
 ## Notes
 
@@ -170,3 +172,4 @@ Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, an
 - `artifact_snapshot_cache` and `artifact_identity_map` are shared integration snapshot tables across SQLite and Postgres and are classified as refreshable, scope-owned integration data.
 - T2-002 kept SkillMeat base URL ownership in project SkillMeat settings via the existing `SkillMeatClient(base_url=...)` convention; no `CCDASH_SKILLMEAT_API_URL` setting was added.
 - T2-002 intentionally did not edit repository/storage files so concurrent T2-003 repository work remains isolated.
+- T2-003 added SQLite and Postgres ArtifactSnapshotRepository implementations and exposed them through the integration snapshot storage/factory surface; it did not edit SkillMeat client files.

@@ -13,6 +13,7 @@ from .test_integrity import SqliteTestIntegrityRepository
 from .entity_graph import SqliteEntityLinkRepository, SqliteTagRepository
 from .runtime_state import SqliteSyncStateRepository
 from .analytics import SqliteAnalyticsRepository
+from .artifact_snapshot_repository import SqliteArtifactSnapshotRepository
 from .execution import SqliteExecutionRepository
 from .telemetry_queue import SqliteTelemetryQueueRepository
 
@@ -31,6 +32,7 @@ __all__ = [
     "SqliteSyncStateRepository",
     "SqliteTagRepository",
     "SqliteAnalyticsRepository",
+    "SqliteArtifactSnapshotRepository",
     "SqliteExecutionRepository",
     "SqliteTelemetryQueueRepository",
 ]
