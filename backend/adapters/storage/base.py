@@ -49,6 +49,9 @@ class _ObservedProductView(_RepositoryDomainView):
     def entity_links(self) -> Any:
         return self._repo("entity_links")
 
+    def feature_sessions(self) -> Any:
+        return self._repo("feature_sessions")
+
     def tags(self) -> Any:
         return self._repo("tags")
 
@@ -137,6 +140,7 @@ class RepositoryBackedStorageUnitOfWork:
                 "tasks",
                 "session_usage",
                 "entity_links",
+                "feature_sessions",
                 "tags",
                 "features",
             ),
@@ -231,6 +235,9 @@ class RepositoryBackedStorageUnitOfWork:
 
     def entity_links(self) -> Any:
         return self._repo("entity_links")
+
+    def feature_sessions(self) -> Any:
+        return self._repo("feature_sessions")
 
     def tags(self) -> Any:
         return self._repo("tags")

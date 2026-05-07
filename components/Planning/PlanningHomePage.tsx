@@ -1099,6 +1099,7 @@ export default function PlanningHomePage() {
           feature={selectedFeature}
           initialTab={selectedFeatureModal.tab}
           onClose={closeFeatureModal}
+          launchedFromPlanning={true}
         />
       ) : null}
       {/* P14-002: Tracker/intake row quick view panel */}

@@ -163,6 +163,22 @@ class TokenUsageByModel(BaseModel):
     total: int = 0
 
 
+class FeatureEvidenceSummary(AgentQueryEnvelope):
+    """Bounded evidence summary for planning surfaces — lighter than FeatureForensicsDTO."""
+
+    feature_id: str
+    feature_slug: str = ""
+    feature_status: str = ""
+    name: str = ""
+    session_count: int = 0
+    total_tokens: int = 0
+    total_cost: float = 0.0
+    token_usage_by_model: TokenUsageByModel = Field(default_factory=TokenUsageByModel)
+    workflow_mix: dict[str, float] = Field(default_factory=dict)
+    latest_activity: datetime | None = None
+    telemetry_available: TelemetryAvailability = Field(default_factory=TelemetryAvailability)
+
+
 class PlanningArtifactRef(BaseModel):
     """Artifact reference grouped into planning payload buckets."""
 

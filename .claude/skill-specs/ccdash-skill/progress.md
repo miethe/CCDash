@@ -2,10 +2,10 @@
 schema_version: 2
 doc_type: progress
 title: "CCDash Claude Code Skill — Progress"
-description: "Task tracker seeded with Phase 1 (MVP) for the ccdash skill."
-status: phase-1-3-complete
+description: "Task tracker for the ccdash skill."
+status: phase-5-complete
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-05-06
 feature_slug: ccdash-skill
 prd_ref: .claude/skill-specs/ccdash-skill/prd.md
 plan_ref: .claude/skill-specs/ccdash-skill/implementation-plan.md
@@ -26,7 +26,7 @@ Exit criteria (from implementation plan):
 
 | ID | Task | Status | Owner | Notes |
 |---|---|---|---|---|
-| P1-01 | Author `SKILL.md` (trigger, router summary, when-not-to-use, pointers) | done | skill-creator | ≤150 lines |
+| P1-01 | Author `SKILL.md` (trigger, router summary, when-not-to-use, pointers) | done | skill-creator | Focused on routing and guardrails |
 | P1-02 | Author `references/cli-overview.md` | done | skill-creator | Snapshot current `ccdash --help` tree |
 | P1-03 | Author `references/install-setup.md` | done | skill-creator | pipx + repo-local fallback |
 | P1-04 | Author `references/command-status.md` and `references/command-doctor.md` | done | skill-creator | Include JSON field glossary |
@@ -38,7 +38,7 @@ Exit criteria (from implementation plan):
 
 ## Phase 1 Validation Checklist
 
-- [ ] SKILL.md under 150 lines
+- [ ] SKILL.md focused on routing and guardrails; detailed flows live in references/recipes
 - [ ] All Phase 1 reference files present and cross-linked
 - [ ] `scripts/router-table.json` validates as JSON and covers all MVP intents
 - [ ] `ccdash doctor` appears in the fail-path for every query recipe
@@ -72,6 +72,15 @@ Exit criteria (from implementation plan):
 
 Placeholder only. Do not execute until the MCP surface in the CLI/MCP enablement plan lands. Tasks: P4-01..P4-04 per implementation plan.
 
+## Phase 5 — Container Project Onboarding And Watcher Binding (Done 2026-05-06)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P5-01 | `references/container-project-onboarding.md` | done | Covers `projects.json`, container paths, watcher env overlays, mounts, and validation |
+| P5-02 | `recipes/container-project-onboarding.md` | done | Uses `backend/scripts/container_project_onboarding.py`; includes compose overlay and probe checks |
+| P5-03 | `SKILL.md` trigger/runtime/do-not-say updates | done | Separates registry creation, project selection, and watcher binding |
+| P5-04 | `scripts/router-table.json` intent update | done | Routes onboarding, watcher env, and healthy-empty-stack requests to the new recipe |
+
 ## Remaining
 
 - **P1-09 smoke test** — requires a live `ccdash` install and running CCDash backend; operator-run, not part of this execution batch.
@@ -88,3 +97,4 @@ Placeholder only. Do not execute until the MCP surface in the CLI/MCP enablement
 |---|---|
 | 2026-04-13 | Initial progress tracker created alongside PRD and implementation plan. |
 | 2026-04-14 | Phases 1-3 implemented in `.claude/skills/ccdash/`. Planning docs moved to `.claude/skill-specs/ccdash-skill/`. Phase 4 deferred; P1-09 smoke test still operator-pending. |
+| 2026-05-06 | Phase 5 added container project onboarding and watcher-binding skill guidance grounded in the design spec, quickstart, runtime README, and helper script. |

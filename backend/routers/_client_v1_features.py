@@ -18,12 +18,16 @@ from backend.application.services.agent_queries import (
     FeatureForensicsDTO,
     FeatureForensicsQueryService,
 )
+from backend.application.services.agent_queries.feature_evidence_summary import (
+    FeatureEvidenceSummaryService,
+)
 from backend.application.services.agent_queries.models import SessionRef
 from backend.application.services.feature_surface import (
     FeatureSurfaceListRollupService,
     ModalSectionResult,
 )
 from backend.application.services.feature_surface.modal_service import FeatureModalDetailService
+from backend.application.services.sessions import SessionTranscriptService
 from backend.db.repositories.feature_queries import (
     DateRange,
     FeatureListQuery,
@@ -57,12 +61,29 @@ from backend.routers.client_v1_models import (
     build_client_v1_meta,
     build_client_v1_paginated_meta,
 )
+from backend.model_identity import derive_model_identity
+from backend.session_mappings import (
+    classify_session_key_metadata,
+    load_session_mappings,
+    workflow_command_exemptions,
+    workflow_command_markers,
+)
 
 logger = logging.getLogger("ccdash.client_v1.features")
 
 _feature_forensics_query_service = FeatureForensicsQueryService()
 _feature_surface_list_rollup_service = FeatureSurfaceListRollupService()
 _feature_modal_detail_service = FeatureModalDetailService()
+_session_transcript_service = SessionTranscriptService()
+
+
+def _get_evidence_summary_service() -> FeatureEvidenceSummaryService:
+    """Lazy factory for FeatureEvidenceSummaryService.
+
+    Returns a fresh instance on each call so that tests can patch
+    ``FeatureEvidenceSummaryService`` without fighting a module-level singleton.
+    """
+    return FeatureEvidenceSummaryService()
 
 _MAX_LIMIT = 200
 _SUPPORTED_LIST_VIEWS = {"summary", "cards"}
@@ -76,6 +97,210 @@ _SUPPORTED_MODAL_SECTIONS = {
     "activity",
 }
 _SUPPORTED_LIST_INCLUDES = {"phase_summary"}
+
+
+def _safe_json(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _command_token(command_name: str) -> str:
+    normalized = " ".join((command_name or "").strip().split()).lower()
+    return normalized.split()[0] if normalized else ""
+
+
+def _normalize_link_commands(commands: list[str]) -> list[str]:
+    markers = workflow_command_markers()
+    exclusions = workflow_command_exemptions()
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for raw in commands:
+        command = " ".join((raw or "").strip().split())
+        if not command:
+            continue
+        if _command_token(command) in exclusions:
+            continue
+        lowered = command.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(command)
+    deduped.sort(
+        key=lambda command: (
+            next((idx for idx, marker in enumerate(markers) if marker in command.lower()), len(markers)),
+            command.lower(),
+        )
+    )
+    return deduped
+
+
+def _phase_label(phase_token: str) -> str:
+    token = (phase_token or "").strip()
+    if not token:
+        return ""
+    if token.lower() == "all":
+        return "All Phases"
+    return f"Phase {token}"
+
+
+def _normalize_subagent_type(value: Any) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    lowered = candidate.lower()
+    if lowered in {"subagent", "agent"}:
+        return ""
+    if lowered.startswith("agent-") or lowered.startswith("agent_"):
+        return ""
+    return candidate
+
+
+def _parse_tool_args(raw_tool_args: Any) -> dict[str, Any]:
+    if isinstance(raw_tool_args, dict):
+        return raw_tool_args
+    if not isinstance(raw_tool_args, str) or not raw_tool_args.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_tool_args)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _subagent_type_from_logs(
+    logs: list[dict[str, Any]],
+    *,
+    target_linked_session_id: str = "",
+) -> str:
+    linked_target = str(target_linked_session_id or "").strip()
+    for row in logs:
+        row_type = str(row.get("type") or "").strip().lower()
+        metadata = _safe_json(row.get("metadata_json") or row.get("metadata"))
+        linked_session_id = str(row.get("linked_session_id") or row.get("linkedSessionId") or "").strip()
+        if row_type == "subagent_start":
+            if linked_target and linked_session_id != linked_target:
+                continue
+            for key in ("subagentType", "subagentName", "taskSubagentType"):
+                candidate = _normalize_subagent_type(metadata.get(key))
+                if candidate:
+                    return candidate
+        if row_type != "tool":
+            continue
+        if linked_target and linked_session_id != linked_target:
+            continue
+        tool_name = row.get("tool_name")
+        if not tool_name:
+            tool_call = row.get("toolCall")
+            if isinstance(tool_call, dict):
+                tool_name = tool_call.get("name")
+        if str(tool_name or "").strip().lower() not in {"task", "agent"}:
+            continue
+        for key in ("taskSubagentType", "subagentType", "subagentName"):
+            candidate = _normalize_subagent_type(metadata.get(key))
+            if candidate:
+                return candidate
+        tool_args = row.get("tool_args")
+        if tool_args in (None, ""):
+            tool_args = metadata.get("toolArgs")
+        if tool_args in (None, ""):
+            tool_call = row.get("toolCall")
+            if isinstance(tool_call, dict):
+                tool_args = tool_call.get("args")
+        args = _parse_tool_args(tool_args)
+        for key in ("subagent_type", "subagentType", "agent_name", "agentName"):
+            candidate = _normalize_subagent_type(args.get(key))
+            if candidate:
+                return candidate
+    return ""
+
+
+def _derive_session_title(
+    session_metadata: dict[str, Any] | None,
+    summary: str,
+    session_id: str,
+    *,
+    session_type: str = "",
+    subagent_type: str = "",
+) -> str:
+    if str(session_type or "").strip().lower() == "subagent" and subagent_type:
+        return subagent_type
+
+    summary_text = (summary or "").strip()
+    if summary_text:
+        return summary_text
+
+    metadata = session_metadata if isinstance(session_metadata, dict) else {}
+    session_type_label = str(metadata.get("sessionTypeLabel") or "").strip()
+    phases = metadata.get("relatedPhases")
+    if not isinstance(phases, list):
+        phases = []
+    phase_values = [str(value).strip() for value in phases if str(value).strip()]
+    if session_type_label and phase_values:
+        return f"{session_type_label} - {', '.join(_phase_label(value) for value in phase_values)}"
+    if session_type_label:
+        return session_type_label
+    return session_id
+
+
+def _is_primary_session_link(
+    *,
+    strategy: str,
+    confidence: float,
+    signal_types: set[str],
+    commands: list[str],
+    link_role: str = "",
+) -> bool:
+    normalized_link_role = str(link_role or "").strip().lower()
+    if normalized_link_role == "primary":
+        return True
+    if normalized_link_role == "related":
+        return False
+    if strategy == "task_frontmatter":
+        return True
+    if "command_args_path" in signal_types and any(
+        any(token in command.lower() for token in ("execute-phase", "plan-feature", "implement-story"))
+        for command in commands
+    ):
+        return True
+    if confidence >= 0.9:
+        return True
+    if confidence >= 0.75 and ("file_write" in signal_types or "command_args_path" in signal_types):
+        return True
+    return False
+
+
+def _classify_session_workflow(
+    *,
+    strategy: str,
+    commands: list[str],
+    signal_types: set[str],
+    session_type: str,
+    session_metadata: dict[str, Any] | None,
+) -> str:
+    metadata = session_metadata if isinstance(session_metadata, dict) else {}
+    session_type_label = str(metadata.get("sessionTypeLabel") or "")
+    related_command = str(metadata.get("relatedCommand") or "")
+    haystack = " ".join(
+        [strategy, session_type, session_type_label, related_command, *commands, *sorted(signal_types)]
+    ).lower()
+    if "/plan:" in haystack or "planning" in haystack or "plan" in haystack:
+        return "Planning"
+    if any(token in haystack for token in ("debug", "bug", "fix", "error", "traceback")):
+        return "Debug"
+    if any(token in haystack for token in ("enhance", "improve", "refactor", "optimiz", "cleanup")):
+        return "Enhancement"
+    if any(token in haystack for token in ("execute", "implement", "quick-feature", "file_write", "command_args_path")):
+        return "Execution"
+    if "subagent" in haystack:
+        return "Execution"
+    return "Related"
 _SUPPORTED_MODAL_SECTION_INCLUDES: dict[str, frozenset[str]] = {
     section: frozenset() for section in _SUPPORTED_MODAL_SECTIONS if section != "overview"
 }
@@ -520,6 +745,157 @@ def _session_row_to_session_ref(row: dict[str, Any], feature_id: str) -> Session
     )
 
 
+async def _load_feature_session_link_metadata(
+    storage: Any,
+    feature_id: str,
+) -> dict[str, dict[str, Any]]:
+    try:
+        rows = await storage.entity_links().get_links_for("feature", feature_id, "related")
+    except Exception:
+        logger.debug("Failed to load feature session link metadata", exc_info=True)
+        return {}
+
+    by_session_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("source_type") != "feature" or row.get("source_id") != feature_id:
+            continue
+        if row.get("target_type") != "session":
+            continue
+        session_id = str(row.get("target_id") or "").strip()
+        if not session_id:
+            continue
+        confidence = float(row.get("confidence") or 0.0)
+        metadata = _safe_json(row.get("metadata_json") or row.get("metadata"))
+        existing = by_session_id.get(session_id)
+        if existing is not None and confidence <= float(existing.get("confidence") or 0.0):
+            continue
+        by_session_id[session_id] = {"confidence": confidence, "metadata": metadata}
+    return by_session_id
+
+
+def _session_log_command_events_and_summary(
+    logs: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
+    command_events: list[dict[str, Any]] = []
+    latest_summary = ""
+    for log in logs:
+        metadata = _safe_json(log.get("metadata_json") or log.get("metadata"))
+        log_type = str(log.get("type") or "").strip().lower()
+        if log_type == "system" and str(metadata.get("eventType") or "").strip().lower() == "summary":
+            summary_text = str(log.get("content") or "").strip()
+            if summary_text:
+                latest_summary = summary_text
+        if log_type != "command":
+            continue
+        command_events.append(
+            {
+                "name": str(log.get("content") or "").strip(),
+                "args": str(metadata.get("args") or ""),
+                "parsedCommand": metadata.get("parsedCommand") if isinstance(metadata.get("parsedCommand"), dict) else {},
+            }
+        )
+    return command_events, latest_summary
+
+
+async def _enrich_linked_session_row(
+    row: dict[str, Any],
+    *,
+    app_request: Any,
+    mappings: list[dict[str, Any]],
+    link_metadata_by_session_id: dict[str, dict[str, Any]],
+    parent_logs_cache: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    session_id = str(row.get("session_id") or row.get("id") or "").strip()
+    if not session_id:
+        return row
+
+    logs = await _session_transcript_service.list_session_logs({"id": session_id}, app_request.ports)
+    command_events, latest_summary = _session_log_command_events_and_summary(logs)
+    session_metadata = classify_session_key_metadata(
+        command_events,
+        mappings,
+        platform_type=str(row.get("platform_type") or ""),
+    )
+
+    link_data = link_metadata_by_session_id.get(session_id)
+    link_metadata = link_data.get("metadata", {}) if isinstance(link_data, dict) else {}
+    confidence = float(link_data.get("confidence") or 0.0) if isinstance(link_data, dict) else 0.0
+    strategy = str(link_metadata.get("linkStrategy") or link_metadata.get("link_strategy") or "").strip()
+    link_role = str(link_metadata.get("linkRole") or link_metadata.get("link_role") or "").strip()
+
+    signal_types: set[str] = set()
+    signals = link_metadata.get("signals")
+    if isinstance(signals, list):
+        for signal in signals:
+            if not isinstance(signal, dict):
+                continue
+            signal_type = str(signal.get("type") or "").strip()
+            if signal_type:
+                signal_types.add(signal_type)
+
+    metadata_commands = link_metadata.get("commands")
+    raw_commands = [str(item) for item in metadata_commands if isinstance(item, str)] if isinstance(metadata_commands, list) else []
+    raw_commands.extend(str(event.get("name") or "") for event in command_events)
+    commands = _normalize_link_commands(raw_commands)
+
+    session_type = str(row.get("session_type") or "")
+    parent_session_id = str(row.get("parent_session_id") or "").strip()
+    subagent_type = _subagent_type_from_logs(logs)
+    if not subagent_type and session_type.strip().lower() == "subagent" and parent_session_id:
+        parent_logs = parent_logs_cache.get(parent_session_id)
+        if parent_logs is None:
+            parent_logs = await _session_transcript_service.list_session_logs(
+                {"id": parent_session_id},
+                app_request.ports,
+            )
+            parent_logs_cache[parent_session_id] = parent_logs
+        subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=session_id)
+
+    title = _derive_session_title(
+        session_metadata,
+        latest_summary,
+        session_id,
+        session_type=session_type,
+        subagent_type=subagent_type,
+    )
+    is_direct_link = link_data is not None
+    model_identity = derive_model_identity(row.get("model"))
+    reasons = []
+    if strategy:
+        reasons.append(strategy)
+    reasons.extend(sorted(signal_types))
+
+    enriched = dict(row)
+    enriched.update(
+        {
+            "title": title,
+            "commands": commands[:12],
+            "reasons": list(dict.fromkeys(reasons)),
+            "model_family": row.get("model_family") or model_identity["modelFamily"],
+            "workflow_type": _classify_session_workflow(
+                strategy=strategy,
+                commands=commands,
+                signal_types=signal_types,
+                session_type=session_type,
+                session_metadata=session_metadata,
+            ),
+            "is_primary_link": _is_primary_session_link(
+                strategy=strategy,
+                confidence=confidence,
+                signal_types=signal_types,
+                commands=commands,
+                link_role=link_role,
+            )
+            if is_direct_link
+            else False,
+            "is_subthread": bool(row.get("parent_session_id")) or session_type.strip().lower() == "subagent",
+        }
+    )
+    return enriched
+
+
 def _session_row_to_linked_dto(row: dict[str, Any]) -> LinkedFeatureSessionDTO:
     task_refs = row.get("related_tasks")
     if not isinstance(task_refs, list):
@@ -537,11 +913,11 @@ def _session_row_to_linked_dto(row: dict[str, Any]) -> LinkedFeatureSessionDTO:
             "updatedAt": str(row.get("updated_at") or ""),
             "totalCost": float(row.get("total_cost") or 0.0),
             "observedTokens": int(row.get("observed_tokens") or 0),
-            "rootSessionId": str(row.get("root_session_id") or ""),
-            "parentSessionId": row.get("parent_session_id"),
-            "workflowType": str(row.get("session_type") or ""),
+            "rootSessionId": str(row.get("root_session_id") or row.get("session_id") or ""),
+            "parentSessionId": row.get("parent_session_id") or None,
+            "workflowType": str(row.get("workflow_type") or row.get("session_type") or ""),
             "isPrimaryLink": bool(row.get("is_primary_link", True)),
-            "isSubthread": bool(row.get("parent_session_id")),
+            "isSubthread": bool(row.get("is_subthread", bool(row.get("parent_session_id")))),
             "threadChildCount": int(row.get("thread_child_count") or 0),
             "reasons": row.get("reasons") if isinstance(row.get("reasons"), list) else [],
             "commands": row.get("commands") if isinstance(row.get("commands"), list) else [],
@@ -1034,9 +1410,15 @@ async def get_feature_sessions_v1(
         feature_slug = feature_id
         if not bypass_cache:
             try:
-                _, feature_slug = await _get_forensics(feature_id, request_context, core_ports, bypass_cache=False)
-            except HTTPException:
-                logger.debug("Feature forensics unavailable for feature sessions slug lookup", exc_info=True)
+                evidence = await _get_evidence_summary_service().get_summary(
+                    app_request.context,
+                    app_request.ports,
+                    feature_id,
+                )
+                if evidence.feature_slug:
+                    feature_slug = evidence.feature_slug
+            except Exception:
+                logger.debug("Feature evidence summary unavailable for feature sessions slug lookup", exc_info=True)
 
         dto = FeatureSessionsDTO(
             feature_id=feature_id,
@@ -1416,16 +1798,38 @@ async def get_feature_linked_session_page_v1(
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
 
         rows = result.data.get("rows") if isinstance(result.data.get("rows"), list) else []
+        mappings = await load_session_mappings(
+            getattr(app_request.ports.storage, "db", None),
+            app_request.context.project.project_id if app_request.context.project else "",
+        )
+        link_metadata_by_session_id = await _load_feature_session_link_metadata(
+            app_request.ports.storage,
+            resolved_feature_id,
+        )
+        parent_logs_cache: dict[str, list[dict[str, Any]]] = {}
+        enriched_rows: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            enriched_rows.append(
+                await _enrich_linked_session_row(
+                    row,
+                    app_request=app_request,
+                    mappings=mappings,
+                    link_metadata_by_session_id=link_metadata_by_session_id,
+                    parent_logs_cache=parent_logs_cache,
+                )
+            )
         dto = LinkedFeatureSessionPageDTO(
-            items=[_session_row_to_linked_dto(row) for row in rows if isinstance(row, dict)],
+            items=[_session_row_to_linked_dto(row) for row in enriched_rows],
             total=int(result.data.get("total") or 0),
             offset=int(result.data.get("offset") or effective_offset),
             limit=int(result.data.get("limit") or effective_limit),
             has_more=bool(result.data.get("has_more")),
             enrichment=LinkedSessionEnrichmentDTO(
-                includes=[],
-                logs_read=False,
-                command_count_included=False,
+                includes=["titles", "commands", "workflow"],
+                logs_read=True,
+                command_count_included=True,
                 task_refs_included=False,
                 thread_children_included=False,
             ),

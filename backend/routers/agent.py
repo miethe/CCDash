@@ -10,6 +10,8 @@ from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.agent_queries import (
     AARReportDTO,
+    FeatureEvidenceSummary,
+    FeatureEvidenceSummaryService,
     FeatureForensicsDTO,
     FeatureForensicsQueryService,
     FeaturePlanningContextDTO,
@@ -60,6 +62,7 @@ def _require_next_run_preview_enabled() -> None:
 
 project_status_query_service = ProjectStatusQueryService()
 feature_forensics_query_service = FeatureForensicsQueryService()
+feature_evidence_summary_service = FeatureEvidenceSummaryService()
 workflow_diagnostics_query_service = WorkflowDiagnosticsQueryService()
 reporting_query_service = ReportingQueryService()
 # PCP-202: planning query surface — one singleton for the whole process lifetime.
@@ -123,6 +126,24 @@ async def get_feature_forensics(
         feature_id,
         bypass_cache=bypass_cache,
     )
+
+
+@agent_router.get("/feature-evidence-summary/{feature_id}", response_model=FeatureEvidenceSummary)
+async def get_feature_evidence_summary(
+    feature_id: str = Path(..., description="Feature id to summarise."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> FeatureEvidenceSummary:
+    """Return a bounded evidence summary for a feature without transcript enrichment."""
+    app_request = await _resolve_app_request(request_context, core_ports)
+    result = await feature_evidence_summary_service.get_summary(
+        app_request.context,
+        app_request.ports,
+        feature_id,
+    )
+    if result.status == "error":
+        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
+    return result
 
 
 @agent_router.get("/workflow-diagnostics", response_model=WorkflowDiagnosticsDTO)

@@ -2,10 +2,10 @@
 schema_version: 2
 doc_type: implementation_plan
 title: "CCDash Claude Code Skill — Implementation Plan"
-description: "Phased delivery of the ccdash Claude Code skill with a progressive-disclosure structure and an explicit update protocol for future CLI growth."
+description: "Phased delivery of the ccdash Claude Code skill with a progressive-disclosure structure and an explicit update protocol for future CLI, MCP, and deployment-runbook growth."
 status: draft
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-05-06
 feature_slug: ccdash-skill
 priority: medium
 risk_level: low
@@ -15,6 +15,9 @@ plan_ref: null
 related_documents:
   - docs/project_plans/ccdash-cli-mcp-enablement-plan.md
   - packages/ccdash_cli/README.md
+  - docs/project_plans/design-specs/container-project-onboarding-and-watchers-v1.md
+  - docs/guides/containerized-deployment-quickstart.md
+  - deploy/runtime/README.md
 ---
 
 # CCDash Claude Code Skill — Implementation Plan
@@ -29,7 +32,7 @@ Target location: the repo's `.claude/skills/ccdash/` for project-scoped iteratio
 
 ```text
 ccdash/
-  SKILL.md                      # ≤150 lines: trigger description, routing table, when-not-to-use, pointers
+  SKILL.md                      # Trigger description, routing table, when-not-to-use, pointers
   references/
     cli-overview.md             # Full command tree snapshot + global flags + target/auth resolution
     command-status.md           # status project — flags, examples, JSON shape notes
@@ -42,6 +45,7 @@ ccdash/
     install-setup.md            # pipx install, from-repo fallback, verify steps
     output-modes.md             # human vs json vs markdown decision rules
     provenance.md               # IDs, timestamps, freshness fields to echo into agent context
+    container-project-onboarding.md  # projects.json, watcher overlays, mount/path rules
   recipes/
     project-triage.md           # status project → risky feature → feature show → sessions
     feature-retrospective.md    # feature show → sessions → AAR report
@@ -49,6 +53,7 @@ ccdash/
     session-cluster-investigation.md  # session show → family → drilldown each sibling
     unreachable-server.md       # error → doctor → interpret → remediation branch
     target-onboarding.md        # fresh operator → install → target add → login → doctor
+    container-project-onboarding.md  # host-side registry prep → watcher env overlay → validation
   scripts/
     preflight.sh                # optional: ccdash --version check + minimal doctor probe
     router-table.json           # machine-readable intent → command mapping (single source of truth for SKILL.md routing table)
@@ -57,10 +62,11 @@ ccdash/
 
 Design rules:
 
-- `SKILL.md` stays tight; all depth is in `references/` and `recipes/`.
+- `SKILL.md` stays focused on routing and guardrails; all depth is in `references/` and `recipes/`.
 - `scripts/router-table.json` is the **single source of truth** for intent routing. `SKILL.md` renders a summary table from it by convention, but the skill loads `router-table.json` when disambiguation is needed.
 - Reference files mirror CLI command groups 1:1. Adding a group = adding a file.
 - Recipes capture *multi-step* flows; single-command invocations stay in reference files only.
+- Deployment recipes may route to repo-shipped helper scripts and runbooks when no CLI/MCP command exists. They must state operational boundaries explicitly.
 
 ## Phased Delivery
 
@@ -72,7 +78,7 @@ Tasks:
 
 | ID | Task | Acceptance |
 |---|---|---|
-| P1-01 | Author `SKILL.md` with trigger description, when-not-to-use, pointer to `references/` and `recipes/` | Under 150 lines; passes `skill-creator` validation |
+| P1-01 | Author `SKILL.md` with trigger description, when-not-to-use, pointer to `references/` and `recipes/` | Focused on routing and guardrails; passes `skill-creator` validation |
 | P1-02 | Author `references/cli-overview.md` (command tree + global flags + target/auth resolution) | Matches `ccdash --help` output as of 2026-04-13; links to upstream README |
 | P1-03 | Author `references/install-setup.md` | Covers pipx, pip, repo-local install; includes `ccdash --version` / `target show` / `doctor` verification steps |
 | P1-04 | Author `references/command-status.md` and `references/command-doctor.md` | Each includes flag table, example human + json output, and JSON field glossary |
@@ -144,6 +150,25 @@ Exit criteria:
 - Skill works in environments with and without MCP available (feature-detected).
 - Recipes remain CLI-backed by default; MCP is an optimization, not a dependency.
 
+### Phase 5 — Container Project Onboarding And Watcher Binding
+
+**Goal**: Agents can prepare deployment inputs for container projects and live watchers without implying CCDash can remotely orchestrate watcher containers.
+
+Tasks:
+
+| ID | Task | Acceptance |
+|---|---|---|
+| P5-01 | Add `references/container-project-onboarding.md` | Covers `projects.json`, container-visible paths, watcher env keys, mount variables, and validation probes |
+| P5-02 | Add `recipes/container-project-onboarding.md` | Deterministic flow using `backend/scripts/container_project_onboarding.py`, watcher env overlays, and compose validation |
+| P5-03 | Extend `SKILL.md` trigger/routing/do-not-say guidance | Explicitly separates registry creation, project selection, and watcher binding |
+| P5-04 | Extend `scripts/router-table.json` with container onboarding intent | Routes project onboarding / watcher env / healthy-empty-stack requests to the new recipe |
+
+Exit criteria:
+
+- Skill points agents to host-side `projects.json` preparation before watcher startup.
+- Skill states `worker-watch` is one project per process in v1 and binds at startup through `CCDASH_WORKER_WATCH_PROJECT_ID`.
+- Skill does not imply UI project switching, CLI `--project`, or target defaults can rebind running watcher containers.
+
 ## Update Protocol — How to Extend the Skill
 
 Pointer for future agents editing this skill. **When a new `ccdash` subcommand ships:**
@@ -155,6 +180,13 @@ Pointer for future agents editing this skill. **When a new `ccdash` subcommand s
 5. If the new command enables a new multi-step flow worth naming, add a new `recipes/<flow>.md`. If it only augments an existing flow, update that recipe in place.
 6. Append a dated one-liner to `CHANGELOG.md`.
 7. **Do not edit `SKILL.md` unless trigger scope or when-not-to-use guidance changes.** The routing summary in SKILL.md should be regenerable from `router-table.json`.
+
+**When a deployment helper or runtime runbook changes:**
+
+1. Update the owning reference file under `references/`.
+2. If the flow spans registry files, env overlays, compose commands, and probes, update or add a recipe under `recipes/`.
+3. Add or update a router-table row only when agents need to recognize a new natural-language intent.
+4. Preserve operational boundaries. A helper that writes deployment inputs is not a remote orchestration surface.
 
 **When a CLI subcommand is removed or renamed:**
 
@@ -171,7 +203,7 @@ Pointer for future agents editing this skill. **When a new `ccdash` subcommand s
 
 | Risk | Mitigation |
 |---|---|
-| `SKILL.md` bloats as CLI grows | Update protocol forbids SKILL.md edits for routine command additions. |
+| `SKILL.md` bloats as CLI grows | Update protocol forbids SKILL.md edits for routine command additions and keeps detail in references/recipes. |
 | Router table drifts from reference files | Add a lightweight check in `scripts/preflight.sh` or a separate lint script that diffs router-table command names against reference-file filenames. |
 | Agent ignores recipes and single-shots commands | Recipes are referenced from router-table entries under `recipe:` so router steers toward them for known multi-step intents. |
 | Install-from-repo path rots as packages move | `install-setup.md` pins the canonical path (`packages/ccdash_cli/`, `packages/ccdash_contracts/`) and references the upstream CLI README as ground truth. |
