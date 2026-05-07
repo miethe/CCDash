@@ -18,6 +18,9 @@ from backend.application.services.agent_queries import (
     FeatureForensicsDTO,
     FeatureForensicsQueryService,
 )
+from backend.application.services.agent_queries.feature_evidence_summary import (
+    FeatureEvidenceSummaryService,
+)
 from backend.application.services.agent_queries.models import SessionRef
 from backend.application.services.feature_surface import (
     FeatureSurfaceListRollupService,
@@ -63,6 +66,15 @@ logger = logging.getLogger("ccdash.client_v1.features")
 _feature_forensics_query_service = FeatureForensicsQueryService()
 _feature_surface_list_rollup_service = FeatureSurfaceListRollupService()
 _feature_modal_detail_service = FeatureModalDetailService()
+
+
+def _get_evidence_summary_service() -> FeatureEvidenceSummaryService:
+    """Lazy factory for FeatureEvidenceSummaryService.
+
+    Returns a fresh instance on each call so that tests can patch
+    ``FeatureEvidenceSummaryService`` without fighting a module-level singleton.
+    """
+    return FeatureEvidenceSummaryService()
 
 _MAX_LIMIT = 200
 _SUPPORTED_LIST_VIEWS = {"summary", "cards"}
@@ -1034,9 +1046,15 @@ async def get_feature_sessions_v1(
         feature_slug = feature_id
         if not bypass_cache:
             try:
-                _, feature_slug = await _get_forensics(feature_id, request_context, core_ports, bypass_cache=False)
-            except HTTPException:
-                logger.debug("Feature forensics unavailable for feature sessions slug lookup", exc_info=True)
+                evidence = await _get_evidence_summary_service().get_summary(
+                    app_request.context,
+                    app_request.ports,
+                    feature_id,
+                )
+                if evidence.feature_slug:
+                    feature_slug = evidence.feature_slug
+            except Exception:
+                logger.debug("Feature evidence summary unavailable for feature sessions slug lookup", exc_info=True)
 
         dto = FeatureSessionsDTO(
             feature_id=feature_id,
