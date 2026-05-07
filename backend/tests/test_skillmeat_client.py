@@ -1,9 +1,41 @@
 import unittest
 from io import BytesIO
-from unittest.mock import MagicMock, patch
-from urllib.error import HTTPError
+from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.error import HTTPError, URLError
 
+from backend.models import SKILLMEAT_ARTIFACT_SNAPSHOT_SCHEMA_VERSION
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
+
+
+def _snapshot_payload() -> dict[str, object]:
+    return {
+        "schemaVersion": SKILLMEAT_ARTIFACT_SNAPSHOT_SCHEMA_VERSION,
+        "generatedAt": "2026-05-06T00:00:00Z",
+        "projectId": "sm-project",
+        "collectionId": "default",
+        "artifacts": [
+            {
+                "definitionType": "skill",
+                "externalId": "skill:frontend-design",
+                "artifactUuid": "artifact-uuid",
+                "displayName": "frontend-design",
+                "versionId": "version-id",
+                "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "collectionIds": ["default"],
+                "deploymentProfileIds": ["claude-code"],
+                "defaultLoadMode": "always",
+                "workflowRefs": ["workflow-1"],
+                "tags": ["frontend"],
+                "status": "active",
+            }
+        ],
+        "freshness": {
+            "snapshotSource": "skillmeat",
+            "sourceGeneratedAt": "2026-05-06T00:00:00Z",
+            "fetchedAt": "2026-05-06T00:00:01Z",
+            "warnings": [],
+        },
+    }
 
 
 class SkillMeatClientTests(unittest.IsolatedAsyncioTestCase):
@@ -54,6 +86,116 @@ class SkillMeatClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(items[0]["external_id"], "cm_123")
         self.assertIn("ctx:planning", items[0]["resolution_metadata"]["aliases"])
+
+    async def test_fetch_project_artifact_snapshot_returns_valid_snapshot(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+
+        with (
+            patch(
+                "backend.services.integrations.skillmeat_client.agentic_intelligence_flags.artifact_intelligence_enabled",
+                return_value=True,
+            ),
+            patch.object(SkillMeatClient, "_request_json", return_value=_snapshot_payload()) as request_mock,
+        ):
+            snapshot = await client.fetch_project_artifact_snapshot("sm-project", "default")
+
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot.project_id, "sm-project")
+        self.assertEqual(snapshot.collection_id, "default")
+        self.assertEqual(snapshot.artifacts[0].external_id, "skill:frontend-design")
+        request_mock.assert_called_once_with(
+            "/api/v1/projects/sm-project/artifact-snapshot",
+            {"collection_id": "default"},
+        )
+
+    async def test_fetch_project_artifact_snapshot_returns_none_when_flag_disabled(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+
+        with (
+            patch(
+                "backend.services.integrations.skillmeat_client.agentic_intelligence_flags.artifact_intelligence_enabled",
+                return_value=False,
+            ),
+            patch(
+                "backend.services.integrations.skillmeat_client.agentic_intelligence_flags.report_artifact_intelligence_disabled",
+                return_value={"enabled": False, "reason": "artifact intelligence disabled", "context": "unit-test"},
+            ) as disabled_mock,
+            patch.object(SkillMeatClient, "_request_json") as request_mock,
+        ):
+            snapshot = await client.fetch_project_artifact_snapshot("sm-project", "default")
+
+        self.assertIsNone(snapshot)
+        request_mock.assert_not_called()
+        disabled_mock.assert_called_once_with("skillmeat.project_artifact_snapshot.fetch")
+
+    async def test_fetch_project_artifact_snapshot_returns_none_on_404(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+
+        with (
+            patch(
+                "backend.services.integrations.skillmeat_client.agentic_intelligence_flags.artifact_intelligence_enabled",
+                return_value=True,
+            ),
+            patch.object(
+                SkillMeatClient,
+                "_request_json",
+                side_effect=SkillMeatClientError("missing", status_code=404, detail="Project not found"),
+            ) as request_mock,
+            self.assertLogs("ccdash.skillmeat_client", level="INFO") as logs,
+        ):
+            snapshot = await client.fetch_project_artifact_snapshot("missing-project", "default")
+
+        self.assertIsNone(snapshot)
+        request_mock.assert_called_once()
+        self.assertIn("snapshot not found", "\n".join(logs.output))
+
+    async def test_fetch_project_artifact_snapshot_retries_429_with_backoff(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+        rate_limit = SkillMeatClientError("rate limited", status_code=429, detail="Too many requests")
+
+        with (
+            patch(
+                "backend.services.integrations.skillmeat_client.agentic_intelligence_flags.artifact_intelligence_enabled",
+                return_value=True,
+            ),
+            patch.object(
+                SkillMeatClient,
+                "_request_json",
+                side_effect=[rate_limit, rate_limit, _snapshot_payload()],
+            ) as request_mock,
+            patch("backend.services.integrations.skillmeat_client.asyncio.sleep", new=AsyncMock()) as sleep_mock,
+        ):
+            snapshot = await client.fetch_project_artifact_snapshot("sm-project", "default")
+
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(request_mock.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep_mock.await_args_list], [0.25, 0.5])
+
+    async def test_fetch_project_artifact_snapshot_network_error_raises_client_error(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+
+        with patch(
+            "backend.services.integrations.skillmeat_client.agentic_intelligence_flags.artifact_intelligence_enabled",
+            return_value=True,
+        ), patch(
+            "backend.services.integrations.skillmeat_client.request.urlopen",
+            side_effect=URLError("connection refused"),
+        ):
+            with self.assertRaises(SkillMeatClientError) as ctx:
+                await client.fetch_project_artifact_snapshot("sm-project", "default")
+
+        self.assertIsNone(ctx.exception.status_code)
+        self.assertIn("connection refused", ctx.exception.detail)
+
+    async def test_existing_list_artifacts_rate_limit_behavior_is_unchanged(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+        rate_limit = SkillMeatClientError("rate limited", status_code=429, detail="Too many requests")
+
+        with patch.object(SkillMeatClient, "_request_json", side_effect=rate_limit) as request_mock:
+            with self.assertRaises(SkillMeatClientError):
+                await client.list_artifacts(collection_id="default")
+
+        request_mock.assert_called_once()
 
     async def test_preview_context_pack_posts_project_scoped_request(self) -> None:
         client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)

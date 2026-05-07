@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 from urllib import error, parse, request
 
+from pydantic import ValidationError
+
+from backend.models import SkillMeatArtifactSnapshot
+from backend.services import agentic_intelligence_flags
 from backend.services.integrations.skillmeat_trust import SkillMeatTrustMetadata
 
 
@@ -17,6 +22,10 @@ _BUNDLE_PAGE_LIMIT = 100
 _WORKFLOW_EXECUTION_PAGE_LIMIT = 25
 _MAX_CURSOR_PAGES = 25
 _MAX_OFFSET_PAGES = 25
+_SNAPSHOT_RATE_LIMIT_MAX_RETRIES = 3
+_SNAPSHOT_RATE_LIMIT_INITIAL_BACKOFF_SECONDS = 0.25
+
+logger = logging.getLogger("ccdash.skillmeat_client")
 
 
 class SkillMeatClientError(RuntimeError):
@@ -78,6 +87,82 @@ class SkillMeatClient:
         if isinstance(payload, dict):
             return payload
         return {}
+
+    async def fetch_project_artifact_snapshot(
+        self,
+        project_id: str,
+        collection_id: str,
+    ) -> SkillMeatArtifactSnapshot | None:
+        if not agentic_intelligence_flags.artifact_intelligence_enabled():
+            disabled_status = agentic_intelligence_flags.report_artifact_intelligence_disabled(
+                "skillmeat.project_artifact_snapshot.fetch"
+            )
+            logger.info(
+                "SkillMeat artifact snapshot fetch skipped: %s",
+                disabled_status,
+            )
+            return None
+
+        encoded_project_id = parse.quote(str(project_id or "").strip(), safe="")
+        if not encoded_project_id:
+            raise SkillMeatClientError(
+                "SkillMeat project ID is required to fetch an artifact snapshot",
+                endpoint="/api/v1/projects/{project_id}/artifact-snapshot",
+                detail="project_id is required",
+            )
+
+        endpoint = f"/api/v1/projects/{encoded_project_id}/artifact-snapshot"
+        query = {"collection_id": str(collection_id or "").strip()}
+        last_rate_limit_error: SkillMeatClientError | None = None
+
+        for attempt in range(_SNAPSHOT_RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                payload = await asyncio.to_thread(self._request_json, endpoint, query)
+                if not isinstance(payload, dict):
+                    raise SkillMeatClientError(
+                        f"{endpoint} returned an invalid artifact snapshot payload",
+                        endpoint=endpoint,
+                        detail="artifact snapshot payload must be a JSON object",
+                        payload=payload,
+                    )
+                return SkillMeatArtifactSnapshot.model_validate(payload)
+            except SkillMeatClientError as exc:
+                if exc.status_code == 404:
+                    logger.info(
+                        "SkillMeat artifact snapshot not found for project_id=%s collection_id=%s",
+                        project_id,
+                        collection_id,
+                    )
+                    return None
+                if exc.status_code != 429:
+                    raise
+                last_rate_limit_error = exc
+                if attempt >= _SNAPSHOT_RATE_LIMIT_MAX_RETRIES:
+                    logger.warning(
+                        "SkillMeat artifact snapshot fetch exhausted rate-limit retries for project_id=%s collection_id=%s",
+                        project_id,
+                        collection_id,
+                    )
+                    raise
+                delay = _SNAPSHOT_RATE_LIMIT_INITIAL_BACKOFF_SECONDS * (2**attempt)
+                logger.warning(
+                    "SkillMeat artifact snapshot fetch rate limited; retrying project_id=%s collection_id=%s attempt=%s delay_seconds=%.2f",
+                    project_id,
+                    collection_id,
+                    attempt + 1,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            except ValidationError as exc:
+                raise SkillMeatClientError(
+                    f"{endpoint} returned an invalid artifact snapshot",
+                    endpoint=endpoint,
+                    detail=str(exc),
+                ) from exc
+
+        if last_rate_limit_error is not None:
+            raise last_rate_limit_error
+        return None
 
     async def list_artifacts(self, *, collection_id: str = "") -> list[dict[str, Any]]:
         query: dict[str, Any] = {"limit": _ARTIFACT_PAGE_LIMIT}
