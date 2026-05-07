@@ -77,7 +77,7 @@ import { RecommendedStackCard } from './execution/RecommendedStackCard';
 import { RecommendedStackPreviewCard } from './execution/RecommendedStackPreviewCard';
 import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
 import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
-import { WorkflowEffectivenessSurface } from './execution/WorkflowEffectivenessSurface';
+import { WorkflowEffectivenessSurface } from './Workflows/WorkflowEffectivenessSurface';
 import { SessionIntelligencePanel } from './session-intelligence/SessionIntelligencePanel';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { resolveDisplayCost } from '../lib/sessionSemantics';
