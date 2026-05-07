@@ -1,8 +1,12 @@
 /**
  * P4-004: Feature Modal Sessions Pagination UI
  *
- * Verifies the load-more sessions pagination UI added to ProjectBoard's
- * Sessions tab in P4-004.
+ * Verifies the load-more sessions pagination UI. After the P4 boundary
+ * extraction refactor:
+ *   - Load-more button and partial-tree indicator live in
+ *     components/FeatureModal/SessionsTab.tsx
+ *   - Accumulator merge effect and tab-label expression remain in
+ *     ProjectBoard.tsx (ProjectBoardFeatureModal)
  *
  * Testing strategy (no @testing-library/react):
  *   1. Source-level proofs — assert production source contains the load-more
@@ -20,36 +24,46 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-// ── Source file under test ────────────────────────────────────────────────────
+// ── Source files under test ───────────────────────────────────────────────────
+// Load-more UI and partial-tree indicator were extracted to SessionsTab.tsx
+// during the P4 planning/forensics boundary refactor.
+const SESSIONS_TAB_PATH = path.resolve(
+  __dirname,
+  '../FeatureModal/SessionsTab.tsx',
+);
+const SESSIONS_TAB_SOURCE = fs.readFileSync(SESSIONS_TAB_PATH, 'utf-8');
+
+// Accumulator merge effect and tab-label expression remain in ProjectBoard.tsx.
 const SOURCE_PATH = path.resolve(__dirname, '../ProjectBoard.tsx');
 const SOURCE = fs.readFileSync(SOURCE_PATH, 'utf-8');
 
 // ── Source extraction helpers ─────────────────────────────────────────────────
 
 /**
- * Returns the P4-004 load-more UI block from the Sessions tab.
- * Anchored on the P4-004 comment marker injected during implementation.
+ * Returns the load-more UI block from SessionsTab.tsx.
+ * Anchored on the section comment that wraps the pagination control.
  */
 function getLoadMoreBlock(): string {
-  const marker = '/* P4-004: Load-more pagination control */';
-  const idx = SOURCE.indexOf(marker);
+  const marker = '{/* ── Load-more pagination control';
+  const idx = SESSIONS_TAB_SOURCE.indexOf(marker);
   if (idx === -1) return '';
   // Capture roughly 2000 chars after the marker — enough for the full button block.
-  return SOURCE.slice(idx, idx + 2000);
+  return SESSIONS_TAB_SOURCE.slice(idx, idx + 2000);
 }
 
 /**
- * Returns the partial-tree indicator block inside coreSessionGroups.map.
+ * Returns the partial-tree indicator block inside coreSessionGroups.map
+ * from SessionsTab.tsx.
  */
 function getPartialTreeBlock(): string {
-  const marker = '{/* P4-004: partial-tree indicator when more pages are available */}';
-  const idx = SOURCE.indexOf(marker);
+  const marker = '{/* Partial-tree indicator when more pages are available */}';
+  const idx = SESSIONS_TAB_SOURCE.indexOf(marker);
   if (idx === -1) return '';
-  return SOURCE.slice(idx, idx + 400);
+  return SESSIONS_TAB_SOURCE.slice(idx, idx + 400);
 }
 
 /**
- * Returns the sessions tab-label expression.
+ * Returns the sessions tab-label expression from ProjectBoard.tsx.
  */
 function getTabLabelBlock(): string {
   const marker = '// P4-004: prefer server-reported total';
@@ -59,7 +73,7 @@ function getTabLabelBlock(): string {
 }
 
 /**
- * Returns the P4-004 accumulator merge effect block.
+ * Returns the P4-004 accumulator merge effect block from ProjectBoard.tsx.
  */
 function getAccumulatorEffectBlock(): string {
   const marker = '// P4-004: Adapt LinkedFeatureSessionDTO items from the paginated accumulator';
@@ -117,8 +131,14 @@ describe('P4-004 — Source-level: partial-tree indicator in session groups', ()
   });
 
   it('partial-tree indicator checks sessionPagination.hasMore', () => {
+    // After extraction, SessionsTab.tsx destructures hasMore from sessionPagination
+    // at the top of the render scope, so the indicator block references {hasMore && ...}.
+    // We verify the invariant in two steps:
+    //   1. The file destructures hasMore from sessionPagination.
+    //   2. The indicator block is gated on hasMore.
+    expect(SESSIONS_TAB_SOURCE).toContain('hasMore, isLoadingMore, serverTotal } = sessionPagination');
     const block = getPartialTreeBlock();
-    expect(block).toContain('sessionPagination.hasMore');
+    expect(block).toContain('{hasMore && (');
   });
 
   it('partial-tree indicator explains more sessions may appear in group', () => {
