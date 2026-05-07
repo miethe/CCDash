@@ -3,6 +3,36 @@ import pytest
 from backend.models import ArtifactUsageRollup
 from backend.services.telemetry_transformer import AnonymizationVerifier, PrivacyViolationError
 
+PROHIBITED_FIELDS = [
+    "raw_prompt",
+    "prompt_text",
+    "transcript_text",
+    "message_content",
+    "source_code",
+    "code_snippet",
+    "absolute_path",
+    "file_path",
+    "unhashed_username",
+    "user_email",
+    "api_key",
+    "token",
+    "secret",
+]
+
+PROHIBITED_FIELD_ALIASES = [
+    "rawPrompt",
+    "promptText",
+    "transcriptText",
+    "messageContent",
+    "sourceCode",
+    "codeSnippet",
+    "absolutePath",
+    "filePath",
+    "unhashedUsername",
+    "userEmail",
+    "apiKey",
+]
+
 
 def _clean_rollup() -> ArtifactUsageRollup:
     return ArtifactUsageRollup.model_validate(
@@ -40,7 +70,7 @@ def test_clean_rollup_passes_allowlist_verification() -> None:
 
 @pytest.mark.parametrize(
     "field_name",
-    ["rawPrompt", "transcriptText", "code", "absolutePath", "unhashedUsername"],
+    PROHIBITED_FIELDS + PROHIBITED_FIELD_ALIASES,
 )
 def test_prohibited_mock_fields_raise_privacy_violation(field_name: str) -> None:
     payload = _clean_rollup().rollup_dict()
@@ -50,9 +80,24 @@ def test_prohibited_mock_fields_raise_privacy_violation(field_name: str) -> None
         AnonymizationVerifier.verify_rollup_payload(payload)
 
 
-def test_absolute_paths_in_allowed_fields_raise_privacy_violation() -> None:
+@pytest.mark.parametrize(
+    "field_path,value",
+    [
+        (("recommendations", 0, "nextAction"), "/Users/miethe/private/raw-session.jsonl"),
+        (("recommendations", 0, "nextAction"), "C:\\Users\\miethe\\private\\raw-session.jsonl"),
+        (("recommendations", 0, "nextAction"), "operator@example.com"),
+        (("recommendations", 0, "nextAction"), "```python\ndef leak():\n    return secret\n```"),
+    ],
+)
+def test_sensitive_values_in_allowed_fields_raise_privacy_violation(
+    field_path: tuple[str, int, str],
+    value: str,
+) -> None:
     payload = _clean_rollup().rollup_dict()
-    payload["recommendations"][0]["nextAction"] = "/Users/miethe/private/raw-session.jsonl"
+    target = payload
+    for segment in field_path[:-1]:
+        target = target[segment]
+    target[field_path[-1]] = value
 
     with pytest.raises(PrivacyViolationError):
         AnonymizationVerifier.verify_rollup_payload(payload)

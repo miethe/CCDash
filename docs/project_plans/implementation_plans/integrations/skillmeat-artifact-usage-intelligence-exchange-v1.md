@@ -1,9 +1,9 @@
 ---
-schema_version: 3
+schema_version: 2
 doc_type: implementation_plan
 title: "Implementation Plan: SkillMeat Artifact Usage Intelligence Exchange V1"
 description: "Phased plan for snapshot exchange, artifact rankings, optimization recommendations, and project/user/collection rollup export between CCDash and SkillMeat."
-status: draft
+status: completed
 created: 2026-05-07
 updated: 2026-05-07
 feature_slug: skillmeat-artifact-usage-intelligence-exchange-v1
@@ -35,10 +35,13 @@ references:
     - docs/project_plans/PRDs/integrations/skillmeat-artifact-usage-intelligence-exchange-v1.md
 spike_ref: null
 adr_refs: []
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+  - docs/project_plans/design-specs/skillmeat-per-user-rollup-local-mode.md
+  - docs/project_plans/design-specs/skillmeat-recommendation-training-signals.md
+  - docs/project_plans/design-specs/skillmeat-collection-rankings-non-deployed.md
 findings_doc_ref: null
 charter_ref: null
-changelog_ref: null
+changelog_ref: CHANGELOG.md
 changelog_required: true
 test_plan_ref: null
 plan_structure: independent
@@ -50,25 +53,123 @@ risk_level: high
 category: integrations
 tags: [implementation, integrations, skillmeat, artifacts, rankings, recommendations, rollup, export]
 milestone: null
-commit_refs: []
+commit_refs:
+  - 10c6f70
+  - 7a32e0e
+  - 53d990b
+  - c564a7e
+  - e09530d
+  - bfebfd4
+  - 60483bd
+  - c08d1e2
+  - 8b96c7f
+  - 2a8e72c
+  - 97ca544
+  - 408ab06
+  - 003dff9
+  - 170e31f
+  - 958e1b2
+  - 2ee6dbf
 pr_refs: []
 files_affected:
+  - .claude/progress/skillmeat-artifact-usage-intelligence-exchange-v1/phase-1-progress.md
+  - .claude/progress/skillmeat-artifact-usage-intelligence-exchange-v1/phase-2-progress.md
+  - .claude/progress/skillmeat-artifact-usage-intelligence-exchange-v1/phase-3-progress.md
+  - .claude/progress/skillmeat-artifact-usage-intelligence-exchange-v1/phase-4-progress.md
+  - .claude/progress/skillmeat-artifact-usage-intelligence-exchange-v1/phase-5-progress.md
+  - .claude/progress/skillmeat-artifact-usage-intelligence-exchange-v1/phase-6-progress.md
+  - .claude/worknotes/skillmeat-artifact-usage-intelligence-exchange-v1/feature-guide.md
+  - .env.example
+  - CHANGELOG.md
+  - CLAUDE.md
+  - backend/adapters/jobs/__init__.py
+  - backend/adapters/jobs/artifact_rollup_export_job.py
+  - backend/adapters/jobs/runtime.py
+  - backend/adapters/storage/base.py
+  - backend/adapters/storage/enterprise.py
+  - backend/adapters/storage/local.py
+  - backend/application/ports/core.py
+  - backend/application/services/agent_queries/__init__.py
+  - backend/application/services/agent_queries/artifact_intelligence.py
+  - backend/application/services/agent_queries/models.py
+  - backend/cli/commands/artifact.py
+  - backend/cli/main.py
+  - backend/config.py
+  - backend/data_domain_layout.py
+  - backend/data_domains.py
+  - backend/db/factory.py
+  - backend/db/postgres_migrations.py
+  - backend/db/repositories/__init__.py
   - backend/services/integrations/skillmeat_client.py
   - backend/services/integrations/telemetry_exporter.py
   - backend/services/artifact_ranking_service.py
   - backend/services/artifact_recommendation_service.py
   - backend/services/identity_resolver.py
   - backend/db/repositories/artifact_snapshot_repository.py
+  - backend/db/repositories/base.py
   - backend/db/repositories/artifact_ranking_repository.py
+  - backend/db/repositories/postgres/artifact_snapshot_repository.py
+  - backend/db/repositories/postgres/artifact_ranking_repository.py
+  - backend/db/sqlite_migrations.py
+  - backend/mcp/tools/__init__.py
+  - backend/mcp/tools/artifacts.py
+  - backend/models.py
   - backend/routers/analytics.py
   - backend/routers/agent.py
-  - backend/mcp/server.py
-  - backend/cli/commands.py
-  - backend/models.py
+  - backend/runtime/container.py
+  - backend/services/agentic_intelligence_flags.py
+  - backend/services/rollup_payload_builder.py
+  - backend/services/telemetry_transformer.py
+  - backend/tests/test_agent_queries_artifact_intelligence.py
+  - backend/tests/test_agent_router.py
+  - backend/tests/test_analytics_router.py
+  - backend/tests/test_artifact_intelligence_feature_flag.py
+  - backend/tests/test_artifact_intelligence_phase6_contracts.py
+  - backend/tests/test_artifact_intelligence_privacy_audit.py
+  - backend/tests/test_artifact_intelligence_schemas.py
+  - backend/tests/test_artifact_ranking_calibration.py
+  - backend/tests/test_artifact_ranking_repository.py
+  - backend/tests/test_artifact_ranking_service.py
+  - backend/tests/test_artifact_recommendation_service.py
+  - backend/tests/test_artifact_rollup_exporter.py
+  - backend/tests/test_artifact_snapshot_repository.py
+  - backend/tests/test_ccdash_artifact_usage_rollup_contract.py
+  - backend/tests/test_cli_commands.py
+  - backend/tests/test_identity_resolver.py
+  - backend/tests/test_mcp_server.py
+  - backend/tests/test_migration_governance.py
+  - backend/tests/test_rollup_payload_builder.py
+  - backend/tests/test_rollup_privacy.py
+  - backend/tests/test_skillmeat_artifact_snapshot_contract.py
+  - backend/tests/test_skillmeat_client.py
+  - backend/tests/test_skillmeat_rollup_contract.py
+  - backend/tests/test_snapshot_ingestion.py
+  - backend/tests/test_sqlite_migrations.py
+  - backend/tests/test_storage_adapter_composition.py
   - types.ts
   - components/Analytics/AnalyticsDashboard.tsx
-  - components/execution/WorkflowEffectivenessSurface.tsx
+  - components/Analytics/ArtifactRankingsView.tsx
+  - components/FeatureExecutionWorkbench.tsx
   - components/Settings.tsx
+  - components/Workflows/WorkflowEffectivenessSurface.tsx
+  - components/__tests__/ArtifactRankingsView.test.tsx
+  - components/__tests__/ExecutionWorkbenchRecommendations.test.ts
+  - components/execution/ArtifactContributionPanel.tsx
+  - components/execution/ExecutionWorkbenchRecommendations.tsx
+  - docs/guides/artifact-intelligence-calibration-report-v1.md
+  - docs/guides/artifact-intelligence-operator-guide.md
+  - docs/guides/artifact-intelligence-privacy-audit.md
+  - docs/project_plans/design-specs/skillmeat-collection-rankings-non-deployed.md
+  - docs/project_plans/design-specs/skillmeat-per-user-rollup-local-mode.md
+  - docs/project_plans/design-specs/skillmeat-recommendation-training-signals.md
+  - docs/schemas/integrations/ccdash-artifact-usage-rollup-v1.sample.json
+  - docs/schemas/integrations/ccdash-artifact-usage-rollup-v1.schema.json
+  - docs/schemas/integrations/skillmeat-artifact-snapshot-v1.sample.json
+  - docs/schemas/integrations/skillmeat-artifact-snapshot-v1.schema.json
+  - services/__tests__/apiClient.test.ts
+  - services/__tests__/artifactIntelligenceTypes.test.ts
+  - services/analytics.ts
+  - services/apiClient.ts
 ---
 
 # Implementation Plan: SkillMeat Artifact Usage Intelligence Exchange V1
@@ -216,7 +317,7 @@ These thresholds should be configurable via `CCDASH_SNAPSHOT_FRESHNESS_*` env va
 | DF-002 | design | OQ-4 (PRD): recommendation review outcomes as training signals — requires SkillMeat-side write-back API and review workflow | SkillMeat review-outcome ingestion endpoint available; privacy contract defined | docs/project_plans/design-specs/skillmeat-recommendation-training-signals.md |
 | DF-003 | design | OQ-5 (PRD): collection-level rankings for artifacts not deployed in project — scope and filtering semantics undefined for non-deployed artifacts | Collection ranking scope decision recorded in ADR | docs/project_plans/design-specs/skillmeat-collection-rankings-non-deployed.md |
 
-*Design-spec authoring tasks for DF-001, DF-002, and DF-003 are included in Phase 6 (P6-DOC-006). Paths above are targets; `deferred_items_spec_refs` will be populated during P6 execution.*
+*Design-spec authoring tasks for DF-001, DF-002, and DF-003 were completed during Phase 6 (T6-006). The three paths above are now populated in `deferred_items_spec_refs`.*
 
 ### In-Flight Findings
 

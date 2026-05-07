@@ -14,6 +14,7 @@
 
 ### Added
 
+- **Artifact intelligence surfaces and agent access**: Added Analytics artifact rankings, Execution Workbench artifact optimization recommendations, Settings SkillMeat snapshot health, and agent/operator access through `ccdash artifact` CLI commands and the `artifact_recommendations` MCP tool.
 - **Per-message token usage in session transcript**: Every assistant message in the session inspector now shows a compact token caption (e.g. `1.2K tok · cached 800`) beneath the message body. Hovering or clicking the caption opens a popover with the full per-turn breakdown: input, output, cache read, cache creation, total, and tool-call count. User messages and messages without usage data render no caption.
   - Backend: four new nullable columns on `session_messages` (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`) in both SQLite (schema v26) and PostgreSQL (schema v27) migrations.
   - Parser: the Claude Code JSONL parser already extracts `message.usage` into message metadata; the projection layer now promotes those fields into the dedicated columns on sync.
