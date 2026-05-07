@@ -10,8 +10,8 @@
  * - PlanningTabGroup routes correctly to each tab component
  *
  * Uses renderToStaticMarkup (no DOM) to keep tests fast and dependency-free.
- * Interactive behaviours (filter changes, phase toggles) are tested with
- * @testing-library/react where DOM interaction is required.
+ * Interactive behaviours (filter changes, phase toggles) require DOM and are
+ * left to integration tests (FeatureModalConsumerWiring, FeatureModalLazyTabs).
  */
 
 import React from 'react';
@@ -25,7 +25,12 @@ import { PlanningTabGroup } from '../PlanningTabGroup';
 
 import type { SectionHandle } from '../../../services/useFeatureModalCore';
 import type { FeatureModalPlanningStore } from '../../../services/useFeatureModalPlanning';
-import type { FeaturePhase, LinkedDocument, LinkedFeatureRef } from '../../../types';
+import type {
+  FeaturePhase,
+  LinkedDocument,
+  LinkedFeatureRef,
+  ProjectTask,
+} from '../../../types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,7 +51,9 @@ function makeHandle(overrides: Partial<SectionHandle> = {}): SectionHandle {
   };
 }
 
-function makePlanningStore(overrides: Partial<FeatureModalPlanningStore> = {}): FeatureModalPlanningStore {
+function makePlanningStore(
+  overrides: Partial<FeatureModalPlanningStore> = {},
+): FeatureModalPlanningStore {
   return {
     phases: makeHandle(),
     docs: makeHandle(),
@@ -55,6 +62,25 @@ function makePlanningStore(overrides: Partial<FeatureModalPlanningStore> = {}): 
     markStale: vi.fn(),
     invalidateAll: vi.fn(),
     ...overrides,
+  };
+}
+
+/** Minimal ProjectTask fixture — satisfies the full interface. */
+function makeTask(id: string, title: string, status: ProjectTask['status']): ProjectTask {
+  return {
+    id,
+    title,
+    status,
+    description: '',
+    owner: '',
+    lastAgent: '',
+    cost: 0,
+    priority: 'medium',
+    projectType: 'Feature',
+    projectLevel: 'Full',
+    tags: [],
+    updatedAt: '2026-05-01T00:00:00Z',
+    relatedFiles: [],
   };
 }
 
@@ -78,36 +104,8 @@ const SAMPLE_PHASE: FeaturePhase = {
   completedTasks: 2,
   deferredTasks: 0,
   tasks: [
-    {
-      id: 'T1-001',
-      title: 'Set up CI pipeline',
-      status: 'done',
-      description: '',
-      owner: '',
-      lastAgent: '',
-      cost: 0,
-      projectType: 'Feature',
-      projectLevel: 'Quick',
-      tags: [],
-      updatedAt: '',
-      priority: 'medium',
-      relatedFiles: [],
-    },
-    {
-      id: 'T1-002',
-      title: 'Write integration tests',
-      status: 'backlog',
-      description: '',
-      owner: '',
-      lastAgent: '',
-      cost: 0,
-      projectType: 'Feature',
-      projectLevel: 'Quick',
-      tags: [],
-      updatedAt: '',
-      priority: 'medium',
-      relatedFiles: [],
-    },
+    makeTask('T1-001', 'Set up CI pipeline', 'done'),
+    makeTask('T1-002', 'Write integration tests', 'backlog'),
   ],
 };
 
@@ -151,12 +149,12 @@ describe('PhasesTab', () => {
   });
 
   it('renders error banner with retry affordance', () => {
-    const handle = makeHandle({
-      status: 'error',
-      error: new Error('network timeout'),
-    });
     const html = render(
-      <PhasesTab handle={handle} phases={[]} callbacks={NOOP_CALLBACKS} />,
+      <PhasesTab
+        handle={makeHandle({ status: 'error', error: new Error('network timeout') })}
+        phases={[]}
+        callbacks={NOOP_CALLBACKS}
+      />,
     );
     expect(html).toContain('Failed to load');
     expect(html).toContain('network timeout');
@@ -207,6 +205,23 @@ describe('PhasesTab', () => {
       />,
     );
     expect(html).toContain('Refreshing phases');
+  });
+
+  it('renders deferred badge when phase has deferred tasks', () => {
+    const phaseWithDeferred: FeaturePhase = {
+      ...SAMPLE_PHASE,
+      id: 'p-deferred',
+      deferredTasks: 1,
+      tasks: [makeTask('T2-001', 'Deferred task', 'deferred')],
+    };
+    const html = render(
+      <PhasesTab
+        handle={makeHandle({ status: 'success' })}
+        phases={[phaseWithDeferred]}
+        callbacks={NOOP_CALLBACKS}
+      />,
+    );
+    expect(html).toContain('Deferred');
   });
 });
 
@@ -291,7 +306,7 @@ describe('DocsTab', () => {
         renderDocGrid={NOOP_RENDER_DOC_GRID}
       />,
     );
-    // 'PRD' type chip should appear
+    // PRD type chip should appear in the type breakdown strip
     expect(html).toContain('PRD');
   });
 
@@ -306,22 +321,42 @@ describe('DocsTab', () => {
     );
     expect(html).toContain('Refreshing documents');
   });
+
+  it('renders doc group section headers for groups with docs', () => {
+    const planDoc: LinkedDocument = {
+      id: 'plan-001',
+      title: 'Impl Plan',
+      filePath: '/docs/plan.md',
+      docType: 'implementation_plan',
+    };
+    const html = render(
+      <DocsTab
+        handle={makeHandle({ status: 'success' })}
+        linkedDocs={[SAMPLE_DOC, planDoc]}
+        docsByGroup={
+          new Map([
+            ['prds', [SAMPLE_DOC]],
+            ['plans', [planDoc]],
+          ])
+        }
+        renderDocGrid={NOOP_RENDER_DOC_GRID}
+      />,
+    );
+    expect(html).toContain('Plans');
+    expect(html).toContain('PRDs');
+  });
 });
 
 // ── RelationsTab ──────────────────────────────────────────────────────────────
 
 describe('RelationsTab', () => {
   it('renders idle state as empty', () => {
-    const html = render(
-      <RelationsTab handle={makeHandle({ status: 'idle' })} />,
-    );
+    const html = render(<RelationsTab handle={makeHandle({ status: 'idle' })} />);
     expect(html).toBe('');
   });
 
   it('renders loading skeleton when loading', () => {
-    const html = render(
-      <RelationsTab handle={makeHandle({ status: 'loading' })} />,
-    );
+    const html = render(<RelationsTab handle={makeHandle({ status: 'loading' })} />);
     expect(html).toContain('Loading');
   });
 
@@ -336,9 +371,7 @@ describe('RelationsTab', () => {
   });
 
   it('renders empty state when success with no relations', () => {
-    const html = render(
-      <RelationsTab handle={makeHandle({ status: 'success' })} />,
-    );
+    const html = render(<RelationsTab handle={makeHandle({ status: 'success' })} />);
     expect(html).toContain('No relations found for this feature.');
   });
 
@@ -392,7 +425,7 @@ describe('RelationsTab', () => {
     expect(html).toContain('2 of 5');
   });
 
-  it('renders lineage signals from docs that have lineage metadata', () => {
+  it('renders lineage signals from docs with lineage metadata', () => {
     const docWithLineage: LinkedDocument = {
       id: 'doc-lineage-001',
       title: 'Platform PRD',
@@ -432,13 +465,7 @@ describe('RelationsTab', () => {
     expect(html).toContain('No lineage metadata detected.');
   });
 
-  it('uses planningRouteFeatureModalHref when launchedFromPlanning=true', () => {
-    // We test that the href contains the /planning route marker.
-    // RelationsTab uses window.location.href when no callback is provided,
-    // so we test by rendering the button and checking the onclick href
-    // is resolved at call time. Since renderToStaticMarkup doesn't call handlers,
-    // we verify by setting launchedFromPlanning and confirming the component renders
-    // without errors (route resolution is a pure function tested separately).
+  it('renders with launchedFromPlanning=true without errors', () => {
     const html = render(
       <RelationsTab
         handle={makeHandle({ status: 'success' })}
@@ -446,14 +473,10 @@ describe('RelationsTab', () => {
         launchedFromPlanning={true}
       />,
     );
-    // Component renders with the feature link
     expect(html).toContain('FEAT-042');
   });
 
-  it('calls onFeatureNavigate callback when provided', () => {
-    // This requires DOM interaction; we test the prop passes through correctly
-    // by verifying the component renders the linked feature without error
-    // when a callback is provided.
+  it('renders with custom onFeatureNavigate callback without errors', () => {
     const onNavigate = vi.fn();
     const html = render(
       <RelationsTab
@@ -463,6 +486,17 @@ describe('RelationsTab', () => {
       />,
     );
     expect(html).toContain('FEAT-042');
+  });
+
+  it('renders no related features message when relatedFeatures is empty', () => {
+    const html = render(
+      <RelationsTab
+        handle={makeHandle({ status: 'success' })}
+        linkedFeatures={[SAMPLE_LINKED_FEATURE]}
+        relatedFeatures={[]}
+      />,
+    );
+    expect(html).toContain('No related features.');
   });
 });
 
@@ -483,8 +517,8 @@ describe('PlanningTabGroup', () => {
         relationsProps={{}}
       />,
     );
-    // Should render the phase
     expect(html).toContain('Phase 1');
+    expect(html).toContain('Foundation');
   });
 
   it('renders DocsTab for docs tab', () => {
@@ -521,8 +555,9 @@ describe('PlanningTabGroup', () => {
     expect(html).toContain('FEAT-042');
   });
 
-  it('returns null for non-planning tab IDs', () => {
-    for (const tabId of ['overview', 'sessions', 'history', 'test-status'] as const) {
+  it('returns empty string for non-planning tab IDs', () => {
+    const nonPlanningTabs = ['overview', 'sessions', 'history', 'test-status'] as const;
+    for (const tabId of nonPlanningTabs) {
       const html = render(
         <PlanningTabGroup
           activeTab={tabId}
@@ -538,5 +573,26 @@ describe('PlanningTabGroup', () => {
       );
       expect(html).toBe('');
     }
+  });
+
+  it('forwards error handle from store to PhasesTab', () => {
+    const store = makePlanningStore({
+      phases: makeHandle({ status: 'error', error: new Error('phases failed') }),
+    });
+    const html = render(
+      <PlanningTabGroup
+        activeTab="phases"
+        planningStore={store}
+        phasesProps={{ phases: [], callbacks: NOOP_CALLBACKS }}
+        docsProps={{
+          linkedDocs: [],
+          docsByGroup: new Map(),
+          renderDocGrid: NOOP_RENDER_DOC_GRID,
+        }}
+        relationsProps={{}}
+      />,
+    );
+    expect(html).toContain('Failed to load');
+    expect(html).toContain('phases failed');
   });
 });

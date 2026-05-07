@@ -24,6 +24,17 @@ export type {
   FeatureDetailShellProps,
 } from './types';
 
+// ── Shared-shell overview tab (P4-006) ────────────────────────────────────────
+
+export { OverviewTab } from './OverviewTab';
+export type {
+  OverviewTabProps,
+  OverviewTabMetrics,
+  OverviewTabDelivery,
+  OverviewTabFamilyData,
+  OverviewTabDateSignals,
+} from './OverviewTab';
+
 // ── Execution-domain components (P4-005) ──────────────────────────────────────
 
 export { TestStatusTab } from './TestStatusTab';

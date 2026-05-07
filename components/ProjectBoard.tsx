@@ -7,7 +7,6 @@ import { useFeatureSurface } from '../services/useFeatureSurface';
 import {
   ExecutionGateStateValue,
   Feature,
-  FeatureDependencyEvidence,
   FeatureFamilyItem,
   FeatureFamilyPosition,
   FeaturePhase,
@@ -23,15 +22,13 @@ import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from '.
 import { DocumentModal } from './DocumentModal';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
-import { FeatureModalTestStatus } from './TestVisualizer/FeatureModalTestStatus';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Surface } from './ui/surface';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
-  Search, Filter, CheckCircle2, Circle, CircleDashed, Layers, Box,
-  FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
-  Terminal, GitCommit, GitBranch, Link2, Play, TestTube2,
+  Search, Filter, Layers, Box,
+  FolderOpen, ExternalLink, ClipboardList, BarChart3, RefreshCw,
+  Terminal, GitCommit, Link2, Play, TestTube2,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 import { EffectiveStatusChips, MismatchBadge, PlanningNodeTypeIcon } from '@/components/shared/PlanningMetadata';
@@ -48,6 +45,7 @@ import {
   isPlanningFeatureModalTab,
   planningFeatureDetailHref,
   planningFeatureModalHref,
+  planningRouteFeatureModalHref,
   type PlanningFeatureModalTab,
 } from '../services/planningRoutes';
 import { invalidateFeatureSurface } from '../services/featureSurfaceCache';
@@ -64,9 +62,16 @@ import {
 import type { FeatureCardDTO } from '../services/featureSurface';
 import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, getFeatureTaskSource } from '../services/featureSurface';
 import { useFeatureModalData, type ModalTabId } from '../services/useFeatureModalData';
-import { TabStateView } from './FeatureModal/TabStateView';
 import { isFeatureSurfaceV2Enabled } from '../services/featureSurfaceFlag';
 import { useAppRuntime } from '../contexts/AppRuntimeContext';
+// P4-006: FeatureDetailShell + domain tab components
+import { FeatureDetailShell } from './FeatureModal/FeatureDetailShell';
+import { OverviewTab } from './FeatureModal/OverviewTab';
+import { PlanningTabGroup } from './FeatureModal/PlanningTabGroup';
+import { SessionsTab } from './FeatureModal/SessionsTab';
+import { HistoryTab } from './FeatureModal/HistoryTab';
+import { TestStatusTab } from './FeatureModal/TestStatusTab';
+import type { ShellTabConfig, ShellSectionStateMap } from './FeatureModal/types';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -184,29 +189,6 @@ interface PullRequestRef {
   prRepository?: string;
 }
 
-interface CommitCorrelationRef {
-  commitHash: string;
-  sessionId: string;
-  branch?: string;
-  windowStart?: string;
-  windowEnd?: string;
-  eventCount: number;
-  toolCallCount: number;
-  commandCount: number;
-  artifactCount: number;
-  tokenInput: number;
-  tokenOutput: number;
-  fileCount: number;
-  additions: number;
-  deletions: number;
-  costUsd: number;
-  featureIds: string[];
-  phases: string[];
-  taskIds: string[];
-  filePaths: string[];
-  provisional: boolean;
-}
-
 interface GitCommitAggregate {
   commitHash: string;
   sessionIds: string[];
@@ -232,7 +214,6 @@ interface GitCommitAggregate {
 
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
-type SessionViewMode = 'list' | 'grid';
 export type FeatureModalTab = PlanningFeatureModalTab;
 
 interface CoreSessionGroupDefinition {
@@ -327,19 +308,6 @@ const DOC_GROUPS: DocGroupDefinition[] = [
     description: 'Additional context docs, notes, and supporting references.',
   },
 ];
-const DEFAULT_CORE_SESSION_GROUP_EXPANDED: Record<CoreSessionGroupId, boolean> = {
-  plan: true,
-  execution: true,
-  other: true,
-};
-const DEFAULT_DOC_GROUP_EXPANDED: Record<DocGroupId, boolean> = {
-  initialPlanning: true,
-  prd: true,
-  plans: true,
-  progress: true,
-  context: true,
-};
-
 const formatSessionReason = (reason: string): string => {
   const normalized = (reason || '').trim();
   if (!normalized) return 'related';
@@ -850,29 +818,10 @@ const EXECUTION_GATE_LABELS: Record<ExecutionGateStateValue, string> = {
   unknown_dependency_state: 'Dependency state unknown',
 };
 
-const EXECUTION_GATE_STYLES: Record<ExecutionGateStateValue, string> = {
-  ready: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
-  blocked_dependency: 'bg-rose-500/10 text-rose-200 border-rose-500/30',
-  waiting_on_family_predecessor: 'bg-amber-500/10 text-amber-200 border-amber-500/30',
-  unknown_dependency_state: 'bg-slate-500/10 text-slate-200 border-slate-500/30',
-};
 
 const getExecutionGateLabel = (gate?: ExecutionGateStateValue | string | null): string => {
   if (!gate) return 'Unknown';
   return EXECUTION_GATE_LABELS[gate as ExecutionGateStateValue] || gate;
-};
-
-const getExecutionGateStyle = (gate?: ExecutionGateStateValue | string | null): string => {
-  if (!gate) return EXECUTION_GATE_STYLES.unknown_dependency_state;
-  return EXECUTION_GATE_STYLES[gate as ExecutionGateStateValue] || EXECUTION_GATE_STYLES.unknown_dependency_state;
-};
-
-const getDependencyEvidenceLabel = (evidence: FeatureDependencyEvidence): string => {
-  const parts = [
-    evidence.dependencyFeatureName || evidence.dependencyFeatureId || 'Unknown dependency',
-    evidence.dependencyStatus || 'unknown',
-  ].filter(Boolean);
-  return parts.join(' • ');
 };
 
 const getFamilyPositionLabel = (position?: FeatureFamilyPosition | null): string => {
@@ -882,16 +831,6 @@ const getFamilyPositionLabel = (position?: FeatureFamilyPosition | null): string
   return `${position.currentIndex} of ${position.totalItems || position.currentIndex}`;
 };
 
-const getFamilyItemLabel = (item?: FeatureFamilyItem | null): string => {
-  if (!item) return 'No family recommendation';
-  const parts = [
-    item.featureName || item.featureId,
-    item.sequenceOrder !== null && item.sequenceOrder !== undefined ? `seq ${item.sequenceOrder}` : '',
-    item.isBlocked ? 'blocked' : '',
-    item.isBlockedUnknown ? 'blocked unknown' : '',
-  ].filter(Boolean);
-  return parts.join(' • ');
-};
 
 const resolveNextFamilyItem = (
   feature: Feature,
@@ -1103,88 +1042,9 @@ const StatusDropdown = ({
   );
 };
 
-const featureValue = (value?: string | number | null): string => {
-  if (value === null || value === undefined || value === '') return '-';
-  return String(value);
-};
 
-const FeatureMetricTile = ({
-  label,
-  value,
-  detail,
-  icon: Icon,
-  accentClassName = 'text-panel-foreground',
-}: {
-  label: string;
-  value: React.ReactNode;
-  detail?: React.ReactNode;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  accentClassName?: string;
-}) => (
-  <Surface tone="elevated" padding="sm" className="min-h-[104px] overflow-hidden">
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</div>
-        <div className={`mt-2 text-2xl font-semibold leading-none ${accentClassName}`}>{value}</div>
-      </div>
-      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-panel-border bg-surface-overlay/80 text-muted-foreground">
-        <Icon size={15} />
-      </span>
-    </div>
-    {detail ? <div className="mt-2 text-[11px] leading-4 text-muted-foreground">{detail}</div> : null}
-  </Surface>
-);
 
-const FeatureModalSection = ({
-  title,
-  description,
-  icon: Icon,
-  children,
-  className = '',
-  headerRight,
-}: {
-  title: string;
-  description?: React.ReactNode;
-  icon?: React.ComponentType<{ size?: number; className?: string }>;
-  children: React.ReactNode;
-  className?: string;
-  headerRight?: React.ReactNode;
-}) => (
-  <Surface tone="panel" padding="md" className={className}>
-    <div className="mb-4 flex items-start justify-between gap-3">
-      <div className="flex min-w-0 items-start gap-3">
-        {Icon ? (
-          <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-panel-border bg-surface-muted text-muted-foreground">
-            <Icon size={15} />
-          </span>
-        ) : null}
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-panel-foreground">{title}</h3>
-          {description ? <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p> : null}
-        </div>
-      </div>
-      {headerRight ? <div className="shrink-0">{headerRight}</div> : null}
-    </div>
-    {children}
-  </Surface>
-);
 
-const FeatureField = ({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value?: React.ReactNode;
-  mono?: boolean;
-}) => (
-  <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2">
-    <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</div>
-    <div className={`mt-1 min-h-[18px] text-sm text-panel-foreground ${mono ? 'font-mono text-xs' : ''}`}>
-      {value || '-'}
-    </div>
-  </div>
-);
 
 const getDocTypeTone = (docType: string): string => {
   switch ((docType || '').toLowerCase()) {
@@ -1205,16 +1065,6 @@ const getDocTypeTone = (docType: string): string => {
   }
 };
 
-const getDocGroupIcon = (groupId: DocGroupId): React.ComponentType<{ size?: number; className?: string }> => {
-  switch (groupId) {
-    case 'initialPlanning': return Search;
-    case 'prd': return ClipboardList;
-    case 'plans': return Layers;
-    case 'progress': return Terminal;
-    case 'context': return FileText;
-    default: return FileText;
-  }
-};
 
 const getDocPhaseLabel = (doc: LinkedDocument): string => {
   const phase = getDocPhaseNumber(doc);
@@ -1380,10 +1230,17 @@ export const ProjectBoardFeatureModal = ({
   feature,
   onClose,
   initialTab = 'overview',
+  launchedFromPlanning = false,
 }: {
   feature: Feature;
   onClose: () => void;
   initialTab?: FeatureModalTab;
+  /**
+   * P4-006: When true, RelationsTab uses planning-route navigation
+   * (planningRouteFeatureModalHref) so the URL stays within /planning.
+   * Set to true when mounting from PlanningHomePage.
+   */
+  launchedFromPlanning?: boolean;
 }) => {
   const navigate = useNavigate();
   const { activeProject, updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
@@ -1392,7 +1249,6 @@ export const ProjectBoardFeatureModal = ({
   const { runtimeStatus: modalRuntimeStatus } = useAppRuntime();
   const modalV2Enabled = isFeatureSurfaceV2Enabled(modalRuntimeStatus);
   const [activeTab, setActiveTab] = useState<FeatureModalTab>(initialTab);
-  const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
   const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
@@ -1400,15 +1256,7 @@ export const ProjectBoardFeatureModal = ({
   const [phaseStatusFilter, setPhaseStatusFilter] = useState<string>('all');
   const [taskStatusFilter, setTaskStatusFilter] = useState<string>('all');
   const [linkedSessionLinks, setLinkedSessionLinks] = useState<FeatureSessionLink[]>([]);
-  const [coreSessionGroupExpanded, setCoreSessionGroupExpanded] = useState<Record<CoreSessionGroupId, boolean>>(
-    () => ({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED })
-  );
-  const [docGroupExpanded, setDocGroupExpanded] = useState<Record<DocGroupId, boolean>>(
-    () => ({ ...DEFAULT_DOC_GROUP_EXPANDED })
-  );
   const [gitHistoryCommitFilter, setGitHistoryCommitFilter] = useState<string>('');
-  const [showSecondarySessions, setShowSecondarySessions] = useState(false);
-  const [sessionViewMode, setSessionViewMode] = useState<SessionViewMode>('list');
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
   const [featureTestHealth, setFeatureTestHealth] = useState<FeatureTestHealth | null>(null);
   const featureDetailRequestIdRef = useRef(0);
@@ -1496,10 +1344,7 @@ export const ProjectBoardFeatureModal = ({
     setFullFeature(null);
     setLinkedSessionLinks([]);
     setFeatureTestHealth(null);
-    setCoreSessionGroupExpanded({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED });
-    setDocGroupExpanded({ ...DEFAULT_DOC_GROUP_EXPANDED });
     setGitHistoryCommitFilter('');
-    setShowSecondarySessions(false);
     setExpandedSubthreadsBySessionId(new Set());
     setPhaseStatusFilter('all');
     setTaskStatusFilter('all');
@@ -1760,15 +1605,6 @@ export const ProjectBoardFeatureModal = ({
     return () => clearInterval(interval);
   }, [activeTab, applyLiveRefreshPolicy, featureLiveEnabled, featureLiveStatus, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
 
-  const togglePhase = (phaseKey: string) => {
-    setExpandedPhases(prev => {
-      const next = new Set(prev);
-      if (next.has(phaseKey)) next.delete(phaseKey);
-      else next.add(phaseKey);
-      return next;
-    });
-  };
-
   useEffect(() => {
     if (updatingStatus) return;
     setFullFeature(prev => {
@@ -1781,8 +1617,7 @@ export const ProjectBoardFeatureModal = ({
   const phases = activeFeature.phases || [];
   const featureDeferredTasks = getFeatureDeferredCount(activeFeature);
   const featureCompletedTasks = getFeatureCompletedCount(activeFeature);
-  const featureDoneTasks = Math.max(featureCompletedTasks - featureDeferredTasks, 0);
-  const pct = activeFeature.totalTasks > 0 ? Math.round((featureCompletedTasks / activeFeature.totalTasks) * 100) : 0;
+  const pct =activeFeature.totalTasks > 0 ? Math.round((featureCompletedTasks / activeFeature.totalTasks) * 100) : 0;
   const linkedDocs = activeFeature.linkedDocs || [];
   const dependencyState = activeFeature.dependencyState || null;
   const familySummary = activeFeature.familySummary || null;
@@ -2335,18 +2170,6 @@ export const ProjectBoardFeatureModal = ({
     return { commits, pullRequests, branches };
   }, [linkedSessions]);
 
-  const filteredGitCommits = useMemo(() => {
-    const normalized = normalizeCommitHash(gitHistoryCommitFilter);
-    if (!normalized) return gitHistoryData.commits;
-    return gitHistoryData.commits.filter(commit => commit.commitHash === normalized);
-  }, [gitHistoryCommitFilter, gitHistoryData.commits]);
-  const animatedPullRequests = useAnimatedListDiff(gitHistoryData.pullRequests, {
-    getId: pr => getPullRequestStableKey(pr),
-  });
-  const animatedGitCommits = useAnimatedListDiff(filteredGitCommits, {
-    getId: commit => commit.commitHash,
-  });
-
   const phaseCommitLinks = useMemo(() => {
     const byPhase = new Map<string, GitCommitAggregate[]>();
     const addPhaseCommit = (phaseToken: string, commit: GitCommitAggregate) => {
@@ -2582,14 +2405,6 @@ export const ProjectBoardFeatureModal = ({
     () => linkedDocs.filter(doc => typeof doc.sequenceOrder === 'number'),
     [linkedDocs]
   );
-
-  const toggleCoreSessionGroup = (groupId: CoreSessionGroupId) => {
-    setCoreSessionGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
-  };
-
-  const toggleDocGroup = (groupId: DocGroupId) => {
-    setDocGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
-  };
 
   const toggleSubthreads = (sessionId: string) => {
     setExpandedSubthreadsBySessionId(prev => {
@@ -3000,1320 +2815,331 @@ export const ProjectBoardFeatureModal = ({
     </div>
   );
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-surface-overlay/90 p-3 backdrop-blur-sm animate-in fade-in duration-200 sm:p-4"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={modalTitleId}
-        className="flex h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-panel-border bg-panel text-panel-foreground shadow-[var(--viewer-shell-shadow)]"
-        onClick={e => e.stopPropagation()}
-      >
+  // ── P4-006: FeatureDetailShell tab configuration ─────────────────────────────
 
-        {/* Header */}
-        <div className="border-b border-panel-border bg-surface-overlay/95 px-4 py-4 sm:px-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0 flex-1">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <Badge tone="muted" mono className="max-w-full truncate rounded-md px-2 py-1 text-[11px]">
-                  {feature.id}
-                </Badge>
-                <StatusDropdown status={activeFeature.status} onStatusChange={handleFeatureStatusChange} />
-                {updatingStatus && <RefreshCw size={14} className="text-info animate-spin" />}
-                {activeFeature.category && (
-                  <Badge tone="outline" className="uppercase tracking-wide">
-                    {activeFeature.category}
-                  </Badge>
-                )}
-                {featureDeferredTasks > 0 && (
-                  <Badge tone="warning" className="uppercase tracking-wide">
-                    Done with deferrals
-                  </Badge>
-                )}
-              </div>
-              <h2 id={modalTitleId} className="text-balance text-2xl font-semibold leading-tight text-panel-foreground">
-                {activeFeature.name}
-              </h2>
-              <div className="mt-3 grid gap-3 text-xs text-muted-foreground sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={activeFeature.totalTasks} />
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="font-medium text-panel-foreground">{pct}% complete</span>
-                  <span>{featureCompletedTasks}/{activeFeature.totalTasks} tasks</span>
-                  {featureDeferredTasks > 0 && (
-                    <span className="text-warning">{featureDeferredTasks} deferred</span>
-                  )}
-                  {primaryFeatureDate.value && (
-                    <span className="inline-flex items-center gap-1">
-                      <Calendar size={12} />
-                      {primaryFeatureDate.label}: {new Date(primaryFeatureDate.value).toLocaleDateString()}
-                      {primaryFeatureDate.confidence ? ` (${primaryFeatureDate.confidence})` : ''}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={handleBeginWork}
-                className="border border-info-border bg-info/10 text-info shadow-sm hover:bg-info/20"
-              >
-                <Play size={14} />
-                Begin Work
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="panel"
-                onClick={() => {
-                  navigate(planningFeatureDetailHref(feature.id));
-                  onClose();
-                }}
-                title="Open full planning detail"
-              >
-                <ExternalLink size={13} />
-                Expand
-              </Button>
-              <Button type="button" size="icon" variant="ghost" onClick={onClose} aria-label="Close feature modal">
-                <X size={18} />
-              </Button>
-            </div>
-          </div>
-        </div>
+  const shellTabs = useMemo((): ShellTabConfig[] => {
+    const base: ShellTabConfig[] = [
+      { id: 'overview', label: 'Overview', icon: Box, domain: 'shared-shell' },
+      { id: 'phases', label: `Phases (${phases.length})`, icon: Layers, domain: 'planning' },
+      { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText, domain: 'planning' },
+      {
+        id: 'relations',
+        label: `Relations (${getFeatureLinkedFeatureCount(activeFeature)})`,
+        icon: Link2,
+        domain: 'planning',
+      },
+      {
+        id: 'sessions',
+        label: `Sessions (${modalSections.sessionPagination.serverTotal > 0 ? modalSections.sessionPagination.serverTotal : linkedSessions.length})`,
+        icon: Terminal,
+        domain: 'forensics',
+      },
+      { id: 'history', label: 'Git History', icon: Calendar, domain: 'forensics' },
+    ];
+    if ((featureTestHealth?.totalTests || 0) > 0) {
+      base.push({ id: 'test-status', label: 'Test Status', icon: TestTube2, domain: 'execution' });
+    }
+    return base;
+  }, [activeFeature, featureTestHealth?.totalTests, linkedDocs.length, linkedSessions.length, phases.length, modalSections.sessionPagination.serverTotal]);
 
-        {/* Tab Nav */}
-        <div className="border-b border-panel-border bg-panel px-3 py-2 sm:px-6">
-          <div className="flex gap-1 overflow-x-auto rounded-lg border border-panel-border bg-surface-muted/70 p-1">
-            {tabs.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${activeTab === tab.id
-                  ? 'bg-panel text-panel-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-hover/70 hover:text-foreground'
-                  }`}
-              >
-                <tab.icon size={15} />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
+  const shellSectionStates = useMemo((): ShellSectionStateMap => ({
+    overview: modalSections.overview,
+    phases: modalSections.phases,
+    docs: modalSections.docs,
+    relations: modalSections.relations,
+    sessions: modalSections.sessions,
+    'test-status': modalSections['test-status'],
+    history: modalSections.history,
+  }), [modalSections]);
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto bg-surface-muted/45 p-4 sm:p-6">
+  // ── renderTabContent: routes active tab to the correct domain component ───────
 
-          {/* Overview Tab */}
-          {activeTab === 'overview' && (
-            <div className="space-y-6">
-              {/* Stats Grid */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <FeatureMetricTile
-                  label="Total Tasks"
-                  value={activeFeature.totalTasks}
-                  detail={`${pct}% overall progress`}
-                  icon={ClipboardList}
-                />
-                <FeatureMetricTile
-                  label="Completed"
-                  value={featureDoneTasks}
-                  detail={featureDeferredTasks > 0 ? `${featureDeferredTasks} deferred count as complete` : 'No deferred completion caveats'}
-                  icon={CheckCircle2}
-                  accentClassName="text-success"
-                />
-                <FeatureMetricTile
-                  label="Phases"
-                  value={phases.length}
-                  detail={`${filteredPhases.length} visible with current filters`}
-                  icon={Layers}
-                  accentClassName="text-info"
-                />
-                <FeatureMetricTile
-                  label="Documents"
-                  value={linkedDocs.length}
-                  detail={`${groupedDocs.length} document groups`}
-                  icon={FileText}
-                  accentClassName="text-warning"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
-                <FeatureModalSection
-                  title="Delivery Metadata"
-                  description="Planning attributes that explain priority, ownership, release fit, and execution readiness."
-                  icon={LayoutGrid}
-                >
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                    <FeatureField label="Priority" value={featureValue(activeFeature.priority)} />
-                    <FeatureField label="Risk" value={featureValue(activeFeature.riskLevel)} />
-                    <FeatureField label="Complexity" value={featureValue(activeFeature.complexity)} />
-                    <FeatureField label="Track" value={featureValue(activeFeature.track)} />
-                    <FeatureField label="Family" value={featureValue(activeFeature.featureFamily)} mono />
-                    <FeatureField label="Target" value={featureValue(activeFeature.targetRelease)} />
-                    <FeatureField label="Milestone" value={featureValue(activeFeature.milestone)} />
-                    <FeatureField label="Readiness" value={featureValue(activeFeature.executionReadiness)} />
-                    <FeatureField label="Coverage" value={getFeatureCoverageSummary(activeFeature)} />
-                  </div>
-                </FeatureModalSection>
-                <FeatureModalSection
-                  title="Quality Signals"
-                  description="Risk and integrity signals that deserve attention before execution."
-                  icon={BarChart3}
-                >
-                  <div className="grid grid-cols-2 gap-2">
-                    <FeatureField label="Blockers" value={activeFeature.qualitySignals?.blockerCount ?? 0} />
-                    <FeatureField label="At Risk" value={activeFeature.qualitySignals?.atRiskTaskCount ?? 0} />
-                    <FeatureField label="Blocked By" value={blockedByRelations.length} />
-                    <FeatureField label="Test Impact" value={featureValue(activeFeature.testImpact || activeFeature.qualitySignals?.testImpact)} />
-                    <FeatureField label="Relations" value={getFeatureLinkedFeatureCount(activeFeature)} />
-                  </div>
-                  {(activeFeature.qualitySignals?.integritySignalRefs || []).length > 0 && (
-                    <div className="mt-3 rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-[11px] text-muted-foreground">
-                      <span className="font-semibold text-panel-foreground">Integrity refs:</span> {(activeFeature.qualitySignals?.integritySignalRefs || []).join(', ')}
-                    </div>
-                  )}
-                </FeatureModalSection>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-                <FeatureModalSection
-                  title="Execution Gate"
-                  description={executionGate?.reason || dependencyState?.blockingReason || 'No gate reason available.'}
-                  icon={Play}
-                  headerRight={(
-                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${getExecutionGateStyle(executionGate?.state)}`}>
-                      {getExecutionGateLabel(executionGate?.state)}
-                    </span>
-                  )}
-                >
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-1">
-                    <FeatureField label="Ready" value={executionGate?.isReady ? 'Yes' : 'No'} />
-                    <FeatureField label="Waiting on family" value={executionGate?.waitingOnFamilyPredecessor ? 'Yes' : 'No'} />
-                    <FeatureField label="Next item" value={familyPosition?.nextItemLabel || nextFamilyItem?.featureName || '-'} mono />
-                  </div>
-                </FeatureModalSection>
-                <FeatureModalSection
-                  title="Family Position"
-                  description="Where this feature sits in its execution family."
-                  icon={Link2}
-                  headerRight={(
-                    <Badge tone="outline" mono className="max-w-[160px] truncate rounded-md border-info-border bg-info/10 text-info uppercase">
-                      {familySummary?.featureFamily || activeFeature.featureFamily || '-'}
-                    </Badge>
-                  )}
-                >
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                    <FeatureField label="Position" value={getFamilyPositionLabel(familyPosition)} />
-                    <FeatureField label="Sequenced" value={familySummary?.sequencedItems ?? familyPosition?.sequencedItems ?? 0} />
-                    <FeatureField label="Unsequenced" value={familySummary?.unsequencedItems ?? familyPosition?.unsequencedItems ?? 0} />
-                    <FeatureField label="Next feature" value={familySummary?.nextRecommendedFeatureId || nextFamilyItem?.featureId || '-'} mono />
-                  </div>
-                </FeatureModalSection>
-                <FeatureModalSection
-                  title="Blocker Evidence"
-                  description="Dependency evidence attached to this feature."
-                  icon={Filter}
-                  headerRight={(
-                    <Badge
-                      tone="outline"
-                      mono
-                      className={blockingEvidence.length > 0
-                        ? 'border-danger-border bg-danger/10 text-danger'
-                        : 'border-success-border bg-success/10 text-success'
-                      }
-                    >
-                      {blockingEvidence.length}
-                    </Badge>
-                  )}
-                >
-                  {blockingEvidence.length > 0 ? (
-                    <div className="space-y-2">
-                      {blockingEvidence.slice(0, 3).map(evidence => (
-                        <div key={evidence.dependencyFeatureId} className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-2 text-[11px]">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-mono text-foreground truncate">{getDependencyEvidenceLabel(evidence)}</span>
-                            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${evidence.state === 'complete'
-                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-                              : evidence.state === 'blocked_unknown'
-                                ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
-                                : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
-                              }`}>
-                              {evidence.state}
-                            </span>
-                          </div>
-                          {evidence.blockingReason && (
-                            <div className="mt-1 text-muted-foreground">{evidence.blockingReason}</div>
-                          )}
-                          {(evidence.blockingDocumentIds || []).length > 0 && (
-                            <div className="mt-1 text-muted-foreground">
-                              Docs: <span className="font-mono text-foreground">{evidence.blockingDocumentIds.join(', ')}</span>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      {blockingEvidence.length > 3 && (
-                        <div className="text-[11px] text-muted-foreground">+{blockingEvidence.length - 3} more blocker entries</div>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground italic">No blocker evidence is attached.</p>
-                  )}
-                </FeatureModalSection>
-              </div>
-
-              <FeatureModalSection title="Date Signals" icon={Calendar}>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {[
-                    { label: 'Planned', value: getFeatureDateValue(activeFeature, 'plannedAt') },
-                    { label: 'Started', value: getFeatureDateValue(activeFeature, 'startedAt') },
-                    { label: 'Completed', value: getFeatureDateValue(activeFeature, 'completedAt') },
-                    { label: 'Updated', value: getFeatureDateValue(activeFeature, 'updatedAt') },
-                  ].map(item => (
-                    <div key={item.label} className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 text-xs">
-                      <div className="font-bold uppercase tracking-wider text-muted-foreground">{item.label}</div>
-                      <div className="mt-1 text-sm text-panel-foreground">
-                        {item.value.value ? new Date(item.value.value).toLocaleDateString() : '-'}
-                        {item.value.confidence ? ` (${item.value.confidence})` : ''}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </FeatureModalSection>
-
-              {(blockedByRelations.length > 0 || sequenceDocs.length > 0) && (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <FeatureModalSection title="Hard Dependencies" icon={Link2}>
-                    <div className="flex flex-wrap gap-2">
-                      {blockedByRelations.map((relation, index) => (
-                        <button
-                          key={`${relation.feature}-${index}`}
-                          onClick={() => { onClose(); navigate(planningFeatureModalHref(relation.feature)); }}
-                          className="rounded-full border border-danger-border bg-danger/10 px-2 py-1 text-[10px] font-semibold text-danger"
-                        >
-                          {relation.feature}
-                        </button>
-                      ))}
-                      {blockedByRelations.length === 0 && <span className="text-xs text-muted-foreground italic">No hard feature dependencies captured.</span>}
-                    </div>
-                  </FeatureModalSection>
-                  <FeatureModalSection title="Family Sequence" icon={Layers}>
-                    <div className="grid grid-cols-2 gap-2">
-                      <FeatureField label="Family" value={activeFeature.featureFamily || '-'} mono />
-                      <FeatureField label="Sequenced docs" value={sequenceDocs.length} />
-                    </div>
-                    {sequenceDocs.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {sequenceDocs.slice(0, 6).map(doc => (
-                          <button
-                            key={`seq-doc-${doc.id}`}
-                            onClick={() => handleDocClick(doc)}
-                            className="rounded-full border border-panel-border bg-surface-overlay px-2 py-1 text-[10px] text-foreground hover:border-info-border"
-                          >
-                            #{doc.sequenceOrder} {doc.title}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </FeatureModalSection>
-                </div>
-              )}
-
-              {/* Linked Documents — clickable */}
-              {linkedDocs.length > 0 && (
-                <FeatureModalSection title="Linked Documents" icon={FileText}>
-                  <div className="space-y-2">
-                    {orderedLinkedDocs.map(doc => (
-                      <button
-                        key={doc.id}
-                        onClick={() => handleDocClick(doc)}
-                        className="group flex w-full items-center gap-3 rounded-lg border border-panel-border bg-surface-overlay/70 p-3 text-left transition-all hover:border-info-border hover:bg-surface-muted/70"
-                      >
-                        <DocTypeIcon docType={doc.docType} />
-                        <span className="flex-1 truncate text-sm text-foreground transition-colors group-hover:text-info">{doc.title}</span>
-                        <DocTypeBadge docType={doc.docType} />
-                        <ExternalLink size={12} className="text-muted-foreground transition-colors group-hover:text-info" />
-                      </button>
-                    ))}
-                  </div>
-                </FeatureModalSection>
-              )}
-
-              {/* Related Features */}
-              {activeFeature.relatedFeatures.length > 0 && (
-                <FeatureModalSection title="Related Features" icon={Link2}>
-                  <div className="flex flex-wrap gap-2">
-                    {activeFeature.relatedFeatures.map(rel => (
-                      <span key={rel} className="rounded border border-panel-border bg-surface-muted px-2 py-1 text-xs text-info">
-                        {rel}
-                      </span>
-                    ))}
-                  </div>
-                </FeatureModalSection>
-              )}
-
-              {/* Tags */}
-              {activeFeature.tags.length > 0 && (
-                <FeatureModalSection title="Tags" icon={Tag}>
-                  <div className="flex flex-wrap gap-2">
-                    {activeFeature.tags.map(tag => (
-                      <span key={tag} className="flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] text-muted-foreground">
-                        <Tag size={10} />{tag}
-                      </span>
-                    ))}
-                  </div>
-                </FeatureModalSection>
-              )}
-            </div>
-          )}
-
-          {/* Phases Tab */}
-          {activeTab === 'phases' && (
-            <TabStateView
-              status={modalSections.phases.status}
-              error={modalSections.phases.error?.message}
-              onRetry={modalSections.phases.retry}
-              isEmpty={phases.length === 0 && modalSections.phases.status === 'success'}
-              emptyLabel="No phases tracked for this feature."
-              staleLabel="Refreshing phases…"
-            >
-            <div className="space-y-3">
-              {phases.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-panel-border bg-panel/70">
-                  <div>
-                    <label className="text-[10px] text-muted-foreground mb-1 block uppercase">Phase Status</label>
-                    <select
-                      value={phaseStatusFilter}
-                      onChange={(e) => setPhaseStatusFilter(e.target.value)}
-                      className="w-full bg-surface-overlay border border-panel-border rounded px-2 py-1 text-xs text-panel-foreground focus:border-focus focus:outline-none"
-                    >
-                      <option value="all">All</option>
-                      {FEATURE_STATUS_OPTIONS.map(status => (
-                        <option key={`phase-filter-${status}`} value={status}>{getStatusStyle(status).label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-muted-foreground mb-1 block uppercase">Task Status</label>
-                    <select
-                      value={taskStatusFilter}
-                      onChange={(e) => setTaskStatusFilter(e.target.value)}
-                      className="w-full bg-surface-overlay border border-panel-border rounded px-2 py-1 text-xs text-panel-foreground focus:border-focus focus:outline-none"
-                    >
-                      <option value="all">All</option>
-                      {FEATURE_STATUS_OPTIONS.map(status => (
-                        <option key={`task-filter-${status}`} value={status}>{getStatusStyle(status).label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              )}
-              {filteredPhases.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
-                  <Layers size={32} className="mx-auto mb-3 opacity-50" />
-                  <p>{phases.length === 0 ? 'No phases tracked for this feature.' : 'No phases match your filters.'}</p>
-                </div>
-              )}
-              {filteredPhases.map(phase => {
-                const phaseStatus = getStatusStyle(phase.status);
-                const phaseKey = phase.id || phase.phase;
-                const isExpanded = expandedPhases.has(phaseKey);
-                const phaseTasks = dedupePhaseTasks(phase.tasks || []);
-                const phaseDoneTasks = phaseTasks.filter(task => task.status === 'done').length;
-                const phaseDeferredTasks = phaseTasks.filter(task => task.status === 'deferred').length;
-                const phaseCompletedTasks = phaseTasks.length > 0 ? phaseDoneTasks + phaseDeferredTasks : getPhaseCompletedCount(phase);
-                const phaseTotalTasks = phaseTasks.length > 0 ? Math.max(phase.totalTasks || 0, phaseTasks.length) : phase.totalTasks;
-                const phaseRelatedSessions = phaseSessionLinks.get(String(phase.phase || '').trim()) || [];
-                const phaseRelatedCommits = phaseCommitLinks.get(String(phase.phase || '').trim()) || [];
-                const visibleTasks = taskStatusFilter === 'all'
-                  ? phaseTasks
-                  : phaseTasks.filter(task => task.status === taskStatusFilter);
-                return (
-                  <div key={phaseKey} className="bg-panel border border-panel-border rounded-lg overflow-hidden">
-                    <div className="flex items-start gap-3 p-4 hover:bg-surface-muted/60 transition-colors">
-                      <div className="flex-1 min-w-0">
-                        <button
-                          onClick={() => togglePhase(phaseKey)}
-                          className="w-full flex items-center gap-3 text-left"
-                        >
-                          {isExpanded ? <ChevronDown size={16} className="text-muted-foreground" /> : <ChevronRight size={16} className="text-muted-foreground" />}
-                          <div className={`w-2 h-2 rounded-full ${phaseStatus.dot}`} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-panel-foreground">Phase {phase.phase}</span>
-                              {phase.title && (
-                                <span className="text-sm text-muted-foreground truncate">- {phase.title}</span>
-                              )}
-                              {phaseDeferredTasks > 0 && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 uppercase">
-                                  Deferred
-                                </span>
-                              )}
-                            </div>
-                            <div className="mt-1">
-                              <ProgressBar completed={phaseCompletedTasks} deferred={phaseDeferredTasks} total={phaseTotalTasks} />
-                            </div>
-                          </div>
-                        </button>
-                        {phaseRelatedSessions.length > 0 && (
-                          <div className="mt-2 ml-7 flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Sessions</span>
-                            {phaseRelatedSessions.slice(0, 3).map(sessionLink => (
-                              <button
-                                key={`phase-${phaseKey}-session-${sessionLink.sessionId}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onClose();
-                                  navigate(`/sessions?session=${encodeURIComponent(sessionLink.sessionId)}`);
-                                }}
-                                className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 font-mono hover:bg-indigo-500/20 transition-colors"
-                                title="Go to linked session"
-                              >
-                                {sessionLink.sessionId}
-                              </button>
-                            ))}
-                            {phaseRelatedSessions.length > 3 && (
-                              <span className="text-[10px] text-muted-foreground">+{phaseRelatedSessions.length - 3} more</span>
-                            )}
-                          </div>
-                        )}
-                        {phaseRelatedCommits.length > 0 && (
-                          <div className="mt-2 ml-7 flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Commits</span>
-                            {phaseRelatedCommits.slice(0, 5).map(commitRef => (
-                              <button
-                                key={`phase-${phaseKey}-commit-${commitRef.commitHash}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openGitCommitInHistory(commitRef.commitHash);
-                                }}
-                                className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-mono hover:bg-emerald-500/20 transition-colors"
-                                title={`Open ${commitRef.commitHash} in Git history`}
-                              >
-                                {toShortCommitHash(commitRef.commitHash)}
-                              </button>
-                            ))}
-                            {phaseRelatedCommits.length > 5 && (
-                              <span className="text-[10px] text-muted-foreground">+{phaseRelatedCommits.length - 5} more</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <StatusDropdown
-                        status={phase.status}
-                        onStatusChange={(s) => handlePhaseStatusChange(phase.phase, s)}
-                        size="xs"
-                      />
-                    </div>
-
-                    {/* Expanded task list */}
-                    {isExpanded && visibleTasks.length > 0 && (
-                      <div className="border-t border-panel-border px-4 py-3 space-y-1.5 bg-surface-overlay/60">
-                        {visibleTasks.map(task => {
-                          const normalizedStatus = (task.status || '').toLowerCase();
-                          const taskDone = normalizedStatus === 'done';
-                          const taskDeferred = normalizedStatus === 'deferred';
-                          const nextStatus = taskDone ? 'deferred' : taskDeferred ? 'backlog' : 'done';
-                          const markTitle = taskDone ? 'Mark deferred' : taskDeferred ? 'Mark backlog' : 'Mark done';
-                          const taskSessionLinks = taskSessionLinksByTaskId.get(String(task.id || '').trim()) || [];
-                          const taskTextClass = taskDone
-                            ? 'text-muted-foreground line-through'
-                            : taskDeferred
-                              ? 'text-amber-300/90 italic'
-                              : 'text-foreground';
-                          const correlatedCommits = taskCommitLinksByTaskId.get(String(task.id || '').trim()) || [];
-                          const taskCommitHashes = Array.from(
-                            new Set(
-                              [
-                                normalizeCommitHash(String(task.commitHash || '')),
-                                ...correlatedCommits.map(commit => normalizeCommitHash(commit.commitHash)),
-                              ].filter(Boolean)
-                            )
-                          );
-                          return (
-                            <div key={`${task.id}-${task.sourceFile || ''}`} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-panel transition-colors">
-                              <button
-                                onClick={() => handleTaskStatusChange(phase.phase, task.id, nextStatus as ProjectTask['status'])}
-                                className="flex-shrink-0 hover:scale-110 transition-transform"
-                                title={markTitle}
-                              >
-                                {taskDone ? (
-                                  <CheckCircle2 size={14} className="text-emerald-500" />
-                                ) : taskDeferred ? (
-                                  <CircleDashed size={14} className="text-amber-400" />
-                                ) : (
-                                  <Circle size={14} className="text-muted-foreground hover:text-indigo-400" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => setViewingTask(task)}
-                                className="font-mono text-[10px] text-muted-foreground w-16 flex-shrink-0 hover:text-indigo-400 transition-colors cursor-pointer text-left"
-                                title="View source file"
-                              >
-                                {task.id}
-                              </button>
-                              <button
-                                onClick={() => setViewingTask(task)}
-                                className={`text-sm flex-1 truncate text-left hover:text-indigo-400 transition-colors ${taskTextClass}`}
-                                title="View source file"
-                              >
-                                {task.title}
-                              </button>
-                              {taskCommitHashes.length > 0 && (
-                                <div className="flex items-center gap-1 flex-wrap">
-                                  {taskCommitHashes.slice(0, 3).map(hash => (
-                                    <button
-                                      key={`${task.id}-commit-${hash}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openGitCommitInHistory(hash);
-                                      }}
-                                      className="flex items-center gap-1 text-[10px] bg-surface-muted text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-mono flex-shrink-0 hover:bg-emerald-500/20 transition-colors"
-                                      title={`Open ${hash} in Git history`}
-                                    >
-                                      <GitCommit size={10} />
-                                      {toShortCommitHash(hash)}
-                                    </button>
-                                  ))}
-                                  {taskCommitHashes.length > 3 && (
-                                    <span className="text-[10px] text-muted-foreground">+{taskCommitHashes.length - 3} more</span>
-                                  )}
-                                </div>
-                              )}
-                              {taskSessionLinks.length > 0 && (
-                                <div className="flex items-center gap-1 flex-wrap">
-                                  {taskSessionLinks.slice(0, 3).map(link => (
-                                    <button
-                                      key={`${task.id}-session-${link.sessionId}-${link.source}`}
-                                      onClick={(e) => { e.stopPropagation(); onClose(); navigate(`/sessions?session=${encodeURIComponent(link.sessionId)}`); }}
-                                      className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-mono transition-colors flex-shrink-0 ${link.isSubthread
-                                        ? 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
-                                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/20'
-                                        }`}
-                                      title={link.isSubthread ? 'Go to linked sub-thread session' : 'Go to linked session'}
-                                    >
-                                      <Terminal size={10} />
-                                      {link.sessionId}
-                                    </button>
-                                  ))}
-                                  {taskSessionLinks.length > 3 && (
-                                    <span className="text-[10px] text-muted-foreground">+{taskSessionLinks.length - 3} more</span>
-                                  )}
-                                </div>
-                              )}
-                              {task.owner && (
-                                <span className="text-[10px] text-muted-foreground truncate max-w-[100px] flex-shrink-0">{task.owner}</span>
-                              )}
-                              <StatusDropdown
-                                status={task.status}
-                                onStatusChange={(s) => handleTaskStatusChange(phase.phase, task.id, s as ProjectTask['status'])}
-                                size="xs"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {isExpanded && visibleTasks.length === 0 && (
-                      <div className="border-t border-panel-border px-4 py-3 text-xs text-muted-foreground italic">
-                        No task details match the current task filter.
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            </TabStateView>
-          )}
-
-          {/* Documents Tab — clickable */}
-          {activeTab === 'docs' && (
-            <TabStateView
-              status={modalSections.docs.status}
-              error={modalSections.docs.error?.message}
-              onRetry={modalSections.docs.retry}
-              isEmpty={linkedDocs.length === 0 && modalSections.docs.status === 'success'}
-              emptyLabel="No documents linked to this feature."
-              staleLabel="Refreshing documents…"
-            >
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <FeatureMetricTile
-                  label="Document Groups"
-                  value={groupedDocs.length}
-                  detail={`${linkedDocs.length} linked documents`}
-                  icon={FileText}
-                />
-                <FeatureMetricTile
-                  label="Family Position"
-                  value={getFamilyPositionLabel(familyPosition)}
-                  detail={familySummary?.featureFamily || activeFeature.featureFamily || 'No family assigned'}
-                  icon={Link2}
-                  accentClassName="text-info"
-                />
-                <FeatureMetricTile
-                  label="Execution Gate"
-                  value={getExecutionGateLabel(executionGate?.state)}
-                  detail={executionGate?.reason || dependencyState?.blockingReason || 'No gate reason available'}
-                  icon={Play}
-                  accentClassName="text-warning"
-                />
-              </div>
-
-              {docTypeCounts.length > 0 && (
-                <Surface tone="panel" padding="sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Types</span>
-                    {docTypeCounts.map(row => (
-                      <span
-                        key={`doc-type-count-${row.docType}`}
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold uppercase ${getDocTypeTone(row.docType)}`}
-                      >
-                        <DocTypeIcon docType={row.docType} />
-                        {getDocTypeLabel(row.docType)}
-                        <span className="font-mono">{row.count}</span>
-                      </span>
-                    ))}
-                  </div>
-                </Surface>
-              )}
-
-              {linkedDocs.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
-                  <FileText size={32} className="mx-auto mb-3 opacity-50" />
-                  <p>No documents linked to this feature.</p>
-                </div>
-              )}
-
-              {DOC_GROUPS.filter(group => group.id !== 'progress').map(group => {
-                const docs = docsByGroup.get(group.id) || [];
-                if (docs.length === 0) return null;
-                const Icon = getDocGroupIcon(group.id);
-                const implementationPlans = group.id === 'plans'
-                  ? docs.filter(doc => (doc.docType || '').toLowerCase() === 'implementation_plan')
-                  : [];
-                const phasePlans = group.id === 'plans'
-                  ? docs.filter(doc => (doc.docType || '').toLowerCase() === 'phase_plan')
-                  : [];
-                return (
-                  <FeatureModalSection
-                    key={group.id}
-                    title={group.label}
-                    description={group.description}
-                    icon={Icon}
-                    headerRight={(
-                      <button
-                        type="button"
-                        onClick={() => toggleDocGroup(group.id)}
-                        className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-panel-foreground"
-                      >
-                        {docGroupExpanded[group.id] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                        {docs.length}
-                      </button>
-                    )}
-                  >
-                    {docGroupExpanded[group.id] && (
-                      group.id === 'plans' ? (
-                        <div className="space-y-4">
-                          {implementationPlans.length > 0 && (
-                            <div>
-                              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Implementation Plans</div>
-                              {renderDocGrid(implementationPlans)}
-                            </div>
-                          )}
-                          {phasePlans.length > 0 && (
-                            <div>
-                              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Phase Plans</div>
-                              {renderDocGrid(phasePlans)}
-                            </div>
-                          )}
-                          {implementationPlans.length === 0 && phasePlans.length === 0 && renderDocGrid(docs)}
-                        </div>
-                      ) : renderDocGrid(docs)
-                    )}
-                  </FeatureModalSection>
-                );
-              })}
-
-              {(docsByGroup.get('progress') || []).length > 0 && (
-                <FeatureModalSection
-                  title="Progress Files"
-                  description="Execution and phase progress files, grouped under their detected phase when available."
-                  icon={Terminal}
-                  headerRight={(
-                    <button
-                      type="button"
-                      onClick={() => toggleDocGroup('progress')}
-                      className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-panel-foreground"
-                    >
-                      {docGroupExpanded.progress ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      {(docsByGroup.get('progress') || []).length}
-                    </button>
-                  )}
-                >
-                  {docGroupExpanded.progress && (
-                    <div className="space-y-4">
-                      {progressDocPhaseBuckets.map(bucket => (
-                        <div key={`progress-${bucket.label}`} className="rounded-lg border border-panel-border bg-surface-muted/55 p-3">
-                          <div className="mb-3 flex items-center justify-between gap-3">
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-panel-foreground">{bucket.label}</div>
-                            <span className="font-mono text-[10px] text-muted-foreground">{bucket.docs.length}</span>
-                          </div>
-                          {renderDocGrid(bucket.docs, true)}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </FeatureModalSection>
-              )}
-            </div>
-            </TabStateView>
-          )}
-          {activeTab === 'relations' && (
-            <TabStateView
-              status={modalSections.relations.status}
-              error={modalSections.relations.error?.message}
-              onRetry={modalSections.relations.retry}
-              isEmpty={(activeFeature.linkedFeatures || []).length === 0 && activeFeature.relatedFeatures.length === 0 && modalSections.relations.status === 'success'}
-              emptyLabel="No relations found for this feature."
-              staleLabel="Refreshing relations…"
-            >
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-panel border border-panel-border rounded-lg p-4">
-                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Dependency Evidence</h3>
-                  <div className="space-y-2">
-                    {blockingEvidence.length > 0 ? blockingEvidence.map(evidence => (
-                      <div key={`dependency-${evidence.dependencyFeatureId}`} className="rounded border border-panel-border bg-surface-overlay px-3 py-2 text-xs">
-                        <div className="flex items-center justify-between gap-2">
-                          <button
-                            onClick={() => {
-                              if (!evidence.dependencyFeatureId) return;
-                              onClose();
-                              navigate(planningFeatureModalHref(evidence.dependencyFeatureId));
-                            }}
-                            className="font-mono text-indigo-300 hover:text-indigo-200 text-left truncate"
-                          >
-                            {evidence.dependencyFeatureName || evidence.dependencyFeatureId}
-                          </button>
-                          <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${evidence.state === 'complete'
-                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-                            : evidence.state === 'blocked_unknown'
-                              ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
-                              : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
-                            }`}>
-                            {evidence.state}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-muted-foreground">{evidence.blockingReason || 'No blocker reason recorded.'}</div>
-                        {evidence.dependencyCompletionEvidence.length > 0 && (
-                          <div className="mt-1 text-muted-foreground">
-                            Evidence: <span className="font-mono text-foreground">{evidence.dependencyCompletionEvidence.join(', ')}</span>
-                          </div>
-                        )}
-                        {(evidence.blockingDocumentIds || []).length > 0 && (
-                          <div className="mt-1 text-muted-foreground">
-                            Documents: <span className="font-mono text-foreground">{evidence.blockingDocumentIds.join(', ')}</span>
-                          </div>
-                        )}
-                      </div>
-                    )) : (
-                      <p className="text-xs text-muted-foreground italic">No dependency evidence is attached.</p>
-                    )}
-                  </div>
-                </div>
-                <div className="bg-panel border border-panel-border rounded-lg p-4">
-                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Family Order</h3>
-                  <div className="space-y-2 text-xs">
-                    <div className="text-muted-foreground">Family <span className="text-panel-foreground ml-1 font-mono">{familySummary?.featureFamily || activeFeature.featureFamily || '-'}</span></div>
-                    <div className="text-muted-foreground">Position <span className="text-panel-foreground ml-1">{getFamilyPositionLabel(familyPosition)}</span></div>
-                    <div className="text-muted-foreground">Next item <span className="text-panel-foreground ml-1 font-mono">{familyPosition?.nextItemLabel || nextFamilyItem?.featureName || '-'}</span></div>
-                    <div className="text-muted-foreground">Recommended feature <span className="text-panel-foreground ml-1 font-mono">{familySummary?.nextRecommendedFeatureId || nextFamilyItem?.featureId || '-'}</span></div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-panel border border-panel-border rounded-lg p-4">
-                <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Typed Feature Relations</h3>
-                <div className="space-y-2">
-                  {(activeFeature.linkedFeatures || []).map((relation, index) => (
-                    <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 rounded border border-panel-border bg-surface-overlay px-3 py-2 text-xs">
-                      <button
-                        onClick={() => { onClose(); navigate(planningFeatureModalHref(relation.feature)); }}
-                        className="font-mono text-indigo-300 hover:text-indigo-200"
-                      >
-                        {relation.feature}
-                      </button>
-                      <span className="uppercase px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted text-foreground">{relation.type || 'related'}</span>
-                      <span className="uppercase px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted text-muted-foreground">{relation.source || 'unknown'}</span>
-                      {typeof relation.confidence === 'number' && (
-                        <span className="text-muted-foreground">{Math.round(relation.confidence * 100)}%</span>
-                      )}
-                      {relation.notes && <span className="text-muted-foreground">{relation.notes}</span>}
-                    </div>
-                  ))}
-                  {(activeFeature.linkedFeatures || []).length === 0 && (
-                    <p className="text-xs text-muted-foreground italic">No typed feature relations available.</p>
-                  )}
-                </div>
-              </div>
-              <div className="bg-panel border border-panel-border rounded-lg p-4">
-                <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Related Features</h3>
-                <div className="flex flex-wrap gap-2">
-                  {activeFeature.relatedFeatures.map(rel => (
-                    <button
-                      key={rel}
-                      onClick={() => { onClose(); navigate(planningFeatureModalHref(rel)); }}
-                      className="text-xs bg-surface-muted text-indigo-400 px-2 py-1 rounded border border-panel-border"
-                    >
-                      {rel}
-                    </button>
-                  ))}
-                  {activeFeature.relatedFeatures.length === 0 && (
-                    <span className="text-xs text-muted-foreground italic">No related features.</span>
-                  )}
-                </div>
-              </div>
-              <div className="bg-panel border border-panel-border rounded-lg p-4">
-                <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Lineage Signals</h3>
-                <div className="space-y-2">
-                  {linkedDocs
-                    .filter(doc => doc.lineageFamily || doc.lineageParent || (doc.lineageChildren || []).length > 0)
-                    .map(doc => (
-                      <div key={`lineage-${doc.id}`} className="text-xs rounded border border-panel-border bg-surface-overlay p-2">
-                        <div className="text-foreground">{doc.title}</div>
-                        <div className="text-muted-foreground mt-1">Family: <span className="font-mono">{doc.lineageFamily || '-'}</span></div>
-                        <div className="text-muted-foreground">Parent: <span className="font-mono">{doc.lineageParent || '-'}</span></div>
-                        <div className="text-muted-foreground">Children: <span className="font-mono">{(doc.lineageChildren || []).join(', ') || '-'}</span></div>
-                      </div>
-                    ))}
-                  {!linkedDocs.some(doc => doc.lineageFamily || doc.lineageParent || (doc.lineageChildren || []).length > 0) && (
-                    <p className="text-xs text-muted-foreground italic">No lineage metadata detected.</p>
-                  )}
-                </div>
-              </div>
-            </div>
-            </TabStateView>
-          )}
-          {/* Sessions Tab */}
-          {activeTab === 'sessions' && (
-            <TabStateView
-              status={modalSections.sessions.status}
-              error={modalSections.sessions.error?.message}
-              onRetry={modalSections.sessions.retry}
-              isEmpty={linkedSessions.length === 0 && modalSections.sessions.status === 'success'}
-              emptyLabel="No sessions linked to this feature."
-              staleLabel="Refreshing sessions…"
-            >
-            <div className="space-y-4">
-              {linkedSessions.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
-                  <Terminal size={32} className="mx-auto mb-3 opacity-50" />
-                  <p>No sessions linked to this feature.</p>
-                  <p className="text-xs mt-1 text-muted-foreground">No high-confidence session evidence found yet.</p>
-                </div>
-              )}
-              {linkedSessions.length > 0 && (
-                <>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <FeatureMetricTile
-                      label="Linked Sessions"
-                      value={linkedSessions.length}
-                      detail={`${primarySessionCount} primary focus sessions`}
-                      icon={Terminal}
-                    />
-                    <FeatureMetricTile
-                      label="Sub-Threads"
-                      value={linkedSessions.filter(isSubthreadSession).length}
-                      detail={`${secondarySessionCount} secondary linkages`}
-                      icon={GitBranch}
-                      accentClassName="text-warning"
-                    />
-                    <FeatureMetricTile
-                      label="Observed Workload"
-                      value={formatTokenCount(linkedSessions.reduce((sum, session) => (
-                        sum + resolveTokenMetrics(session, {
-                          hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, linkedSessions),
-                        }).workloadTokens
-                      ), 0))}
-                      detail={`${linkedSessions.filter(isPrimarySession).length} primary roots`}
-                      icon={BarChart3}
-                      accentClassName="text-info"
-                    />
-                  </div>
-
-                  <Surface tone="panel" padding="sm">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <div className="text-xs font-bold uppercase tracking-wider text-panel-foreground">Session Evidence</div>
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                          Grid uses compact shared session cards; list keeps the full detailed session cards.
-                        </p>
-                      </div>
-                      <div className="inline-flex w-fit rounded-lg border border-panel-border bg-surface-muted/70 p-1">
-                        <button
-                          type="button"
-                          onClick={() => setSessionViewMode('grid')}
-                          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${sessionViewMode === 'grid'
-                            ? 'bg-panel text-panel-foreground shadow-sm'
-                            : 'text-muted-foreground hover:bg-hover/70 hover:text-foreground'
-                            }`}
-                        >
-                          <LayoutGrid size={14} />
-                          Grid
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSessionViewMode('list')}
-                          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${sessionViewMode === 'list'
-                            ? 'bg-panel text-panel-foreground shadow-sm'
-                            : 'text-muted-foreground hover:bg-hover/70 hover:text-foreground'
-                            }`}
-                        >
-                          <List size={14} />
-                          List
-                        </button>
-                      </div>
-                    </div>
-                  </Surface>
-
-                  {coreSessionGroups.map(group => (
-                    <FeatureModalSection
-                      key={group.id}
-                      title={group.label}
-                      description={group.description}
-                      icon={group.id === 'plan' ? Search : group.id === 'execution' ? Play : Terminal}
-                      headerRight={(
-                        <button
-                          type="button"
-                          onClick={() => toggleCoreSessionGroup(group.id)}
-                          className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-panel-foreground"
-                        >
-                          {coreSessionGroupExpanded[group.id] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                          {group.totalSessions}
-                        </button>
-                      )}
-                    >
-                      {coreSessionGroupExpanded[group.id] && (
-                        group.roots.length === 0 ? (
-                          <div className="text-xs text-muted-foreground italic">No sessions currently in this group.</div>
-                        ) : sessionViewMode === 'grid' ? (
-                          renderSessionGrid(group.roots)
-                        ) : (
-                          <div className="space-y-3">
-                            <AnimatePresence initial={false}>
-                              {group.roots.map(node => renderSessionTreeNode(node))}
-                            </AnimatePresence>
-                            {/* P4-004: partial-tree indicator when more pages are available */}
-                            {modalSections.sessionPagination.hasMore && (
-                              <p className="text-[11px] text-muted-foreground italic pl-1">
-                                More sessions may appear in this group — load more below.
-                              </p>
-                            )}
-                          </div>
-                        )
-                      )}
-                    </FeatureModalSection>
-                  ))}
-
-                  <FeatureModalSection
-                    title="Secondary Linkages"
-                    description="Related sessions that are useful evidence but not primary planning or execution roots."
-                    icon={Link2}
-                    headerRight={(
-                      <button
-                        type="button"
-                        onClick={() => setShowSecondarySessions(prev => !prev)}
-                        className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-surface-muted px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-panel-foreground"
-                      >
-                        {showSecondarySessions ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                        {secondarySessionCount}
-                      </button>
-                    )}
-                  >
-                    {showSecondarySessions && (
-                      secondarySessionRoots.length === 0 ? (
-                        <div className="text-xs text-muted-foreground italic">No secondary linked sessions.</div>
-                      ) : sessionViewMode === 'grid' ? (
-                        renderSessionGrid(secondarySessionRoots)
-                      ) : (
-                        <div className="space-y-3">
-                          <AnimatePresence initial={false}>
-                            {secondarySessionRoots.map(node => renderSessionTreeNode(node))}
-                          </AnimatePresence>
-                        </div>
-                      )
-                    )}
-                  </FeatureModalSection>
-
-                  {/* P4-004: Load-more pagination control */}
-                  {(() => {
-                    const { hasMore, isLoadingMore, serverTotal } = modalSections.sessionPagination;
-                    const notYetLoaded = serverTotal > 0 ? serverTotal - linkedSessions.length : 0;
-                    if (!hasMore && notYetLoaded <= 0) return null;
-                    return (
-                      <div className="flex flex-col items-center gap-2 pt-2 pb-1">
-                        {notYetLoaded > 0 && !hasMore && (
-                          <p className="text-[11px] text-muted-foreground">
-                            {notYetLoaded} more session{notYetLoaded !== 1 ? 's' : ''} not yet loaded
-                          </p>
-                        )}
-                        {hasMore && (
-                          <button
-                            type="button"
-                            disabled={isLoadingMore}
-                            onClick={() => { void modalSections.loadMoreSessions(); }}
-                            className="inline-flex items-center gap-2 rounded-lg border border-panel-border bg-surface-muted px-4 py-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {isLoadingMore ? (
-                              <>
-                                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                                Loading…
-                              </>
-                            ) : (
-                              <>
-                                <ChevronDown size={13} />
-                                Load more sessions
-                                {notYetLoaded > 0 && (
-                                  <span className="rounded-full bg-panel px-1.5 py-0.5 text-[10px] font-bold text-panel-foreground">
-                                    {notYetLoaded}
-                                  </span>
-                                )}
-                              </>
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </>
-              )}
-            </div>
-            </TabStateView>
-          )}
-          {activeTab === 'test-status' && featureTestHealth && (
-            <TabStateView
-              status={modalSections['test-status'].status}
-              error={modalSections['test-status'].error?.message}
-              onRetry={modalSections['test-status'].retry}
-              isEmpty={false}
-              staleLabel="Refreshing test status…"
-            >
-            <FeatureModalTestStatus
-              featureId={activeFeature.id}
-              health={featureTestHealth}
-              onNavigateToExecution={() => {
-                onClose();
-                navigate(`/execution?feature=${encodeURIComponent(activeFeature.id)}&tab=test-status`);
-              }}
-            />
-            </TabStateView>
-          )}
-          {activeTab === 'history' && (
-            <TabStateView
-              status={modalSections.history.status}
-              error={modalSections.history.error?.message}
-              onRetry={modalSections.history.retry}
-              isEmpty={gitHistoryData.commits.length === 0 && gitHistoryData.pullRequests.length === 0 && modalSections.history.status === 'success'}
-              emptyLabel="No git history found for this feature."
-              staleLabel="Refreshing git history…"
-            >
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="bg-panel border border-panel-border rounded-lg p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked Commits</div>
-                  <div className="text-xl font-semibold text-emerald-300 mt-1">{gitHistoryData.commits.length}</div>
-                </div>
-                <div className="bg-panel border border-panel-border rounded-lg p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked PRs</div>
-                  <div className="text-xl font-semibold text-blue-300 mt-1">{gitHistoryData.pullRequests.length}</div>
-                </div>
-                <div className="bg-panel border border-panel-border rounded-lg p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked Branches</div>
-                  <div className="text-xl font-semibold text-purple-300 mt-1">{gitHistoryData.branches.length}</div>
-                </div>
-              </div>
-
-              {gitHistoryCommitFilter && (
-                <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
-                  <div className="text-xs text-emerald-200">
-                    Filtering to commit <span className="font-mono">{gitHistoryCommitFilter}</span>
-                  </div>
-                  <button
-                    onClick={() => setGitHistoryCommitFilter('')}
-                    className="text-[11px] px-2 py-1 rounded border border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/20 transition-colors"
-                  >
-                    Clear Filter
-                  </button>
-                </div>
-              )}
-
-              {gitHistoryData.branches.length > 0 && (
-                <div className="bg-panel border border-panel-border rounded-lg p-3">
-                  <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Branches</div>
-                  <div className="flex flex-wrap gap-2">
-                    {gitHistoryData.branches.map(branch => (
-                      <span
-                        key={`branch-${branch}`}
-                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-purple-500/30 bg-purple-500/10 text-purple-200 font-mono"
-                      >
-                        <GitBranch size={12} />
-                        {branch}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {gitHistoryData.pullRequests.length > 0 && (
-                <div className="bg-panel border border-panel-border rounded-lg p-3">
-                  <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Pull Requests</div>
-                  <div className="space-y-2">
-                    <AnimatePresence initial={false}>
-                      {animatedPullRequests.items.map((pr, index) => {
-                      const label = pr.prNumber ? `#${pr.prNumber}` : (pr.prUrl || pr.prRepository || `PR ${index + 1}`);
-                      const href = pr.prUrl || '';
-                      const prKey = getPullRequestStableKey(pr) || `pr-row-${label}`;
-                      const shouldAnimateIn = animatedPullRequests.insertedIds.has(prKey);
-                      return (
-                        <motion.div
-                          key={prKey}
-                          layout="position"
-                          initial={shouldAnimateIn ? listInsertPreset.initial : false}
-                          animate={shouldAnimateIn ? listInsertPreset.animate : undefined}
-                          exit={listInsertPreset.exit}
-                          transition={listInsertPreset.transition}
-                          className="flex items-center justify-between gap-3 text-xs"
-                        >
-                          <div className="text-foreground flex items-center gap-2">
-                            <span className="font-mono text-blue-300">{label}</span>
-                            {pr.prRepository && <span className="text-muted-foreground">{pr.prRepository}</span>}
-                          </div>
-                          {href ? (
-                            <a
-                              href={href}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200"
-                            >
-                              Open <ExternalLink size={12} />
-                            </a>
-                          ) : (
-                            <span className="text-muted-foreground">No URL</span>
-                          )}
-                        </motion.div>
-                      );
-                    })}
-                    </AnimatePresence>
-                  </div>
-                </div>
-              )}
-
-              {filteredGitCommits.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
-                  <GitCommit size={32} className="mx-auto mb-3 opacity-50" />
-                  <p>No linked Git commits available yet.</p>
-                  <p className="text-xs mt-1 text-muted-foreground">Commit correlations are derived from session evidence and forensics metadata.</p>
-                </div>
-              )}
-
-              {filteredGitCommits.length > 0 && (
-                <div className="space-y-2">
-                  <AnimatePresence initial={false}>
-                    {animatedGitCommits.items.map(commit => {
-                      const shouldAnimateIn = animatedGitCommits.insertedIds.has(commit.commitHash);
-                      return (
-                    <motion.div
-                      key={commit.commitHash}
-                      layout="position"
-                      initial={shouldAnimateIn ? listInsertPreset.initial : false}
-                      animate={shouldAnimateIn ? listInsertPreset.animate : undefined}
-                      exit={listInsertPreset.exit}
-                      transition={listInsertPreset.transition}
-                      className="bg-panel border border-panel-border rounded-lg p-3"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <button
-                          onClick={() => setGitHistoryCommitFilter(commit.commitHash === gitHistoryCommitFilter ? '' : commit.commitHash)}
-                          className="inline-flex items-center gap-2 text-sm text-emerald-300 font-mono hover:text-emerald-200 transition-colors"
-                          title="Filter to this commit"
-                        >
-                          <GitCommit size={14} />
-                          {toShortCommitHash(commit.commitHash)}
-                        </button>
-                        <div className="text-xs text-muted-foreground">
-                          {commit.lastSeenAt ? `Last seen ${new Date(commit.lastSeenAt).toLocaleString()}` : 'No timestamp'}
-                        </div>
-                      </div>
-
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
-                        {commit.provisional && (
-                          <span className="px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 uppercase">
-                            Provisional
-                          </span>
-                        )}
-                        {commit.branches.map(branch => (
-                          <span key={`${commit.commitHash}-branch-${branch}`} className="px-2 py-0.5 rounded border border-purple-500/30 bg-purple-500/10 text-purple-200 font-mono">
-                            {branch}
-                          </span>
-                        ))}
-                        {commit.pullRequests.map((pr, idx) => (
-                          <span key={`${commit.commitHash}-pr-${getPullRequestStableKey(pr) || idx}`} className="px-2 py-0.5 rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 font-mono">
-                            {pr.prNumber ? `PR #${pr.prNumber}` : 'PR'}
-                          </span>
-                        ))}
-                        {commit.phases.map(phase => (
-                          <span key={`${commit.commitHash}-phase-${phase}`} className="px-2 py-0.5 rounded border border-panel-border bg-surface-muted/90 text-foreground">
-                            Phase {phase}
-                          </span>
-                        ))}
-                        {commit.taskIds.slice(0, 6).map(taskId => (
-                          <span key={`${commit.commitHash}-task-${taskId}`} className="px-2 py-0.5 rounded border border-panel-border bg-surface-muted/90 text-foreground font-mono">
-                            {taskId}
-                          </span>
-                        ))}
-                        {commit.taskIds.length > 6 && (
-                          <span className="text-muted-foreground">+{commit.taskIds.length - 6} tasks</span>
-                        )}
-                      </div>
-
-                      <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 text-[11px]">
-                        <div className="text-muted-foreground">Sessions: <span className="text-panel-foreground">{commit.sessionIds.length}</span></div>
-                        <div className="text-muted-foreground">Files: <span className="text-panel-foreground">{commit.fileCount}</span></div>
-                        <div className="text-muted-foreground">+/-: <span className="text-panel-foreground">{commit.additions}/{commit.deletions}</span></div>
-                        <div className="text-muted-foreground">Model IO: <span className="text-panel-foreground">{(commit.tokenInput + commit.tokenOutput).toLocaleString()}</span></div>
-                        <div className="text-muted-foreground">Events: <span className="text-panel-foreground">{commit.eventCount}</span></div>
-                        <div className="text-muted-foreground">Cost: <span className="text-panel-foreground">${commit.costUsd.toFixed(2)}</span></div>
-                      </div>
-                    </motion.div>
-                  )})}
-                  </AnimatePresence>
-                </div>
-              )}
-            </div>
-            </TabStateView>
-          )}
-        </div>
-
-        {/* Task Source Dialog */}
-        {viewingTask && <TaskSourceDialog task={viewingTask} onClose={() => setViewingTask(null)} />}
-        {viewingDoc && (
-          <DocumentModal
-            doc={viewingDoc}
-            onClose={() => setViewingDoc(null)}
-            onBack={() => setViewingDoc(null)}
-            backLabel="Back to feature"
-            zIndexClassName="z-[60]"
+  const renderTabContent = useCallback((tab: ModalTabId) => {
+    switch (tab) {
+      case 'overview':
+        return (
+          <OverviewTab
+            metrics={{
+              totalTasks: activeFeature.totalTasks,
+              completedTasks: featureCompletedTasks,
+              deferredTasks: featureDeferredTasks,
+              phasesCount: phases.length,
+              linkedDocsCount: linkedDocs.length,
+              pct,
+              docGroupCount: groupedDocs.length,
+              filteredPhasesCount: filteredPhases.length,
+            }}
+            delivery={{
+              priority: activeFeature.priority,
+              riskLevel: activeFeature.riskLevel,
+              complexity: activeFeature.complexity,
+              track: activeFeature.track,
+              featureFamily: activeFeature.featureFamily,
+              targetRelease: activeFeature.targetRelease,
+              milestone: activeFeature.milestone,
+              executionReadiness: activeFeature.executionReadiness,
+              coverage: getFeatureCoverageSummary(activeFeature),
+              qualitySignals: activeFeature.qualitySignals ? {
+                blockerCount: activeFeature.qualitySignals.blockerCount,
+                atRiskTaskCount: activeFeature.qualitySignals.atRiskTaskCount,
+                testImpact: activeFeature.testImpact || activeFeature.qualitySignals.testImpact,
+                integritySignalRefs: activeFeature.qualitySignals.integritySignalRefs,
+              } : null,
+              blockedByCount: blockedByRelations.length,
+              relatedFeatureCount: getFeatureLinkedFeatureCount(activeFeature),
+            }}
+            family={{
+              familyPosition,
+              familySummary,
+              executionGate,
+              blockingEvidence: blockingEvidence.slice(0, 10),
+              nextFamilyItemName: nextFamilyItem?.featureName || null,
+              nextFamilyItemId: nextFamilyItem?.featureId || null,
+              familyPositionLabel: getFamilyPositionLabel(familyPosition),
+              blockingReason: dependencyState?.blockingReason || null,
+            }}
+            dateSignals={{
+              plannedAt: getFeatureDateValue(activeFeature, 'plannedAt'),
+              startedAt: getFeatureDateValue(activeFeature, 'startedAt'),
+              completedAt: getFeatureDateValue(activeFeature, 'completedAt'),
+              updatedAt: getFeatureDateValue(activeFeature, 'updatedAt'),
+            }}
+            blockedByRelations={blockedByRelations}
+            relatedFeatures={activeFeature.relatedFeatures || []}
+            tags={activeFeature.tags || []}
+            linkedDocs={orderedLinkedDocs}
+            onFeatureNavigate={(fid) => {
+              onClose();
+              navigate(planningFeatureModalHref(fid));
+            }}
+            onDocNavigate={handleDocClick}
           />
-        )}
-      </div>
-    </div>
+        );
+
+      case 'phases':
+      case 'docs':
+      case 'relations':
+        return (
+          <PlanningTabGroup
+            activeTab={tab}
+            planningStore={{
+              phases: modalSections.phases,
+              docs: modalSections.docs,
+              relations: modalSections.relations,
+              prefetch: async (section) => { await modalSections.prefetch(section); },
+              markStale: (section) => { modalSections.markStale(section); },
+              invalidateAll: () => { modalSections.markStale(); },
+            }}
+            phasesProps={{
+              phases,
+              phaseSessionLinks: new Map(
+                Array.from(phaseSessionLinks.entries()).map(([k, sessions]) => [
+                  k,
+                  sessions.map(s => ({ sessionId: s.sessionId })),
+                ])
+              ),
+              phaseCommitLinks: phaseCommitLinks,
+              taskSessionLinks: new Map(
+                Array.from(taskSessionLinksByTaskId.entries()).map(([k, links]) => [
+                  k,
+                  links.map(l => ({ sessionId: l.sessionId, isSubthread: l.isSubthread, source: l.source })),
+                ])
+              ),
+              taskCommitLinks: taskCommitLinksByTaskId,
+              callbacks: {
+                onSessionNavigate: (sessionId) => {
+                  onClose();
+                  navigate(`/sessions?session=${encodeURIComponent(sessionId)}`);
+                },
+                onCommitNavigate: openGitCommitInHistory,
+                onPhaseStatusChange: handlePhaseStatusChange,
+                onTaskStatusChange: handleTaskStatusChange,
+                onTaskView: setViewingTask,
+              },
+            }}
+            docsProps={{
+              linkedDocs,
+              docsByGroup: new Map(docsByGroup),
+              progressDocPhaseBuckets,
+              familyPositionLabel: getFamilyPositionLabel(familyPosition),
+              featureFamily: activeFeature.featureFamily || undefined,
+              executionGateLabel: getExecutionGateLabel(executionGate?.state),
+              executionGateDetail: executionGate?.reason || dependencyState?.blockingReason || undefined,
+              renderDocGrid: (docs, isProgress) => renderDocGrid(docs, isProgress),
+            }}
+            relationsProps={{
+              blockingEvidence: blockingEvidence,
+              familyPosition: familyPosition,
+              familySummary: familySummary,
+              nextFamilyItemLabel: nextFamilyItem?.featureName,
+              nextFamilyItemId: nextFamilyItem?.featureId,
+              familyPositionLabel: getFamilyPositionLabel(familyPosition),
+              featureFamily: familySummary?.featureFamily || activeFeature.featureFamily,
+              linkedFeatures: activeFeature.linkedFeatures,
+              relatedFeatures: activeFeature.relatedFeatures,
+              linkedDocs: linkedDocs,
+              launchedFromPlanning,
+              onFeatureNavigate: (fid) => {
+                onClose();
+                navigate(
+                  launchedFromPlanning
+                    ? planningRouteFeatureModalHref(fid)
+                    : planningFeatureModalHref(fid),
+                );
+              },
+              onClose,
+            }}
+          />
+        );
+
+      case 'sessions':
+        return (
+          <SessionsTab
+            sessions={modalSections.sessions}
+            sessionPagination={modalSections.sessionPagination}
+            loadMoreSessions={modalSections.loadMoreSessions}
+            linkedSessions={linkedSessions}
+            onNavigateToSession={(sessionId) => {
+              onClose();
+              navigate(`/sessions?session=${encodeURIComponent(sessionId)}`);
+            }}
+          />
+        );
+
+      case 'test-status':
+        return (
+          <TestStatusTab
+            featureId={activeFeature.id}
+            health={featureTestHealth}
+            section={modalSections['test-status']}
+            onClose={onClose}
+            navigate={navigate}
+          />
+        );
+
+      case 'history':
+        return (
+          <HistoryTab
+            history={modalSections.history}
+            linkedSessions={linkedSessions}
+          />
+        );
+
+      default:
+        return null;
+    }
+  }, [
+    activeFeature,
+    featureCompletedTasks,
+    featureDeferredTasks,
+    phases,
+    linkedDocs,
+    pct,
+    groupedDocs,
+    filteredPhases,
+    blockedByRelations,
+    familyPosition,
+    familySummary,
+    executionGate,
+    blockingEvidence,
+    nextFamilyItem,
+    dependencyState,
+    orderedLinkedDocs,
+    modalSections,
+    linkedSessions,
+    featureTestHealth,
+    phaseSessionLinks,
+    phaseCommitLinks,
+    taskSessionLinksByTaskId,
+    taskCommitLinksByTaskId,
+    docsByGroup,
+    progressDocPhaseBuckets,
+    navigate,
+    onClose,
+    launchedFromPlanning,
+    openGitCommitInHistory,
+    handlePhaseStatusChange,
+    handleTaskStatusChange,
+    handleDocClick,
+  ]);
+
+  return (
+    <>
+      <FeatureDetailShell
+        featureId={activeFeature.id}
+        featureName={activeFeature.name}
+        statusBadge={
+          <>
+            <StatusDropdown status={activeFeature.status} onStatusChange={handleFeatureStatusChange} />
+            {updatingStatus && <RefreshCw size={14} className="text-info animate-spin" />}
+            {activeFeature.category && (
+              <Badge tone="outline" className="uppercase tracking-wide">
+                {activeFeature.category}
+              </Badge>
+            )}
+            {featureDeferredTasks > 0 && (
+              <Badge tone="warning" className="uppercase tracking-wide">
+                Done with deferrals
+              </Badge>
+            )}
+          </>
+        }
+        progressRow={
+          <div className="mt-3 grid gap-3 text-xs text-muted-foreground sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={activeFeature.totalTasks} />
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="font-medium text-panel-foreground">{pct}% complete</span>
+              <span>{featureCompletedTasks}/{activeFeature.totalTasks} tasks</span>
+              {featureDeferredTasks > 0 && (
+                <span className="text-warning">{featureDeferredTasks} deferred</span>
+              )}
+              {primaryFeatureDate.value && (
+                <span className="inline-flex items-center gap-1">
+                  <Calendar size={12} />
+                  {primaryFeatureDate.label}: {new Date(primaryFeatureDate.value).toLocaleDateString()}
+                  {primaryFeatureDate.confidence ? ` (${primaryFeatureDate.confidence})` : ''}
+                </span>
+              )}
+            </div>
+          </div>
+        }
+        tabs={shellTabs}
+        initialTab={activeTab}
+        onTabChange={(tab) => setActiveTab(tab)}
+        sectionStates={shellSectionStates}
+        renderTabContent={renderTabContent}
+        beginWorkAction={
+          <Button
+            type="button"
+            size="sm"
+            onClick={handleBeginWork}
+            className="border border-info-border bg-info/10 text-info shadow-sm hover:bg-info/20"
+          >
+            <Play size={14} />
+            Begin Work
+          </Button>
+        }
+        onExpand={() => {
+          navigate(planningFeatureDetailHref(feature.id));
+          onClose();
+        }}
+        onClose={onClose}
+      />
+      {/* Task Source Dialog — rendered outside shell (z-index layers above modal) */}
+      {viewingTask && <TaskSourceDialog task={viewingTask} onClose={() => setViewingTask(null)} />}
+      {viewingDoc && (
+        <DocumentModal
+          doc={viewingDoc}
+          onClose={() => setViewingDoc(null)}
+          onBack={() => setViewingDoc(null)}
+          backLabel="Back to feature"
+          zIndexClassName="z-[60]"
+        />
+      )}
+    </>
   );
 };
+
 
 // ── Feature Card ───────────────────────────────────────────────────
 
