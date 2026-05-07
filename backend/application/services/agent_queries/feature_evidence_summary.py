@@ -1,4 +1,29 @@
-"""Bounded feature evidence summary service — no transcript enrichment."""
+"""Bounded feature evidence summary service — no transcript enrichment.
+
+Session discovery
+-----------------
+This service discovers sessions for a feature through two successive paths:
+
+1. **Explicit entity links** — the ``entity_links`` DB table is queried for
+   ``feature→session`` relationships already established by the link-rebuild
+   pipeline.  This is the primary and authoritative path.
+
+2. **Feature-scoped session list** (fallback) — when no explicit links exist,
+   ``SessionIntelligenceReadService.list_sessions`` is called with the
+   ``feature_id`` filter.  This relies on DB-stored ``feature_id`` / ``task_id``
+   columns on session rows, NOT on any heuristic slug-matching.
+
+Heuristic correlation (slug tokens, phase hints, command token scanning, lineage
+inheritance) is deliberately **not** performed here.  That logic lives entirely
+in :mod:`.session_correlation` and is consumed only by the planning session board
+(``planning_sessions.py``).  This separation ensures the two surfaces do not
+duplicate correlation heuristics (P3-003 acceptance criterion).
+
+The ``_feature_slug`` helper below extracts a display slug string from a feature
+row dict for DTO population; it is unrelated to
+:func:`.session_correlation._feature_slug_tokens`, which tokenises a slug for
+substring matching during heuristic correlation.
+"""
 from __future__ import annotations
 
 from collections import Counter
@@ -231,7 +256,9 @@ class FeatureEvidenceSummaryService:
             except Exception:
                 partial = True
 
-        # Fall back to feature-scoped session list when links yield nothing
+        # Fall back to feature-scoped session list when links yield nothing.
+        # This uses the DB-stored feature_id/task_id column filter — NOT heuristic
+        # slug matching.  Heuristic correlation is deferred to session_correlation.py.
         if not session_rows and not session_ids:
             try:
                 from backend.application.services.session_intelligence import (
