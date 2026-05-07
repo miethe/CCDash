@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -723,6 +723,47 @@ CREATE INDEX IF NOT EXISTS idx_external_definitions_name
     ON external_definitions(project_id, display_name);
 CREATE INDEX IF NOT EXISTS idx_external_definitions_raw_snapshot
     ON external_definitions USING GIN (raw_snapshot_json);
+
+CREATE TABLE IF NOT EXISTS artifact_snapshot_cache (
+    id             BIGSERIAL PRIMARY KEY,
+    project_id     TEXT NOT NULL,
+    collection_id  TEXT DEFAULT '',
+    schema_version TEXT NOT NULL,
+    generated_at   TEXT NOT NULL,
+    fetched_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    artifact_count INTEGER NOT NULL DEFAULT 0,
+    status         TEXT NOT NULL DEFAULT 'fetched',
+    raw_json       JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_project_fetched
+    ON artifact_snapshot_cache(project_id, fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_project_collection
+    ON artifact_snapshot_cache(project_id, collection_id, fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_raw
+    ON artifact_snapshot_cache USING GIN (raw_json);
+
+CREATE TABLE IF NOT EXISTS artifact_identity_map (
+    id                BIGSERIAL PRIMARY KEY,
+    project_id        TEXT NOT NULL,
+    ccdash_name       TEXT NOT NULL,
+    ccdash_type       TEXT NOT NULL DEFAULT '',
+    skillmeat_uuid    TEXT DEFAULT '',
+    content_hash      TEXT DEFAULT '',
+    match_tier        TEXT NOT NULL DEFAULT 'unresolved',
+    confidence        DOUBLE PRECISION,
+    resolved_at       TEXT DEFAULT '',
+    unresolved_reason TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_name
+    ON artifact_identity_map(project_id, ccdash_name);
+CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_uuid
+    ON artifact_identity_map(project_id, skillmeat_uuid);
+CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_hash
+    ON artifact_identity_map(project_id, content_hash);
+CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_match_tier
+    ON artifact_identity_map(project_id, match_tier);
 
 CREATE TABLE IF NOT EXISTS pricing_catalog_entries (
     id                  BIGSERIAL PRIMARY KEY,
@@ -1784,6 +1825,58 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_external_definitions_raw_snapshot ON external_definitions USING GIN (raw_snapshot_json)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artifact_snapshot_cache (
+            id             BIGSERIAL PRIMARY KEY,
+            project_id     TEXT NOT NULL,
+            collection_id  TEXT DEFAULT '',
+            schema_version TEXT NOT NULL,
+            generated_at   TEXT NOT NULL,
+            fetched_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            artifact_count INTEGER NOT NULL DEFAULT 0,
+            status         TEXT NOT NULL DEFAULT 'fetched',
+            raw_json       JSONB NOT NULL DEFAULT '{}'::jsonb
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_project_fetched ON artifact_snapshot_cache(project_id, fetched_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_project_collection ON artifact_snapshot_cache(project_id, collection_id, fetched_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_raw ON artifact_snapshot_cache USING GIN (raw_json)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artifact_identity_map (
+            id                BIGSERIAL PRIMARY KEY,
+            project_id        TEXT NOT NULL,
+            ccdash_name       TEXT NOT NULL,
+            ccdash_type       TEXT NOT NULL DEFAULT '',
+            skillmeat_uuid    TEXT DEFAULT '',
+            content_hash      TEXT DEFAULT '',
+            match_tier        TEXT NOT NULL DEFAULT 'unresolved',
+            confidence        DOUBLE PRECISION,
+            resolved_at       TEXT DEFAULT '',
+            unresolved_reason TEXT DEFAULT ''
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_name ON artifact_identity_map(project_id, ccdash_name)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_uuid ON artifact_identity_map(project_id, skillmeat_uuid)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_hash ON artifact_identity_map(project_id, content_hash)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_match_tier ON artifact_identity_map(project_id, match_tier)"
     )
     await db.execute(
         """

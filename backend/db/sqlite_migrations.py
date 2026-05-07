@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -722,6 +722,45 @@ CREATE INDEX IF NOT EXISTS idx_external_definitions_source
     ON external_definitions(source_id, definition_type);
 CREATE INDEX IF NOT EXISTS idx_external_definitions_name
     ON external_definitions(project_id, display_name);
+
+CREATE TABLE IF NOT EXISTS artifact_snapshot_cache (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id     TEXT NOT NULL,
+    collection_id  TEXT DEFAULT '',
+    schema_version TEXT NOT NULL,
+    generated_at   TEXT NOT NULL,
+    fetched_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    artifact_count INTEGER NOT NULL DEFAULT 0,
+    status         TEXT NOT NULL DEFAULT 'fetched',
+    raw_json       TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_project_fetched
+    ON artifact_snapshot_cache(project_id, fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_project_collection
+    ON artifact_snapshot_cache(project_id, collection_id, fetched_at DESC);
+
+CREATE TABLE IF NOT EXISTS artifact_identity_map (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id        TEXT NOT NULL,
+    ccdash_name       TEXT NOT NULL,
+    ccdash_type       TEXT NOT NULL DEFAULT '',
+    skillmeat_uuid    TEXT DEFAULT '',
+    content_hash      TEXT DEFAULT '',
+    match_tier        TEXT NOT NULL DEFAULT 'unresolved',
+    confidence        REAL,
+    resolved_at       TEXT DEFAULT '',
+    unresolved_reason TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_name
+    ON artifact_identity_map(project_id, ccdash_name);
+CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_uuid
+    ON artifact_identity_map(project_id, skillmeat_uuid);
+CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_hash
+    ON artifact_identity_map(project_id, content_hash);
+CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_match_tier
+    ON artifact_identity_map(project_id, match_tier);
 
 CREATE TABLE IF NOT EXISTS pricing_catalog_entries (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1659,6 +1698,63 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_index(
         db,
         "CREATE INDEX IF NOT EXISTS idx_external_definitions_name ON external_definitions(project_id, display_name)",
+    )
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS artifact_snapshot_cache (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id     TEXT NOT NULL,
+            collection_id  TEXT DEFAULT '',
+            schema_version TEXT NOT NULL,
+            generated_at   TEXT NOT NULL,
+            fetched_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            artifact_count INTEGER NOT NULL DEFAULT 0,
+            status         TEXT NOT NULL DEFAULT 'fetched',
+            raw_json       TEXT NOT NULL DEFAULT '{}'
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_project_fetched ON artifact_snapshot_cache(project_id, fetched_at DESC)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_snapshot_cache_project_collection ON artifact_snapshot_cache(project_id, collection_id, fetched_at DESC)",
+    )
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS artifact_identity_map (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id        TEXT NOT NULL,
+            ccdash_name       TEXT NOT NULL,
+            ccdash_type       TEXT NOT NULL DEFAULT '',
+            skillmeat_uuid    TEXT DEFAULT '',
+            content_hash      TEXT DEFAULT '',
+            match_tier        TEXT NOT NULL DEFAULT 'unresolved',
+            confidence        REAL,
+            resolved_at       TEXT DEFAULT '',
+            unresolved_reason TEXT DEFAULT ''
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_name ON artifact_identity_map(project_id, ccdash_name)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_uuid ON artifact_identity_map(project_id, skillmeat_uuid)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_hash ON artifact_identity_map(project_id, content_hash)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identity_map_project_match_tier ON artifact_identity_map(project_id, match_tier)",
     )
     await _ensure_index(
         db,

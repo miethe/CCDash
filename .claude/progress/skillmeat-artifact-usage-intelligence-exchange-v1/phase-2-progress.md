@@ -7,7 +7,7 @@ feature_slug: skillmeat-artifact-usage-intelligence-exchange-v1
 phase: 2
 phase_title: Snapshot Ingestion & Storage
 title: "skillmeat-artifact-usage-intelligence-exchange-v1 - Phase 2: Snapshot Ingestion & Storage"
-status: pending
+status: in_progress
 created: '2026-05-07'
 updated: '2026-05-07'
 prd_ref: docs/project_plans/PRDs/integrations/skillmeat-artifact-usage-intelligence-exchange-v1.md
@@ -15,10 +15,10 @@ plan_ref: docs/project_plans/implementation_plans/integrations/skillmeat-artifac
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
-overall_progress: 0
-completion_estimate: blocked
+overall_progress: 17
+completion_estimate: on_track
 total_tasks: 6
-completed_tasks: 0
+completed_tasks: 1
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -28,13 +28,13 @@ owners:
 contributors: []
 phase_dependencies:
 - phase: 1
-  status: blocking
-  description: Phase 1 must complete before snapshot ingestion and storage work starts.
+  status: complete
+  description: Phase 1 contract/schema foundation is complete; Phase 2 migration work is unblocked.
 tasks:
 - id: T2-001
   title: "DB migration: snapshot tables"
-  description: Create Alembic migration adding artifact_snapshot_cache and artifact_identity_map tables with required indexes and clean downgrade behavior.
-  status: pending
+  description: Create custom SQLite/Postgres migrations adding artifact_snapshot_cache and artifact_identity_map tables with required indexes. CCDash does not use Alembic for this path and has no downgrade migration flow.
+  status: completed
   assigned_to:
   - data-layer-expert
   dependencies:
@@ -117,14 +117,7 @@ parallelization:
   - T2-003
   - T2-004
   - T2-006
-blockers:
-- id: PHASE1-COMPLETE
-  title: Phase 1 contract and schema foundation not complete
-  severity: high
-  blocking:
-  - phase-start
-  resolution: Complete Phase 1 schemas, DTOs, TypeScript interfaces, feature flag wiring, and validation before starting Phase 2.
-  created: '2026-05-07'
+blockers: []
 success_criteria:
 - id: SC-1
   description: CCDash fetches and stores a SkillMeat artifact snapshot for a configured project or collection.
@@ -146,7 +139,7 @@ success_criteria:
   status: pending
 validation:
   required:
-  - Alembic migration upgrade and downgrade on SQLite and PostgreSQL
+  - Custom SQLite and PostgreSQL migration bootstrap/idempotent upgrade coverage for artifact_snapshot_cache and artifact_identity_map; no Alembic downgrade path exists in CCDash.
   - SkillMeat snapshot client error-handling tests for 404, 429, and network failures
   - ArtifactSnapshotRepository seeded database tests
   - Identity resolver coverage for all required three-tier resolution scenarios
@@ -162,4 +155,14 @@ Build the persistence, fetch, identity mapping, diagnostics, and integration-tes
 
 ## Current Status
 
-Phase 2 is pending and blocked on Phase 1 completion. All T2 tasks remain pending.
+Phase 2 is in progress. Phase 1 is complete, the Phase 1 blocker is resolved, and T2-001 is complete. T2-002 through T2-006 remain pending.
+
+## Validation Evidence
+
+- 2026-05-07 T2-001: `backend/.venv/bin/python -m pytest backend/tests/test_sqlite_migrations.py backend/tests/test_migration_governance.py -q` -> 18 passed in 0.63s.
+- 2026-05-07 T2-001 ownership follow-up: `backend/.venv/bin/python -m pytest backend/tests/test_data_domain_layout.py backend/tests/test_data_domain_ownership.py -q` -> failed on unrelated contract drift outside T2-001 scope (`feature_sessions`, `session_memory_drafts`, `planning_worktree_contexts`, `filesystem_scan_manifest`); new artifact snapshot tables were classified.
+
+## Notes
+
+- T2-001 used CCDash's custom migration modules (`backend/db/sqlite_migrations.py`, `backend/db/postgres_migrations.py`) rather than Alembic. There is no downgrade path in this migration system.
+- `artifact_snapshot_cache` and `artifact_identity_map` are shared integration snapshot tables across SQLite and Postgres and are classified as refreshable, scope-owned integration data.

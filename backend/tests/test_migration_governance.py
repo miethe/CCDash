@@ -46,6 +46,14 @@ class MigrationGovernanceTests(unittest.TestCase):
             self.assertIn(table, shared)
             self.assertNotIn(table, get_enterprise_only_postgres_tables())
 
+    def test_artifact_snapshot_tables_are_shared_integration_tables(self) -> None:
+        shared = get_sqlite_migration_tables()
+        enterprise_only = get_enterprise_only_postgres_tables()
+
+        for table in ("artifact_snapshot_cache", "artifact_identity_map"):
+            self.assertIn(table, shared)
+            self.assertNotIn(table, enterprise_only)
+
     def test_enterprise_only_tables_are_in_expected_schemas(self) -> None:
         schema_map = get_enterprise_only_postgres_table_schemas()
         expected = {
@@ -80,6 +88,7 @@ class MigrationGovernanceTests(unittest.TestCase):
         matrix = get_table_backend_difference_matrix()
         self.assertIn("json_storage", matrix["external_definition_sources"])
         self.assertIn("json_storage", matrix["external_definitions"])
+        self.assertIn("json_storage", matrix["artifact_snapshot_cache"])
         self.assertIn("json_storage", matrix["execution_runs"])
 
     def test_supported_storage_compositions_cover_phase4_matrix(self) -> None:

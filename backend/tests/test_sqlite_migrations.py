@@ -34,6 +34,79 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
 
         validate_contract.assert_called_once()
 
+    async def test_run_migrations_creates_artifact_snapshot_tables_and_indexes(self) -> None:
+        db = await aiosqlite.connect(":memory:")
+        self.addAsyncCleanup(db.close)
+
+        await sqlite_migrations.run_migrations(db)
+
+        async with db.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('artifact_snapshot_cache', 'artifact_identity_map')
+            """
+        ) as cur:
+            tables = {row[0] for row in await cur.fetchall()}
+        self.assertEqual(tables, {"artifact_snapshot_cache", "artifact_identity_map"})
+
+        async with db.execute("PRAGMA table_info(artifact_snapshot_cache)") as cur:
+            snapshot_columns = {row[1]: row[2].upper() for row in await cur.fetchall()}
+        self.assertEqual(
+            set(snapshot_columns),
+            {
+                "id",
+                "project_id",
+                "collection_id",
+                "schema_version",
+                "generated_at",
+                "fetched_at",
+                "artifact_count",
+                "status",
+                "raw_json",
+            },
+        )
+        self.assertEqual(snapshot_columns["raw_json"], "TEXT")
+
+        async with db.execute("PRAGMA table_info(artifact_identity_map)") as cur:
+            identity_columns = {row[1]: row[2].upper() for row in await cur.fetchall()}
+        self.assertEqual(
+            set(identity_columns),
+            {
+                "id",
+                "project_id",
+                "ccdash_name",
+                "ccdash_type",
+                "skillmeat_uuid",
+                "content_hash",
+                "match_tier",
+                "confidence",
+                "resolved_at",
+                "unresolved_reason",
+            },
+        )
+
+        async with db.execute("PRAGMA index_list(artifact_snapshot_cache)") as cur:
+            snapshot_indexes = {row[1] for row in await cur.fetchall()}
+        self.assertTrue(
+            {
+                "idx_artifact_snapshot_cache_project_fetched",
+                "idx_artifact_snapshot_cache_project_collection",
+            }.issubset(snapshot_indexes)
+        )
+
+        async with db.execute("PRAGMA index_list(artifact_identity_map)") as cur:
+            identity_indexes = {row[1] for row in await cur.fetchall()}
+        self.assertTrue(
+            {
+                "idx_artifact_identity_map_project_name",
+                "idx_artifact_identity_map_project_uuid",
+                "idx_artifact_identity_map_project_hash",
+                "idx_artifact_identity_map_project_match_tier",
+            }.issubset(identity_indexes)
+        )
+
     async def test_run_migrations_upgrades_legacy_session_logs_before_bootstrap_indexes(self) -> None:
         db = await aiosqlite.connect(":memory:")
         self.addAsyncCleanup(db.close)

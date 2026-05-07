@@ -217,14 +217,22 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
     )
 
     register_many(
-        ("external_definition_sources", "pricing_catalog_entries"),
+        (
+            "external_definition_sources",
+            "pricing_catalog_entries",
+            "artifact_snapshot_cache",
+            "artifact_identity_map",
+        ),
         kind="table",
         domain="integration_snapshots",
         durability="refreshable",
         local_owner="SQLite refreshable snapshot cache",
         enterprise_owner="enterprise Postgres refreshable snapshot store",
         ownership_posture="scope-owned",
-        notes="Snapshot roots remain scope-governed; they should not reserve direct ownership primitives.",
+        notes=(
+            "Snapshot roots and project-scoped identity reconciliation state remain scope-governed; "
+            "they should not reserve direct ownership primitives."
+        ),
         migration_managed=True,
     )
     register_many(

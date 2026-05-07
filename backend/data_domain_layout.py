@@ -145,13 +145,20 @@ SCHEMA_BOUNDARIES = MappingProxyType(
             current_tables=(
                 "external_definition_sources",
                 "external_definitions",
+                "artifact_snapshot_cache",
+                "artifact_identity_map",
                 "pricing_catalog_entries",
             ),
-            scope_owned_concerns=("external_definition_sources", "pricing_catalog_entries"),
+            scope_owned_concerns=(
+                "external_definition_sources",
+                "artifact_snapshot_cache",
+                "artifact_identity_map",
+                "pricing_catalog_entries",
+            ),
             inherited_ownership_concerns=("external_definitions",),
             notes=(
                 "Integration data is refreshable and intentionally separated from canonical product state. "
-                "Snapshot roots stay scope-owned; definitions inherit from their source."
+                "Snapshot roots and identity reconciliation rows stay scope-owned; definitions inherit from their source."
             ),
         ),
         "operational_state": SchemaBoundary(
