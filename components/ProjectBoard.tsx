@@ -212,15 +212,8 @@ interface GitCommitAggregate {
   provisional: boolean;
 }
 
-type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
 export type FeatureModalTab = PlanningFeatureModalTab;
-
-interface CoreSessionGroupDefinition {
-  id: CoreSessionGroupId;
-  label: string;
-  description: string;
-}
 
 interface DocGroupDefinition {
   id: DocGroupId;
@@ -258,29 +251,7 @@ const normalizeCommitHash = (value: string): string => {
   if (!COMMIT_HASH_PATTERN.test(raw)) return '';
   return raw;
 };
-const getPullRequestStableKey = (pr: PullRequestRef): string => (
-  String(pr.prUrl || '').trim()
-  || `pr:${String(pr.prRepository || '').trim()}:${String(pr.prNumber || '').trim()}`
-  || `pr:${String(pr.prNumber || '').trim()}`
-  || `repo:${String(pr.prRepository || '').trim()}`
-);
-const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
-  {
-    id: 'plan',
-    label: 'Planning Sessions',
-    description: 'Planning tasks, discovery, analysis, and scope definition.',
-  },
-  {
-    id: 'execution',
-    label: 'Execution Sessions',
-    description: 'Implementation work, sorted by phase order.',
-  },
-  {
-    id: 'other',
-    label: 'Other Core Sessions',
-    description: 'Primary linked sessions that do not fit planning or phase execution.',
-  },
-];
+
 const DOC_GROUPS: DocGroupDefinition[] = [
   {
     id: 'initialPlanning',
@@ -358,139 +329,8 @@ const parsePhaseNumber = (value: string, allowBareNumber = false): number | null
   return null;
 };
 
-const getSessionPhaseNumbers = (session: FeatureSessionLink): number[] => {
-  const candidates: number[] = [];
-  const relatedPhases = session.sessionMetadata?.relatedPhases || [];
-  relatedPhases.forEach(phase => {
-    const parsed = parsePhaseNumber(String(phase || ''), true);
-    if (parsed !== null) candidates.push(parsed);
-  });
-  [session.title || '', ...session.commands].forEach(value => {
-    const parsed = parsePhaseNumber(value, false);
-    if (parsed !== null) candidates.push(parsed);
-  });
-  return Array.from(new Set(candidates)).sort((a, b) => a - b);
-};
-
-const getSessionPrimaryPhaseNumber = (session: FeatureSessionLink): number | null => {
-  const values = getSessionPhaseNumbers(session);
-  return values.length > 0 ? values[0] : null;
-};
-
-const getSessionClassificationText = (session: FeatureSessionLink): string =>
-  [
-    session.workflowType || '',
-    session.sessionType || '',
-    session.sessionMetadata?.sessionTypeLabel || '',
-    session.title || '',
-    ...session.reasons,
-    ...session.commands,
-  ]
-    .join(' ')
-    .toLowerCase();
-
-const isPlanningSession = (session: FeatureSessionLink): boolean => {
-  const haystack = getSessionClassificationText(session);
-  const workflow = (session.workflowType || '').toLowerCase();
-  if (workflow === 'planning') return true;
-  return [
-    '/plan:',
-    'planning',
-    'analysis',
-    'spike',
-    'adr',
-    'discovery',
-    'research',
-    'scoping',
-  ].some(token => haystack.includes(token));
-};
-
-const isExecutionSession = (session: FeatureSessionLink): boolean => {
-  const workflow = (session.workflowType || '').toLowerCase();
-  if (workflow === 'execution' || workflow === 'debug' || workflow === 'enhancement') return true;
-  const haystack = getSessionClassificationText(session);
-  if ([
-    '/dev:execute-phase',
-    'execute-phase',
-    'execution',
-    'implement',
-    'implementation',
-    'quick-feature',
-  ].some(token => haystack.includes(token))) {
-    return true;
-  }
-  return getSessionPrimaryPhaseNumber(session) !== null;
-};
-
-const getCoreSessionGroupId = (session: FeatureSessionLink): CoreSessionGroupId => {
-  if (isPlanningSession(session)) return 'plan';
-  if (isExecutionSession(session)) return 'execution';
-  return 'other';
-};
-
-const sessionStartedAtValue = (session: FeatureSessionLink): number => Date.parse(session.startedAt || '') || 0;
-const compareSessionsByConfidenceAndTime = (a: FeatureSessionLink, b: FeatureSessionLink): number => {
-  if (b.confidence !== a.confidence) return b.confidence - a.confidence;
-  return sessionStartedAtValue(b) - sessionStartedAtValue(a);
-};
-
-const compareSessionsForGroup = (groupId: CoreSessionGroupId, a: FeatureSessionLink, b: FeatureSessionLink): number => {
-  if (groupId === 'execution') {
-    const aPhase = getSessionPrimaryPhaseNumber(a) ?? Number.POSITIVE_INFINITY;
-    const bPhase = getSessionPrimaryPhaseNumber(b) ?? Number.POSITIVE_INFINITY;
-    if (aPhase !== bPhase) return aPhase - bPhase;
-  }
-  return compareSessionsByConfidenceAndTime(a, b);
-};
-
-const sortThreadNodes = (
-  nodes: FeatureSessionTreeNode[],
-  comparator: (a: FeatureSessionLink, b: FeatureSessionLink) => number,
-): FeatureSessionTreeNode[] => {
-  const sortedRoots = [...nodes]
-    .sort((a, b) => comparator(a.session, b.session))
-    .map(node => ({
-      ...node,
-      children: sortThreadNodes(node.children, compareSessionsByConfidenceAndTime),
-    }));
-  return sortedRoots;
-};
-
 const countThreadNodes = (nodes: FeatureSessionTreeNode[]): number =>
   nodes.reduce((sum, node) => sum + 1 + countThreadNodes(node.children), 0);
-
-const buildSessionThreadForest = (sessions: FeatureSessionLink[]): FeatureSessionTreeNode[] => {
-  const nodes = new Map<string, FeatureSessionTreeNode>();
-  sessions.forEach(session => {
-    nodes.set(session.sessionId, { session, children: [] });
-  });
-
-  const attached = new Set<string>();
-  sessions.forEach(session => {
-    const node = nodes.get(session.sessionId);
-    if (!node || !isSubthreadSession(session)) return;
-
-    const candidateParents = [
-      session.parentSessionId || '',
-      session.rootSessionId && session.rootSessionId !== session.sessionId ? session.rootSessionId : '',
-    ];
-    const parentId = candidateParents.find(id => !!id && nodes.has(id));
-    if (!parentId || parentId === session.sessionId) return;
-    const parentNode = nodes.get(parentId);
-    if (!parentNode) return;
-    parentNode.children.push(node);
-    attached.add(session.sessionId);
-  });
-
-  const roots: FeatureSessionTreeNode[] = [];
-  sessions.forEach(session => {
-    if (!attached.has(session.sessionId)) {
-      const node = nodes.get(session.sessionId);
-      if (node) roots.push(node);
-    }
-  });
-  return roots;
-};
 
 const getDocumentClassificationText = (doc: LinkedDocument): string =>
   [doc.docType || '', doc.title || '', doc.filePath || '', doc.category || ''].join(' ').toLowerCase();
@@ -885,20 +725,6 @@ const formatFeatureDateCompact = (value?: string): string => {
   });
 };
 
-const buildLinkedDocTypeCounts = (docs: LinkedDocument[]): Array<{ docType: string; count: number }> => {
-  const counts = new Map<string, number>();
-  docs.forEach((doc) => {
-    const key = (doc.docType || 'document').toLowerCase();
-    counts.set(key, (counts.get(key) || 0) + 1);
-  });
-  return Array.from(counts.entries())
-    .map(([docType, count]) => ({ docType, count }))
-    .sort((a, b) => {
-      if (b.count !== a.count) return b.count - a.count;
-      return getDocTypeLabel(a.docType).localeCompare(getDocTypeLabel(b.docType));
-    });
-};
-
 const getFeatureDateModule = (feature: Feature): {
   first: { label: 'Planned' | 'Started'; value: string; confidence?: string };
   completed: { label: 'Completed'; value: string; confidence?: string };
@@ -1256,7 +1082,7 @@ export const ProjectBoardFeatureModal = ({
   const [phaseStatusFilter, setPhaseStatusFilter] = useState<string>('all');
   const [taskStatusFilter, setTaskStatusFilter] = useState<string>('all');
   const [linkedSessionLinks, setLinkedSessionLinks] = useState<FeatureSessionLink[]>([]);
-  const [gitHistoryCommitFilter, setGitHistoryCommitFilter] = useState<string>('');
+  const [_gitHistoryCommitFilter, setGitHistoryCommitFilter] = useState<string>('');
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
   const [featureTestHealth, setFeatureTestHealth] = useState<FeatureTestHealth | null>(null);
   const featureDetailRequestIdRef = useRef(0);
@@ -2237,113 +2063,6 @@ export const ProjectBoardFeatureModal = ({
   }, [gitHistoryData.commits, phases]);
 
   const primaryFeatureDate = getFeaturePrimaryDate(activeFeature);
-  const featureHistoryEvents = useMemo(() => {
-    const events: Array<{
-      id: string;
-      timestamp: string;
-      label: string;
-      kind: string;
-      confidence: string;
-      source: string;
-      description?: string;
-    }> = [];
-
-    (activeFeature.timeline || []).forEach((event, idx) => {
-      if (!event || !event.timestamp) return;
-      events.push({
-        id: event.id || `feature-${idx}`,
-        timestamp: event.timestamp,
-        label: event.label || 'Feature event',
-        kind: event.kind || 'feature',
-        confidence: event.confidence || 'low',
-        source: event.source || 'feature',
-        description: event.description,
-      });
-    });
-
-    linkedDocs.forEach((doc, docIndex) => {
-      (doc.timeline || []).forEach((event, idx) => {
-        if (!event || !event.timestamp) return;
-        events.push({
-          id: `${doc.id || docIndex}-${event.id || idx}`,
-          timestamp: event.timestamp,
-          label: `${event.label || 'Doc update'} (${doc.docType || 'doc'})`,
-          kind: event.kind || 'document',
-          confidence: event.confidence || 'low',
-          source: event.source || `document:${doc.filePath}`,
-          description: event.description,
-        });
-      });
-    });
-
-    linkedSessions.forEach((session) => {
-      if (session.startedAt) {
-        events.push({
-          id: `${session.sessionId}-started`,
-          timestamp: session.startedAt,
-          label: `Session Started (${session.workflowType || session.sessionType || 'related'})`,
-          kind: 'session_started',
-          confidence: 'high',
-          source: `session:${session.sessionId}`,
-        });
-      }
-      if (session.endedAt) {
-        events.push({
-          id: `${session.sessionId}-completed`,
-          timestamp: session.endedAt,
-          label: `Session Completed (${session.workflowType || session.sessionType || 'related'})`,
-          kind: 'session_completed',
-          confidence: 'high',
-          source: `session:${session.sessionId}`,
-        });
-      }
-    });
-
-    return events
-      .filter(event => !!event.timestamp)
-      .sort((a, b) => toEpoch(b.timestamp) - toEpoch(a.timestamp));
-  }, [activeFeature.timeline, linkedDocs, linkedSessions]);
-
-  const allSessionRoots = useMemo(
-    () => buildSessionThreadForest(linkedSessions),
-    [linkedSessions]
-  );
-
-  const primarySessionRoots = useMemo(
-    () => allSessionRoots.filter(node => isPrimarySession(node.session)),
-    [allSessionRoots]
-  );
-
-  const secondarySessionRoots = useMemo(
-    () => sortThreadNodes(allSessionRoots.filter(node => !isPrimarySession(node.session)), compareSessionsByConfidenceAndTime),
-    [allSessionRoots]
-  );
-
-  const primarySessionCount = useMemo(
-    () => countThreadNodes(primarySessionRoots),
-    [primarySessionRoots]
-  );
-
-  const secondarySessionCount = useMemo(
-    () => countThreadNodes(secondarySessionRoots),
-    [secondarySessionRoots]
-  );
-
-  const coreSessionGroups = useMemo(() => {
-    const grouped: Record<CoreSessionGroupId, FeatureSessionTreeNode[]> = {
-      plan: [],
-      execution: [],
-      other: [],
-    };
-    primarySessionRoots.forEach(root => {
-      grouped[getCoreSessionGroupId(root.session)].push(root);
-    });
-    return CORE_SESSION_GROUPS.map(group => ({
-      ...group,
-      roots: sortThreadNodes(grouped[group.id], (a, b) => compareSessionsForGroup(group.id, a, b)),
-      totalSessions: countThreadNodes(grouped[group.id]),
-    }));
-  }, [primarySessionRoots]);
 
   const groupedDocs = useMemo(() => {
     const grouped: Record<DocGroupId, LinkedDocument[]> = {
@@ -2372,10 +2091,7 @@ export const ProjectBoardFeatureModal = ({
     () => groupedDocs.flatMap(group => group.docs),
     [groupedDocs]
   );
-  const docTypeCounts = useMemo(
-    () => buildLinkedDocTypeCounts(linkedDocs),
-    [linkedDocs]
-  );
+
   const primaryDocIds = useMemo(() => {
     const ids = new Set<string>();
     const primary = activeFeature.primaryDocuments;
@@ -2401,11 +2117,6 @@ export const ProjectBoardFeatureModal = ({
     () => (activeFeature.linkedFeatures || []).filter(relation => (relation.type || '').toLowerCase() === 'blocked_by'),
     [activeFeature.linkedFeatures]
   );
-  const sequenceDocs = useMemo(
-    () => linkedDocs.filter(doc => typeof doc.sequenceOrder === 'number'),
-    [linkedDocs]
-  );
-
   const toggleSubthreads = (sessionId: string) => {
     setExpandedSubthreadsBySessionId(prev => {
       const next = new Set(prev);
@@ -2415,27 +2126,6 @@ export const ProjectBoardFeatureModal = ({
     });
   };
 
-  const tabs = useMemo(() => {
-    const base: Array<{ id: FeatureModalTab; label: string; icon: React.ComponentType<{ size?: number }> }> = [
-      { id: 'overview', label: 'Overview', icon: Box },
-      { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
-      { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
-      { id: 'relations', label: `Relations (${getFeatureLinkedFeatureCount(activeFeature)})`, icon: Link2 },
-      {
-        id: 'sessions',
-        // P4-004: prefer server-reported total (from rollup/page) over materialized count.
-        // Falls back to the local list length while first page is loading.
-        label: `Sessions (${modalSections.sessionPagination.serverTotal > 0 ? modalSections.sessionPagination.serverTotal : linkedSessions.length})`,
-        icon: Terminal,
-      },
-      { id: 'history', label: 'Git History', icon: Calendar },
-    ];
-    if ((featureTestHealth?.totalTests || 0) > 0) {
-      base.push({ id: 'test-status', label: 'Test Status', icon: TestTube2 });
-    }
-    return base;
-  }, [activeFeature, featureTestHealth?.totalTests, linkedDocs.length, linkedSessions.length, phases.length]);
-  const modalTitleId = `feature-modal-title-${activeFeature.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const renderDocGrid = (docs: LinkedDocument[], compact = false) => (
     <div className={`grid grid-cols-1 gap-3 ${compact ? 'lg:grid-cols-2' : 'md:grid-cols-2 xl:grid-cols-3'}`}>
       {docs.map(doc => (
@@ -2667,130 +2357,6 @@ export const ProjectBoardFeatureModal = ({
       </motion.div>
     );
   };
-
-  const renderCompactSessionCard = (
-    session: FeatureSessionLink,
-    threadToggle?: {
-      expanded: boolean;
-      childCount: number;
-      onToggle: () => void;
-    }
-  ) => {
-    const openSession = () => {
-      onClose();
-      navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`);
-    };
-    const displayTitle = deriveSessionCardTitle(session.sessionId, (session.title || '').trim(), session.sessionMetadata || null);
-    const workflow = (session.workflowType || session.sessionType || '').trim() || 'Related';
-    const threadLabel = isSubthreadSession(session) ? 'Sub-thread' : 'Main thread';
-    const phaseNumbers = getSessionPhaseNumbers(session);
-    const metrics = resolveTokenMetrics(session, {
-      hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, linkedSessions),
-    });
-    const primaryCommit = session.gitCommitHash || session.gitCommitHashes?.[0] || session.commitHashes?.[0];
-    const modelBadges = (session.modelsUsed && session.modelsUsed.length > 0)
-      ? session.modelsUsed.map(modelInfo => ({
-        raw: modelInfo.raw,
-        displayName: modelInfo.modelDisplayName,
-        provider: modelInfo.modelProvider,
-        family: modelInfo.modelFamily,
-        version: modelInfo.modelVersion,
-      }))
-      : [{
-        raw: session.model,
-        displayName: session.modelDisplayName,
-        provider: session.modelProvider,
-        family: session.modelFamily,
-        version: session.modelVersion,
-      }];
-
-    return (
-      <SessionCard
-        sessionId={session.sessionId}
-        title={displayTitle}
-        status={session.status}
-        startedAt={session.startedAt}
-        endedAt={session.endedAt}
-        updatedAt={session.updatedAt}
-        dates={{
-          startedAt: session.startedAt ? { value: session.startedAt, confidence: 'high' } : undefined,
-          completedAt: session.endedAt ? { value: session.endedAt, confidence: 'high' } : undefined,
-          updatedAt: session.updatedAt ? { value: session.updatedAt, confidence: 'medium' } : undefined,
-        }}
-        model={{
-          raw: session.model,
-          displayName: session.modelDisplayName,
-          provider: session.modelProvider,
-          family: session.modelFamily,
-          version: session.modelVersion,
-        }}
-        models={modelBadges}
-        metadata={session.sessionMetadata || null}
-        threadToggle={threadToggle ? {
-          ...threadToggle,
-          label: 'Sub-Threads',
-        } : undefined}
-        onClick={openSession}
-        className="h-full rounded-lg p-3 hover:border-info-border"
-        infoBadges={(
-          <div className="flex flex-wrap items-center gap-1">
-            <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isPrimarySession(session)
-              ? 'border-success-border bg-success/10 text-success'
-              : 'border-panel-border bg-panel text-muted-foreground'
-              }`}>
-              {isPrimarySession(session) ? 'Primary' : 'Related'}
-            </span>
-            <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isSubthreadSession(session)
-              ? 'border-warning-border bg-warning/10 text-warning'
-              : 'border-info-border bg-info/10 text-info'
-              }`}>
-              {threadLabel}
-            </span>
-            <span className="rounded border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-400">
-              {workflow}
-            </span>
-          </div>
-        )}
-        headerRight={(
-          <div className="text-right">
-            <div className="font-mono text-xs font-semibold text-success">${resolveDisplayCost(session).toFixed(2)}</div>
-          </div>
-        )}
-      >
-        <div className="grid grid-cols-3 gap-2 border-t border-panel-border/70 pt-3 text-[11px]">
-          <div>
-            <div className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Confidence</div>
-            <div className="mt-1 font-mono text-panel-foreground">{Math.round(session.confidence * 100)}%</div>
-          </div>
-          <div>
-            <div className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Workload</div>
-            <div className="mt-1 font-mono text-info">{formatTokenCount(metrics.workloadTokens)}</div>
-          </div>
-          <div>
-            <div className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Duration</div>
-            <div className="mt-1 font-mono text-muted-foreground">{Math.round((session.durationSeconds || 0) / 60)}m</div>
-          </div>
-        </div>
-        {(phaseNumbers.length > 0 || primaryCommit) && (
-          <div className="mt-3 flex flex-wrap gap-1.5 text-[10px]">
-            {phaseNumbers.slice(0, 3).map(phase => (
-              <span key={`${session.sessionId}-phase-${phase}`} className="rounded-full border border-panel-border bg-panel px-2 py-0.5 text-foreground">
-                Phase {phase}
-              </span>
-            ))}
-            {primaryCommit ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-panel-border bg-panel px-2 py-0.5 font-mono text-muted-foreground">
-                <GitCommit size={10} />
-                {toShortCommitHash(primaryCommit)}
-              </span>
-            ) : null}
-          </div>
-        )}
-      </SessionCard>
-    );
-  };
-
-
 
   // ── P4-006: FeatureDetailShell tab configuration ─────────────────────────────
 
