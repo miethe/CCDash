@@ -78,7 +78,7 @@ context_files:
   - components/execution/WorkflowEffectivenessSurface.tsx
   - components/Settings.tsx
   - types.ts
-implementation_plan_ref: ""
+implementation_plan_ref: "docs/project_plans/implementation_plans/integrations/skillmeat-artifact-usage-intelligence-exchange-v1.md"
 ---
 
 # PRD: SkillMeat Artifact Usage Intelligence Exchange V1
