@@ -25,6 +25,8 @@ from backend.application.services.agent_queries.models import (
 from backend.application.services.agent_queries.planning import PlanningQueryService
 from backend.application.services.agent_queries.planning_sessions import (
     PlanningSessionQueryService,
+)
+from backend.application.services.agent_queries.session_correlation import (
     _correlate_explicit_link,
     _correlate_phase_hints,
     _correlate_task_hints,
