@@ -2,7 +2,12 @@
 schema_version: 2
 doc_type: design_spec
 title: "Spec Creation Workflow v1"
-status: draft
+status: superseded
+superseded_by:
+  - docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
+superseded_note: >
+  Spec creation CTA partially absorbed into PlanningTopBar within the
+  planning reskin v2. Full workflow not implemented but core entry point exists.
 maturity: shaping
 created: "2026-04-21"
 updated: "2026-04-21"

@@ -2,7 +2,7 @@
 schema_version: "1.0"
 doc_type: design-spec
 title: "CCDash CLI Package Split and Shared Schemas"
-status: draft
+status: accepted
 created: "2026-04-12"
 feature_slug: "ccdash-standalone-global-cli"
 prd_ref: "docs/project_plans/PRDs/features/ccdash-standalone-global-cli-v1.md"
