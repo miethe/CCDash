@@ -2,7 +2,7 @@
 title: "Design Spec: Container Project Onboarding And Watcher Binding V1"
 schema_version: 2
 doc_type: design_doc
-status: proposed
+status: accepted
 created: 2026-05-05
 updated: 2026-05-05
 feature_slug: container-project-onboarding-and-watchers-v1

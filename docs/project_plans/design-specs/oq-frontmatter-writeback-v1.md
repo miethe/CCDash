@@ -2,7 +2,13 @@
 schema_version: 2
 doc_type: design_spec
 title: "OQ Frontmatter Writeback v1"
-status: draft
+status: superseded
+superseded_by:
+  - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
+superseded_note: >
+  Open-question resolution and frontmatter writeback implemented within the
+  planning control plane via /features/{id}/open-questions/{oq_id} endpoint
+  and INFERRED_STATUS_WRITEBACK_ENABLED flag.
 maturity: shaping
 created: "2026-04-21"
 updated: "2026-04-21"

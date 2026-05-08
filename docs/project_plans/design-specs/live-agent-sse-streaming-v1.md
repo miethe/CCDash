@@ -2,7 +2,12 @@
 schema_version: 2
 doc_type: design_spec
 title: "Live Agent SSE Streaming v1"
-status: draft
+status: superseded
+superseded_by:
+  - docs/project_plans/PRDs/features/sse-live-update-platform-v1.md
+superseded_note: >
+  Core SSE streaming concept absorbed into the full SSE live-update platform,
+  which provides a broader event-driven architecture at backend/adapters/live_updates/.
 maturity: shaping
 created: "2026-04-21"
 updated: "2026-04-21"

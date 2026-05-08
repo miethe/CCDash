@@ -2,7 +2,7 @@
 schema_version: "1.0"
 doc_type: design-spec
 title: "CCDash Planning Control Plane Architecture"
-status: draft
+status: accepted
 created: "2026-04-15"
 feature_slug: "ccdash-planning-control-plane-v1"
 prd_ref: "docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md"
