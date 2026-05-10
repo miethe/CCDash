@@ -1,35 +1,50 @@
 ---
 schema_version: 2
 doc_type: implementation_plan
-title: "Remote CCDash Streaming + Entire.io Integration — Implementation Plan"
-description: "Skeleton implementation plan. Status: draft. Phase 1 is SPIKE execution; Phases 2–7 are sketched and re-baseline after SPIKE findings."
-status: draft
+title: "Remote CCDash Streaming + Entire.io Integration \u2014 Implementation Plan"
+description: "Skeleton implementation plan. Status: draft. Phase 1 is SPIKE execution;\
+  \ Phases 2\u20137 are sketched and re-baseline after SPIKE findings."
+status: in-progress
 created: 2026-04-19
-updated: 2026-04-19
+updated: '2026-05-10'
 feature_slug: remote-ccdash-streaming
 priority: high
 risk_level: high
 prd_ref: null
 plan_ref: null
-scope: "Transport-neutral session ingest, local daemon, workspace-scoped auth, multi-project routing, Entire branch parser, UI source attribution + daemon health, migration docs."
-effort_estimate: "8–12 weeks engineering (estimate firms after SPIKEs)"
+scope: Transport-neutral session ingest, local daemon, workspace-scoped auth, multi-project
+  routing, Entire branch parser, UI source attribution + daemon health, migration
+  docs.
+effort_estimate: "8\u201312 weeks engineering (estimate firms after SPIKEs)"
 spike_refs:
-  - docs/project_plans/SPIKEs/remote-ccdash-streaming-charter.md
-  - docs/project_plans/SPIKEs/entire-io-integration-charter.md
+- docs/project_plans/spikes/remote-ccdash-streaming-charter.md
+- docs/project_plans/SPIKEs/remote-ccdash-streaming.md
+- docs/project_plans/SPIKEs/entire-io-integration-charter.md
 related_documents:
-  - docs/project_plans/design-specs/remote-ccdash-streaming.md
-  - .claude/findings/remote-ccdash-grounding-brief.md
+- docs/project_plans/design-specs/remote-ccdash-streaming.md
+- docs/project_plans/designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md
+- docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md
+- docs/project_plans/adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md
+- docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md
+- docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
+- docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md
+- .claude/findings/remote-ccdash-grounding-brief.md
 deferred_items_spec_refs: []
 findings_doc_ref: null
 changelog_required: true
-architecture_summary: null
+architecture_summary: Chunked NDJSON over HTTPS POST to /api/v1/ingest/sessions (ADR-006).
+  Daemon as ccdash CLI subcommand supervised by host OS (ADR-007). Workspace-scoped
+  bearer tokens with explicit-predicate scoping (ADR-008). SessionIngestSource Protocol
+  + ingest_cursors watermark table absorbs filesystem and remote sources without forking
+  the engine (ADR-009). Single-process api runtime with request-scoped project binding
+  via AuthContext.project_id (ADR-010).
 owner: null
 contributors: []
 ---
 
 # Remote CCDash Streaming + Entire.io Integration — Implementation Plan
 
-⚠️ **DRAFT SKELETON** — This plan front-loads SPIKE execution as Phase 1. Phases 2–7 are sketched at a high level only; detailed task breakdowns will expand after SPIKE-A and SPIKE-B findings land. The effort estimate is a wide band (8–12 weeks); the final scope and timeline will firm up post-SPIKE.
+⚠️ **DRAFT SKELETON (SPIKE-A resolved 2026-05-10)** — SPIKE-A (remote-ccdash-streaming) findings are now landed. The five gating ADRs (006–010) are accepted; see `architecture_summary` and the [findings summary](../../SPIKEs/remote-ccdash-streaming.md). SPIKE-B (Entire.io integration) remains in-flight; Phase 5 is gated on its findings. Phases 2–8 task breakdowns expand against the ADRs in the next planning revision; the effort band (8–12 weeks) holds.
 
 ---
 
@@ -101,6 +116,7 @@ Mandatory at-a-glance index of all phases with point estimates, target subagents
 **Owners:** backend-typescript-architect, data-layer-expert, backend-architect, frontend-architect
 **Model(s):** sonnet/opus mix
 **Gate:** Hard gate on SPIKE-A + SPIKE-B deliverables; ADRs finalized; design meeting locked before Phase 2 begins
+**Status (2026-05-10):** Partially complete. SPIKE-A (`remote-ccdash-streaming`) **completed**; ADRs 006–010 landed; findings, design doc, and impl-plan skeleton refreshed. SPIKE-B (`entire-io-integration-charter.md`) **still `draft`** — Phase 1 cannot close until SPIKE-B finishes and the post-SPIKE design meeting on OQ-3/OQ-4/OQ-7 is recorded.
 
 #### Goals
 
@@ -607,6 +623,6 @@ Findings doc is **not pre-created**. On the first load-bearing finding discovere
 
 ---
 
-**Implementation Plan Version:** 1.0 (Draft)  
-**Last Updated:** 2026-04-19  
-**Status:** Draft — awaiting SPIKE completion
+**Implementation Plan Version:** 1.1 (In-Progress)  
+**Last Updated:** 2026-05-10  
+**Status:** In-Progress — Phase 1 partially complete (SPIKE-A landed 2026-05-10; SPIKE-B Entire.io still in `draft`; post-SPIKE design meeting on OQ-3/4/7 pending). Phase 2 remains gated until SPIKE-B closes and ADRs 006–010 are reviewed alongside Entire findings.

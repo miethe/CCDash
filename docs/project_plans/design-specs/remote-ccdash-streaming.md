@@ -3,10 +3,10 @@ schema_version: 2
 doc_type: design_spec
 title: "Remote CCDash Streaming + Entire.io Integration"
 description: "Umbrella design for running CCDash remotely with local-daemon session streaming, and for ingesting sessions from the Entire.io CLI. Captures shared foundational work, alternatives, and open questions."
-status: draft
-maturity: shaping
+status: spike-resolved
+maturity: ready
 created: 2026-04-19
-updated: 2026-04-19
+updated: 2026-05-10
 feature_slug: remote-ccdash-streaming
 problem_statement: "CCDash is local-first: sync engine is filesystem+mtime-coupled, auth is single-tenant, and transports are REST-pagination only. Teams want (a) a remote CCDash deployment that receives sessions streamed from developer workstations, and (b) to pull sessions captured by Entire.io's git-native CLI. Both require the same foundation: transport-neutral session ingest and de-filesystem-coupled sync."
 open_questions:
@@ -28,6 +28,13 @@ explored_alternatives:
   - "Alt-E (Entire-first): Adopt Entire's git-branch model as CCDash's native session storage. Pros: free offline-sync, free Entire compat. Cons: locks us to their schema, rejects existing JSONL sources, massive migration."
 related_documents:
   - ".claude/findings/remote-ccdash-grounding-brief.md"
+  - "docs/project_plans/SPIKEs/remote-ccdash-streaming.md"
+  - "docs/project_plans/designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md"
+  - "docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md"
+  - "docs/project_plans/adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md"
+  - "docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md"
+  - "docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md"
+  - "docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md"
 prd_ref: null
 ---
 
@@ -352,6 +359,28 @@ and hook surface probe for live ingest possibility (OQ-10).
 
 Deliverables: `EntireCheckpointSource` data contract, `source_ref` scheme for Entire
 sessions, schema-migration plan for `sessions` table, go/no-go on live hook ingest.
+
+---
+
+## 9b. SPIKE Resolutions (added 2026-05-10)
+
+SPIKE-A (`docs/project_plans/spikes/remote-ccdash-streaming-charter.md`) is complete. SPIKE-B (Entire.io integration) remains in-flight. The remote-track open questions are now resolved:
+
+- **OQ-1 ↔ RQ-1 (transport)** — Resolved: chunked NDJSON over HTTPS POST. ([ADR-006](../adrs/adr-006-remote-session-ingest-transport-ndjson-http.md))
+- **OQ-2 ↔ RQ-2 (daemon model)** — Resolved: subcommand of the `ccdash` CLI; OS-native supervision. ([ADR-007](../adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md))
+- **OQ-3 ↔ RQ-3 (auth)** — Resolved: workspace-scoped bearer tokens with explicit-predicate scoping; OIDC/mTLS deferred. ([ADR-008](../adrs/adr-008-workspace-scoped-bearer-auth-v1.md))
+- **OQ-4 ↔ RQ-4 (sync engine refactor)** — Resolved: `SessionIngestSource` Protocol + `ingest_cursors` watermark table; zero existing-test-change hard gate on the `FilesystemSource` wrap. ([ADR-009](../adrs/adr-009-session-ingest-source-port-and-cursor-table.md))
+- **OQ-7 ↔ RQ-5 (project binding)** — Resolved: single-process `api` runtime with request-scoped `RuntimeContainer.resolve_binding`; `worker` retains startup-time binding. ([ADR-010](../adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md))
+- **OQ-8 ↔ RQ-7 (frontend UX)** — Resolved: source chip + daemon health badge + live/historical pill; polling at 5s when daemon connected; no new SSE for ingest. ([Findings summary RQ-7](../SPIKEs/remote-ccdash-streaming.md#rq-7--frontend-requirements), [design doc §3](../designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md))
+- **OQ-9 ↔ RQ-6 (failure modes)** — Resolved: 12-row failure-mode matrix; backoff + WAL on daemon; 429 + Retry-After + dead-letter on server. ([Findings summary failure-mode matrix](../SPIKEs/remote-ccdash-streaming.md#failure-mode-matrix-rq-6))
+
+The Entire-track open questions are deferred to the sister SPIKE per charter §5 (Out of Scope) and remain open here:
+
+- **OQ-5 (Entire ingest path)** — Deferred to [SPIKE-B charter](../SPIKEs/entire-io-integration-charter.md).
+- **OQ-6 (Entire session identity)** — Deferred to SPIKE-B. The `SessionIngestSource` port (ADR-009) and `source_ref` URI scheme (`entire:<hex>`) provide the integration surface.
+- **OQ-10 (Entire CLI hook surface)** — Deferred to SPIKE-B.
+
+§4 (Proposed Direction) is now considered ready; the v1 architecture is captured in the [design doc](../designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md). PRD authoring may proceed.
 
 ---
 
