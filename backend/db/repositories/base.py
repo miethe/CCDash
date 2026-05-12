@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable, Any
 
+from backend.application.ports.ingest import IngestCursor
 from backend.models import SkillMeatArtifactSnapshot, SnapshotDiagnostics, SnapshotFreshnessMeta
 
 
@@ -529,6 +530,38 @@ class TestIntegrityRepository(Protocol):
 
 
 # ── Execution Workbench Repository ────────────────────────────────
+
+@runtime_checkable
+class IngestCursorRepository(Protocol):
+    """Track ingest watermarks per (source_id, project_id, workspace_id) triplet."""
+
+    async def get_or_create(
+        self,
+        *,
+        source_id: str,
+        project_id: str,
+        workspace_id: str = "default",
+    ) -> IngestCursor: ...
+
+    async def advance(
+        self,
+        *,
+        source_id: str,
+        project_id: str,
+        workspace_id: str,
+        cursor_value: str,
+        occurred_at: str,
+    ) -> None: ...
+
+    async def record_error(
+        self,
+        *,
+        source_id: str,
+        project_id: str,
+        workspace_id: str,
+        error_message: str,
+    ) -> None: ...
+
 
 @runtime_checkable
 class WorktreeContextRepository(Protocol):

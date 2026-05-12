@@ -7,6 +7,46 @@ from datetime import datetime, timezone
 import aiosqlite
 from backend.model_identity import model_filter_tokens
 
+_FS_SOURCE_ID = "filesystem"
+_REMOTE_SOURCE_ID = "remote_ingest"
+_ENTIRE_SOURCE_ID = "entire"
+
+
+def compute_source_ref(
+    source_id: str,
+    *,
+    source_file: str | None = None,
+    event_id: str | None = None,
+    checkpoint_id: str | None = None,
+) -> str:
+    """Build the canonical source_ref URI for a session row.
+
+    fs:<canonical-rel-path>        — filesystem source
+    remote:<event-id>              — daemon remote ingest (workspace prefix added in Phase 4)
+    entire:<checkpoint-hex>        — Entire.io checkpoint (Phase 5)
+
+    Raises ValueError for an unknown source_id or a missing required field.
+    """
+    if source_id == _FS_SOURCE_ID:
+        if not source_file:
+            raise ValueError(
+                "source_file is required when source_id is 'filesystem'"
+            )
+        return f"fs:{source_file}"
+    if source_id == _REMOTE_SOURCE_ID:
+        if not event_id:
+            raise ValueError(
+                "event_id is required when source_id is 'remote_ingest'"
+            )
+        return f"remote:{event_id}"
+    if source_id == _ENTIRE_SOURCE_ID:
+        if not checkpoint_id:
+            raise ValueError(
+                "checkpoint_id is required when source_id is 'entire'"
+            )
+        return f"entire:{checkpoint_id}"
+    raise ValueError(f"Unknown source_id: {source_id!r}")
+
 
 class SqliteSessionRepository:
     """SQLite-backed session storage with normalized detail tables."""
@@ -14,7 +54,13 @@ class SqliteSessionRepository:
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
-    async def upsert(self, session_data: dict, project_id: str) -> None:
+    async def upsert(
+        self,
+        session_data: dict,
+        project_id: str,
+        *,
+        source_ref: str | None = None,
+    ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = session_data.get("createdAt", "") or now
         updated_at = session_data.get("updatedAt", "") or now
@@ -33,8 +79,9 @@ class SqliteSessionRepository:
                 fork_parent_session_id, fork_point_log_id, fork_point_entry_uuid, fork_point_parent_entry_uuid, fork_depth, fork_count,
                 started_at, ended_at, created_at, updated_at, source_file,
                 dates_json, timeline_json, impact_history_json,
-                thinking_level, session_forensics_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thinking_level, session_forensics_json,
+                source_ref
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -78,7 +125,8 @@ class SqliteSessionRepository:
                 timeline_json=excluded.timeline_json,
                 impact_history_json=excluded.impact_history_json,
                 thinking_level=excluded.thinking_level,
-                session_forensics_json=excluded.session_forensics_json
+                session_forensics_json=excluded.session_forensics_json,
+                source_ref=COALESCE(excluded.source_ref, sessions.source_ref)
             """,
             (
                 session_data["id"], project_id,
@@ -131,6 +179,7 @@ class SqliteSessionRepository:
                 json.dumps(session_data.get("impactHistory", []) or []),
                 str(session_data.get("thinkingLevel", "") or ""),
                 json.dumps(session_data.get("sessionForensics", {}) or {}),
+                source_ref,
             ),
         )
         await self.db.commit()
