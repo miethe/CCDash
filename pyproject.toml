@@ -22,6 +22,7 @@ include = ["backend*"]
 namespaces = true
 
 [tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
 markers = [
     "perf: performance and benchmark tests (may be long-running; use CCDASH_PERF_DURATION_SECONDS to control duration)",
 ]
