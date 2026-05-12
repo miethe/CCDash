@@ -1,5 +1,10 @@
 """Framework-agnostic application ports."""
 
+from backend.application.ports.ingest import (
+    IngestCursor,
+    IngestEvent,
+    SessionIngestSource,
+)
 from backend.application.ports.core import (
     AuditSecurityStorage,
     AuthorizationDecision,
@@ -19,6 +24,9 @@ from backend.application.ports.core import (
 )
 
 __all__ = [
+    "IngestCursor",
+    "IngestEvent",
+    "SessionIngestSource",
     "AuditSecurityStorage",
     "AuthorizationDecision",
     "AuthorizationPolicy",

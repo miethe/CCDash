@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -2098,6 +2098,41 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         db,
         "CREATE INDEX IF NOT EXISTS idx_phases_feature_status"
         " ON feature_phases(feature_id, status)",
+    )
+
+    # ── v28: ADR-009: SessionIngestSource port + ingest_cursors watermark table; source_ref column on sessions ──
+    await _ensure_column(db, "sessions", "source_ref", "TEXT")
+    await db.execute(
+        """
+        UPDATE sessions
+        SET source_ref = 'fs:' || source_file
+        WHERE source_ref IS NULL
+          AND source_file IS NOT NULL
+          AND source_file != ''
+        """
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS ix_sessions_source_ref ON sessions (project_id, source_ref)",
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ingest_cursors (
+            source_id      TEXT NOT NULL,
+            project_id     TEXT NOT NULL,
+            workspace_id   TEXT NOT NULL DEFAULT 'default',
+            last_cursor    TEXT,
+            last_ingest_at TEXT,
+            error_count    INTEGER NOT NULL DEFAULT 0,
+            last_error     TEXT,
+            last_error_at  TEXT,
+            PRIMARY KEY (source_id, project_id, workspace_id)
+        )
+        """
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS ix_ingest_cursors_workspace ON ingest_cursors (workspace_id)",
     )
 
     # Seed metric types
