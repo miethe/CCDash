@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 
 import aiosqlite
 from backend.model_identity import model_filter_tokens
+
+logger = logging.getLogger("ccdash.db.sessions")
 
 
 class SqliteSessionRepository:
@@ -531,8 +534,29 @@ class SqliteSessionRepository:
     # ── Detail tables ───────────────────────────────────────────────
 
     async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:
+        # Deduplicate by (session_id, source_log_id) for non-empty source_log_id values,
+        # keeping the first occurrence.  Duplicates produced by the parser are a known
+        # upstream issue (Fix C) — this guard prevents the DB constraint from firing.
+        seen_source_ids: set[str] = set()
+        deduped: list[dict] = []
+        dropped = 0
+        for log in logs:
+            src_id = log.get("id", "")
+            if src_id:
+                if src_id in seen_source_ids:
+                    dropped += 1
+                    continue
+                seen_source_ids.add(src_id)
+            deduped.append(log)
+        if dropped:
+            logger.warning(
+                "upsert_logs: dropped %d duplicate source_log_id entries for session_id=%r",
+                dropped,
+                session_id,
+            )
+
         await self.db.execute("DELETE FROM session_logs WHERE session_id = ?", (session_id,))
-        for i, log in enumerate(logs):
+        for i, log in enumerate(deduped):
             tool_name = None
             tool_call_id = None
             related_tool_call_id = None
@@ -553,7 +577,7 @@ class SqliteSessionRepository:
                 metadata_json = json.dumps(metadata)
 
             await self.db.execute(
-                """INSERT INTO session_logs
+                """INSERT OR IGNORE INTO session_logs
                     (session_id, log_index, source_log_id, timestamp, speaker, type, content,
                      agent_name, tool_name, tool_call_id, related_tool_call_id,
                      linked_session_id, tool_args, tool_output, tool_status, metadata_json)
