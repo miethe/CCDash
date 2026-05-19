@@ -2,9 +2,11 @@
 schema_version: 2
 doc_type: spike
 title: "Entire.io OSS CLI Integration — Session Ingest from Git-Branch Checkpoints"
-status: draft
+status: completed
 created: 2026-04-19
-updated: 2026-04-19
+updated: 2026-05-11
+completed_date: 2026-05-11
+spike_output: docs/project_plans/spikes/entire-io-integration.md
 feature_slug: remote-ccdash-streaming
 complexity: medium
 estimated_research_time: "1.5 weeks (1 engineer), can overlap with remote-streaming SPIKE"
@@ -171,15 +173,16 @@ Grounded in `.claude/findings/remote-ccdash-grounding-brief.md` (Leg 2).
 
 ## 6. Deliverables Checklist
 
-- [ ] Canonical Entire checkpoint schema doc (RQ-1, E3)
-- [ ] ADR-NNNN: Ingest path decision (branch-parse vs CLI-wrap vs hybrid)
-- [ ] ADR-NNNN: Session identity unification (schema change proposal)
-- [ ] ADR-NNNN: Live-update loop mechanism
-- [ ] Prototype branch with `EntireCheckpointSource` skeleton (E4)
-- [ ] Upstream-feedback memo (any issues/PRs filed with `entireio/cli`)
-- [ ] Coexistence / dedup policy memo (RQ-8)
-- [ ] Privacy/redaction memo (RQ-9)
-- [ ] Findings summary at `docs/project_plans/SPIKEs/entire-io-integration.md`
+- [x] Canonical Entire checkpoint schema doc (RQ-1, E3) — [`spikes/entire-io-integration/checkpoint-schema.md`](./entire-io-integration/checkpoint-schema.md)
+- [x] ADR-011: Ingest path decision (branch-parse vs CLI-wrap vs hybrid) — [`adrs/adr-011-entire-ingest-path-decision.md`](../adrs/adr-011-entire-ingest-path-decision.md)
+- [x] ADR-012: Session identity unification (schema change proposal) — [`adrs/adr-012-entire-session-identity-unification.md`](../adrs/adr-012-entire-session-identity-unification.md) (supersedes charter `source_type` draft language; honors ADR-009 `source_ref`)
+- [x] ADR-013: Live-update loop mechanism — [`adrs/adr-013-entire-live-update-mechanism.md`](../adrs/adr-013-entire-live-update-mechanism.md)
+- [x] Prototype design + acceptance criteria for `EntireCheckpointSource` skeleton (E4) — conformance walk in [findings §ADR-009 Conformance Check](./entire-io-integration.md#adr-009-conformance-check-charter-e4); zero port additions required. **(Build deferred to Phase 5 implementation per SPIKE constraints.)**
+- [x] Upstream-feedback memo (items to raise with `entireio/cli`) — [`spikes/entire-io-integration/upstream-feedback-memo.md`](./entire-io-integration/upstream-feedback-memo.md)
+- [x] Coexistence / dedup policy memo (RQ-8) — [`spikes/entire-io-integration/coexistence-memo.md`](./entire-io-integration/coexistence-memo.md)
+- [x] Privacy/redaction memo (RQ-9) — [`spikes/entire-io-integration/privacy-redaction-memo.md`](./entire-io-integration/privacy-redaction-memo.md)
+- [x] Commit-linkage design memo (RQ-6) — [`spikes/entire-io-integration/commit-linkage-design.md`](./entire-io-integration/commit-linkage-design.md)
+- [x] Findings summary at [`spikes/entire-io-integration.md`](./entire-io-integration.md)
 
 ## 7. Timeline & Owners
 

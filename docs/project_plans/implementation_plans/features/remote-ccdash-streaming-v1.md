@@ -6,7 +6,7 @@ description: "Skeleton implementation plan. Status: draft. Phase 1 is SPIKE exec
   \ Phases 2\u20137 are sketched and re-baseline after SPIKE findings."
 status: in-progress
 created: 2026-04-19
-updated: '2026-05-10'
+updated: '2026-05-11'
 feature_slug: remote-ccdash-streaming
 priority: high
 risk_level: high
@@ -18,8 +18,9 @@ scope: Transport-neutral session ingest, local daemon, workspace-scoped auth, mu
 effort_estimate: "8\u201312 weeks engineering (estimate firms after SPIKEs)"
 spike_refs:
 - docs/project_plans/spikes/remote-ccdash-streaming-charter.md
-- docs/project_plans/SPIKEs/remote-ccdash-streaming.md
-- docs/project_plans/SPIKEs/entire-io-integration-charter.md
+- docs/project_plans/spikes/remote-ccdash-streaming.md
+- docs/project_plans/spikes/entire-io-integration-charter.md
+- docs/project_plans/spikes/entire-io-integration.md
 related_documents:
 - docs/project_plans/design-specs/remote-ccdash-streaming.md
 - docs/project_plans/designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md
@@ -116,7 +117,21 @@ Mandatory at-a-glance index of all phases with point estimates, target subagents
 **Owners:** backend-typescript-architect, data-layer-expert, backend-architect, frontend-architect
 **Model(s):** sonnet/opus mix
 **Gate:** Hard gate on SPIKE-A + SPIKE-B deliverables; ADRs finalized; design meeting locked before Phase 2 begins
-**Status (2026-05-10):** Partially complete. SPIKE-A (`remote-ccdash-streaming`) **completed**; ADRs 006–010 landed; findings, design doc, and impl-plan skeleton refreshed. SPIKE-B (`entire-io-integration-charter.md`) **still `draft`** — Phase 1 cannot close until SPIKE-B finishes and the post-SPIKE design meeting on OQ-3/OQ-4/OQ-7 is recorded.
+**Status (2026-05-11):** **Complete.** SPIKE-A (`remote-ccdash-streaming`) and SPIKE-B (`entire-io-integration`) both completed; ADRs 006–013 landed.
+
+SPIKE-A outputs (authoritative, 2026-05-10):
+- Findings: [`docs/project_plans/spikes/remote-ccdash-streaming.md`](../../spikes/remote-ccdash-streaming.md)
+- ADR-006 (transport NDJSON/HTTP), ADR-007 (daemon as CLI subcommand), ADR-008 (workspace bearer), ADR-009 (`SessionIngestSource` port + cursor table), ADR-010 (single-process multi-project routing)
+
+SPIKE-B outputs (2026-05-11):
+- Findings: [`docs/project_plans/spikes/entire-io-integration.md`](../../spikes/entire-io-integration.md)
+- Checkpoint schema: [`docs/project_plans/spikes/entire-io-integration/checkpoint-schema.md`](../../spikes/entire-io-integration/checkpoint-schema.md)
+- ADR-011 (Entire ingest path: branch-parse primary, CLI-wrap fallback)
+- ADR-012 (Entire session identity: reuse ADR-009 `source_ref` with `entire:` scheme; supersedes charter draft `source_type` enum)
+- ADR-013 (Entire live-update: fs-watch primary, git-fetch poll fallback)
+- Supporting memos: coexistence, privacy/redaction, upstream-feedback, commit-linkage design
+
+**Phase 1 closes.** Phase 5 (`EntireCheckpointSource`) inputs are locked: read findings + ADRs 011–013 + checkpoint-schema as the input package. Estimated effort (12–16 pts) is unchanged by SPIKE-B; zero new port additions required (E4 conformance walk passed).
 
 #### Goals
 
