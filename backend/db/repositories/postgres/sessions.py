@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
 from backend.model_identity import model_filter_tokens
 from backend.db.repositories.postgres._transactions import postgres_transaction
+
+logger = logging.getLogger("ccdash.db.postgres.sessions")
 
 class PostgresSessionRepository:
     """PostgreSQL-backed session storage."""
@@ -556,17 +559,34 @@ class PostgresSessionRepository:
     # ── Detail tables ───────────────────────────────────────────────
 
     async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:
+        # Deduplicate by source_log_id (non-empty) before building the record list.
+        # Duplicates produced by the parser are a known upstream issue (Fix C) — this
+        # guard prevents the partial-unique index constraint from firing.
+        seen_source_ids: set[str] = set()
+        deduped: list[dict] = []
+        dropped = 0
+        for log in logs:
+            src_id = log.get("id", "")
+            if src_id:
+                if src_id in seen_source_ids:
+                    dropped += 1
+                    continue
+                seen_source_ids.add(src_id)
+            deduped.append(log)
+        if dropped:
+            logger.warning(
+                "upsert_logs: dropped %d duplicate source_log_id entries for session_id=%r",
+                dropped,
+                session_id,
+            )
+
         async with postgres_transaction(self.db) as conn:
             await conn.execute("DELETE FROM session_logs WHERE session_id = $1", session_id)
-            if not logs:
+            if not deduped:
                 return
-                
-            # Efficient batch insert could be used here (copy_records_to_table), but loop is safer for now
-            # Actually asyncpg executemany is good.
-            # But let's stick to loop to match logic for now, or use executemany with prepared statement.
-            
+
             records = []
-            for i, log in enumerate(logs):
+            for i, log in enumerate(deduped):
                 tc = log.get("toolCall")
                 tool_name, tool_call_id, tool_args, tool_output, tool_status = None, None, None, None, "success"
                 if tc and isinstance(tc, dict):
@@ -596,7 +616,8 @@ class PostgresSessionRepository:
                     (session_id, log_index, source_log_id, timestamp, speaker, type, content,
                      agent_name, tool_name, tool_call_id, related_tool_call_id,
                      linked_session_id, tool_args, tool_output, tool_status, metadata_json)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)""",
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                   ON CONFLICT ON CONSTRAINT idx_logs_source_log_unique DO NOTHING""",
                 records
             )
 
