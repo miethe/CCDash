@@ -12,6 +12,7 @@ import { Surface, AlertSurface } from './ui/surface';
 import { cn } from '../lib/utils';
 import { useFeatureSurface } from '../services/useFeatureSurface';
 import { apiFetch } from '../services/apiClient';
+import { SystemMetricsChip } from './SystemMetricsChip';
 
 const STAT_TONE_STYLES: Record<string, string> = {
   primary: 'border-primary-border bg-primary/10 text-primary-foreground',
@@ -325,6 +326,10 @@ export const Dashboard: React.FC = () => {
           <LiveAgentsChip count={liveAgentsCount} />
         </div>
       </Surface>
+
+      {/* System-wide live agent count — polls /api/agent/system/active-count every 30 s.
+          Placed between Feature Portfolio and KPI cards per OQ-EXP-1. */}
+      <SystemMetricsChip />
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">

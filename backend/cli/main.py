@@ -9,6 +9,7 @@ from backend.cli.commands.feature import feature_app
 from backend.cli.commands.live import live_app
 from backend.cli.commands.report import report_app
 from backend.cli.commands.status import status_app
+from backend.cli.commands.system import system_app
 from backend.cli.commands.workflow import workflow_app
 from backend.cli.output import OutputMode
 
@@ -42,3 +43,4 @@ app.add_typer(workflow_app, name="workflow", help="Workflow diagnostics commands
 app.add_typer(report_app, name="report", help="Reporting commands.")
 app.add_typer(artifact_app, name="artifact", help="Artifact intelligence commands.")
 app.add_typer(live_app, name="live", help="Live agent metrics.")
+app.add_typer(system_app, name="system", help="System-wide metrics across all projects.")

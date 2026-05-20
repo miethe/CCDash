@@ -3546,3 +3546,38 @@ export interface PlanningNextRunPreview {
   /** ISO-8601 timestamp when this payload was assembled by the backend. */
   generatedAt?: string;
 }
+
+// ── System-wide metrics (GET /api/agent/system/active-count) ─────────────────
+
+/**
+ * Per-project live agent count summary returned as part of SystemActiveCount.
+ * Fields use snake_case to match the wire format, consistent with other API
+ * DTOs in this file that preserve the backend's naming convention.
+ */
+export interface ProjectActiveCountSummary {
+  project_id: string;
+  project_name: string;
+  /** Active agent count for this project; null when the count could not be determined. */
+  count: number | null;
+  /** True when the project data is known-stale; null is treated as true by the frontend. */
+  is_stale: boolean | null;
+  /** ISO-8601 timestamp of the most recent sync for this project; null when unavailable. */
+  last_synced_at: string | null;
+  /** Error message when the project query failed; null on success. */
+  error: string | null;
+}
+
+/**
+ * Aggregate response from GET /api/agent/system/active-count.
+ * "partial" status means at least one per_project entry has an error.
+ */
+export interface SystemActiveCount {
+  total: number;
+  per_project: ProjectActiveCountSummary[];
+  /** ISO-8601 timestamp when this payload was generated. */
+  generated_at: string;
+  /** The active-session window in seconds used by the backend. */
+  window_seconds: number;
+  /** "ok" when all projects queried successfully; "partial" when ≥1 error. */
+  status: 'ok' | 'partial';
+}

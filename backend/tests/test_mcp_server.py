@@ -202,6 +202,8 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 "artifact_recommendations",
                 # live-agents-count-v1
                 "ccdash_live_active_count",
+                # system-wide-metrics-v1
+                "ccdash_system_active_count",
             },
         )
 

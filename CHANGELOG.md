@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **System-wide live agent count chip on the home dashboard**: shows total running agents across all projects with per-project staleness indicators. Available via REST (`GET /api/agent/system/active-count`), MCP (`ccdash_system_active_count`), and CLI (`ccdash system active-count`). Backed by `SystemMetricsQueryService` with bounded fan-out (`CCDASH_SYSTEM_METRICS_CONCURRENCY`, default 10), memoized cache (`CCDASH_SYSTEM_METRICS_CACHE_TTL_SECONDS`, default 30s), and a configurable staleness horizon (`CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS`, default 3600s).
+
 ### Fixed
 
 - **Session data now reflects the active project after a project switch**: `POST /api/projects/active/{id}` atomically rebinds the file watcher to the new project's `sessions_dir`, `docs_dir`, and `progress_dir`, triggers a one-shot sync, and returns `watcherRebound: true` in the response. Session counts, analytics, and live metrics now immediately reflect the correct project. `GET /api/health/detail` watcher `watchPaths` field updates on switch. If the new project's paths do not exist, the API returns HTTP 4xx and the watcher remains on the previous project's paths (no half-rebound state).

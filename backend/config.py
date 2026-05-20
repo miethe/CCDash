@@ -998,6 +998,34 @@ CCDASH_LIVE_COUNT_CACHE_TTL_SECONDS = _env_int("CCDASH_LIVE_COUNT_CACHE_TTL_SECO
 # happen to share the same 600 s default by convention, but serve different roles.
 CCDASH_LIVE_AGENTS_WINDOW_SECONDS = _env_int("CCDASH_LIVE_AGENTS_WINDOW_SECONDS", 600)
 
+# System-wide metrics
+# CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS (default: 3600)
+# A project's data is flagged is_stale=True when the maximum sessions.updated_at
+# for that project is older than this horizon.  Non-active projects are expected
+# to be stale; this threshold lets the UI surface an indicator without hiding the
+# (frozen) count entirely.
+CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS = _env_int(
+    "CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS",
+    3600,
+)
+# CCDASH_SYSTEM_METRICS_CACHE_TTL_SECONDS (default: 30)
+# Short TTL for the system-metrics overview cache, distinct from the heavier
+# planning/forensics CCDASH_QUERY_CACHE_TTL_SECONDS (default 60).  Tuned to the
+# Dashboard live-chip poll interval (~10–30 s) so each poll sees a reasonably
+# fresh aggregate count while the fan-out cost is amortised across requests.
+CCDASH_SYSTEM_METRICS_CACHE_TTL_SECONDS = _env_int(
+    "CCDASH_SYSTEM_METRICS_CACHE_TTL_SECONDS",
+    30,
+)
+# CCDASH_SYSTEM_METRICS_CONCURRENCY (default: 10)
+# Maximum number of concurrent per-project DB queries issued by the system-metrics
+# fan-out.  Bounded by asyncio.Semaphore to avoid saturating the shared SQLite
+# connection on large project lists (current default: 36 projects).
+CCDASH_SYSTEM_METRICS_CONCURRENCY = _env_int(
+    "CCDASH_SYSTEM_METRICS_CONCURRENCY",
+    10,
+)
+
 # Server settings
 HOST = os.getenv("CCDASH_HOST", "0.0.0.0")
 PORT = int(os.getenv("CCDASH_PORT", "8000"))
