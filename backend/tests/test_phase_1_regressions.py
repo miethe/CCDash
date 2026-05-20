@@ -102,11 +102,13 @@ class TestListFeatureCardsTotalReflectsFilter(unittest.TestCase):
                     await repo.upsert(
                         _make_feature(f"R-{i:03d}", f"Active Feature {i}", "active", "cat-a", 5, 2),
                         _TEST_PROJECT,
+                        workspace_id="default-local",
                     )
                 for i in range(6, 11):
                     await repo.upsert(
                         _make_feature(f"R-{i:03d}", f"Backlog Feature {i}", "backlog", "cat-a", 3, 0),
                         _TEST_PROJECT,
+                        workspace_id="default-local",
                     )
 
                 q = FeatureListQuery(status=["active"], limit=3, offset=0)

@@ -264,7 +264,7 @@ class RepoHeuristicsProvider:
         project_id: str,
         context: dict[str, Any],
     ) -> list[MappingCandidate]:
-        features = await self.feature_repo.list_all(project_id)
+        features = await self.feature_repo.list_all(project_id, workspace_id="default-local")
         domain_assigner = _DomainHierarchyAssigner(self.domain_repo, test_definitions, context)
         candidates: list[MappingCandidate] = []
 
@@ -368,7 +368,7 @@ class TestMetadataProvider:
         project_id: str,
         context: dict[str, Any],
     ) -> list[MappingCandidate]:
-        features = await self.feature_repo.list_all(project_id)
+        features = await self.feature_repo.list_all(project_id, workspace_id="default-local")
         feature_lookup: dict[str, str] = {}
         for feature in features:
             feature_id = str(feature.get("id") or "").strip()

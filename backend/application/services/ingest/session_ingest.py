@@ -130,6 +130,7 @@ class RemoteSessionIngestService:
             await self._session_repo.upsert(
                 event.payload,
                 project_id,
+                workspace_id=workspace_id,
                 source_ref=source_ref,
             )
             await self._cursor_repo.advance(

@@ -348,7 +348,7 @@ async def _resolve_feature_alias_id(storage: Any, context: RequestContext, featu
         return feature_id
 
     base = canonical_slug(feature_id)
-    candidates = await feature_repo.list_all(project_id)
+    candidates = await feature_repo.list_all(project_id, workspace_id="default-local")
     matches = [
         dict(row)
         for row in candidates
@@ -1180,8 +1180,8 @@ async def list_features_v1(
                 logger.debug("Could not resolve project scope for list_features_v1")
 
             keyword = q.strip() if q else None
-            rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit, keyword=keyword)
-            total = await feature_repo.count(project_id, keyword=keyword)
+            rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit, keyword=keyword, workspace_id="default-local")
+            total = await feature_repo.count(project_id, keyword=keyword, workspace_id="default-local")
 
             if status:
                 status_lower = {s.lower() for s in status}

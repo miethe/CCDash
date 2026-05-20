@@ -2201,6 +2201,23 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     # retains DEFAULT 'default' at the DDL level for rows that pre-date v29 and were
     # not yet updated by this UPDATE.  New inserts from v29-aware code pass the value
     # explicitly, so the stale default is a legacy artefact only.
+    # Resolve PK conflicts first: if a 'default-local' row already exists for the
+    # same (source_id, project_id), drop the stale 'default' row before UPDATE.
+    # PK is (source_id, project_id, workspace_id); UPDATE-without-this would raise
+    # IntegrityError when both variants coexist (observed in test fixtures that
+    # seed both values pre-migration).
+    await db.execute(
+        """
+        DELETE FROM ingest_cursors
+        WHERE workspace_id = 'default'
+          AND EXISTS (
+            SELECT 1 FROM ingest_cursors c2
+            WHERE c2.source_id = ingest_cursors.source_id
+              AND c2.project_id = ingest_cursors.project_id
+              AND c2.workspace_id = 'default-local'
+          )
+        """
+    )
     await db.execute(
         "UPDATE ingest_cursors SET workspace_id = 'default-local' WHERE workspace_id = 'default'"
     )

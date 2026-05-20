@@ -33,6 +33,7 @@ class PricingCatalogRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "sourceFile": "/tmp/session.jsonl",
             },
             "project-1",
+            workspace_id="default-local",
         )
 
     async def asyncTearDown(self) -> None:

@@ -108,7 +108,7 @@ class FeatureSurfaceListRollupService:
 
         project = require_project(context, ports, requested_project_id=requested_project_id)
         feature_repo = ports.storage.features()
-        page: FeatureListPage = await feature_repo.list_feature_cards(project.id, query)
+        page: FeatureListPage = await feature_repo.list_feature_cards(project.id, query, workspace_id="default-local")
 
         feature_ids = [str(row.get("id") or "") for row in page.rows if row.get("id")]
         phase_summaries_by_feature: dict[str, list[PhaseSummary]] = {fid: [] for fid in feature_ids}
@@ -117,6 +117,7 @@ class FeatureSurfaceListRollupService:
             phase_summaries_by_feature = await feature_repo.list_phase_summaries_for_features(
                 project.id,
                 PhaseSummaryBulkQuery(feature_ids=feature_ids),
+                workspace_id="default-local",
             )
 
         rows = [

@@ -41,6 +41,7 @@ class TelemetryQueueRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "sourceFile": f"/tmp/{session_id}.jsonl",
             },
             "project-1",
+            workspace_id="default-local",
         )
 
     async def test_protocol_runtime_check(self) -> None:

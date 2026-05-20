@@ -40,15 +40,17 @@ _ROLLUP_SORT_KEYS = {FeatureSortKey.LATEST_ACTIVITY, FeatureSortKey.SESSION_COUN
 def _build_feature_list_where_clause(
     project_id: str,
     query: FeatureListQuery,
+    *,
+    workspace_id: str,
 ) -> tuple[str, list[Any]]:
     """Build the WHERE clause and parameter list for feature list / count queries.
 
     Returns a ``(sql_fragment, params)`` tuple.  ``sql_fragment`` always starts
-    with ``WHERE`` and always includes the ``project_id`` predicate.  ``params``
-    uses positional ``?`` placeholders (SQLite style).
+    with ``WHERE`` and always includes the ``workspace_id`` and ``project_id``
+    predicates.  ``params`` uses positional ``?`` placeholders (SQLite style).
     """
-    conditions: list[str] = ["project_id = ?"]
-    params: list[Any] = [project_id]
+    conditions: list[str] = ["workspace_id = ?", "project_id = ?"]
+    params: list[Any] = [workspace_id, project_id]
 
     # ── text search ─────────────────────────────────────────────────────────
     if query.q:
@@ -161,7 +163,7 @@ LEFT JOIN (
             ELSE s.started_at
         END) AS latest_activity_at
     FROM entity_links el
-    JOIN sessions s ON s.id = el.target_id AND s.project_id = ?
+    JOIN sessions s ON s.id = el.target_id AND s.project_id = ? AND s.workspace_id = features.workspace_id
     WHERE el.source_type = 'feature'
       AND el.target_type = 'session'
     GROUP BY el.source_id
@@ -190,7 +192,7 @@ class SqliteFeatureRepository:
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
-    async def upsert(self, feature_data: dict, project_id: str) -> None:
+    async def upsert(self, feature_data: dict, project_id: str, *, workspace_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = feature_data.get("createdAt", "") or now
         updated_at = feature_data.get("updatedAt", "") or now
@@ -199,11 +201,11 @@ class SqliteFeatureRepository:
 
         await self.db.execute(
             """INSERT INTO features (
-                id, project_id, name, status, category,
+                id, project_id, workspace_id, name, status, category,
                 tags_json, deferred_tasks, planned_at, started_at,
                 total_tasks, completed_tasks, parent_feature_id,
                 created_at, updated_at, completed_at, data_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, status=excluded.status,
                 category=excluded.category,
@@ -219,7 +221,7 @@ class SqliteFeatureRepository:
                 data_json=excluded.data_json
             """,
             (
-                feature_data["id"], project_id,
+                feature_data["id"], project_id, workspace_id,
                 feature_data.get("name", ""),
                 feature_data.get("status", "backlog"),
                 feature_data.get("category", ""),
@@ -256,17 +258,18 @@ class SqliteFeatureRepository:
             rows = await cur.fetchall()
         return {row["id"]: dict(row) for row in rows}
 
-    async def list_all(self, project_id: str | None = None) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]:
         if project_id:
             async with self.db.execute(
-                "SELECT * FROM features WHERE project_id = ? ORDER BY name LIMIT ?",
-                (project_id, 5000),
+                "SELECT * FROM features WHERE workspace_id = ? AND project_id = ? ORDER BY name LIMIT ?",
+                (workspace_id, project_id, 5000),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
         else:
+            # WORKSPACE-AUDIT-EXEMPT: cross-project list scoped to a single workspace.
             async with self.db.execute(
-                "SELECT * FROM features ORDER BY name LIMIT ?",
-                (5000,),
+                "SELECT * FROM features WHERE workspace_id = ? ORDER BY name LIMIT ?",
+                (workspace_id, 5000),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
 
@@ -277,6 +280,7 @@ class SqliteFeatureRepository:
         limit: int,
         *,
         keyword: str | None = None,
+        workspace_id: str,
     ) -> list[dict]:
         # SQLite LIKE is case-insensitive for ASCII by default; LOWER() ensures
         # consistent behaviour across all character sets.
@@ -284,58 +288,61 @@ class SqliteFeatureRepository:
             pattern = f"%{keyword.lower()}%"
             if project_id:
                 async with self.db.execute(
-                    "SELECT * FROM features WHERE project_id = ?"
+                    "SELECT * FROM features WHERE workspace_id = ? AND project_id = ?"
                     " AND (LOWER(name) LIKE ? OR LOWER(id) LIKE ?)"
                     " ORDER BY name LIMIT ? OFFSET ?",
-                    (project_id, pattern, pattern, limit, offset),
+                    (workspace_id, project_id, pattern, pattern, limit, offset),
                 ) as cur:
                     return [dict(r) for r in await cur.fetchall()]
             async with self.db.execute(
                 "SELECT * FROM features"
-                " WHERE LOWER(name) LIKE ? OR LOWER(id) LIKE ?"
+                " WHERE workspace_id = ? AND (LOWER(name) LIKE ? OR LOWER(id) LIKE ?)"
                 " ORDER BY name LIMIT ? OFFSET ?",
-                (pattern, pattern, limit, offset),
+                (workspace_id, pattern, pattern, limit, offset),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
 
         if project_id:
             async with self.db.execute(
-                "SELECT * FROM features WHERE project_id = ? ORDER BY name LIMIT ? OFFSET ?",
-                (project_id, limit, offset),
+                "SELECT * FROM features WHERE workspace_id = ? AND project_id = ? ORDER BY name LIMIT ? OFFSET ?",
+                (workspace_id, project_id, limit, offset),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
         async with self.db.execute(
-            "SELECT * FROM features ORDER BY name LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT * FROM features WHERE workspace_id = ? ORDER BY name LIMIT ? OFFSET ?",
+            (workspace_id, limit, offset),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def count(self, project_id: str | None = None, *, keyword: str | None = None) -> int:
+    async def count(self, project_id: str | None = None, *, keyword: str | None = None, workspace_id: str) -> int:
         if keyword:
             pattern = f"%{keyword.lower()}%"
             if project_id:
                 async with self.db.execute(
-                    "SELECT COUNT(*) FROM features WHERE project_id = ?"
+                    "SELECT COUNT(*) FROM features WHERE workspace_id = ? AND project_id = ?"
                     " AND (LOWER(name) LIKE ? OR LOWER(id) LIKE ?)",
-                    (project_id, pattern, pattern),
+                    (workspace_id, project_id, pattern, pattern),
                 ) as cur:
                     row = await cur.fetchone()
                     return int(row[0]) if row else 0
             async with self.db.execute(
-                "SELECT COUNT(*) FROM features WHERE LOWER(name) LIKE ? OR LOWER(id) LIKE ?",
-                (pattern, pattern),
+                "SELECT COUNT(*) FROM features WHERE workspace_id = ? AND (LOWER(name) LIKE ? OR LOWER(id) LIKE ?)",
+                (workspace_id, pattern, pattern),
             ) as cur:
                 row = await cur.fetchone()
                 return int(row[0]) if row else 0
 
         if project_id:
             async with self.db.execute(
-                "SELECT COUNT(*) FROM features WHERE project_id = ?",
-                (project_id,),
+                "SELECT COUNT(*) FROM features WHERE workspace_id = ? AND project_id = ?",
+                (workspace_id, project_id),
             ) as cur:
                 row = await cur.fetchone()
                 return int(row[0]) if row else 0
-        async with self.db.execute("SELECT COUNT(*) FROM features") as cur:
+        async with self.db.execute(
+            "SELECT COUNT(*) FROM features WHERE workspace_id = ?",
+            (workspace_id,),
+        ) as cur:
             row = await cur.fetchone()
             return int(row[0]) if row else 0
 
@@ -384,6 +391,8 @@ class SqliteFeatureRepository:
         self,
         project_id: str,
         query: PhaseSummaryBulkQuery,
+        *,
+        workspace_id: str,
     ) -> dict[str, list[PhaseSummary]]:
         """Return phase summaries for all requested features in a single query.
 
@@ -421,10 +430,11 @@ class SqliteFeatureRepository:
             " FROM feature_phases fp"
             " JOIN features f ON fp.feature_id = f.id"
             f" WHERE fp.feature_id IN ({placeholders})"
+            " AND f.workspace_id = ?"
             " AND f.project_id = ?"
             " ORDER BY fp.feature_id, fp.phase"
         )
-        params: list[Any] = list(feature_ids) + [project_id]
+        params: list[Any] = list(feature_ids) + [workspace_id, project_id]
 
         async with self.db.execute(sql, params) as cur:
             rows = await cur.fetchall()
@@ -473,13 +483,15 @@ class SqliteFeatureRepository:
         self,
         project_id: str,
         query: FeatureListQuery,
+        *,
+        workspace_id: str,
     ) -> FeatureListPage:
         """Return a paginated, fully-filtered list of feature card dicts.
 
         All filtering and sorting is performed in SQL.  No in-memory filtering
         is applied after pagination.
         """
-        where_sql, params = _build_feature_list_where_clause(project_id, query)
+        where_sql, params = _build_feature_list_where_clause(project_id, query, workspace_id=workspace_id)
         rollup_join_sql = _build_rollup_sort_join_clause(query)
         row_params_prefix: list[Any] = [project_id] if rollup_join_sql else []
         order_sql = _build_order_clause(query)
@@ -519,9 +531,11 @@ class SqliteFeatureRepository:
         self,
         project_id: str,
         query: FeatureListQuery,
+        *,
+        workspace_id: str,
     ) -> int:
         """Return post-filter, pre-pagination count for ``query``."""
-        where_sql, params = _build_feature_list_where_clause(project_id, query)
+        where_sql, params = _build_feature_list_where_clause(project_id, query, workspace_id=workspace_id)
         async with self.db.execute(
             f"SELECT COUNT(*) FROM features {where_sql}",
             params,
@@ -529,7 +543,7 @@ class SqliteFeatureRepository:
             row = await cur.fetchone()
             return int(row[0]) if row else 0
 
-    async def get_project_stats(self, project_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
         """Get aggregated feature statistics."""
         query = """
             SELECT AVG(
@@ -537,9 +551,9 @@ class SqliteFeatureRepository:
                      THEN CAST(completed_tasks AS REAL) / total_tasks * 100
                      ELSE 0
                 END
-            ) FROM features WHERE project_id = ?
+            ) FROM features WHERE workspace_id = ? AND project_id = ?
         """
-        async with self.db.execute(query, (project_id,)) as cur:
+        async with self.db.execute(query, (workspace_id, project_id)) as cur:
             row = await cur.fetchone()
             avg_progress = row[0] if row and row[0] is not None else 0.0
         return {"avg_progress": avg_progress}

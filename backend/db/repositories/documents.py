@@ -130,10 +130,10 @@ class SqliteDocumentRepository:
             unique[(kind, norm, source_field)] = (kind, raw, norm, source_field)
         return list(unique.values())
 
-    def _build_where_clause(self, project_id: str, filters: dict | None = None) -> tuple[str, list[Any]]:
+    def _build_where_clause(self, project_id: str, filters: dict | None = None, *, workspace_id: str) -> tuple[str, list[Any]]:
         filters = filters or {}
-        clauses = ["project_id = ?"]
-        params: list[Any] = [project_id]
+        clauses = ["workspace_id = ?", "project_id = ?"]
+        params: list[Any] = [workspace_id, project_id]
 
         include_progress = filters.get("include_progress")
         if include_progress is False:
@@ -222,7 +222,7 @@ class SqliteDocumentRepository:
 
         return " AND ".join(clauses), params
 
-    async def upsert(self, doc_data: dict, project_id: str) -> None:
+    async def upsert(self, doc_data: dict, project_id: str, *, workspace_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = doc_data.get("createdAt", "") or now
         updated_at = doc_data.get("updatedAt", "") or doc_data.get("lastModified", "") or now
@@ -250,7 +250,7 @@ class SqliteDocumentRepository:
 
         await self.db.execute(
             """INSERT INTO documents (
-                id, project_id, title, file_path, canonical_path, root_kind, doc_subtype,
+                id, project_id, workspace_id, title, file_path, canonical_path, root_kind, doc_subtype,
                 file_name, file_stem, file_dir, has_frontmatter, frontmatter_type,
                 status, status_normalized, author, content, doc_type, category,
                 feature_slug_hint, feature_slug_canonical, prd_ref,
@@ -258,7 +258,7 @@ class SqliteDocumentRepository:
                 total_tasks, completed_tasks, in_progress_tasks, blocked_tasks,
                 metadata_json, parent_doc_id, created_at, updated_at, last_modified,
                 frontmatter_json, source_file
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,
                 file_path=excluded.file_path,
@@ -296,6 +296,7 @@ class SqliteDocumentRepository:
             (
                 doc_data["id"],
                 project_id,
+                workspace_id,
                 doc_data.get("title", ""),
                 file_path,
                 canonical_path,
@@ -361,16 +362,16 @@ class SqliteDocumentRepository:
             rows = await cur.fetchall()
         return {row["id"]: dict(row) for row in rows}
 
-    async def get_by_path(self, project_id: str, canonical_path: str) -> dict | None:
+    async def get_by_path(self, project_id: str, canonical_path: str, *, workspace_id: str) -> dict | None:
         async with self.db.execute(
-            "SELECT * FROM documents WHERE project_id = ? AND canonical_path = ? LIMIT 1",
-            (project_id, normalize_ref_path(canonical_path)),
+            "SELECT * FROM documents WHERE workspace_id = ? AND project_id = ? AND canonical_path = ? LIMIT 1",
+            (workspace_id, project_id, normalize_ref_path(canonical_path)),
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
 
-    async def list_paginated(self, project_id: str, offset: int, limit: int, filters: dict | None = None) -> list[dict]:
-        where_sql, params = self._build_where_clause(project_id, filters)
+    async def list_paginated(self, project_id: str, offset: int, limit: int, filters: dict | None = None, *, workspace_id: str) -> list[dict]:
+        where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         query = f"""
             SELECT * FROM documents
             WHERE {where_sql}
@@ -384,21 +385,27 @@ class SqliteDocumentRepository:
         async with self.db.execute(query, params) as cur:
             return [dict(row) for row in await cur.fetchall()]
 
-    async def count(self, project_id: str, filters: dict | None = None) -> int:
-        where_sql, params = self._build_where_clause(project_id, filters)
+    async def count(self, project_id: str, filters: dict | None = None, *, workspace_id: str) -> int:
+        where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         query = f"SELECT COUNT(*) AS total FROM documents WHERE {where_sql}"
         async with self.db.execute(query, params) as cur:
             row = await cur.fetchone()
             return int(row[0] if row else 0)
 
-    async def list_all(self, project_id: str | None = None) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]:
         if project_id:
-            return await self.list_paginated(project_id, 0, 5000, {})
-        async with self.db.execute("SELECT * FROM documents ORDER BY title LIMIT ?", (5000,)) as cur:
+            return await self.list_paginated(project_id, 0, 5000, {}, workspace_id=workspace_id)
+        # WORKSPACE-AUDIT-EXEMPT: cross-project list within a single workspace is OK in v1;
+        # cross-workspace list is not supported (project_id=None already implies a
+        # within-workspace admin query at the call sites that use this path).
+        async with self.db.execute(
+            "SELECT * FROM documents WHERE workspace_id = ? ORDER BY title LIMIT ?",
+            (workspace_id, 5000),
+        ) as cur:
             return [dict(row) for row in await cur.fetchall()]
 
-    async def get_catalog_facets(self, project_id: str, filters: dict | None = None) -> dict:
-        where_sql, params = self._build_where_clause(project_id, filters)
+    async def get_catalog_facets(self, project_id: str, filters: dict | None = None, *, workspace_id: str) -> dict:
+        where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         facets: dict[str, dict[str, int] | int] = {
             "total": 0,
             "root_kind": {},

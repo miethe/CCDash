@@ -190,7 +190,7 @@ def _feature_row_score(row: dict[str, Any]) -> tuple[int, int, int, str, int]:
 async def _resolve_feature_alias_id(repo, project_id: str, feature_id: str) -> str:
     """Choose the best canonical feature row for a requested id alias."""
     base = canonical_slug(feature_id)
-    candidates = await repo.list_all(project_id)
+    candidates = await repo.list_all(project_id, workspace_id="default-local")
     matches = [
         row for row in candidates
         if canonical_slug(str(row.get("id") or "")) == base
@@ -849,8 +849,8 @@ async def list_features(
     db = await connection.get_connection()
     repo = get_feature_repository(db)
 
-    features_data = await repo.list_paginated(project.id, offset, limit)
-    total = await repo.count(project.id)
+    features_data = await repo.list_paginated(project.id, offset, limit, workspace_id="default-local")
+    total = await repo.count(project.id, workspace_id="default-local")
 
     results: list[Feature] = []
     for f in features_data:
@@ -1739,6 +1739,7 @@ async def get_feature_linked_sessions(feature_id: str):
             total = await session_repo.count(
                 active_project.id,
                 {"include_subagents": True, "root_session_id": root_id},
+                workspace_id="default-local",
             )
             if total <= 0:
                 continue
@@ -1752,6 +1753,7 @@ async def get_feature_linked_sessions(feature_id: str):
                     "started_at",
                     "desc",
                     {"include_subagents": True, "root_session_id": root_id},
+                    workspace_id="default-local",
                 )
                 if not page:
                     break

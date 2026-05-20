@@ -13,7 +13,7 @@ class _SessionRepo:
         self.sessions: list[tuple[dict, str]] = []
         self.relationships: list[tuple[str, str, list[dict]]] = []
 
-    async def upsert(self, session_data: dict, project_id: str) -> None:
+    async def upsert(self, session_data: dict, project_id: str, *, workspace_id: str = "default-local") -> None:
         self.sessions.append((dict(session_data), project_id))
 
     async def get_logs(self, session_id: str) -> list[dict]:

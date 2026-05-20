@@ -178,6 +178,7 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
                 "primaryDocuments": [{"documentId": "doc-1", "title": "Plan", "docType": "prd"}],
             },
             cls._PROJECT_ID,
+            workspace_id="default-local",
         )
         await storage.features().upsert_phases(
             cls._FEATURE_ID,
@@ -209,6 +210,7 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
                 "sourceFile": "sessions/session-surface-1.jsonl",
             },
             cls._PROJECT_ID,
+            workspace_id="default-local",
         )
         await storage.sessions().upsert_logs(
             cls._SESSION_ID,
@@ -235,7 +237,8 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
                 "link_type": "related",
                 "origin": "test",
                 "confidence": 1.0,
-            }
+            },
+            workspace_id="default-local",
         )
 
     def _openapi_paths(self) -> dict:

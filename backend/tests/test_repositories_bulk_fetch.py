@@ -90,7 +90,7 @@ class TestSessionGetManyByIds(unittest.IsolatedAsyncioTestCase):
         await run_migrations(self.db)
         self.repo = SqliteSessionRepository(self.db)
         for sid in ("s1", "s2", "s3"):
-            await self.repo.upsert({**_SESSION_BASE, "id": sid}, "proj-1")
+            await self.repo.upsert({**_SESSION_BASE, "id": sid}, "proj-1", workspace_id="default-local")
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
@@ -143,7 +143,7 @@ class TestFeatureGetManyByIds(unittest.IsolatedAsyncioTestCase):
         await run_migrations(self.db)
         self.repo = SqliteFeatureRepository(self.db)
         for fid in ("f1", "f2", "f3"):
-            await self.repo.upsert({**_FEATURE_BASE, "id": fid}, "proj-1")
+            await self.repo.upsert({**_FEATURE_BASE, "id": fid}, "proj-1", workspace_id="default-local")
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
@@ -209,7 +209,7 @@ class TestDocumentGetManyByIds(unittest.IsolatedAsyncioTestCase):
         await run_migrations(self.db)
         self.repo = SqliteDocumentRepository(self.db)
         for did in ("d1", "d2", "d3"):
-            await self.repo.upsert({**_DOC_BASE, "id": did, "filePath": f"docs/{did}.md"}, "proj-1")
+            await self.repo.upsert({**_DOC_BASE, "id": did, "filePath": f"docs/{did}.md"}, "proj-1", workspace_id="default-local")
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
@@ -253,53 +253,53 @@ class TestEntityLinkGetLinksForMany(unittest.IsolatedAsyncioTestCase):
             "source_type": "feature", "source_id": "f1",
             "target_type": "session", "target_id": "session-a",
             "link_type": "related",
-        })
+        }, workspace_id="default-local")
         # f1 → session-b
         await self.repo.upsert({
             "source_type": "feature", "source_id": "f1",
             "target_type": "session", "target_id": "session-b",
             "link_type": "related",
-        })
+        }, workspace_id="default-local")
         # f2 → session-c
         await self.repo.upsert({
             "source_type": "feature", "source_id": "f2",
             "target_type": "session", "target_id": "session-c",
             "link_type": "related",
-        })
+        }, workspace_id="default-local")
         # f3 has no links
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
 
     async def test_empty_input_returns_empty_dict(self) -> None:
-        result = await self.repo.get_links_for_many("feature", [])
+        result = await self.repo.get_links_for_many("feature", [], workspace_id="default-local")
         self.assertEqual(result, {})
 
     async def test_single_id_with_links(self) -> None:
-        result = await self.repo.get_links_for_many("feature", ["f1"])
+        result = await self.repo.get_links_for_many("feature", ["f1"], workspace_id="default-local")
         self.assertIn("f1", result)
         self.assertEqual(len(result["f1"]), 2)
 
     async def test_multi_id_returns_grouped_links(self) -> None:
-        result = await self.repo.get_links_for_many("feature", ["f1", "f2"])
+        result = await self.repo.get_links_for_many("feature", ["f1", "f2"], workspace_id="default-local")
         self.assertIn("f1", result)
         self.assertIn("f2", result)
         self.assertEqual(len(result["f1"]), 2)
         self.assertEqual(len(result["f2"]), 1)
 
     async def test_id_with_no_links_maps_to_empty_list(self) -> None:
-        result = await self.repo.get_links_for_many("feature", ["f1", "f3"])
+        result = await self.repo.get_links_for_many("feature", ["f1", "f3"], workspace_id="default-local")
         self.assertIn("f3", result)
         self.assertEqual(result["f3"], [])
 
     async def test_nonexistent_id_maps_to_empty_list(self) -> None:
-        result = await self.repo.get_links_for_many("feature", ["missing"])
+        result = await self.repo.get_links_for_many("feature", ["missing"], workspace_id="default-local")
         self.assertIn("missing", result)
         self.assertEqual(result["missing"], [])
 
     async def test_all_ids_present_in_result_keys(self) -> None:
         ids = ["f1", "f2", "f3"]
-        result = await self.repo.get_links_for_many("feature", ids)
+        result = await self.repo.get_links_for_many("feature", ids, workspace_id="default-local")
         for fid in ids:
             self.assertIn(fid, result)
 

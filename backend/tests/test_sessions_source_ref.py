@@ -165,18 +165,18 @@ class SessionsSourceRefRepositoryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_upsert_with_source_ref_persists_value(self) -> None:
         data = _minimal_session("sess-001")
-        await self.repo.upsert(data, "proj-1", source_ref="fs:projects/my-proj/session.jsonl")
+        await self.repo.upsert(data, "proj-1", workspace_id="default-local", source_ref="fs:projects/my-proj/session.jsonl")
         self.assertEqual(await self._source_ref("sess-001"), "fs:projects/my-proj/session.jsonl")
 
     async def test_upsert_without_source_ref_leaves_column_null_on_insert(self) -> None:
         data = _minimal_session("sess-002")
-        await self.repo.upsert(data, "proj-1")  # no source_ref kwarg
+        await self.repo.upsert(data, "proj-1", workspace_id="default-local")  # no source_ref kwarg
         self.assertIsNone(await self._source_ref("sess-002"))
 
     async def test_upsert_source_ref_updates_on_conflict_preserves_other_fields(self) -> None:
         """Re-upserting with source_ref should update source_ref; other fields preserved."""
         data = _minimal_session("sess-003")
-        await self.repo.upsert(data, "proj-1")
+        await self.repo.upsert(data, "proj-1", workspace_id="default-local")
 
         async with self.db.execute(
             "SELECT model, source_ref FROM sessions WHERE id = 'sess-003'"
@@ -185,7 +185,7 @@ class SessionsSourceRefRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row_before["model"], "claude-opus-4")
         self.assertIsNone(row_before["source_ref"])
 
-        await self.repo.upsert(data, "proj-1", source_ref="fs:projects/my-proj/session.jsonl")
+        await self.repo.upsert(data, "proj-1", workspace_id="default-local", source_ref="fs:projects/my-proj/session.jsonl")
 
         async with self.db.execute(
             "SELECT model, source_ref FROM sessions WHERE id = 'sess-003'"
@@ -197,9 +197,9 @@ class SessionsSourceRefRepositoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_upsert_without_source_ref_does_not_clear_existing_source_ref(self) -> None:
         """Backwards-compat: upserting without source_ref must not NULL out an existing value."""
         data = _minimal_session("sess-004")
-        await self.repo.upsert(data, "proj-1", source_ref="fs:projects/my-proj/session.jsonl")
+        await self.repo.upsert(data, "proj-1", workspace_id="default-local", source_ref="fs:projects/my-proj/session.jsonl")
         # Second upsert — legacy caller, no source_ref kwarg
-        await self.repo.upsert(data, "proj-1")
+        await self.repo.upsert(data, "proj-1", workspace_id="default-local")
         # COALESCE(excluded.source_ref, sessions.source_ref) must preserve original value
         self.assertEqual(
             await self._source_ref("sess-004"),
@@ -209,8 +209,8 @@ class SessionsSourceRefRepositoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_upsert_source_ref_can_be_overwritten_when_new_value_provided(self) -> None:
         """A second upsert with a different non-None source_ref overwrites the old one."""
         data = _minimal_session("sess-005")
-        await self.repo.upsert(data, "proj-1", source_ref="remote:evt-old")
-        await self.repo.upsert(data, "proj-1", source_ref="remote:evt-new")
+        await self.repo.upsert(data, "proj-1", workspace_id="default-local", source_ref="remote:evt-old")
+        await self.repo.upsert(data, "proj-1", workspace_id="default-local", source_ref="remote:evt-new")
         self.assertEqual(await self._source_ref("sess-005"), "remote:evt-new")
 
 

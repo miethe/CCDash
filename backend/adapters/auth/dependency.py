@@ -23,6 +23,7 @@ from fastapi import Depends, HTTPException, Request
 
 from backend.adapters.auth.context import AuthContext
 from backend.adapters.auth.workspace_token import WorkspaceTokenAuthBackend
+from backend.db.connection import get_connection
 
 logger = logging.getLogger("ccdash.auth.dependency")
 
@@ -30,9 +31,16 @@ logger = logging.getLogger("ccdash.auth.dependency")
 _PROJECT_ID_HEADER_DEPRECATION_WARNED: bool = False
 
 
+def _get_workspace_token_backend() -> WorkspaceTokenAuthBackend:
+    """Return a per-process WorkspaceTokenAuthBackend singleton."""
+    if not hasattr(_get_workspace_token_backend, "_instance"):
+        _get_workspace_token_backend._instance = WorkspaceTokenAuthBackend(get_db=get_connection)  # type: ignore[attr-defined]
+    return _get_workspace_token_backend._instance  # type: ignore[attr-defined]
+
+
 async def get_auth_context(
     request: Request,
-    backend: WorkspaceTokenAuthBackend = Depends(),
+    backend: WorkspaceTokenAuthBackend = Depends(_get_workspace_token_backend),
 ) -> AuthContext:
     """Resolve and return the AuthContext for the current request.
 

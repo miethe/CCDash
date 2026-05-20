@@ -877,6 +877,7 @@ async def _load_registry_details(db: Any, project: Any) -> list[dict[str, Any]]:
         "started_at",
         "desc",
         {"include_subagents": True},
+        workspace_id="default-local",  # TODO(workspace-routing)
     )
     sessions_by_id = {str(row.get("id") or ""): row for row in session_rows}
 

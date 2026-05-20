@@ -111,6 +111,7 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.session_repo.upsert(
             {
@@ -135,6 +136,7 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
             "project-1",
+            workspace_id="default-local",
         )
 
         await self.intelligence_repo.upsert_stack_observation(
@@ -387,7 +389,8 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
                 "origin": "auto",
                 "confidence": 0.95,
                 "metadata_json": "{}",
-            }
+            },
+            workspace_id="default-local",
         )
 
         payload = await get_workflow_effectiveness(

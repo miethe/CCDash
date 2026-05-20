@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 
 import aiosqlite
 from backend.model_identity import model_filter_tokens
+
+logger = logging.getLogger("ccdash.db.sessions")
 
 _FS_SOURCE_ID = "filesystem"
 _REMOTE_SOURCE_ID = "remote_ingest"
@@ -59,6 +62,7 @@ class SqliteSessionRepository:
         session_data: dict,
         project_id: str,
         *,
+        workspace_id: str,
         source_ref: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -66,7 +70,7 @@ class SqliteSessionRepository:
         updated_at = session_data.get("updatedAt", "") or now
         await self.db.execute(
             """INSERT INTO sessions (
-                id, project_id, task_id, status, model,
+                id, project_id, workspace_id, task_id, status, model,
                 platform_type, platform_version, platform_versions_json, platform_version_transitions_json,
                 duration_seconds, tokens_in, tokens_out, model_io_tokens,
                 cache_creation_input_tokens, cache_read_input_tokens, cache_input_tokens, observed_tokens,
@@ -81,7 +85,7 @@ class SqliteSessionRepository:
                 dates_json, timeline_json, impact_history_json,
                 thinking_level, session_forensics_json,
                 source_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -129,7 +133,7 @@ class SqliteSessionRepository:
                 source_ref=COALESCE(excluded.source_ref, sessions.source_ref)
             """,
             (
-                session_data["id"], project_id,
+                session_data["id"], project_id, workspace_id,
                 session_data.get("taskId", ""),
                 session_data.get("status", "completed"),
                 session_data.get("model", ""),
@@ -220,17 +224,20 @@ class SqliteSessionRepository:
         sort_by: str = "started_at",
         sort_order: str = "desc",
         filters: dict | None = None,
+        *,
+        workspace_id: str,
     ) -> list[dict]:
         # Whitelist sortable columns
-        
+
         allowed_sort = {"started_at", "total_cost", "duration_seconds", "tokens_in", "created_at"}
         if sort_by not in allowed_sort:
             sort_by = "started_at"
         order = "DESC" if sort_order.lower() == "desc" else "ASC"
 
         query_parts = ["SELECT * FROM sessions"]
-        params = []
-        where_clauses = []
+        params: list = []
+        where_clauses: list[str] = ["workspace_id = ?"]
+        params.append(workspace_id)
         filters = filters or {}
 
         if project_id:
@@ -333,10 +340,11 @@ class SqliteSessionRepository:
             rows = await cur.fetchall()
             return [self._row_to_dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None, filters: dict | None = None) -> int:
+    async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str) -> int:
         query_parts = ["SELECT COUNT(*) FROM sessions"]
-        params = []
-        where_clauses = []
+        params: list = []
+        where_clauses: list[str] = ["workspace_id = ?"]
+        params.append(workspace_id)
         filters = filters or {}
 
         if project_id:
@@ -430,13 +438,14 @@ class SqliteSessionRepository:
             row = await cur.fetchone()
         return row[0] if row else 0
 
-    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
+    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str) -> list[dict]:
         query_parts = [
             "SELECT model, COUNT(*) AS count",
             "FROM sessions",
         ]
-        params: list[str] = []
-        where_clauses: list[str] = ["TRIM(COALESCE(model, '')) != ''"]
+        params: list = []
+        where_clauses: list[str] = ["workspace_id = ?", "TRIM(COALESCE(model, '')) != ''"]
+        params.append(workspace_id)
 
         if project_id:
             where_clauses.append("project_id = ?")
@@ -454,13 +463,14 @@ class SqliteSessionRepository:
             rows = await cur.fetchall()
             return [{"model": row[0], "count": int(row[1] or 0)} for row in rows]
 
-    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
+    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str) -> list[dict]:
         query_parts = [
             "SELECT platform_type, platform_version, platform_versions_json",
             "FROM sessions",
         ]
-        params: list[str] = []
-        where_clauses: list[str] = []
+        params: list = []
+        where_clauses: list[str] = ["workspace_id = ?"]
+        params.append(workspace_id)
 
         if project_id:
             where_clauses.append("project_id = ?")
@@ -782,7 +792,7 @@ class SqliteSessionRepository:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def get_project_stats(self, project_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
         """Get aggregated session statistics for a project."""
         query = """
             SELECT
@@ -796,9 +806,9 @@ class SqliteSessionRepository:
                 ) as tokens,
                 AVG(duration_seconds) as duration
             FROM sessions
-            WHERE project_id = ?
+            WHERE project_id = ? AND workspace_id = ?
         """
-        async with self.db.execute(query, (project_id,)) as cur:
+        async with self.db.execute(query, (project_id, workspace_id)) as cur:
             row = await cur.fetchone()
             if row:
                 return {
@@ -809,7 +819,7 @@ class SqliteSessionRepository:
                 }
             return {"count": 0, "cost": 0.0, "tokens": 0, "duration": 0.0}
 
-    async def get_tool_stats(self, project_id: str) -> dict:
+    async def get_tool_stats(self, project_id: str, *, workspace_id: str) -> dict:
         """Get aggregated tool usage statistics for a project."""
         query = """
             SELECT
@@ -817,9 +827,9 @@ class SqliteSessionRepository:
                 AVG(CAST(success_count AS REAL) / NULLIF(call_count, 0) * 100)
             FROM session_tool_usage stu
             JOIN sessions s ON s.id = stu.session_id
-            WHERE s.project_id = ?
+            WHERE s.project_id = ? AND s.workspace_id = ?
         """
-        async with self.db.execute(query, (project_id,)) as cur:
+        async with self.db.execute(query, (project_id, workspace_id)) as cur:
             row = await cur.fetchone()
             if row:
                 return {

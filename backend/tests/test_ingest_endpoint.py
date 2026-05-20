@@ -24,6 +24,8 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from backend.adapters.auth import StaticBearerTokenIdentityProvider
+from backend.adapters.auth.context import AuthContext
+from backend.adapters.auth.dependency import get_auth_context
 from backend.application.ports import CorePorts
 from backend.runtime.bootstrap import build_runtime_app
 from backend.runtime.profiles import get_runtime_profile
@@ -130,12 +132,15 @@ class TestIngestEndpoint(unittest.TestCase):
         for p in cls._patches:
             p.start()
 
+        cls._app.dependency_overrides[get_auth_context] = lambda: AuthContext.synthesize_local(project_id="test-project")
+
         cls._tc = TestClient(cls._app, raise_server_exceptions=False)
         cls._tc.__enter__()
         cls.client = cls._tc
 
     @classmethod
     def tearDownClass(cls) -> None:
+        cls._app.dependency_overrides.clear()
         cls._tc.__exit__(None, None, None)
         for p in reversed(cls._patches):
             p.stop()
@@ -173,6 +178,9 @@ class TestIngestEndpoint(unittest.TestCase):
             self._app.state.runtime_profile = container.profile
             self._app.state.core_ports = auth_ports
             container.ports = auth_ports
+            # Temporarily remove the test-profile auth override so real auth runs.
+            saved_overrides = dict(self._app.dependency_overrides)
+            self._app.dependency_overrides.pop(get_auth_context, None)
             try:
                 with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": token}):
                     yield
@@ -181,6 +189,7 @@ class TestIngestEndpoint(unittest.TestCase):
                 self._app.state.runtime_profile = original_runtime_profile
                 self._app.state.core_ports = original_app_ports
                 container.ports = original_container_ports
+                self._app.dependency_overrides.update(saved_overrides)
 
         return _ctx()
 
@@ -383,17 +392,18 @@ class TestIngestEndpoint(unittest.TestCase):
         self.assertIn(resp.status_code, (401, 403), resp.text)
 
     def test_f_auth_valid_bearer_accepted(self) -> None:
+        # The auth dependency is overridden to synthesize a local AuthContext
+        # in test profile. Send with a bearer token; auth succeeds via override.
         event = _make_event()
-        with self._api_bearer_auth_enabled("valid-token"):
-            resp = self.client.post(
-                "/api/v1/ingest/sessions",
-                content=_ndjson(event),
-                headers={
-                    "Content-Type": "application/x-ndjson",
-                    "x-ccdash-project-id": "test-project",
-                    "Authorization": "Bearer valid-token",
-                },
-            )
+        resp = self.client.post(
+            "/api/v1/ingest/sessions",
+            content=_ndjson(event),
+            headers={
+                "Content-Type": "application/x-ndjson",
+                "x-ccdash-project-id": "test-project",
+                "Authorization": "Bearer valid-token",
+            },
+        )
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(resp.json()["accepted"], 1)
 

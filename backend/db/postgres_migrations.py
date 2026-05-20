@@ -2264,6 +2264,22 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     # ingest_cursors: normalise legacy 'default' workspace_id rows to 'default-local'.
     # Also update the column DEFAULT so new rows from v29-aware code use the correct
     # identifier without requiring an explicit value.
+    # Resolve PK conflicts first: drop the 'default' row if a 'default-local'
+    # row already exists for the same (source_id, project_id). PK is
+    # (source_id, project_id, workspace_id); UPDATE-without-this raises
+    # IntegrityError when both variants coexist.
+    await db.execute(
+        """
+        DELETE FROM ingest_cursors
+        WHERE workspace_id = 'default'
+          AND EXISTS (
+            SELECT 1 FROM ingest_cursors c2
+            WHERE c2.source_id = ingest_cursors.source_id
+              AND c2.project_id = ingest_cursors.project_id
+              AND c2.workspace_id = 'default-local'
+          )
+        """
+    )
     await db.execute(
         "UPDATE ingest_cursors SET workspace_id = 'default-local' WHERE workspace_id = 'default'"
     )

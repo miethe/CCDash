@@ -105,6 +105,7 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                 "conversationFamilyId": "family-1",
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.storage.session_messages().replace_session_messages(
             "S-1",
@@ -215,6 +216,7 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                 "conversationFamilyId": "family-2",
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.storage.sessions().upsert_logs(
             "S-2",

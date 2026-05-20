@@ -22,6 +22,7 @@ class SessionIntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "updatedAt": "2026-04-02T00:00:00Z",
             },
             "project-1",
+            workspace_id="default-local",
         )
 
     async def asyncTearDown(self) -> None:
@@ -139,6 +140,7 @@ class SessionIntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "updatedAt": "2026-04-03T00:00:00Z",
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.session_repo.upsert(
             {
@@ -150,6 +152,7 @@ class SessionIntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "updatedAt": "2026-04-04T00:00:00Z",
             },
             "project-1",
+            workspace_id="default-local",
         )
 
         await self.repo.save_backfill_checkpoint(

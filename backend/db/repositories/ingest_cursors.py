@@ -44,7 +44,7 @@ class SqliteIngestCursorRepository:
         *,
         source_id: str,
         project_id: str,
-        workspace_id: str = "default",
+        workspace_id: str = "default-local",
     ) -> IngestCursor:
         async with self.db.execute(
             """
@@ -147,7 +147,7 @@ class PostgresIngestCursorRepository:
         *,
         source_id: str,
         project_id: str,
-        workspace_id: str = "default",
+        workspace_id: str = "default-local",
     ) -> IngestCursor:
         row = await self.db.fetchrow(
             """

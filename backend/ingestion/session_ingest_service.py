@@ -167,7 +167,7 @@ class SessionIngestService:
             if not session_id:
                 continue
 
-            await self.session_repo.upsert(session_dict, project_id)
+            await self.session_repo.upsert(session_dict, project_id, workspace_id="default-local")  # TODO(workspace-routing)
             result.session_ids.append(session_id)
             result.updated_session_ids.append(session_id)
 

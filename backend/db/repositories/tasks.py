@@ -13,20 +13,20 @@ class SqliteTaskRepository:
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
-    async def upsert(self, task_data: dict, project_id: str) -> None:
+    async def upsert(self, task_data: dict, project_id: str, *, workspace_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         data_json = json.dumps(task_data)
 
         await self.db.execute(
             """INSERT INTO tasks (
-                id, project_id, title, description, status, priority,
+                id, project_id, workspace_id, title, description, status, priority,
                 owner, last_agent, cost,
                 task_type, project_type, project_level,
                 parent_task_id, feature_id, phase_id,
                 session_id, commit_hash,
                 created_at, updated_at, completed_at,
                 source_file, data_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title, description=excluded.description,
                 status=excluded.status, priority=excluded.priority,
@@ -41,7 +41,7 @@ class SqliteTaskRepository:
                 source_file=excluded.source_file, data_json=excluded.data_json
             """,
             (
-                task_data["id"], project_id,
+                task_data["id"], project_id, workspace_id,
                 task_data.get("title", ""),
                 task_data.get("description", ""),
                 task_data.get("status", "backlog"),
@@ -73,41 +73,46 @@ class SqliteTaskRepository:
             row = await cur.fetchone()
             return dict(row) if row else None
 
-    async def list_all(self, project_id: str | None = None) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]:
         if project_id:
             async with self.db.execute(
-                "SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC",
-                (project_id,),
+                "SELECT * FROM tasks WHERE workspace_id = ? AND project_id = ? ORDER BY updated_at DESC",
+                (workspace_id, project_id),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
         else:
+            # WORKSPACE-AUDIT-EXEMPT: cross-project list scoped to a single workspace.
             async with self.db.execute(
-                "SELECT * FROM tasks ORDER BY updated_at DESC"
+                "SELECT * FROM tasks WHERE workspace_id = ? ORDER BY updated_at DESC",
+                (workspace_id,),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
 
-    async def list_paginated(self, project_id: str | None, offset: int, limit: int) -> list[dict]:
+    async def list_paginated(self, project_id: str | None, offset: int, limit: int, *, workspace_id: str) -> list[dict]:
         if project_id:
             async with self.db.execute(
-                "SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-                (project_id, limit, offset),
+                "SELECT * FROM tasks WHERE workspace_id = ? AND project_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                (workspace_id, project_id, limit, offset),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
         async with self.db.execute(
-            "SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT * FROM tasks WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (workspace_id, limit, offset),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def count(self, project_id: str | None = None) -> int:
+    async def count(self, project_id: str | None = None, *, workspace_id: str) -> int:
         if project_id:
             async with self.db.execute(
-                "SELECT COUNT(*) FROM tasks WHERE project_id = ?",
-                (project_id,),
+                "SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND project_id = ?",
+                (workspace_id, project_id),
             ) as cur:
                 row = await cur.fetchone()
                 return int(row[0]) if row else 0
-        async with self.db.execute("SELECT COUNT(*) FROM tasks") as cur:
+        async with self.db.execute(
+            "SELECT COUNT(*) FROM tasks WHERE workspace_id = ?",
+            (workspace_id,),
+        ) as cur:
             row = await cur.fetchone()
             return int(row[0]) if row else 0
 
@@ -129,12 +134,12 @@ class SqliteTaskRepository:
         await self.db.execute("DELETE FROM tasks WHERE source_file = ?", (source_file,))
         await self.db.commit()
 
-    async def get_project_stats(self, project_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
         """Get aggregated task statistics."""
         # Completed count
         async with self.db.execute(
-            "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND lower(status) IN ('done', 'deferred', 'completed')",
-            (project_id,)
+            "SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND project_id = ? AND lower(status) IN ('done', 'deferred', 'completed')",
+            (workspace_id, project_id)
         ) as cur:
             row = await cur.fetchone()
             completed = row[0] if row else 0
@@ -145,9 +150,9 @@ class SqliteTaskRepository:
                 CAST(SUM(CASE WHEN lower(status) IN ('done', 'deferred', 'completed') THEN 1 ELSE 0 END) AS REAL)
                 / NULLIF(COUNT(*), 0) * 100
             FROM tasks
-            WHERE project_id = ?
+            WHERE workspace_id = ? AND project_id = ?
         """
-        async with self.db.execute(query, (project_id,)) as cur:
+        async with self.db.execute(query, (workspace_id, project_id)) as cur:
             row = await cur.fetchone()
             pct = row[0] if row and row[0] is not None else 0.0
             

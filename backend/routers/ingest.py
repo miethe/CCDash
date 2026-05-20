@@ -1,10 +1,9 @@
 """POST /api/v1/ingest/sessions — chunked NDJSON session ingest endpoint.
 
 Transport contract: ADR-006.
-Auth: existing StaticBearerTokenIdentityProvider via request_scope DI (same
-path as client_v1); no new auth code is introduced.
-project_id: from ``x-ccdash-project-id`` header.
-workspace_id: hardcoded to ``"default"`` until Phase 4 ADR-008 workspace auth.
+Auth: WorkspaceTokenAuthBackend via get_auth_context (ADR-008).
+project_id: from AuthContext.project_id (resolved from workspace token).
+workspace_id: from AuthContext.workspace_id (resolved from workspace token).
 """
 from __future__ import annotations
 
@@ -14,6 +13,8 @@ import logging
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
+from backend.adapters.auth.context import AuthContext
+from backend.adapters.auth.dependency import get_auth_context
 from backend.application.models.ingest import (
     IngestBatchResponse,
     IngestSessionEvent,
@@ -23,13 +24,11 @@ from backend.application.services.ingest.session_ingest import (
     IngestProcessingError,
     MAX_EVENTS_PER_BATCH,
 )
-from backend.request_scope import get_request_context, get_runtime_container
+from backend.request_scope import get_runtime_container
 
 logger = logging.getLogger("ccdash.routers.ingest")
 
 ingest_router = APIRouter(prefix="/api/v1/ingest", tags=["ingest"])
-
-_WORKSPACE_ID_DEFAULT = "default"
 
 
 # ---------------------------------------------------------------------------
@@ -40,14 +39,14 @@ _WORKSPACE_ID_DEFAULT = "default"
 @ingest_router.post("/sessions")
 async def post_ingest_sessions(
     request: Request,
+    auth: AuthContext = Depends(get_auth_context),
     container: object = Depends(get_runtime_container),
-    _request_context: object = Depends(get_request_context),
 ) -> Response:
     """Accept a chunked NDJSON batch of IngestSessionEvent records.
 
-    The ``get_request_context`` dependency triggers bearer-token authentication
-    exactly as the client_v1 routes do.  A 401/403 is raised before we reach
-    the body-parsing logic if auth fails.
+    The ``get_auth_context`` dependency resolves the workspace token and
+    provides workspace-scoped project_id and workspace_id.  A 401/403 is
+    raised before we reach the body-parsing logic if auth fails.
 
     Returns
     -------
@@ -64,11 +63,9 @@ async def post_ingest_sessions(
             media_type="text/plain",
         )
 
-    # ── Project / workspace resolution ────────────────────────────────────────
-    project_id: str = (
-        request.headers.get("x-ccdash-project-id", "").strip() or "default-project"
-    )
-    workspace_id: str = _WORKSPACE_ID_DEFAULT
+    # ── Project / workspace resolution (from workspace token, ADR-008) ────────
+    project_id: str = auth.project_id
+    workspace_id: str = auth.workspace_id
 
     # ── Get (or lazy-create) the process-wide ingest service ─────────────────
     ingest_service = container.remote_ingest_service  # type: ignore[attr-defined]

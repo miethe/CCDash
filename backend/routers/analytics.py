@@ -44,7 +44,6 @@ from backend.models import (
     WorkflowRegistryListResponse,
     WorkflowEffectivenessResponse,
 )
-from backend.db.factory import get_artifact_ranking_repository
 from backend.model_identity import canonical_model_name, derive_model_identity, model_family_name
 from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
@@ -390,7 +389,7 @@ def _operation_kind_label(kind: str) -> str:
 
 
 async def _fetch_artifact_analytics_rows(
-    db: Any,
+    analytics_repo: Any,
     *,
     project_id: str,
     start: str | None,
@@ -405,9 +404,6 @@ async def _fetch_artifact_analytics_rows(
     list[dict[str, Any]],
     list[dict[str, Any]],
 ]:
-    from backend.db.factory import get_analytics_repository
-
-    analytics_repo = get_analytics_repository(db)
     row_groups = await analytics_repo.list_artifact_analytics_rows(
         project_id=project_id,
         start=start,
@@ -1288,7 +1284,7 @@ def _build_artifact_analytics_payload(
 
 
 async def _load_artifact_analytics_payload(
-    db: Any,
+    analytics_repo: Any,
     *,
     project_id: str,
     start: str | None,
@@ -1301,7 +1297,7 @@ async def _load_artifact_analytics_payload(
     detail_limit: int,
 ) -> dict[str, Any]:
     artifact_rows, lifecycle_rows, feature_link_rows, feature_rows, command_rows, agent_rows = await _fetch_artifact_analytics_rows(
-        db,
+        analytics_repo,
         project_id=project_id,
         start=start,
         end=end,
@@ -1965,7 +1961,7 @@ async def get_artifact_rankings(
             user_scope=user or "all",
             persist=True,
         )
-    repo = get_artifact_ranking_repository(core_ports.storage.db)
+    repo = core_ports.storage.artifact_rankings()
     payload = await repo.list_rankings(
         project_id=project_id,
         period=period,
@@ -2041,7 +2037,7 @@ async def get_artifact_recommendations(
     project_id = project or (active_project.id if active_project else "")
     if not project_id:
         raise HTTPException(status_code=404, detail="No active project")
-    repo = get_artifact_ranking_repository(core_ports.storage.db)
+    repo = core_ports.storage.artifact_rankings()
     payload = await repo.list_rankings(
         project_id=project_id,
         period=period,
@@ -2199,7 +2195,7 @@ async def get_artifacts(
         }
 
     payload = await _load_artifact_analytics_payload(
-        core_ports.storage.db,
+        core_ports.storage.analytics(),
         project_id=project.id,
         start=start,
         end=end,
@@ -2682,7 +2678,7 @@ async def export_prometheus(
     artifact_payload: dict[str, Any] = {}
     try:
         artifact_payload = await _load_artifact_analytics_payload(
-            core_ports.storage.db,
+            core_ports.storage.analytics(),
             project_id=project.id,
             start=None,
             end=None,
