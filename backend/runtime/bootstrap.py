@@ -16,6 +16,7 @@ from backend.routers.analytics import analytics_router
 from backend.routers.agent import agent_router
 from backend.routers.auth import auth_router
 from backend.routers.client_v1 import client_v1_router
+from backend.routers.ingest import ingest_router
 from backend.routers.api import documents_router, sessions_router, tasks_router
 from backend.routers.cache import cache_router, links_router
 from backend.routers.codebase import codebase_router
@@ -361,3 +362,4 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(pricing_router)
     app.include_router(observability_router)
     app.include_router(client_v1_router)
+    app.include_router(ingest_router)

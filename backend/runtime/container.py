@@ -68,6 +68,7 @@ class RuntimeContainer:
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
         self.project_binding: ProjectBinding | None = None
         self.migration_status = "not_started"
+        self._remote_ingest_service: Any | None = None
 
     async def startup(self, app: FastAPI) -> None:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
@@ -192,6 +193,38 @@ class RuntimeContainer:
         if self.ports is None:
             raise RuntimeError("Runtime ports are unavailable before startup completes.")
         return self.ports
+
+    @property
+    def remote_ingest_service(self) -> Any:
+        """Lazy-built, process-wide singleton for the remote session ingest service.
+
+        Built on first access so it is available after ``startup()`` has
+        populated ``self.db``.  The LRU cache inside the service is shared
+        across all requests in the same worker process.
+        """
+        if self._remote_ingest_service is None:
+            if self.db is None:
+                raise RuntimeError(
+                    "RuntimeContainer.db is unavailable; cannot build RemoteSessionIngestService."
+                )
+            from backend.application.services.ingest.session_ingest import RemoteSessionIngestService
+            from backend.db.repositories.sessions import SqliteSessionRepository
+            from backend.db.repositories.ingest_cursors import SqliteIngestCursorRepository
+            import aiosqlite
+            if isinstance(self.db, aiosqlite.Connection):
+                session_repo = SqliteSessionRepository(self.db)
+                cursor_repo = SqliteIngestCursorRepository(self.db)
+            else:
+                # Postgres path — use the factory to get the right implementations.
+                from backend.db.factory import get_session_repository
+                from backend.db.repositories.ingest_cursors import PostgresIngestCursorRepository
+                session_repo = get_session_repository(self.db)
+                cursor_repo = PostgresIngestCursorRepository(self.db)
+            self._remote_ingest_service = RemoteSessionIngestService(
+                session_repo,
+                cursor_repo,
+            )
+        return self._remote_ingest_service
 
     def _build_core_ports(self) -> CorePorts:
         return build_core_ports(

@@ -23,6 +23,7 @@ ccdash = "ccdash_cli.main:app"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-httpx>=0.30", "respx>=0.21"]
+daemon = ["watchfiles>=0.21"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
