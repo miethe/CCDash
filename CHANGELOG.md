@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **System-wide live agent count chip on the home dashboard**: shows total running agents across all projects with per-project staleness indicators. Available via REST (`GET /api/agent/system/active-count`), MCP (`ccdash_system_active_count`), and CLI (`ccdash system active-count`). Backed by `SystemMetricsQueryService` with bounded fan-out (`CCDASH_SYSTEM_METRICS_CONCURRENCY`, default 10), memoized cache (`CCDASH_SYSTEM_METRICS_CACHE_TTL_SECONDS`, default 30s), and a configurable staleness horizon (`CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS`, default 3600s).
+
+### Fixed
+
+- **Session data now reflects the active project after a project switch**: `POST /api/projects/active/{id}` atomically rebinds the file watcher to the new project's `sessions_dir`, `docs_dir`, and `progress_dir`, triggers a one-shot sync, and returns `watcherRebound: true` in the response. Session counts, analytics, and live metrics now immediately reflect the correct project. `GET /api/health/detail` watcher `watchPaths` field updates on switch. If the new project's paths do not exist, the API returns HTTP 4xx and the watcher remains on the previous project's paths (no half-rebound state).
+
 ### Changed
 
 - **Planning / Forensics Boundary Extraction**: Separated planning and execution workflows from session forensics and metrics through bounded shared evidence contracts. Key changes:
@@ -14,6 +22,7 @@
 
 ### Added
 
+- **Live agents count widget and API**: Exposes the per-project "currently running agents" count through all three CCDash transports (REST, MCP, CLI) and renders it as a live chip on the Dashboard. The count reflects sessions with `status='active'` and `updated_at` within the last 10 minutes, defending against stale-active rows from un-rebounded file watchers. Dashboard chip polls every 10 seconds and degrades to `--` on API error without crashing. Adds `GET /api/agent/live/active-count`, MCP tool `ccdash_live_active_count`, and CLI command `ccdash live active-count [--project <id>] [--json]`. Adds composite index `idx_sessions_project_status_updated` on the `sessions` table (SQLite and PostgreSQL) to make the count query cheap.
 - **Artifact intelligence surfaces and agent access**: Added Analytics artifact rankings, Execution Workbench artifact optimization recommendations, Settings SkillMeat snapshot health, and agent/operator access through `ccdash artifact` CLI commands and the `artifact_recommendations` MCP tool.
 - **Per-message token usage in session transcript**: Every assistant message in the session inspector now shows a compact token caption (e.g. `1.2K tok · cached 800`) beneath the message body. Hovering or clicking the caption opens a popover with the full per-turn breakdown: input, output, cache read, cache creation, total, and tool-call count. User messages and messages without usage data render no caption.
   - Backend: four new nullable columns on `session_messages` (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`) in both SQLite (schema v26) and PostgreSQL (schema v27) migrations.

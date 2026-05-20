@@ -1,7 +1,7 @@
 """Agent-facing REST endpoints backed by transport-neutral query services."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field
 
 from backend import config
@@ -18,6 +18,8 @@ from backend.application.services.agent_queries import (
     FeatureForensicsDTO,
     FeatureForensicsQueryService,
     FeaturePlanningContextDTO,
+    LiveActiveCountDTO,
+    LiveMetricsQueryService,
     PhaseOperationsDTO,
     PlanningAgentSessionBoardDTO,
     PlanningNextRunPreviewDTO,
@@ -33,6 +35,8 @@ from backend.application.services.agent_queries import (
     WorkflowDiagnosticsDTO,
     WorkflowDiagnosticsQueryService,
 )
+from backend.application.services.agent_queries.system_metrics import SystemMetricsQueryService
+from backend.models import SystemActiveCountDTO
 from backend.observability import otel
 from backend.request_scope import get_core_ports, get_request_context
 
@@ -74,6 +78,10 @@ artifact_intelligence_query_service = ArtifactIntelligenceQueryService()
 planning_query_service = PlanningQueryService()
 # PASB-102: planning session board query surface.
 planning_session_query_service = PlanningSessionQueryService()
+# live-agents-count-v1: live metrics query surface.
+live_metrics_query_service = LiveMetricsQueryService()
+# system-wide-metrics-v1: system-wide active count surface.
+system_metrics_query_service = SystemMetricsQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -114,6 +122,83 @@ async def get_project_status(
         project_id_override=project_id,
         bypass_cache=bypass_cache,
     )
+
+
+@agent_router.get("/live/active-count", response_model=LiveActiveCountDTO)
+async def get_live_active_count(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> LiveActiveCountDTO:
+    """Return the number of currently active agent sessions for a project.
+
+    Sessions are counted when both conditions hold:
+    - ``status = 'active'``
+    - ``updated_at >= now() - CCDASH_LIVE_AGENTS_WINDOW_SECONDS`` (default 600 s)
+
+    The freshness window defends against stale-active rows (OQ-3 finding: rows
+    with ``status='active'`` up to 93 days old from un-rebounded file watchers).
+
+    When ``project_id`` is omitted the active project is resolved from the
+    request context (same as all other agent endpoints).  A project with no
+    sessions or no active sessions within the window returns ``{count: 0}``,
+    not an error.
+
+    Response fields:
+    - ``project_id``: resolved project identifier
+    - ``count``: integer count of active sessions
+    - ``window_seconds``: freshness window used for the query
+    - ``generated_at``: UTC timestamp when this response was produced
+    """
+    app_request = await _resolve_app_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    return await live_metrics_query_service.get_active_count(
+        app_request.context,
+        app_request.ports,
+        project_id_override=project_id,
+    )
+
+
+@agent_router.get(
+    "/system/active-count",
+    response_model=SystemActiveCountDTO,
+    summary="System-wide active agent count across all projects",
+)
+async def get_system_active_count(
+    response: Response,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> SystemActiveCountDTO:
+    """Return the aggregated live-agent count across **all** known projects.
+
+    Per-project rows include an ``is_stale`` flag (``True`` when
+    ``now() - max(sessions.updated_at)`` exceeds
+    ``CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS``, default 3600 s) and a
+    ``last_synced_at`` timestamp.  Projects with no sessions return
+    ``is_stale=null`` (staleness indeterminate, not stale).
+
+    Consumers should poll this endpoint at most once every 30 seconds; the
+    response is cached server-side for ``CCDASH_SYSTEM_METRICS_CACHE_TTL_SECONDS``
+    (default 30 s).  A ``Cache-Control: max-age=30`` header is set to inform
+    intermediate caches and polling clients.
+
+    Response fields:
+    - ``total``: sum of active counts across all projects with valid data
+    - ``per_project``: list of per-project summaries (count, is_stale, last_synced_at, error)
+    - ``window_seconds``: freshness window used for the count query
+    - ``generated_at``: UTC timestamp when this response was produced
+    - ``status``: ``"ok"`` when all projects succeeded; ``"partial"`` when any errored
+    """
+    app_request = await _resolve_app_request(request_context, core_ports)
+    result = await system_metrics_query_service.get_system_active_count(
+        app_request.context,
+        app_request.ports,
+    )
+    response.headers["Cache-Control"] = "max-age=30"
+    return result
 
 
 @agent_router.get("/feature-forensics/{feature_id}", response_model=FeatureForensicsDTO)

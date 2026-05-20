@@ -406,6 +406,53 @@ class PostgresSessionRepository:
         val = await self.db.fetchval(f"SELECT COUNT(*) FROM sessions{where}", *params)
         return val or 0
 
+    async def count_active(
+        self,
+        project_id: str,
+        *,
+        window_seconds: int = 600,
+        include_subagents: bool = False,
+    ) -> int:
+        """Count sessions that are currently active for a project.
+
+        See ``SqliteSessionRepository.count_active`` for full docstring including
+        the dual role of the freshness clamp and the stale-active defence.
+
+        The default ``window_seconds=600`` matches ``_ACTIVE_SESSION_WINDOW_SECONDS``
+        in the parsers but serves a different purpose (read-time filter, not
+        parser classification).
+
+        Args:
+            project_id: The project to scope the count to.
+            window_seconds: Freshness window in seconds (default 600 = 10 min).
+            include_subagents: If ``False`` (default), excludes subagent rows.
+
+        Returns:
+            Integer count of currently-active sessions within the window.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        threshold = (
+            datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        ).isoformat()
+
+        where_parts = [
+            "project_id = $1",
+            "status = $2",
+            "updated_at >= $3",
+        ]
+        params: list[Any] = [project_id, "active", threshold]
+
+        if not include_subagents:
+            where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        where = " WHERE " + " AND ".join(where_parts)
+        val = await self.db.fetchval(
+            f"SELECT COUNT(*) FROM sessions{where}",  # noqa: S608
+            *params,
+        )
+        return int(val or 0)
+
     async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
         where_parts: list[str] = ["TRIM(COALESCE(model, '')) != ''"]
         params: list[Any] = []

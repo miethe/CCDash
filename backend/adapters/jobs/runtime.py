@@ -23,6 +23,14 @@ from backend.services.test_config import effective_test_flags, resolve_test_sour
 logger = logging.getLogger("ccdash.runtime.jobs")
 
 
+class WatcherRebindError(Exception):
+    """Raised when a watcher rebind cannot proceed or fails atomically."""
+
+    def __init__(self, message: str, *, status_code: int = 422) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -186,6 +194,148 @@ class RuntimeJobAdapter:
                 self.state.cache_warming_task = cache_warming_task
 
         return self.state
+
+    async def rebind_watcher(self, new_project_id: str) -> dict[str, object]:
+        """Atomically rebind the file watcher to the new project's paths.
+
+        Sequence:
+        1. Resolve new project's paths via the workspace registry.
+        2. Validate paths exist (return 4xx-compatible error if not).
+        3. Capture old-project snapshot as rollback target.
+        4. Drain the outgoing project (light sync) to minimise event loss.
+        5. Stop old watcher, start new watcher.
+        6. On start failure, rollback to old project's watcher.
+        7. Trigger one-shot sync for new project.
+
+        Returns a dict with ``watcherRebound: bool`` and optional ``error: str``.
+        Raises ``WatcherRebindError`` on unrecoverable failure.
+        """
+        if not self.profile.capabilities.watch or self.sync is None:
+            # Watcher is not enabled for this runtime profile; rebind is a no-op.
+            return {"watcherRebound": False, "error": "watcher_not_enabled"}
+
+        workspace_registry = self.ports.workspace_registry
+
+        # Step 1: Resolve new project binding (raises ValueError if not found).
+        new_binding = workspace_registry.resolve_project_binding(
+            new_project_id, allow_active_fallback=False, refresh=True
+        )
+        if new_binding is None:
+            raise WatcherRebindError(f"Project '{new_project_id}' not found", status_code=404)
+
+        new_project = new_binding.project
+        new_paths = new_binding.paths  # ResolvedProjectPaths
+        new_sessions_dir, new_docs_dir, new_progress_dir = new_paths.as_tuple()
+
+        # Step 2: Validate that at least one watch path exists before stopping.
+        # Reuse FileWatcher._resolve_watch_paths logic.
+        existing_paths = [p for p in [new_sessions_dir, new_docs_dir, new_progress_dir] if p.exists()]
+        if not existing_paths:
+            raise WatcherRebindError(
+                f"No watch paths exist for project '{new_project_id}': "
+                f"sessions={new_sessions_dir}, docs={new_docs_dir}, progress={new_progress_dir}",
+                status_code=422,
+            )
+
+        # Step 3: Capture old snapshot for rollback.
+        old_snapshot = file_watcher.snapshot()
+        old_project_id: str | None = old_snapshot.get("projectId")  # type: ignore[assignment]
+
+        # Resolve old binding for rollback (only needed if stop later succeeds but start fails).
+        old_binding = (
+            workspace_registry.resolve_project_binding(
+                old_project_id, allow_active_fallback=False, refresh=False
+            )
+            if old_project_id
+            else None
+        )
+
+        # Step 4: Drain the outgoing project (light sync) — drain-before-rebind strategy.
+        if old_project_id and old_binding is not None:
+            old_sessions_dir, old_docs_dir, old_progress_dir = old_binding.paths.as_tuple()
+            try:
+                if hasattr(self.sync, "sync_planning_artifacts"):
+                    await self.sync.sync_planning_artifacts(
+                        old_project_id,
+                        old_docs_dir,
+                        old_progress_dir,
+                        force=False,
+                    )
+            except Exception:
+                logger.exception(
+                    "Watcher rebind: drain sync failed for outgoing project '%s' — continuing",
+                    old_project_id,
+                )
+
+        # Step 5: Atomic stop → start.
+        await file_watcher.stop()
+        self.state.watcher_started = False
+
+        try:
+            await file_watcher.start(
+                self.sync,
+                new_project.id,
+                new_sessions_dir,
+                new_docs_dir,
+                new_progress_dir,
+            )
+            self.state.watcher_started = True
+        except Exception as start_exc:
+            # Step 6: Rollback — restart watcher on old project.
+            logger.exception(
+                "Watcher rebind: start() failed for project '%s' — attempting rollback",
+                new_project_id,
+            )
+            if old_binding is not None:
+                r_sessions_dir, r_docs_dir, r_progress_dir = old_binding.paths.as_tuple()
+                try:
+                    await file_watcher.start(
+                        self.sync,
+                        str(old_project_id),
+                        r_sessions_dir,
+                        r_docs_dir,
+                        r_progress_dir,
+                    )
+                    self.state.watcher_started = True
+                    logger.info(
+                        "Watcher rebind: rollback succeeded — watcher restarted on project '%s'",
+                        old_project_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Watcher rebind: rollback start() also failed for project '%s'",
+                        old_project_id,
+                    )
+            raise WatcherRebindError(
+                f"Failed to start watcher for project '{new_project_id}': {start_exc}",
+                status_code=422,
+            ) from start_exc
+
+        # Step 7: One-shot sync for new project (startup-equivalent, sessions/docs/progress only).
+        # Test sources are intentionally excluded from the rebind sync; a full test sync runs
+        # as part of the startup pipeline and is not required for immediate session visibility.
+        try:
+            await self.sync.sync_project(
+                new_project,
+                new_sessions_dir,
+                new_docs_dir,
+                new_progress_dir,
+                trigger="rebind",
+                rebuild_links=False,
+                capture_analytics=False,
+                backfill_session_intelligence=False,
+            )
+        except Exception:
+            logger.exception(
+                "Watcher rebind: one-shot sync failed for project '%s' — watcher is running but table may be stale",
+                new_project_id,
+            )
+
+        logger.info(
+            "Watcher rebind complete",
+            extra={"old_project_id": old_project_id, "new_project_id": new_project_id},
+        )
+        return {"watcherRebound": True}
 
     async def stop(self) -> None:
         if self.state.sync_task is not None:

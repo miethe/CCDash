@@ -154,6 +154,13 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, started_at DESC);
 
+-- Composite index for live active-count queries (live-agents-count-v1).
+-- Supports the count_active query: WHERE project_id = ? AND status = ? AND updated_at >= ?
+-- Also defends against stale-active rows (OQ-3 finding: rows up to 93 days old with
+-- status='active') by making the updated_at predicate cheap to execute.
+CREATE INDEX IF NOT EXISTS idx_sessions_project_status_updated
+    ON sessions(project_id, status, updated_at);
+
 -- Normalized log entries
 CREATE TABLE IF NOT EXISTS session_logs (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,

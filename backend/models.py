@@ -3315,4 +3315,32 @@ class TestMetricSummaryDTO(BaseModel):
     total_metrics: int = 0
     by_platform: dict[str, int] = Field(default_factory=dict)
     by_metric_type: dict[str, int] = Field(default_factory=dict)
+
+
+# ── System-wide metrics DTOs ────────────────────────────────────────
+
+class ProjectActiveCountSummaryDTO(BaseModel):
+    """Per-project summary within a system-wide active-count rollup.
+
+    ``count`` and ``is_stale`` may be ``None`` when the project query errored
+    or when the project has no sessions in the cache (``is_stale=None``
+    means staleness cannot be determined, not that data is fresh).
+    """
+
+    project_id: str
+    project_name: str
+    count: Optional[int] = None
+    is_stale: Optional[bool] = None
+    last_synced_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class SystemActiveCountDTO(BaseModel):
+    """System-wide rollup of active agent counts across all known projects."""
+
+    total: int
+    per_project: list[ProjectActiveCountSummaryDTO] = Field(default_factory=list)
+    generated_at: datetime
+    window_seconds: int
+    status: Literal["ok", "partial"]
     latest_collected_at: str = ""

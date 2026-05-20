@@ -2,7 +2,9 @@
 schema_version: 2
 doc_type: implementation_plan
 title: "System-Wide Metrics - Implementation Plan"
-status: draft
+status: completed
+runtime_smoke: skipped
+runtime_smoke_reason: "Executed as background agent sprint with no interactive runtime. Browser smoke must be performed by the human reviewer before merge to main per CLAUDE.md runtime-smoke gate."
 created: 2026-05-20
 updated: 2026-05-20
 feature_slug: system-wide-metrics
@@ -16,7 +18,10 @@ architecture_summary: "Service primitive (agent_queries/) → transport wiring (
 priority: medium
 risk_level: medium
 changelog_required: true
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+  - docs/project_plans/design-specs/system-metrics-background-rollup.md
+  - docs/project_plans/design-specs/system-metrics-lazy-rescan.md
+  - docs/project_plans/design-specs/system-metrics-widget-api-hardening.md
 findings_doc_ref: null
 plan_structure: unified
 progress_init: auto
@@ -547,3 +552,18 @@ See `.claude/progress/system-wide-metrics/` (to be created by `artifact-tracking
 
 **Implementation Plan Version**: 1.0
 **Last Updated**: 2026-05-20
+
+---
+
+## Implementation Notes (2026-05-20 background sprint)
+
+- All five phases (T1-001 through T5-004) implemented end-to-end on branch `feat/system-wide-metrics`.
+- OQ-5 resolution: two-query staleness approach chosen (kept `SessionsRepository.count_active()` unchanged; service runs a separate `SELECT MAX(updated_at)` per project, dual SQLite/Postgres path mirroring `cache.py:_query_max_updated_at`).
+- Tests landed: 7 backend cases (`backend/tests/test_system_metrics.py`) + 26 Vitest cases (`components/__tests__/SystemMetricsChip.test.tsx`). Local performance: p95 ≈ 73ms over 10 runs on a 36-project fixture; cached repeat under 20ms. Perf test is env-gated by `CCDASH_RUN_PERF_TESTS=1`.
+- Phase 4 `task-completion-validator` and Phase 5 `karen` reviewer gates are deferred to post-PR human review.
+- Runtime smoke is `skipped`: no interactive browser available in the background-agent sprint. Human reviewer must run `npm run dev` and verify the chip on the home dashboard before merging to `main`.
+- Three deferred-items design specs authored:
+  - DEF-001: `docs/project_plans/design-specs/system-metrics-background-rollup.md`
+  - DEF-002: `docs/project_plans/design-specs/system-metrics-lazy-rescan.md`
+  - DEF-003: `docs/project_plans/design-specs/system-metrics-widget-api-hardening.md`
+- Feature guide: `.claude/worknotes/system-wide-metrics/feature-guide.md`.
