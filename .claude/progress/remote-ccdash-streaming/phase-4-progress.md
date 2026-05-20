@@ -27,7 +27,7 @@ execution_model: batch-parallel
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 10
-completed_tasks: 1
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 runtime_smoke: pending
@@ -111,14 +111,21 @@ tasks:
     register in api/worker runtime profiles only. Local profile retains\nlegacy bearer\
     \ guard for backwards compat (synthesizes AuthContext with\n`workspace_id=\"default-local\"\
     `, `project_id=runtime_container.bound_project`).\n"
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   assigned_model: sonnet
   dependencies:
   - T4-001
-  evidence: []
-  verified_by: []
+  evidence:
+  - file: backend/adapters/auth/context.py
+  - file: backend/adapters/auth/workspace_token.py
+  - file: backend/adapters/auth/dependency.py
+  - test: backend/tests/test_workspace_token_auth.py
+  verified_by:
+  - T4-008
+  started: '2026-05-20T17:30:00Z'
+  completed: '2026-05-20T19:30:00Z'
 - id: T4-003
   description: 'Refactor `RuntimeContainer` (backend/runtime/container.py:67) to support
 
@@ -167,14 +174,20 @@ tasks:
     different tokens in a single test.
 
     '
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   assigned_model: sonnet
   dependencies:
   - T4-001
-  evidence: []
-  verified_by: []
+  evidence:
+  - file: backend/runtime/container.py
+  - file: backend/runtime/dependencies.py
+  - test: backend/tests/test_runtime_container_routing.py
+  verified_by:
+  - T4-008
+  started: '2026-05-20T17:30:00Z'
+  completed: '2026-05-20T19:30:00Z'
 - id: T4-004
   description: 'Workspace scoping wave 1 — sessions + documents + tasks + features
 
@@ -404,7 +417,7 @@ parallelization:
   - T4-009
   batch_6:
   - T4-010
-progress: 10
+progress: 30
 ---
 
 # Phase 4: Workspace Auth + Multi-Project Routing — Progress

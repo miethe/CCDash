@@ -175,6 +175,15 @@ def _build_health_payload(
             runtime_status.get("authProviderMissingRequiredVariables", ())
         ),
         "authGuardrail": dict(runtime_status.get("authGuardrail", {})),
+        # auth_mode: indicates which auth backend is active for operators to verify
+        # post-migration state (ADR-008 §Migration Path, T4-006).
+        # "workspace_token" — api/worker profiles using WorkspaceTokenAuthBackend.
+        # "single_bearer"   — local/test profiles using StaticBearerTokenIdentityProvider.
+        "auth_mode": (
+            "workspace_token"
+            if runtime_profile.capabilities.auth
+            else "single_bearer"
+        ),
         "integrationsEnabled": bool(runtime_status.get("integrationsEnabled", False)),
         # Feature surface v2 rollout flag — readable by the FE from /api/health
         # to decide which data path to activate.  Defaults to True (v2 enabled).
