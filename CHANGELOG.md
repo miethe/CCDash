@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Session data now reflects the active project after a project switch**: `POST /api/projects/active/{id}` atomically rebinds the file watcher to the new project's `sessions_dir`, `docs_dir`, and `progress_dir`, triggers a one-shot sync, and returns `watcherRebound: true` in the response. Session counts, analytics, and live metrics now immediately reflect the correct project. `GET /api/health/detail` watcher `watchPaths` field updates on switch. If the new project's paths do not exist, the API returns HTTP 4xx and the watcher remains on the previous project's paths (no half-rebound state).
+
 ### Changed
 
 - **Planning / Forensics Boundary Extraction**: Separated planning and execution workflows from session forensics and metrics through bounded shared evidence contracts. Key changes:

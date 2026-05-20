@@ -1,8 +1,9 @@
 """API router for project management."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from backend.adapters.jobs.runtime import WatcherRebindError
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.models import Project, ProjectResolvedPathDTO, ProjectResolvedPathsDTO
@@ -120,13 +121,20 @@ def get_active_project_paths(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@projects_router.post("/active/{project_id}", response_model=Project)
-def set_active_project(
+@projects_router.post("/active/{project_id}")
+async def set_active_project(
     project_id: str,
+    request: Request,
     core_ports: CorePorts = Depends(get_core_ports),
     request_context: RequestContext | None = Depends(get_request_context),
 ):
-    """Switch the active project."""
+    """Switch the active project and rebind the file watcher to the new project's paths.
+
+    Returns the new active project with an additional ``watcherRebound`` field indicating
+    whether the file watcher was successfully rebound.  Returns HTTP 4xx if the new
+    project's paths do not exist on disk; in that case the watcher is left on the
+    previous project's paths (no half-rebound state).
+    """
     if _request_uses_hosted_project_selection(request_context):
         if not core_ports.workspace_registry.get_project(project_id):
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
@@ -138,16 +146,40 @@ def set_active_project(
             ),
         )
 
+    # Resolve job adapter from app state (the canonical DI path per container.py:101).
+    job_adapter = getattr(request.app.state, "runtime_jobs", None)
+
+    # Attempt watcher rebind before committing the active-project switch.
+    # This way, if the new project's paths are invalid, we return 4xx without
+    # changing the active project — no partial state.
+    rebind_result: dict[str, object] = {"watcherRebound": None}
+    if job_adapter is not None and hasattr(job_adapter, "rebind_watcher"):
+        try:
+            rebind_result = await job_adapter.rebind_watcher(project_id)
+        except WatcherRebindError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # Rebind succeeded — now commit the active-project switch.
     try:
         core_ports.workspace_registry.set_active_project(project_id)
         project = core_ports.workspace_registry.get_active_project()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found after switch")
-        return project
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Return project data merged with rebind outcome.
+    project_dict = project.model_dump()
+    project_dict["watcherRebound"] = rebind_result.get("watcherRebound")
+    return project_dict
 
 
 @projects_router.get("/{project_id}/paths", response_model=ProjectResolvedPathsDTO)
