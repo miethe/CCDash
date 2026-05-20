@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: implementation_plan
 title: "System-Wide Metrics - Implementation Plan"
-status: in-progress
+status: completed
 runtime_smoke: skipped
 runtime_smoke_reason: "Executed as background agent sprint with no interactive runtime. Browser smoke must be performed by the human reviewer before merge to main per CLAUDE.md runtime-smoke gate."
 created: 2026-05-20

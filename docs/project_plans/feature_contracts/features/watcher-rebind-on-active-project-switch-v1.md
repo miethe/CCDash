@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: feature_contract
 title: "Feature Contract: Watcher Rebind on Active Project Switch"
-status: draft
+status: completed
 created: 2026-05-20
 updated: 2026-05-20
 feature_slug: watcher-rebind-on-active-project-switch
@@ -20,7 +20,13 @@ prd_ref: null
 plan_ref: null
 commit_refs: []
 pr_refs: []
-files_affected: []
+files_affected:
+  - backend/adapters/jobs/runtime.py
+  - backend/adapters/jobs/__init__.py
+  - backend/routers/projects.py
+  - backend/tests/test_watcher_rebind.py
+  - backend/tests/test_project_paths.py
+  - CHANGELOG.md
 ---
 
 # Feature Contract: Watcher Rebind on Active Project Switch
