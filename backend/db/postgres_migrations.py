@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -2185,6 +2185,90 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS ix_ingest_cursors_workspace ON ingest_cursors (workspace_id)"
+    )
+
+    # ── v29: ADR-008: workspace-scoped bearer auth — workspaces + workspace_tokens tables;
+    #         workspace_id column on all scoped tables; ingest_cursors default normalised ──
+    #
+    # workspaces: one row per logical workspace (tenant).
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workspaces (
+            workspace_id TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'active',
+            created_at   TEXT NOT NULL
+        )
+        """
+    )
+    # workspace_tokens: bearer-token registry keyed by argon2id hash.
+    # Partial indexes over active (non-revoked) rows only.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workspace_tokens (
+            token_id     TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            project_id   TEXT NOT NULL,
+            hashed_token TEXT NOT NULL UNIQUE,
+            scope        TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            last_used_at TEXT,
+            revoked_at   TEXT,
+            description  TEXT
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tokens_workspace"
+        " ON workspace_tokens (workspace_id) WHERE revoked_at IS NULL"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tokens_hash"
+        " ON workspace_tokens (hashed_token) WHERE revoked_at IS NULL"
+    )
+
+    # Seed the default-local workspace (idempotent via ON CONFLICT DO NOTHING).
+    await db.execute(
+        """
+        INSERT INTO workspaces (workspace_id, name, status, created_at)
+        VALUES ('default-local', 'Default Local Workspace', 'active', CURRENT_TIMESTAMP::text)
+        ON CONFLICT (workspace_id) DO NOTHING
+        """
+    )
+
+    # Add workspace_id column to every scoped table using ADD COLUMN IF NOT EXISTS
+    # (Postgres 9.6+ supports this natively).
+    for scoped_table in ("sessions", "documents", "tasks", "features"):
+        await db.execute(
+            f"ALTER TABLE {scoped_table} ADD COLUMN IF NOT EXISTS"
+            " workspace_id TEXT NOT NULL DEFAULT 'default-local'"
+        )
+    await db.execute(
+        "ALTER TABLE entity_links ADD COLUMN IF NOT EXISTS"
+        " workspace_id TEXT NOT NULL DEFAULT 'default-local'"
+    )
+    # progress_files may not exist in all deployments; guard with a table check.
+    progress_files_exists = await db.fetchrow(
+        """
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'progress_files' AND table_schema = 'public'
+        LIMIT 1
+        """
+    )
+    if progress_files_exists:
+        await db.execute(
+            "ALTER TABLE progress_files ADD COLUMN IF NOT EXISTS"
+            " workspace_id TEXT NOT NULL DEFAULT 'default-local'"
+        )
+
+    # ingest_cursors: normalise legacy 'default' workspace_id rows to 'default-local'.
+    # Also update the column DEFAULT so new rows from v29-aware code use the correct
+    # identifier without requiring an explicit value.
+    await db.execute(
+        "UPDATE ingest_cursors SET workspace_id = 'default-local' WHERE workspace_id = 'default'"
+    )
+    await db.execute(
+        "ALTER TABLE ingest_cursors ALTER COLUMN workspace_id SET DEFAULT 'default-local'"
     )
 
     # Seed metric types

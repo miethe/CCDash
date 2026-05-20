@@ -167,7 +167,10 @@ class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
             row = await cur.fetchone()
 
         self.assertEqual(row[0], sqlite_migrations.SCHEMA_VERSION)
-        self.assertEqual(sqlite_migrations.SCHEMA_VERSION, 28)
+        # SCHEMA_VERSION is bumped by each subsequent migration version.
+        # Assert that it is at least 28, not that it equals exactly 28,
+        # so this test remains valid as the codebase advances.
+        self.assertGreaterEqual(sqlite_migrations.SCHEMA_VERSION, 28)
 
     async def test_migration_is_idempotent(self) -> None:
         """Running migration twice does not raise and does not duplicate rows."""

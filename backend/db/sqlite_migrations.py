@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -2133,6 +2133,76 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_index(
         db,
         "CREATE INDEX IF NOT EXISTS ix_ingest_cursors_workspace ON ingest_cursors (workspace_id)",
+    )
+
+    # ── v29: ADR-008: workspace-scoped bearer auth — workspaces + workspace_tokens tables;
+    #         workspace_id column on all scoped tables; ingest_cursors default normalised ──
+    #
+    # workspaces: one row per logical workspace (tenant).
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workspaces (
+            workspace_id TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'active',
+            created_at   TEXT NOT NULL
+        )
+        """
+    )
+    # workspace_tokens: bearer-token registry keyed by argon2id hash.
+    # SQLite supports partial indexes with WHERE clauses (SQLite ≥ 3.8.9, 2014).
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workspace_tokens (
+            token_id     TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            project_id   TEXT NOT NULL,
+            hashed_token TEXT NOT NULL UNIQUE,
+            scope        TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            last_used_at TEXT,
+            revoked_at   TEXT,
+            description  TEXT
+        )
+        """
+    )
+    # Partial indexes over active (non-revoked) rows only.
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tokens_workspace"
+        " ON workspace_tokens (workspace_id) WHERE revoked_at IS NULL",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tokens_hash"
+        " ON workspace_tokens (hashed_token) WHERE revoked_at IS NULL",
+    )
+
+    # Seed the default-local workspace (idempotent via INSERT OR IGNORE).
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO workspaces (workspace_id, name, status, created_at)
+        VALUES ('default-local', 'Default Local Workspace', 'active', datetime('now'))
+        """
+    )
+
+    # Add workspace_id column to every scoped table.  Each call is a no-op when
+    # the column already exists (_ensure_column checks PRAGMA table_info first).
+    for scoped_table in ("sessions", "documents", "tasks", "features"):
+        await _ensure_column(db, scoped_table, "workspace_id", "TEXT NOT NULL DEFAULT 'default-local'")
+    # entity_links and progress_files use the same pattern.
+    await _ensure_column(db, "entity_links", "workspace_id", "TEXT NOT NULL DEFAULT 'default-local'")
+    await _ensure_column_if_table_exists(db, "progress_files", "workspace_id", "TEXT NOT NULL DEFAULT 'default-local'")
+
+    # ingest_cursors already has workspace_id (added in v28 with DEFAULT 'default').
+    # Normalise any legacy 'default' rows to 'default-local' so the entire codebase
+    # uses a single canonical workspace identifier after this migration.
+    # SQLite does not support ALTER COLUMN to change a DEFAULT in-place; the column
+    # retains DEFAULT 'default' at the DDL level for rows that pre-date v29 and were
+    # not yet updated by this UPDATE.  New inserts from v29-aware code pass the value
+    # explicitly, so the stale default is a legacy artefact only.
+    await db.execute(
+        "UPDATE ingest_cursors SET workspace_id = 'default-local' WHERE workspace_id = 'default'"
     )
 
     # Seed metric types
