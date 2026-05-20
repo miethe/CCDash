@@ -200,6 +200,8 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 "ccdash_workflow_failure_patterns",
                 "ccdash_generate_aar",
                 "artifact_recommendations",
+                # live-agents-count-v1
+                "ccdash_live_active_count",
             },
         )
 

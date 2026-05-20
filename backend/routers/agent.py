@@ -18,6 +18,8 @@ from backend.application.services.agent_queries import (
     FeatureForensicsDTO,
     FeatureForensicsQueryService,
     FeaturePlanningContextDTO,
+    LiveActiveCountDTO,
+    LiveMetricsQueryService,
     PhaseOperationsDTO,
     PlanningAgentSessionBoardDTO,
     PlanningNextRunPreviewDTO,
@@ -74,6 +76,8 @@ artifact_intelligence_query_service = ArtifactIntelligenceQueryService()
 planning_query_service = PlanningQueryService()
 # PASB-102: planning session board query surface.
 planning_session_query_service = PlanningSessionQueryService()
+# live-agents-count-v1: live metrics query surface.
+live_metrics_query_service = LiveMetricsQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -113,6 +117,44 @@ async def get_project_status(
         app_request.ports,
         project_id_override=project_id,
         bypass_cache=bypass_cache,
+    )
+
+
+@agent_router.get("/live/active-count", response_model=LiveActiveCountDTO)
+async def get_live_active_count(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> LiveActiveCountDTO:
+    """Return the number of currently active agent sessions for a project.
+
+    Sessions are counted when both conditions hold:
+    - ``status = 'active'``
+    - ``updated_at >= now() - CCDASH_LIVE_AGENTS_WINDOW_SECONDS`` (default 600 s)
+
+    The freshness window defends against stale-active rows (OQ-3 finding: rows
+    with ``status='active'`` up to 93 days old from un-rebounded file watchers).
+
+    When ``project_id`` is omitted the active project is resolved from the
+    request context (same as all other agent endpoints).  A project with no
+    sessions or no active sessions within the window returns ``{count: 0}``,
+    not an error.
+
+    Response fields:
+    - ``project_id``: resolved project identifier
+    - ``count``: integer count of active sessions
+    - ``window_seconds``: freshness window used for the query
+    - ``generated_at``: UTC timestamp when this response was produced
+    """
+    app_request = await _resolve_app_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    return await live_metrics_query_service.get_active_count(
+        app_request.context,
+        app_request.ports,
+        project_id_override=project_id,
     )
 
 

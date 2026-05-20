@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useData } from '../contexts/DataContext';
-import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu, LayoutGrid, ShieldAlert, CheckCircle2, Clock } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu, LayoutGrid, ShieldAlert, CheckCircle2, Clock, Activity } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
 import { analyticsService } from '../services/analytics';
 import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../lib/chartTheme';
@@ -11,6 +11,7 @@ import { Button } from './ui/button';
 import { Surface, AlertSurface } from './ui/surface';
 import { cn } from '../lib/utils';
 import { useFeatureSurface } from '../services/useFeatureSurface';
+import { apiFetch } from '../services/apiClient';
 
 const STAT_TONE_STYLES: Record<string, string> = {
   primary: 'border-primary-border bg-primary/10 text-primary-foreground',
@@ -35,6 +36,95 @@ const StatCard = ({ label, value, sub, icon: Icon, tone }: any) => (
   </Surface>
 );
 
+// ── Live agents count chip ────────────────────────────────────────────────────
+
+/** Poll interval for the live active-count widget (matches cache TTL default). */
+const LIVE_AGENTS_POLL_MS = 10_000;
+
+interface LiveAgentsChipProps {
+  /** Integer count, or null when data is unavailable. */
+  count: number | null;
+}
+
+/**
+ * Displays the number of currently active agent sessions.
+ *
+ * Resilience contract (R-P2): renders "--" when count is null, an error occurred,
+ * or the API field is absent. Never shows "0" for unavailable data — 0 means
+ * genuinely no active sessions.
+ */
+const LiveAgentsChip: React.FC<LiveAgentsChipProps> = ({ count }) => {
+  const isAvailable = count !== null;
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm',
+        isAvailable && count > 0
+          ? 'border-success-border bg-success/10 text-success-foreground'
+          : 'border-primary-border bg-primary/10 text-primary-foreground',
+      )}
+      title="Active agent sessions in the last 10 minutes"
+    >
+      <Activity size={14} className="shrink-0" />
+      <span className="font-semibold tabular-nums">
+        {isAvailable ? count.toLocaleString() : '--'}
+      </span>
+      <span className="text-xs">live agents</span>
+    </div>
+  );
+};
+
+/**
+ * React hook that polls GET /api/agent/live/active-count every 10 s.
+ *
+ * - Pauses polling while the document is hidden (visibility API) to avoid
+ *   background tab thrash (~5400 req / 15-hour idle period without this guard).
+ * - Returns null when the API has not yet responded or returned an error,
+ *   satisfying the R-P2 resilience contract (render "--" not "0").
+ */
+function useLiveAgentsCount(): number | null {
+  const [count, setCount] = useState<number | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchCount = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const res = await apiFetch('/api/agent/live/active-count');
+        if (!res.ok) {
+          // Non-2xx: degrade to "--" without throwing to error boundary
+          if (mounted) setCount(null);
+          return;
+        }
+        const data = await res.json();
+        const raw = data?.count;
+        if (mounted) {
+          setCount(typeof raw === 'number' ? raw : null);
+        }
+      } catch {
+        // Network error or JSON parse failure — degrade to "--"
+        if (mounted) setCount(null);
+      }
+    };
+
+    // Kick off immediately, then schedule repeating poll
+    void fetchCount();
+    pollRef.current = setInterval(() => void fetchCount(), LIVE_AGENTS_POLL_MS);
+
+    return () => {
+      mounted = false;
+      if (pollRef.current !== null) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, []);
+
+  return count;
+}
+
 // ── Feature surface summary chip ──────────────────────────────────────────────
 
 const FeatureSummaryChip = ({
@@ -57,6 +147,11 @@ const FeatureSummaryChip = ({
 
 export const Dashboard: React.FC = () => {
   const { sessions, tasks, loading } = useData();
+
+  // Live agents count — polls /api/agent/live/active-count every 10 s.
+  // Returns null on first render (before API responds) or on API error,
+  // satisfying the R-P2 resilience contract.
+  const liveAgentsCount = useLiveAgentsCount();
 
   // Feature surface — one bounded page fetch + one rollup batch.
   // pageSize:1 is sufficient to get totals; rollup fields give cost+session
@@ -226,6 +321,8 @@ export const Dashboard: React.FC = () => {
           <FeatureSummaryChip icon={Clock} label="active" count={featureCounts.active} tone="primary" />
           <FeatureSummaryChip icon={ShieldAlert} label="blocked" count={featureCounts.blocked} tone="danger" />
           <FeatureSummaryChip icon={CheckCircle2} label="completed" count={featureCounts.completed} tone="success" />
+          {/* live-agents-count-v1: live active-agents chip; polls /api/agent/live/active-count every 10 s */}
+          <LiveAgentsChip count={liveAgentsCount} />
         </div>
       </Surface>
 

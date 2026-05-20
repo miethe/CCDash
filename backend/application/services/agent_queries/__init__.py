@@ -59,6 +59,7 @@ from backend.application.services.agent_queries.models import (
 from backend.application.services.agent_queries.artifact_intelligence import ArtifactIntelligenceQueryService
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
 from backend.application.services.agent_queries.feature_evidence_summary import FeatureEvidenceSummaryService
+from backend.application.services.agent_queries.live_metrics import LiveActiveCountDTO, LiveMetricsQueryService
 from backend.application.services.agent_queries.planning import PlanningQueryService
 from backend.application.services.agent_queries.project_status import ProjectStatusQueryService
 from backend.application.services.agent_queries.reporting import ReportingQueryService
@@ -88,6 +89,9 @@ __all__ = [
     "FeatureForensicsDTO",
     "ArtifactIntelligenceQueryService",
     "KeyMetrics",
+    # Live metrics (live-agents-count-v1)
+    "LiveActiveCountDTO",
+    "LiveMetricsQueryService",
     "ProjectStatusDTO",
     "ProjectStatusQueryService",
     "QueryStatus",

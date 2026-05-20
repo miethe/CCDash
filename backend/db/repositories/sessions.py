@@ -384,6 +384,78 @@ class SqliteSessionRepository:
             row = await cur.fetchone()
         return row[0] if row else 0
 
+    async def count_active(
+        self,
+        project_id: str,
+        *,
+        window_seconds: int = 600,
+        include_subagents: bool = False,
+    ) -> int:
+        """Count sessions that are currently active for a project.
+
+        A session is counted as "active" when BOTH conditions hold:
+        1. ``status = 'active'``
+        2. ``updated_at >= now() - window_seconds``
+
+        Dual role of the freshness clamp (important — do NOT remove):
+        - **Liveness gate**: ensures only recently-seen sessions are reported
+          as running.  Without this predicate, sessions that are truly finished
+          but whose ``status`` column was never updated (e.g. because the parser
+          ran before the JSONL file was fully flushed) would be counted forever.
+        - **Stale-active defence**: the spike verification (OQ-3) found sessions
+          with ``status='active'`` and ``updated_at`` values 57–93 days in the
+          past.  These are phantom rows that appear when a project is switched
+          away from before the file watcher can re-parse them.  The
+          ``updated_at >= now() - window_seconds`` predicate silently excludes
+          those rows and prevents phantom live-agent counts.
+
+        The default ``window_seconds=600`` intentionally matches
+        ``_ACTIVE_SESSION_WINDOW_SECONDS`` in:
+        - ``backend/parsers/platforms/claude_code/parser.py`` (line ~100)
+        - ``backend/parsers/platforms/codex/parser.py`` (line ~22)
+        Those constants control *parser classification*; this parameter controls
+        *query filtering*.  They are equal by convention, not by coupling.
+        Override via ``CCDASH_LIVE_AGENTS_WINDOW_SECONDS`` at query call sites.
+
+        Args:
+            project_id: The project to scope the count to.
+            window_seconds: Freshness window in seconds (default 600 = 10 min).
+                Sessions with ``updated_at`` older than this are excluded even
+                if their ``status`` is ``'active'``.
+            include_subagents: If ``False`` (default), rows where
+                ``session_type = 'subagent'`` are excluded, matching the
+                existing ``include_subagents=False`` convention on
+                ``list_paginated`` and ``count``.
+
+        Returns:
+            Integer count of currently-active sessions.  Returns 0 when the
+            project has no sessions or no active sessions within the window.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        threshold = (
+            datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        ).isoformat()
+
+        where_clauses = [
+            "project_id = ?",
+            "status = ?",
+            "updated_at >= ?",
+        ]
+        params: list = [project_id, "active", threshold]
+
+        if not include_subagents:
+            where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        query = (
+            "SELECT COUNT(*) FROM sessions WHERE "
+            + " AND ".join(where_clauses)
+        )
+
+        async with self.db.execute(query, tuple(params)) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else 0
+
     async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
         query_parts = [
             "SELECT model, COUNT(*) AS count",

@@ -980,6 +980,23 @@ CCDASH_QUERY_CACHE_TTL_SECONDS = _env_int("CCDASH_QUERY_CACHE_TTL_SECONDS", 600)
 # CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS (default: 300)
 # Background warmer interval for proactive cache refresh; works in tandem with TTL for sustained hits.
 CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = _env_int("CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS", 300)
+# CCDASH_LIVE_COUNT_CACHE_TTL_SECONDS (default: 10)
+# Cache TTL for the live active-agents count endpoint.  Deliberately separate from
+# CCDASH_QUERY_CACHE_TTL_SECONDS so operators can tune the "liveness" of the
+# Dashboard chip independently from heavier planning/forensics queries.
+# Matches the Dashboard poll interval (10 s) so each poll sees a fresh count.
+# Warning: if an operator sets this to a larger value the Dashboard will show a
+# lagging count — the "Live" promise degrades proportionally to the TTL.
+CCDASH_LIVE_COUNT_CACHE_TTL_SECONDS = _env_int("CCDASH_LIVE_COUNT_CACHE_TTL_SECONDS", 10)
+# CCDASH_LIVE_AGENTS_WINDOW_SECONDS (default: 600)
+# Query-time freshness window for counting active agents.  Sessions with
+# updated_at older than this value are excluded even if their status is 'active'
+# (defends against stale-active rows found in OQ-3 spike verification).
+# NOTE: This is a read-time filter parameter, distinct from the parser-level
+# _ACTIVE_SESSION_WINDOW_SECONDS constant in parsers/platforms/*/parser.py which
+# controls how the parser *classifies* session status from JSONL files.  The two
+# happen to share the same 600 s default by convention, but serve different roles.
+CCDASH_LIVE_AGENTS_WINDOW_SECONDS = _env_int("CCDASH_LIVE_AGENTS_WINDOW_SECONDS", 600)
 
 # Server settings
 HOST = os.getenv("CCDASH_HOST", "0.0.0.0")
