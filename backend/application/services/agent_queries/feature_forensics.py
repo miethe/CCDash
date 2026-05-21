@@ -136,7 +136,7 @@ async def _load_feature_session_rows(
     linked_session_ids: list[str],
 ) -> list[dict[str, Any]]:
     if linked_session_ids:
-        fetched = await ports.storage.sessions().get_many_by_ids(linked_session_ids)
+        fetched = await ports.storage.sessions().get_many_by_ids(linked_session_ids, workspace_id="default-local")  # TODO(workspace-routing)
         # Preserve input order and drop missing ids
         rows: list[dict[str, Any]] = [fetched[sid] for sid in linked_session_ids if sid in fetched]
         if rows:
@@ -249,7 +249,7 @@ class FeatureForensicsQueryService:
             )
 
         partial = False
-        feature_row = await ports.storage.features().get_by_id(feature_id)
+        feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         if feature_row is None:
             return FeatureForensicsDTO(
                 status="error",
@@ -280,13 +280,14 @@ class FeatureForensicsQueryService:
                 0,
                 100,
                 {"feature": feature_id, "include_progress": True},
+                workspace_id="default-local",  # TODO(workspace-routing)
             )
         except Exception:
             partial = True
 
         task_rows: list[dict[str, Any]] = []
         try:
-            task_rows = await ports.storage.tasks().list_by_feature(feature_id)
+            task_rows = await ports.storage.tasks().list_by_feature(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         except Exception:
             partial = True
 

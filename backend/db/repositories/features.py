@@ -219,6 +219,7 @@ class SqliteFeatureRepository:
                 updated_at=excluded.updated_at,
                 completed_at=excluded.completed_at,
                 data_json=excluded.data_json
+            WHERE features.workspace_id = excluded.workspace_id
             """,
             (
                 feature_data["id"], project_id, workspace_id,
@@ -240,20 +241,31 @@ class SqliteFeatureRepository:
         )
         await self.db.commit()
 
-    async def get_by_id(self, feature_id: str) -> dict | None:
+    async def get_by_id(self, feature_id: str, *, workspace_id: str) -> dict | None:
+        """Fetch a single feature by PK, scoped to workspace_id.
+
+        Returns None when the feature does not exist OR belongs to a different
+        workspace.  Per ADR-008 §Data Isolation, callers surface this as 404.
+        """
         async with self.db.execute(
-            "SELECT * FROM features WHERE id = ?", (feature_id,)
+            "SELECT * FROM features WHERE id = ? AND workspace_id = ?",
+            (feature_id, workspace_id),
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple features in a single query. Returns a dict keyed by feature id."""
+    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str) -> dict[str, dict]:
+        """Fetch multiple features in a single query, scoped to workspace_id.
+
+        Returns a dict keyed by feature id.  Features belonging to a different
+        workspace are silently excluded.
+        """
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
         async with self.db.execute(
-            f"SELECT * FROM features WHERE id IN ({placeholders})", tuple(ids)
+            f"SELECT * FROM features WHERE id IN ({placeholders}) AND workspace_id = ?",
+            tuple(ids) + (workspace_id,),
         ) as cur:
             rows = await cur.fetchall()
         return {row["id"]: dict(row) for row in rows}

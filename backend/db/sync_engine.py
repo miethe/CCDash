@@ -4129,7 +4129,7 @@ class SyncEngine:
         return stats
 
     async def _session_source_needs_lineage_backfill(self, file_path: str) -> bool:
-        rows = await self.session_repo.list_by_source(file_path)
+        rows = await self.session_repo.list_by_source(file_path, workspace_id=self._WORKSPACE_ID)
         if not rows:
             return False
         for row in rows:
@@ -4607,7 +4607,7 @@ class SyncEngine:
                 and canonical_slug(str(row.get("id") or "")) in scanned_bases
             ]
             for stale_feature_id in stale_feature_ids:
-                stale_tasks = await self.task_repo.list_by_feature(stale_feature_id)
+                stale_tasks = await self.task_repo.list_by_feature(stale_feature_id, workspace_id="default-local")  # TODO(workspace-routing)
                 for task_row in stale_tasks:
                     task_id = str(task_row.get("id") or "")
                     if task_id:
@@ -5063,7 +5063,7 @@ class SyncEngine:
                             feature_slug_aliases[feature_id].add(_canonical_slug(token))
 
             # Link feature → tasks
-            tasks = await self.task_repo.list_by_feature(feature_id)
+            tasks = await self.task_repo.list_by_feature(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
             for t in tasks:
                 await self.link_repo.delete_auto_links("task", t["id"])
 
@@ -5833,7 +5833,7 @@ class SyncEngine:
                         await self.analytics_repo.link_to_entity(analytics_id, entity_type, entity_id)
 
             # 1. Session Metrics
-            s_stats = await self.session_repo.get_project_stats(project_id)
+            s_stats = await self.session_repo.get_project_stats(project_id, workspace_id=self._WORKSPACE_ID)
 
             await insert_metric("session_count", s_stats.get("count", 0), metadata={"scope": "project"})
             await insert_metric("session_cost", s_stats.get("cost", 0.0), metadata={"scope": "project", "unit": "usd"})
@@ -5841,7 +5841,7 @@ class SyncEngine:
             await insert_metric("session_duration", s_stats.get("duration", 0.0), metadata={"scope": "project", "unit": "seconds"})
 
             # 2. Task Metrics
-            t_stats = await self.task_repo.get_project_stats(project_id)
+            t_stats = await self.task_repo.get_project_stats(project_id, workspace_id=self._WORKSPACE_ID)
 
             await insert_metric(
                 "task_velocity",
@@ -5855,12 +5855,12 @@ class SyncEngine:
             )
 
             # 3. Feature Progress
-            f_stats = await self.feature_repo.get_project_stats(project_id)
+            f_stats = await self.feature_repo.get_project_stats(project_id, workspace_id=self._WORKSPACE_ID)
 
             await insert_metric("feature_progress", f_stats.get("avg_progress", 0.0), metadata={"scope": "project", "unit": "percent"})
 
             # 4. Tool Usage
-            tool_stats = await self.session_repo.get_tool_stats(project_id)
+            tool_stats = await self.session_repo.get_tool_stats(project_id, workspace_id=self._WORKSPACE_ID)
 
             await insert_metric("tool_call_count", tool_stats.get("calls", 0), metadata={"scope": "project"})
             await insert_metric("tool_success_rate", tool_stats.get("success_rate", 0.0), metadata={"scope": "project", "unit": "percent"})
@@ -5901,7 +5901,7 @@ class SyncEngine:
                 feature_name = str(feature_row.get("name") or "")
                 feature_links = [("project", project_id), ("feature", feature_id)]
 
-                feature_tasks = await self.task_repo.list_by_feature(feature_id, None)
+                feature_tasks = await self.task_repo.list_by_feature(feature_id, None, workspace_id="default-local")  # TODO(workspace-routing)
                 total_feature_tasks = len(feature_tasks)
                 completed_feature_tasks = sum(
                     1
@@ -5973,7 +5973,7 @@ class SyncEngine:
                 feature_file_churn = 0
 
                 for session_id in linked_session_ids:
-                    session_row = await self.session_repo.get_by_id(session_id)
+                    session_row = await self.session_repo.get_by_id(session_id, workspace_id=self._WORKSPACE_ID)
                     if not session_row:
                         continue
 

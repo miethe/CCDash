@@ -178,12 +178,9 @@ def _build_health_payload(
         # auth_mode: indicates which auth backend is active for operators to verify
         # post-migration state (ADR-008 §Migration Path, T4-006).
         # "workspace_token" — api/worker profiles using WorkspaceTokenAuthBackend.
-        # "single_bearer"   — local/test profiles using StaticBearerTokenIdentityProvider.
-        "auth_mode": (
-            "workspace_token"
-            if runtime_profile.capabilities.auth
-            else "single_bearer"
-        ),
+        # "single_bearer"   — local profile using StaticBearerTokenIdentityProvider.
+        # "test"            — test profile (no real auth; no-op backend).
+        "auth_mode": _resolve_auth_mode(runtime_profile),
         "integrationsEnabled": bool(runtime_status.get("integrationsEnabled", False)),
         # Feature surface v2 rollout flag — readable by the FE from /api/health
         # to decide which data path to activate.  Defaults to True (v2 enabled).
@@ -233,6 +230,31 @@ def _build_health_payload(
         "probeDetailWarnings": list(runtime_status.get("probeDetailWarnings", ())),
         "probeDetailWarningCodes": list(runtime_status.get("probeDetailWarningCodes", ())),
     }
+
+
+def _resolve_auth_mode(runtime_profile: RuntimeProfile) -> str:
+    """Return the auth_mode string for the /api/health payload (ADR-008 §Migration Path).
+
+    Values
+    ------
+    "workspace_token"
+        api / worker profiles — WorkspaceTokenAuthBackend is active; tokens are
+        validated against the workspace_tokens table using argon2id.
+    "single_bearer"
+        local profile — StaticBearerTokenIdentityProvider using CCDASH_AUTH_TOKEN.
+    "test"
+        test profile — no real auth backend; all auth is bypassed in tests.
+
+    Note: the worker profile has ``capabilities.auth=False`` because it does not
+    serve HTTP auth requests itself, but it shares the WorkspaceTokenAuthBackend
+    for internal token resolution.  We classify it as ``workspace_token`` per the
+    ADR-008 operator documentation contract.
+    """
+    if runtime_profile.name == "test":
+        return "test"
+    if runtime_profile.name in ("api", "worker", "worker-watch"):
+        return "workspace_token"
+    return "single_bearer"
 
 
 def _build_live_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:

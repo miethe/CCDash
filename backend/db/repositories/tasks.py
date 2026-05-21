@@ -39,6 +39,7 @@ class SqliteTaskRepository:
                 session_id=excluded.session_id, commit_hash=excluded.commit_hash,
                 updated_at=excluded.updated_at, completed_at=excluded.completed_at,
                 source_file=excluded.source_file, data_json=excluded.data_json
+            WHERE tasks.workspace_id = excluded.workspace_id
             """,
             (
                 task_data["id"], project_id, workspace_id,
@@ -66,9 +67,15 @@ class SqliteTaskRepository:
         )
         await self.db.commit()
 
-    async def get_by_id(self, task_id: str) -> dict | None:
+    async def get_by_id(self, task_id: str, *, workspace_id: str) -> dict | None:
+        """Fetch a single task by PK, scoped to workspace_id.
+
+        Returns None when the task does not exist OR belongs to a different
+        workspace.  Per ADR-008 §Data Isolation, callers surface this as 404.
+        """
         async with self.db.execute(
-            "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            "SELECT * FROM tasks WHERE id = ? AND workspace_id = ?",
+            (task_id, workspace_id),
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
@@ -116,17 +123,24 @@ class SqliteTaskRepository:
             row = await cur.fetchone()
             return int(row[0]) if row else 0
 
-    async def list_by_feature(self, feature_id: str, phase_id: str | None = None) -> list[dict]:
+    async def list_by_feature(
+        self,
+        feature_id: str,
+        phase_id: str | None = None,
+        *,
+        workspace_id: str,
+    ) -> list[dict]:
+        """Return tasks for a feature, scoped to workspace_id (ADR-008 §Data Isolation)."""
         if phase_id:
             async with self.db.execute(
-                "SELECT * FROM tasks WHERE feature_id = ? AND phase_id = ? ORDER BY id",
-                (feature_id, phase_id),
+                "SELECT * FROM tasks WHERE feature_id = ? AND phase_id = ? AND workspace_id = ? ORDER BY id",
+                (feature_id, phase_id, workspace_id),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
         else:
             async with self.db.execute(
-                "SELECT * FROM tasks WHERE feature_id = ? ORDER BY phase_id, id",
-                (feature_id,),
+                "SELECT * FROM tasks WHERE feature_id = ? AND workspace_id = ? ORDER BY phase_id, id",
+                (feature_id, workspace_id),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
 

@@ -270,7 +270,13 @@ class WorkspaceTokenAuthBackend:
         )
 
     async def _is_token_active(self, token_id: str) -> bool:
-        """Fast indexed lookup — returns True iff the token exists and is not revoked."""
+        """Fast indexed lookup — returns True iff the token exists and is not revoked.
+
+        Fail-closed policy (ADR-008 §Data Isolation): any DB error during the
+        revocation re-check causes the method to return False, treating the token
+        as inactive.  This prevents a revoked token from being accepted when the
+        database is temporarily unavailable.
+        """
         db = await self._get_db()
         try:
             async with db.execute(
@@ -282,12 +288,12 @@ class WorkspaceTokenAuthBackend:
         except Exception:  # noqa: BLE001
             logger.exception(
                 "auth.workspace_token: revocation re-check failed for token_id=%s; "
-                "treating as active to avoid false rejections",
+                "failing closed per ADR-008 §Data Isolation",
                 token_id,
             )
-            # Fail open on DB errors during revocation check to avoid
-            # denying service when the DB is temporarily unavailable.
-            return True
+            # Fail closed: treat as inactive on any DB error to prevent a revoked
+            # token from being accepted while the database is unavailable.
+            return False
 
     async def _update_last_used(self, token_id: str) -> None:
         """Asynchronous fire-and-forget update of last_used_at."""

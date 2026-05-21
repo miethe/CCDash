@@ -614,9 +614,10 @@ async def list_sessions(
 
     # DB returns dicts, Pydantic will validate them
     sessions_data = await repo.list_paginated(
-        offset, limit, project.id, sort_by, sort_order, filters
+        offset, limit, project.id, sort_by, sort_order, filters,
+        workspace_id="default-local",  # TODO(workspace-routing)
     )
-    total_count = await repo.count(project.id, filters)
+    total_count = await repo.count(project.id, filters, workspace_id="default-local")  # TODO(workspace-routing)
     
     parent_logs_cache: dict[str, list[dict[str, Any]]] = {}
     # Hydrate items (minimal for list view)
@@ -805,7 +806,7 @@ async def get_session_logs(
 ):
     """Return a paginated session transcript page."""
     repo = core_ports.storage.sessions()
-    session_row = await repo.get_by_id(session_id)
+    session_row = await repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
@@ -836,7 +837,7 @@ async def get_session(
     project = resolve_project(request_context, core_ports)
     mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
     
-    s = await repo.get_by_id(session_id)
+    s = await repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not s:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         
@@ -866,7 +867,7 @@ async def get_session(
         child_id = str(row.get("child_session_id") or "").strip()
         if not child_id:
             continue
-        child_row = await repo.get_by_id(child_id)
+        child_row = await repo.get_by_id(child_id, workspace_id="default-local")  # TODO(workspace-routing)
         child_forensics = _safe_json(child_row.get("session_forensics_json")) if child_row else {}
         child_summary = child_forensics.get("forkSummary", {}) if isinstance(child_forensics, dict) else {}
         metadata = _safe_json(row.get("metadata_json"))
@@ -1181,7 +1182,7 @@ async def get_session_linked_features(
     mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
     workflow_markers = workflow_command_markers(mappings) if mappings else workflow_command_markers()
     session_repo = core_ports.storage.sessions()
-    session_row = await session_repo.get_by_id(session_id)
+    session_row = await session_repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
@@ -1200,7 +1201,7 @@ async def get_session_linked_features(
         if not feature_id:
             continue
 
-        feature_row = await feature_repo.get_by_id(feature_id)
+        feature_row = await feature_repo.get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         if not feature_row:
             continue
 
@@ -1283,7 +1284,7 @@ async def upsert_session_linked_feature(
     """Create/update a manual session↔feature link as primary or related."""
     await _require_api_authorization(request_context, core_ports, "entity_link:create")
     session_repo = core_ports.storage.sessions()
-    session_row = await session_repo.get_by_id(session_id)
+    session_row = await session_repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
@@ -1292,7 +1293,7 @@ async def upsert_session_linked_feature(
         raise HTTPException(status_code=400, detail="featureId is required")
 
     feature_repo = core_ports.storage.features()
-    feature_row = await feature_repo.get_by_id(feature_id)
+    feature_row = await feature_repo.get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not feature_row:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
 
@@ -1383,7 +1384,7 @@ async def delete_session_linked_feature(
     """Remove a session↔feature link."""
     await _require_api_authorization(request_context, core_ports, "entity_link:create")
     session_repo = core_ports.storage.sessions()
-    session_row = await session_repo.get_by_id(session_id)
+    session_row = await session_repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
@@ -1802,14 +1803,14 @@ async def update_document(
     active_project = resolve_project(request_context, core_ports, required=True)
     repo = core_ports.storage.documents()
 
-    row = await repo.get_by_id(doc_id)
+    row = await repo.get_by_id(doc_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not row:
-        row = await repo.get_by_path(active_project.id, doc_id)
+        row = await repo.get_by_path(active_project.id, doc_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not row and doc_id.startswith("DOC-"):
         legacy_hint = doc_id[4:]
         candidate_path = normalize_ref_path(legacy_hint.replace("-", "/"))
         if candidate_path:
-            row = await repo.get_by_path(active_project.id, candidate_path)
+            row = await repo.get_by_path(active_project.id, candidate_path, workspace_id="default-local")  # TODO(workspace-routing)
     if not row:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
 
@@ -1890,7 +1891,7 @@ async def update_document(
         bundle.progress.path,
     )
 
-    refreshed_row = await repo.get_by_id(str(row.get("id") or doc_id))
+    refreshed_row = await repo.get_by_id(str(row.get("id") or doc_id), workspace_id="default-local")  # TODO(workspace-routing)
     document = (
         _map_document_row_to_model(refreshed_row, include_content=True, link_counts=None)
         if refreshed_row
@@ -1925,8 +1926,8 @@ async def list_tasks(
         return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
     repo = core_ports.storage.tasks()
-    tasks = await repo.list_paginated(project.id, offset, limit)
-    total = await repo.count(project.id)
+    tasks = await repo.list_paginated(project.id, offset, limit, workspace_id="default-local")  # TODO(workspace-routing)
+    total = await repo.count(project.id, workspace_id="default-local")  # TODO(workspace-routing)
 
     results: list[ProjectTask] = []
     for t in tasks:

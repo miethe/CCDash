@@ -40,6 +40,8 @@ _ROLLUP_SORT_KEYS = {FeatureSortKey.LATEST_ACTIVITY, FeatureSortKey.SESSION_COUN
 def _build_feature_list_where_clause_pg(
     project_id: str,
     query: FeatureListQuery,
+    *,
+    workspace_id: str,
 ) -> tuple[str, list[Any]]:
     """Build the WHERE clause and parameter list for Postgres feature queries.
 
@@ -53,6 +55,7 @@ def _build_feature_list_where_clause_pg(
         params.append(value)
         return f"${len(params)}"
 
+    conditions.append(f"workspace_id = {_p(workspace_id)}")
     conditions.append(f"project_id = {_p(project_id)}")
 
     # ── text search ─────────────────────────────────────────────────────────
@@ -209,6 +212,7 @@ class PostgresFeatureRepository:
                 updated_at=EXCLUDED.updated_at,
                 completed_at=EXCLUDED.completed_at,
                 data_json=EXCLUDED.data_json
+            WHERE features.workspace_id = EXCLUDED.workspace_id
         """
         await self.db.execute(
             query,
@@ -229,28 +233,49 @@ class PostgresFeatureRepository:
             data_json,
         )
 
-    async def get_by_id(self, feature_id: str) -> dict | None:
-        row = await self.db.fetchrow("SELECT * FROM features WHERE id = $1", feature_id)
+    async def get_by_id(self, feature_id: str, *, workspace_id: str) -> dict | None:
+        """Fetch a single feature by PK, scoped to workspace_id.
+
+        Returns None when the feature does not exist OR belongs to a different
+        workspace.  Per ADR-008 §Data Isolation, callers surface this as 404.
+        """
+        row = await self.db.fetchrow(
+            "SELECT * FROM features WHERE id = $1 AND workspace_id = $2",
+            feature_id,
+            workspace_id,
+        )
         return dict(row) if row else None
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple features in a single query. Returns a dict keyed by feature id."""
+    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str) -> dict[str, dict]:
+        """Fetch multiple features in a single query, scoped to workspace_id.
+
+        Returns a dict keyed by feature id.  Features belonging to a different
+        workspace are silently excluded.
+        """
         if not ids:
             return {}
         rows = await self.db.fetch(
-            "SELECT * FROM features WHERE id = ANY($1::text[])", ids
+            "SELECT * FROM features WHERE id = ANY($1::text[]) AND workspace_id = $2",
+            ids,
+            workspace_id,
         )
         return {row["id"]: dict(row) for row in rows}
 
-    async def list_all(self, project_id: str | None = None) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]:
         if project_id:
             rows = await self.db.fetch(
-                "SELECT * FROM features WHERE project_id = $1 ORDER BY name LIMIT $2",
+                "SELECT * FROM features WHERE workspace_id = $1 AND project_id = $2 ORDER BY name LIMIT $3",
+                workspace_id,
                 project_id,
                 5000,
             )
         else:
-            rows = await self.db.fetch("SELECT * FROM features ORDER BY name LIMIT $1", 5000)
+            # WORKSPACE-AUDIT-EXEMPT: cross-project list scoped to a single workspace.
+            rows = await self.db.fetch(
+                "SELECT * FROM features WHERE workspace_id = $1 ORDER BY name LIMIT $2",
+                workspace_id,
+                5000,
+            )
         return [dict(r) for r in rows]
 
     async def list_paginated(
@@ -260,14 +285,16 @@ class PostgresFeatureRepository:
         limit: int,
         *,
         keyword: str | None = None,
+        workspace_id: str,
     ) -> list[dict]:
         if keyword:
             pattern = f"%{keyword}%"
             if project_id:
                 rows = await self.db.fetch(
-                    "SELECT * FROM features WHERE project_id = $1"
-                    " AND (name ILIKE $2 OR id ILIKE $2)"
-                    " ORDER BY name LIMIT $3 OFFSET $4",
+                    "SELECT * FROM features WHERE workspace_id = $1 AND project_id = $2"
+                    " AND (name ILIKE $3 OR id ILIKE $3)"
+                    " ORDER BY name LIMIT $4 OFFSET $5",
+                    workspace_id,
                     project_id,
                     pattern,
                     limit,
@@ -275,8 +302,9 @@ class PostgresFeatureRepository:
                 )
             else:
                 rows = await self.db.fetch(
-                    "SELECT * FROM features WHERE name ILIKE $1 OR id ILIKE $1"
-                    " ORDER BY name LIMIT $2 OFFSET $3",
+                    "SELECT * FROM features WHERE workspace_id = $1 AND (name ILIKE $2 OR id ILIKE $2)"
+                    " ORDER BY name LIMIT $3 OFFSET $4",
+                    workspace_id,
                     pattern,
                     limit,
                     offset,
@@ -285,40 +313,51 @@ class PostgresFeatureRepository:
 
         if project_id:
             rows = await self.db.fetch(
-                "SELECT * FROM features WHERE project_id = $1 ORDER BY name LIMIT $2 OFFSET $3",
+                "SELECT * FROM features WHERE workspace_id = $1 AND project_id = $2 ORDER BY name LIMIT $3 OFFSET $4",
+                workspace_id,
                 project_id,
                 limit,
                 offset,
             )
         else:
             rows = await self.db.fetch(
-                "SELECT * FROM features ORDER BY name LIMIT $1 OFFSET $2",
+                "SELECT * FROM features WHERE workspace_id = $1 ORDER BY name LIMIT $2 OFFSET $3",
+                workspace_id,
                 limit,
                 offset,
             )
         return [dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None, *, keyword: str | None = None) -> int:
+    async def count(self, project_id: str | None = None, *, keyword: str | None = None, workspace_id: str) -> int:
         if keyword:
             pattern = f"%{keyword}%"
             if project_id:
                 value = await self.db.fetchval(
-                    "SELECT COUNT(*) FROM features WHERE project_id = $1"
-                    " AND (name ILIKE $2 OR id ILIKE $2)",
+                    "SELECT COUNT(*) FROM features WHERE workspace_id = $1 AND project_id = $2"
+                    " AND (name ILIKE $3 OR id ILIKE $3)",
+                    workspace_id,
                     project_id,
                     pattern,
                 )
             else:
                 value = await self.db.fetchval(
-                    "SELECT COUNT(*) FROM features WHERE name ILIKE $1 OR id ILIKE $1",
+                    "SELECT COUNT(*) FROM features WHERE workspace_id = $1 AND (name ILIKE $2 OR id ILIKE $2)",
+                    workspace_id,
                     pattern,
                 )
             return int(value or 0)
 
         if project_id:
-            value = await self.db.fetchval("SELECT COUNT(*) FROM features WHERE project_id = $1", project_id)
+            value = await self.db.fetchval(
+                "SELECT COUNT(*) FROM features WHERE workspace_id = $1 AND project_id = $2",
+                workspace_id,
+                project_id,
+            )
         else:
-            value = await self.db.fetchval("SELECT COUNT(*) FROM features")
+            value = await self.db.fetchval(
+                "SELECT COUNT(*) FROM features WHERE workspace_id = $1",
+                workspace_id,
+            )
         return int(value or 0)
 
     async def upsert_phases(self, feature_id: str, phases: list[dict]) -> None:
@@ -369,6 +408,8 @@ class PostgresFeatureRepository:
         self,
         project_id: str,
         query: PhaseSummaryBulkQuery,
+        *,
+        workspace_id: str,
     ) -> dict[str, list[PhaseSummary]]:
         """Return phase summaries for all requested features in a single query.
 
@@ -392,9 +433,10 @@ class PostgresFeatureRepository:
         # Pre-populate result dict so missing features get [] rather than absent keys
         result: dict[str, list[PhaseSummary]] = {fid: [] for fid in feature_ids}
 
-        # Build $1..$N placeholders for the IN-list, then $N+1 for project_id
+        # Build $1..$N placeholders for the IN-list, then $N+1 for workspace_id, $N+2 for project_id
         id_placeholders = ", ".join(f"${i + 1}" for i in range(len(feature_ids)))
-        project_ph = f"${len(feature_ids) + 1}"
+        workspace_ph = f"${len(feature_ids) + 1}"
+        project_ph = f"${len(feature_ids) + 2}"
 
         sql = (
             "SELECT fp.id, fp.feature_id, fp.title, fp.status, fp.phase,"
@@ -402,11 +444,12 @@ class PostgresFeatureRepository:
             " FROM feature_phases fp"
             " JOIN features f ON fp.feature_id = f.id"
             f" WHERE fp.feature_id IN ({id_placeholders})"
+            f" AND f.workspace_id = {workspace_ph}"
             f" AND f.project_id = {project_ph}"
             " ORDER BY fp.feature_id, fp.phase"
         )
 
-        db_rows = await self.db.fetch(sql, *feature_ids, project_id)
+        db_rows = await self.db.fetch(sql, *feature_ids, workspace_id, project_id)
 
         for row in db_rows:
             r = dict(row)
@@ -448,13 +491,15 @@ class PostgresFeatureRepository:
         self,
         project_id: str,
         query: FeatureListQuery,
+        *,
+        workspace_id: str,
     ) -> FeatureListPage:
         """Return a paginated, fully-filtered list of feature card dicts.
 
         Uses a single query with ``COUNT(*) OVER ()`` window function to avoid
         a separate count round-trip.
         """
-        where_sql, params = _build_feature_list_where_clause_pg(project_id, query)
+        where_sql, params = _build_feature_list_where_clause_pg(project_id, query, workspace_id=workspace_id)
         rollup_join_sql = _build_rollup_sort_join_clause_pg(query)
         if rollup_join_sql:
             params = [project_id, *params]
@@ -487,23 +532,25 @@ class PostgresFeatureRepository:
         self,
         project_id: str,
         query: FeatureListQuery,
+        *,
+        workspace_id: str,
     ) -> int:
         """Return post-filter, pre-pagination count for ``query``."""
-        where_sql, params = _build_feature_list_where_clause_pg(project_id, query)
+        where_sql, params = _build_feature_list_where_clause_pg(project_id, query, workspace_id=workspace_id)
         value = await self.db.fetchval(
             f"SELECT COUNT(*) FROM features {where_sql}",
             *params,
         )
         return int(value or 0)
 
-    async def get_project_stats(self, project_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
         query = """
             SELECT AVG(
                 CASE WHEN total_tasks > 0
                      THEN CAST(completed_tasks AS DOUBLE PRECISION) / total_tasks * 100
                      ELSE 0
                 END
-            ) FROM features WHERE project_id = $1
+            ) FROM features WHERE workspace_id = $1 AND project_id = $2
         """
-        val = await self.db.fetchval(query, project_id)
+        val = await self.db.fetchval(query, workspace_id, project_id)
         return {"avg_progress": val or 0.0}

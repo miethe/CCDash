@@ -342,6 +342,7 @@ class PlanningSessionQueryService:
                 sort_by="started_at",
                 sort_order="desc",
                 filters={"include_subagents": True},
+                workspace_id="default-local",  # TODO(workspace-routing)
             )
         except Exception:
             logger.exception("Failed to load sessions for project %s", effective_project_id)
@@ -350,7 +351,7 @@ class PlanningSessionQueryService:
         # ── Load features ────────────────────────────────────────────────────
         features: list[dict[str, Any]] = []
         try:
-            features = await ports.storage.features().list_all(effective_project_id)
+            features = await ports.storage.features().list_all(effective_project_id, workspace_id="default-local")  # TODO(workspace-routing)
         except Exception:
             logger.exception("Failed to load features for project %s", effective_project_id)
             partial = True

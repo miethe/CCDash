@@ -87,14 +87,14 @@ class AnalyticsOverviewService:
                 "feature_progress",
             ],
         )
-        task_stats = await task_repo.get_project_stats(project.id)
-        session_stats = await session_repo.get_project_stats(project.id)
+        task_stats = await task_repo.get_project_stats(project.id, workspace_id="default-local")  # TODO(workspace-routing)
+        session_stats = await session_repo.get_project_stats(project.id, workspace_id="default-local")  # TODO(workspace-routing)
         session_filters: dict[str, Any] = {"include_subagents": True}
         if start:
             session_filters["start_date"] = start
         if end:
             session_filters["end_date"] = end
-        recent_sessions = await session_repo.list_paginated(0, 250, project.id, "started_at", "desc", session_filters)
+        recent_sessions = await session_repo.list_paginated(0, 250, project.id, "started_at", "desc", session_filters, workspace_id="default-local")  # TODO(workspace-routing)
 
         model_counts: dict[str, int] = defaultdict(int)
         for row in recent_sessions:

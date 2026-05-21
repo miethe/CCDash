@@ -213,6 +213,7 @@ class _FakeStorage:
         link_repo=None,
         feature_repo=None,
         alert_repo=None,
+        artifact_rankings_repo=None,
     ) -> None:
         self.db = db if db is not None else object()
         self._analytics_repo = analytics_repo
@@ -221,6 +222,7 @@ class _FakeStorage:
         self._link_repo = link_repo
         self._feature_repo = feature_repo
         self._alert_repo = alert_repo
+        self._artifact_rankings_repo = artifact_rankings_repo
 
     def analytics(self):
         return self._analytics_repo
@@ -239,6 +241,9 @@ class _FakeStorage:
 
     def alert_configs(self):
         return self._alert_repo
+
+    def artifact_rankings(self):
+        return self._artifact_rankings_repo
 
 
 def _request_context(project_id: str = "project-1") -> RequestContext:
@@ -268,6 +273,7 @@ def _core_ports(
     link_repo=None,
     feature_repo=None,
     alert_repo=None,
+    artifact_rankings_repo=None,
     authorization_policy=None,
 ) -> CorePorts:
     resolved_project = project or types.SimpleNamespace(id="project-1", name="Project 1")
@@ -283,6 +289,7 @@ def _core_ports(
             link_repo=link_repo,
             feature_repo=feature_repo,
             alert_repo=alert_repo,
+            artifact_rankings_repo=artifact_rankings_repo,
         ),
         job_scheduler=_FakeJobScheduler(),
         integration_client=_FakeIntegrationClient(),
@@ -396,24 +403,23 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         repo = _FakeArtifactRankingRepo([_artifact_ranking_row()])
         project = types.SimpleNamespace(id="project-1")
 
-        with patch.object(analytics_router, "get_artifact_ranking_repository", return_value=repo):
-            payload = await analytics_router.get_artifact_rankings(
-                project="project-1",
-                collection="collection-a",
-                user="user-a",
-                period="30d",
-                artifact="uuid-expensive",
-                version="v1",
-                workflow="workflow-a",
-                artifact_type="skill",
-                recommendation_type="optimization_target",
-                refresh=False,
-                offset=0,
-                limit=50,
-                cursor=None,
-                request_context=_request_context(project.id),
-                core_ports=_core_ports(project=project),
-            )
+        payload = await analytics_router.get_artifact_rankings(
+            project="project-1",
+            collection="collection-a",
+            user="user-a",
+            period="30d",
+            artifact="uuid-expensive",
+            version="v1",
+            workflow="workflow-a",
+            artifact_type="skill",
+            recommendation_type="optimization_target",
+            refresh=False,
+            offset=0,
+            limit=50,
+            cursor=None,
+            request_context=_request_context(project.id),
+            core_ports=_core_ports(project=project, artifact_rankings_repo=repo),
+        )
 
         self.assertEqual(payload.total, 1)
         self.assertEqual(payload.rows[0].artifact_id, "expensive-skill")
@@ -429,19 +435,18 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         repo = _FakeArtifactRankingRepo([_artifact_ranking_row(workflow_id="")])
         project = types.SimpleNamespace(id="project-1")
 
-        with patch.object(analytics_router, "get_artifact_ranking_repository", return_value=repo):
-            payload = await analytics_router.get_artifact_recommendations(
-                project="project-1",
-                recommendation_type="optimization_target",
-                min_confidence=0.7,
-                period="30d",
-                collection="collection-a",
-                user="user-a",
-                workflow=None,
-                limit=100,
-                request_context=_request_context(project.id),
-                core_ports=_core_ports(project=project),
-            )
+        payload = await analytics_router.get_artifact_recommendations(
+            project="project-1",
+            recommendation_type="optimization_target",
+            min_confidence=0.7,
+            period="30d",
+            collection="collection-a",
+            user="user-a",
+            workflow=None,
+            limit=100,
+            request_context=_request_context(project.id),
+            core_ports=_core_ports(project=project, artifact_rankings_repo=repo),
+        )
 
         self.assertEqual(payload.total, 1)
         self.assertEqual(payload.recommendations[0].recommendation_type, "optimization_target")

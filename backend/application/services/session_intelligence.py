@@ -165,7 +165,7 @@ class SessionIntelligenceQueryService:
         session_id: str,
     ) -> SessionIntelligenceDetailResponse | None:
         project = resolve_project(context, ports)
-        session_row = await ports.storage.sessions().get_by_id(session_id)
+        session_row = await ports.storage.sessions().get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
         if project is None or not session_row or str(session_row.get("project_id") or "") != project.id:
             return None
 
@@ -409,6 +409,7 @@ class SessionIntelligenceQueryService:
             "started_at",
             "desc",
             filters,
+            workspace_id="default-local",  # TODO(workspace-routing)
         )
         if session_id:
             rows = [row for row in rows if str(row.get("id") or "") == session_id]
@@ -981,6 +982,7 @@ async def _linked_documents(document_repo: Any, project_id: str, session_row: di
         0,
         200,
         filters={"feature": feature_id, "include_progress": True},
+        workspace_id="default-local",  # TODO(workspace-routing)
     )
 
 

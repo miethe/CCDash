@@ -1111,7 +1111,7 @@ async def build_stack_recommendations(
 
     async def load_session(session_id: str) -> dict[str, Any] | None:
         if session_id not in session_cache:
-            session_cache[session_id] = await session_repo.get_by_id(session_id)
+            session_cache[session_id] = await session_repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
         return session_cache[session_id]
 
     similar_work: list[SimilarWorkExample] = []

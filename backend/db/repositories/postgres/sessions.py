@@ -81,6 +81,7 @@ class PostgresSessionRepository:
                 impact_history_json=EXCLUDED.impact_history_json,
                 thinking_level=EXCLUDED.thinking_level,
                 session_forensics_json=EXCLUDED.session_forensics_json
+            WHERE sessions.workspace_id = EXCLUDED.workspace_id
         """
         await self.db.execute(
             query,
@@ -136,25 +137,42 @@ class PostgresSessionRepository:
             json.dumps(session_data.get("sessionForensics", {}) or {}),
         )
 
-    async def get_by_id(self, session_id: str) -> dict | None:
-        row = await self.db.fetchrow("SELECT * FROM sessions WHERE id = $1", session_id)
+    async def get_by_id(self, session_id: str, *, workspace_id: str) -> dict | None:
+        """Fetch a single session by PK, scoped to workspace_id.
+
+        Returns None when the session does not exist OR belongs to a different
+        workspace.  Per ADR-008 §Data Isolation, callers surface this as 404.
+        """
+        row = await self.db.fetchrow(
+            "SELECT * FROM sessions WHERE id = $1 AND workspace_id = $2",
+            session_id,
+            workspace_id,
+        )
         if not row:
             return None
         return dict(row)
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple sessions in a single query. Returns a dict keyed by session id."""
+    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str) -> dict[str, dict]:
+        """Fetch multiple sessions in a single query, scoped to workspace_id.
+
+        Returns a dict keyed by session id.  Sessions belonging to a different
+        workspace are silently excluded.
+        """
         if not ids:
             return {}
         rows = await self.db.fetch(
-            "SELECT * FROM sessions WHERE id = ANY($1::text[])", ids
+            "SELECT * FROM sessions WHERE id = ANY($1::text[]) AND workspace_id = $2",
+            ids,
+            workspace_id,
         )
         return {row["id"]: dict(row) for row in rows}
 
-    async def list_by_source(self, source_file: str) -> list[dict]:
+    async def list_by_source(self, source_file: str, *, workspace_id: str) -> list[dict]:
+        """List sessions by source_file, scoped to workspace_id."""
         rows = await self.db.fetch(
-            "SELECT * FROM sessions WHERE source_file = $1",
+            "SELECT * FROM sessions WHERE source_file = $1 AND workspace_id = $2",
             source_file,
+            workspace_id,
         )
         return [dict(row) for row in rows]
 
@@ -162,15 +180,17 @@ class PostgresSessionRepository:
         self, offset: int, limit: int, project_id: str | None = None,
         sort_by: str = "started_at", sort_order: str = "desc",
         filters: dict | None = None,
+        *,
+        workspace_id: str,
     ) -> list[dict]:
         allowed_sort = {"started_at", "total_cost", "duration_seconds", "tokens_in", "created_at"}
         if sort_by not in allowed_sort:
             sort_by = "started_at"
         order = "DESC" if sort_order.lower() == "desc" else "ASC"
 
-        where_parts: list[str] = []
-        params: list[Any] = []
-        idx = 1
+        where_parts: list[str] = [f"workspace_id = $1"]
+        params: list[Any] = [workspace_id]
+        idx = 2
 
         if project_id:
             where_parts.append(f"project_id = ${idx}")
@@ -287,10 +307,10 @@ class PostgresSessionRepository:
         
         return [dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None, filters: dict | None = None) -> int:
-        where_parts: list[str] = []
-        params: list[Any] = []
-        idx = 1
+    async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str) -> int:
+        where_parts: list[str] = [f"workspace_id = $1"]
+        params: list[Any] = [workspace_id]
+        idx = 2
 
         if project_id:
             where_parts.append(f"project_id = ${idx}")
@@ -403,10 +423,10 @@ class PostgresSessionRepository:
         val = await self.db.fetchval(f"SELECT COUNT(*) FROM sessions{where}", *params)
         return val or 0
 
-    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
-        where_parts: list[str] = ["TRIM(COALESCE(model, '')) != ''"]
-        params: list[Any] = []
-        idx = 1
+    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str) -> list[dict]:
+        where_parts: list[str] = ["workspace_id = $1", "TRIM(COALESCE(model, '')) != ''"]
+        params: list[Any] = [workspace_id]
+        idx = 2
 
         if project_id:
             where_parts.append(f"project_id = ${idx}")
@@ -431,10 +451,10 @@ class PostgresSessionRepository:
         )
         return [dict(row) for row in rows]
 
-    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
-        where_parts: list[str] = []
-        params: list[Any] = []
-        idx = 1
+    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str) -> list[dict]:
+        where_parts: list[str] = ["workspace_id = $1"]
+        params: list[Any] = [workspace_id]
+        idx = 2
 
         if project_id:
             where_parts.append(f"project_id = ${idx}")
@@ -782,7 +802,7 @@ class PostgresSessionRepository:
         )
         return [dict(r) for r in rows]
 
-    async def get_project_stats(self, project_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
         query = """
             SELECT
                 COUNT(*) as count,
@@ -795,9 +815,9 @@ class PostgresSessionRepository:
                 ) as tokens,
                 AVG(duration_seconds) as duration
             FROM sessions
-            WHERE project_id = $1
+            WHERE project_id = $1 AND workspace_id = $2
         """
-        row = await self.db.fetchrow(query, project_id)
+        row = await self.db.fetchrow(query, project_id, workspace_id)
         if row:
             return {
                 "count": row["count"] or 0,
@@ -807,16 +827,16 @@ class PostgresSessionRepository:
             }
         return {"count": 0, "cost": 0.0, "tokens": 0, "duration": 0.0}
 
-    async def get_tool_stats(self, project_id: str) -> dict:
+    async def get_tool_stats(self, project_id: str, *, workspace_id: str) -> dict:
         query = """
             SELECT
                 SUM(call_count) as calls,
                 AVG(CAST(success_count AS DOUBLE PRECISION) / NULLIF(call_count, 0) * 100) as success_rate
             FROM session_tool_usage stu
             JOIN sessions s ON s.id = stu.session_id
-            WHERE s.project_id = $1
+            WHERE s.project_id = $1 AND s.workspace_id = $2
         """
-        row = await self.db.fetchrow(query, project_id)
+        row = await self.db.fetchrow(query, project_id, workspace_id)
         if row:
             return {
                 "calls": row["calls"] or 0,

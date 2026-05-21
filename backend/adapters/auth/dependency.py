@@ -17,6 +17,7 @@ have been fully migrated to use AuthContext.project_id directly.
 """
 from __future__ import annotations
 
+import functools
 import logging
 
 from fastapi import Depends, HTTPException, Request
@@ -31,11 +32,15 @@ logger = logging.getLogger("ccdash.auth.dependency")
 _PROJECT_ID_HEADER_DEPRECATION_WARNED: bool = False
 
 
+@functools.lru_cache(maxsize=1)
 def _get_workspace_token_backend() -> WorkspaceTokenAuthBackend:
-    """Return a per-process WorkspaceTokenAuthBackend singleton."""
-    if not hasattr(_get_workspace_token_backend, "_instance"):
-        _get_workspace_token_backend._instance = WorkspaceTokenAuthBackend(get_db=get_connection)  # type: ignore[attr-defined]
-    return _get_workspace_token_backend._instance  # type: ignore[attr-defined]
+    """Return a per-process WorkspaceTokenAuthBackend singleton.
+
+    ``@functools.lru_cache`` provides atomic first-call initialisation under
+    the GIL, replacing the non-atomic ``hasattr`` + assignment pattern that
+    could produce duplicate instances under multi-threaded workers.
+    """
+    return WorkspaceTokenAuthBackend(get_db=get_connection)
 
 
 async def get_auth_context(

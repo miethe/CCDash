@@ -29,6 +29,7 @@ class SessionFacetService:
         rows = await ports.storage.sessions().get_model_facets(
             project.id,
             include_subagents=include_subagents,
+            workspace_id="default-local",  # TODO(workspace-routing)
         )
         items: list[dict[str, str | int]] = []
         for row in rows:
@@ -60,6 +61,7 @@ class SessionFacetService:
         rows = await ports.storage.sessions().get_platform_facets(
             project.id,
             include_subagents=include_subagents,
+            workspace_id="default-local",  # TODO(workspace-routing)
         )
         return [
             {

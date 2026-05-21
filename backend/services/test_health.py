@@ -124,7 +124,7 @@ class TestHealthService:
         rows: list[dict[str, Any]] = []
         offset = 0
         while True:
-            page = await repo.list_paginated(offset=offset, limit=page_size, project_id=project_id)
+            page = await repo.list_paginated(offset=offset, limit=page_size, project_id=project_id, workspace_id="default-local")  # TODO(workspace-routing)
             if not page:
                 break
             rows.extend(page)
@@ -321,7 +321,7 @@ class TestHealthService:
         limit: int = 50,
     ) -> tuple[list[FeatureTestHealthDTO], int]:
         mappings = await self.mapping_repo.list_primary_by_project(project_id=project_id, domain_id=domain_id)
-        feature_rows = await self.feature_repo.list_all(project_id)
+        feature_rows = await self.feature_repo.list_all(project_id, workspace_id="default")
         feature_names = {str(row.get("id") or ""): str(row.get("name") or "") for row in feature_rows}
         integrity_signals = await self.integrity_repo.list_by_project(project_id=project_id, limit=5000, offset=0)
         _, latest_result, latest_run_for_test, _ = await self._latest_results_by_test(project_id=project_id, since=since)

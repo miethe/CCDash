@@ -201,6 +201,38 @@ class TestWorkspaceTokenAuthBackend(unittest.IsolatedAsyncioTestCase):
         ctx2 = await self.backend.verify("secret-alpha")
         self.assertIsNone(ctx2)
 
+    # --- Fail-closed on DB error (ADR-008 §Data Isolation) ------------------ #
+
+    async def test_db_error_during_revocation_check_fails_closed(self) -> None:
+        """A DB error in _is_token_active must cause verify() to return None (fail closed).
+
+        ADR-008 §Data Isolation: revocation is a hard gate. If the DB is
+        unavailable we must not accept the token — fail closed, not fail open.
+        """
+        # First call: populate LRU cache so the second call hits the
+        # revocation re-check path (_is_token_active) rather than argon2 verify.
+        ctx1 = await self.backend.verify("secret-alpha")
+        self.assertIsNotNone(ctx1)
+
+        # Replace _get_db with one whose execute() raises synchronously (as an
+        # async-context-manager entry), simulating a DB fault.
+        async def _broken_db():
+            mock_db = MagicMock()
+            mock_db.execute.side_effect = RuntimeError("simulated DB failure")
+            return mock_db
+
+        original_get_db = self.backend._get_db
+        self.backend._get_db = _broken_db  # type: ignore[method-assign]
+        try:
+            # Second call: LRU hit triggers _is_token_active; DB raises; must fail closed.
+            ctx2 = await self.backend.verify("secret-alpha")
+            self.assertIsNone(
+                ctx2,
+                "verify() must return None (fail closed) when DB raises during revocation check",
+            )
+        finally:
+            self.backend._get_db = original_get_db  # type: ignore[method-assign]
+
     # --- LRU cache ---------------------------------------------------------- #
 
     async def test_lru_cache_skip_argon2_on_second_call(self) -> None:

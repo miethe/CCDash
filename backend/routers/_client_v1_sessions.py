@@ -256,7 +256,7 @@ async def get_session_family_v1(
     session_repo = get_session_repository(core_ports.storage.db)
 
     # Step 1: resolve the anchor session.
-    anchor = await session_repo.get_by_id(session_id)
+    anchor = await session_repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
     if anchor is None:
         raise HTTPException(
             status_code=404,
@@ -274,6 +274,7 @@ async def get_session_family_v1(
         sort_by="started_at",
         sort_order="asc",
         filters={"root_session_id": root_id},
+        workspace_id="default-local",  # TODO(workspace-routing)
     )
 
     # Step 3: map raw rows to SessionRef DTOs.

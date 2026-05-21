@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
+from backend.db.repositories.feature_queries import LinkedSessionPage
 from backend.routers._client_v1_features import get_feature_detail_v1, get_feature_sessions_v1
 
 
@@ -64,6 +65,39 @@ class _WorkspaceRegistry:
         )
 
 
+class _FakeFeatureSessionRepo:
+    """Stub for SqliteFeatureSessionRepository used by modal_service.get_sessions()."""
+
+    def __init__(self, link_rows, session_rows):
+        self._link_rows = link_rows
+        self._session_rows = session_rows
+
+    async def list_feature_session_refs(self, project_id, query):
+        feature_id = query.feature_id
+        session_ids = [
+            row["target_id"]
+            for row in self._link_rows
+            if row["source_type"] == "feature"
+            and row["source_id"] == feature_id
+            and row["target_type"] == "session"
+        ]
+        rows = [
+            {"session_id": sid, **self._session_rows[sid]}
+            for sid in session_ids
+            if sid in self._session_rows
+        ]
+        offset = getattr(query, "offset", 0) or 0
+        limit = getattr(query, "limit", 50) or 50
+        page = rows[offset: offset + limit]
+        return LinkedSessionPage(
+            rows=page,
+            total=len(rows),
+            offset=offset,
+            limit=limit,
+            has_more=(offset + len(page)) < len(rows),
+        )
+
+
 class _Storage:
     def __init__(self, *, features_repo, sessions_repo, documents_repo, tasks_repo, links_repo):
         self.db = object()
@@ -73,6 +107,7 @@ class _Storage:
         self._tasks_repo = tasks_repo
         self._links_repo = links_repo
         self._session_messages_repo = types.SimpleNamespace(list_by_session=AsyncMock(return_value=[]))
+        self._feature_sessions_repo = _FakeFeatureSessionRepo(_LINK_ROWS, _SESSION_ROWS)
 
     def features(self):
         return self._features_repo
@@ -91,6 +126,9 @@ class _Storage:
 
     def session_messages(self):
         return self._session_messages_repo
+
+    def feature_sessions(self):
+        return self._feature_sessions_repo
 
 
 def _context(project_id: str = "project-1") -> RequestContext:
@@ -214,7 +252,10 @@ def _make_sessions_repo():
     async def get_by_id(session_id):
         return _SESSION_ROWS.get(session_id)
 
-    return types.SimpleNamespace(get_by_id=get_by_id)
+    async def get_many_by_ids(session_ids):
+        return {sid: _SESSION_ROWS[sid] for sid in session_ids if sid in _SESSION_ROWS}
+
+    return types.SimpleNamespace(get_by_id=get_by_id, get_many_by_ids=get_many_by_ids)
 
 
 def _make_links_repo():

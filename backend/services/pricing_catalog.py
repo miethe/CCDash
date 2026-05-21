@@ -315,7 +315,7 @@ class PricingCatalogService:
     async def _detected_inventory_entries(self, platform_type: str | None = None) -> list[dict[str, Any]]:
         if self.session_repo is None:
             return []
-        model_rows = await self.session_repo.get_model_facets(None, include_subagents=True)
+        model_rows = await self.session_repo.get_model_facets(None, include_subagents=True, workspace_id="default-local")  # TODO(workspace-routing)
         reference_entries = await self._merged_reference_entries(self._catalog_scope(), platform_type)
         reference_by_key = {
             _pricing_key(entry["platformType"], entry["modelId"]): entry

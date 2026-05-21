@@ -244,7 +244,7 @@ async def generate_session_memory_drafts(
     transcript_service = SessionTranscriptService()
 
     if session_id.strip():
-        candidate_rows = [await session_repo.get_by_id(session_id.strip())]
+        candidate_rows = [await session_repo.get_by_id(session_id.strip(), workspace_id="default-local")]  # TODO(workspace-routing)
         candidate_rows = [row for row in candidate_rows if row and str(row.get("project_id") or "") == str(project.id)]
     else:
         candidate_rows = await session_repo.list_paginated(
@@ -252,6 +252,7 @@ async def generate_session_memory_drafts(
             limit,
             project.id,
             filters={"status": "completed", "include_subagents": False},
+            workspace_id="default-local",  # TODO(workspace-routing)
         )
 
     drafts_created = 0

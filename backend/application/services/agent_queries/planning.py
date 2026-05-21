@@ -656,7 +656,7 @@ async def _load_all_features(
     ports: CorePorts, project_id: str
 ) -> tuple[list[dict[str, Any]], list[Feature], dict[str, Feature]]:
     """Return raw rows, Feature objects, and a key-indexed lookup dict."""
-    rows: list[dict[str, Any]] = await ports.storage.features().list_all(project_id)
+    rows: list[dict[str, Any]] = await ports.storage.features().list_all(project_id, workspace_id="default-local")  # TODO(workspace-routing)
     features = [feature_from_row(row) for row in rows]
     index: dict[str, Feature] = {_feature_key(f.id): f for f in features}
     return rows, features, index
@@ -666,11 +666,11 @@ async def _load_all_doc_rows(
     ports: CorePorts, project_id: str
 ) -> list[dict[str, Any]]:
     try:
-        return await ports.storage.documents().list_all(project_id)
+        return await ports.storage.documents().list_all(project_id, workspace_id="default-local")  # TODO(workspace-routing)
     except AttributeError:
         # Fallback: list_paginated when list_all is unavailable.
         return await ports.storage.documents().list_paginated(
-            project_id, 0, 500, {"include_progress": True}
+            project_id, 0, 500, {"include_progress": True}, workspace_id="default-local"  # TODO(workspace-routing)
         )
 
 
@@ -1343,7 +1343,7 @@ class PlanningQueryService:
         except Exception:
             partial = True
 
-        feature_row = await ports.storage.features().get_by_id(feature_id)
+        feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature_id)
         if feature_row is None and not current_doc_rows:
             return FeaturePlanningContextDTO(
@@ -1525,7 +1525,7 @@ class PlanningQueryService:
             if scope is None:
                 raise LookupError(f"Feature '{feature_id}' not found.")
 
-            feature_row = await ports.storage.features().get_by_id(feature_id)
+            feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
             if feature_row is None:
                 raise LookupError(f"Feature '{feature_id}' not found.")
 
@@ -1599,7 +1599,7 @@ class PlanningQueryService:
         project = scope.project
         partial = False
 
-        feature_row = await ports.storage.features().get_by_id(feature_id)
+        feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         if feature_row is None:
             return PhaseOperationsDTO(
                 status="error",
@@ -1812,7 +1812,7 @@ class PlanningQueryService:
         partial = False
 
         # ── 1. Load feature row and planning projection ───────────────────────
-        feature_row = await ports.storage.features().get_by_id(feature_id)
+        feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         if feature_row is None:
             return PlanningNextRunPreviewDTO(
                 status="error",
@@ -1924,7 +1924,7 @@ class PlanningQueryService:
         unique_session_ids = sorted(set(selection.session_ids))
         if unique_session_ids:
             try:
-                session_map = await ports.storage.sessions().get_many_by_ids(unique_session_ids)
+                session_map = await ports.storage.sessions().get_many_by_ids(unique_session_ids, workspace_id="default-local")  # TODO(workspace-routing)
             except Exception:
                 session_map = {}
         else:

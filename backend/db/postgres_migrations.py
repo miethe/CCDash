@@ -82,6 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_entity_tags_tag ON entity_tags(tag_id);
 CREATE TABLE IF NOT EXISTS sessions (
     id               TEXT PRIMARY KEY,
     project_id       TEXT NOT NULL,
+    workspace_id     TEXT NOT NULL DEFAULT 'default-local',
     task_id          TEXT DEFAULT '',
     status           TEXT DEFAULT 'completed',
     model            TEXT DEFAULT '',
@@ -331,6 +332,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_session_relationships_unique
 CREATE TABLE IF NOT EXISTS documents (
     id             TEXT PRIMARY KEY,
     project_id     TEXT NOT NULL,
+    workspace_id   TEXT NOT NULL DEFAULT 'default-local',
     title          TEXT NOT NULL,
     file_path      TEXT NOT NULL,
     canonical_path TEXT DEFAULT '',
@@ -389,6 +391,7 @@ CREATE INDEX IF NOT EXISTS idx_document_refs_query
 CREATE TABLE IF NOT EXISTS tasks (
     id             TEXT PRIMARY KEY,
     project_id     TEXT NOT NULL,
+    workspace_id   TEXT NOT NULL DEFAULT 'default-local',
     title          TEXT NOT NULL,
     description    TEXT DEFAULT '',
     status         TEXT DEFAULT 'backlog',
@@ -418,6 +421,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status  ON tasks(project_id, status);
 CREATE TABLE IF NOT EXISTS features (
     id              TEXT PRIMARY KEY,
     project_id      TEXT NOT NULL,
+    workspace_id    TEXT NOT NULL DEFAULT 'default-local',
     name            TEXT NOT NULL,
     status          TEXT DEFAULT 'backlog',
     category        TEXT DEFAULT '',

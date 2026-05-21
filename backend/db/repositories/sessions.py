@@ -131,6 +131,7 @@ class SqliteSessionRepository:
                 thinking_level=excluded.thinking_level,
                 session_forensics_json=excluded.session_forensics_json,
                 source_ref=COALESCE(excluded.source_ref, sessions.source_ref)
+            WHERE sessions.workspace_id = excluded.workspace_id
             """,
             (
                 session_data["id"], project_id, workspace_id,
@@ -188,30 +189,43 @@ class SqliteSessionRepository:
         )
         await self.db.commit()
 
-    async def get_by_id(self, session_id: str) -> dict | None:
+    async def get_by_id(self, session_id: str, *, workspace_id: str) -> dict | None:
+        """Fetch a single session by PK, scoped to workspace_id.
+
+        Returns None when the session does not exist OR belongs to a different
+        workspace.  Callers should surface None as 404 per ADR-008 §Data
+        Isolation (do not disclose existence across workspace boundaries).
+        """
         async with self.db.execute(
-            "SELECT * FROM sessions WHERE id = ?", (session_id,)
+            "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?",
+            (session_id, workspace_id),
         ) as cur:
             row = await cur.fetchone()
             if not row:
                 return None
             return self._row_to_dict(row)
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple sessions in a single query. Returns a dict keyed by session id."""
+    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str) -> dict[str, dict]:
+        """Fetch multiple sessions in a single query, scoped to workspace_id.
+
+        Returns a dict keyed by session id.  Sessions belonging to a different
+        workspace are silently excluded (they are not visible to the caller).
+        """
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
         async with self.db.execute(
-            f"SELECT * FROM sessions WHERE id IN ({placeholders})", tuple(ids)
+            f"SELECT * FROM sessions WHERE id IN ({placeholders}) AND workspace_id = ?",
+            tuple(ids) + (workspace_id,),
         ) as cur:
             rows = await cur.fetchall()
         return {row["id"]: self._row_to_dict(row) for row in rows}
 
-    async def list_by_source(self, source_file: str) -> list[dict]:
+    async def list_by_source(self, source_file: str, *, workspace_id: str) -> list[dict]:
+        """List sessions by source_file, scoped to workspace_id."""
         async with self.db.execute(
-            "SELECT * FROM sessions WHERE source_file = ?",
-            (source_file,),
+            "SELECT * FROM sessions WHERE source_file = ? AND workspace_id = ?",
+            (source_file, workspace_id),
         ) as cur:
             rows = await cur.fetchall()
             return [self._row_to_dict(row) for row in rows]

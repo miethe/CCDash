@@ -7,7 +7,7 @@ class _FakeFeatureRepo:
     def __init__(self, rows):
         self._rows = rows
 
-    async def list_all(self, project_id):
+    async def list_all(self, project_id, **kwargs):
         return self._rows
 
 

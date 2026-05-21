@@ -112,7 +112,7 @@ class TestListFeatureCardsTotalReflectsFilter(unittest.TestCase):
                     )
 
                 q = FeatureListQuery(status=["active"], limit=3, offset=0)
-                page = await repo.list_feature_cards(_TEST_PROJECT, q)
+                page = await repo.list_feature_cards(_TEST_PROJECT, q, workspace_id="default-local")
 
                 # Regression check: total must be the FILTERED count, not 10
                 self.assertNotEqual(page.total, 10,
@@ -182,7 +182,7 @@ class TestNoNPlusOneInPhaseSummaryBulk(unittest.TestCase):
                 repo = SqliteFeatureRepository(db)
                 five_ids = ["FEAT-1", "FEAT-2", "FEAT-3", "FEAT-4", "FEAT-5"]
                 q = PhaseSummaryBulkQuery(feature_ids=five_ids)
-                await repo.list_phase_summaries_for_features("proj-A", q)
+                await repo.list_phase_summaries_for_features("proj-A", q, workspace_id="default-local")
                 self.assertLessEqual(
                     call_count[0], 2,
                     f"Expected ≤ 2 SQL statements but got {call_count[0]}. "

@@ -346,18 +346,31 @@ class SqliteDocumentRepository:
             )
         await self.db.commit()
 
-    async def get_by_id(self, doc_id: str) -> dict | None:
-        async with self.db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)) as cur:
+    async def get_by_id(self, doc_id: str, *, workspace_id: str) -> dict | None:
+        """Fetch a single document by PK, scoped to workspace_id.
+
+        Returns None when the document does not exist OR belongs to a different
+        workspace.  Per ADR-008 §Data Isolation, callers surface this as 404.
+        """
+        async with self.db.execute(
+            "SELECT * FROM documents WHERE id = ? AND workspace_id = ?",
+            (doc_id, workspace_id),
+        ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple documents in a single query. Returns a dict keyed by document id."""
+    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str) -> dict[str, dict]:
+        """Fetch multiple documents in a single query, scoped to workspace_id.
+
+        Returns a dict keyed by document id.  Documents belonging to a different
+        workspace are silently excluded.
+        """
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
         async with self.db.execute(
-            f"SELECT * FROM documents WHERE id IN ({placeholders})", tuple(ids)
+            f"SELECT * FROM documents WHERE id IN ({placeholders}) AND workspace_id = ?",
+            tuple(ids) + (workspace_id,),
         ) as cur:
             rows = await cur.fetchall()
         return {row["id"]: dict(row) for row in rows}
