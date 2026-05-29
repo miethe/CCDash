@@ -5,6 +5,7 @@ import { CommandCenterFeatureCard } from './CommandCenterFeatureCard';
 interface CommandCenterCardViewProps {
   items: PlanningCommandCenterItem[];
   commandOverrides: Record<string, string>;
+  onCopyCommand?: (command: string) => void;
   onOpenLaunch?: (featureId: string) => void;
   onOpenExecution?: (featureId: string) => void;
   onOpenPlan?: (path: string) => void;
@@ -15,6 +16,7 @@ interface CommandCenterCardViewProps {
 export function CommandCenterCardView({
   items,
   commandOverrides,
+  onCopyCommand,
   onOpenLaunch,
   onOpenExecution,
   onOpenPlan,
@@ -41,6 +43,7 @@ export function CommandCenterCardView({
             key={key}
             item={item}
             commandValue={commandOverrides[key] ?? item.command?.command ?? ''}
+            onCopyCommand={onCopyCommand}
             onOpenLaunch={onOpenLaunch}
             onOpenExecution={onOpenExecution}
             onOpenPlan={onOpenPlan}

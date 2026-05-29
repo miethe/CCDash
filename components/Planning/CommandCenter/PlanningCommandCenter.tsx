@@ -258,6 +258,7 @@ export function PlanningCommandCenter({
           <CommandCenterCardView
             items={page.items}
             commandOverrides={commandOverrides}
+            onCopyCommand={copyCommand}
             onOpenLaunch={openLaunch}
             onOpenExecution={openExecution}
             onOpenPlan={openPlan}
@@ -266,15 +267,22 @@ export function PlanningCommandCenter({
           />
         ) : null}
         {page && viewMode === 'board' ? (
-          <CommandCenterBoardView
-            items={page.items}
-            commandOverrides={commandOverrides}
-            onOpenLaunch={openLaunch}
-            onOpenExecution={openExecution}
-            onOpenPlan={openPlan}
-            onOpenDetail={openDetail}
-            onOpenPullRequest={openPullRequest}
-          />
+          // Board view uses a wider responsive container that escapes the
+          // global 1680px cap so the 5-column kanban has room to breathe.
+          <div className="-mx-5 px-5">
+            <div className="w-full" style={{ maxWidth: 'min(96vw, 2200px)', marginLeft: 'auto', marginRight: 'auto' }}>
+              <CommandCenterBoardView
+                items={page.items}
+                commandOverrides={commandOverrides}
+                onCopyCommand={copyCommand}
+                onOpenLaunch={openLaunch}
+                onOpenExecution={openExecution}
+                onOpenPlan={openPlan}
+                onOpenDetail={openDetail}
+                onOpenPullRequest={openPullRequest}
+              />
+            </div>
+          </div>
         ) : null}
         {page?.warnings.length ? (
           <div className="space-y-1">

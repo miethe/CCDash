@@ -10,6 +10,7 @@ import { Chip } from '../primitives';
 interface CommandCenterBoardViewProps {
   items: PlanningCommandCenterItem[];
   commandOverrides: Record<string, string>;
+  onCopyCommand?: (command: string) => void;
   onOpenLaunch?: (featureId: string) => void;
   onOpenExecution?: (featureId: string) => void;
   onOpenPlan?: (path: string) => void;
@@ -20,6 +21,7 @@ interface CommandCenterBoardViewProps {
 export function CommandCenterBoardView({
   items,
   commandOverrides,
+  onCopyCommand,
   onOpenLaunch,
   onOpenExecution,
   onOpenPlan,
@@ -38,8 +40,10 @@ export function CommandCenterBoardView({
   });
 
   return (
+    // Fluid 5-column grid: allow horizontal scroll only below ~900px so columns
+    // never fully collapse. The parent container controls the overall max-width.
     <div className="overflow-x-auto pb-2" data-testid="command-center-board-view">
-      <div className="grid min-w-[1380px] grid-cols-5 gap-3">
+      <div className="grid min-w-[900px] grid-cols-5 gap-3">
         {COMMAND_CENTER_BOARD_BUCKETS.map((bucket) => (
           <section
             key={bucket.id}
@@ -60,6 +64,7 @@ export function CommandCenterBoardView({
                     key={key}
                     item={item}
                     commandValue={commandOverrides[key] ?? item.command?.command ?? ''}
+                    onCopyCommand={onCopyCommand}
                     onOpenLaunch={onOpenLaunch}
                     onOpenExecution={onOpenExecution}
                     onOpenPlan={onOpenPlan}

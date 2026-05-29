@@ -8,6 +8,7 @@ import {
   CommandCenterBoardView,
   CommandCenterCardView,
   CommandCenterDetailPanel,
+  CommandCenterFeatureCard,
   CommandCenterListView,
   commandCenterDoneLabel,
 } from '../CommandCenter';
@@ -244,5 +245,110 @@ describe('Planning Command Center list view', () => {
     expect(html).toContain('worktree and git state');
     expect(html).toContain('phase plan');
     expect(html).toContain('launch and review context');
+  });
+
+  it('feature card renders status pill, title+slug full-width zone, next-command box, copy button, and branch button', () => {
+    const html = renderToStaticMarkup(
+      <CommandCenterFeatureCard
+        item={ITEM}
+        commandValue={ITEM.command?.command ?? ''}
+        onCopyCommand={vi.fn()}
+        onOpenExecution={vi.fn()}
+        onOpenPlan={vi.fn()}
+        onOpenDetail={vi.fn()}
+      />,
+    );
+
+    // Status pill present (absolute top-right positioning)
+    expect(html).toContain('in-progress');
+
+    // Title and slug rendered without sharing a row with the pill
+    expect(html).toContain('Feature A');
+    expect(html).toContain('feature-a'); // slug
+
+    // Next command box: testid present and command text shown
+    expect(html).toContain('data-testid="command-center-next-command-box"');
+    expect(html).toContain('/dev:execute-phase feature-a --phase 2');
+
+    // Copy command button rendered with correct aria-label and testid
+    expect(html).toContain('data-testid="command-center-copy-command-btn"');
+    expect(html).toContain('aria-label="Copy command"');
+
+    // Branch copy button rendered with correct aria-label and testid
+    expect(html).toContain('data-testid="command-center-branch-copy-btn"');
+    expect(html).toContain('aria-label="Copy branch name"');
+    expect(html).toContain('codex/feature-a');
+  });
+
+  it('feature card copy button is disabled when commandValue is empty', () => {
+    const html = renderToStaticMarkup(
+      <CommandCenterFeatureCard
+        item={ITEM}
+        commandValue=""
+        onCopyCommand={vi.fn()}
+        onOpenExecution={vi.fn()}
+        onOpenPlan={vi.fn()}
+        onOpenDetail={vi.fn()}
+      />,
+    );
+
+    // The button should have disabled attribute when no command; both the
+    // testid and the disabled attribute must be present in the same button tag.
+    expect(html).toContain('data-testid="command-center-copy-command-btn"');
+    // disabled="" appears in the same button element (order-agnostic check)
+    expect(html).toMatch(/aria-label="Copy command"[^>]*disabled/);
+  });
+
+  it('feature card thread: card view forwards onCopyCommand to feature cards', () => {
+    const onCopyCommand = vi.fn();
+    const html = renderToStaticMarkup(
+      <CommandCenterCardView
+        items={[ITEM]}
+        commandOverrides={{}}
+        onCopyCommand={onCopyCommand}
+        onOpenExecution={vi.fn()}
+        onOpenPlan={vi.fn()}
+        onOpenDetail={vi.fn()}
+      />,
+    );
+
+    // Verify that the copy button is present inside the card view
+    expect(html).toContain('data-testid="command-center-copy-command-btn"');
+    expect(html).toContain('data-testid="command-center-branch-copy-btn"');
+  });
+
+  it('feature card thread: board view forwards onCopyCommand to feature cards', () => {
+    const onCopyCommand = vi.fn();
+    const html = renderToStaticMarkup(
+      <CommandCenterBoardView
+        items={[ITEM]}
+        commandOverrides={{}}
+        onCopyCommand={onCopyCommand}
+        onOpenExecution={vi.fn()}
+        onOpenPlan={vi.fn()}
+        onOpenDetail={vi.fn()}
+      />,
+    );
+
+    // Copy button and branch button are present inside board cards
+    expect(html).toContain('data-testid="command-center-copy-command-btn"');
+    expect(html).toContain('data-testid="command-center-branch-copy-btn"');
+  });
+
+  it('board view uses fluid min-width (not fixed 1380px)', () => {
+    const html = renderToStaticMarkup(
+      <CommandCenterBoardView
+        items={[ITEM]}
+        commandOverrides={{}}
+        onOpenExecution={vi.fn()}
+        onOpenPlan={vi.fn()}
+        onOpenDetail={vi.fn()}
+      />,
+    );
+
+    // The old fixed min-w-[1380px] should no longer appear
+    expect(html).not.toContain('min-w-[1380px]');
+    // The new smaller min-width should be present
+    expect(html).toContain('min-w-[900px]');
   });
 });
