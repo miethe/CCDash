@@ -3,7 +3,7 @@ export type TaskStatus = 'todo' | 'backlog' | 'in-progress' | 'review' | 'done' 
 
 export type DateConfidence = 'high' | 'medium' | 'low';
 
-export type AuthSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'unauthorized';
+export type AuthSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'unauthorized' | 'unavailable';
 
 export type AuthErrorClassification = 'unauthenticated' | 'unauthorized' | null;
 
