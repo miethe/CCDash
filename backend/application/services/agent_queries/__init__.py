@@ -19,8 +19,12 @@ from backend.application.services.agent_queries._filters import (
 from backend.application.services.agent_queries.models import (
     AARReportDTO,
     AgentQueryEnvelope,
+    AnalyticsKPIsDTO,
+    AnalyticsOverviewBundleDTO,
+    AnalyticsTopModelDTO,
     Bottleneck,
     CostSummary,
+    DashboardBundleDTO,
     DocumentRef,
     FeatureEvidenceSummary,
     FeatureForensicsDTO,
@@ -59,11 +63,13 @@ from backend.application.services.agent_queries.models import (
     PlanningNodeCountsByType,
     PlanningOpenQuestionItem,
     PlanningSpikeItem,
+    PlanningViewBundleDTO,
     ProjectPlanningSummaryDTO,
     ProjectPlanningGraphDTO,
     ProjectStatusDTO,
     PromptContextSelection,
     QueryStatus,
+    SessionCardDTO,
     SessionRef,
     SessionSummary,
     SnapshotDiagnosticsDTO,
@@ -78,7 +84,9 @@ from backend.application.services.agent_queries.models import (
     WorkflowObservation,
     WorkflowSummary,
 )
+from backend.application.services.agent_queries.analytics_bundle import AnalyticsBundleQueryService
 from backend.application.services.agent_queries.artifact_intelligence import ArtifactIntelligenceQueryService
+from backend.application.services.agent_queries.dashboard import DashboardQueryService
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
 from backend.application.services.agent_queries.feature_evidence_summary import FeatureEvidenceSummaryService
 from backend.application.services.agent_queries.live_metrics import LiveActiveCountDTO, LiveMetricsQueryService
@@ -185,4 +193,13 @@ __all__ = [
     "NextRunContextRef",
     "PlanningNextRunPreviewDTO",
     "PromptContextSelection",
+    # P5a fat-read bundle services and DTOs (T5-001, T5-003, T5-004)
+    "AnalyticsBundleQueryService",
+    "AnalyticsKPIsDTO",
+    "AnalyticsOverviewBundleDTO",
+    "AnalyticsTopModelDTO",
+    "DashboardBundleDTO",
+    "DashboardQueryService",
+    "PlanningViewBundleDTO",
+    "SessionCardDTO",
 ]

@@ -3,11 +3,14 @@ import { ChevronDown, FolderPlus, Check, Lock } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { summarizeAuthMembershipContext, useAuthSession } from '../contexts/AuthSessionContext';
 import { AddProjectModal } from './AddProjectModal';
+import { useProjectsQuery } from '../services/queries/projects';
 
 const PROJECT_OPERATOR_ROLES = ['EA', 'TA', 'PM', 'owner', 'admin', 'operator', 'project_maintainer', 'project-maintainer', 'project:maintainer'];
 
 export const ProjectSelector: React.FC<{ initialOpen?: boolean }> = ({ initialOpen = false }) => {
-    const { projects, activeProject, switchProject } = useData();
+    const { activeProject, switchProject } = useData();
+    const { data: tqProjects } = useProjectsQuery();
+    const projects = tqProjects ?? [];
     const auth = useAuthSession();
     const [isOpen, setIsOpen] = useState(initialOpen);
     const [isModalOpen, setIsModalOpen] = useState(false);

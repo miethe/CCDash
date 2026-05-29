@@ -135,7 +135,7 @@ import {
   PlanningApiError,
 } from '../../services/planning';
 import type { PlanningSignal, PlanningStatusBucket } from '../../services/planningRoutes';
-import { useData } from '../../contexts/DataContext';
+import { useDocumentsQuery } from '../../services/queries/documents';
 import { DocumentModal } from '../DocumentModal';
 import { BtnGhost, Chip, DocChip, StatusPill } from './primitives';
 import { EdgeLayer } from './primitives/EdgeLayer';
@@ -1473,7 +1473,8 @@ export function PlanningGraphPanel({
   activeStatusBucket = null,
   activeSignal = null,
 }: PlanningGraphPanelProps) {
-  const { documents } = useData();
+  // T2-002: documents from TanStack Query hook (projectId comes from prop)
+  const { data: documents = [] } = useDocumentsQuery({ projectId });
   const [state, setState] = useState<GraphFetchState>({ phase: 'idle' });
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);

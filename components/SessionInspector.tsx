@@ -1,8 +1,12 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
+import { useSessionsQuery } from '../services/queries/sessions';
+import { useFeaturesQuery } from '../services/queries/features';
+import { useDocumentsQuery } from '../services/queries/documents';
 import { useModelColors } from '../contexts/ModelColorsContext';
 import { AgentSession, SessionLog, SessionArtifact, PlanDocument, Feature, ProjectTask, SessionTranscriptAppendPayload } from '../types';
 import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
@@ -39,6 +43,7 @@ import {
 import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../services/featureSurface';
 import { apiFetch } from '../services/apiClient';
 import { isMemoryGuardEnabled } from '../lib/featureFlags';
+import { uiStateKeys } from '../services/queryKeys';
 import { SessionFeaturesView, TranscriptView } from './SessionInspector/TranscriptView';
 
 const MAIN_SESSION_AGENT = 'Main Session';
@@ -3949,7 +3954,9 @@ const areSessionFiltersEqual = (left: Partial<SessionFilters>, right: Partial<Se
     JSON.stringify(buildSessionFilterPayload(left)) === JSON.stringify(buildSessionFilterPayload(right));
 
 const SessionFilterBar: React.FC = () => {
-    const { sessionFilters, setSessionFilters, sessions } = useData();
+    const { sessionFilters, setSessionFilters, activeProject } = useData();
+    const { data: sessionsData } = useSessionsQuery({ projectId: activeProject?.id });
+    const sessions = sessionsData?.pages.flatMap(p => p.items) ?? [];
     const [localFilters, setLocalFilters] = useState<SessionFilters>(() => buildSessionFilterPayload(sessionFilters));
     const [modelFacets, setModelFacets] = useState<SessionModelFacet[]>([]);
     const [modelFacetsLoading, setModelFacetsLoading] = useState(false);
@@ -4576,6 +4583,9 @@ const SessionDetail: React.FC<{
     onTabChange: (tab: SessionInspectorTab) => void;
 }> = ({ session, onBack, onOpenSession, initialTab, onTabChange }) => {
     const { activeProject, getSessionById, features, runtimeStatus } = useData();
+    // Mount useFeaturesQuery so features are fetched on cold load (T4-003).
+    // useData().features reads from TQ cache — it does not trigger a fetch itself.
+    useFeaturesQuery({ projectId: activeProject?.id });
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<SessionInspectorTab>(initialTab);
@@ -5372,8 +5382,27 @@ const SessionDetail: React.FC<{
     );
 };
 
+// T6-001: estimated row height for session list virtualizer.
+const SESSION_LIST_ITEM_ESTIMATE_PX = 88;
+// T6-001: fallback item cap when virtualizer container height is 0.
+const SESSION_LIST_FALLBACK_CAP = 200;
+// T6-001: height for each virtualized session list container.
+const SESSION_LIST_CONTAINER_HEIGHT_PX = 600;
+
 export const SessionInspector: React.FC = () => {
-    const { sessions, loadMoreSessions, hasMoreSessions, getSessionById, loading } = useData();
+    const { activeProject, getSessionById, loading } = useData();
+    const queryClient = useQueryClient();
+    const {
+        data: sessionsData,
+        fetchNextPage,
+        hasNextPage,
+    } = useSessionsQuery({ projectId: activeProject?.id });
+    // Mount useDocumentsQuery so documents are fetched on cold load (T4-003).
+    // SessionInspectorPanels.ActivityView/FilesView read useData().documents — no fetch without this.
+    useDocumentsQuery({ projectId: activeProject?.id });
+    const sessions = sessionsData?.pages.flatMap(p => p.items) ?? [];
+    const loadMoreSessions = fetchNextPage;
+    const hasMoreSessions = Boolean(hasNextPage);
     const [searchParams, setSearchParams] = useSearchParams();
     const [selectedSession, setSelectedSession] = useState<AgentSession | null>(null);
     const [sessionBackStack, setSessionBackStack] = useState<AgentSession[]>([]);
@@ -5706,6 +5735,50 @@ export const SessionInspector: React.FC = () => {
         [sessionThreadRoots, liveNowMs]
     );
 
+    // T6-001: Refs for virtualizer scroll containers (past sessions — threaded + cards modes).
+    const pastThreadsContainerRef = useRef<HTMLDivElement>(null);
+    const pastCardsContainerRef = useRef<HTMLDivElement>(null);
+
+    // T6-001: Restore scroll offset from TQ query meta on mount.
+    const projectId = activeProject?.id ?? '';
+    const savedScrollOffset = queryClient.getQueryData<number>(
+        uiStateKeys.sessionListScrollOffset(projectId)
+    ) ?? 0;
+
+    // T6-001: Virtualizer for past session thread roots (threaded view).
+    const pastThreadsVirtualizer = useVirtualizer({
+        count: pastSessionThreadRoots.length,
+        getScrollElement: () => pastThreadsContainerRef.current,
+        estimateSize: () => SESSION_LIST_ITEM_ESTIMATE_PX,
+        overscan: 5,
+        initialOffset: savedScrollOffset,
+    });
+
+    // T6-001: Virtualizer for past sessions flat cards view.
+    const pastCardsVirtualizer = useVirtualizer({
+        count: pastSessions.length,
+        getScrollElement: () => pastCardsContainerRef.current,
+        estimateSize: () => SESSION_LIST_ITEM_ESTIMATE_PX,
+        overscan: 5,
+        initialOffset: savedScrollOffset,
+    });
+
+    // T6-001: Persist scroll offset on unmount so back-nav restores position.
+    useEffect(() => {
+        const threadContainer = pastThreadsContainerRef.current;
+        const cardsContainer = pastCardsContainerRef.current;
+        return () => {
+            const offset = threadContainer?.scrollTop ?? cardsContainer?.scrollTop ?? 0;
+            if (offset > 0) {
+                queryClient.setQueryData(
+                    uiStateKeys.sessionListScrollOffset(projectId),
+                    offset,
+                );
+            }
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId]);
+
     const openSessionFromList = useCallback((session: AgentSession) => {
         setSessionBackStack([]);
         setActiveSessionTab('transcript');
@@ -5888,26 +5961,125 @@ export const SessionInspector: React.FC = () => {
                     </h3>
 
                     {sessionsViewMode === 'threaded' ? (
-                        <div className="space-y-4">
-                            {pastSessionThreadRoots.map(node => renderThreadNode(node))}
-                            {pastSessionThreadRoots.length === 0 && (
-                                <div className="col-span-full border border-dashed border-panel-border rounded-2xl p-10 text-center text-muted-foreground bg-panel/10">
-                                    <Zap size={32} className="mx-auto mb-3 opacity-10" />
-                                    <p className="text-sm">No historical sessions found.</p>
-                                </div>
-                            )}
-                        </div>
+                        pastSessionThreadRoots.length === 0 ? (
+                            <div className="border border-dashed border-panel-border rounded-2xl p-10 text-center text-muted-foreground bg-panel/10">
+                                <Zap size={32} className="mx-auto mb-3 opacity-10" />
+                                <p className="text-sm">No historical sessions found.</p>
+                            </div>
+                        ) : (
+                            /* T6-001: Virtualized threaded list. Container needs explicit height.
+                               Fallback: if height=0 (container not yet laid out), cap to
+                               SESSION_LIST_FALLBACK_CAP items and log a warning. */
+                            (() => {
+                                const containerH = pastThreadsContainerRef.current?.clientHeight ?? 0;
+                                if (containerH === 0) {
+                                    // Height=0 fallback: render a bounded slice without virtualizer.
+                                    const cappedItems = pastSessionThreadRoots.slice(0, SESSION_LIST_FALLBACK_CAP);
+                                    if (pastSessionThreadRoots.length > SESSION_LIST_FALLBACK_CAP) {
+                                        console.warn(
+                                            `[SessionInspector] pastSessionThreadRoots virtualizer container height=0; ` +
+                                            `capping render to ${SESSION_LIST_FALLBACK_CAP} of ${pastSessionThreadRoots.length} items.`
+                                        );
+                                    }
+                                    return (
+                                        <div ref={pastThreadsContainerRef} className="space-y-4" style={{ height: SESSION_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}>
+                                            {cappedItems.map(node => renderThreadNode(node))}
+                                        </div>
+                                    );
+                                }
+                                const virtualItems = pastThreadsVirtualizer.getVirtualItems();
+                                const totalSize = pastThreadsVirtualizer.getTotalSize();
+                                return (
+                                    <div
+                                        ref={pastThreadsContainerRef}
+                                        style={{ height: SESSION_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}
+                                        className="custom-scrollbar"
+                                    >
+                                        <div style={{ height: totalSize, position: 'relative' }}>
+                                            {virtualItems.map(virtualRow => (
+                                                <div
+                                                    key={pastSessionThreadRoots[virtualRow.index].session.id}
+                                                    data-index={virtualRow.index}
+                                                    ref={pastThreadsVirtualizer.measureElement}
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: 0,
+                                                        left: 0,
+                                                        width: '100%',
+                                                        transform: `translateY(${virtualRow.start}px)`,
+                                                        paddingBottom: 16,
+                                                    }}
+                                                >
+                                                    {renderThreadNode(pastSessionThreadRoots[virtualRow.index])}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()
+                        )
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                            {pastSessions.map(session => (
-                                <SessionSummaryCard
-                                    key={session.id}
-                                    session={session}
-                                    statusOverride="completed"
-                                    onClick={() => openSessionFromList(session)}
-                                />
-                            ))}
-                        </div>
+                        /* T6-001: Virtualized flat cards list. Same fallback pattern. */
+                        (() => {
+                            const containerH = pastCardsContainerRef.current?.clientHeight ?? 0;
+                            if (containerH === 0) {
+                                const cappedItems = pastSessions.slice(0, SESSION_LIST_FALLBACK_CAP);
+                                if (pastSessions.length > SESSION_LIST_FALLBACK_CAP) {
+                                    console.warn(
+                                        `[SessionInspector] pastSessions virtualizer container height=0; ` +
+                                        `capping render to ${SESSION_LIST_FALLBACK_CAP} of ${pastSessions.length} items.`
+                                    );
+                                }
+                                return (
+                                    <div ref={pastCardsContainerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5" style={{ height: SESSION_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}>
+                                        {cappedItems.map(session => (
+                                            <SessionSummaryCard
+                                                key={session.id}
+                                                session={session}
+                                                statusOverride="completed"
+                                                onClick={() => openSessionFromList(session)}
+                                            />
+                                        ))}
+                                    </div>
+                                );
+                            }
+                            const virtualItems = pastCardsVirtualizer.getVirtualItems();
+                            const totalSize = pastCardsVirtualizer.getTotalSize();
+                            return (
+                                <div
+                                    ref={pastCardsContainerRef}
+                                    style={{ height: SESSION_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}
+                                    className="custom-scrollbar"
+                                >
+                                    <div style={{ height: totalSize, position: 'relative' }}>
+                                        {virtualItems.map(virtualRow => {
+                                            const session = pastSessions[virtualRow.index];
+                                            return (
+                                                <div
+                                                    key={session.id}
+                                                    data-index={virtualRow.index}
+                                                    ref={pastCardsVirtualizer.measureElement}
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: 0,
+                                                        left: 0,
+                                                        width: '100%',
+                                                        transform: `translateY(${virtualRow.start}px)`,
+                                                        paddingBottom: 16,
+                                                    }}
+                                                >
+                                                    <SessionSummaryCard
+                                                        session={session}
+                                                        statusOverride="completed"
+                                                        onClick={() => openSessionFromList(session)}
+                                                    />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            );
+                        })()
                     )}
 
                     {hasMoreSessions && (

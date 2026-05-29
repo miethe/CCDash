@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { DataProvider } from './contexts/DataContext';
 import { ModelColorsProvider } from './contexts/ModelColorsContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { Layout } from './components/Layout';
+import { createProjectQueryClient } from './lib/queryClient';
 
 type RouteComponent<TProps = object> = React.ComponentType<TProps>;
 
@@ -59,20 +61,45 @@ function withRouteSuspense(element: React.ReactNode) {
   return <React.Suspense fallback={<RoutePending />}>{element}</React.Suspense>;
 }
 
-const App: React.FC = () => {
+// Lazy devtools component — only resolves the import when the env flag is true.
+// This keeps devtools out of the production bundle when the flag is absent.
+const ReactQueryDevtoolsLazy = React.lazy(() =>
+  import('@tanstack/react-query-devtools').then((m) => ({
+    default: () => <m.ReactQueryDevtools initialIsOpen={false} />,
+  })),
+);
+
+function ReactQueryDevtoolsConditional() {
+  // Flag is read at call time (not module scope) as required by the spec.
+  if (import.meta.env.VITE_CCDASH_QUERY_DEVTOOLS !== 'true') {
+    return null;
+  }
   return (
-    <ThemeProvider>
-      <HashRouter>
-        <Routes>
-          <Route path="/" element={withRouteSuspense(<LandingPage />)} />
-          <Route path="/docs" element={withRouteSuspense(<DocsPage />)} />
-          <Route path="/app" element={<Navigate to="/dashboard" replace />} />
-          <Route
-            path="/*"
-            element={
-              <DataProvider>
-                <Layout>
-                  <ModelColorsProvider>
+    <React.Suspense fallback={null}>
+      <ReactQueryDevtoolsLazy />
+    </React.Suspense>
+  );
+}
+
+const App: React.FC = () => {
+  // QueryClient is created once for the lifetime of the App component.
+  // Call queryClient.clear() on project switch to avoid cross-project cache bleed.
+  const queryClientRef = useRef(createProjectQueryClient('default'));
+
+  return (
+    <QueryClientProvider client={queryClientRef.current}>
+      <ThemeProvider>
+        <HashRouter>
+          <Routes>
+            <Route path="/" element={withRouteSuspense(<LandingPage />)} />
+            <Route path="/docs" element={withRouteSuspense(<DocsPage />)} />
+            <Route path="/app" element={<Navigate to="/dashboard" replace />} />
+            <Route
+              path="/*"
+              element={
+                <DataProvider>
+                  <Layout>
+                    <ModelColorsProvider>
                     <React.Suspense fallback={<RoutePending />}>
                       <Routes>
                         <Route path="/dashboard" element={<Dashboard />} />
@@ -96,14 +123,16 @@ const App: React.FC = () => {
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                       </Routes>
                     </React.Suspense>
-                  </ModelColorsProvider>
-                </Layout>
-              </DataProvider>
-            }
-          />
-        </Routes>
-      </HashRouter>
-    </ThemeProvider>
+                    </ModelColorsProvider>
+                  </Layout>
+                </DataProvider>
+              }
+            />
+          </Routes>
+        </HashRouter>
+      </ThemeProvider>
+      <ReactQueryDevtoolsConditional />
+    </QueryClientProvider>
   );
 };
 

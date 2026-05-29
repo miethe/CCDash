@@ -1,166 +1,192 @@
 ---
-title: "Implementation Plan: CCDash Frontend Data Layer Refactor v1"
+title: 'Implementation Plan: CCDash Frontend Data Layer Refactor v1'
 schema_version: 2
 doc_type: implementation_plan
-status: draft
-created: 2026-05-28
-updated: 2026-05-28
-feature_slug: "ccdash-frontend-data-layer-refactor"
-feature_version: "v1"
+status: completed
+created: '2026-05-28'
+updated: '2026-05-29'
+feature_slug: ccdash-frontend-data-layer-refactor
+feature_version: v1
 prd_ref: docs/project_plans/PRDs/refactors/ccdash-frontend-data-layer-refactor-v1.md
 plan_ref: null
-scope: "Replace three hand-rolled server-state caches with TanStack Query, remove eager-load waterfall, add backend fat-read bundles, virtualize large lists, and gate Next.js/SSR migration entry criteria."
-effort_estimate: "31 pts (Epics A–C) + 1 pt Epic D gate = 32 pts total"
-architecture_summary: "TQ QueryClientProvider above DataProvider; domain query hooks in services/queries/; contexts shrunk to client-state; bundle endpoints in agent_queries/ then routers/; virtualizers via @tanstack/react-virtual."
+scope: Replace three hand-rolled server-state caches with TanStack Query, remove eager-load
+  waterfall, add backend fat-read bundles, virtualize large lists, and gate Next.js/SSR
+  migration entry criteria.
+effort_estimate: "31 pts (Epics A\u2013C) + 1 pt Epic D gate = 32 pts total"
+architecture_summary: TQ QueryClientProvider above DataProvider; domain query hooks
+  in services/queries/; contexts shrunk to client-state; bundle endpoints in agent_queries/
+  then routers/; virtualizers via @tanstack/react-virtual.
 risk_level: medium
 changelog_required: true
 category: refactors
-tags: [implementation, refactor, tanstack-query, data-layer, performance, frontend]
+tags:
+- implementation
+- refactor
+- tanstack-query
+- data-layer
+- performance
+- frontend
 priority: high
 owner: null
 contributors: []
 milestone: null
-commit_refs: []
+commit_refs:
+- c8d583c
+- 84eda5a
+- 6f92460
+- 4e1db9b
 pr_refs: []
-deferred_items_spec_refs: []
-findings_doc_ref: null
+deferred_items_spec_refs:
+- docs/project_plans/design-specs/ccdash-nextjs-migration-entry-criteria.md
+findings_doc_ref: .claude/findings/ccdash-frontend-data-layer-refactor-findings.md
 related_documents:
-  - docs/project_plans/PRDs/refactors/ccdash-frontend-data-layer-refactor-v1.md
-  - .claude/worknotes/ccdash-frontend-data-layer-refactor/decisions-block.md
-  - .claude/worknotes/ccdash-frontend-data-layer-refactor/inventory-frontend.md
-  - .claude/worknotes/ccdash-frontend-data-layer-refactor/inventory-backend.md
-  - .claude/worknotes/ccdash-frontend-data-layer-refactor/inventory-priorart.md
-  - docs/guides/feature-surface-architecture.md
+- docs/project_plans/PRDs/refactors/ccdash-frontend-data-layer-refactor-v1.md
+- .claude/worknotes/ccdash-frontend-data-layer-refactor/decisions-block.md
+- .claude/worknotes/ccdash-frontend-data-layer-refactor/inventory-frontend.md
+- .claude/worknotes/ccdash-frontend-data-layer-refactor/inventory-backend.md
+- .claude/worknotes/ccdash-frontend-data-layer-refactor/inventory-priorart.md
+- docs/guides/feature-surface-architecture.md
 references:
   user_docs:
-    - docs/guides/feature-surface-architecture.md
-    - docs/guides/query-cache-tuning-guide.md
+  - docs/guides/feature-surface-architecture.md
+  - docs/guides/query-cache-tuning-guide.md
   context:
-    - .claude/context/distilled/project-fundamentals-and-design-context.md
+  - .claude/context/distilled/project-fundamentals-and-design-context.md
   specs:
-    - .claude/specs/changelog-spec.md
+  - .claude/specs/changelog-spec.md
   related_prds:
-    - docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
+  - docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
 spike_ref: null
 adr_refs: []
 charter_ref: null
-changelog_ref: null
+changelog_ref: CHANGELOG.md
 test_plan_ref: null
 plan_structure: unified
 progress_init: auto
 files_affected:
-  - App.tsx
-  - lib/queryClient.ts
-  - services/queryKeys.ts
-  - services/queries/sessions.ts
-  - services/queries/documents.ts
-  - services/queries/tasks.ts
-  - services/queries/features.ts
-  - services/queries/alerts.ts
-  - services/queries/notifications.ts
-  - services/queries/planning.ts
-  - services/queries/dashboard.ts
-  - services/planning.ts
-  - services/featureSurfaceCache.ts
-  - services/featureCacheBus.ts
-  - services/useFeatureSurface.ts
-  - services/apiClient.ts
-  - contexts/AppEntityDataContext.tsx
-  - contexts/AppRuntimeContext.tsx
-  - contexts/DataContext.tsx
-  - contexts/AppSessionContext.tsx
-  - components/Dashboard.tsx
-  - components/SessionInspector.tsx
-  - components/PlanCatalog.tsx
-  - components/ProjectBoard.tsx
-  - backend/application/services/agent_queries/dashboard.py
-  - backend/routers/client_v1.py
-  - backend/routers/api.py
+- App.tsx
+- lib/queryClient.ts
+- services/queryKeys.ts
+- services/queries/sessions.ts
+- services/queries/documents.ts
+- services/queries/tasks.ts
+- services/queries/features.ts
+- services/queries/alerts.ts
+- services/queries/notifications.ts
+- services/queries/planning.ts
+- services/queries/dashboard.ts
+- services/planning.ts
+- services/featureSurfaceCache.ts
+- services/featureCacheBus.ts
+- services/useFeatureSurface.ts
+- services/apiClient.ts
+- contexts/AppEntityDataContext.tsx
+- contexts/AppRuntimeContext.tsx
+- contexts/DataContext.tsx
+- contexts/AppSessionContext.tsx
+- components/Dashboard.tsx
+- components/SessionInspector.tsx
+- components/PlanCatalog.tsx
+- components/ProjectBoard.tsx
+- backend/application/services/agent_queries/dashboard.py
+- backend/routers/client_v1.py
+- backend/routers/api.py
 wave_plan:
   serialization_barriers:
-    - contexts/DataContext.tsx
-    - services/queryKeys.ts
-    - App.tsx
+  - contexts/DataContext.tsx
+  - services/queryKeys.ts
+  - App.tsx
   phases:
-    - id: P0
-      depends_on: []
-      isolation: shared
-      parallelizable: false
-      files_affected:
-        - App.tsx
-        - lib/queryClient.ts
-        - services/queryKeys.ts
-    - id: P1
-      depends_on: [P0]
-      isolation: shared
-      parallelizable: false
-      files_affected:
-        - services/queries/sessions.ts
-        - contexts/AppEntityDataContext.tsx
-        - components/SessionInspector.tsx
-        - components/Dashboard.tsx
-    - id: P2
-      depends_on: [P1]
-      isolation: shared
-      parallelizable: true
-      files_affected:
-        - services/queries/documents.ts
-        - services/queries/tasks.ts
-        - services/queries/features.ts
-        - services/queries/alerts.ts
-        - services/queries/notifications.ts
-        - contexts/AppEntityDataContext.tsx
-    - id: P3
-      depends_on: [P2]
-      isolation: shared
-      parallelizable: false
-      files_affected:
-        - services/planning.ts
-        - services/featureSurfaceCache.ts
-        - services/featureCacheBus.ts
-        - services/useFeatureSurface.ts
-    - id: P4
-      depends_on: [P3]
-      isolation: shared
-      parallelizable: false
-      files_affected:
-        - contexts/AppEntityDataContext.tsx
-        - contexts/AppRuntimeContext.tsx
-        - contexts/DataContext.tsx
-        - App.tsx
-    - id: P5
-      depends_on: [P0]
-      isolation: shared
-      parallelizable: true
-      files_affected:
-        - backend/application/services/agent_queries/dashboard.py
-        - backend/routers/client_v1.py
-        - backend/routers/api.py
-        - services/queries/dashboard.ts
-        - components/Dashboard.tsx
-    - id: P6
-      depends_on: [P2]
-      isolation: shared
-      parallelizable: false
-      files_affected:
-        - components/SessionInspector.tsx
-        - components/PlanCatalog.tsx
-        - components/ProjectBoard.tsx
-    - id: P7
-      depends_on: [P4, P5, P6]
-      isolation: shared
-      parallelizable: false
-      files_affected:
-        - CHANGELOG.md
-        - docs/guides/feature-surface-architecture.md
-        - docs/project_plans/design-specs/ccdash-nextjs-migration-entry-criteria.md
+  - id: P0
+    depends_on: []
+    isolation: shared
+    parallelizable: false
+    files_affected:
+    - App.tsx
+    - lib/queryClient.ts
+    - services/queryKeys.ts
+  - id: P1
+    depends_on:
+    - P0
+    isolation: shared
+    parallelizable: false
+    files_affected:
+    - services/queries/sessions.ts
+    - contexts/AppEntityDataContext.tsx
+    - components/SessionInspector.tsx
+    - components/Dashboard.tsx
+  - id: P2
+    depends_on:
+    - P1
+    isolation: shared
+    parallelizable: true
+    files_affected:
+    - services/queries/documents.ts
+    - services/queries/tasks.ts
+    - services/queries/features.ts
+    - services/queries/alerts.ts
+    - services/queries/notifications.ts
+    - contexts/AppEntityDataContext.tsx
+  - id: P3
+    depends_on:
+    - P2
+    isolation: shared
+    parallelizable: false
+    files_affected:
+    - services/planning.ts
+    - services/featureSurfaceCache.ts
+    - services/featureCacheBus.ts
+    - services/useFeatureSurface.ts
+  - id: P4
+    depends_on:
+    - P3
+    isolation: shared
+    parallelizable: false
+    files_affected:
+    - contexts/AppEntityDataContext.tsx
+    - contexts/AppRuntimeContext.tsx
+    - contexts/DataContext.tsx
+    - App.tsx
+  - id: P5
+    depends_on:
+    - P0
+    isolation: shared
+    parallelizable: true
+    files_affected:
+    - backend/application/services/agent_queries/dashboard.py
+    - backend/routers/client_v1.py
+    - backend/routers/api.py
+    - services/queries/dashboard.ts
+    - components/Dashboard.tsx
+  - id: P6
+    depends_on:
+    - P2
+    isolation: shared
+    parallelizable: false
+    files_affected:
+    - components/SessionInspector.tsx
+    - components/PlanCatalog.tsx
+    - components/ProjectBoard.tsx
+  - id: P7
+    depends_on:
+    - P4
+    - P5
+    - P6
+    isolation: shared
+    parallelizable: false
+    files_affected:
+    - CHANGELOG.md
+    - docs/guides/feature-surface-architecture.md
+    - docs/project_plans/design-specs/ccdash-nextjs-migration-entry-criteria.md
   waves:
-    - [P0]
-    - [P1, P5]
-    - [P2, P6]
-    - [P3]
-    - [P4]
-    - [P7]
+  - - P0
+  - - P1
+    - P5
+  - - P2
+    - P6
+  - - P3
+  - - P4
+  - - P7
 ---
 
 # Implementation Plan: CCDash Frontend Data Layer Refactor v1

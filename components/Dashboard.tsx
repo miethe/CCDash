@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useData } from '../contexts/DataContext';
+import { useDashboardBundleQuery } from '../services/queries/dashboard';
 import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu, LayoutGrid, ShieldAlert, CheckCircle2, Clock, Activity } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
 import { analyticsService } from '../services/analytics';
@@ -147,7 +148,22 @@ const FeatureSummaryChip = ({
 );
 
 export const Dashboard: React.FC = () => {
-  const { sessions, tasks, loading } = useData();
+  const { activeProject, tasks, loading } = useData();
+
+  // T5-005 / T5-006: Replace separate useSessionsQuery + useTasksQuery with
+  // a single fat-read bundle.  Cold Dashboard load now issues ONE GET /api/v1/dashboard.
+  // AC-R-P2 resilience: sessions ?? [] and taskCounts ?? {} are applied in the hook.
+  const {
+    sessions: bundleSessions,
+    taskCounts,
+  } = useDashboardBundleQuery({ projectId: activeProject?.id });
+
+  // Adapt SessionCardDTO (snake_case) to the shape used by analyticsData below.
+  const sessions = bundleSessions.map(s => ({
+    startedAt: s.started_at ?? undefined,
+    totalCost: s.total_cost ?? 0,
+    qualityRating: undefined as number | undefined,
+  }));
 
   // Live agents count — polls /api/agent/live/active-count every 10 s.
   // Returns null on first render (before API responds) or on API error,
@@ -364,7 +380,7 @@ export const Dashboard: React.FC = () => {
         <StatCard
           label="Features Shipped"
           value={`${Number(overview?.kpis?.taskVelocity || 0).toLocaleString()}`}
-          sub={`${Number(overview?.kpis?.sessionCount || 0).toLocaleString()} sessions in scope`}
+          sub={`${Number(overview?.kpis?.sessionCount || 0).toLocaleString()} sessions • ${taskCounts['done'] ?? 0} done tasks`}
           icon={Zap}
           tone="warning"
         />

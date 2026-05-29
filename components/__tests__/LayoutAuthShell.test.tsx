@@ -47,6 +47,14 @@ vi.mock('../ProjectSelector', () => ({
   ProjectSelector: () => <div>Project selector</div>,
 }));
 
+// T2 Batch B: stub TQ hooks added to Layout/ProjectSelector so they render without QueryClientProvider
+vi.mock('../../services/queries/notifications', () => ({
+  useNotificationsQuery: () => ({ data: undefined, isLoading: false, error: null }),
+}));
+vi.mock('../../services/queries/alerts', () => ({
+  useAlertsQuery: () => ({ data: undefined, isLoading: false, error: null }),
+}));
+
 import { Layout } from '../Layout';
 
 const baseAuth = () => ({

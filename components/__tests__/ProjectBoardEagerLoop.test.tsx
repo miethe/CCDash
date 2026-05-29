@@ -22,6 +22,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Feature, PlanDocument } from '../../types';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -62,11 +63,8 @@ vi.mock('../../services/useFeatureSurface', () => ({
   })),
 }));
 
-// ── featureSurfaceCache mock ──────────────────────────────────────────────────
-
-vi.mock('../../services/featureSurfaceCache', () => ({
-  invalidateFeatureSurface: vi.fn(),
-}));
+// T3-005: featureSurfaceCache replaced with TQ.
+// renderBoard wraps with QueryClientProvider so useQueryClient works.
 
 // ── DataContext mock — empty features (avoids FeatureCard shape issues) ───────
 
@@ -202,6 +200,12 @@ vi.mock('../../services/featureSurfaceFlag', () => ({
   isFeatureSurfaceV2Enabled: vi.fn(() => false),
 }));
 
+// T2-004: stub paginated features query so ProjectBoard renders without a QueryClientProvider
+vi.mock('../../services/queries/features', () => ({
+  useFeaturesQuery: () => ({ data: { items: [], total: 0, page: 0, pageSize: 100 }, isLoading: false, error: null }),
+  FEATURES_PAGE_SIZE: 100,
+}));
+
 // ── Component under test ──────────────────────────────────────────────────────
 
 import { ProjectBoard } from '../ProjectBoard';
@@ -209,10 +213,13 @@ import { ProjectBoard } from '../ProjectBoard';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function renderBoard() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(
-    <MemoryRouter initialEntries={['/board']}>
-      <ProjectBoard />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/board']}>
+        <ProjectBoard />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -283,9 +290,11 @@ describe('P3-004 — Source-level proof: eager loop removed', () => {
     expect(hasFanOutLoop).toBe(false);
   });
 
-  it('invalidateFeatureSurface is imported and wired to handleStatusChange', () => {
-    expect(source).toContain("import { invalidateFeatureSurface } from '../services/featureSurfaceCache'");
-    expect(source).toContain('invalidateFeatureSurface({ projectId: activeProjectId, featureIds: [featureId] })');
+  it('T3-005: featureSurfaceKeys is imported and queryClient.invalidateQueries is wired to handleStatusChange', () => {
+    // T3-005: invalidateFeatureSurface replaced with TQ invalidation.
+    expect(source).toContain("import { featureSurfaceKeys } from '../services/queryKeys'");
+    expect(source).toContain("featureSurfaceKeys.all(activeProjectId ?? '')");
+    expect(source).toContain('queryClient.invalidateQueries');
   });
 
   it('featureSessionSummaries state fully removed (P3-005: rollup data path in place)', () => {

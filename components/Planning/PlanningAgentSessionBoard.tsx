@@ -13,7 +13,7 @@ import type {
   SessionCorrelation,
   SessionCorrelationEvidence,
 } from '@/types';
-import { getSessionBoard } from '@/services/planning';
+import { usePlanningSessionBoardQuery } from '@/services/queries/planning';
 import {
   trackBoardOpened,
   trackGroupingChanged,
@@ -1150,18 +1150,13 @@ function BoardRightRailSidebar({ groups, onSessionSelect }: BoardRightRailSideba
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-type FetchState =
-  | { phase: 'idle' }
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'ready'; board: PlanningAgentSessionBoardData };
 
 export interface PlanningAgentSessionBoardProps {
   className?: string;
 }
 
 export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoardProps) {
-  const { activeProject, sessions } = useData();
+  const { activeProject } = useData();
   const { density } = usePlanningRoute();
   const compact = density === 'compact';
 
@@ -1186,9 +1181,24 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     return () => clearTimeout(t);
   }, [filterText]);
 
-  const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
+  // TQ-backed session board query (T3-002).
+  const boardQuery = usePlanningSessionBoardQuery({
+    projectId: activeProject?.id,
+    grouping,
+    enabled: !!activeProject?.id,
+  });
+  const board = boardQuery.data;
   const [refreshing, setRefreshing] = useState(false);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
+
+  // Track fetchedAt from TQ data updates.
+  const prevBoardRef = useRef(board);
+  useEffect(() => {
+    if (prevBoardRef.current !== board && board != null) {
+      prevBoardRef.current = board;
+      setFetchedAt(new Date());
+    }
+  }, [board]);
 
   // ── Relationship highlight state ────────────────────────────────────────────
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
@@ -1199,59 +1209,6 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   const [previewFeatureId, setPreviewFeatureId] = useState<string | null>(null);
   const [previewPhaseNumber, setPreviewPhaseNumber] = useState<number | undefined>(undefined);
   const [previewCards, setPreviewCards] = useState<PlanningAgentSessionCard[]>([]);
-
-  const sessionsRef = useRef(sessions);
-  const prevSessionsRef = useRef(sessions);
-
-  const load = useCallback(
-    async (opts: { forceRefresh?: boolean } = {}) => {
-      if (!activeProject?.id) {
-        setFetchState({ phase: 'idle' });
-        return;
-      }
-      const isBackgroundRefresh = fetchState.phase === 'ready' && !opts.forceRefresh;
-      const isManualRefresh = fetchState.phase === 'ready' && opts.forceRefresh;
-
-      if (isBackgroundRefresh || isManualRefresh) {
-        setRefreshing(true);
-      } else {
-        setFetchState((prev) => (prev.phase === 'ready' ? prev : { phase: 'loading' }));
-      }
-
-      try {
-        const board = await getSessionBoard(activeProject.id, grouping, opts);
-        setFetchState({ phase: 'ready', board });
-        setFetchedAt(new Date());
-      } catch (err) {
-        if (isBackgroundRefresh || isManualRefresh) {
-          console.warn('[PlanningAgentSessionBoard] Background refresh failed:', err);
-        } else {
-          setFetchState({
-            phase: 'error',
-            message: err instanceof Error ? err.message : 'Failed to load session board.',
-          });
-        }
-      } finally {
-        setRefreshing(false);
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeProject?.id, grouping],
-  );
-
-  useEffect(() => {
-    sessionsRef.current = sessions;
-  });
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    if (prevSessionsRef.current === sessions) return;
-    prevSessionsRef.current = sessions;
-    void load();
-  }, [sessions, load]);
 
   // ── Telemetry: board opened + reduced-motion detection ─────────────────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1302,23 +1259,25 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   );
 
   const handleManualRefresh = useCallback(() => {
-    void load({ forceRefresh: true });
-  }, [load]);
+    setRefreshing(true);
+    void boardQuery.refetch().finally(() => setRefreshing(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardQuery.refetch]);
 
   // ── Relationship highlight derivation ────────────────────────────────────────
 
   const activeSessionId = selectedSessionId ?? hoveredSessionId;
 
   const cardBySessionId = useMemo<Map<string, PlanningAgentSessionCard>>(() => {
-    if (fetchState.phase !== 'ready') return new Map();
+    if (!board) return new Map();
     const map = new Map<string, PlanningAgentSessionCard>();
-    for (const group of fetchState.board.groups) {
+    for (const group of board.groups) {
       for (const card of group.cards) {
         map.set(card.sessionId, card);
       }
     }
     return map;
-  }, [fetchState]);
+  }, [board]);
 
   const {
     highlightedSessionIds,
@@ -1430,7 +1389,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     [urlHighlightId],
   );
 
-  const isInitialLoad = fetchState.phase === 'loading' || fetchState.phase === 'idle';
+  const isInitialLoad = boardQuery.isPending;
 
   // Derive the currently selected card for the detail panel.
   const selectedCard = selectedSessionId ? cardBySessionId.get(selectedSessionId) ?? null : null;
@@ -1440,15 +1399,15 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
 
   // Apply state filter BEFORE grouping display — groups with zero cards after filtering are removed.
   const filteredGroups = useMemo<PlanningBoardGroup[]>(() => {
-    if (fetchState.phase !== 'ready') return [];
-    if (stateFilter === 'all') return fetchState.board.groups;
-    return fetchState.board.groups
+    if (!board) return [];
+    if (stateFilter === 'all') return board.groups;
+    return board.groups
       .map((group) => ({
         ...group,
         cards: applyStateFilter(group.cards, stateFilter),
       }))
       .filter((group) => group.cards.length > 0);
-  }, [fetchState, stateFilter]);
+  }, [board, stateFilter]);
 
   return (
     <Panel className={cn('p-4', className)}>
@@ -1544,13 +1503,15 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
 
       {isInitialLoad ? (
         <BoardSkeleton />
-      ) : fetchState.phase === 'error' ? (
+      ) : boardQuery.isError ? (
         <div className="flex flex-col items-center gap-3 py-10">
           <AlertCircle size={22} style={{ color: 'var(--err)' }} aria-hidden />
-          <p className="text-[12px] text-[color:var(--ink-2)]">{fetchState.message}</p>
+          <p className="text-[12px] text-[color:var(--ink-2)]">
+            {boardQuery.error instanceof Error ? boardQuery.error.message : 'Failed to load session board.'}
+          </p>
           <button
             type="button"
-            onClick={() => void load({ forceRefresh: true })}
+            onClick={() => void boardQuery.refetch()}
             className={cn(
               'flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--line-2)]',
               'bg-[color:var(--bg-2)] px-3 py-1.5 text-[11px] text-[color:var(--ink-1)]',
@@ -1561,7 +1522,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
             Retry
           </button>
         </div>
-      ) : fetchState.board.groups.length === 0 ? (
+      ) : !board || board.groups.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-10">
           <LayoutGrid size={22} style={{ color: 'var(--ink-4)' }} aria-hidden />
           <p className="text-[12px] text-[color:var(--ink-3)]">No active agent sessions</p>
@@ -1609,7 +1570,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
 
           {/* ── Right-rail summary sidebar ────────────────────────────────── */}
           <BoardRightRailSidebar
-            groups={fetchState.board.groups}
+            groups={board?.groups ?? []}
             onSessionSelect={(id) => setSelectedSessionId(id)}
           />
 

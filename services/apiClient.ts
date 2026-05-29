@@ -101,9 +101,11 @@ export interface ApiClient {
   getSession(sessionId: string): Promise<AgentSession>;
   getDocuments(offset: number, limit: number): Promise<PaginatedResponse<PlanDocument> | PlanDocument[]>;
   getTasks(): Promise<PaginatedResponse<ProjectTask> | ProjectTask[]>;
+  getTasksPaginated(offset: number, limit: number): Promise<PaginatedResponse<ProjectTask> | ProjectTask[]>;
   getAlerts(): Promise<AlertConfig[]>;
   getNotifications(): Promise<Notification[]>;
   getFeatures(): Promise<PaginatedResponse<Feature> | Feature[]>;
+  getFeaturesPaginated(page: number, pageSize: number, query?: string): Promise<PaginatedResponse<Feature> | Feature[]>;
   getProjects(): Promise<Project[]>;
   getActiveProject(): Promise<Project>;
   getProjectScope(): string | null;
@@ -398,7 +400,14 @@ export function createApiClient(): ApiClient {
     },
 
     async getTasks() {
-      return requestJson<PaginatedResponse<ProjectTask> | ProjectTask[]>('/tasks?offset=0&limit=5000');
+      // Legacy call — returns first page only (100 items). Prefer getTasksPaginated.
+      return requestJson<PaginatedResponse<ProjectTask> | ProjectTask[]>('/tasks?offset=0&limit=100');
+    },
+
+    async getTasksPaginated(offset: number, limit: number) {
+      return requestJson<PaginatedResponse<ProjectTask> | ProjectTask[]>(
+        `/tasks?offset=${offset}&limit=${limit}`,
+      );
     },
 
     async getAlerts() {
@@ -410,7 +419,18 @@ export function createApiClient(): ApiClient {
     },
 
     async getFeatures() {
-      return requestJson<PaginatedResponse<Feature> | Feature[]>('/features?offset=0&limit=5000');
+      // Legacy call — returns first page only (100 items). Prefer getFeaturesPaginated.
+      return requestJson<PaginatedResponse<Feature> | Feature[]>('/features?offset=0&limit=100');
+    },
+
+    async getFeaturesPaginated(page: number, pageSize: number, query?: string) {
+      const params = new URLSearchParams({
+        view: 'cards',
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (query) params.set('q', query);
+      return requestJson<PaginatedResponse<Feature> | Feature[]>(`/features?${params.toString()}`);
     },
 
     async getProjects() {

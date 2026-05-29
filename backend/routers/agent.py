@@ -28,6 +28,7 @@ from backend.application.services.agent_queries import (
     PlanningNextRunPreviewDTO,
     PlanningQueryService,
     PlanningSessionQueryService,
+    PlanningViewBundleDTO,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     ProjectStatusDTO,
@@ -661,6 +662,55 @@ async def get_planning_session_board_for_feature(
         )
         if result.status == "error":
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
+        return result
+
+
+# ── Planning view bundle (T5-003) ────────────────────────────────────────────
+# Fat-read bundle for the Planning above-fold view.  Always includes the project
+# planning summary; optional sub-payloads (graph, session_board) are included
+# when present in the ``include=`` query parameter.
+
+
+@agent_router.get(
+    "/planning/view",
+    response_model=PlanningViewBundleDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_view_bundle(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    include: list[str] | None = Query(
+        default=None,
+        description="Optional sub-payloads to include: 'graph', 'session_board'.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningViewBundleDTO:
+    """Return the Planning view fat-read bundle.
+
+    Always returns the project planning summary.  Include ``?include=graph`` and/or
+    ``?include=session_board`` to add those optional sub-payloads.  Absent sub-payloads
+    are ``null`` in the response — the FE should request them lazily when needed.
+    """
+    with otel.start_span(
+        "ccdash.planning.view.bundle",
+        {"project_id": project_id or "", "include": ",".join(include or [])},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_query_service.get_planning_view_bundle(
+            app_request.context,
+            app_request.ports,
+            project_id_override=project_id,
+            include=include or [],
+        )
+        if result.status == "error":
+            raise HTTPException(
+                status_code=404,
+                detail="Project scope could not be resolved.",
+            )
         return result
 
 

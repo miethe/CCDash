@@ -160,6 +160,25 @@ vi.mock('../TestVisualizer/TestStatusView', () => ({
   TestStatusView: () => <div data-mock="test-status-view" />,
 }));
 
+// T2-002/T2-004: stub TQ hooks so components render without a QueryClientProvider.
+// useFeaturesQuery returns mockData.features so ProjectBoard's modal auto-select works.
+vi.mock('../../services/queries/documents', () => ({
+  useDocumentsQuery: () => ({ data: [], isLoading: false, error: null }),
+  DOCUMENTS_PAGE_SIZE: 500,
+}));
+vi.mock('../../services/queries/features', () => ({
+  useFeaturesQuery: () => ({
+    data: { items: mockData.features ?? [], total: (mockData.features ?? []).length, page: 0, pageSize: 100 },
+    isLoading: false,
+    error: null,
+  }),
+  FEATURES_PAGE_SIZE: 100,
+}));
+vi.mock('../../services/queries/tasks', () => ({
+  useTasksQuery: () => ({ data: { items: [], total: 0, page: 0, pageSize: 100 }, isLoading: false, error: null }),
+  TASKS_PAGE_SIZE: 100,
+}));
+
 import { DocumentModal } from '../DocumentModal';
 import { PlanCatalog } from '../PlanCatalog';
 import { ProjectBoard } from '../ProjectBoard';

@@ -902,3 +902,102 @@ class PlanningNextRunPreviewDTO(AgentQueryEnvelope):
     prompt_skeleton: str = ""
     context_refs: list[NextRunContextRef] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+# ── P5a Fat-Read Bundle DTOs ──────────────────────────────────────────────────
+# These DTOs compose existing cached reads into single above-fold bundles.
+# They reduce the FE waterfall from N parallel above-fold requests to ≤1 per view.
+
+
+class SessionCardDTO(BaseModel):
+    """Lightweight session card for the Dashboard bundle sessions list."""
+
+    session_id: str
+    title: str = ""
+    status: str = ""
+    started_at: str = ""
+    ended_at: str = ""
+    model: str = ""
+    total_cost: float = 0.0
+    total_tokens: int = 0
+    feature_id: str = ""
+    root_session_id: str = ""
+
+
+class DashboardBundleDTO(AgentQueryEnvelope):
+    """Fat-read bundle for the Dashboard view (T5-001).
+
+    Composes the most-recent sessions page (limit 20, desc ``started_at``) and
+    task counts by status into a single above-fold response.  Both fields are
+    resilience-safe: missing values default to empty list / empty dict.
+
+    Field notes:
+    - ``sessions``: up to 20 most-recent session cards sorted by ``started_at`` desc.
+    - ``task_counts``: dict mapping status string to integer count for the project.
+    """
+
+    project_id: str
+    sessions: list[SessionCardDTO] = Field(default_factory=list)
+    task_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class PlanningViewBundleDTO(AgentQueryEnvelope):
+    """Fat-read bundle for the Planning view (T5-003).
+
+    Always includes the planning summary.  Graph and session board are optional
+    and included only when requested via the ``include=`` query parameter.
+
+    Field notes:
+    - ``summary``: project-level planning health counts (always present).
+    - ``graph``: planning graph nodes/edges (present when ``include=graph``).
+    - ``session_board``: planning agent session board (present when
+      ``include=session_board``).
+    """
+
+    project_id: str
+    summary: ProjectPlanningSummaryDTO | None = None
+    graph: ProjectPlanningGraphDTO | None = None
+    session_board: "PlanningAgentSessionBoardDTO | None" = None
+
+
+class AnalyticsKPIsDTO(BaseModel):
+    """Above-fold analytics KPI snapshot (T5-004)."""
+
+    session_count: int = 0
+    session_cost: float = 0.0
+    session_tokens: int = 0
+    session_duration_avg: float = 0.0
+    task_velocity: int = 0
+    task_completion_pct: float = 0.0
+    feature_progress: float = 0.0
+    tool_call_count: int = 0
+    tool_success_rate: float = 0.0
+    model_io_tokens: int = 0
+    cache_input_tokens: int = 0
+    observed_tokens: int = 0
+
+
+class AnalyticsTopModelDTO(BaseModel):
+    """Single model entry in the top-models list."""
+
+    name: str
+    usage: int = 0
+
+
+class AnalyticsOverviewBundleDTO(AgentQueryEnvelope):
+    """Fat-read bundle for the Analytics above-fold view (T5-004).
+
+    Contains only above-fold KPIs and top models.  Detailed tab breakdowns
+    (workflow effectiveness, session intelligence, etc.) remain as separate lazy
+    endpoints so they are not penalised by bundle latency.
+
+    Field notes:
+    - ``kpis``: key performance indicators for the project.
+    - ``top_models``: model usage breakdown (up to 8 entries).
+    - ``range``: effective date range used for KPI computation.
+    """
+
+    project_id: str
+    kpis: AnalyticsKPIsDTO = Field(default_factory=AnalyticsKPIsDTO)
+    top_models: list[AnalyticsTopModelDTO] = Field(default_factory=list)
+    range: dict[str, str] = Field(default_factory=dict)

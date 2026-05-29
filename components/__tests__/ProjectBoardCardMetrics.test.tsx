@@ -19,6 +19,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Feature, PlanDocument } from '../../types';
 import type { FeatureCardDTO, FeatureRollupDTO } from '../../services/featureSurface';
 
@@ -127,9 +128,8 @@ vi.mock('../../services/useFeatureSurface', () => ({
   useFeatureSurface: makeSurfaceMock([], new Map()),
 }));
 
-vi.mock('../../services/featureSurfaceCache', () => ({
-  invalidateFeatureSurface: vi.fn(),
-}));
+// T3-005: featureSurfaceCache deleted; TQ is the cache layer.
+// renderBoard wraps with QueryClientProvider so useQueryClient works.
 
 vi.mock('../../contexts/DataContext', () => ({
   useData: () => ({
@@ -259,6 +259,12 @@ vi.mock('../../services/featureSurfaceFlag', () => ({
   isFeatureSurfaceV2Enabled: vi.fn(() => false),
 }));
 
+// T2-004: stub paginated features query so ProjectBoard renders without a QueryClientProvider
+vi.mock('../../services/queries/features', () => ({
+  useFeaturesQuery: () => ({ data: { items: [], total: 0, page: 0, pageSize: 100 }, isLoading: false, error: null }),
+  FEATURES_PAGE_SIZE: 100,
+}));
+
 // ── Component under test ──────────────────────────────────────────────────────
 
 import { ProjectBoard } from '../ProjectBoard';
@@ -268,10 +274,13 @@ import * as UseFeatureSurfaceModule from '../../services/useFeatureSurface';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function renderBoard() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(
-    <MemoryRouter initialEntries={['/board']}>
-      <ProjectBoard />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/board']}>
+        <ProjectBoard />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -446,8 +455,17 @@ describe('P3-005 — Source-level proof: featureSessionSummaries state removed',
     expect(source).toContain('surfaceCards.filter(c => cardDTOBoardStage(c)');
   });
 
-  it('list render maps over surfaceCards', () => {
-    expect(source).toContain('surfaceCards.map(c => (');
+  it('list render iterates surfaceCards (virtualized in P6)', () => {
+    // P6 (T6-003) replaced the eager `surfaceCards.map(c => (` list render with
+    // a @tanstack/react-virtual virtualizer that indexes surfaceCards by virtual
+    // row (`surfaceCards[vRow.index]`), plus a `surfaceCards.slice(...)` height=0
+    // fallback. The invariant is unchanged: the list renders from the derived
+    // `surfaceCards`, never the eager `filteredFeatures`.
+    const rendersFromSurfaceCards =
+      source.includes('surfaceCards[vRow.index]') ||
+      source.includes('surfaceCards.map(c => (');
+    expect(rendersFromSurfaceCards).toBe(true);
+    expect(source).not.toContain('filteredFeatures.map(');
   });
 
   it('no per-feature session fetch calls remain on the render path', () => {

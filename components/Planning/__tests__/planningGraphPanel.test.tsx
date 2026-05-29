@@ -53,6 +53,13 @@ vi.mock('../../../contexts/DataContext', () => ({
   useData: () => ({ activeProject: { id: 'proj-1', name: 'Test Project' } }),
 }));
 
+// T2-002: stub useDocumentsQuery so PlanningGraphPanel and PlanningNodeDetail
+// render without a QueryClientProvider.
+vi.mock('../../../services/queries/documents', () => ({
+  useDocumentsQuery: () => ({ data: [], isLoading: false, error: null }),
+  DOCUMENTS_PAGE_SIZE: 500,
+}));
+
 // react-router-dom useParams / useNavigate stubs
 vi.mock('react-router-dom', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router-dom')>();

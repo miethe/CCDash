@@ -13,7 +13,12 @@ from pydantic import BaseModel
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
+from backend.application.services.agent_queries import (
+    AnalyticsBundleQueryService,
+    AnalyticsOverviewBundleDTO,
+)
 from backend.application.services.analytics import AnalyticsOverviewService
+from backend.observability import otel
 from backend.application.services.common import resolve_project
 from backend.application.services.session_intelligence import (
     SessionIntelligenceReadService,
@@ -61,6 +66,8 @@ from backend.services.workflow_registry import get_workflow_registry_detail, lis
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 analytics_overview_service = AnalyticsOverviewService()
+# P5a: analytics overview bundle service singleton (T5-004)
+_analytics_bundle_query_service = AnalyticsBundleQueryService()
 transcript_search_service = TranscriptSearchService()
 session_intelligence_read_service = SessionIntelligenceReadService()
 artifact_ranking_service = ArtifactRankingService()
@@ -1339,6 +1346,33 @@ class AlertConfigPatch(BaseModel):
     threshold: float | None = None
     isActive: bool | None = None
     scope: str | None = None
+
+
+@analytics_router.get("/overview-bundle", response_model=AnalyticsOverviewBundleDTO)
+async def get_analytics_overview_bundle(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AnalyticsOverviewBundleDTO:
+    """Return the Analytics above-fold fat-read bundle (T5-004).
+
+    Composes KPIs and top model usage into a single above-fold response.
+    Detailed tab breakdowns (workflow effectiveness, session intelligence, etc.)
+    remain as separate lazy endpoints and are not included here.
+    """
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
+    with otel.start_span(
+        "ccdash.analytics.overview.bundle",
+        {"project_id": project_id or ""},
+    ):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await _analytics_bundle_query_service.get_analytics_overview_bundle(
+            app_request.context,
+            app_request.ports,
+            project_id_override=project_id,
+            bypass_cache=bypass_cache,
+        )
 
 
 @analytics_router.get("/metrics", response_model=list[AnalyticsMetric])

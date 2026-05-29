@@ -56,6 +56,8 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Select } from './ui/select';
 import { AlertSurface, ControlRow, Surface } from './ui/surface';
+import { useAlertsQuery } from '../services/queries/alerts';
+import { useProjectsQuery } from '../services/queries/projects';
 
 type SettingsTab = 'general' | 'projects' | 'integrations' | 'ai-platforms' | 'alerts';
 type IntegrationsSubtab = 'skillmeat' | 'github';
@@ -952,7 +954,9 @@ const PricingSection: React.FC<{
 );
 
 const AIPlatformsTab: React.FC = () => {
-  const { projects } = useData();
+  // T2-007: projects served directly from TanStack Query hook.
+  const { data: tqProjectsAI } = useProjectsQuery();
+  const projects = tqProjectsAI ?? [];
   const [pricingPlatform, setPricingPlatform] = useState(DEFAULT_PRICING_PLATFORM);
   const [pricingEntries, setPricingEntries] = useState<PricingCatalogEntry[]>([]);
   const [pricingLoading, setPricingLoading] = useState(false);
@@ -1203,7 +1207,11 @@ const AIPlatformsTab: React.FC = () => {
 // ── Projects Tab ───────────────────────────────────────────────────
 
 const ProjectsTab: React.FC = () => {
-  const { projects, activeProject, updateProject } = useData();
+  // T2-007: projects served directly from TanStack Query hook;
+  // activeProject and updateProject remain client-state from useData().
+  const { data: tqProjectsP } = useProjectsQuery();
+  const { activeProject, updateProject } = useData();
+  const projects = tqProjectsP ?? [];
   const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject?.id || '');
   const [editData, setEditData] = useState<Project | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1943,7 +1951,11 @@ const ProjectsTab: React.FC = () => {
 };
 
 const IntegrationsTab: React.FC = () => {
-  const { projects, activeProject, updateProject } = useData();
+  // T2-007: projects served directly from TanStack Query hook;
+  // activeProject and updateProject remain client-state from useData().
+  const { data: tqProjectsI } = useProjectsQuery();
+  const { activeProject, updateProject } = useData();
+  const projects = tqProjectsI ?? [];
   const apiClient = React.useMemo(() => createApiClient(), []);
   const [subtab, setSubtab] = useState<IntegrationsSubtab>('skillmeat');
   const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject?.id || '');
@@ -2873,14 +2885,17 @@ const IntegrationsTab: React.FC = () => {
 // ── Alerts Tab ─────────────────────────────────────────────────────
 
 const AlertsTab: React.FC = () => {
-  const { alerts: apiAlerts, refreshAll } = useData();
+  // T2-007: alerts served directly from TanStack Query hook.
+  // activeProject is client-state; refreshAll is kept for post-mutation cache flush.
+  const { activeProject, refreshAll } = useData();
+  const { data: tqAlerts } = useAlertsQuery({ projectId: activeProject?.id });
   const [alerts, setAlerts] = useState<AlertConfig[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setAlerts(apiAlerts);
-  }, [apiAlerts]);
+    setAlerts(tqAlerts ?? []);
+  }, [tqAlerts]);
 
   const toggleAlert = async (id: string) => {
     const target = alerts.find(a => a.id === id);

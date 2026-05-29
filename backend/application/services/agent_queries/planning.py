@@ -59,6 +59,7 @@ from .models import (
     PlanningStatusCounts,
     PlanningTokenTelemetry,
     PlanningTokenTelemetryEntry,
+    PlanningViewBundleDTO,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     PromptContextSelection,
@@ -2150,4 +2151,112 @@ class PlanningQueryService:
                 feature_id,
                 [str(phase_number)] if phase_number is not None else [],
             ),
+        )
+
+    # ── Bundle: Planning view fat-read (T5-003) ───────────────────────────────
+
+    async def get_planning_view_bundle(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        project_id_override: str | None = None,
+        include: list[str] | None = None,
+    ) -> PlanningViewBundleDTO:
+        """Return the Planning view fat-read bundle.
+
+        Always includes the project planning summary.  Optional sub-payloads are
+        composed when their key appears in the ``include`` list:
+
+        - ``"graph"`` → ``ProjectPlanningGraphDTO`` (planning node/edge graph)
+        - ``"session_board"`` → ``PlanningAgentSessionBoardDTO`` (Kanban board)
+
+        Each sub-read delegates to the existing cached service methods, so no
+        additional DB queries are introduced.  Failures in optional sub-reads
+        degrade the bundle to ``status="partial"`` rather than raising.
+        """
+        from .planning_sessions import PlanningSessionQueryService  # noqa: PLC0415 — lazy import avoids circular dep
+
+        include_set: set[str] = set(include or [])
+        scope = resolve_project_scope(context, ports, project_id_override)
+        if scope is None:
+            return PlanningViewBundleDTO(
+                status="error",
+                project_id=str(project_id_override or ""),
+                source_refs=[],
+            )
+
+        project = scope.project
+        partial = False
+
+        # ── Summary (always included) ─────────────────────────────────────
+        summary = None
+        try:
+            with otel.start_span(
+                "ccdash.planning.view.bundle.summary",
+                {"project_id": project.id},
+            ):
+                summary = await self.get_project_planning_summary(
+                    context,
+                    ports,
+                    project_id_override=project.id,
+                )
+        except Exception:
+            logger.warning(
+                "PlanningQueryService.get_planning_view_bundle: failed to load summary "
+                "for project %s",
+                project.id,
+            )
+            partial = True
+
+        # ── Graph (optional) ──────────────────────────────────────────────
+        graph = None
+        if "graph" in include_set:
+            try:
+                with otel.start_span(
+                    "ccdash.planning.view.bundle.graph",
+                    {"project_id": project.id},
+                ):
+                    graph = await self.get_project_planning_graph(
+                        context,
+                        ports,
+                        project_id_override=project.id,
+                    )
+            except Exception:
+                logger.warning(
+                    "PlanningQueryService.get_planning_view_bundle: failed to load graph "
+                    "for project %s",
+                    project.id,
+                )
+                partial = True
+
+        # ── Session board (optional) ──────────────────────────────────────
+        session_board = None
+        if "session_board" in include_set:
+            try:
+                with otel.start_span(
+                    "ccdash.planning.view.bundle.session_board",
+                    {"project_id": project.id},
+                ):
+                    board_service = PlanningSessionQueryService()
+                    session_board = await board_service.get_session_board(
+                        context,
+                        ports,
+                        project_id=project.id,
+                    )
+            except Exception:
+                logger.warning(
+                    "PlanningQueryService.get_planning_view_bundle: failed to load session_board "
+                    "for project %s",
+                    project.id,
+                )
+                partial = True
+
+        return PlanningViewBundleDTO(
+            status="partial" if partial else "ok",
+            project_id=project.id,
+            summary=summary,
+            graph=graph,
+            session_board=session_board,
+            source_refs=collect_source_refs(project.id),
         )

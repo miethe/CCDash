@@ -30,6 +30,18 @@
   - API: `GET /api/sessions/{id}/logs` response includes `tokenUsage` (camelCase, null for messages without data) per message.
   - Re-sync required for existing sessions: historical sessions will show captions after their next sync; no manual backfill is needed.
 
+### Performance
+
+- **Frontend data-layer refactor: TanStack Query migration** — Replaced three hand-rolled server-state caches with TanStack Query; back-navigation renders instantly from cache for all previously-visited routes.
+
+### Changed
+
+- **Dashboard and planning cold-load optimization** — Dashboard cold load reduced to 1 network request (was 8–9 parallel); tasks and features requests now paginated (no longer limit=5000).
+
+### Improved
+
+- **List virtualization for scale** — Session list, document list, and feature list virtualized via @tanstack/react-virtual.
+
 ## [0.2.0] - 2026-04-28
 ### Added
 

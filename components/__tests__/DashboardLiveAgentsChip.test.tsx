@@ -38,10 +38,7 @@ vi.mock('../../services/useFeatureSurface', () => ({
   }),
 }));
 
-vi.mock('../../services/featureSurfaceCache', () => ({
-  defaultFeatureSurfaceCache: { get: vi.fn(), set: vi.fn(), delete: vi.fn(), clear: vi.fn() },
-  invalidateFeatureSurface: vi.fn(),
-}));
+// T3-005: featureSurfaceCache deleted; no TQ mock needed (test renders standalone component).
 
 vi.mock('../../contexts/DataContext', () => ({
   useData: () => ({
