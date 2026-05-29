@@ -40,6 +40,7 @@ import { PlanningDensityToggle } from './PlanningRouteLayout';
 import { PlanningTriagePanel } from './PlanningTriagePanel';
 import { PlanningAgentRosterPanel } from './PlanningAgentRosterPanel';
 import { PlanningAgentSessionBoard } from './PlanningAgentSessionBoard';
+import { PlanningCommandCenter } from './CommandCenter';
 import {
   Chip,
   EffectiveStatusChips,
@@ -776,6 +777,8 @@ function PlanningShell({
   onDrillDown,
   onRefresh,
   onNodeQuickView,
+  onOpenExecution,
+  onOpenPlan,
   activeStatusBucket,
   activeSignal,
   onStatusBucketClick,
@@ -789,6 +792,8 @@ function PlanningShell({
   onRefresh?: () => void;
   /** P14-002: Row-click handler for tracker/intake panel rows. */
   onNodeQuickView?: (resolution: NodeClickResolution, triggerEl: HTMLElement | null) => void;
+  onOpenExecution?: (featureId: string) => void;
+  onOpenPlan?: (path: string) => void;
   /** P13-003: Active status bucket filter from URL. */
   activeStatusBucket?: PlanningStatusBucket | null;
   /** P13-003: Active health signal filter from URL. */
@@ -841,6 +846,12 @@ function PlanningShell({
       <Panel className="px-5 py-3" data-testid="planning-artifact-chip-row-section">
         <PlanningArtifactChipRow nodeCountsByType={summary.nodeCountsByType} />
       </Panel>
+
+      <PlanningCommandCenter
+        projectId={summary.projectId ?? null}
+        onOpenExecution={onOpenExecution}
+        onOpenPlan={onOpenPlan}
+      />
 
       {/* T3-003: Two-up layout — Triage (1.3fr) + Agent Roster (1fr); stacks below 1280px */}
       <div
@@ -1073,6 +1084,13 @@ export default function PlanningHomePage() {
     return (
       <div className="max-w-screen-2xl space-y-6">
         <EmptyShell hasProject={true} />
+        <PlanningCommandCenter
+          projectId={summary.projectId ?? activeProject.id ?? null}
+          onOpenExecution={(featureId) => navigate(`/execution?feature=${encodeURIComponent(featureId)}`)}
+          onOpenPlan={(path) =>
+            navigate(`${planningArtifactsHref('implementation_plan')}?path=${encodeURIComponent(path)}`)
+          }
+        />
       </div>
     );
   }
@@ -1089,6 +1107,10 @@ export default function PlanningHomePage() {
         }
         onRefresh={() => void loadSummary()}
         onNodeQuickView={handleNodeQuickView}
+        onOpenExecution={(featureId) => navigate(`/execution?feature=${encodeURIComponent(featureId)}`)}
+        onOpenPlan={(path) =>
+          navigate(`${planningArtifactsHref('implementation_plan')}?path=${encodeURIComponent(path)}`)
+        }
         activeStatusBucket={filter.statusBucket}
         activeSignal={filter.signal}
         onStatusBucketClick={setStatusBucket}

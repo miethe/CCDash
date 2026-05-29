@@ -4,13 +4,13 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: completed
 category: enhancements
 title: "Implementation Plan: Planning Command Center V1"
 description: "Implement a planning portfolio console with searchable feature work items, deterministic next-command resolution, phase/worktree context, and launch/review controls."
 summary: "Add a command-center aggregate API, centralized planning command resolver, live worktree/git state, and Planning UI views for list, card, and board workflows."
 created: 2026-05-27
-updated: 2026-05-27
+updated: 2026-05-29
 priority: high
 risk_level: high
 complexity: High
@@ -66,6 +66,9 @@ related:
   - docs/project_plans/design-specs/planning-collab-threads-v1.md
   - docs/project_plans/implementation_plans/enhancements/wireframes/planning-command-center-v1/list-view.png
   - docs/project_plans/implementation_plans/enhancements/wireframes/planning-command-center-v1/board-view.png
+  - docs/guides/planning-command-center.md
+  - docs/project_plans/human-briefs/planning-command-center-v1.md
+  - docs/project_plans/reports/planning-command-center-v1-aar-2026-05-29.md
   - App.tsx
   - services/planningRoutes.ts
   - components/Planning/PlanningHomePage.tsx
@@ -92,7 +95,12 @@ related:
 plan_ref: planning-command-center-v1
 linked_sessions: []
 request_log_id: ""
-commits: []
+commits:
+  - d903b55
+  - 1cfc537
+  - 3847ca1
+  - baa6ce2
+  - 645e1b7
 prs: []
 ---
 
@@ -101,6 +109,35 @@ prs: []
 ## Objective
 
 Implement a Planning Command Center that turns CCDash Planning into a portfolio-level execution console. The feature should show all active, planned, ready, blocked, and reviewable features; expose deterministic next-command guidance; show the exact plan or artifact path to operate against; surface phase, story point, related-file, launch-batch, worktree, branch, PR, and live git context; and support list, card, and board views.
+
+## Implementation Closeout
+
+Completed on branch `codex/planning-command-center-v1` in worktree `/Users/miethe/.codex/worktrees/7934/CCDash`.
+
+| Phase | Commit | Status | Completed Scope |
+|---|---|---|---|
+| 1 | `d903b55` | Completed | Shared command-center DTOs, resolver rules, compatibility import, and resolver tests. |
+| 2 | `1cfc537` | Completed | Aggregate command-center query service, list/detail API endpoints, live git probe, and backend tests. |
+| 3 | `3847ca1` | Completed | Frontend service, Planning route placement, list view, expanded row, editable command, related-file context, git panel, phase table, and tests. |
+| 4 | `baa6ce2` | Completed | Card view, board view, shared feature card, right detail panel, board buckets, and tests. |
+| 5 | `645e1b7` | Completed | Launch Sheet command override handoff, launch/workbench/plan/PR/review actions, command-center telemetry, and Launch Sheet compatibility tests. |
+| 6 | This closeout commit | Completed | User guide, human brief, AAR, validation record, browser smoke, and plan traceability. |
+
+Operator-facing references:
+
+1. User guide: `docs/guides/planning-command-center.md`
+2. Human brief: `docs/project_plans/human-briefs/planning-command-center-v1.md`
+3. Closeout AAR: `docs/project_plans/reports/planning-command-center-v1-aar-2026-05-29.md`
+4. Wireframes: `docs/project_plans/implementation_plans/enhancements/wireframes/planning-command-center-v1/list-view.png` and `docs/project_plans/implementation_plans/enhancements/wireframes/planning-command-center-v1/board-view.png`
+
+Validation recorded during closeout:
+
+1. `python3 -m pytest backend/tests/test_planning_command_center_service.py backend/tests/test_worktree_git_state.py backend/tests/test_planning_router.py backend/tests/test_planning_command_resolver.py -q`
+2. `npm test -- services/__tests__/planningCommandCenter.test.ts components/Planning/__tests__/planningCommandCenter.test.tsx`
+3. `npm test -- components/Planning/__tests__/planningHomePage.test.tsx components/Planning/__tests__/planningHomePageNavigation.test.tsx`
+4. `npm test -- components/Planning/__tests__/planningCommandCenter.test.tsx components/Planning/__tests__/planningLaunchSheet.test.tsx components/Planning/__tests__/planningLaunchSheetExtended.test.tsx services/__tests__/planningCommandCenter.test.ts`
+5. `npm run typecheck -- --pretty false` was attempted after `npm ci`; it remains blocked by unrelated baseline errors in existing files and copied design fixtures, not by command-center files.
+6. Browser smoke on `http://127.0.0.1:3001/#/planning` against local backend runtime on `8000` confirmed the command center, toolbar, view switcher, and empty work-item state render for projects with zero planning artifacts.
 
 ## Current Baseline
 

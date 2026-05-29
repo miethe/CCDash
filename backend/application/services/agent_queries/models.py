@@ -8,6 +8,17 @@ from pydantic import BaseModel, Field
 
 
 QueryStatus = Literal["ok", "partial", "error"]
+PlanningCommandRuleId = Literal[
+    "PCC-CMD-001",
+    "PCC-CMD-002",
+    "PCC-CMD-003",
+    "PCC-CMD-004",
+    "PCC-CMD-005",
+    "PCC-CMD-006",
+    "PCC-CMD-007",
+    "PCC-CMD-008",
+    "PCC-CMD-009",
+]
 
 
 def _utc_now() -> datetime:
@@ -517,6 +528,226 @@ class PhaseOperationsDTO(AgentQueryEnvelope):
     tasks: list[PhaseTaskItem] = Field(default_factory=list)
     dependency_resolution: dict[str, Any] = Field(default_factory=dict)
     progress_evidence: list[str] = Field(default_factory=list)
+
+
+# ── Planning Command Center DTOs (PCC-101) ───────────────────────────────────
+
+
+class PlanningCommandTargetArtifactDTO(BaseModel):
+    """Artifact targeted by a planning command recommendation."""
+
+    path: str = ""
+    doc_type: str = ""
+    title: str = ""
+    exists: bool | None = None
+    source_ref: str = ""
+
+
+class PlanningCommandCapabilityDTO(BaseModel):
+    """Capability required to execute a recommended planning command."""
+
+    name: str
+    supported: bool = True
+    required: bool = True
+    warning: str = ""
+    fallback_command: str = ""
+
+
+class PlanningCommandAlternativeDTO(BaseModel):
+    """Non-primary command candidate shown as an explainable alternative."""
+
+    rule_id: PlanningCommandRuleId
+    command: str = ""
+    confidence: float = 0.0
+    rationale: str = ""
+    target_artifact_path: str = ""
+    target_artifact_doc_type: str = ""
+    phase: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+    required_capabilities: list[PlanningCommandCapabilityDTO] = Field(default_factory=list)
+
+
+class PlanningCommandResolutionDTO(BaseModel):
+    """Deterministic command recommendation for a planning work item."""
+
+    command: str = ""
+    rule_id: PlanningCommandRuleId
+    confidence: float = 0.0
+    rationale: str = ""
+    target_artifact_path: str = ""
+    target_artifact_doc_type: str = ""
+    target_artifact: PlanningCommandTargetArtifactDTO | None = None
+    phase: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+    alternatives: list[PlanningCommandAlternativeDTO] = Field(default_factory=list)
+    required_capabilities: list[PlanningCommandCapabilityDTO] = Field(default_factory=list)
+
+
+class PlanningCommandCenterFeatureDTO(BaseModel):
+    """Feature identity shown in the command-center work-item list."""
+
+    feature_id: str
+    feature_slug: str = ""
+    name: str = ""
+    category: str = ""
+    tags: list[str] = Field(default_factory=list)
+    priority: str = ""
+    summary: str = ""
+
+
+class PlanningCommandCenterStatusDTO(BaseModel):
+    """Raw and derived planning status for a command-center item."""
+
+    raw_status: str = ""
+    effective_status: str = ""
+    planning_signal: str = ""
+    mismatch_state: str = "unknown"
+    is_mismatch: bool = False
+
+
+class PlanningCommandCenterTierDTO(BaseModel):
+    tier_number: int | None = None
+    tier_name: str = ""
+    estimated_points: float | None = None
+
+
+class PlanningCommandCenterStoryPointsDTO(BaseModel):
+    total: float = 0.0
+    remaining: float = 0.0
+    completed: float = 0.0
+
+
+class PlanningCommandCenterPhaseDTO(BaseModel):
+    current_phase: int | None = None
+    next_phase: int | None = None
+    total_phases: int = 0
+    completed_phases: int = 0
+
+
+class PlanningCommandCenterArtifactDTO(BaseModel):
+    artifact_id: str = ""
+    path: str = ""
+    doc_type: str = ""
+    title: str = ""
+    status: str = ""
+    exists: bool | None = None
+
+
+class PlanningCommandCenterRelatedFileDTO(BaseModel):
+    path: str = ""
+    doc_type: str = ""
+    size_bytes: int | None = None
+    last_modified: str = ""
+    addable: bool = True
+
+
+class PlanningCommandCenterPhaseRowDTO(BaseModel):
+    phase_number: int | None = None
+    name: str = ""
+    story_points: float | None = None
+    phase_files: list[str] = Field(default_factory=list)
+    domain: str = ""
+    model: str = ""
+    agents: list[str] = Field(default_factory=list)
+    status: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlanningCommandCenterLaunchAgentDTO(BaseModel):
+    agent_id: str = ""
+    label: str = ""
+    skills: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    state: str = "unknown"
+
+
+class PlanningCommandCenterLaunchBatchDTO(BaseModel):
+    batch_id: str = ""
+    label: str = ""
+    readiness: str = "unknown"
+    agents: list[PlanningCommandCenterLaunchAgentDTO] = Field(default_factory=list)
+    queued_count: int = 0
+    running_count: int = 0
+
+
+class PlanningCommandCenterWorktreeDTO(BaseModel):
+    context_id: str = ""
+    path: str = ""
+    branch: str = ""
+    status: str = ""
+    phase_number: int | None = None
+    batch_id: str = ""
+
+
+class PlanningCommandCenterGitStateDTO(BaseModel):
+    path_exists: bool | None = None
+    head: str = ""
+    dirty_count: int | None = None
+    stash_count: int | None = None
+    upstream: str = ""
+    ahead: int | None = None
+    behind: int | None = None
+    probed_at: str = ""
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PlanningCommandCenterPullRequestDTO(BaseModel):
+    provider: str = ""
+    number: int | None = None
+    url: str = ""
+    state: str = ""
+    review_status: str = ""
+
+
+class PlanningCommandCenterBlockerDTO(BaseModel):
+    label: str = ""
+    reason: str = ""
+    severity: str = ""
+
+
+class PlanningCommandCenterCapabilitiesDTO(BaseModel):
+    copy_command: bool = True
+    launch: bool = False
+    review: bool = False
+    merge: bool = False
+    cleanup: bool = False
+    open_pr: bool = False
+    edit_command: bool = True
+
+
+class PlanningCommandCenterItemDTO(BaseModel):
+    """Single command-center work item consumed by aggregate endpoints."""
+
+    feature: PlanningCommandCenterFeatureDTO
+    status: PlanningCommandCenterStatusDTO = Field(default_factory=PlanningCommandCenterStatusDTO)
+    tier: PlanningCommandCenterTierDTO = Field(default_factory=PlanningCommandCenterTierDTO)
+    story_points: PlanningCommandCenterStoryPointsDTO = Field(default_factory=PlanningCommandCenterStoryPointsDTO)
+    phase: PlanningCommandCenterPhaseDTO = Field(default_factory=PlanningCommandCenterPhaseDTO)
+    artifacts: list[PlanningCommandCenterArtifactDTO] = Field(default_factory=list)
+    target_artifact: PlanningCommandTargetArtifactDTO | None = None
+    command: PlanningCommandResolutionDTO | None = None
+    related_files: list[PlanningCommandCenterRelatedFileDTO] = Field(default_factory=list)
+    phase_rows: list[PlanningCommandCenterPhaseRowDTO] = Field(default_factory=list)
+    launch_batch: PlanningCommandCenterLaunchBatchDTO | None = None
+    worktree: PlanningCommandCenterWorktreeDTO | None = None
+    git_state: PlanningCommandCenterGitStateDTO | None = None
+    pull_request: PlanningCommandCenterPullRequestDTO | None = None
+    blockers: list[PlanningCommandCenterBlockerDTO] = Field(default_factory=list)
+    last_activity: dict[str, Any] = Field(default_factory=dict)
+    capabilities: PlanningCommandCenterCapabilitiesDTO = Field(default_factory=PlanningCommandCenterCapabilitiesDTO)
+
+
+class PlanningCommandCenterPageDTO(AgentQueryEnvelope):
+    """Paginated command-center response contract."""
+
+    project_id: str
+    items: list[PlanningCommandCenterItemDTO] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 50
+    sort_by: str = ""
+    sort_direction: Literal["asc", "desc"] = "asc"
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ── Planning Agent Session Board DTOs ────────────────────────────────────────

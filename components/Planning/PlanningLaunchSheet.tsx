@@ -50,6 +50,7 @@ export interface PlanningLaunchSheetProps {
   phaseNumber: number;
   batchId: string;
   initialWorktreeContextId?: string;
+  initialCommandOverride?: string;
   onClose: () => void;
   onLaunched?: (result: LaunchStartResponse) => void;
 }
@@ -466,6 +467,7 @@ export function PlanningLaunchSheet({
   phaseNumber,
   batchId,
   initialWorktreeContextId,
+  initialCommandOverride,
   onClose,
   onLaunched,
 }: PlanningLaunchSheetProps): JSX.Element | null {
@@ -525,13 +527,13 @@ export function PlanningLaunchSheet({
       setNewWorktreePath(result.worktreeSelection?.worktreePath ?? '');
       setNewBaseBranch(result.worktreeSelection?.baseBranch ?? '');
       setNewNotes(result.worktreeSelection?.notes ?? '');
-      setCommandOverride('');
+      setCommandOverride(initialCommandOverride ?? '');
     } catch (err) {
       setPrepError(err instanceof Error ? err.message : 'Failed to load launch preparation.');
     } finally {
       setPrepLoading(false);
     }
-  }, [open, projectId, featureId, phaseNumber, batchId, initialWorktreeContextId]);
+  }, [open, projectId, featureId, phaseNumber, batchId, initialWorktreeContextId, initialCommandOverride]);
 
   useEffect(() => {
     if (open) {

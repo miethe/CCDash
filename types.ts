@@ -3547,6 +3547,202 @@ export interface PlanningNextRunPreview {
   generatedAt?: string;
 }
 
+// ── Planning Command Center (PCC) ────────────────────────────────────────────
+
+export interface PlanningCommandTargetArtifact {
+  path: string;
+  docType: string;
+  title: string;
+  exists?: boolean | null;
+  sourceRef: string;
+}
+
+export interface PlanningCommandCapability {
+  name: string;
+  supported: boolean;
+  required: boolean;
+  warning: string;
+  fallbackCommand: string;
+}
+
+export interface PlanningCommandAlternative {
+  ruleId: string;
+  command: string;
+  confidence: number;
+  rationale: string;
+  targetArtifactPath: string;
+  targetArtifactDocType: string;
+  phase?: number | null;
+  warnings: string[];
+  requiredCapabilities: PlanningCommandCapability[];
+}
+
+export interface PlanningCommandResolution {
+  command: string;
+  ruleId: string;
+  confidence: number;
+  rationale: string;
+  targetArtifactPath: string;
+  targetArtifactDocType: string;
+  targetArtifact?: PlanningCommandTargetArtifact | null;
+  phase?: number | null;
+  warnings: string[];
+  alternatives: PlanningCommandAlternative[];
+  requiredCapabilities: PlanningCommandCapability[];
+}
+
+export interface PlanningCommandCenterFeature {
+  featureId: string;
+  featureSlug: string;
+  name: string;
+  category: string;
+  tags: string[];
+  priority: string;
+  summary: string;
+}
+
+export interface PlanningCommandCenterStatus {
+  rawStatus: string;
+  effectiveStatus: string;
+  planningSignal: string;
+  mismatchState: string;
+  isMismatch: boolean;
+}
+
+export interface PlanningCommandCenterStoryPoints {
+  total: number;
+  remaining: number;
+  completed: number;
+}
+
+export interface PlanningCommandCenterPhase {
+  currentPhase?: number | null;
+  nextPhase?: number | null;
+  totalPhases: number;
+  completedPhases: number;
+}
+
+export interface PlanningCommandCenterArtifact {
+  artifactId: string;
+  path: string;
+  docType: string;
+  title: string;
+  status: string;
+  exists?: boolean | null;
+}
+
+export interface PlanningCommandCenterRelatedFile {
+  path: string;
+  docType: string;
+  sizeBytes?: number | null;
+  lastModified: string;
+  addable: boolean;
+}
+
+export interface PlanningCommandCenterPhaseRow {
+  phaseNumber?: number | null;
+  name: string;
+  storyPoints?: number | null;
+  phaseFiles: string[];
+  domain: string;
+  model: string;
+  agents: string[];
+  status: string;
+  details: Record<string, unknown>;
+}
+
+export interface PlanningCommandCenterLaunchAgent {
+  agentId: string;
+  label: string;
+  skills: string[];
+  tools: string[];
+  state: string;
+}
+
+export interface PlanningCommandCenterLaunchBatch {
+  batchId: string;
+  label: string;
+  readiness: string;
+  agents: PlanningCommandCenterLaunchAgent[];
+  queuedCount: number;
+  runningCount: number;
+}
+
+export interface PlanningCommandCenterWorktree {
+  contextId: string;
+  path: string;
+  branch: string;
+  status: string;
+  phaseNumber?: number | null;
+  batchId: string;
+}
+
+export interface PlanningCommandCenterGitState {
+  pathExists?: boolean | null;
+  head: string;
+  dirtyCount?: number | null;
+  stashCount?: number | null;
+  upstream: string;
+  ahead?: number | null;
+  behind?: number | null;
+  probedAt: string;
+  warnings: string[];
+}
+
+export interface PlanningCommandCenterPullRequest {
+  provider: string;
+  number?: number | null;
+  url: string;
+  state: string;
+  reviewStatus: string;
+}
+
+export interface PlanningCommandCenterBlocker {
+  label: string;
+  reason: string;
+  severity: string;
+}
+
+export interface PlanningCommandCenterCapabilities {
+  copyCommand: boolean;
+  launch: boolean;
+  review: boolean;
+  merge: boolean;
+  cleanup: boolean;
+  openPr: boolean;
+  editCommand: boolean;
+}
+
+export interface PlanningCommandCenterItem {
+  feature: PlanningCommandCenterFeature;
+  status: PlanningCommandCenterStatus;
+  storyPoints: PlanningCommandCenterStoryPoints;
+  phase: PlanningCommandCenterPhase;
+  artifacts: PlanningCommandCenterArtifact[];
+  targetArtifact?: PlanningCommandTargetArtifact | null;
+  command?: PlanningCommandResolution | null;
+  relatedFiles: PlanningCommandCenterRelatedFile[];
+  phaseRows: PlanningCommandCenterPhaseRow[];
+  launchBatch?: PlanningCommandCenterLaunchBatch | null;
+  worktree?: PlanningCommandCenterWorktree | null;
+  gitState?: PlanningCommandCenterGitState | null;
+  pullRequest?: PlanningCommandCenterPullRequest | null;
+  blockers: PlanningCommandCenterBlocker[];
+  lastActivity: Record<string, unknown>;
+  capabilities: PlanningCommandCenterCapabilities;
+}
+
+export interface PlanningCommandCenterPage extends AgentQueryEnvelope {
+  projectId: string;
+  items: PlanningCommandCenterItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sortBy: string;
+  sortDirection: 'asc' | 'desc';
+  warnings: string[];
+}
+
 // ── System-wide metrics (GET /api/agent/system/active-count) ─────────────────
 
 /**
