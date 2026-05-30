@@ -42,7 +42,7 @@ import { PlanningDensityToggle } from './PlanningRouteLayout';
 import { PlanningTriagePanel } from './PlanningTriagePanel';
 import { PlanningAgentRosterPanel } from './PlanningAgentRosterPanel';
 import { PlanningAgentSessionBoard } from './PlanningAgentSessionBoard';
-import { PlanningCommandCenter } from './CommandCenter';
+import { PlanningCommandCenterShell } from './CommandCenter';
 import {
   Chip,
   EffectiveStatusChips,
@@ -837,7 +837,7 @@ function PlanningShell({
         <PlanningArtifactChipRow nodeCountsByType={summary.nodeCountsByType} />
       </Panel>
 
-      <PlanningCommandCenter
+      <PlanningCommandCenterShell
         projectId={summary.projectId ?? null}
         onOpenExecution={onOpenExecution}
         onOpenPlan={onOpenPlan}
@@ -1052,7 +1052,7 @@ export default function PlanningHomePage() {
     return (
       <div className="max-w-screen-2xl space-y-6">
         <EmptyShell hasProject={true} />
-        <PlanningCommandCenter
+        <PlanningCommandCenterShell
           projectId={summary.projectId ?? activeProject.id ?? null}
           onOpenExecution={(featureId) => navigate(`/execution?feature=${encodeURIComponent(featureId)}`)}
           onOpenPlan={(path) =>

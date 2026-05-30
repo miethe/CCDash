@@ -181,3 +181,81 @@ export const analyticsKeys = {
   overviewBundle: (projectId: string) =>
     [projectId, 'analytics', 'overview-bundle'] as const,
 };
+
+// ─── Multi-Project Planning (aggregate / portfolio) ───────────────────────────
+// Aggregate queries span multiple projects so there is no single projectId.
+// The sentinel 'multi-project' prefix is used instead.  Project-level
+// invalidation via [projectId] still works for single-project views; the
+// multi-project views are invalidated by their own namespace keys.
+
+export interface MultiProjectCommandCenterFilters {
+  projectIds?: string[];
+  status?: string;
+  kind?: string;
+  group?: string;
+  search?: string;
+  sort?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface MultiProjectSessionBoardFilters {
+  projectIds?: string[];
+  group?: string;
+  groupBy?: string;
+  activeWindowMinutes?: number;
+  includeWorkers?: boolean;
+  page?: number;
+  pageSize?: number;
+  includeStale?: boolean;
+}
+
+export const multiProjectPlanningKeys = {
+  /** Invalidates ALL aggregate planning data (command center + session board). */
+  all: () => ['multi-project', 'planning'] as const,
+
+  /**
+   * Aggregate command-center key.
+   * Includes the full filter set (status, kind, group, search, projectIds,
+   * page, pageSize, sort) for stable cache identity across filter changes.
+   * The feature flag is NOT in the key — a flag change causes a page reload.
+   */
+  commandCenter: (filters: MultiProjectCommandCenterFilters = {}) =>
+    [
+      'multi-project',
+      'planning',
+      'command-center',
+      {
+        projectIds: filters.projectIds ? [...filters.projectIds].sort() : [],
+        status: filters.status ?? null,
+        kind: filters.kind ?? null,
+        group: filters.group ?? null,
+        search: filters.search ?? null,
+        sort: filters.sort ?? null,
+        page: filters.page ?? 1,
+        pageSize: filters.pageSize ?? 50,
+      },
+    ] as const,
+
+  /**
+   * Aggregate session-board key.
+   * Includes groupBy, projectIds, group, activeWindowMinutes, includeWorkers,
+   * includeStale, page, and pageSize for stable cache identity.
+   */
+  sessionBoard: (filters: MultiProjectSessionBoardFilters = {}) =>
+    [
+      'multi-project',
+      'planning',
+      'session-board',
+      {
+        projectIds: filters.projectIds ? [...filters.projectIds].sort() : [],
+        group: filters.group ?? null,
+        groupBy: filters.groupBy ?? 'state',
+        activeWindowMinutes: filters.activeWindowMinutes ?? 30,
+        includeWorkers: filters.includeWorkers ?? true,
+        page: filters.page ?? 1,
+        pageSize: filters.pageSize ?? 50,
+        includeStale: filters.includeStale ?? false,
+      },
+    ] as const,
+};

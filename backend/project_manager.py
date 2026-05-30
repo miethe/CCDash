@@ -1,6 +1,7 @@
 """Project Manager to handle project persistence and context switching."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -8,12 +9,78 @@ from typing import Optional
 
 from backend import config
 from backend.application.ports.core import ProjectBinding
-from backend.models import Project
+from backend.models import Project, ProjectDisplayConfig, ProjectDisplayMetadata
 from backend.services.project_paths.models import ResolvedProjectPath, ResolvedProjectPaths
 from backend.services.project_paths.resolver import ProjectPathResolver
 from backend.services.test_config import normalize_project_test_config
 
 logger = logging.getLogger("ccdash")
+
+# ---------------------------------------------------------------------------
+# Display-config fallback helpers
+# ---------------------------------------------------------------------------
+
+# A fixed palette of visually distinct hex colors.  The palette index is
+# derived deterministically from sha256(project_id) so the same project id
+# always maps to the same color across runs and restarts.
+_DISPLAY_COLOR_PALETTE: tuple[str, ...] = (
+    "#6366f1",  # indigo
+    "#22c55e",  # green
+    "#f59e0b",  # amber
+    "#ec4899",  # pink
+    "#14b8a6",  # teal
+    "#f97316",  # orange
+    "#8b5cf6",  # violet
+    "#06b6d4",  # cyan
+    "#ef4444",  # red
+    "#84cc16",  # lime
+    "#a855f7",  # purple
+    "#0ea5e9",  # sky
+)
+
+_DEFAULT_GROUP = "default"
+
+
+def _stable_hash_index(project_id: str, palette_len: int) -> int:
+    """Return a deterministic index into a palette using sha256(project_id)."""
+    digest = hashlib.sha256(project_id.encode()).digest()
+    # Take the first 4 bytes as a big-endian unsigned int.
+    value = int.from_bytes(digest[:4], "big")
+    return value % palette_len
+
+
+def resolve_display_metadata(project: Project) -> ProjectDisplayMetadata:
+    """Merge persisted ``project.display`` config over deterministic fallbacks.
+
+    Guarantees that the returned ``ProjectDisplayMetadata`` always has
+    non-None ``color`` and ``group`` values regardless of whether the project
+    has a stored ``ProjectDisplayConfig``.  ``sort_order`` and
+    ``label_override`` are passed through as-is (may be None).
+
+    Algorithm for deterministic fallbacks:
+    - ``color``:   palette[ sha256(project.id)[:4] % len(palette) ]
+    - ``group``:   "default"
+    - ``sort_order``:     None  (frontend sorts alphabetically by project name)
+    - ``label_override``: None  (frontend uses project.name)
+
+    Calling this function twice with the same project always returns identical
+    values (pure / side-effect-free).
+    """
+    cfg: ProjectDisplayConfig = project.display or ProjectDisplayConfig()
+
+    color = cfg.color or _DISPLAY_COLOR_PALETTE[
+        _stable_hash_index(project.id, len(_DISPLAY_COLOR_PALETTE))
+    ]
+    group = cfg.group or _DEFAULT_GROUP
+    sort_order = cfg.sortOrder  # may be None — caller decides ordering
+    label_override = cfg.labelOverride  # may be None
+
+    return ProjectDisplayMetadata(
+        color=color,
+        group=group,
+        sort_order=sort_order,
+        label_override=label_override,
+    )
 
 
 class ProjectManager:

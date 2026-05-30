@@ -1649,6 +1649,33 @@ class ProjectResolvedPathsDTO(BaseModel):
 
 # ── Project model ──────────────────────────────────────────────────
 
+class ProjectDisplayConfig(BaseModel):
+    """Persisted per-project display configuration stored in projects.json.
+
+    All fields are optional and default to None.  When absent the
+    ``resolve_display_metadata`` helper in ``project_manager`` derives
+    deterministic fallbacks so callers always receive a fully-populated
+    ``ProjectDisplayMetadata`` wire DTO.
+
+    Field names are intentionally aligned with ``ProjectDisplayMetadata``
+    (the wire/DTO shape) so they map cleanly without renaming.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    color: Optional[str] = None
+    """Explicit hex/CSS color override, e.g. "#6366f1"."""
+
+    group: Optional[str] = None
+    """Free-form group label for clustering projects in multi-project views."""
+
+    sortOrder: Optional[int] = None
+    """Explicit sort position within a group.  Lower values sort first."""
+
+    labelOverride: Optional[str] = None
+    """Short display label to use instead of the project name."""
+
+
 class Project(BaseModel):
     id: str
     name: str
@@ -1662,6 +1689,10 @@ class Project(BaseModel):
     pathConfig: ProjectPathConfig = Field(default_factory=ProjectPathConfig)
     testConfig: ProjectTestConfig = Field(default_factory=ProjectTestConfig)
     skillMeat: SkillMeatProjectConfig = Field(default_factory=SkillMeatProjectConfig)
+    display: Optional[ProjectDisplayConfig] = None
+    """Optional persisted display configuration.  Absent on existing records;
+    ``resolve_display_metadata`` in project_manager fills deterministic
+    fallbacks so callers receive a fully-populated ``ProjectDisplayMetadata``."""
 
     @model_validator(mode="before")
     @classmethod
@@ -3006,11 +3037,14 @@ class LaunchCapabilitiesDTO(BaseModel):
     Frontend consumes this to gate the Launch entrypoint; backend routers
     return 503 with `error="launch_disabled"` when `enabled` is False.
     `planningEnabled` gates the planning control plane surfaces (PCP-603).
+    `multiProjectCommandCenterEnabled` gates all multi-project command-center
+    UI surfaces and endpoints (MPCC Phase 1+); defaults False.
     """
     enabled: bool = False
     disabledReason: str = ""
     providers: list[LaunchProviderCapabilityDTO] = Field(default_factory=list)
     planningEnabled: bool = True
+    multiProjectCommandCenterEnabled: bool = False
 
 
 # ── Test Visualizer DTOs ───────────────────────────────────────────
@@ -3344,3 +3378,257 @@ class SystemActiveCountDTO(BaseModel):
     window_seconds: int
     status: Literal["ok", "partial"]
     latest_collected_at: str = ""
+
+
+# ── Multi-Project Planning Command Center DTOs (MPCC-101) ───────────────────
+# These DTOs freeze the aggregate DTO contract for the Multi-Project Planning
+# Command Center.  They embed the V1 single-project work-item and session-card
+# shapes defined in backend/application/services/agent_queries/models.py (via
+# the routers) rather than duplicating their field lists.  Only the extra
+# cross-project fields are declared here.
+#
+# Naming conventions:
+#   - ``ProjectDisplayMetadata``  – optional per-project rendering hints
+#   - ``ProjectSummary``          – identity + counts + freshness per project
+#   - ``AggregateWorkItem``       – V1 item + cross-project identity fields
+#   - ``AggregateSessionCard``    – V1 card + cross-project identity fields
+#   - ``AggregatePagination``     – standard page/pageSize/total/hasMore
+#   - ``ProjectWarning``          – per-project partial-status warning entry
+#   - ``MultiProjectCommandCenterResponse``   – aggregate work-item envelope
+#   - ``MultiProjectSessionBoardResponse``    – aggregate session-board envelope
+
+
+class ProjectDisplayMetadata(BaseModel):
+    """Optional per-project rendering hints for multi-project views.
+
+    All fields are optional.  When absent the frontend applies deterministic
+    fallbacks (e.g. consistent-hash color from project id, group "default",
+    sort order derived from project index).
+
+    Fallback semantics (documented for frontend implementors):
+    - ``color``: absent → deterministic HSL from sha256(project_id)[:6]
+    - ``group``: absent → "default"
+    - ``sort_order``: absent → alphabetical by project name
+    - ``label_override``: absent → use project name as-is
+    """
+
+    color: Optional[str] = None
+    """Hex or CSS color used to tint project chips/rails.  E.g. "#6366f1"."""
+
+    group: Optional[str] = None
+    """Free-form group label used to cluster projects in multi-project rail.
+    E.g. "core-platform", "mobile", "infra"."""
+
+    sort_order: Optional[int] = None
+    """Explicit sort position within a group.  Lower values sort first."""
+
+    label_override: Optional[str] = None
+    """Short display label to use instead of the project name."""
+
+
+class ProjectWorkItemCounts(BaseModel):
+    """Aggregate work-item counts for a project in the multi-project view."""
+
+    work_items: int = 0
+    """Total planning command-center work items (features + orphan docs)."""
+
+    blocked: int = 0
+    """Items whose effective_status is "blocked"."""
+
+    review: int = 0
+    """Items in a review or review-ready status."""
+
+    stale: int = 0
+    """Items flagged as stale (raw status terminal but evidence incomplete)."""
+
+    active_sessions: int = 0
+    """Active (running/thinking) agent sessions associated with this project."""
+
+    errors: int = 0
+    """Items or sessions that are in an error state."""
+
+
+class ProjectSummary(BaseModel):
+    """Per-project identity, counts, and freshness for multi-project views.
+
+    Used in both ``MultiProjectCommandCenterResponse`` and
+    ``MultiProjectSessionBoardResponse`` so the frontend can render a project
+    rail and filter controls without fetching per-project details.
+
+    Field notes:
+    - ``is_stale`` is True when the project data is known-stale (i.e. the
+      background sync has not run recently enough).  None means staleness
+      cannot be determined.
+    - ``error`` is non-None when the per-project aggregate query failed; the
+      rest of the fields may carry partial data.
+    - ``last_updated`` is the ISO-8601 timestamp of the most recently synced
+      artifact in this project.
+    - ``freshness_seconds`` is the age of the oldest contributing data row in
+      seconds; None when unavailable.
+    """
+
+    project_id: str
+    name: str
+    display_metadata: ProjectDisplayMetadata = Field(default_factory=ProjectDisplayMetadata)
+    counts: ProjectWorkItemCounts = Field(default_factory=ProjectWorkItemCounts)
+    is_stale: Optional[bool] = None
+    error: Optional[str] = None
+    last_updated: Optional[str] = None
+    freshness_seconds: Optional[int] = None
+
+
+class ProjectIdentityFields(BaseModel):
+    """Minimal cross-project identity fields embedded in aggregate items/cards.
+
+    These are the fields a renderer needs to color-code, label, and route a
+    card back to its source project without consulting ``projectSummaries``.
+    """
+
+    project_id: str
+    project_name: str = ""
+    project_color: Optional[str] = None
+    """Resolved color (after deterministic fallback).  Always a hex string."""
+
+    project_group: Optional[str] = None
+    """Resolved group label (after fallback to "default")."""
+
+
+class AggregateWorkItem(BaseModel):
+    """A single planning command-center work item annotated with project identity.
+
+    Embeds the V1 ``PlanningCommandCenterItemDTO`` shape via ``item`` plus the
+    cross-project identity fields needed for rendering in the multi-project
+    board.  The ``item`` field intentionally carries the full V1 payload rather
+    than flattening it so V1 consumers of the nested shape remain unaffected
+    when aggregate fields are added or removed.
+    """
+
+    project: ProjectIdentityFields
+    item: dict[str, Any]
+    """Serialised ``PlanningCommandCenterItemDTO``.  Typed as dict to avoid a
+    circular import at models.py load time; the router validates shape via the
+    agent-query service layer."""
+
+
+class AggregateSessionWorkerSummary(BaseModel):
+    """Compact summary of a worker or subagent nested under an aggregate card."""
+
+    session_id: str
+    agent_name: Optional[str] = None
+    state: str = "unknown"
+    model: Optional[str] = None
+    started_at: Optional[str] = None
+    last_activity_at: Optional[str] = None
+    duration_seconds: Optional[float] = None
+
+
+class AggregateSessionCard(BaseModel):
+    """A planning agent session card annotated with project identity.
+
+    Embeds the V1 ``PlanningAgentSessionCardDTO`` shape via ``card`` plus the
+    cross-project identity fields and an optional nested worker/subagent
+    summary list.  The ``card`` field is a serialised dict for the same
+    import-boundary reasons as ``AggregateWorkItem.item``.
+    """
+
+    project: ProjectIdentityFields
+    card: dict[str, Any]
+    """Serialised ``PlanningAgentSessionCardDTO``."""
+
+    workers: list[AggregateSessionWorkerSummary] = Field(default_factory=list)
+    """Compact summaries of worker/subagent sessions nested under this card.
+    Populated when the session is a root session with child worker sessions.
+    Empty list when there are no workers or when child data is unavailable."""
+
+
+class AggregatePagination(BaseModel):
+    """Standard pagination envelope mirroring ``PlanningCommandCenterPageDTO`` conventions."""
+
+    page: int = 1
+    page_size: int = 50
+    total: int = 0
+    has_more: bool = False
+
+
+class ProjectWarning(BaseModel):
+    """A per-project warning or partial-status message for multi-project responses.
+
+    ``severity`` mirrors the ``PlanningCommandCenterBlockerDTO.severity`` scale.
+    ``project_id`` identifies which project the warning originated from so the
+    frontend can surface it inline in the project rail or card.
+    """
+
+    project_id: str
+    message: str
+    severity: Literal["low", "medium", "high"] = "medium"
+    code: str = ""
+    """Machine-readable warning code for programmatic handling (e.g. "sync_stale",
+    "feature_load_failed", "session_load_failed")."""
+
+
+class MultiProjectCommandCenterResponse(BaseModel):
+    """Aggregate response envelope for the multi-project Planning Command Center.
+
+    Packages:
+    - ``items``: flat list of ``AggregateWorkItem`` spanning all projects.
+    - ``project_summaries``: per-project identity + count snapshot (drives the
+      project rail and filter counts in the UI).
+    - ``pagination``: standard pagination token.
+    - ``warnings``: per-project and global warnings / partial-status messages.
+    - ``status``: aggregate query status ("ok" | "partial" | "error").
+
+    When ``status`` is "partial" at least one project's aggregate query failed
+    or returned incomplete data.  ``warnings`` carries per-project detail.
+    """
+
+    status: Literal["ok", "partial", "error"] = "ok"
+    items: list[AggregateWorkItem] = Field(default_factory=list)
+    project_summaries: list[ProjectSummary] = Field(default_factory=list)
+    pagination: AggregatePagination = Field(default_factory=AggregatePagination)
+    warnings: list[ProjectWarning] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
+    data_freshness: Optional[str] = None
+
+
+class AggregateBoardGroup(BaseModel):
+    """A column in the multi-project session board, keyed by the active grouping.
+
+    Mirrors ``PlanningBoardGroupDTO`` structure but contains ``AggregateSessionCard``
+    instances that carry project identity fields.
+    """
+
+    group_key: str
+    group_label: str = ""
+    group_type: str = ""
+    cards: list[AggregateSessionCard] = Field(default_factory=list)
+    card_count: int = 0
+
+
+class MultiProjectSessionBoardResponse(BaseModel):
+    """Aggregate response envelope for the multi-project active-session board.
+
+    Packages:
+    - ``groups``: board columns (``AggregateBoardGroup``) under the active grouping.
+    - ``project_summaries``: per-project identity + count snapshot.
+    - ``pagination``: standard pagination token (applied to the flat card list
+      before grouping when ``paginate_before_group`` is requested).
+    - ``warnings``: per-project and global warnings.
+    - ``grouping``: the dimension used to group cards (mirrors
+      ``PlanningBoardGroupingMode``).
+    - ``total_card_count`` / ``active_count`` / ``completed_count``: convenience
+      tallies across all groups for the header summary strip.
+
+    When ``status`` is "partial" at least one project's session query failed.
+    """
+
+    status: Literal["ok", "partial", "error"] = "ok"
+    grouping: str = "state"
+    groups: list[AggregateBoardGroup] = Field(default_factory=list)
+    project_summaries: list[ProjectSummary] = Field(default_factory=list)
+    pagination: AggregatePagination = Field(default_factory=AggregatePagination)
+    warnings: list[ProjectWarning] = Field(default_factory=list)
+    total_card_count: int = 0
+    active_count: int = 0
+    completed_count: int = 0
+    generated_at: Optional[datetime] = None
+    data_freshness: Optional[str] = None

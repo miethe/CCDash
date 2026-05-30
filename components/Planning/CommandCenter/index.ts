@@ -1,4 +1,4 @@
-export { PlanningCommandCenter } from './PlanningCommandCenter';
+export { PlanningCommandCenter, PlanningCommandCenterShell } from './PlanningCommandCenter';
 export { CommandCenterListView } from './CommandCenterListView';
 export { CommandCenterCardView } from './CommandCenterCardView';
 export { CommandCenterBoardView } from './CommandCenterBoardView';
@@ -11,6 +11,15 @@ export { RelatedFilesPicker } from './RelatedFilesPicker';
 export { PhasePlanTable } from './PhasePlanTable';
 export { WorktreeGitStatePanel } from './WorktreeGitStatePanel';
 export { QuickCommandBar } from './QuickCommandBar';
+// ── Multi-project exports (MPCC-501..505) ─────────────────────────────────────
+export { MultiProjectCommandCenter } from './MultiProjectCommandCenter';
+export { MultiProjectFilterRail } from './MultiProjectFilterRail';
+export { MultiProjectSessionBoard } from './MultiProjectSessionBoard';
+export { MultiProjectWorkItemCard } from './MultiProjectWorkItemCard';
+export { MultiProjectDetailRail } from './MultiProjectDetailRail';
+export { MultiProjectModeToggle } from './MultiProjectModeToggle';
+export type { CommandCenterMode } from './MultiProjectModeToggle';
+export type { DetailTarget } from './MultiProjectDetailRail';
 export {
   appendRelatedFileToCommand,
   commandCenterDoneLabel,

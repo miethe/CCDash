@@ -23,11 +23,48 @@ import { CommandCenterBoardView } from './CommandCenterBoardView';
 import { CommandCenterDetailPanel } from './CommandCenterDetailPanel';
 import { PlanningLaunchSheet } from '../PlanningLaunchSheet';
 import { BtnGhost, Panel } from '../primitives';
+import { MULTI_PROJECT_COMMAND_CENTER_ENABLED } from '@/constants';
+import { MultiProjectModeToggle, type CommandCenterMode } from './MultiProjectModeToggle';
+import { MultiProjectCommandCenter } from './MultiProjectCommandCenter';
 
 interface PlanningCommandCenterProps {
   projectId?: string | null;
   onOpenExecution?: (featureId: string) => void;
   onOpenPlan?: (path: string) => void;
+}
+
+/**
+ * MPCC-501: Shell wrapper that gates the multi-project mode toggle.
+ * When the flag is off, only the V1 single-project component renders.
+ */
+export function PlanningCommandCenterShell(props: PlanningCommandCenterProps) {
+  const [mode, setMode] = useState<CommandCenterMode>('single');
+
+  if (!MULTI_PROJECT_COMMAND_CENTER_ENABLED) {
+    return <PlanningCommandCenter {...props} />;
+  }
+
+  return (
+    <div className="space-y-3" data-testid="planning-command-center-shell">
+      {/* Mode toggle — only renders when flag is on */}
+      <div className="flex items-center justify-end">
+        <MultiProjectModeToggle mode={mode} onModeChange={setMode} />
+      </div>
+
+      {mode === 'single' ? (
+        <PlanningCommandCenter {...props} />
+      ) : (
+        <MultiProjectCommandCenter
+          onOpenExecution={
+            props.onOpenExecution
+              ? (featureId, _projectId) => props.onOpenExecution!(featureId)
+              : undefined
+          }
+          onOpenPlan={props.onOpenPlan}
+        />
+      )}
+    </div>
+  );
 }
 
 type LoadState =

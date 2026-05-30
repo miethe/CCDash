@@ -238,3 +238,127 @@ export function usePlanningViewQuery({
     enabled: !!projectId && enabled,
   });
 }
+
+// ── useMultiProjectCommandCenterQuery ─────────────────────────────────────────
+
+import type {
+  MultiProjectCommandCenterResponse,
+  MultiProjectSessionBoardResponse,
+} from '../../types';
+import {
+  fetchMultiProjectCommandCenter,
+  fetchMultiProjectSessionBoard,
+  type MultiProjectCommandCenterQuery,
+  type MultiProjectSessionBoardQuery,
+} from '../multiProjectPlanningCommandCenter';
+import {
+  multiProjectPlanningKeys,
+  type MultiProjectCommandCenterFilters,
+  type MultiProjectSessionBoardFilters,
+} from '../queryKeys';
+import { MULTI_PROJECT_COMMAND_CENTER_ENABLED } from '../../constants';
+
+export interface UseMultiProjectCommandCenterQueryOptions {
+  /**
+   * Filter + pagination parameters forwarded to the aggregate endpoint.
+   * Changing any field produces a new cache entry (all fields are in the key).
+   */
+  filters?: MultiProjectCommandCenterFilters;
+  /**
+   * Whether the project list is ready (at least one project known).
+   * The query is gated on flag AND projectListReady to avoid spurious fetches
+   * before the project list has loaded.
+   */
+  projectListReady?: boolean;
+  /** Set false to explicitly suppress the query. */
+  enabled?: boolean;
+}
+
+/**
+ * MPCC-403: TanStack Query hook for the multi-project aggregate command center.
+ *
+ * Gated on:
+ *   1. MULTI_PROJECT_COMMAND_CENTER_ENABLED (env-var flag)
+ *   2. projectListReady (project list has resolved — avoids fetching before
+ *      the project scope is known)
+ *   3. enabled prop (explicit suppression)
+ *
+ * staleTime: 30_000 — soft-TTL matches existing planning hooks.
+ * The query key includes all filter fields so any filter change invalidates
+ * and re-fetches automatically.
+ *
+ * Never mutates the active project.  Read-only.
+ */
+export function useMultiProjectCommandCenterQuery({
+  filters = {},
+  projectListReady = true,
+  enabled = true,
+}: UseMultiProjectCommandCenterQueryOptions = {}) {
+  return useQuery<MultiProjectCommandCenterResponse>({
+    queryKey: multiProjectPlanningKeys.commandCenter(filters),
+    queryFn: (): Promise<MultiProjectCommandCenterResponse> => {
+      const fetchQuery: MultiProjectCommandCenterQuery = {
+        projectIds: filters.projectIds,
+        status: filters.status,
+        kind: filters.kind,
+        group: filters.group,
+        search: filters.search,
+        page: filters.page,
+        pageSize: filters.pageSize,
+        sort: filters.sort,
+      };
+      return fetchMultiProjectCommandCenter(fetchQuery);
+    },
+    staleTime: 30_000,
+    gcTime: 300_000,
+    enabled: MULTI_PROJECT_COMMAND_CENTER_ENABLED && projectListReady && enabled,
+  });
+}
+
+// ── useMultiProjectSessionBoardQuery ──────────────────────────────────────────
+
+export interface UseMultiProjectSessionBoardQueryOptions {
+  /** Filter + pagination parameters forwarded to the aggregate session-board endpoint. */
+  filters?: MultiProjectSessionBoardFilters;
+  /**
+   * Whether the project list is ready (at least one project known).
+   * Prevents fetching before project scope resolves.
+   */
+  projectListReady?: boolean;
+  /** Set false to explicitly suppress the query. */
+  enabled?: boolean;
+}
+
+/**
+ * MPCC-403: TanStack Query hook for the multi-project aggregate session board.
+ *
+ * Gated on MULTI_PROJECT_COMMAND_CENTER_ENABLED + projectListReady + enabled.
+ * staleTime: 30_000 — consistent with single-project session board hooks.
+ *
+ * Never mutates the active project.  Read-only.
+ */
+export function useMultiProjectSessionBoardQuery({
+  filters = {},
+  projectListReady = true,
+  enabled = true,
+}: UseMultiProjectSessionBoardQueryOptions = {}) {
+  return useQuery<MultiProjectSessionBoardResponse>({
+    queryKey: multiProjectPlanningKeys.sessionBoard(filters),
+    queryFn: (): Promise<MultiProjectSessionBoardResponse> => {
+      const fetchQuery: MultiProjectSessionBoardQuery = {
+        projectIds: filters.projectIds,
+        group: filters.group,
+        groupBy: filters.groupBy as MultiProjectSessionBoardQuery['groupBy'],
+        activeWindowMinutes: filters.activeWindowMinutes,
+        includeWorkers: filters.includeWorkers,
+        page: filters.page,
+        pageSize: filters.pageSize,
+        includeStale: filters.includeStale,
+      };
+      return fetchMultiProjectSessionBoard(fetchQuery);
+    },
+    staleTime: 30_000,
+    gcTime: 300_000,
+    enabled: MULTI_PROJECT_COMMAND_CENTER_ENABLED && projectListReady && enabled,
+  });
+}

@@ -368,6 +368,8 @@ export interface LaunchCapabilities {
   providers: LaunchProviderCapability[];
   /** Whether the planning control plane surfaces are enabled (PCP-603). */
   planningEnabled: boolean;
+  /** Whether multi-project command-center UI and endpoints are enabled (MPCC-102). Defaults false; absent = off. */
+  multiProjectCommandCenterEnabled?: boolean;
 }
 
 export async function getLaunchCapabilities(): Promise<LaunchCapabilities> {

@@ -456,6 +456,85 @@ class SqliteSessionRepository:
             row = await cur.fetchone()
         return row[0] if row else 0
 
+    async def list_active(
+        self,
+        project_id: str,
+        *,
+        window_seconds: int = 600,
+        limit: int | None = None,
+        include_subagents: bool = True,
+    ) -> list[dict]:
+        """List sessions that are currently active for a project.
+
+        Returns session rows ordered by ``updated_at DESC`` (most-recently
+        active first).  The active predicate and staleness clamp are
+        **identical** to :meth:`count_active`:
+
+        1. ``status = 'active'``
+        2. ``updated_at >= now() - window_seconds``
+
+        The WHERE clause is intentionally shaped to match the composite index
+        declared in ``sqlite_migrations.py``::
+
+            CREATE INDEX idx_sessions_project_status_updated
+                ON sessions(project_id, status, updated_at);
+
+        That index covers all three leading predicate columns, so this query
+        never does a full table scan.
+
+        Args:
+            project_id: The project to scope the query to.
+            window_seconds: Freshness window in seconds (default 600 = 10 min).
+                Sessions with ``updated_at`` older than this are excluded even
+                if their stored ``status`` is ``'active'``.  Same default and
+                same semantics as :meth:`count_active`.
+            limit: Optional cap on returned rows.  ``None`` means no cap.
+                Callers doing cross-project sweeps should always pass a
+                reasonable limit to avoid unbounded result sets.
+            include_subagents: If ``True`` (default), rows where
+                ``session_type = 'subagent'`` are included.  Pass ``False``
+                to exclude worker/subagent sessions, mirroring the
+                ``include_subagents=False`` convention on
+                :meth:`list_paginated`, :meth:`count`, and
+                :meth:`count_active`.
+
+        Returns:
+            List of session row dicts ordered by ``updated_at DESC``.
+            Returns an empty list when the project has no active sessions
+            within the window.  Each dict has the same shape as rows
+            returned by :meth:`list_paginated` (all ``sessions`` columns
+            via :meth:`_row_to_dict`).
+        """
+        from datetime import datetime, timedelta, timezone
+
+        threshold = (
+            datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        ).isoformat()
+
+        where_clauses = [
+            "project_id = ?",
+            "status = ?",
+            "updated_at >= ?",
+        ]
+        params: list = [project_id, "active", threshold]
+
+        if not include_subagents:
+            where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        query = (
+            "SELECT * FROM sessions WHERE "
+            + " AND ".join(where_clauses)
+            + " ORDER BY updated_at DESC"
+        )
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        async with self.db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
         query_parts = [
             "SELECT model, COUNT(*) AS count",

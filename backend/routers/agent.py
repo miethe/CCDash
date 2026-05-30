@@ -40,7 +40,13 @@ from backend.application.services.agent_queries import (
     WorkflowDiagnosticsQueryService,
 )
 from backend.application.services.agent_queries.system_metrics import SystemMetricsQueryService
-from backend.models import SystemActiveCountDTO
+from backend.application.services.agent_queries.multi_project_planning_command_center import (
+    MultiProjectPlanningCommandCenterQueryService,
+)
+from backend.application.services.agent_queries.multi_project_planning_sessions import (
+    MultiProjectActiveSessionBoardQueryService,
+)
+from backend.models import AggregateWorkItem, MultiProjectCommandCenterResponse, MultiProjectSessionBoardResponse, SystemActiveCountDTO
 from backend.observability import otel
 from backend.request_scope import get_core_ports, get_request_context
 
@@ -56,6 +62,18 @@ def _require_planning_enabled() -> None:
                 "error": "planning_disabled",
                 "message": "Planning control plane is disabled.",
                 "hint": "Set CCDASH_PLANNING_CONTROL_PLANE_ENABLED=true to enable.",
+            },
+        )
+
+
+def _require_multi_project_command_center_enabled() -> None:
+    if not config.CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "multi_project_command_center_disabled",
+                "message": "Multi-project planning command center is disabled.",
+                "hint": "Set CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED=true to enable.",
             },
         )
 
@@ -88,6 +106,10 @@ planning_session_query_service = PlanningSessionQueryService()
 live_metrics_query_service = LiveMetricsQueryService()
 # system-wide-metrics-v1: system-wide active count surface.
 system_metrics_query_service = SystemMetricsQueryService()
+# MPCC-204: multi-project aggregate planning command center query surface.
+multi_project_command_center_query_service = MultiProjectPlanningCommandCenterQueryService()
+# MPCC-304: multi-project aggregate active-session board query surface.
+multi_project_session_board_query_service = MultiProjectActiveSessionBoardQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -801,3 +823,124 @@ async def post_planning_next_run_preview(
         if result.status == "error":
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
         return result
+
+
+# ── Multi-project planning command center (MPCC-204) ─────────────────────────
+# Aggregate cross-project work-item surface.  Both handlers are thin: resolve
+# the app request, delegate to MultiProjectPlanningCommandCenterQueryService,
+# and return the DTO unchanged.  Flag-off behaviour matches the next-run preview
+# convention: 404 with a disabled-payload so REST clients get the right code.
+
+
+@agent_router.get(
+    "/planning/multi-project/command-center",
+    response_model=MultiProjectCommandCenterResponse,
+    dependencies=[Depends(_require_multi_project_command_center_enabled)],
+)
+async def get_multi_project_command_center(
+    q: str | None = Query(default=None, description="Search text across feature, command, and artifact paths."),
+    status: str | None = Query(default=None, description="Raw or effective planning status filter."),
+    phase: int | None = Query(default=None, ge=1, description="Current or next phase number filter."),
+    artifact_type: str | None = Query(default=None, description="Required linked artifact type."),
+    worktree_state: str | None = Query(default=None, description="Stored worktree context status filter."),
+    pr_state: str | None = Query(default=None, description="Pull request state filter."),
+    launch_readiness: str | None = Query(default=None, description="Launch batch readiness filter."),
+    sort_by: str = Query(default="last_activity", description="Sort key."),
+    sort_direction: str = Query(default="desc", pattern="^(asc|desc)$", description="Sort direction."),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=50, ge=1, le=200, description="Page size."),
+    project_ids: list[str] | None = Query(default=None, description="Optional project id allowlist; omit to include all."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> MultiProjectCommandCenterResponse:
+    """Return enriched aggregate planning work items spanning all registered projects."""
+    with otel.start_span("planning.multi_project_command_center", {}):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await multi_project_command_center_query_service.get_multi_project_command_center(
+            app_request.context,
+            app_request.ports,
+            q=q,
+            status=status,
+            phase=phase,
+            artifact_type=artifact_type,
+            worktree_state=worktree_state,
+            pr_state=pr_state,
+            launch_readiness=launch_readiness,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            page=page,
+            page_size=page_size,
+            project_ids=project_ids,
+        )
+
+
+@agent_router.get(
+    "/planning/multi-project/command-center/item/{feature_id}",
+    response_model=AggregateWorkItem,
+    dependencies=[Depends(_require_multi_project_command_center_enabled)],
+)
+async def get_multi_project_command_center_item(
+    feature_id: str = Path(..., description="Feature id to inspect."),
+    project_id: str | None = Query(default=None, description="Optional project scope — limits search to one project."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AggregateWorkItem:
+    """Return one enriched aggregate work item by feature id without loading the full list."""
+    with otel.start_span(
+        "planning.multi_project_command_center.item",
+        {"feature_id": feature_id, "project_id": project_id or ""},
+    ):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        result = await multi_project_command_center_query_service.get_multi_project_item(
+            app_request.context,
+            app_request.ports,
+            feature_id=feature_id,
+            project_id=project_id,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found in any registered project.")
+        return result
+
+
+# ── Multi-project active-session board (MPCC-304) ────────────────────────────
+# Aggregate cross-project session-board surface.  The handler is thin: resolve
+# the app request, delegate to MultiProjectActiveSessionBoardQueryService, and
+# return the DTO unchanged.  Flag-off behaviour matches the Phase 2 convention:
+# 404 with a disabled-payload.  The same gate (_require_multi_project_command_center_enabled)
+# covers both surfaces — session board is a sub-feature of the MPCC flag.
+
+
+@agent_router.get(
+    "/planning/multi-project/session-board",
+    response_model=MultiProjectSessionBoardResponse,
+    dependencies=[Depends(_require_multi_project_command_center_enabled)],
+)
+async def get_multi_project_session_board(
+    group_by: str = Query(default="state", description="Grouping dimension: state | feature | phase | agent | model | project."),
+    project_ids: list[str] | None = Query(default=None, description="Optional project id allowlist; omit to include all."),
+    group_filter: str | None = Query(default=None, description="Only include cards whose group_key matches this value."),
+    feature_id: str | None = Query(default=None, description="Only include cards correlated to this feature."),
+    state_filter: str | None = Query(default=None, description="Only include cards in this state (e.g. 'running')."),
+    window_seconds: int | None = Query(default=None, ge=1, description="Active-session freshness window in seconds; overrides server default."),
+    include_workers: bool = Query(default=True, description="When false, worker sessions are omitted from all groups."),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=50, ge=1, le=200, description="Page size."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> MultiProjectSessionBoardResponse:
+    """Return active-session cards grouped across all registered projects."""
+    with otel.start_span("planning.multi_project_session_board", {}):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await multi_project_session_board_query_service.get_multi_project_session_board(
+            app_request.context,
+            app_request.ports,
+            group_by=group_by,
+            project_ids=project_ids,
+            group_filter=group_filter,
+            feature_id=feature_id,
+            state_filter=state_filter,
+            window_seconds=window_seconds,
+            include_workers=include_workers,
+            page=page,
+            page_size=page_size,
+        )

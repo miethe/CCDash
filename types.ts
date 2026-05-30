@@ -3777,3 +3777,218 @@ export interface SystemActiveCount {
   /** "ok" when all projects queried successfully; "partial" when ≥1 error. */
   status: 'ok' | 'partial';
 }
+
+// ── Multi-Project Planning Command Center DTOs (MPCC-101) ─────────────────────
+// These interfaces freeze the aggregate DTO contract for the Multi-Project
+// Planning Command Center.  They embed the V1 single-project shapes
+// (PlanningCommandCenterItem, PlanningAgentSessionCard) and add the extra
+// cross-project identity fields needed for the multi-project board and rail.
+
+/**
+ * Optional per-project rendering hints stored alongside project configuration.
+ *
+ * All fields are optional.  Absent fields get deterministic fallbacks:
+ * - color: consistent-hash HSL from project id
+ * - group: "default"
+ * - sortOrder: alphabetical by project name
+ * - labelOverride: project name as-is
+ */
+export interface ProjectDisplayMetadata {
+  /** Hex or CSS color used to tint project chips and rails.  E.g. "#6366f1". */
+  color?: string;
+  /** Free-form group label used to cluster projects in the multi-project rail. */
+  group?: string;
+  /** Explicit sort position within a group.  Lower values sort first. */
+  sortOrder?: number;
+  /** Short display label to use instead of the project name. */
+  labelOverride?: string;
+}
+
+/** Aggregate work-item counts for a project in the multi-project view. */
+export interface ProjectWorkItemCounts {
+  workItems: number;
+  blocked: number;
+  review: number;
+  stale: number;
+  activeSessions: number;
+  errors: number;
+}
+
+/**
+ * Per-project identity, counts, and freshness for multi-project views.
+ *
+ * Surfaced in both MultiProjectCommandCenterResponse and
+ * MultiProjectSessionBoardResponse to power the project rail and filter
+ * controls without requiring per-project detail fetches.
+ *
+ * - isStale: true when backend data is known-stale; null = unknown
+ * - error: non-null when the per-project aggregate query failed
+ * - lastUpdated: ISO-8601 timestamp of most-recently-synced artifact
+ * - freshnessSeconds: age of oldest contributing row in seconds
+ */
+export interface ProjectSummary {
+  projectId: string;
+  name: string;
+  displayMetadata: ProjectDisplayMetadata;
+  counts: ProjectWorkItemCounts;
+  isStale: boolean | null;
+  error: string | null;
+  lastUpdated: string | null;
+  freshnessSeconds: number | null;
+}
+
+/**
+ * Minimal cross-project identity fields embedded in every aggregate item/card.
+ *
+ * Carries the resolved (post-fallback) color and group so a renderer can
+ * color-code and route a card back to its source project without consulting
+ * projectSummaries.
+ */
+export interface ProjectIdentityFields {
+  projectId: string;
+  projectName: string;
+  /** Resolved color after deterministic fallback.  Always a hex string. */
+  projectColor?: string;
+  /** Resolved group label after fallback to "default". */
+  projectGroup?: string;
+}
+
+/**
+ * A single planning command-center work item annotated with project identity.
+ *
+ * Embeds the V1 PlanningCommandCenterItem shape via `item` plus the
+ * cross-project identity fields for rendering in the multi-project board.
+ * The V1 shape is embedded as an object (not re-declared) so V1 consumers
+ * of the nested shape remain unaffected when aggregate fields change.
+ */
+/** Minimal session reference embedded in AggregateWorkItem.activeSessions. */
+export interface AggregateWorkItemSession {
+  sessionId: string;
+  state?: string;
+  agentName?: string;
+}
+
+export interface AggregateWorkItem {
+  project: ProjectIdentityFields;
+  /** Full V1 work-item payload. */
+  item: PlanningCommandCenterItem;
+  /**
+   * Compact references to currently-active agent sessions for this work item.
+   * Optional — absent or empty when no sessions are running.
+   * Consumers MUST guard with optional chaining before dereferencing elements.
+   */
+  activeSessions?: AggregateWorkItemSession[];
+}
+
+/** Compact summary of a worker or subagent nested under an aggregate session card. */
+export interface AggregateSessionWorkerSummary {
+  sessionId: string;
+  agentName?: string;
+  state: string;
+  model?: string;
+  startedAt?: string;
+  lastActivityAt?: string;
+  durationSeconds?: number;
+}
+
+/**
+ * A planning agent session card annotated with project identity.
+ *
+ * Embeds the V1 PlanningAgentSessionCard shape via `card` plus the
+ * cross-project identity fields and an optional worker/subagent summary list.
+ */
+export interface AggregateSessionCard {
+  project: ProjectIdentityFields;
+  /** Full V1 session card payload. */
+  card: PlanningAgentSessionCard;
+  /**
+   * Compact summaries of worker/subagent sessions nested under this card.
+   * Present when the session is a root session with child workers.
+   * Empty array when there are no workers or child data is unavailable.
+   */
+  workers: AggregateSessionWorkerSummary[];
+}
+
+/** Standard pagination envelope matching the V1 PlanningCommandCenterPage conventions. */
+export interface AggregatePagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * A per-project warning or partial-status message for multi-project responses.
+ *
+ * severity mirrors PlanningCommandCenterBlocker.severity levels.
+ * code is a machine-readable key for programmatic handling.
+ */
+export interface ProjectWarning {
+  projectId: string;
+  message: string;
+  severity: 'low' | 'medium' | 'high';
+  /** Machine-readable code, e.g. "sync_stale" | "feature_load_failed" | "session_load_failed". */
+  code: string;
+}
+
+/**
+ * Aggregate response for the multi-project Planning Command Center.
+ *
+ * - items: flat list of AggregateWorkItem spanning all projects
+ * - projectSummaries: per-project identity + count snapshot (drives project rail)
+ * - pagination: standard page token
+ * - warnings: per-project and global partial-status messages
+ * - status: "ok" | "partial" | "error"
+ *
+ * When status is "partial" at least one project's aggregate query failed or
+ * returned incomplete data; warnings carries per-project detail.
+ */
+export interface MultiProjectCommandCenterResponse {
+  status: 'ok' | 'partial' | 'error';
+  items: AggregateWorkItem[];
+  projectSummaries: ProjectSummary[];
+  pagination: AggregatePagination;
+  warnings: ProjectWarning[];
+  generatedAt?: string;
+  dataFreshness?: string;
+}
+
+/**
+ * A column in the multi-project session board, keyed by the active grouping.
+ *
+ * Mirrors PlanningBoardGroup but contains AggregateSessionCard instances that
+ * carry project identity fields.
+ */
+export interface AggregateBoardGroup {
+  groupKey: string;
+  groupLabel: string;
+  groupType: string;
+  cards: AggregateSessionCard[];
+  cardCount: number;
+}
+
+/**
+ * Aggregate response for the multi-project active-session board.
+ *
+ * - groups: board columns under the active grouping
+ * - projectSummaries: per-project identity + count snapshot
+ * - pagination: standard pagination token
+ * - warnings: per-project and global partial-status messages
+ * - grouping: dimension used to group cards (mirrors PlanningBoardGroupingMode)
+ * - totalCardCount / activeCount / completedCount: header summary strip tallies
+ *
+ * When status is "partial" at least one project's session query failed.
+ */
+export interface MultiProjectSessionBoardResponse {
+  status: 'ok' | 'partial' | 'error';
+  grouping: string;
+  groups: AggregateBoardGroup[];
+  projectSummaries: ProjectSummary[];
+  pagination: AggregatePagination;
+  warnings: ProjectWarning[];
+  totalCardCount: number;
+  activeCount: number;
+  completedCount: number;
+  generatedAt?: string;
+  dataFreshness?: string;
+}

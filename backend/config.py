@@ -113,6 +113,10 @@ CCDASH_LAUNCH_PREP_ENABLED = _env_bool("CCDASH_LAUNCH_PREP_ENABLED", False)
 CCDASH_PLANNING_CONTROL_PLANE_ENABLED = _env_bool("CCDASH_PLANNING_CONTROL_PLANE_ENABLED", True)
 CCDASH_FEATURE_SURFACE_V2_ENABLED = _env_bool("CCDASH_FEATURE_SURFACE_V2_ENABLED", True)
 CCDASH_NEXT_RUN_PREVIEW_ENABLED = _env_bool("CCDASH_NEXT_RUN_PREVIEW_ENABLED", True)
+# CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED (default: false)
+# Gates all multi-project command-center UI surfaces and endpoints (MPCC Phase 1+).
+# Keep OFF until Phase 2/3 endpoints and FE components are wired; flip ON to enable the feature.
+CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED = _env_bool("CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED", False)
 # CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED (default: false)
 # Gates incremental rebuild scope dispatch in document-link operations. Enable after validating
 # stability in dev/staging environments; reduces cold-start latency when rebuilding partial link graphs.

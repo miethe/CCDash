@@ -344,6 +344,10 @@ class PlanningCommandCenterQueryService:
         self.resolver = resolver or PlanningCommandResolver()
         self.git_probe = git_probe or WorktreeGitStateProbe()
 
+    # ------------------------------------------------------------------
+    # Public V1 endpoint — behavior-compatible wrapper
+    # ------------------------------------------------------------------
+
     async def get_command_center(
         self,
         context: RequestContext,
@@ -370,31 +374,152 @@ class PlanningCommandCenterQueryService:
                 warnings=["Project scope could not be resolved."],
             )
 
-        project = scope.project
+        feature_rows, features, feature_index, doc_rows, partial, warnings = await self._load_project_data(
+            ports, scope.project.id
+        )
+
+        items, _, had_build_errors = await self._build_items_for_scope(
+            ports=ports,
+            project_id=scope.project.id,
+            features=features,
+            feature_index=feature_index,
+            doc_rows=doc_rows,
+            warnings=warnings,
+            q=q,
+            status=status,
+            phase=phase,
+            artifact_type=artifact_type,
+            worktree_state=worktree_state,
+            pr_state=pr_state,
+            launch_readiness=launch_readiness,
+        )
+
+        partial = partial or had_build_errors
+        shaped = self._sort_items(items, sort_by=sort_by, sort_direction=sort_direction)
+        safe_page_size = min(200, max(1, int(page_size or 50)))
+        safe_page = max(1, int(page or 1))
+        start = (safe_page - 1) * safe_page_size
+        end = start + safe_page_size
+        page_items = shaped[start:end]
+
+        return PlanningCommandCenterPageDTO(
+            status="partial" if partial else "ok",
+            project_id=scope.project.id,
+            items=page_items,
+            total=len(shaped),
+            page=safe_page,
+            page_size=safe_page_size,
+            sort_by=sort_by,
+            sort_direction="desc" if str(sort_direction).lower() == "desc" else "asc",
+            warnings=warnings,
+            data_freshness=derive_data_freshness(
+                *[row.get("updated_at") or row.get("updatedAt") for row in feature_rows],
+                *[row.get("updated_at") or row.get("updatedAt") for row in doc_rows],
+            ),
+            source_refs=collect_source_refs(scope.project.id, [item.feature.feature_id for item in page_items]),
+        )
+
+    # ------------------------------------------------------------------
+    # Reusable cross-project helper — no HTTP, accepts explicit scope
+    # ------------------------------------------------------------------
+
+    async def _load_project_data(
+        self,
+        ports: CorePorts,
+        project_id: str,
+    ) -> tuple[
+        list[dict[str, Any]],   # feature_rows
+        list[Feature],          # features
+        dict[str, Feature],     # feature_index  (key → Feature)
+        list[dict[str, Any]],   # doc_rows
+        bool,                   # partial
+        list[str],              # warnings
+    ]:
+        """Load raw feature and document rows for an explicit project scope.
+
+        Callers supply *project_id* directly; no active-project resolution
+        is performed here.  This is the entry point for cross-project
+        iteration (MPCC-202 and later).
+
+        Returns the ``feature_index`` alongside raw rows so
+        ``_build_items_for_scope`` does not need a second storage round-trip.
+
+        NOTE (MPCC-206): ``_build_item`` still calls ``git_probe.probe()``
+        which may trigger filesystem/git I/O per item.  That seam is
+        intentionally left here for MPCC-206 to address; callers that want
+        to skip git probes should override ``_build_item`` or pass a no-op
+        ``WorktreeGitStateProbe``.
+        """
         partial = False
         warnings: list[str] = []
+        feature_index: dict[str, Feature] = {}
 
         try:
-            feature_rows, features, feature_index = await _load_all_features(ports, project.id)
+            feature_rows, features, feature_index = await _load_all_features(ports, project_id)
         except Exception as exc:
-            feature_rows, features, feature_index = [], [], {}
+            feature_rows, features = [], []
             partial = True
             warnings.append(f"Feature rows unavailable: {exc}")
 
         try:
-            doc_rows = await _load_all_doc_rows(ports, project.id)
+            doc_rows = await _load_all_doc_rows(ports, project_id)
         except Exception as exc:
             doc_rows = []
             partial = True
             warnings.append(f"Document rows unavailable: {exc}")
 
+        return feature_rows, features, feature_index, doc_rows, partial, warnings
+
+    async def _build_items_for_scope(
+        self,
+        *,
+        ports: CorePorts,
+        project_id: str,
+        features: list[Feature],
+        feature_index: dict[str, Feature],
+        doc_rows: list[dict[str, Any]],
+        warnings: list[str],
+        q: str | None = None,
+        status: str | None = None,
+        phase: int | None = None,
+        artifact_type: str | None = None,
+        worktree_state: str | None = None,
+        pr_state: str | None = None,
+        launch_readiness: str | None = None,
+    ) -> tuple[list[PlanningCommandCenterItemDTO], list[PlanningCommandCenterItemDTO], bool]:
+        """Build and filter work-item DTOs for an *explicit* project scope.
+
+        Accepts pre-loaded ``feature_rows``, ``features``, ``feature_index``,
+        and ``doc_rows`` — no additional storage round-trips are made here.
+        A future cross-project service can iterate projects, call
+        ``_load_project_data`` per project, then pass the results here
+        without routing through HTTP or mutating the active project.
+
+        The ``feature_index`` returned by ``_load_project_data`` must be
+        supplied so ``_project_with_planning`` can resolve cross-feature
+        references without a second DB call.
+
+        Returns ``(filtered_items, all_items, had_errors)`` where
+        ``had_errors`` is ``True`` if any per-feature projection failed (so
+        the caller can propagate ``partial`` status).  Callers that need
+        the unfiltered set (e.g. cross-project aggregation) can use
+        ``all_items`` directly.
+
+        NOTE (MPCC-206): git probes inside ``_build_item`` run per item.
+        The interface is kept clean here so MPCC-206 can inject a deferred
+        or no-op probe without touching this method.
+        """
+        had_errors = False
+
+        # Project features with their planning overlay; ``feature_index`` was
+        # built during data-load so no extra storage call is needed here.
         projected: list[Feature] = []
         for feature in features:
             try:
                 projected.append(_project_with_planning(feature, doc_rows, feature_index))
             except Exception:
                 projected.append(feature)
-                partial = True
+                had_errors = True
 
         emitted_keys = {_feature_key(feature.id) for feature in projected}
         orphan_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -412,9 +537,10 @@ class PlanningCommandCenterQueryService:
         for key, rows in orphan_groups.items():
             projected.append(_synthetic_feature_from_doc_rows(key, rows))
 
-        worktrees_by_feature = await self._worktrees_by_feature(ports, project.id, warnings)
+        worktrees_by_feature = await self._worktrees_by_feature(ports, project_id, warnings)
 
-        items: list[PlanningCommandCenterItemDTO] = []
+        all_items: list[PlanningCommandCenterItemDTO] = []
+        filtered_items: list[PlanningCommandCenterItemDTO] = []
         for feature in projected:
             docs = _dedupe_documents(
                 [
@@ -424,32 +550,11 @@ class PlanningCommandCenterQueryService:
             )
             worktree_row = worktrees_by_feature.get(_feature_key(feature.id))
             item = await self._build_item(feature, docs, worktree_row)
+            all_items.append(item)
             if self._matches_filters(item, q, status, phase, artifact_type, worktree_state, pr_state, launch_readiness):
-                items.append(item)
+                filtered_items.append(item)
 
-        shaped = self._sort_items(items, sort_by=sort_by, sort_direction=sort_direction)
-        safe_page_size = min(200, max(1, int(page_size or 50)))
-        safe_page = max(1, int(page or 1))
-        start = (safe_page - 1) * safe_page_size
-        end = start + safe_page_size
-        page_items = shaped[start:end]
-
-        return PlanningCommandCenterPageDTO(
-            status="partial" if partial else "ok",
-            project_id=project.id,
-            items=page_items,
-            total=len(shaped),
-            page=safe_page,
-            page_size=safe_page_size,
-            sort_by=sort_by,
-            sort_direction="desc" if str(sort_direction).lower() == "desc" else "asc",
-            warnings=warnings,
-            data_freshness=derive_data_freshness(
-                *[row.get("updated_at") or row.get("updatedAt") for row in feature_rows],
-                *[row.get("updated_at") or row.get("updatedAt") for row in doc_rows],
-            ),
-            source_refs=collect_source_refs(project.id, [item.feature.feature_id for item in page_items]),
-        )
+        return filtered_items, all_items, had_errors
 
     async def get_command_center_item(
         self,
