@@ -1,15 +1,16 @@
 ---
 title: "Feature Contract: CCDash Skill Refresh and SPEC.md Authorship"
+description: "Author SPEC.md and refresh the ccdash skill (SKILL.md, references, router-table.json, CHANGELOG.md) to match the shipped CCDash runtime surface: 7 MCP tools, 7 in-repo CLI groups, and the standalone CLI groups including the new project command group."
 schema_version: 2
 doc_type: feature_contract
-status: draft
+status: completed
 created: 2026-05-29
 updated: 2026-05-29
 feature_slug: "ccdash-skill-refresh-and-spec"
 category: "enhancements"
 estimated_points: 4
 tier: 1
-owner: null
+owner: "Nick Miethe"
 priority: medium
 risk_level: low
 changelog_required: false
@@ -18,7 +19,8 @@ related_documents:
 spike_ref: null
 prd_ref: null
 plan_ref: null
-commit_refs: []
+commit_refs:
+  - "a13e86a094b66e4ef56b7bc114ed31ca40ab4660"  # MeatySkills: ccdash skill + SPEC.md
 pr_refs: []
 files_affected:
   - "/Users/miethe/dev/homelab/development/MeatySkills/skills/ccdash/SPEC.md"
