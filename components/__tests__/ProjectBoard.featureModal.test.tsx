@@ -24,6 +24,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { Feature, PlanDocument } from '../../types';
 
@@ -158,8 +159,25 @@ vi.mock('../../services/featureSurfaceFlag', () => ({
   isFeatureSurfaceV2Enabled: vi.fn(() => false),
 }));
 
+// T2-004: stub paginated features query so ProjectBoard renders without a QueryClientProvider
+vi.mock('../../services/queries/features', () => ({
+  useFeaturesQuery: () => ({ data: { items: [], total: 0, page: 0, pageSize: 100 }, isLoading: false, error: null }),
+  FEATURES_PAGE_SIZE: 100,
+}));
+
 import { ProjectBoard } from '../ProjectBoard';
 import { planningFeatureDetailHref, planningFeatureModalHref } from '../../services/planningRoutes';
+
+function renderBoard() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderToStaticMarkup(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/board']}>
+        <ProjectBoard />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 // ── Tab resolution logic (pure, extracted inline from ProjectBoard) ────────────
 
@@ -264,11 +282,7 @@ describe('ProjectBoard — deep link URL (planningFeatureModalHref)', () => {
 
 describe('ProjectBoard — static render sanity', () => {
   it('renders without crashing when feature list is empty', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/board']}>
-        <ProjectBoard />
-      </MemoryRouter>,
-    );
+    const html = renderBoard();
     expect(html.length).toBeGreaterThan(0);
     expect(html).not.toMatch(/TypeError:|ReferenceError:/);
   });

@@ -19,6 +19,7 @@ import {
    X,
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
+import { useDocumentsQuery } from '../services/queries/documents';
 import { Link, useNavigate } from 'react-router-dom';
 import { getFeatureStatusStyle } from './featureStatus';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
@@ -279,7 +280,9 @@ export const DocumentModal = ({
    featureDetailHref = planningFeatureDetailHref,
 }: DocumentModalProps) => {
    const navigate = useNavigate();
-   const { sessions, features, refreshDocuments } = useData();
+   const { sessions, features, refreshDocuments, activeProject } = useData();
+   const projectId = activeProject?.id;
+   const { data: documents = [] } = useDocumentsQuery({ projectId });
    const [activeTab, setActiveTab] = React.useState<'summary' | 'delivery' | 'relationships' | 'content' | 'timeline' | 'raw'>('summary');
    const [fullDoc, setFullDoc] = React.useState<PlanDocument>(() => normalizeDoc(initialDoc, initialDoc));
    const [links, setLinks] = React.useState<DocumentLinksResponse | null>(null);

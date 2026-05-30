@@ -15,10 +15,13 @@ from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services.agent_queries import (
     AARReportDTO,
+    DashboardBundleDTO,
+    DashboardQueryService,
     FeatureForensicsDTO,
     ProjectStatusDTO,
     WorkflowDiagnosticsDTO,
 )
+from backend.observability import otel
 from backend.application.services.feature_surface import (
     FeatureModalOverviewDTO,
     FeatureModalSectionDTO,
@@ -68,6 +71,9 @@ from backend.routers._client_v1_sessions import (
 
 
 client_v1_router = APIRouter(prefix="/api/v1", tags=["client-v1"])
+
+# P5a: dashboard bundle service singleton (T5-001/T5-002)
+_dashboard_query_service = DashboardQueryService()
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +129,40 @@ async def project_status(
 ) -> ClientV1Envelope[ProjectStatusDTO]:
     """Return the project status snapshot."""
     return await get_project_status_v1(project_id, request_context, core_ports, bypass_cache=bypass_cache)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard bundle (T5-002)
+# ---------------------------------------------------------------------------
+
+
+@client_v1_router.get("/dashboard")
+async def dashboard_bundle(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[DashboardBundleDTO]:
+    """Return the Dashboard fat-read bundle.
+
+    Composes the most-recent sessions page (limit 20, ``started_at`` desc) and
+    task counts by status into a single above-fold response, collapsing ≤N
+    parallel Dashboard requests to exactly 1.
+    """
+    with otel.start_span(
+        "ccdash.dashboard.bundle",
+        {"project_id": project_id or ""},
+    ):
+        data = await _dashboard_query_service.get_dashboard_bundle(
+            request_context,
+            core_ports,
+            project_id_override=project_id,
+            bypass_cache=bypass_cache,
+        )
+    return ClientV1Envelope(
+        data=data,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
 
 
 # ---------------------------------------------------------------------------

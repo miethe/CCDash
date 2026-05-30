@@ -20,11 +20,15 @@ from backend.application.services.agent_queries import (
     FeaturePlanningContextDTO,
     LiveActiveCountDTO,
     LiveMetricsQueryService,
+    PlanningCommandCenterItemDTO,
+    PlanningCommandCenterPageDTO,
+    PlanningCommandCenterQueryService,
     PhaseOperationsDTO,
     PlanningAgentSessionBoardDTO,
     PlanningNextRunPreviewDTO,
     PlanningQueryService,
     PlanningSessionQueryService,
+    PlanningViewBundleDTO,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     ProjectStatusDTO,
@@ -76,6 +80,8 @@ reporting_query_service = ReportingQueryService()
 artifact_intelligence_query_service = ArtifactIntelligenceQueryService()
 # PCP-202: planning query surface — one singleton for the whole process lifetime.
 planning_query_service = PlanningQueryService()
+# PCC-201/PCC-202: aggregate planning command center query surface.
+planning_command_center_query_service = PlanningCommandCenterQueryService()
 # PASB-102: planning session board query surface.
 planning_session_query_service = PlanningSessionQueryService()
 # live-agents-count-v1: live metrics query surface.
@@ -438,6 +444,81 @@ async def get_planning_graph(
 
 
 @agent_router.get(
+    "/planning/command-center",
+    response_model=PlanningCommandCenterPageDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_command_center(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    q: str | None = Query(default=None, description="Search text across feature, command, and artifact paths."),
+    status: str | None = Query(default=None, description="Raw or effective planning status filter."),
+    phase: int | None = Query(default=None, ge=1, description="Current or next phase number filter."),
+    artifact_type: str | None = Query(default=None, description="Required linked artifact type."),
+    worktree_state: str | None = Query(default=None, description="Stored worktree context status filter."),
+    pr_state: str | None = Query(default=None, description="Pull request state filter."),
+    launch_readiness: str | None = Query(default=None, description="Launch batch readiness filter."),
+    sort_by: str = Query(default="last_activity", description="Sort key."),
+    sort_direction: str = Query(default="desc", pattern="^(asc|desc)$", description="Sort direction."),
+    page: int = Query(default=1, ge=1, description="1-based page number."),
+    page_size: int = Query(default=50, ge=1, le=200, description="Page size."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningCommandCenterPageDTO:
+    """Return enriched planning work items for the project command center."""
+    with otel.start_span("planning.command_center", {"project_id": project_id or ""}):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        return await planning_command_center_query_service.get_command_center(
+            app_request.context,
+            app_request.ports,
+            project_id_override=project_id,
+            q=q,
+            status=status,
+            phase=phase,
+            artifact_type=artifact_type,
+            worktree_state=worktree_state,
+            pr_state=pr_state,
+            launch_readiness=launch_readiness,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            page=page,
+            page_size=page_size,
+        )
+
+
+@agent_router.get(
+    "/planning/command-center/{feature_id}",
+    response_model=PlanningCommandCenterItemDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_command_center_item(
+    feature_id: str = Path(..., description="Feature id to inspect."),
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningCommandCenterItemDTO:
+    """Return one enriched command-center row without loading the whole UI list."""
+    with otel.start_span("planning.command_center.item", {"feature_id": feature_id, "project_id": project_id or ""}):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_command_center_query_service.get_command_center_item(
+            app_request.context,
+            app_request.ports,
+            feature_id=feature_id,
+            project_id_override=project_id,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found in planning command center.")
+        return result
+
+
+@agent_router.get(
     "/planning/features/{feature_id}",
     response_model=FeaturePlanningContextDTO,
     dependencies=[Depends(_require_planning_enabled)],
@@ -581,6 +662,55 @@ async def get_planning_session_board_for_feature(
         )
         if result.status == "error":
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
+        return result
+
+
+# ── Planning view bundle (T5-003) ────────────────────────────────────────────
+# Fat-read bundle for the Planning above-fold view.  Always includes the project
+# planning summary; optional sub-payloads (graph, session_board) are included
+# when present in the ``include=`` query parameter.
+
+
+@agent_router.get(
+    "/planning/view",
+    response_model=PlanningViewBundleDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_view_bundle(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    include: list[str] | None = Query(
+        default=None,
+        description="Optional sub-payloads to include: 'graph', 'session_board'.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PlanningViewBundleDTO:
+    """Return the Planning view fat-read bundle.
+
+    Always returns the project planning summary.  Include ``?include=graph`` and/or
+    ``?include=session_board`` to add those optional sub-payloads.  Absent sub-payloads
+    are ``null`` in the response — the FE should request them lazily when needed.
+    """
+    with otel.start_span(
+        "ccdash.planning.view.bundle",
+        {"project_id": project_id or "", "include": ",".join(include or [])},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_query_service.get_planning_view_bundle(
+            app_request.context,
+            app_request.ports,
+            project_id_override=project_id,
+            include=include or [],
+        )
+        if result.status == "error":
+            raise HTTPException(
+                status_code=404,
+                detail="Project scope could not be resolved.",
+            )
         return result
 
 

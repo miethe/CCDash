@@ -1,6 +1,6 @@
 # Feature Surface Architecture Guide
 
-Last updated: 2026-04-24
+Last updated: 2026-05-29
 
 This guide documents the redesigned feature-surface data contracts, caching strategy, and performance budgets for CCDash developers. It describes which API endpoint to use for card-level metrics vs modal sections, how the frontend caches work, and what invalidation events clear which caches.
 
@@ -8,13 +8,18 @@ This guide documents the redesigned feature-surface data contracts, caching stra
 
 ## Overview
 
-The feature surface is a **layered architecture** that separates concerns across backend repositories, service aggregators, REST routers, and frontend hooks with explicit cache boundaries:
+The feature surface uses a **two-layer caching architecture** separating server-side and client-side concerns:
 
+**Backend (server-side):**
 1. **Repository layer** (`backend/db/repositories/features.py`, `postgres/features.py`): Filtering, sorting, pagination, and aggregation queries.
 2. **Service layer** (`backend/application/services/feature_surface/*.py`): DTO assembly, freshness metadata, cross-domain enrichment.
-3. **Router layer** (`backend/routers/features.py`): HTTP contracts, parameter validation, observability instrumentation.
-4. **Frontend hooks** (`services/useFeatureSurface.ts`, `services/useFeatureModalData.ts`): Query identity, cache policy, loading/error state, invalidation.
-5. **Cache layer** (`services/featureSurfaceCache.ts`, `services/planning.ts`): Two-tier SWR + LRU for list pages and rollups; separate LRU for modal sections.
+3. **Query cache** (`backend/application/services/agent_queries/cache.py:50`): `@memoized_query` decorator with ~600s TTL caching expensive reads.
+4. **Router layer** (`backend/routers/features.py`): HTTP contracts, parameter validation, observability instrumentation.
+
+**Frontend (client-side):**
+5. **Query client** (`lib/queryClient.ts`): TanStack Query `QueryClient` managing all server-state caching; staleTime: 30s–5min per query.
+6. **Domain query hooks** (`services/queries/*.ts`): TQ-backed hooks wrapping feature endpoints; query keys registered at `services/queryKeys.ts`.
+7. **Component layer**: Features, cards, modals consume domain hooks; TQ caching layer enables instant back-navigation renders from previously-visited routes.
 
 **Key principle:** Never fan out per-feature API calls during list rendering. Cards fetch metrics via a single bounded rollup call; modal sections load lazily and independently.
 
@@ -40,7 +45,7 @@ Five v1 API endpoints form the public surface contract. Each has a specific purp
 
 ### `useFeatureSurface(projectId, query, options)`
 
-**Owns:** Feature board data loading (list + rollup in one call sequence).
+**Owns:** Feature board data loading (list + rollup in one call sequence), TQ-backed.
 
 ```typescript
 // Typical usage
@@ -61,9 +66,10 @@ const {
 });
 ```
 
-**Cache policy:** Two-tier bounded LRU:
-- **List tier:** 50 entries, keyed by `projectId|normalizedQuery|page`. No TTL; invalidates on project switch or write events.
-- **Rollup tier:** 100 entries, keyed by `projectId|sortedIds|fields|freshnessToken`. 30s TTL; stale-while-revalidate exposed via `isStale()`.
+**Cache policy:** TanStack Query QueryClient backed:
+- **List query**: Keyed via registry at `services/queryKeys.ts`. staleTime: 30s. Enabled only when `projectId` is set.
+- **Rollup query**: Separate TQ query, keyed on sorted feature IDs. staleTime: 30s. Stale-while-revalidate pattern via TQ's background refetch.
+- Back-navigation renders instantly from TQ cache for previously-visited routes.
 
 **When to use:**
 - Rendering ProjectBoard columns and feature cards.
@@ -71,12 +77,13 @@ const {
 - **Never** call this once per card to fetch detail; use the rollup endpoint instead.
 
 **Invalidation:**
-- `invalidateFeatureSurface({ projectId, featureIds: [...] })` — fine-grained, clears list pages and rollup entries for affected IDs.
-- Automatically invoked when status/phase/task writes publish events to the feature cache bus.
+- `queryClient.invalidateQueries({ queryKey: featureSurfaceKeys.list(...) })` — clears list pages.
+- `queryClient.invalidateQueries({ queryKey: featureSurfaceKeys.rollups(...) })` — clears rollup cache.
+- Automatically invoked in mutation handlers (e.g., after feature status/phase/task writes).
 
 ### `useFeatureModalData(featureId, options)`
 
-**Owns:** Per-section modal tab loading (overview, phases, docs, relations, sessions, test-status, history).
+**Owns:** Per-section modal tab loading (overview, phases, docs, relations, sessions, test-status, history), TQ-backed.
 
 ```typescript
 // Typical usage
@@ -107,10 +114,11 @@ sections.invalidateAll();        // clear all sections for this feature
 sections.prefetch('activity');   // warm cache before user clicks
 ```
 
-**Cache policy:** Dedicated modal section LRU:
-- **Max 120 entries**, keyed by `featureId|section|paramsHash`.
-- Separate from list/rollup cache to avoid eviction conflicts (board ~50 items, modal 1 feature × 7 sections).
-- No TTL; invalidates on feature writes or explicit user refresh.
+**Cache policy:** TanStack Query backed per modal section:
+- Keyed via `services/queryKeys.ts` registry (e.g., `featureModalKeys.overview(featureId)`).
+- staleTime: 30s–1min per section (varies by section weight).
+- Separate queries per section avoid eviction conflicts.
+- Each section loads independently; no eager fetch of all tabs.
 
 **When to use:**
 - Each modal tab loads independently on click (no eager fetch of all tabs).
@@ -119,25 +127,41 @@ sections.prefetch('activity');   // warm cache before user clicks
 - **Never** open a modal and immediately fetch all tab data; use the lazy-load pattern.
 
 **Invalidation:**
-- `sections.invalidate()` — clears cache for that specific feature's all sections.
-- Automatically cleared on feature status/phase/task writes (coarse-grained via planning cache bus).
+- `queryClient.invalidateQueries({ queryKey: featureModalKeys.section(featureId, sectionName) })` — clears one section.
+- `queryClient.invalidateQueries({ queryKey: featureModalKeys.allForFeature(featureId) })` — clears all sections for a feature.
+- Automatically invoked in mutation handlers after feature writes.
 
 ---
 
-## Cache Invalidation Matrix
+## Cache Invalidation
 
-Two independent browser-side caches coexist. A unified **feature cache bus** (`services/featureCacheBus.ts`) ensures both are invalidated deterministically:
+All server-state is managed by TanStack Query. Invalidation happens through the QueryClient:
 
-| Event | Feature Surface Cache | Planning Browser Cache | Feature Cache Bus |
-|-------|----------------------|----------------------|------------------|
-| **Feature status write** (ProjectBoard.handleFeatureStatusChange) | Fine-grained: `invalidateFeatureSurface({ projectId, featureIds: [id] })` | Coarse: `clearPlanningBrowserCache(projectId)` | `publishFeatureWriteEvent({ projectId, featureIds: [id], kind: 'status' })` |
-| **Phase progression** (modal edit) | Fine-grained: same as above | Coarse: same as above | `publishFeatureWriteEvent({ ..., kind: 'phase' })` |
-| **Task update** (modal edit) | Fine-grained: same as above | Coarse: same as above | `publishFeatureWriteEvent({ ..., kind: 'task' })` |
-| **Project switch** | Direct call: `invalidateFeatureSurface({ projectId })` | Direct call: `clearPlanningBrowserCache(projectId)` | Not used; not a feature write |
-| **Sync completion** | Existing live-topic handler + periodic revalidation | Existing freshness-key revalidation | Not involved |
-| **Rollout flag toggle** (`CCDASH_FEATURE_SURFACE_V2_ENABLED`) | Browser hard-refresh (Cmd+Shift+R) clears `/api/health` cache; optional `window.__ccdash_invalidate_feature_cache?.()` | Same hard-refresh | Not involved |
+```typescript
+// From ProjectBoard.tsx or any mutation handler
+await updateFeatureStatus(featureId, newStatus);
 
-**Planning cache detail:** The planning browser cache uses freshness buckets (not feature IDs) as its internal key structure. Eviction is coarse (all entries for a project) because feature-granular eviction would require a schema change out of scope for Phase 4.
+// Invalidate affected feature queries
+queryClient.invalidateQueries({
+  queryKey: featureSurfaceKeys.list(projectId)
+});
+queryClient.invalidateQueries({
+  queryKey: featureSurfaceKeys.rollups(projectId)
+});
+queryClient.invalidateQueries({
+  queryKey: featureModalKeys.allForFeature(featureId)
+});
+```
+
+**Mutation patterns:** Most mutations are handled by calling `queryClient.invalidateQueries()` in the mutation handler's `onSuccess` callback. TQ automatically refetches stale queries on next access.
+
+**Project switch:**
+
+```typescript
+// From context provider or route handler
+handleProjectChange(newProjectId);
+queryClient.clear(); // or selectively invalidate previous project's queries
+```
 
 ---
 
@@ -188,41 +212,6 @@ The feature-surface architecture enforces request count, payload size, and laten
 | Session logs read | 0 | 0 (pagination first) | 0 | Never fetch logs for sections |
 
 **Key assertion:** Opening any modal tab triggers exactly 1 network request. No combined list + detail fetches; no session log reads for summary metrics.
-
----
-
-## Cache Invalidation Events
-
-The feature cache bus publishes three event kinds. Write-site handlers call `publishFeatureWriteEvent()` once; both caches subscribe automatically:
-
-```typescript
-// From ProjectBoard.tsx or any mutation handler
-await updateFeatureStatus(featureId, newStatus);
-
-// One call triggers both cache evictions
-publishFeatureWriteEvent({
-  projectId,
-  featureIds: [featureId],
-  kind: 'status', // or 'phase' or 'task'
-});
-
-// Subscriber 1 (Feature Surface Cache)
-// → invalidateFeatureSurface({ projectId, featureIds: [featureId] })
-// → Evicts only list pages and rollup entries for this feature
-
-// Subscriber 2 (Planning Cache)
-// → clearPlanningBrowserCache(projectId)
-// → Evicts all entries for the project (coarse-grained)
-```
-
-**Project switch** does NOT use the bus (not a feature write):
-
-```typescript
-// From context provider or route handler
-handleProjectChange(newProjectId);
-invalidateFeatureSurface({ projectId: oldProjectId });  // Direct call
-clearPlanningBrowserCache(oldProjectId);                // Direct call
-```
 
 ---
 
@@ -296,20 +285,21 @@ function FeatureModal({ featureId }) {
 
 When adding a new feature surface consumer:
 
-1. ✅ **Use `useFeatureSurface` for list + card metrics** — never fetch detail per card.
-2. ✅ **Use `useFeatureModalData` for modal tabs** — sections load independently on tab click.
-3. ✅ **Call `publishFeatureWriteEvent()` after mutations** — use the cache bus, not direct `invalidateFeatureSurface()` calls.
-4. ✅ **Encode feature IDs in URLs** — `encodeURIComponent(featureId)` in all API paths.
-5. ✅ **Handle missing rollup gracefully** — if a feature has no rollups in the response, show a fallback badge.
-6. ✅ **Never prefetch all modal tabs** — wait for user intent (tab click).
-7. ✅ **Page before enriching** — the API does this for you; don't add extra joins client-side.
+1. ✅ **Use `useFeatureSurface` for list + card metrics** — TQ-backed, never fetch detail per card.
+2. ✅ **Use `useFeatureModalData` for modal tabs** — TQ-backed, sections load independently on tab click.
+3. ✅ **Invalidate via QueryClient** — call `queryClient.invalidateQueries()` in mutation handlers, not via deleted cache bus.
+4. ✅ **Use queryKey registry** — hook into keys from `services/queryKeys.ts`; never hard-code query keys.
+5. ✅ **Encode feature IDs in URLs** — `encodeURIComponent(featureId)` in all API paths.
+6. ✅ **Handle missing rollup gracefully** — if a feature has no rollups in the response, show a fallback badge.
+7. ✅ **Never prefetch all modal tabs** — wait for user intent (tab click).
+8. ✅ **Page before enriching** — the API does this for you; don't add extra joins client-side.
 
 ---
 
 ## Related Documentation
 
 - **Rollback Guide:** [`docs/guides/feature-surface-v2-rollback.md`](./feature-surface-v2-rollback.md) — How to disable v2 and revert to legacy paths in an emergency.
-- **Planning Cache ADR:** [`docs/project_plans/design-specs/feature-surface-planning-cache-coordination.md`](../project_plans/design-specs/feature-surface-planning-cache-coordination.md) — Detailed cache bus design and invalidation semantics.
+- **QueryClient Configuration:** `lib/queryClient.ts` — TanStack Query client setup with staleTime defaults and global configuration.
+- **QueryKey Registry:** `services/queryKeys.ts` — Centralized query key definitions for all feature surface and feature modal queries.
 - **Implementation Plan:** [`docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1.md`](../project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1.md) § Architecture Direction — Authoritative contract table and layering rules.
-- **Phase 5 Plan:** [`docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1/phase-5-validation-rollout.md`](../project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1/phase-5-validation-rollout.md) — Testing strategy and rollout gates.
-- **CLAUDE.md § Planning Entries:** [./CLAUDE.md](../../CLAUDE.md) — Project-wide architecture context.
+- **CLAUDE.md § Frontend Data Layer:** [./CLAUDE.md](../../CLAUDE.md) — Project-wide architecture context for TQ QueryClient and service queries.

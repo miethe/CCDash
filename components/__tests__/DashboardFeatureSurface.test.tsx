@@ -20,6 +20,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { FeatureCardDTO, FeatureRollupDTO } from '../../services/featureSurface';
 import type { Feature, PlanDocument } from '../../types';
 
@@ -152,10 +153,8 @@ vi.mock('../../services/useFeatureSurface', () => ({
   useFeatureSurface: makeSurfaceMock([], new Map()),
 }));
 
-vi.mock('../../services/featureSurfaceCache', () => ({
-  defaultFeatureSurfaceCache: { get: vi.fn(), set: vi.fn(), delete: vi.fn(), clear: vi.fn() },
-  invalidateFeatureSurface: vi.fn(),
-}));
+// T3-005: featureSurfaceCache deleted; TQ is the cache layer.
+// renderDashboard wraps with QueryClientProvider so useQueryClient works.
 
 vi.mock('../../contexts/DataContext', () => ({
   useData: () => ({
@@ -187,6 +186,15 @@ vi.mock('../../contexts/DataContext', () => ({
   }),
 }));
 
+vi.mock('../../services/queries/sessions', () => ({
+  useSessionsQuery: () => ({ data: undefined, isLoading: false, isFetching: false, fetchNextPage: vi.fn(), hasNextPage: false, error: null }),
+}));
+
+vi.mock('../../services/queries/tasks', () => ({
+  useTasksQuery: () => ({ data: { items: [], total: 0, page: 0, pageSize: 100 }, isLoading: false, error: null }),
+  TASKS_PAGE_SIZE: 100,
+}));
+
 vi.mock('../../services/analytics', () => ({
   analyticsService: {
     getOverview: vi.fn().mockResolvedValue({ kpis: {} }),
@@ -216,10 +224,13 @@ import * as UseFeatureSurfaceModule from '../../services/useFeatureSurface';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function renderDashboard() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(
-    <MemoryRouter>
-      <Dashboard />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

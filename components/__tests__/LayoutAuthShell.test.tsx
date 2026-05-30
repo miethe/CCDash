@@ -47,6 +47,14 @@ vi.mock('../ProjectSelector', () => ({
   ProjectSelector: () => <div>Project selector</div>,
 }));
 
+// T2 Batch B: stub TQ hooks added to Layout/ProjectSelector so they render without QueryClientProvider
+vi.mock('../../services/queries/notifications', () => ({
+  useNotificationsQuery: () => ({ data: undefined, isLoading: false, error: null }),
+}));
+vi.mock('../../services/queries/alerts', () => ({
+  useAlertsQuery: () => ({ data: undefined, isLoading: false, error: null }),
+}));
+
 import { Layout } from '../Layout';
 
 const baseAuth = () => ({
@@ -55,6 +63,7 @@ const baseAuth = () => ({
   authenticated: true,
   unauthenticated: false,
   unauthorized: false,
+  unavailable: false,
   metadata: {
     provider: 'oidc',
     runtimeProfile: 'api',
@@ -283,6 +292,88 @@ describe('Layout auth shell', () => {
     expect(html).toContain('Access restricted');
     expect(html).toContain('Retry');
     expect(html).toContain('Sign out');
+    expect(html).not.toContain('APP CONTENT');
+    expect(state.useData).not.toHaveBeenCalled();
+  });
+
+  it('unavailable + unknown runtime renders backend-unavailable copy and Retry, not Sign in', () => {
+    state.dataShouldThrow = true;
+    state.auth = {
+      ...baseAuth(),
+      status: 'unavailable',
+      authenticated: false,
+      unauthenticated: false,
+      unauthorized: false,
+      unavailable: true,
+      // metadata null → canUseRuntimeWithoutHostedLogin is false
+      metadata: null,
+      session: null,
+      principal: null,
+    };
+
+    const html = renderLayout('/planning');
+
+    expect(html).toContain('CCDash backend unavailable');
+    // renderToStaticMarkup HTML-encodes the apostrophe
+    expect(html).toContain("Couldn&#x27;t reach the CCDash backend");
+    expect(html).toContain('Retry');
+    expect(html).not.toContain('Sign in');
+    expect(html).not.toContain('APP CONTENT');
+    expect(state.useData).not.toHaveBeenCalled();
+  });
+
+  it('unavailable + known-local runtime (metadata.localMode) falls through to app shell', () => {
+    state.auth = {
+      ...baseAuth(),
+      status: 'unavailable',
+      authenticated: false,
+      unauthenticated: false,
+      unauthorized: false,
+      unavailable: true,
+      // metadata retained from prior success → canUseRuntimeWithoutHostedLogin is true
+      metadata: {
+        provider: 'local',
+        runtimeProfile: 'local',
+        authMode: 'local',
+        hosted: false,
+        localMode: true,
+      },
+      session: null,
+      principal: null,
+    };
+
+    const html = renderLayout('/planning');
+
+    // Known-local: falls through to AuthenticatedLayout (app shell + disconnect banner)
+    expect(html).toContain('APP CONTENT');
+    expect(html).not.toContain('Sign in');
+    expect(html).not.toContain('CCDash backend unavailable');
+  });
+
+  it('definitive unauthenticated (status unauthenticated) on non-local runtime still renders Sign in', () => {
+    state.dataShouldThrow = true;
+    state.auth = {
+      ...baseAuth(),
+      status: 'unauthenticated',
+      authenticated: false,
+      unauthenticated: true,
+      unauthorized: false,
+      unavailable: false,
+      metadata: {
+        provider: 'oidc',
+        runtimeProfile: 'api',
+        authMode: 'oidc',
+        hosted: true,
+        localMode: false,
+      },
+      session: null,
+      principal: null,
+    };
+
+    const html = renderLayout('/dashboard');
+
+    expect(html).toContain('Sign in to continue');
+    expect(html).toContain('Sign in');
     expect(html).not.toContain('APP CONTENT');
     expect(state.useData).not.toHaveBeenCalled();
   });

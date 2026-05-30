@@ -6,6 +6,7 @@ import { useAppRuntime } from '../contexts/AppRuntimeContext';
 import { summarizeAuthMembershipContext, useAuthSession } from '../contexts/AuthSessionContext';
 import { cn } from '../lib/utils';
 import { ProjectSelector } from './ProjectSelector';
+import { useNotificationsQuery } from '../services/queries/notifications';
 
 // Brand color for the Planning nav item active ring (matches planning-tokens.css --brand)
 const PLANNING_BRAND = 'oklch(75% 0.14 195)';
@@ -117,16 +118,21 @@ const AuthShellState: React.FC<{
   const [actionError, setActionError] = useState<string | null>(null);
   const runtimeLabel = runtimeLabelForAuth(auth);
   const isUnauthorized = auth.unauthorized;
+  const isUnavailable = auth.unavailable;
   const title = auth.loading
     ? 'Checking session'
-    : isUnauthorized
-      ? 'Access restricted'
-      : 'Sign in to continue';
+    : isUnavailable
+      ? 'CCDash backend unavailable'
+      : isUnauthorized
+        ? 'Access restricted'
+        : 'Sign in to continue';
   const message = auth.loading
     ? 'Validating your CCDash session.'
-    : isUnauthorized
-      ? 'Your session is active, but it does not have access to this CCDash workspace.'
-      : 'Hosted CCDash requires an active browser session.';
+    : isUnavailable
+      ? "Couldn't reach the CCDash backend. Make sure it's running, then retry."
+      : isUnauthorized
+        ? 'Your session is active, but it does not have access to this CCDash workspace.'
+        : 'Hosted CCDash requires an active browser session.';
 
   const redirectTo = useMemo(() => {
     const path = `${location.pathname}${location.search}${location.hash}`;
@@ -177,7 +183,7 @@ const AuthShellState: React.FC<{
             </div>
           )}
           <div className="mt-6 flex flex-wrap items-center gap-3">
-            {!auth.loading && !isUnauthorized && (
+            {!auth.loading && !isUnauthorized && !isUnavailable && (
               <button
                 type="button"
                 onClick={handleSignIn}
@@ -188,27 +194,27 @@ const AuthShellState: React.FC<{
                 {busy ? 'Starting...' : 'Sign in'}
               </button>
             )}
+            {(isUnauthorized || isUnavailable) && (
+              <button
+                type="button"
+                onClick={auth.refreshSession}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-md border border-panel-border bg-surface-overlay px-3 py-2 text-sm font-medium text-panel-foreground transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw size={16} />
+                Retry
+              </button>
+            )}
             {isUnauthorized && (
-              <>
-                <button
-                  type="button"
-                  onClick={auth.refreshSession}
-                  disabled={busy}
-                  className="inline-flex items-center gap-2 rounded-md border border-panel-border bg-surface-overlay px-3 py-2 text-sm font-medium text-panel-foreground transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <RefreshCw size={16} />
-                  Retry
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSignOut}
-                  disabled={busy}
-                  className="inline-flex items-center gap-2 rounded-md border border-panel-border bg-surface-overlay px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-hover hover:text-panel-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <LogOut size={16} />
-                  Sign out
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-md border border-panel-border bg-surface-overlay px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-hover hover:text-panel-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <LogOut size={16} />
+                Sign out
+              </button>
             )}
           </div>
         </section>
@@ -285,9 +291,13 @@ const SessionContextPanel: React.FC<{
 const AuthenticatedLayout: React.FC<{ children: React.ReactNode; auth: ReturnType<typeof useAuthSession> }> = ({ children, auth }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const location = useLocation();
-  const { notifications, error } = useData();
+  const { activeProject, error } = useData();
   const { runtimeUnreachable, retryRuntime } = useAppRuntime();
   const isStaticBearerRuntime = isStaticBearerRuntimeAuth(auth);
+  // T2-007: Notifications served directly from TanStack Query hook.
+  // Falls back to [] on first load (data undefined) — preserves existing empty-state behaviour.
+  const { data: tqNotifications } = useNotificationsQuery({ projectId: activeProject?.id });
+  const notifications = tqNotifications ?? [];
   const unreadCount = notifications.filter(n => !n.isRead).length;
   const isPlanningRoute = location.pathname.startsWith('/planning');
   const authDataError = error?.includes('API error: 401') || error?.includes('API error: 403');
@@ -439,6 +449,16 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     return <AuthShellState auth={auth} />;
   }
 
+  // Backend unavailable on an unknown (not-known-local/bearer) runtime: show
+  // retry shell, NOT the sign-in wall. If canUseRuntimeWithoutHostedLogin is
+  // true (metadata cached from a prior success), fall through to
+  // AuthenticatedLayout, which already renders the "Backend disconnected —
+  // live updates paused" banner.
+  if (auth.unavailable && !canUseRuntimeWithoutHostedLogin) {
+    return <AuthShellState auth={auth} />;
+  }
+
+  // Definitive auth gate (401/403) for hosted runtimes only.
   if (!canUseRuntimeWithoutHostedLogin && (auth.unauthenticated || auth.unauthorized)) {
     return <AuthShellState auth={auth} />;
   }

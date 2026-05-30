@@ -44,6 +44,10 @@ vi.mock('../../../contexts/DataContext', () => ({
   }),
 }));
 
+vi.mock('../../../services/queries/sessions', () => ({
+  useSessionsQuery: () => ({ data: undefined, isLoading: false, isFetching: false, fetchNextPage: vi.fn(), hasNextPage: false, error: null }),
+}));
+
 vi.mock('../PlanningRouteLayout', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../PlanningRouteLayout')>();
   return {

@@ -25,6 +25,12 @@ vi.mock('../../contexts/DataContext', () => ({
   useData: () => state.data,
 }));
 
+// T2 Batch B: stub TQ projects query added to ProjectSelector so it renders without QueryClientProvider.
+// Return state.data.projects (fixture data) so the project list is visible in tests.
+vi.mock('../../services/queries/projects', () => ({
+  useProjectsQuery: () => ({ data: state.data.projects, isLoading: false, error: null }),
+}));
+
 import { ProjectSelector } from '../ProjectSelector';
 
 const projects = [

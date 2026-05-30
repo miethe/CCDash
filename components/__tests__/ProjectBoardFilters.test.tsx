@@ -22,6 +22,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Feature, PlanDocument } from '../../types';
 
 // ── Hook mock ────────────────────────────────────────────────────────────────
@@ -192,10 +193,27 @@ vi.mock('../../services/featureSurfaceFlag', () => ({
   isFeatureSurfaceV2Enabled: vi.fn(() => false),
 }));
 
+// T2-004: stub paginated features query so ProjectBoard renders without a QueryClientProvider
+vi.mock('../../services/queries/features', () => ({
+  useFeaturesQuery: () => ({ data: { items: [], total: 0, page: 0, pageSize: 100 }, isLoading: false, error: null }),
+  FEATURES_PAGE_SIZE: 100,
+}));
+
 // ── Import component and hook ─────────────────────────────────────────────────
 
 import { ProjectBoard } from '../ProjectBoard';
 import { useFeatureSurface } from '../../services/useFeatureSurface';
+
+function renderBoard() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderToStaticMarkup(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/board']}>
+        <ProjectBoard />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -365,21 +383,13 @@ describe('P3-003 — applySidebarFilters query shape', () => {
 
 describe('P3-003 — ProjectBoard hook initialisation', () => {
   it('renders without crashing with useFeatureSurface wired in', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/board']}>
-        <ProjectBoard />
-      </MemoryRouter>,
-    );
+    const html = renderBoard();
     expect(html.length).toBeGreaterThan(0);
     expect(html).not.toMatch(/TypeError:|ReferenceError:/);
   });
 
   it('calls useFeatureSurface with the active project id', () => {
-    renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/board']}>
-        <ProjectBoard />
-      </MemoryRouter>,
-    );
+    renderBoard();
     expect(useFeatureSurface).toHaveBeenCalledWith(
       expect.objectContaining({
         initialQuery: expect.objectContaining({ projectId: 'proj-1' }),
@@ -388,11 +398,7 @@ describe('P3-003 — ProjectBoard hook initialisation', () => {
   });
 
   it('passes noCache: false (cache enabled by default)', () => {
-    renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/board']}>
-        <ProjectBoard />
-      </MemoryRouter>,
-    );
+    renderBoard();
     expect(useFeatureSurface).toHaveBeenCalledWith(
       expect.objectContaining({ noCache: false }),
     );
@@ -401,11 +407,7 @@ describe('P3-003 — ProjectBoard hook initialisation', () => {
   it('P3-005: header shows filteredTotal from hook as authoritative count', () => {
     // Hook returns filteredTotal: 17; the header now renders that directly as
     // the authoritative count (no legacy "server: N" suffix).
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/board']}>
-        <ProjectBoard />
-      </MemoryRouter>,
-    );
+    const html = renderBoard();
     // filteredTotal (17) should appear; legacy "server: 42" pattern is gone.
     expect(html).toContain('17 features');
     expect(html).not.toContain('server: 42');

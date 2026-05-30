@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GitBranch, Inbox, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { useData } from '../../contexts/DataContext';
 import type { Feature, FeaturePlanningContext, FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
 import {
-  getCachedProjectPlanningSummary,
-  getFeaturePlanningContext,
-  getProjectPlanningSummary,
-  PlanningApiError,
   prefetchFeaturePlanningContext,
 } from '../../services/planning';
+import {
+  usePlanningViewQuery,
+  usePlanningFeatureContextQuery,
+} from '../../services/queries/planning';
+import { planningKeys } from '../../services/queryKeys';
 import { getLaunchCapabilities } from '../../services/execution';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
 import {
@@ -40,6 +42,7 @@ import { PlanningDensityToggle } from './PlanningRouteLayout';
 import { PlanningTriagePanel } from './PlanningTriagePanel';
 import { PlanningAgentRosterPanel } from './PlanningAgentRosterPanel';
 import { PlanningAgentSessionBoard } from './PlanningAgentSessionBoard';
+import { PlanningCommandCenter } from './CommandCenter';
 import {
   Chip,
   EffectiveStatusChips,
@@ -576,23 +579,11 @@ function FeatureQuickViewContent({
   featureSlug: string;
   projectId: string | null;
 }) {
-  const [ctx, setCtx] = useState<FeaturePlanningContext | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    getFeaturePlanningContext(featureSlug, { projectId: projectId ?? undefined })
-      .then((data) => {
-        setCtx(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : 'Failed to load feature context.');
-        setLoading(false);
-      });
-  }, [featureSlug, projectId]);
+  const { data: ctx, isPending: loading, error: queryError } = usePlanningFeatureContextQuery({
+    projectId,
+    featureId: featureSlug,
+  });
+  const error = queryError ? (queryError instanceof Error ? queryError.message : 'Failed to load feature context.') : null;
 
   if (loading) {
     return (
@@ -776,6 +767,8 @@ function PlanningShell({
   onDrillDown,
   onRefresh,
   onNodeQuickView,
+  onOpenExecution,
+  onOpenPlan,
   activeStatusBucket,
   activeSignal,
   onStatusBucketClick,
@@ -789,6 +782,8 @@ function PlanningShell({
   onRefresh?: () => void;
   /** P14-002: Row-click handler for tracker/intake panel rows. */
   onNodeQuickView?: (resolution: NodeClickResolution, triggerEl: HTMLElement | null) => void;
+  onOpenExecution?: (featureId: string) => void;
+  onOpenPlan?: (path: string) => void;
   /** P13-003: Active status bucket filter from URL. */
   activeStatusBucket?: PlanningStatusBucket | null;
   /** P13-003: Active health signal filter from URL. */
@@ -841,6 +836,12 @@ function PlanningShell({
       <Panel className="px-5 py-3" data-testid="planning-artifact-chip-row-section">
         <PlanningArtifactChipRow nodeCountsByType={summary.nodeCountsByType} />
       </Panel>
+
+      <PlanningCommandCenter
+        projectId={summary.projectId ?? null}
+        onOpenExecution={onOpenExecution}
+        onOpenPlan={onOpenPlan}
+      />
 
       {/* T3-003: Two-up layout — Triage (1.3fr) + Agent Roster (1fr); stacks below 1280px */}
       <div
@@ -921,17 +922,11 @@ function PlanningShell({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-type FetchState =
-  | { phase: 'idle' }
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'ready'; summary: ProjectPlanningSummary };
-
 export default function PlanningHomePage() {
   const { activeProject, features = [] } = useData();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
+  const queryClient = useQueryClient();
   const [planningEnabled, setPlanningEnabled] = useState<boolean>(true);
   const selectedFeatureModal = useMemo(
     () => resolvePlanningRouteFeatureModalState(searchParams),
@@ -950,52 +945,34 @@ export default function PlanningHomePage() {
       .catch(() => setPlanningEnabled(true));
   }, []);
 
-  const loadSummary = useCallback(async (options: { forceRefresh?: boolean } = {}) => {
-    if (!activeProject?.id) {
-      setFetchState({ phase: 'idle' });
-      return;
-    }
-    const projectId = activeProject.id;
-    const warmSummary = options.forceRefresh ? null : getCachedProjectPlanningSummary(projectId);
-    if (warmSummary) {
-      setFetchState({ phase: 'ready', summary: warmSummary });
-    } else {
-      setFetchState({ phase: 'loading' });
-    }
-    try {
-      const summary = await getProjectPlanningSummary(projectId, {
-        forceRefresh: options.forceRefresh,
-        onRevalidated: (revalidatedSummary) => {
-          setFetchState((current) => {
-            if (current.phase !== 'ready') return current;
-            if (revalidatedSummary.projectId && revalidatedSummary.projectId !== projectId) return current;
-            return { phase: 'ready', summary: revalidatedSummary };
-          });
-        },
-      });
-      setFetchState({ phase: 'ready', summary });
-    } catch (err) {
-      const message =
-        err instanceof PlanningApiError
-          ? `Planning API error (${err.status}): ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : 'An unexpected error occurred while loading planning data.';
-      setFetchState({ phase: 'error', message });
-    }
-  }, [activeProject?.id]);
+  // T5-007: TQ-backed view bundle query — issues ONE above-fold GET /api/agent/planning/view.
+  // summary is always present; graph / session_board are loaded on demand via
+  // includeGraph / includeSessionBoard = true which changes the query key.
+  // On cold load both flags are false → exactly 1 network request.
+  const summaryQuery = usePlanningViewQuery({
+    projectId: activeProject?.id,
+    enabled: !!activeProject?.id,
+    includeGraph: false,
+    includeSessionBoard: false,
+  });
 
-  // Initial load + re-fetch when active project changes.
-  useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
+  const summary = summaryQuery.data?.summary ?? null;
+  const summaryErrorMessage = summaryQuery.error
+    ? summaryQuery.error instanceof Error
+      ? summaryQuery.error.message
+      : 'An unexpected error occurred while loading planning data.'
+    : null;
 
-  // Live invalidation subscription.
+  // Live invalidation subscription — triggers TQ refetch instead of manual fetch.
   const liveTopics = activeProject?.id ? [projectPlanningTopic(activeProject.id)] : [];
   const liveStatus = useLiveInvalidation({
     topics: liveTopics,
     enabled: liveTopics.length > 0,
-    onInvalidate: () => loadSummary({ forceRefresh: true }),
+    onInvalidate: () => {
+      if (activeProject?.id) {
+        void queryClient.invalidateQueries({ queryKey: planningKeys.all(activeProject.id) });
+      }
+    },
   });
 
   const openFeatureModal = useCallback((featureId: string, tab: PlanningFeatureModalTab = 'overview') => {
@@ -1012,9 +989,9 @@ export default function PlanningHomePage() {
   }, [navigate, searchParams]);
 
   const selectedFeature = useMemo(() => {
-    if (!selectedFeatureModal || fetchState.phase !== 'ready') return null;
-    return resolvePlanningModalFeature(selectedFeatureModal.featureId, features, fetchState.summary);
-  }, [features, fetchState, selectedFeatureModal]);
+    if (!selectedFeatureModal || !summary) return null;
+    return resolvePlanningModalFeature(selectedFeatureModal.featureId, features, summary);
+  }, [features, summary, selectedFeatureModal]);
 
   // P14-002: Quick view panel state — hosted here so PlanningShell can pass
   // the handler down to TrackerIntakePanel without owning the panel itself.
@@ -1052,7 +1029,7 @@ export default function PlanningHomePage() {
     );
   }
 
-  if (fetchState.phase === 'loading' || fetchState.phase === 'idle') {
+  if (summaryQuery.isPending) {
     return (
       <div className="max-w-screen-2xl space-y-6">
         <LoadingShell />
@@ -1060,19 +1037,28 @@ export default function PlanningHomePage() {
     );
   }
 
-  if (fetchState.phase === 'error') {
+  if (summaryQuery.isError) {
     return (
       <div className="max-w-screen-2xl space-y-6">
-        <ErrorShell message={fetchState.message} onRetry={() => void loadSummary()} />
+        <ErrorShell
+          message={summaryErrorMessage ?? 'An unexpected error occurred while loading planning data.'}
+          onRetry={() => void summaryQuery.refetch()}
+        />
       </div>
     );
   }
 
-  const { summary } = fetchState;
-  if (summary.totalFeatureCount === 0) {
+  if (!summary || summary.totalFeatureCount === 0) {
     return (
       <div className="max-w-screen-2xl space-y-6">
         <EmptyShell hasProject={true} />
+        <PlanningCommandCenter
+          projectId={summary.projectId ?? activeProject.id ?? null}
+          onOpenExecution={(featureId) => navigate(`/execution?feature=${encodeURIComponent(featureId)}`)}
+          onOpenPlan={(path) =>
+            navigate(`${planningArtifactsHref('implementation_plan')}?path=${encodeURIComponent(path)}`)
+          }
+        />
       </div>
     );
   }
@@ -1087,8 +1073,12 @@ export default function PlanningHomePage() {
         onDrillDown={(type) =>
           navigate(planningArtifactsHref(type))
         }
-        onRefresh={() => void loadSummary()}
+        onRefresh={() => void summaryQuery.refetch()}
         onNodeQuickView={handleNodeQuickView}
+        onOpenExecution={(featureId) => navigate(`/execution?feature=${encodeURIComponent(featureId)}`)}
+        onOpenPlan={(path) =>
+          navigate(`${planningArtifactsHref('implementation_plan')}?path=${encodeURIComponent(path)}`)
+        }
         activeStatusBucket={filter.statusBucket}
         activeSignal={filter.signal}
         onStatusBucketClick={setStatusBucket}

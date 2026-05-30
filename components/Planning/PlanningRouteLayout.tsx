@@ -5,6 +5,9 @@ import '../../planning-tokens.css';
 import { cn } from '@/lib/utils';
 import { Btn, BtnGhost } from './primitives';
 import { PlanningTopBar } from './PlanningTopBar';
+import { useData } from '@/contexts/DataContext';
+import { useSessionsQuery } from '@/services/queries/sessions';
+import { useFeaturesQuery } from '@/services/queries/features';
 
 export const PLANNING_DENSITY_STORAGE_KEY = 'planning_density_preference';
 
@@ -136,6 +139,13 @@ export function PlanningDensityToggle({ className }: { className?: string }) {
 }
 
 export function PlanningRouteLayout() {
+  const { activeProject } = useData();
+  // Mount sessions + features queries so all /planning/* child routes have warm cache on cold load.
+  // PlanningTopBar reads useData().sessions; PlanningHomePage + PlanningAgentRosterPanel read
+  // useData().features and useData().sessions — none of those mounts their own fetch hooks.
+  useSessionsQuery({ projectId: activeProject?.id });
+  useFeaturesQuery({ projectId: activeProject?.id });
+
   const [density, setDensity] = useState<PlanningDensity>(() => readStoredPlanningDensity());
 
   useEffect(() => {

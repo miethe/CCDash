@@ -27,7 +27,7 @@ import {
   PlanningApiError,
 } from '../../services/planning';
 import type { PlanningSignal, PlanningStatusBucket } from '../../services/planningRoutes';
-import { useData } from '../../contexts/DataContext';
+import { useDocumentsQuery } from '../../services/queries/documents';
 import { DocumentModal } from '../DocumentModal';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -681,7 +681,8 @@ export function TrackerIntakePanel({
   activeSignal,
   onNodeQuickView,
 }: TrackerIntakePanelProps) {
-  const { documents } = useData();
+  // T2-002: documents from TanStack Query hook
+  const { data: documents = [] } = useDocumentsQuery({ projectId });
   const [graphState, setGraphState] = useState<GraphFetchState>({ phase: 'idle' });
   const [activeTab, setActiveTab] = useState<TabId>('promotion');
 

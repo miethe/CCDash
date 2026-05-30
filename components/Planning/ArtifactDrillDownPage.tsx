@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
+import { useDocumentsQuery } from '../../services/queries/documents';
 import type { PlanDocument } from '../../types';
 import { DocumentModal } from '../DocumentModal';
 import { planningRouteFeatureModalHref } from '../../services/planningRoutes';
@@ -168,7 +169,9 @@ function EmptyState({ label }: { label: string }) {
 export function ArtifactDrillDownPage() {
   const { type } = useParams<{ type: string }>();
   const navigate = useNavigate();
-  const { documents } = useData();
+  const { activeProject } = useData();
+  // T2-002: documents from TanStack Query hook
+  const { data: documents = [] } = useDocumentsQuery({ projectId: activeProject?.id });
   const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
 
   const artifactType = type as ArtifactDrillDownType | undefined;

@@ -14,6 +14,10 @@ import {
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useAuthSession } from '../contexts/AuthSessionContext';
+import { useTasksQuery } from '../services/queries/tasks';
+import { useFeaturesQuery } from '../services/queries/features';
+import { useSessionsQuery } from '../services/queries/sessions';
+import { useDocumentsQuery } from '../services/queries/documents';
 import {
   CacheStatusResponse,
   LinkAuditResponse,
@@ -265,8 +269,17 @@ function mappingProgressPercent(operation: SyncOperation | null): number {
 }
 
 export const OpsPanel: React.FC = () => {
-  const { projects, activeProject, sessions, sessionTotal, documents, tasks, features, refreshAll } = useData();
+  const { projects, activeProject, sessions, sessionTotal, documents, refreshAll } = useData();
   const auth = useAuthSession();
+  // T2-003/T2-004: use paginated queries for accurate totals (not page-0 items count)
+  const tasksQuery = useTasksQuery({ projectId: activeProject?.id });
+  const featuresQuery = useFeaturesQuery({ projectId: activeProject?.id });
+  // Mount sessions + documents queries so cold-load reads from useData() are populated.
+  // useData().sessions and useData().documents read from TQ cache — no fetch without these.
+  useSessionsQuery({ projectId: activeProject?.id });
+  useDocumentsQuery({ projectId: activeProject?.id });
+  const tasksTotal = tasksQuery.data?.total ?? 0;
+  const featuresTotal = featuresQuery.data?.total ?? 0;
   const apiClient = useMemo(() => createApiClient(), []);
 
   const [status, setStatus] = useState<CacheStatusResponse | null>(null);
@@ -968,8 +981,10 @@ export const OpsPanel: React.FC = () => {
   const snapshotCards = [
     { label: 'Sessions (Loaded/Total)', value: `${sessions.length} / ${sessionTotal}`, icon: Activity },
     { label: 'Documents', value: String(documents.length), icon: FolderKanban },
-    { label: 'Tasks', value: String(tasks.length), icon: CheckCircle2 },
-    { label: 'Features', value: String(features.length), icon: Gauge },
+    // T2-003: use total from paginated TasksPage, not items.length
+    { label: 'Tasks', value: String(tasksTotal), icon: CheckCircle2 },
+    // T2-004: use total from paginated FeaturesPage, not items.length
+    { label: 'Features', value: String(featuresTotal), icon: Gauge },
   ];
   const disableBackfillActions = busyAction !== null || mappingBackfillRunning || !canRunMappingBackfill;
   const disableTestIngestAndMapping = busyAction !== null || mappingBackfillRunning || !canRunTestIngest || !canRunMappingBackfill;

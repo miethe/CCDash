@@ -15,6 +15,7 @@
 //                                trackReducedMotionFallback
 //   PlanningNextRunPreview     → trackPromptCopied
 //   PlanningPromptContextTray  → trackContextAdded
+//   PlanningCommandCenter      → trackCommandCenterAction
 
 import { emitTelemetry } from '@/services/telemetry';
 import type { PlanningBoardGroupingMode } from '@/types';
@@ -185,5 +186,33 @@ export function trackPromptCopied(props: PromptCopiedProperties): void {
 export function trackReducedMotionFallback(): void {
   emitTelemetry('planning_board', 'reduced_motion_fallback', {
     mediaQuery: 'prefers-reduced-motion: reduce',
+  });
+}
+
+// ── Event: command center action ─────────────────────────────────────────────
+
+export type CommandCenterAction =
+  | 'copy_command'
+  | 'open_launch_sheet'
+  | 'open_execution_workbench'
+  | 'open_plan'
+  | 'open_pr'
+  | 'open_detail'
+  | 'view_changed';
+
+export interface CommandCenterActionProperties {
+  action: CommandCenterAction;
+  featureId?: string | null;
+  viewMode?: string | null;
+  hasCommand?: boolean;
+  hasPullRequest?: boolean;
+}
+
+export function trackCommandCenterAction(props: CommandCenterActionProperties): void {
+  emitTelemetry('planning_command_center', props.action, {
+    featureId: props.featureId ?? '',
+    viewMode: props.viewMode ?? '',
+    hasCommand: props.hasCommand ?? false,
+    hasPullRequest: props.hasPullRequest ?? false,
   });
 }

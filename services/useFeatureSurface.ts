@@ -1,23 +1,26 @@
-// useFeatureSurface — P3-002: Feature Surface Hook
+// useFeatureSurface — T3-004: Feature Surface Hook (TanStack Query internals)
 //
 // Owns all feature-board data loading: one paginated list fetch → one batched
 // rollup fetch for the returned card IDs.  Exposes query state, loading/error
 // states, and invalidation/retry handlers.  Components never serialize params
 // or call featureSurface.ts directly.
 //
-// Cache seam: a tiny inline LRU (max 20 entries) keyed by
-// `projectId|normalizedQuery|page` guards against duplicate requests.
-// P3-006 will replace this seam with the bounded SWR + LRU cache policy
-// described in the Frontend Cache Policy §1-4 of phase-3-frontend-board.md.
-// The public API of this hook is intentionally stable so P3-006 can swap the
-// cache implementation without reshaping return types or call-sites.
+// T3-004 migration: replaced hand-rolled LRU + request-id guard with two
+// TanStack Query tiers:
+//   list-tier   → useQuery keyed featureSurfaceKeys.list(…), staleTime: 0
+//   rollup-tier → useQuery keyed featureSurfaceKeys.rollup(…), staleTime: 30_000
+//
+// invalidate(scope) → queryClient.invalidateQueries on the appropriate key subset.
+//
+// The public API of this hook is intentionally stable across the TQ migration.
 //
 // Default rollupFields: 'session_counts' | 'token_cost_totals' | 'latest_activity'
 // These three cover all current card-metric display needs (session badge, cost
 // badge, last-active indicator).  Consumers can override via the rollupFields
 // option if they need doc_metrics or test_metrics.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   listFeatureCards,
@@ -28,6 +31,7 @@ import {
   type FeatureCardsListParams,
   type DTOFreshness,
 } from './featureSurface';
+import { featureSurfaceKeys } from './queryKeys';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -73,7 +77,7 @@ export type FeatureFreshness = DTOFreshness;
 
 export type LoadState = 'idle' | 'loading' | 'success' | 'error';
 
-/** Injected cache adapter interface — P3-006 supplies a real implementation. */
+/** Injected cache adapter interface — kept for API compatibility. */
 export interface FeatureSurfaceCacheAdapter {
   get(key: string): CacheEntry | undefined;
   set(key: string, entry: CacheEntry): void;
@@ -90,7 +94,7 @@ export interface CacheEntry {
   timestamp: number;
 }
 
-/** Full return shape of the hook — stable across P3-006 cache upgrade. */
+/** Full return shape of the hook — stable across TQ migration. */
 export interface UseFeatureSurfaceResult {
   // Query state
   query: FeatureSurfaceQuery;
@@ -116,16 +120,13 @@ export interface UseFeatureSurfaceResult {
   refetch: () => void;
   /**
    * Invalidate cached data.
-   * - scope 'list': evict the current list cache entry only
-   * - scope 'rollups': clear the rollup map (triggers re-fetch on next render)
-   * - scope 'all' (default): evict everything and refetch
-   *
-   * P3-006 extension point: wire this to sync/live-topic events.
-   * See Frontend Cache Policy §4 in phase-3-frontend-board.md.
+   * - scope 'list': invalidate the current list query key
+   * - scope 'rollups': invalidate rollup query keys for the current project
+   * - scope 'all' (default): invalidate all featureSurface keys for the project
    */
   invalidate: (scope?: 'list' | 'rollups' | 'all') => void;
 
-  /** The cache key for the current query — useful for P3-006 cache wiring. */
+  /** The cache key for the current query — useful for external cache wiring. */
   cacheKey: string;
 }
 
@@ -143,14 +144,6 @@ export const DEFAULT_FEATURE_SURFACE_QUERY: FeatureSurfaceQuery = {
   sortDirection: 'desc',
   include: [],
 };
-
-// ── Default cache (P3-006) ────────────────────────────────────────────────────
-// The bounded SWR + LRU adapter lives in services/featureSurfaceCache.ts.
-// It provides two tiers: list pages (max 50) and rollups (max 100, 30 s TTL).
-// Hook instances that do not inject a custom adapter share the module singleton.
-import { defaultFeatureSurfaceCache } from './featureSurfaceCache';
-
-const _defaultCache = defaultFeatureSurfaceCache;
 
 // ── Query → cache key ─────────────────────────────────────────────────────────
 
@@ -218,6 +211,37 @@ function queryToApiParams(query: FeatureSurfaceQuery): FeatureCardsListParams {
   };
 }
 
+// ── Query → stable serialized params object for TQ key ────────────────────────
+// Produces a plain object that TQ can serialize for cache identity.
+
+function queryToKeyParams(query: FeatureSurfaceQuery): Record<string, unknown> {
+  const normalize = (arr: string[]) => [...arr].sort();
+  return {
+    pageSize: query.pageSize,
+    search: query.search || null,
+    status: normalize(query.status),
+    stage: normalize(query.stage),
+    tags: normalize(query.tags),
+    sortBy: query.sortBy,
+    sortDirection: query.sortDirection,
+    include: normalize(query.include),
+    category: query.category ?? null,
+    plannedFrom: query.plannedFrom ?? null,
+    plannedTo: query.plannedTo ?? null,
+    startedFrom: query.startedFrom ?? null,
+    startedTo: query.startedTo ?? null,
+    completedFrom: query.completedFrom ?? null,
+    completedTo: query.completedTo ?? null,
+    updatedFrom: query.updatedFrom ?? null,
+    updatedTo: query.updatedTo ?? null,
+    progressMin: query.progressMin ?? null,
+    progressMax: query.progressMax ?? null,
+    taskCountMin: query.taskCountMin ?? null,
+    taskCountMax: query.taskCountMax ?? null,
+    hasDeferred: query.hasDeferred ?? null,
+  };
+}
+
 // ── Hook options ──────────────────────────────────────────────────────────────
 
 export interface UseFeatureSurfaceOptions {
@@ -227,9 +251,9 @@ export interface UseFeatureSurfaceOptions {
    * 'latest_activity'] — the minimum set needed to render card metrics.
    */
   rollupFields?: FeatureRollupFieldKey[];
-  /** Inject a custom cache adapter (P3-006 will supply the real one). */
+  /** Kept for API compatibility — not used; TQ is the cache layer. */
   cacheAdapter?: FeatureSurfaceCacheAdapter;
-  /** Set to true to disable caching entirely (useful in tests / edge cases). */
+  /** Kept for API compatibility — not used; TQ handles cache bypassing via refetch. */
   noCache?: boolean;
   /**
    * P5-005: Feature-surface v2 rollout flag.
@@ -249,9 +273,7 @@ export interface UseFeatureSurfaceOptions {
   featureSurfaceV2Enabled?: boolean;
 }
 
-// Default rollup fields for board cards. These stay bounded to the current
-// feature page and avoid session logs, but include the aggregate groups the
-// card UI reads for session breakdowns and document-count badges.
+// Default rollup fields for board cards.
 const DEFAULT_ROLLUP_FIELDS: FeatureRollupFieldKey[] = [
   'session_counts',
   'token_cost_totals',
@@ -260,14 +282,22 @@ const DEFAULT_ROLLUP_FIELDS: FeatureRollupFieldKey[] = [
   'doc_metrics',
 ];
 
+// ── List query result shape ───────────────────────────────────────────────────
+
+interface ListQueryData {
+  cards: FeatureCardDTO[];
+  total: number;
+  filteredTotal?: number;
+  freshness: DTOFreshness | null;
+  queryHash: string;
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useFeatureSurface(options: UseFeatureSurfaceOptions = {}): UseFeatureSurfaceResult {
   const {
     initialQuery,
     rollupFields = DEFAULT_ROLLUP_FIELDS,
-    cacheAdapter,
-    noCache = false,
     // P5-005: Capture the flag at mount.  useRef ensures subsequent re-renders
     // with a changed prop do NOT trigger a re-fetch — the path is fixed for the
     // lifetime of this hook instance to prevent a re-mount loop.
@@ -278,7 +308,7 @@ export function useFeatureSurface(options: UseFeatureSurfaceOptions = {}): UseFe
   const featureSurfaceV2EnabledRef = useRef(featureSurfaceV2EnabledOption);
   const featureSurfaceV2Enabled = featureSurfaceV2EnabledRef.current;
 
-  const cache = cacheAdapter ?? _defaultCache;
+  const queryClient = useQueryClient();
 
   // ── Query state ─────────────────────────────────────────────────────────────
   const [query, setQueryState] = useState<FeatureSurfaceQuery>({
@@ -296,200 +326,133 @@ export function useFeatureSurface(options: UseFeatureSurfaceOptions = {}): UseFe
     [],
   );
 
-  // ── Data state ──────────────────────────────────────────────────────────────
-  const [cards, setCards] = useState<FeatureCardDTO[]>([]);
-  const [rollups, setRollups] = useState<Map<string, FeatureRollupDTO>>(new Map());
-  const [totals, setTotals] = useState<{ total: number; filteredTotal?: number }>({ total: 0 });
-  const [freshness, setFreshness] = useState<DTOFreshness | null | undefined>(undefined);
-
-  const [listState, setListState] = useState<LoadState>('idle');
-  const [rollupState, setRollupState] = useState<LoadState>('idle');
-  const [listError, setListError] = useState<Error | null>(null);
-  const [rollupError, setRollupError] = useState<Error | null>(null);
-
-  // ── Stale-response guard ────────────────────────────────────────────────────
-  // Monotonically-incrementing request IDs prevent late-arriving responses from
-  // overwriting newer state (matches the linkedSessionsRequestIdRef pattern in
-  // ProjectBoard.tsx).
-  const listRequestIdRef = useRef(0);
-  const rollupRequestIdRef = useRef(0);
-
-  // Expose a refetch trigger separate from query change so callers can force
-  // a fresh fetch without mutating the query object.
-  const [refetchTick, setRefetchTick] = useState(0);
-
-  // ── Derived cache key ───────────────────────────────────────────────────────
+  // ── Derived values ───────────────────────────────────────────────────────────
+  const projectId = query.projectId ?? '';
   const cacheKey = buildCacheKey(query);
 
-  // ── List fetch ──────────────────────────────────────────────────────────────
-  const fetchList = useCallback(
-    async (currentQuery: FeatureSurfaceQuery, requestId: number, bypassCache: boolean) => {
-      // P5-005: When v2 is disabled, produce an empty result immediately.
-      // The caller (ProjectBoard) falls back to the legacy getLegacyFeatureDetail
-      // path for its modal data; the board card grid just stays empty/loading-free.
-      if (!featureSurfaceV2Enabled) {
-        setCards([]);
-        setTotals({ total: 0 });
-        setFreshness(null);
-        setListState('success');
-        setListError(null);
-        return [];
-      }
+  // ── List-tier query ──────────────────────────────────────────────────────────
+  // staleTime: 0 — the list is always considered stale; TQ will refetch on every
+  // mount/focus unless the query key is still in flight.
 
-      const key = buildCacheKey(currentQuery);
-
-      if (!bypassCache) {
-        const cached = cache.get(key);
-        if (cached) {
-          setCards(cached.cards);
-          setTotals({ total: cached.total, filteredTotal: cached.filteredTotal });
-          setFreshness(cached.freshness);
-          setListState('success');
-          setListError(null);
-          return cached.cards.map((c) => c.id);
-        }
-      }
-
-      setListState('loading');
-      setListError(null);
-
-      try {
-        const page = await listFeatureCards(queryToApiParams(currentQuery));
-
-        // Guard: discard if a newer list request has already fired
-        if (listRequestIdRef.current !== requestId) return null;
-
-        const nextCards = page.items;
-        if (!noCache) {
-          cache.set(key, {
-            cards: nextCards,
-            total: page.total,
-            freshness: page.freshness,
-            queryHash: page.queryHash,
-            timestamp: Date.now(),
-          });
-        }
-
-        setCards(nextCards);
-        setTotals({ total: page.total });
-        setFreshness(page.freshness);
-        setListState('success');
-        setListError(null);
-
-        return nextCards.map((c) => c.id);
-      } catch (err) {
-        if (listRequestIdRef.current !== requestId) return null;
-        setListState('error');
-        setListError(err instanceof Error ? err : new Error(String(err)));
-        return null;
-      }
+  const listQuery = useQuery<ListQueryData, Error>({
+    queryKey: featureSurfaceKeys.list(projectId, queryToKeyParams(query), query.page),
+    queryFn: async (): Promise<ListQueryData> => {
+      const page = await listFeatureCards(queryToApiParams(query));
+      return {
+        cards: page.items,
+        total: page.total,
+        freshness: page.freshness ?? null,
+        queryHash: page.queryHash ?? '',
+      };
     },
-    [cache, noCache],
-  );
+    staleTime: 0,
+    enabled: !!projectId && featureSurfaceV2Enabled,
+  });
 
-  // ── Rollup fetch (fires after list resolves) ────────────────────────────────
-  const fetchRollups = useCallback(
-    async (featureIds: string[], requestId: number) => {
-      if (!featureIds.length) {
-        setRollups(new Map());
-        setRollupState('success');
-        setRollupError(null);
-        return;
+  // Derive list values from TQ result
+  const cards: FeatureCardDTO[] = featureSurfaceV2Enabled
+    ? (listQuery.data?.cards ?? [])
+    : [];
+  const totals = featureSurfaceV2Enabled
+    ? { total: listQuery.data?.total ?? 0, filteredTotal: listQuery.data?.filteredTotal }
+    : { total: 0 };
+  const freshness = featureSurfaceV2Enabled ? (listQuery.data?.freshness ?? null) : null;
+
+  const listState: LoadState = !featureSurfaceV2Enabled
+    ? 'success'
+    : listQuery.isLoading
+      ? 'loading'
+      : listQuery.isError
+        ? 'error'
+        : listQuery.data !== undefined
+          ? 'success'
+          : 'idle';
+
+  const listError = listQuery.error ?? null;
+
+  // ── Rollup-tier query ─────────────────────────────────────────────────────────
+  // Keyed by the sorted feature IDs from the current list result + freshnessToken.
+  // staleTime: 30_000 — rollups are considered fresh for 30 seconds (matches old TTL).
+  // Only fires when we have a non-empty list result.
+
+  const cardIds = cards.map((c) => c.id);
+  const freshnessToken = freshness?.sourceRevision ?? freshness?.cacheVersion ?? null;
+
+  const rollupQuery = useQuery<Map<string, FeatureRollupDTO>, Error>({
+    queryKey: featureSurfaceKeys.rollup(projectId, cardIds, freshnessToken),
+    queryFn: async (): Promise<Map<string, FeatureRollupDTO>> => {
+      const response = await getFeatureRollups({
+        featureIds: cardIds,
+        fields: rollupFields,
+        includeInheritedThreads: true,
+        includeFreshness: true,
+        includeTestMetrics: false,
+      });
+      const map = new Map<string, FeatureRollupDTO>();
+      for (const [id, rollup] of Object.entries(response.rollups)) {
+        map.set(id, rollup);
       }
-
-      setRollupState('loading');
-      setRollupError(null);
-
-      try {
-        const response = await getFeatureRollups({
-          featureIds,
-          fields: rollupFields,
-          includeInheritedThreads: true,
-          includeFreshness: true,
-          includeTestMetrics: false,
-        });
-
-        // Guard: discard if a newer rollup request has already fired
-        if (rollupRequestIdRef.current !== requestId) return;
-
-        const map = new Map<string, FeatureRollupDTO>();
-        for (const [id, rollup] of Object.entries(response.rollups)) {
-          map.set(id, rollup);
-        }
-        setRollups(map);
-        setRollupState('success');
-        setRollupError(null);
-      } catch (err) {
-        if (rollupRequestIdRef.current !== requestId) return;
-        setRollupState('error');
-        setRollupError(err instanceof Error ? err : new Error(String(err)));
-      }
+      return map;
     },
-    [rollupFields],
-  );
+    staleTime: 30_000,
+    enabled: !!projectId && featureSurfaceV2Enabled && cardIds.length > 0,
+  });
 
-  // ── Main effect: fire on query change or refetch tick ──────────────────────
-  useEffect(() => {
-    const listId = ++listRequestIdRef.current;
-    const rollupId = ++rollupRequestIdRef.current;
-    const bypassCache = refetchTick > 0; // first mount uses cache; explicit refetch bypasses
+  // Derive rollup values
+  const rollups: Map<string, FeatureRollupDTO> = featureSurfaceV2Enabled
+    ? (rollupQuery.data ?? new Map())
+    : new Map();
 
-    void (async () => {
-      const featureIds = await fetchList(query, listId, bypassCache);
-      // Only fan out rollup batch if this list response is still current
-      if (featureIds !== null && listRequestIdRef.current === listId) {
-        rollupRequestIdRef.current = rollupId;
-        await fetchRollups(featureIds, rollupId);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, refetchTick]);
-  // Note: fetchList/fetchRollups are stable callbacks; including them would
-  // cause infinite re-renders when options change.  Query and refetchTick are
-  // the true dependencies.
+  const rollupState: LoadState = !featureSurfaceV2Enabled || cardIds.length === 0
+    ? 'success'
+    : rollupQuery.isLoading
+      ? 'loading'
+      : rollupQuery.isError
+        ? 'error'
+        : rollupQuery.data !== undefined
+          ? 'success'
+          : 'idle';
+
+  const rollupError = rollupQuery.error ?? null;
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
   const retryList = useCallback(() => {
-    const listId = ++listRequestIdRef.current;
-    const rollupId = ++rollupRequestIdRef.current;
-
-    void (async () => {
-      const featureIds = await fetchList(query, listId, true);
-      if (featureIds !== null && listRequestIdRef.current === listId) {
-        rollupRequestIdRef.current = rollupId;
-        await fetchRollups(featureIds, rollupId);
-      }
-    })();
-  }, [query, fetchList, fetchRollups]);
+    void queryClient.invalidateQueries({
+      queryKey: featureSurfaceKeys.list(projectId, queryToKeyParams(query), query.page),
+    });
+  }, [queryClient, projectId, query]);
 
   const retryRollups = useCallback(() => {
-    const currentIds = cards.map((c) => c.id);
-    if (!currentIds.length) return;
-    const rollupId = ++rollupRequestIdRef.current;
-    void fetchRollups(currentIds, rollupId);
-  }, [cards, fetchRollups]);
+    void queryClient.invalidateQueries({
+      queryKey: featureSurfaceKeys.rollup(projectId, cardIds, freshnessToken),
+    });
+  }, [queryClient, projectId, cardIds, freshnessToken]);
 
   const refetch = useCallback(() => {
-    setRefetchTick((t) => t + 1);
-  }, []);
+    void queryClient.invalidateQueries({
+      queryKey: featureSurfaceKeys.all(projectId),
+    });
+  }, [queryClient, projectId]);
 
   const invalidate = useCallback(
     (scope: 'list' | 'rollups' | 'all' = 'all') => {
-      if (scope === 'list' || scope === 'all') {
-        cache.delete(cacheKey);
-      }
-      if (scope === 'rollups' || scope === 'all') {
-        setRollups(new Map());
-        setRollupState('idle');
-        setRollupError(null);
-      }
-      if (scope === 'all') {
-        // Trigger a fresh fetch
-        setRefetchTick((t) => t + 1);
+      if (scope === 'list') {
+        void queryClient.invalidateQueries({
+          queryKey: featureSurfaceKeys.list(projectId, queryToKeyParams(query), query.page),
+        });
+      } else if (scope === 'rollups') {
+        void queryClient.invalidateQueries({
+          queryKey: featureSurfaceKeys.rollup(projectId, cardIds, freshnessToken),
+        });
+      } else {
+        // scope === 'all'
+        void queryClient.invalidateQueries({
+          queryKey: featureSurfaceKeys.all(projectId),
+        });
       }
     },
-    [cache, cacheKey],
+    [queryClient, projectId, query, cardIds, freshnessToken],
   );
 
   return {
