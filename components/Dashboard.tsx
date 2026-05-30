@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useData } from '../contexts/DataContext';
 import { useDashboardBundleQuery } from '../services/queries/dashboard';
+import { useAnalyticsOverviewQuery } from '../services/queries/analytics';
 import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu, LayoutGrid, ShieldAlert, CheckCircle2, Clock, Activity } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
 import { analyticsService } from '../services/analytics';
 import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../lib/chartTheme';
-import { type AnalyticsOverview, type SessionCostCalibrationSummary } from '../types';
+import { type SessionCostCalibrationSummary } from '../types';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { Button } from './ui/button';
 import { Surface, AlertSurface } from './ui/surface';
@@ -148,7 +149,7 @@ const FeatureSummaryChip = ({
 );
 
 export const Dashboard: React.FC = () => {
-  const { activeProject, tasks, loading } = useData();
+  const { activeProject, tasks } = useData();
 
   // T5-005 / T5-006: Replace separate useSessionsQuery + useTasksQuery with
   // a single fat-read bundle.  Cold Dashboard load now issues ONE GET /api/v1/dashboard.
@@ -157,6 +158,14 @@ export const Dashboard: React.FC = () => {
     sessions: bundleSessions,
     taskCounts,
   } = useDashboardBundleQuery({ projectId: activeProject?.id });
+
+  // T5-007: KPI cards migrated to TanStack Query — decouples slow overview
+  // endpoint from the chart series calls; provides loading/error affordances.
+  const {
+    data: overviewData,
+    isLoading: overviewLoading,
+    isError: overviewError,
+  } = useAnalyticsOverviewQuery({ projectId: activeProject?.id });
 
   // Adapt SessionCardDTO (snake_case) to the shape used by analyticsData below.
   const sessions = bundleSessions.map(s => ({
@@ -208,10 +217,8 @@ export const Dashboard: React.FC = () => {
 
   const [insight, setInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
-  const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
   const [costCalibration, setCostCalibration] = useState<SessionCostCalibrationSummary | null>(null);
   const [chartData, setChartData] = useState<Array<{ date: string; cost: number; velocity: number }>>([]);
-  const [modelData, setModelData] = useState<Array<{ name: string; usage: number }>>([]);
 
   // Derive analytics from real session data
   const analyticsData = useMemo(() => {
@@ -225,7 +232,7 @@ export const Dashboard: React.FC = () => {
 
   const handleGenerateInsight = async () => {
     setLoadingInsight(true);
-    const insightMetrics = (chartData.length > 0 ? chartData : analyticsData).map(point => ({
+    const insightMetrics = (chartData.length > 0 ? chartData : analyticsData).map((point: { date: string; cost: number }) => ({
       name: point.date,
       value: Number(point.cost || 0),
       unit: '$',
@@ -237,28 +244,35 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     let mounted = true;
-    const loadAnalytics = async () => {
-      try {
-        const [ov, calibration, costSeries, velocitySeries] = await Promise.all([
-          analyticsService.getOverview(),
-          analyticsService.getSessionCostCalibration(),
-          analyticsService.getSeries({ metric: 'session_cost', period: 'daily', limit: 120 }),
-          analyticsService.getSeries({ metric: 'task_velocity', period: 'daily', limit: 120 }),
-        ]);
-        if (!mounted) return;
-        setOverview(ov);
-        setCostCalibration(calibration);
-        setModelData((ov.topModels || []).slice(0, 6));
+    const loadChartData = async () => {
+      // Decouple calibration and chart series — a failure in one cannot zero the other
+      // or affect the TQ-managed KPI cards above.
+      const [calibrationResult, costSeriesResult, velocitySeriesResult] = await Promise.allSettled([
+        analyticsService.getSessionCostCalibration(),
+        analyticsService.getSeries({ metric: 'session_cost', period: 'daily', limit: 120 }),
+        analyticsService.getSeries({ metric: 'task_velocity', period: 'daily', limit: 120 }),
+      ]);
+      if (!mounted) return;
 
+      if (calibrationResult.status === 'fulfilled') {
+        setCostCalibration(calibrationResult.value);
+      } else {
+        console.error('Failed to load cost calibration:', calibrationResult.reason);
+      }
+
+      const costSeries = costSeriesResult.status === 'fulfilled' ? costSeriesResult.value : null;
+      const velocitySeries = velocitySeriesResult.status === 'fulfilled' ? velocitySeriesResult.value : null;
+
+      if (costSeries || velocitySeries) {
         const byDate = new Map<string, { date: string; cost: number; velocity: number }>();
-        for (const point of costSeries.items || []) {
+        for (const point of costSeries?.items || []) {
           const date = String(point.captured_at || '').slice(0, 10);
           if (!date) continue;
           const current = byDate.get(date) || { date, cost: 0, velocity: 0 };
           current.cost = Number(point.value || 0);
           byDate.set(date, current);
         }
-        for (const point of velocitySeries.items || []) {
+        for (const point of velocitySeries?.items || []) {
           const date = String(point.captured_at || '').slice(0, 10);
           if (!date) continue;
           const current = byDate.get(date) || { date, cost: 0, velocity: 0 };
@@ -266,11 +280,13 @@ export const Dashboard: React.FC = () => {
           byDate.set(date, current);
         }
         setChartData(Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date)));
-      } catch (err) {
-        console.error('Failed to load analytics overview:', err);
+      } else {
+        const costReason = costSeriesResult.status === 'rejected' ? costSeriesResult.reason : undefined;
+        const velocityReason = velocitySeriesResult.status === 'rejected' ? velocitySeriesResult.reason : undefined;
+        console.error('Failed to load chart series:', costReason ?? velocityReason);
       }
     };
-    loadAnalytics();
+    void loadChartData();
     return () => {
       mounted = false;
     };
@@ -278,12 +294,12 @@ export const Dashboard: React.FC = () => {
 
   const workloadMetrics = useMemo(
     () => resolveTokenMetrics({
-      modelIOTokens: overview?.kpis?.modelIOTokens,
-      cacheInputTokens: overview?.kpis?.cacheInputTokens,
-      observedTokens: overview?.kpis?.observedTokens,
-      toolReportedTokens: overview?.kpis?.toolReportedTokens,
+      modelIOTokens: overviewData?.kpis?.modelIOTokens,
+      cacheInputTokens: overviewData?.kpis?.cacheInputTokens,
+      observedTokens: overviewData?.kpis?.observedTokens,
+      toolReportedTokens: overviewData?.kpis?.toolReportedTokens,
     }),
-    [overview],
+    [overviewData],
   );
 
   return (
@@ -347,47 +363,53 @@ export const Dashboard: React.FC = () => {
           Placed between Feature Portfolio and KPI cards per OQ-EXP-1. */}
       <SystemMetricsChip />
 
-      {/* KPI Cards */}
+      {/* KPI Cards — TQ-managed (T5-007). Shows loading placeholders while fetching,
+          error affordance on failure, never renders literal 0 for unavailable data. */}
+      {overviewError && !overviewData && (
+        <AlertSurface intent="danger" className="text-sm">
+          Analytics KPIs could not be loaded. The chart and calibration data below may still be available.
+        </AlertSurface>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <StatCard
           label="Observed Workload (30d)"
-          value={formatTokenCount(workloadMetrics.workloadTokens)}
-          sub={`${formatTokenCount(workloadMetrics.cacheInputTokens)} cache input (${formatPercent(workloadMetrics.cacheShare)})`}
+          value={overviewLoading && !overviewData ? '—' : formatTokenCount(workloadMetrics.workloadTokens)}
+          sub={overviewLoading && !overviewData ? 'Loading...' : `${formatTokenCount(workloadMetrics.cacheInputTokens)} cache input (${formatPercent(workloadMetrics.cacheShare)})`}
           icon={Cpu}
           tone="info"
         />
         <StatCard
           label="Total Spend (30d)"
-          value={`$${Number(overview?.kpis?.sessionCost || 0).toFixed(2)}`}
-          sub={`${costCalibration?.comparableSessionCount || 0} comparable sessions • ${formatTokenCount(workloadMetrics.modelIOTokens)} model IO`}
+          value={overviewLoading && !overviewData ? '—' : `$${Number(overviewData?.kpis?.sessionCost || 0).toFixed(2)}`}
+          sub={overviewLoading && !overviewData ? 'Loading...' : `${costCalibration?.comparableSessionCount || 0} comparable sessions • ${formatTokenCount(workloadMetrics.modelIOTokens)} model IO`}
           icon={DollarSign}
           tone="success"
         />
         <StatCard
           label="Avg. Session Quality"
-          value={`${Number(overview?.kpis?.taskCompletionPct || 0).toFixed(1)}%`}
+          value={overviewLoading && !overviewData ? '—' : `${Number(overviewData?.kpis?.taskCompletionPct || 0).toFixed(1)}%`}
           sub="Task completion across done/deferred/completed"
           icon={TrendingUp}
           tone="primary"
         />
         <StatCard
           label="Tool Success Rate"
-          value={`${Number(overview?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
-          sub={`${Number(overview?.kpis?.toolCallCount || 0).toLocaleString()} tool calls tracked`}
+          value={overviewLoading && !overviewData ? '—' : `${Number(overviewData?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
+          sub={overviewLoading && !overviewData ? 'Loading...' : `${Number(overviewData?.kpis?.toolCallCount || 0).toLocaleString()} tool calls tracked`}
           icon={AlertTriangle}
           tone="danger"
         />
         <StatCard
           label="Features Shipped"
-          value={`${Number(overview?.kpis?.taskVelocity || 0).toLocaleString()}`}
-          sub={`${Number(overview?.kpis?.sessionCount || 0).toLocaleString()} sessions • ${taskCounts['done'] ?? 0} done tasks`}
+          value={overviewLoading && !overviewData ? '—' : `${Number(overviewData?.kpis?.taskVelocity || 0).toLocaleString()}`}
+          sub={overviewLoading && !overviewData ? 'Loading...' : `${Number(overviewData?.kpis?.sessionCount || 0).toLocaleString()} sessions • ${taskCounts['done'] ?? 0} done tasks`}
           icon={Zap}
           tone="warning"
         />
       </div>
 
       <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
-        Display spend prefers reported cost, then recalculated cost, then estimated fallback. Current-context snapshots were captured for {Number(overview?.kpis?.contextSessionCount || 0).toLocaleString()} recent sessions at an average {Number(overview?.kpis?.avgContextUtilizationPct || 0).toFixed(1)}% utilization.
+        Display spend prefers reported cost, then recalculated cost, then estimated fallback. Current-context snapshots were captured for {Number(overviewData?.kpis?.contextSessionCount || 0).toLocaleString()} recent sessions at an average {Number(overviewData?.kpis?.avgContextUtilizationPct || 0).toFixed(1)}% utilization.
       </AlertSurface>
 
       <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
@@ -450,7 +472,7 @@ export const Dashboard: React.FC = () => {
           <h3 className="mb-6 text-lg font-semibold text-panel-foreground">Top Agent Models</h3>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={modelData} layout="vertical">
+              <BarChart data={(overviewData?.top_models ?? []).slice(0, 6)} layout="vertical">
                 <CartesianGrid {...chartTheme.grid} horizontal vertical={false} />
                 <XAxis type="number" hide />
                 <YAxis dataKey="name" type="category" width={80} {...chartTheme.axis} />

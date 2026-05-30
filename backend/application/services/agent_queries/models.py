@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 
 QueryStatus = Literal["ok", "partial", "error"]
@@ -963,6 +964,8 @@ class PlanningViewBundleDTO(AgentQueryEnvelope):
 class AnalyticsKPIsDTO(BaseModel):
     """Above-fold analytics KPI snapshot (T5-004)."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
     session_count: int = 0
     session_cost: float = 0.0
     session_tokens: int = 0
@@ -972,9 +975,12 @@ class AnalyticsKPIsDTO(BaseModel):
     feature_progress: float = 0.0
     tool_call_count: int = 0
     tool_success_rate: float = 0.0
-    model_io_tokens: int = 0
+    model_io_tokens: int = Field(default=0, serialization_alias="modelIOTokens")
     cache_input_tokens: int = 0
     observed_tokens: int = 0
+    context_session_count: int = 0
+    avg_context_utilization_pct: float = 0.0
+    tool_reported_tokens: int = 0
 
 
 class AnalyticsTopModelDTO(BaseModel):

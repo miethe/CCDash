@@ -160,7 +160,8 @@
           "usageAttributionEnabled": true,
           "sessionBlockInsightsEnabled": true
         }
-      }
+      },
+      "display": null
     },
     {
       "id": "test-project-1",
@@ -321,7 +322,8 @@
           "usageAttributionEnabled": true,
           "sessionBlockInsightsEnabled": true
         }
-      }
+      },
+      "display": null
     },
     {
       "id": "3df0ff70-85fd-402f-a028-83cae8bcedc2",
@@ -482,7 +484,8 @@
           "usageAttributionEnabled": true,
           "sessionBlockInsightsEnabled": true
         }
-      }
+      },
+      "display": null
     },
     {
       "id": "3da60e0c-a928-4b78-abd7-a74731e995c6",
@@ -643,7 +646,170 @@
           "usageAttributionEnabled": true,
           "sessionBlockInsightsEnabled": true
         }
-      }
+      },
+      "display": null
+    },
+    {
+      "id": "479ae45d-1467-4fd9-984a-305d42ca8c94",
+      "name": "MeatyWiki",
+      "path": "/Users/miethe/dev/homelab/development/meatywiki",
+      "description": "",
+      "repoUrl": "https://github.com/miethe/meatywiki",
+      "agentPlatforms": [
+        "Claude Code"
+      ],
+      "planDocsPath": "docs/project_plans/",
+      "sessionsPath": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-meatywiki",
+      "progressPath": ".claude/progress",
+      "pathConfig": {
+        "root": {
+          "field": "root",
+          "sourceKind": "filesystem",
+          "displayValue": "/Users/miethe/dev/homelab/development/meatywiki",
+          "filesystemPath": "/Users/miethe/dev/homelab/development/meatywiki",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "planDocs": {
+          "field": "plan_docs",
+          "sourceKind": "project_root",
+          "displayValue": "docs/project_plans/",
+          "filesystemPath": "",
+          "relativePath": "docs/project_plans/",
+          "repoRef": null
+        },
+        "sessions": {
+          "field": "sessions",
+          "sourceKind": "filesystem",
+          "displayValue": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-meatywiki",
+          "filesystemPath": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-meatywiki",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "progress": {
+          "field": "progress",
+          "sourceKind": "project_root",
+          "displayValue": ".claude/progress",
+          "filesystemPath": "",
+          "relativePath": ".claude/progress",
+          "repoRef": null
+        }
+      },
+      "testConfig": {
+        "flags": {
+          "testVisualizerEnabled": true,
+          "integritySignalsEnabled": true,
+          "liveTestUpdatesEnabled": true,
+          "semanticMappingEnabled": true
+        },
+        "platforms": [
+          {
+            "id": "pytest",
+            "enabled": true,
+            "resultsDir": "test-results",
+            "watch": true,
+            "patterns": [
+              "**/*.xml",
+              "**/junit*.xml",
+              "**/pytest*.xml"
+            ]
+          },
+          {
+            "id": "jest",
+            "enabled": false,
+            "resultsDir": "skillmeat/web",
+            "watch": true,
+            "patterns": [
+              "**/jest-results*.json",
+              "**/coverage/coverage-final.json"
+            ]
+          },
+          {
+            "id": "playwright",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/test-results",
+            "watch": true,
+            "patterns": [
+              "**/results.json"
+            ]
+          },
+          {
+            "id": "coverage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/coverage.xml",
+              "**/coverage.json",
+              "**/lcov.info",
+              "**/coverage-final.json"
+            ]
+          },
+          {
+            "id": "benchmark",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/benchmark*_results.json",
+              "**/benchmark*.json"
+            ]
+          },
+          {
+            "id": "lighthouse",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/lighthouse-reports",
+            "watch": false,
+            "patterns": [
+              "**/*.json",
+              "**/*.html"
+            ]
+          },
+          {
+            "id": "locust",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/locust_report.html",
+              "**/locust_results*.csv"
+            ]
+          },
+          {
+            "id": "triage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/test-failures.json",
+              "**/test-failures-summary.txt",
+              "**/test-failures.md"
+            ]
+          }
+        ],
+        "autoSyncOnStartup": true,
+        "maxFilesPerScan": 500,
+        "maxParseConcurrency": 4,
+        "instructionProfile": "skillmeat",
+        "instructionNotes": ""
+      },
+      "skillMeat": {
+        "enabled": false,
+        "baseUrl": "",
+        "webBaseUrl": "",
+        "projectId": "",
+        "collectionId": "",
+        "aaaEnabled": false,
+        "apiKey": "",
+        "requestTimeoutSeconds": 5.0,
+        "featureFlags": {
+          "stackRecommendationsEnabled": true,
+          "workflowAnalyticsEnabled": true,
+          "usageAttributionEnabled": true,
+          "sessionBlockInsightsEnabled": true
+        }
+      },
+      "display": null
     }
   ]
 }

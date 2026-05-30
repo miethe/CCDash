@@ -126,6 +126,9 @@ class AnalyticsBundleQueryService:
                 model_io_tokens=_safe_int(kpis_raw.get("modelIOTokens")),
                 cache_input_tokens=_safe_int(kpis_raw.get("cacheInputTokens")),
                 observed_tokens=_safe_int(kpis_raw.get("observedTokens")),
+                context_session_count=_safe_int(kpis_raw.get("contextSessionCount")),
+                avg_context_utilization_pct=_safe_float(kpis_raw.get("avgContextUtilizationPct")),
+                tool_reported_tokens=_safe_int(kpis_raw.get("toolReportedTokens")),
             )
 
             top_models = [
