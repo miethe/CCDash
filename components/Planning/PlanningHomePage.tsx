@@ -4,7 +4,7 @@ import { GitBranch, Inbox, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock }
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useData } from '../../contexts/DataContext';
-import type { Feature, FeaturePlanningContext, FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
+import type { Feature, FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
 import {
   prefetchFeaturePlanningContext,
 } from '../../services/planning';
@@ -108,7 +108,9 @@ export function resolvePlanningModalFeature(
  * once the backend query surface exposes them.
  */
 function deriveCorpusStats(summary: import('../../types').ProjectPlanningSummary) {
-  const { nodeCountsByType } = summary;
+  // Defensive fallback: nodeCountsByType may be absent if the wire payload
+  // was not yet adapted (e.g. during a partial response or future API change).
+  const nodeCountsByType = summary?.nodeCountsByType ?? ({} as ProjectPlanningSummary['nodeCountsByType']);
 
   // Total context docs (context + tracker types serve as ctx anchors)
   const ctxCount = (nodeCountsByType.context ?? 0) + (nodeCountsByType.tracker ?? 0);
@@ -131,8 +133,8 @@ function deriveCorpusStats(summary: import('../../types').ProjectPlanningSummary
   // Real historical data is not yet available; we synthesise a plausible
   // monotone growth curve ending at the current totals.
   // TODO: replace with actual per-day aggregate when the backend exposes it.
-  const total = summary.totalFeatureCount;
-  const active = summary.activeFeatureCount;
+  const total = summary?.totalFeatureCount ?? 0;
+  const active = summary?.activeFeatureCount ?? 0;
   const sparkHistory = Array.from({ length: 12 }, (_, i) => {
     const t = i / 11;
     return Math.round(total * (0.3 + 0.7 * t) + active * Math.sin(t * Math.PI) * 0.5);

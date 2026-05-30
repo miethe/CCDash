@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { Project } from '../types';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { useDataClient } from './DataClientContext';
@@ -43,6 +43,8 @@ export const AppSessionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setActiveProject(null);
     }
   }, [client]);
+
+  useEffect(() => { void refreshProjects(); }, [refreshProjects]);
 
   const addProject = useCallback(async (project: Project) => {
     await client.addProject(project);

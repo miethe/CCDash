@@ -16,12 +16,20 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import type { PlanningBoardGroupingMode, ProjectPlanningSummary } from '../../types';
+import type { PlanningBoardGroupingMode, ProjectPlanningSummary, ProjectPlanningGraph, PlanningAgentSessionBoard } from '../../types';
 import {
   getProjectPlanningSummary,
   getFeaturePlanningContext,
   getSessionBoard,
   getFeatureSessionBoard,
+  adaptPlanningSummary,
+  adaptPlanningGraph,
+  adaptPlanningAgentSessionBoard,
+} from '../planning';
+import type {
+  WireProjectPlanningSummary,
+  WireProjectPlanningGraph,
+  WirePlanningAgentSessionBoard,
 } from '../planning';
 import { apiRequestJson } from '../apiClient';
 import { planningKeys } from '../queryKeys';
@@ -174,15 +182,24 @@ export function usePlanningFeatureSessionBoardQuery({
  * summary is always present; graph and session_board are present only when
  * their respective include= segments are specified.
  *
- * The backend composes the same summary payload as GET /api/agent/planning/summary,
- * so `summary` is typed as ProjectPlanningSummary (already adapted by the backend
- * adapter layer, which mirrors the FE adapter in services/planning.ts).
+ * The backend returns snake_case throughout — this interface reflects the raw
+ * wire format.  usePlanningViewQuery adapts the payload to camelCase via the
+ * adapter functions exported from services/planning.ts before returning it
+ * as PlanningViewBundleDTO.  The backend does NOT pre-adapt field names.
  */
-export interface PlanningViewBundleDTO {
+interface WirePlanningViewBundle {
   project_id: string;
+  summary: WireProjectPlanningSummary;
+  graph?: WireProjectPlanningGraph;
+  session_board?: WirePlanningAgentSessionBoard;
+}
+
+/** Fully adapted (camelCase) planning view bundle returned by usePlanningViewQuery. */
+export interface PlanningViewBundleDTO {
+  projectId: string;
   summary: ProjectPlanningSummary;
-  graph?: unknown;
-  session_board?: unknown;
+  graph?: ProjectPlanningGraph;
+  session_board?: PlanningAgentSessionBoard;
 }
 
 export interface UsePlanningViewQueryOptions {
@@ -229,9 +246,18 @@ export function usePlanningViewQuery({
       if (sortedInclude.length > 0) {
         params.set('include', sortedInclude.join(','));
       }
-      return apiRequestJson<PlanningViewBundleDTO>(
+      // Fetch the raw wire payload — the backend returns snake_case throughout.
+      // We adapt each sub-payload using the adapter functions from services/planning.ts
+      // before returning a fully camelCase PlanningViewBundleDTO to consumers.
+      const wire = await apiRequestJson<WirePlanningViewBundle>(
         `/api/agent/planning/view?${params.toString()}`,
       );
+      return {
+        projectId: wire.project_id ?? '',
+        summary: adaptPlanningSummary(wire.summary),
+        ...(wire.graph != null ? { graph: adaptPlanningGraph(wire.graph) } : {}),
+        ...(wire.session_board != null ? { session_board: adaptPlanningAgentSessionBoard(wire.session_board) } : {}),
+      };
     },
     staleTime: 30_000,
     gcTime: 300_000,

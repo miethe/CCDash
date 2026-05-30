@@ -162,7 +162,7 @@ describe('T5-008 (seam): Planning cold load — 1 request (GET /api/agent/planni
   const planningFetchSpy = vi.fn((url: string) => {
     fetchedPlanningUrls.push(url);
     const payload: PlanningViewBundleDTO = {
-      project_id: 'proj-seam',
+      projectId: 'proj-seam',
       summary: {
         status: 'ok',
         projectId: 'proj-seam',
@@ -263,7 +263,7 @@ describe('T5-008 (seam): combined — 1 above-fold request per view', () => {
       }
       if (url.includes('/api/agent/planning/view')) {
         return Promise.resolve({
-          project_id: 'proj-combined',
+          projectId: 'proj-combined',
           summary: {} as PlanningViewBundleDTO['summary'],
         } as PlanningViewBundleDTO);
       }

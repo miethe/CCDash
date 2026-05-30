@@ -155,7 +155,7 @@ interface WireTokenTelemetry {
   source: 'session_attribution' | 'unavailable';
 }
 
-interface WireProjectPlanningSummary extends WireEnvelope {
+export interface WireProjectPlanningSummary extends WireEnvelope {
   project_id: string;
   project_name: string;
   total_feature_count: number;
@@ -232,7 +232,7 @@ interface WirePlanningTokenUsageByModel {
   total: number;
 }
 
-interface WireProjectPlanningGraph extends WireEnvelope {
+export interface WireProjectPlanningGraph extends WireEnvelope {
   project_id: string;
   feature_id: string | null;
   depth: number | null;
@@ -386,7 +386,7 @@ interface WirePlanningBoardGroup {
   card_count: number;
 }
 
-interface WirePlanningAgentSessionBoard {
+export interface WirePlanningAgentSessionBoard {
   project_id: string;
   feature_id?: string;
   grouping: PlanningBoardGroupingMode;
@@ -687,7 +687,7 @@ function adaptPlanningBoardGroup(wire: WirePlanningBoardGroup): PlanningBoardGro
   };
 }
 
-function adaptPlanningAgentSessionBoard(wire: WirePlanningAgentSessionBoard): PlanningAgentSessionBoard {
+export function adaptPlanningAgentSessionBoard(wire: WirePlanningAgentSessionBoard): PlanningAgentSessionBoard {
   return {
     projectId: wire.project_id ?? '',
     featureId: wire.feature_id,
@@ -704,18 +704,13 @@ function adaptPlanningAgentSessionBoard(wire: WirePlanningAgentSessionBoard): Pl
 // ── Public API helpers ────────────────────────────────────────────────────────
 
 /**
- * Fetch project-level planning health counts and per-feature summaries.
- *
- * Mirrors: GET /api/agent/planning/summary
+ * Adapt a raw snake_case wire summary payload to the camelCase
+ * ProjectPlanningSummary shape.  Exported so that usePlanningViewQuery
+ * (services/queries/planning.ts) can reuse this logic when adapting the
+ * bundled summary inside GET /api/agent/planning/view — the backend does NOT
+ * pre-adapt wire fields; all snake→camel conversion happens here.
  */
-export async function getProjectPlanningSummary(
-  projectId?: string,
-): Promise<ProjectPlanningSummary> {
-  const params = new URLSearchParams();
-  if (projectId) params.set('project_id', projectId);
-
-  const wire = await planningFetch<WireProjectPlanningSummary>('/summary', params.toString() ? params : undefined);
-
+export function adaptPlanningSummary(wire: WireProjectPlanningSummary): ProjectPlanningSummary {
   return {
     ...adaptEnvelope(wire),
     projectId: wire.project_id ?? '',
@@ -738,10 +733,45 @@ export async function getProjectPlanningSummary(
 }
 
 /**
+ * Fetch project-level planning health counts and per-feature summaries.
+ *
+ * Mirrors: GET /api/agent/planning/summary
+ */
+export async function getProjectPlanningSummary(
+  projectId?: string,
+): Promise<ProjectPlanningSummary> {
+  const params = new URLSearchParams();
+  if (projectId) params.set('project_id', projectId);
+
+  const wire = await planningFetch<WireProjectPlanningSummary>('/summary', params.toString() ? params : undefined);
+  return adaptPlanningSummary(wire);
+}
+
+/**
  * Fetch aggregated planning graph nodes and edges for the project or a feature seed.
  *
  * Mirrors: GET /api/agent/planning/graph
  */
+/**
+ * Adapt a raw snake_case wire graph payload to the camelCase ProjectPlanningGraph
+ * shape.  Exported so that usePlanningViewQuery can reuse this logic when the
+ * graph sub-payload is present in the view bundle response.
+ */
+export function adaptPlanningGraph(wire: WireProjectPlanningGraph): ProjectPlanningGraph {
+  return {
+    ...adaptEnvelope(wire),
+    projectId: wire.project_id ?? '',
+    featureId: wire.feature_id ?? null,
+    depth: wire.depth ?? null,
+    nodes: castNodes(wire.nodes ?? []),
+    edges: castEdges(wire.edges ?? []),
+    phaseBatches: castPhaseBatches(wire.phase_batches ?? []),
+    nodeCount: wire.node_count ?? 0,
+    edgeCount: wire.edge_count ?? 0,
+    featureTokenRollups: adaptFeatureTokenRollups(wire.feature_token_rollups),
+  };
+}
+
 export async function getProjectPlanningGraph(opts?: {
   projectId?: string;
   featureId?: string;
@@ -757,18 +787,7 @@ export async function getProjectPlanningGraph(opts?: {
   // Surface the sentinel 404 path (feature_id supplied but entity missing).
   guardEnvelopeError(wire, `Feature '${opts?.featureId}' not found in planning graph.`, !!(opts?.featureId) && !wire.nodes?.length);
 
-  return {
-    ...adaptEnvelope(wire),
-    projectId: wire.project_id ?? '',
-    featureId: wire.feature_id ?? null,
-    depth: wire.depth ?? null,
-    nodes: castNodes(wire.nodes ?? []),
-    edges: castEdges(wire.edges ?? []),
-    phaseBatches: castPhaseBatches(wire.phase_batches ?? []),
-    nodeCount: wire.node_count ?? 0,
-    edgeCount: wire.edge_count ?? 0,
-    featureTokenRollups: adaptFeatureTokenRollups(wire.feature_token_rollups),
-  };
+  return adaptPlanningGraph(wire);
 }
 
 /**
