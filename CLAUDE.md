@@ -106,6 +106,12 @@ ccdash feature list --status active --json
 ccdash session search "authentication" --limit 10
 ccdash report aar --feature FEAT-123
 ccdash target check local
+# Project management (ccdash project group)
+ccdash project add --name "My Repo" --path /home/user/myrepo
+ccdash project add --name "My Repo" --path /home/user/myrepo --active
+ccdash project list
+ccdash project list --output json
+ccdash project use <project-id>
 # CLI flags: --timeout SECONDS (default 30), --no-cache (bypass cache), --q TEXT (keyword filter on feature list)
 ccdash feature list --q "auth" --timeout 45
 

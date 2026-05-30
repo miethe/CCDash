@@ -2,7 +2,7 @@
 title: "Feature Contract: CCDash CLI Project Init (`ccdash project` command group)"
 schema_version: 2
 doc_type: feature_contract
-status: draft
+status: completed
 created: 2026-05-29
 updated: 2026-05-29
 feature_slug: "ccdash-cli-project-init"
@@ -259,3 +259,72 @@ This contract is your specification. Implement to satisfy the acceptance criteri
 - **Better implementation path**: Document the deviation in the Completion Report with justification.
 
 Stay within scope. Avoid changes to server code, runtime infrastructure, or the `ccdash` skill documentation (that work belongs to the sibling contract). The reviewer will check for scope drift.
+
+---
+
+## Completion Report
+
+### Summary
+
+Added the `ccdash project` Typer command group (`add`, `init` alias, `list`, `use`) to the standalone CLI. The new module `packages/ccdash_cli/src/ccdash_cli/commands/project.py` follows the structural pattern of `commands/target.py` and uses the existing `CCDashClient.get()`/`.post()` transport with the established exit-code contract. 31 new tests covering all acceptance criteria were added under `packages/ccdash_cli/tests/test_project_commands.py`. Documentation was updated in `packages/ccdash_cli/README.md` and `CLAUDE.md`.
+
+### Files Changed
+
+- `packages/ccdash_cli/src/ccdash_cli/commands/project.py` — new file: project command group (`add`, `init`, `list`, `use`) with idempotency check, remote-path note, error handling per exit-code contract
+- `packages/ccdash_cli/src/ccdash_cli/main.py` — import and register `project_app` alongside existing command groups
+- `packages/ccdash_cli/tests/test_project_commands.py` — new file: 31 tests covering all acceptance criteria
+- `packages/ccdash_cli/README.md` — added project command examples and project onboarding smoke check section
+- `CLAUDE.md` — added `ccdash project` command examples to the Standalone CLI section
+
+### Acceptance Criteria Status
+
+- [x] `ccdash project add --name "X" --path /some/path` registers a project and prints the new project id to stdout; exit 0.
+- [x] The registered project appears in `ccdash project list` immediately after a successful `add` (server-side; tests verify the `POST` is called with correct payload).
+- [x] Re-running `add` with the same `--path` (without `--force`) prints a warning referencing the existing project id and exits 0 without creating a duplicate.
+- [x] `ccdash project add ... --force` bypasses the idempotency check and always attempts the `POST`; server errors are surfaced to stderr.
+- [x] `ccdash project add ... --active` calls `POST /api/projects/active/{id}` after creation and confirms the active switch in stdout.
+- [x] `ccdash project list` outputs a table with `ID`, `Name`, `Path`, `Active` columns; active project row is distinguished with `*`. `--output json` / `--json` emit a JSON array.
+- [x] `ccdash project use <id>` switches the active project; prints confirmation; exit 0.
+- [x] `ccdash project use <nonexistent-id>` prints a clear error to stderr and exits 1 (not a traceback).
+- [x] All commands respect `--target` / `CCDASH_TARGET` / `active_target` resolution.
+- [x] When the CCDash server is unreachable, all `project` commands print a single-line error to stderr (no Python traceback) and exit 4.
+- [x] When the server returns HTTP 401, commands exit 2 with an authentication error message.
+- [x] `ccdash --help` shows `project` in the top-level command list; `ccdash project --help` shows `add`, `list`, `use`.
+- [x] Tests in `test_project_commands.py` cover: `add` success, `add` idempotent no-op, `add --force`, `add --active`, `list` (table and JSON), `use` success, `use` not-found, and unreachable-target error path.
+- [x] **Resilience (R-P2):** If `GET /api/projects/active` returns a non-2xx response during `list`, the `Active` column is omitted and a parenthetical note `(active project unavailable)` is shown; the rest of the list renders normally.
+- [x] Standalone CLI `packages/ccdash_cli/README.md` updated with `project` command examples; root `CLAUDE.md` command table updated.
+
+### Validation Run
+
+| Command | Result | Notes |
+|---|---|---|
+| `python -m ruff check packages/ccdash_cli/src/ccdash_cli/commands/project.py packages/ccdash_cli/tests/test_project_commands.py packages/ccdash_cli/src/ccdash_cli/main.py` | Pass | 0 errors after fixing 4 auto-fixable lint issues (unused imports, f-string without placeholder) |
+| `python -m pytest packages/ccdash_cli/tests/test_project_commands.py -v` | Pass | 31/31 new tests pass |
+| `python -m pytest packages/ccdash_cli/tests/ -v` | 153 pass / 2 pre-existing failures | The 2 failures (`test_connection_error_message_written_to_stderr`, `test_auth_error_message_written_to_stderr`) are pre-existing bugs in `test_commands.py` that call `result.stderr` without `mix_stderr=False`; not introduced by this sprint |
+| `ccdash --help` (manual) | Pass | `project` appears in top-level command list |
+| `ccdash project --help` (manual) | Pass | `add`, `init`, `list`, `use` sub-commands shown |
+| Manual smoke (server not running) | Skipped | `runtime_smoke: skipped` — local CCDash server was not running during sprint; `ccdash target check local` correctly returned exit code 4 |
+
+### Deviations From Contract
+
+- The `init` alias for `add` was implemented by registering the same function under a second Typer command name rather than using a true Typer alias. The behaviour is identical and the help text is inherited from the function docstring.
+- The implementation sends the flat-field dict without the nested `pathConfig`, relying on the server's `_migrate_legacy_path_config` validator as specified in section 8. No deviation from intent.
+
+### Risks and Limitations
+
+- **Server ID generation assumption**: The `Project` model requires `id: str` with no server-side default; the CLI generates UUIDs client-side via `uuid.uuid4()`. If a future server version introduces server-side ID generation, the field will be silently overwritten. A comment in `project.py` documents this assumption.
+- **Pre-existing test failures**: `test_commands.py::TestErrorHandling::test_connection_error_message_written_to_stderr` and `test_auth_error_message_written_to_stderr` fail due to a pre-existing CliRunner invocation pattern bug (`result.stderr` raises `ValueError` when `mix_stderr` is not `False`). These failures predate this sprint and are not caused by changes here.
+- **Manual smoke test skipped**: The local CCDash server was not running during sprint execution. CLI behaviour under live server conditions was not validated end-to-end; all behaviour was validated through the mocked test suite.
+
+### Follow-Up Recommendations
+
+- **In-repo CLI parity**: The in-repo `backend/cli/` CLI uses `ProjectManager` directly but has no `project` group. Adding parity (`backend/cli/commands/project.py`) is out of scope per section 4 but is a natural follow-up.
+- **`ccdash project remove`**: Not implemented; the server exposes no DELETE endpoint for projects. Would require a server-side endpoint addition.
+- **Skill SPEC update**: The `ccdash` skill `SPEC.md`/`SKILL.md` should document the new `project` command group. This is owned by the sibling contract `ccdash-skill-refresh-and-spec.md`.
+- **Fix pre-existing test failures**: `test_commands.py::TestErrorHandling::test_connection_error_message_written_to_stderr` and `test_auth_error_message_written_to_stderr` should be fixed to use `runner.invoke(..., mix_stderr=False)` or by checking `result.output` directly.
+
+### Memory Candidates Captured
+
+- **Pattern**: `GET /api/projects/active` returns 404 (not 200 with null) when no active project is set. The correct client handling is to catch `NotFoundError` and treat it as `active_id = None`. This is implemented in `project_list`.
+- **Pattern**: The CCDash `POST /api/projects` endpoint expects a full `Project` model with `id: str` generated client-side. The server does not generate IDs. The `_migrate_legacy_path_config` validator auto-constructs `pathConfig` from flat fields, so the CLI correctly sends only flat fields.
+- **Pattern**: The `build_client(target)` context manager pattern used across all command modules. The `target` comes from `resolve_target(target_flag=app_state.TARGET_FLAG)`. All project commands follow this same pattern.

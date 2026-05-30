@@ -48,6 +48,28 @@ ccdash report feature FEAT-123
 ccdash report aar --feature FEAT-123
 ```
 
+Register a new project:
+
+```bash
+# Register a project (generates a UUID for the project id automatically)
+ccdash project add --name "My Repo" --path /home/user/myrepo
+
+# Register and immediately set as the active project
+ccdash project add --name "My Repo" --path /home/user/myrepo --active
+
+# List all projects (table output)
+ccdash project list
+
+# List projects as JSON
+ccdash project list --output json
+
+# Switch active project
+ccdash project use <project-id>
+
+# Re-register an existing path (--force bypasses idempotency check)
+ccdash project add --name "My Repo" --path /home/user/myrepo --force
+```
+
 Add and use a named remote target:
 
 ```bash
@@ -98,4 +120,13 @@ These commands are the shortest end-to-end operator sanity check after install:
 ccdash --version
 ccdash target show
 ccdash doctor
+```
+
+Project onboarding smoke check (requires a running CCDash server):
+
+```bash
+ccdash target check local
+ccdash project add --name "Smoke" --path /tmp/smoke
+ccdash project list
+ccdash project use <id-from-list>
 ```
