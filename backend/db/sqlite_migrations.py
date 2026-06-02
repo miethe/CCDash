@@ -1633,6 +1633,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
         sessions_cols = await _col_names("sessions")
 
         # ── 1. Rebuild sessions with composite PK ─────────────────────────────
+        await db.execute("DROP TABLE IF EXISTS sessions_new")
         await db.execute(
             """
             CREATE TABLE sessions_new (
@@ -1710,7 +1711,10 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
             )
             """
         )
-        col_list = ", ".join(sorted(sessions_cols))
+        # Intersect with sessions_new columns to drop any drift/orphan columns
+        # (e.g. source_ref) that exist in the live DB but not in the new schema.
+        new_session_cols = await _col_names("sessions_new")
+        col_list = ", ".join(sorted(sessions_cols & new_session_cols))
         await db.execute(
             f"INSERT INTO sessions_new ({col_list}) SELECT {col_list} FROM sessions"
         )
@@ -1749,6 +1753,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
         # ── 2. Rebuild session_logs ────────────────────────────────────────────
         await _ensure_project_id_and_backfill("session_logs")
         sl_cols = await _col_names("session_logs")
+        await db.execute("DROP TABLE IF EXISTS session_logs_new")
         await db.execute(
             """
             CREATE TABLE session_logs_new (
@@ -1798,6 +1803,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
         # ── 3. Rebuild session_messages (add project_id) ───────────────────────
         await _ensure_project_id_and_backfill("session_messages")
         sm_cols = await _col_names("session_messages")
+        await db.execute("DROP TABLE IF EXISTS session_messages_new")
         await db.execute(
             """
             CREATE TABLE session_messages_new (
@@ -1859,6 +1865,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
 
         # ── 4. Rebuild session_tool_usage ─────────────────────────────────────
         await _ensure_project_id_and_backfill("session_tool_usage")
+        await db.execute("DROP TABLE IF EXISTS session_tool_usage_new")
         await db.execute(
             """
             CREATE TABLE session_tool_usage_new (
@@ -1886,6 +1893,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
         # ── 5. Rebuild session_file_updates ───────────────────────────────────
         await _ensure_project_id_and_backfill("session_file_updates")
         sfu_cols = await _col_names("session_file_updates")
+        await db.execute("DROP TABLE IF EXISTS session_file_updates_new")
         await db.execute(
             """
             CREATE TABLE session_file_updates_new (
@@ -1926,6 +1934,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
         # ── 6. Rebuild session_artifacts (add project_id) ─────────────────────
         await _ensure_project_id_and_backfill("session_artifacts")
         sa_cols = await _col_names("session_artifacts")
+        await db.execute("DROP TABLE IF EXISTS session_artifacts_new")
         await db.execute(
             """
             CREATE TABLE session_artifacts_new (
@@ -1957,6 +1966,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
 
         # ── 7. Rebuild session_usage_events (has project_id NOT NULL) ─────────
         sue_cols = await _col_names("session_usage_events")
+        await db.execute("DROP TABLE IF EXISTS session_usage_events_new")
         await db.execute(
             """
             CREATE TABLE session_usage_events_new (
@@ -2001,6 +2011,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
 
         # ── 8. Rebuild session_relationships (has project_id; both FKs composite) ──
         sr_cols = await _col_names("session_relationships")
+        await db.execute("DROP TABLE IF EXISTS session_relationships_new")
         await db.execute(
             """
             CREATE TABLE session_relationships_new (
@@ -2046,6 +2057,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
         # ── 9. Rebuild session_sentiment_facts (add project_id) ───────────────
         await _ensure_project_id_and_backfill("session_sentiment_facts")
         ssf_cols = await _col_names("session_sentiment_facts")
+        await db.execute("DROP TABLE IF EXISTS session_sentiment_facts_new")
         await db.execute(
             """
             CREATE TABLE session_sentiment_facts_new (
@@ -2089,6 +2101,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
         # ── 10. Rebuild session_code_churn_facts (add project_id) ─────────────
         await _ensure_project_id_and_backfill("session_code_churn_facts")
         sccf_cols = await _col_names("session_code_churn_facts")
+        await db.execute("DROP TABLE IF EXISTS session_code_churn_facts_new")
         await db.execute(
             """
             CREATE TABLE session_code_churn_facts_new (
@@ -2145,6 +2158,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
         # ── 11. Rebuild session_scope_drift_facts (add project_id) ────────────
         await _ensure_project_id_and_backfill("session_scope_drift_facts")
         ssdf_cols = await _col_names("session_scope_drift_facts")
+        await db.execute("DROP TABLE IF EXISTS session_scope_drift_facts_new")
         await db.execute(
             """
             CREATE TABLE session_scope_drift_facts_new (
@@ -2189,6 +2203,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
 
         # ── 12. Rebuild session_stack_observations (has project_id NOT NULL) ───
         sso_cols = await _col_names("session_stack_observations")
+        await db.execute("DROP TABLE IF EXISTS session_stack_observations_new")
         await db.execute(
             """
             CREATE TABLE session_stack_observations_new (
@@ -2229,6 +2244,7 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: aiosqlite.Connect
 
         # ── 13. Rebuild session_memory_drafts (has project_id NOT NULL) ────────
         smd_cols = await _col_names("session_memory_drafts")
+        await db.execute("DROP TABLE IF EXISTS session_memory_drafts_new")
         await db.execute(
             """
             CREATE TABLE session_memory_drafts_new (
