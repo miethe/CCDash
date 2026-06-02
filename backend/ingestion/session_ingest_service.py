@@ -200,10 +200,11 @@ class SessionIngestService:
             artifacts = session_dict.get("linkedArtifacts", [])
             if not isinstance(artifacts, list):
                 artifacts = []
-            await self.session_repo.upsert_artifacts(session_id, artifacts)
+            await self.session_repo.upsert_artifacts(session_id, artifacts, project_id)
             await self.session_repo.update_observability_fields(
                 session_id,
                 await self.derive_session_observability_fields(project_id, session_dict, logs),
+                project_id,
             )
 
             await self.replace_session_usage_attribution(project_id, session_dict, logs, artifacts)

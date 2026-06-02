@@ -165,12 +165,16 @@ class SqliteSessionRepository:
         models_used: list,
         agents_used: list,
         skills_used: list,
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
     ) -> None:
         """Persist the 6 materialized badge columns for a single session.
 
         Called by the badge backfill path and from SessionTranscriptService after
         computing badges from logs.  Designed to be idempotent (safe to call
         multiple times).  Does NOT commit — caller may batch commits.
+
+        The WHERE clause includes a NULL/'' project_id tolerance so sessions written
+        before project_id threading was added still get updated.
         """
         await self.db.execute(
             """UPDATE sessions SET
@@ -180,7 +184,7 @@ class SqliteSessionRepository:
                 models_used_json = ?,
                 agents_used_json = ?,
                 skills_used_json = ?
-               WHERE id = ?""",
+               WHERE (project_id = ? OR project_id IS NULL OR project_id = '') AND id = ?""",
             (
                 str(command_slug or ""),
                 str(latest_summary or ""),
@@ -188,6 +192,7 @@ class SqliteSessionRepository:
                 json.dumps(models_used if isinstance(models_used, list) else []),
                 json.dumps(agents_used if isinstance(agents_used, list) else []),
                 json.dumps(skills_used if isinstance(skills_used, list) else []),
+                project_id,
                 session_id,
             ),
         )
@@ -667,7 +672,12 @@ class SqliteSessionRepository:
         await self.db.execute("DELETE FROM sessions WHERE source_file = ?", (source_file,))
         await self.db.commit()
 
-    async def update_usage_fields(self, session_id: str, usage_fields: dict[str, int]) -> None:
+    async def update_usage_fields(
+        self,
+        session_id: str,
+        usage_fields: dict[str, int],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
         await self.db.execute(
             """
             UPDATE sessions
@@ -681,7 +691,7 @@ class SqliteSessionRepository:
                 tool_result_output_tokens = ?,
                 tool_result_cache_creation_input_tokens = ?,
                 tool_result_cache_read_input_tokens = ?
-            WHERE id = ?
+            WHERE (project_id = ? OR project_id IS NULL OR project_id = '') AND id = ?
             """,
             (
                 int(usage_fields.get("model_io_tokens", 0) or 0),
@@ -694,12 +704,18 @@ class SqliteSessionRepository:
                 int(usage_fields.get("tool_result_output_tokens", 0) or 0),
                 int(usage_fields.get("tool_result_cache_creation_input_tokens", 0) or 0),
                 int(usage_fields.get("tool_result_cache_read_input_tokens", 0) or 0),
+                project_id,
                 session_id,
             ),
         )
         await self.db.commit()
 
-    async def update_observability_fields(self, session_id: str, observability_fields: dict[str, object]) -> None:
+    async def update_observability_fields(
+        self,
+        session_id: str,
+        observability_fields: dict[str, object],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
         await self.db.execute(
             """
             UPDATE sessions
@@ -716,7 +732,7 @@ class SqliteSessionRepository:
                 cost_mismatch_pct = ?,
                 pricing_model_source = ?,
                 total_cost = ?
-            WHERE id = ?
+            WHERE (project_id = ? OR project_id IS NULL OR project_id = '') AND id = ?
             """,
             (
                 int(observability_fields.get("current_context_tokens", 0) or 0),
@@ -732,6 +748,7 @@ class SqliteSessionRepository:
                 observability_fields.get("cost_mismatch_pct"),
                 str(observability_fields.get("pricing_model_source", "") or ""),
                 float(observability_fields.get("total_cost", 0.0) or 0.0),
+                project_id,
                 session_id,
             ),
         )
@@ -761,7 +778,14 @@ class SqliteSessionRepository:
                 session_id,
             )
 
-        await self.db.execute("DELETE FROM session_logs WHERE session_id = ?", (session_id,))
+        # Scope DELETE to (project_id, session_id) so project-A's writer never clears
+        # project-B's rows sharing the same session_id.  NULL/'' tolerance covers
+        # legacy rows written before project_id threading was added.
+        await self.db.execute(
+            "DELETE FROM session_logs "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
         records = []
         for i, log in enumerate(deduped):
             tool_name = None
@@ -824,7 +848,12 @@ class SqliteSessionRepository:
         await self.db.commit()
 
     async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
-        await self.db.execute("DELETE FROM session_file_updates WHERE session_id = ?", (session_id,))
+        # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
+        await self.db.execute(
+            "DELETE FROM session_file_updates "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
         for u in updates:
             await self.db.execute(
                 """INSERT INTO session_file_updates (
@@ -850,14 +879,24 @@ class SqliteSessionRepository:
             )
         await self.db.commit()
 
-    async def upsert_artifacts(self, session_id: str, artifacts: list[dict]) -> None:
-        await self.db.execute("DELETE FROM session_artifacts WHERE session_id = ?", (session_id,))
+    async def upsert_artifacts(
+        self,
+        session_id: str,
+        artifacts: list[dict],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
+        # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
+        await self.db.execute(
+            "DELETE FROM session_artifacts "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
         for a in artifacts:
             await self.db.execute(
                 """INSERT INTO session_artifacts (
-                    id, session_id, title, type, description, source, url, source_log_id, source_tool_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (a.get("id", ""), session_id, a.get("title", ""),
+                    project_id, id, session_id, title, type, description, source, url, source_log_id, source_tool_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (project_id, a.get("id", ""), session_id, a.get("title", ""),
                  a.get("type", "document"), a.get("description", ""), a.get("source", ""),
                  a.get("url"), a.get("sourceLogId"), a.get("sourceToolName")),
             )

@@ -539,7 +539,49 @@ class PostgresSessionRepository:
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM sessions WHERE source_file = $1", source_file)
 
-    async def update_usage_fields(self, session_id: str, usage_fields: dict[str, int]) -> None:
+    async def update_session_badges(
+        self,
+        session_id: str,
+        *,
+        command_slug: str,
+        latest_summary: str,
+        subagent_type: str,
+        models_used: list,
+        agents_used: list,
+        skills_used: list,
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
+        """Persist the 6 materialized badge columns for a single session.
+
+        The WHERE clause includes a NULL/'' project_id tolerance so sessions written
+        before project_id threading was added still get updated.
+        """
+        import json as _json
+        await self.db.execute(
+            """UPDATE sessions SET
+                command_slug = $1,
+                latest_summary = $2,
+                subagent_type = $3,
+                models_used_json = $4,
+                agents_used_json = $5,
+                skills_used_json = $6
+               WHERE (project_id = $7 OR project_id IS NULL OR project_id = '') AND id = $8""",
+            str(command_slug or ""),
+            str(latest_summary or ""),
+            str(subagent_type or ""),
+            _json.dumps(models_used if isinstance(models_used, list) else []),
+            _json.dumps(agents_used if isinstance(agents_used, list) else []),
+            _json.dumps(skills_used if isinstance(skills_used, list) else []),
+            project_id,
+            session_id,
+        )
+
+    async def update_usage_fields(
+        self,
+        session_id: str,
+        usage_fields: dict[str, int],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
         await self.db.execute(
             """
             UPDATE sessions
@@ -553,7 +595,7 @@ class PostgresSessionRepository:
                 tool_result_output_tokens = $8,
                 tool_result_cache_creation_input_tokens = $9,
                 tool_result_cache_read_input_tokens = $10
-            WHERE id = $11
+            WHERE (project_id = $11 OR project_id IS NULL OR project_id = '') AND id = $12
             """,
             int(usage_fields.get("model_io_tokens", 0) or 0),
             int(usage_fields.get("cache_creation_input_tokens", 0) or 0),
@@ -565,10 +607,16 @@ class PostgresSessionRepository:
             int(usage_fields.get("tool_result_output_tokens", 0) or 0),
             int(usage_fields.get("tool_result_cache_creation_input_tokens", 0) or 0),
             int(usage_fields.get("tool_result_cache_read_input_tokens", 0) or 0),
+            project_id,
             session_id,
         )
 
-    async def update_observability_fields(self, session_id: str, observability_fields: dict[str, Any]) -> None:
+    async def update_observability_fields(
+        self,
+        session_id: str,
+        observability_fields: dict[str, Any],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
         await self.db.execute(
             """
             UPDATE sessions
@@ -585,7 +633,7 @@ class PostgresSessionRepository:
                 cost_mismatch_pct = $11,
                 pricing_model_source = $12,
                 total_cost = $13
-            WHERE id = $14
+            WHERE (project_id = $14 OR project_id IS NULL OR project_id = '') AND id = $15
             """,
             int(observability_fields.get("current_context_tokens", 0) or 0),
             int(observability_fields.get("context_window_size", 0) or 0),
@@ -600,6 +648,7 @@ class PostgresSessionRepository:
             observability_fields.get("cost_mismatch_pct"),
             str(observability_fields.get("pricing_model_source", "") or ""),
             float(observability_fields.get("total_cost", 0.0) or 0.0),
+            project_id,
             session_id,
         )
 
@@ -628,7 +677,15 @@ class PostgresSessionRepository:
             )
 
         async with postgres_transaction(self.db) as conn:
-            await conn.execute("DELETE FROM session_logs WHERE session_id = $1", session_id)
+            # Scope DELETE to (project_id, session_id) so project-A's writer never clears
+            # project-B's rows sharing the same session_id.  NULL/'' tolerance covers
+            # legacy rows written before project_id threading was added.
+            await conn.execute(
+                "DELETE FROM session_logs "
+                "WHERE session_id = $1 AND (project_id = $2 OR project_id IS NULL OR project_id = '')",
+                session_id,
+                project_id,
+            )
             if not deduped:
                 return
 
@@ -693,7 +750,13 @@ class PostgresSessionRepository:
 
     async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
         async with postgres_transaction(self.db) as conn:
-            await conn.execute("DELETE FROM session_file_updates WHERE session_id = $1", session_id)
+            # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
+            await conn.execute(
+                "DELETE FROM session_file_updates "
+                "WHERE session_id = $1 AND (project_id = $2 OR project_id IS NULL OR project_id = '')",
+                session_id,
+                project_id,
+            )
             if not updates:
                 return
 
@@ -724,24 +787,35 @@ class PostgresSessionRepository:
                 records
             )
 
-    async def upsert_artifacts(self, session_id: str, artifacts: list[dict]) -> None:
+    async def upsert_artifacts(
+        self,
+        session_id: str,
+        artifacts: list[dict],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
         async with postgres_transaction(self.db) as conn:
-            await conn.execute("DELETE FROM session_artifacts WHERE session_id = $1", session_id)
+            # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
+            await conn.execute(
+                "DELETE FROM session_artifacts "
+                "WHERE session_id = $1 AND (project_id = $2 OR project_id IS NULL OR project_id = '')",
+                session_id,
+                project_id,
+            )
             if not artifacts:
                 return
-                
+
             records = []
             for a in artifacts:
                 records.append((
-                   a.get("id", ""), session_id, a.get("title", ""),
+                   project_id, a.get("id", ""), session_id, a.get("title", ""),
                    a.get("type", "document"), a.get("description", ""), a.get("source", ""),
                    a.get("url"), a.get("sourceLogId"), a.get("sourceToolName"),
                 ))
 
             await conn.executemany(
                 """INSERT INTO session_artifacts (
-                    id, session_id, title, type, description, source, url, source_log_id, source_tool_name
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
+                    project_id, id, session_id, title, type, description, source, url, source_log_id, source_tool_name
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
                 records
             )
 

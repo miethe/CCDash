@@ -1696,9 +1696,9 @@ class SyncEngine:
             )
         scope_drift_facts = build_session_scope_drift_facts(session_payload, linked_docs, file_updates)
 
-        await self.session_intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts)
-        await self.session_intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts)
-        await self.session_intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts)
+        await self.session_intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts, project_id)
+        await self.session_intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts, project_id)
+        await self.session_intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts, project_id)
         return {
             "sentiment": len(sentiment_facts),
             "churn": len(churn_facts),
@@ -2249,7 +2249,7 @@ class SyncEngine:
                 derived_fields = _derive_claude_usage_fields(session)
                 if derived_fields == current_fields:
                     continue
-                await self.session_repo.update_usage_fields(session_id, derived_fields)
+                await self.session_repo.update_usage_fields(session_id, derived_fields, project_id)
                 sessions_updated += 1
             offset += len(sessions)
 
@@ -2294,7 +2294,7 @@ class SyncEngine:
                 derived_fields = await self._derive_session_observability_fields(project_id, session, logs)
                 if derived_fields == current_fields:
                     continue
-                await self.session_repo.update_observability_fields(session_id, derived_fields)
+                await self.session_repo.update_observability_fields(session_id, derived_fields, project_id)
                 sessions_updated += 1
             offset += len(sessions)
 

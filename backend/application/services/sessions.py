@@ -293,6 +293,7 @@ class SessionTranscriptService:
 
         try:
             repo = ports.storage.sessions()
+            _badge_project_id = str(session_row.get("project_id") or "")
             await repo.update_session_badges(
                 session_id,
                 command_slug=command_slug,
@@ -301,6 +302,7 @@ class SessionTranscriptService:
                 models_used=badge_data["modelsUsed"],
                 agents_used=badge_data["agentsUsed"],
                 skills_used=badge_data["skillsUsed"],
+                project_id=_badge_project_id,
             )
         except Exception:
             logger.warning(

@@ -28,10 +28,10 @@ class _SessionRepo:
     async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
         return None
 
-    async def upsert_artifacts(self, session_id: str, artifacts: list[dict]) -> None:
+    async def upsert_artifacts(self, session_id: str, artifacts: list[dict], project_id: str = "") -> None:
         return None
 
-    async def update_observability_fields(self, session_id: str, observability_fields: dict) -> None:
+    async def update_observability_fields(self, session_id: str, observability_fields: dict, project_id: str = "") -> None:
         return None
 
     async def upsert_relationships(self, project_id: str, source_file: str, relationships: list[dict]) -> None:

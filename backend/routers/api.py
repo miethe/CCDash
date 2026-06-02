@@ -717,6 +717,7 @@ async def list_sessions(
             lazy_command_slug = command_events[0]["name"] if command_events else ""
             # Persist badges so subsequent requests hit the fast path.
             try:
+                _badge_project_id = str(s.get("project_id") or project.id or "")
                 await repo.update_session_badges(
                     session_id,
                     command_slug=lazy_command_slug,
@@ -725,6 +726,7 @@ async def list_sessions(
                     models_used=badge_data["modelsUsed"],
                     agents_used=badge_data["agentsUsed"],
                     skills_used=badge_data["skillsUsed"],
+                    project_id=_badge_project_id,
                 )
             except Exception:
                 logger.warning(

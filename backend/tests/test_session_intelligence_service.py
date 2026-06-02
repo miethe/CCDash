@@ -136,6 +136,7 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                     "sourceProvenance": "sync",
                 },
             ],
+            "project-1",  # FC-1: match parent session's project_id to satisfy composite FK
         )
         await self.storage.session_intelligence().replace_session_sentiment_facts(
             "S-1",
@@ -154,6 +155,7 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                     "evidence_json": {"negativeCues": ["blocked", "failing"]},
                 }
             ],
+            "project-1",  # FC-1: match parent session's project_id to satisfy composite FK
         )
         await self.storage.session_intelligence().replace_session_code_churn_facts(
             "S-1",
@@ -182,6 +184,7 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                     "evidence_json": {"updates": 3},
                 }
             ],
+            "project-1",  # FC-1: match parent session's project_id to satisfy composite FK
         )
         await self.storage.session_intelligence().replace_session_scope_drift_facts(
             "S-1",
@@ -201,6 +204,7 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                     "evidence_json": {"matchingMode": "prefix-aware", "outOfScopePaths": ["docs/extra.md"]},
                 }
             ],
+            "project-1",  # FC-1: match parent session's project_id to satisfy composite FK
         )
         await self.storage.sessions().upsert(
             {
@@ -234,6 +238,7 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                     "content": "I added the checkpoint and the operator guidance output.",
                 },
             ],
+            "project-1",  # FC-1: match parent session's project_id to satisfy composite FK
         )
         await self.storage.sessions().upsert_file_updates(
             "S-2",
@@ -247,6 +252,7 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                     "sourceLogId": "log-4",
                 }
             ],
+            "project-1",  # FC-1: match parent session's project_id to satisfy composite FK
         )
 
     async def asyncTearDown(self) -> None:
