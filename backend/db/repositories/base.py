@@ -45,7 +45,9 @@ class SessionRepository(Protocol):
 
 @runtime_checkable
 class SessionMessageRepository(Protocol):
-    async def replace_session_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None: ...
+    async def replace_session_messages(
+        self, session_id: str, messages: list[dict[str, Any]], project_id: str = "",
+    ) -> None: ...
     async def list_by_session(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict[str, Any]]: ...
     async def search_messages(
         self,

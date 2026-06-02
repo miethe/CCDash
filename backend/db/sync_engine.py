@@ -4061,7 +4061,19 @@ class SyncEngine:
                 else:
                     # Modified or added
                     if path.suffix == ".jsonl" and sessions_dir in path.parents:
-                        if await self._sync_single_session(project_id, path):
+                        # Resilience-by-default: a single malformed/constraint-violating session
+                        # must not abort the rest of the changed-files batch (and thus the watcher
+                        # loop). Log, record a parser failure metric, and continue with the others.
+                        try:
+                            synced_session = await self._sync_single_session(project_id, path)
+                        except Exception:
+                            observability.record_parser_failure("sessions", project_id=project_id)
+                            logger.exception(
+                                "Skipping session file that failed to sync",
+                                extra={"project_id": project_id, "file_path": str(path)},
+                            )
+                            continue
+                        if synced_session:
                             stats["sessions"] += 1
                             should_rebuild_links = True
                     else:

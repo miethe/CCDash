@@ -19,13 +19,13 @@ class _SessionRepo:
     async def get_logs(self, session_id: str) -> list[dict]:
         return []
 
-    async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:
+    async def upsert_logs(self, session_id: str, logs: list[dict], project_id: str = "") -> None:
         return None
 
-    async def upsert_tool_usage(self, session_id: str, tools: list[dict]) -> None:
+    async def upsert_tool_usage(self, session_id: str, tools: list[dict], project_id: str = "") -> None:
         return None
 
-    async def upsert_file_updates(self, session_id: str, updates: list[dict]) -> None:
+    async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
         return None
 
     async def upsert_artifacts(self, session_id: str, artifacts: list[dict]) -> None:
@@ -42,7 +42,9 @@ class _SessionMessageRepo:
     async def list_by_session(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
         return []
 
-    async def replace_session_messages(self, session_id: str, messages: list[dict]) -> None:
+    async def replace_session_messages(
+        self, session_id: str, messages: list[dict], project_id: str = "",
+    ) -> None:
         return None
 
 

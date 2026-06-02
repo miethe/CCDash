@@ -185,7 +185,7 @@ class SessionIngestService:
             else:
                 previous_logs = await self.session_message_repo.list_by_session(session_id)
                 await self.session_repo.upsert_logs(session_id, [], project_id)
-            await self.session_message_repo.replace_session_messages(session_id, canonical_rows)
+            await self.session_message_repo.replace_session_messages(session_id, canonical_rows, project_id)
 
             tools = session_dict.get("toolsUsed", [])
             if not isinstance(tools, list):

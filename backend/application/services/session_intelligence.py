@@ -852,7 +852,7 @@ class HistoricalSessionIntelligenceBackfillService:
             file_updates = await session_repo.get_file_updates(session_id)
             linked_docs = await _linked_documents(document_repo, project_id, session_row)
 
-            await session_message_repo.replace_session_messages(session_id, canonical_rows)
+            await session_message_repo.replace_session_messages(session_id, canonical_rows, project_id)
             await _replace_session_intelligence_facts(
                 intelligence_repo,
                 session_id,

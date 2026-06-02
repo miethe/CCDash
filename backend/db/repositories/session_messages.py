@@ -7,13 +7,45 @@ from typing import Any
 import aiosqlite
 
 
+def _coerce_index(value: object) -> int:
+    """Coerce a raw messageIndex (object) to int, matching the prior ``int(... or 0)``
+    behavior: numeric ints/floats and numeric strings convert; anything else → 0."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value)
+    return 0
+
+
 class SqliteSessionMessageRepository:
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
-    async def replace_session_messages(self, session_id: str, messages: list[dict[str, object]]) -> None:
-        await self.db.execute("DELETE FROM session_messages WHERE session_id = ?", (session_id,))
+    async def replace_session_messages(
+        self,
+        session_id: str,
+        messages: list[dict[str, object]],
+        project_id: str = "",
+    ) -> None:
+        # Scope the delete to the owning (project_id, session_id) so we never clear another
+        # project's rows that happen to share the same session id. Legacy rows written before
+        # project_id was persisted carry NULL/'' project_id; clear those for this session too so
+        # the orphaned pre-v31 rows are replaced rather than left dangling and untouched.
+        await self.db.execute(
+            "DELETE FROM session_messages "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
+        # The composite UNIQUE index (session_id, message_index) makes a plain INSERT of a payload
+        # containing duplicate message indexes fail mid-transaction. Dedupe by message_index keeping
+        # the LAST occurrence, mirroring the Postgres ON CONFLICT (session_id, message_index)
+        # DO UPDATE upsert semantics so the SQLite path is equally idempotent.
+        deduped: dict[int, dict[str, object]] = {}
         for message in messages:
+            deduped[_coerce_index(message.get("messageIndex", 0))] = message
+        for message in deduped.values():
             metadata = message.get("metadata")
             metadata_json = json.dumps(metadata) if isinstance(metadata, dict) else None
             token_usage = message.get("tokenUsage")
@@ -33,17 +65,18 @@ class SqliteSessionMessageRepository:
             await self.db.execute(
                 """
                 INSERT INTO session_messages (
-                    session_id, message_index, source_log_id, message_id, role, message_type,
+                    project_id, session_id, message_index, source_log_id, message_id, role, message_type,
                     content, event_timestamp, agent_name, tool_name, tool_call_id,
                     related_tool_call_id, linked_session_id, entry_uuid, parent_entry_uuid,
                     root_session_id, conversation_family_id, thread_session_id,
                     parent_session_id, source_provenance, metadata_json,
                     input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    project_id,
                     session_id,
-                    int(message.get("messageIndex", 0) or 0),
+                    _coerce_index(message.get("messageIndex", 0)),
                     str(message.get("sourceLogId", "") or ""),
                     str(message.get("messageId", "") or ""),
                     str(message.get("role", "") or ""),
