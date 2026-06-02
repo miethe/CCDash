@@ -13,13 +13,6 @@ export const PLANNING_DENSITY_STORAGE_KEY = 'planning_density_preference';
 
 export type PlanningDensity = 'comfortable' | 'compact';
 
-interface HeadLinkDescriptor {
-  key: string;
-  rel: 'preconnect' | 'stylesheet';
-  href: string;
-  crossOrigin?: 'anonymous';
-}
-
 interface PlanningRouteContextValue {
   density: PlanningDensity;
   setDensity: (density: PlanningDensity) => void;
@@ -28,33 +21,10 @@ interface PlanningRouteContextValue {
 
 const DEFAULT_DENSITY: PlanningDensity = 'comfortable';
 
-const PLANNING_HEAD_LINKS: HeadLinkDescriptor[] = [
-  {
-    key: 'planning-fonts-googleapis',
-    rel: 'preconnect',
-    href: 'https://fonts.googleapis.com',
-  },
-  {
-    key: 'planning-fonts-gstatic',
-    rel: 'preconnect',
-    href: 'https://fonts.gstatic.com',
-    crossOrigin: 'anonymous',
-  },
-  {
-    key: 'planning-fonts-stylesheet',
-    rel: 'stylesheet',
-    href: 'https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500&display=swap',
-  },
-];
-
 const PlanningRouteContext = createContext<PlanningRouteContextValue | null>(null);
 
 export function normalizePlanningDensityPreference(value: string | null | undefined): PlanningDensity {
   return value === 'compact' ? 'compact' : DEFAULT_DENSITY;
-}
-
-export function getPlanningHeadLinks(): HeadLinkDescriptor[] {
-  return PLANNING_HEAD_LINKS;
 }
 
 function readStoredPlanningDensity(): PlanningDensity {
@@ -67,27 +37,6 @@ function readStoredPlanningDensity(): PlanningDensity {
   } catch {
     return DEFAULT_DENSITY;
   }
-}
-
-function ensureHeadLink({ key, rel, href, crossOrigin }: HeadLinkDescriptor): () => void {
-  const selector = `link[data-planning-head="${key}"]`;
-  const existing = document.head.querySelector<HTMLLinkElement>(selector);
-  if (existing) {
-    return () => undefined;
-  }
-
-  const link = document.createElement('link');
-  link.setAttribute('data-planning-head', key);
-  link.rel = rel;
-  link.href = href;
-  if (crossOrigin) {
-    link.crossOrigin = crossOrigin;
-  }
-  document.head.appendChild(link);
-
-  return () => {
-    link.remove();
-  };
 }
 
 export function usePlanningRoute(): PlanningRouteContextValue {
@@ -147,13 +96,6 @@ export function PlanningRouteLayout() {
   useFeaturesQuery({ projectId: activeProject?.id });
 
   const [density, setDensity] = useState<PlanningDensity>(() => readStoredPlanningDensity());
-
-  useEffect(() => {
-    const cleanups = getPlanningHeadLinks().map((descriptor) => ensureHeadLink(descriptor));
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {

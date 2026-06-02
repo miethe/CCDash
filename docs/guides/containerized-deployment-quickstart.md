@@ -40,11 +40,15 @@ What you get:
 - Frontend nginx container on port 3000
 - SQLite database persisted in named volume `ccdash-local-data`
 
-## Prepare Projects For Containers
+## STEP 1 (Required Pre-Deploy): Prepare Projects For Containers
 
 Every enterprise and live-watch deployment resolves projects from the mounted `projects.json` registry. The paths in that registry must be visible from inside the containers, not only on the host. A healthy API, worker, and Postgres stack can still show no sessions, plans, or features when the active project id points at a host-only path or a project different from the watcher binding.
 
-Use the helper when you want a repeatable bootstrap:
+**This step is required before starting any enterprise, postgres, or live-watch compose stack for the first time on a new host or a new project.** Running `container_project_onboarding.py` is the canonical way to create or update the registry entry and watcher env overlay atomically and reproducibly.
+
+### Running the onboarding helper
+
+`backend/scripts/container_project_onboarding.py` is a standalone CLI that prepares `projects.json` and optionally writes a per-watcher env overlay file. It does **not** start containers; container startup is controlled by `docker compose` separately.
 
 ```bash
 python3 backend/scripts/container_project_onboarding.py \
@@ -52,9 +56,7 @@ python3 backend/scripts/container_project_onboarding.py \
   --project-id my-project \
   --name "My Project" \
   --root-container /workspace/my-project \
-  --plan-docs docs/project_plans/ \
   --sessions-container /home/ccdash/.codex/sessions \
-  --progress progress \
   --watcher-env deploy/runtime/watchers/my-project.env \
   --workspace-host-root /absolute/host/workspace \
   --workspace-container-root /workspace \
@@ -62,7 +64,79 @@ python3 backend/scripts/container_project_onboarding.py \
   --codex-container-home /home/ccdash/.codex
 ```
 
-The helper updates or inserts the project, sets it active by default, and writes a watcher env overlay. If you prepare `projects.json` manually, the minimum project entry is:
+The helper upserts the project into the registry (creates the file if missing, merges into existing), sets it as `activeProjectId` by default, and writes a watcher env overlay ready for `--env-file` compose use. Run it again with the same `--project-id` to update an existing entry without removing other projects.
+
+### Full flag reference
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--projects-file PATH` | No | `projects.json` | Path to the `projects.json` registry to create or update. |
+| `--project-id ID` | No | slug of `--name` | Stable project id. Use a short, lowercase, hyphenated identifier; changing this after data is ingested requires a re-sync. |
+| `--name TEXT` | **Yes** | — | Project display name shown in the UI. |
+| `--description TEXT` | No | `""` | Optional project description. |
+| `--repo-url URL` | No | `""` | Optional repository URL for display purposes. |
+| `--root-container PATH` | **Yes** | — | Project root path as seen **inside** containers (e.g. `/workspace/my-project`). Must be a container-visible absolute path. |
+| `--plan-docs PATH` | No | `docs/project_plans/` | Plan docs path relative to the project root for PRDs, implementation plans, and design specs. |
+| `--sessions-container PATH` | No | `""` | Session JSONL directory as seen **inside** containers. Should be a project-scoped subdirectory rather than all of `~/.codex/sessions`. |
+| `--progress PATH` | No | `progress` | Progress path relative to the project root for phase trackers and task files. |
+| `--agent-platform LABEL` | No | `Claude Code` | Agent platform label. Repeatable to add multiple platforms: `--agent-platform "Claude Code" --agent-platform "Codex"`. |
+| `--no-active` | No | off | Do not set this project as `activeProjectId`. Useful when adding a non-primary project to a multi-project registry. |
+| `--watcher-env PATH` | No | — | If set, writes a watcher env overlay file at this path. Omit to print the overlay to stdout instead. Typical path: `deploy/runtime/watchers/<project-id>.env`. |
+| `--watcher-probe-port PORT` | No | `9466` | Probe port value written into the watcher env overlay (`CCDASH_WORKER_WATCH_PROBE_PORT`). Increment by 1 for each additional watcher worker. |
+| `--projects-file-for-env PATH` | No | `../../projects.json` | Value of `CCDASH_PROJECTS_FILE` written into the watcher env overlay. Use a host-visible path that compose can resolve at runtime. |
+| `--workspace-host-root PATH` | No | — | `CCDASH_WORKSPACE_HOST_ROOT` in the watcher overlay. Host-side root that is bind-mounted at `--workspace-container-root`. |
+| `--workspace-container-root PATH` | No | — | `CCDASH_WORKSPACE_CONTAINER_ROOT` in the watcher overlay. Container-side root (e.g. `/workspace`). |
+| `--claude-home PATH` | No | — | `CCDASH_CLAUDE_HOME` in the watcher overlay. Host path to `.claude` directory. |
+| `--claude-container-home PATH` | No | — | `CCDASH_CLAUDE_CONTAINER_HOME` in the watcher overlay. Container path where `.claude` is mounted. |
+| `--codex-home PATH` | No | — | `CCDASH_CODEX_HOME` in the watcher overlay. Host path to `.codex` directory. |
+| `--codex-container-home PATH` | No | — | `CCDASH_CODEX_CONTAINER_HOME` in the watcher overlay. Container path where `.codex` is mounted. |
+
+### Example: single-project enterprise deployment with live watch
+
+```bash
+# 1. Prepare the registry and watcher env overlay.
+python3 backend/scripts/container_project_onboarding.py \
+  --projects-file projects.json \
+  --project-id myrepo \
+  --name "My Repo" \
+  --root-container /workspace/myrepo \
+  --sessions-container /home/ccdash/.codex/sessions/myrepo \
+  --watcher-env deploy/runtime/watchers/myrepo.env \
+  --watcher-probe-port 9466 \
+  --projects-file-for-env /opt/ccdash/projects.json \
+  --workspace-host-root /opt/ccdash/workspace \
+  --workspace-container-root /workspace \
+  --claude-home "$HOME/.claude" \
+  --claude-container-home /home/ccdash/.claude \
+  --codex-home "$HOME/.codex" \
+  --codex-container-home /home/ccdash/.codex
+
+# 2. Start the stack (now that the registry and overlay are ready).
+docker compose \
+  --env-file deploy/runtime/.env \
+  --env-file deploy/runtime/watchers/myrepo.env \
+  -f deploy/runtime/compose.yaml \
+  --profile enterprise --profile postgres --profile live-watch \
+  up --build
+```
+
+### Example: adding a second project without changing the active project
+
+```bash
+python3 backend/scripts/container_project_onboarding.py \
+  --projects-file projects.json \
+  --project-id secondary-repo \
+  --name "Secondary Repo" \
+  --root-container /workspace/secondary-repo \
+  --sessions-container /home/ccdash/.codex/sessions/secondary-repo \
+  --no-active \
+  --watcher-env deploy/runtime/watchers/secondary-repo.env \
+  --watcher-probe-port 9467
+```
+
+Note: `worker-watch` binds one project id per worker process in v1. To ingest a second project live, run a second `worker-watch` container with a unique `CCDASH_WORKER_WATCH_PROJECT_ID` and probe port.
+
+If you prepare `projects.json` manually, the minimum project entry is:
 
 ```json
 {
@@ -304,6 +378,75 @@ Common variables for container profiles:
 | `CCDASH_API_BEARER_TOKEN` | All | Optional bearer token for `/api/v1/*` endpoints |
 
 For the complete reference, see `deploy/runtime/.env.example` and `docs/guides/setup.md`.
+
+## Live Updates and SSE Configuration
+
+CCDash supports two modes for real-time feature, test, and operations panel updates:
+
+1. **Server-Sent Events (SSE)**: Real-time push-based invalidation (when enabled)
+2. **Polling fallback**: 30-second TanStack Query polling (when SSE is disabled)
+
+### SSE (Default for Local, Recommended for Enterprise)
+
+Enable when your load balancer supports streaming:
+
+```bash
+VITE_CCDASH_LIVE_FEATURES_ENABLED=true    # Feature board/modal updates
+VITE_CCDASH_LIVE_TESTS_ENABLED=true       # Test visualizer updates
+VITE_CCDASH_LIVE_OPS_ENABLED=true         # Operations panel updates
+CCDASH_LIVE_TEST_UPDATES_ENABLED=true     # Backend gate for test SSE
+```
+
+**Requirements**:
+- Load balancer proxy buffering disabled (Nginx: `proxy_buffering off`)
+- Client connections remain open for event streaming
+- Heartbeat keep-alive prevents timeout-happy proxies from closing idle connections
+
+**Transport tuning**:
+```bash
+CCDASH_LIVE_REPLAY_BUFFER_SIZE=200          # Events per topic for reconnecting clients
+CCDASH_LIVE_HEARTBEAT_SECONDS=15            # Keep-alive ping cadence (increase for slow networks)
+CCDASH_LIVE_MAX_PENDING_EVENTS=100          # Raise on high-concurrency deployments
+CCDASH_LIVE_COUNT_CACHE_TTL_SECONDS=10      # Per-topic cache TTL
+CCDASH_LIVE_AGENTS_WINDOW_SECONDS=600       # Active session aggregation window (10 min)
+```
+
+### Polling Fallback (When SSE Unavailable)
+
+When `VITE_CCDASH_LIVE_FEATURES_ENABLED=false`, `VITE_CCDASH_LIVE_TESTS_ENABLED=false`, or `VITE_CCDASH_LIVE_OPS_ENABLED=false`, the frontend automatically falls back to TanStack Query polling with a 30-second cadence to reduce server load.
+
+```bash
+# Disable SSE, use polling fallback
+VITE_CCDASH_LIVE_FEATURES_ENABLED=false
+VITE_CCDASH_LIVE_TESTS_ENABLED=false
+VITE_CCDASH_LIVE_OPS_ENABLED=false
+# Backend still allows test updates if needed
+CCDASH_LIVE_TEST_UPDATES_ENABLED=true
+```
+
+**Use polling fallback when**:
+- Load balancer does not support streaming
+- Network infrastructure is unstable or drops idle connections
+- Local development where simplicity is preferred over real-time delivery
+- Enterprise deployment with restricted egress where SSE is not a blocker
+
+### Enterprise Deployment Recommendation
+
+For enterprise Postgres deployments with Nginx:
+
+```bash
+# Enable SSE for real-time updates
+VITE_CCDASH_LIVE_FEATURES_ENABLED=true
+VITE_CCDASH_LIVE_TESTS_ENABLED=true
+VITE_CCDASH_LIVE_OPS_ENABLED=true
+CCDASH_LIVE_TEST_UPDATES_ENABLED=true
+
+# Nginx upstream config (in your reverse-proxy)
+proxy_buffering off;
+proxy_request_buffering off;
+proxy_http_version 1.1;
+Connection "";
+```
 
 ## Health Check Endpoints
 

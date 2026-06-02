@@ -56,6 +56,10 @@ DATABASE_URL = os.getenv("CCDASH_DATABASE_URL", DEFAULT_DATABASE_URL)
 LINKING_LOGIC_VERSION = os.getenv("CCDASH_LINKING_LOGIC_VERSION", "1")
 SESSION_MAPPINGS_JSON = os.getenv("CCDASH_SESSION_MAPPINGS_JSON", "")
 SESSION_MAPPINGS_FILE = os.getenv("CCDASH_SESSION_MAPPINGS_FILE", "")
+# CCDASH_PROJECTS_FILE — path to the projects registry JSON (advertised in compose.yaml mount).
+# Defaults to projects.json at the project root so compose bind-mounts work without extra config.
+_projects_file_env = os.getenv("CCDASH_PROJECTS_FILE", "").strip()
+PROJECTS_FILE: Path = Path(_projects_file_env) if _projects_file_env else PROJECT_ROOT / "projects.json"
 OTEL_ENABLED = _env_bool("CCDASH_OTEL_ENABLED", False)
 OTEL_ENDPOINT = os.getenv("CCDASH_OTEL_ENDPOINT", "http://localhost:4318")
 OTEL_SERVICE_NAME = os.getenv("CCDASH_OTEL_SERVICE_NAME", "ccdash-backend")
@@ -243,7 +247,7 @@ def resolve_storage_profile_config(environ: Mapping[str, str] | None = None) -> 
 
     filesystem_source_of_truth = profile == "local"
     if profile == "enterprise":
-        filesystem_source_of_truth = _env_bool_from(env, "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED", False)
+        filesystem_source_of_truth = _env_bool_from(env, "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED", True)
 
     schema_name = str(env.get("CCDASH_STORAGE_SCHEMA", "ccdash")).strip() or "ccdash"
     return StorageProfileConfig(
@@ -957,6 +961,17 @@ INFERRED_STATUS_WRITEBACK_ENABLED = _env_bool(
     STORAGE_PROFILE.profile == "local",
 )
 
+# Worker env vars for k8s / bare-container deploys (compose sets these in the worker service).
+# These are deploy-convenience aliases; they do NOT override the real sync gate which is
+# CCDASH_STARTUP_SYNC_ENABLED + worker RuntimeProfile.capabilities.sync=True.
+# CCDASH_WORKER_WATCH_PROJECT_ID — constrain worker-watch to a single project ID (string).
+WORKER_WATCH_PROJECT_ID: str = str(os.environ.get("CCDASH_WORKER_WATCH_PROJECT_ID", "")).strip()
+# CCDASH_WORKER_STARTUP_SYNC_ENABLED — compose-level alias surfaced here for k8s/bare-container.
+# Feeds awareness of the compose intent but does NOT replace CCDASH_STARTUP_SYNC_ENABLED as the gate.
+WORKER_STARTUP_SYNC_ENABLED: bool = _env_bool("CCDASH_WORKER_STARTUP_SYNC_ENABLED", True)
+# CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED — as above, scoped to the worker-watch profile.
+WORKER_WATCH_STARTUP_SYNC_ENABLED: bool = _env_bool("CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED", True)
+
 # Startup sync tuning
 STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)
 STARTUP_SYNC_DELAY_SECONDS = _env_int("CCDASH_STARTUP_SYNC_DELAY_SECONDS", 2)
@@ -976,6 +991,19 @@ CCDASH_LIVE_HEARTBEAT_SECONDS = _env_int("CCDASH_LIVE_HEARTBEAT_SECONDS", 15)
 CCDASH_LIVE_MAX_PENDING_EVENTS = _env_int("CCDASH_LIVE_MAX_PENDING_EVENTS", 100)
 
 # Agent query cache settings
+# CCDASH_QUERY_CACHE_BACKEND (default: 'memory')
+# Selects the query-cache backend.  'memory' uses the in-process TTLCache
+# (single-node default; no cross-replica sharing).  'postgres' uses the
+# query_cache DB table for distributed cache sharing across replicas (enterprise).
+# Falls back to 'memory' if the postgres backend fails to initialise so
+# deployments are never left without a working cache.
+CCDASH_QUERY_CACHE_BACKEND = os.getenv("CCDASH_QUERY_CACHE_BACKEND", "memory").strip().lower() or "memory"
+# CCDASH_FINGERPRINT_CACHE_TTL_SECONDS (default: 5)
+# TTL for in-process caching of the data-version fingerprint per project_id.
+# Avoids ~6 DB queries before every cache lookup by reusing the fingerprint
+# within this window.  Kept short (5 s) so that a sync event is reflected
+# within one poll cycle.
+CCDASH_FINGERPRINT_CACHE_TTL_SECONDS = _env_int("CCDASH_FINGERPRINT_CACHE_TTL_SECONDS", 5)
 # CCDASH_QUERY_CACHE_TTL_SECONDS (default: 600)
 # Time-to-live for memoized agent query results. Aligns with CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS
 # (300s warmer) to achieve >95% steady-state cache hit rate: entries survive 2 full warmer cycles
@@ -1029,6 +1057,64 @@ CCDASH_SYSTEM_METRICS_CONCURRENCY = _env_int(
     "CCDASH_SYSTEM_METRICS_CONCURRENCY",
     10,
 )
+
+# Job queue backend
+# CCDASH_JOB_QUEUE_BACKEND (default: 'memory')
+# Selects the job-queue backend for scheduled background jobs.
+# 'memory' uses the in-process scheduler (single-node default; no cross-replica
+# sharing).  'postgres' uses a durable Postgres-backed queue for distributed
+# enterprise deployments — ensures jobs survive restarts and are not duplicated
+# across replicas.  Jobs agent reads this via getattr(config, 'JOB_QUEUE_BACKEND').
+JOB_QUEUE_BACKEND: str = os.getenv("CCDASH_JOB_QUEUE_BACKEND", "memory").strip().lower() or "memory"
+
+# Retention / pruning settings
+# CCDASH_RETENTION_PRUNE_ENABLED (default: false)
+# Master opt-in for destructive TTL deletes.  Default OFF — these are batched,
+# worker-scheduled DELETEs that permanently remove old rows.  Set to true only
+# after reviewing ANALYTICS_RETENTION_DAYS and TELEMETRY_RETENTION_DAYS.
+RETENTION_PRUNE_ENABLED = _env_bool("CCDASH_RETENTION_PRUNE_ENABLED", False)
+# CCDASH_ANALYTICS_RETENTION_DAYS (default: 90)
+# analytics_entries rows older than this many days are pruned each sync cycle
+# when RETENTION_PRUNE_ENABLED=true.  Only period='point' rows are pruned;
+# daily/weekly aggregates are kept until explicitly expired.
+ANALYTICS_RETENTION_DAYS = _env_int("CCDASH_ANALYTICS_RETENTION_DAYS", 90)
+# CCDASH_TELEMETRY_RETENTION_DAYS (default: 90)
+# telemetry_events rows with occurred_at older than this many days are pruned
+# each sync cycle when RETENTION_PRUNE_ENABLED=true.  Batched in chunks of
+# 1000 rows to avoid lock contention on SQLite.
+TELEMETRY_RETENTION_DAYS = _env_int("CCDASH_TELEMETRY_RETENTION_DAYS", 90)
+# CCDASH_RETENTION_PRUNE_INTERVAL_SECONDS (default: 86400 = 24h)
+# How often the standalone retention-prune worker job runs.  Each tick calls
+# prune_entries_older_than_days(ANALYTICS_RETENTION_DAYS) and
+# prune_telemetry_older_than_days(TELEMETRY_RETENTION_DAYS), then optionally
+# issues VACUUM/ANALYZE (Postgres) or VACUUM (SQLite).  Only active when
+# RETENTION_PRUNE_ENABLED=true and the runtime profile has jobs capability.
+RETENTION_PRUNE_INTERVAL_SECONDS = _env_int("CCDASH_RETENTION_PRUNE_INTERVAL_SECONDS", 86400)
+# CCDASH_RETENTION_VACUUM_ENABLED (default: true)
+# When true the retention job runs VACUUM (ANALYZE) on analytics_entries and
+# telemetry_events after each prune tick.  Disable in environments where
+# autovacuum is already tuned or where VACUUM scheduling must be externally
+# controlled (e.g., managed cloud Postgres services with aggressive autovacuum).
+RETENTION_VACUUM_ENABLED = _env_bool("CCDASH_RETENTION_VACUUM_ENABLED", True)
+
+# CCDASH_DROP_SESSION_LOGS_ENABLED (default: false)
+# Staged removal gate for the legacy denormalized session_logs store.
+# When true, session read paths will NEVER fall back to session_logs;
+# session_messages is the sole authoritative source.  Enable ONLY after:
+#   (1) P1-010 badge materialization has landed,
+#   (2) all 6 consumers have been confirmed canonical-first (P1-002 staging), AND
+#   (3) a DB snapshot has been taken.
+# The migration agent owns the actual DROP TABLE; this flag gates the READ path.
+DROP_SESSION_LOGS_ENABLED = _env_bool("CCDASH_DROP_SESSION_LOGS_ENABLED", False)
+
+# AI insight proxy
+# CCDASH_GEMINI_API_KEY — Gemini REST API key used by the server-side AI insight proxy.
+# When unset, POST /api/ai/insight returns {disabled: true} instead of 500.
+CCDASH_GEMINI_API_KEY: str = os.getenv("CCDASH_GEMINI_API_KEY", "").strip()
+
+# Capability flags (enterprise add-on surfaces; default OFF)
+ARC_ENABLED = _env_bool("CCDASH_ARC_ENABLED", False)
+MEATYWIKI_ENABLED = _env_bool("CCDASH_MEATYWIKI_ENABLED", False)
 
 # Server settings
 HOST = os.getenv("CCDASH_HOST", "0.0.0.0")

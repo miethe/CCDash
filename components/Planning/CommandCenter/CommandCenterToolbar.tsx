@@ -12,14 +12,22 @@ export interface CommandCenterFilters {
 
 export type CommandCenterViewMode = 'list' | 'cards' | 'board';
 
+// T4-014: selectable page sizes
+export const COMMAND_CENTER_PAGE_SIZES = [25, 50, 100] as const;
+export type CommandCenterPageSize = (typeof COMMAND_CENTER_PAGE_SIZES)[number];
+
 interface CommandCenterToolbarProps {
   filters: CommandCenterFilters;
   viewMode: CommandCenterViewMode;
   total: number;
   loading?: boolean;
+  /** T4-014: current pageSize; renders a selector when provided. */
+  pageSize?: CommandCenterPageSize;
   onFiltersChange: (filters: CommandCenterFilters) => void;
   onViewModeChange: (viewMode: CommandCenterViewMode) => void;
   onRefresh: () => void;
+  /** T4-014: called when the user selects a new page size. */
+  onPageSizeChange?: (pageSize: number) => void;
 }
 
 function updateFilter(
@@ -34,9 +42,11 @@ export function CommandCenterToolbar({
   viewMode,
   total,
   loading = false,
+  pageSize,
   onFiltersChange,
   onViewModeChange,
   onRefresh,
+  onPageSizeChange,
 }: CommandCenterToolbarProps) {
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between" data-testid="command-center-toolbar">
@@ -94,6 +104,19 @@ export function CommandCenterToolbar({
           <List size={13} aria-hidden />
           {filters.sortDirection}
         </BtnGhost>
+        {/* T4-014: pageSize selector — only renders when handler is provided */}
+        {onPageSizeChange ? (
+          <select
+            value={pageSize ?? 50}
+            onChange={(event) => onPageSizeChange(Number(event.currentTarget.value))}
+            className="planning-mono h-[32px] rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-1)] px-2 text-[11px] text-[color:var(--ink-1)]"
+            aria-label="Items per page"
+          >
+            {COMMAND_CENTER_PAGE_SIZES.map((size) => (
+              <option key={size} value={size}>{size} / page</option>
+            ))}
+          </select>
+        ) : null}
         <div className="planning-chip planning-mono border-[color:var(--line-1)] bg-[color:var(--bg-1)] p-1 text-[10.5px]" role="group" aria-label="Command center view">
           {([
             ['list', List, 'List'],

@@ -81,6 +81,14 @@ export const projectsKeys = {
   list: () => ['projects', 'list'] as const,
 };
 
+// ─── Ops Panel ────────────────────────────────────────────────────────────────
+// Global (not project-scoped) — the ops panel is a backend-wide surface.
+
+export const opsKeys = {
+  overview: () => ['ops', 'overview'] as const,
+  telemetryStatus: () => ['ops', 'telemetry-status'] as const,
+};
+
 // ─── Planning ─────────────────────────────────────────────────────────────────
 
 export const planningKeys = {
@@ -119,6 +127,39 @@ export const planningKeys = {
    */
   view: (projectId: string, include: readonly string[]) =>
     [projectId, 'planning', 'view', { include: [...include].sort() }] as const,
+
+  /**
+   * T4-002 / T4-014: V1 command center key.
+   * All filter + pagination fields are in the key so any change produces a
+   * distinct cache entry without manual invalidation.
+   * pageSize defaults to 50 to match the historical hardcoded value.
+   */
+  commandCenter: (
+    projectId: string,
+    filters: {
+      q?: string;
+      status?: string;
+      phase?: number;
+      sortBy?: string;
+      sortDirection?: 'asc' | 'desc';
+      page?: number;
+      pageSize?: number;
+    } = {},
+  ) =>
+    [
+      projectId,
+      'planning',
+      'command-center',
+      {
+        q: filters.q ?? '',
+        status: filters.status ?? '',
+        phase: filters.phase ?? null,
+        sortBy: filters.sortBy ?? 'priority',
+        sortDirection: filters.sortDirection ?? 'desc',
+        page: filters.page ?? 1,
+        pageSize: filters.pageSize ?? 50,
+      },
+    ] as const,
 };
 
 // ─── Feature Surface ──────────────────────────────────────────────────────────
@@ -142,6 +183,19 @@ export const featureSurfaceKeys = {
    */
   rollup: (projectId: string, ids: string[], freshnessToken: string | null | undefined) =>
     [projectId, 'featureSurface', 'rollup', { ids: [...ids].sort(), freshnessToken: freshnessToken ?? null }] as const,
+};
+
+// ─── Execution Runs ──────────────────────────────────────────────────────────
+
+export const executionRunsKeys = {
+  all: (featureId: string) => [featureId, 'executionRuns'] as const,
+  list: (featureId: string) => [featureId, 'executionRuns', 'list'] as const,
+  /**
+   * T4-006-4: Live-poll key for visibility-aware refetchInterval polling.
+   * runId + afterSequence ensures each polling window fetches only new events.
+   */
+  livePoll: (runId: string, afterSequence: number) =>
+    [runId, 'executionRuns', 'live-poll', { afterSequence }] as const,
 };
 
 // ─── UI State (scroll position persistence) ───────────────────────────────────
@@ -168,6 +222,17 @@ export const dashboardKeys = {
    * staleTime: 10_000 matches backend @memoized_query TTL (10 s live counts).
    */
   bundle: (projectId: string) => [projectId, 'dashboard', 'bundle'] as const,
+  /**
+   * T4-011: Chart series key (cost calibration + cost + velocity series).
+   * staleTime: 60_000 — chart data changes slowly; no need for aggressive refresh.
+   */
+  chart: (projectId: string) => [projectId, 'dashboard', 'chart'] as const,
+  /**
+   * T4-011 / T4-006-1: Live active-agents count key.
+   * refetchInterval: 10_000 replaces the manual setInterval in useLiveAgentsCount.
+   * Not project-scoped — global endpoint.
+   */
+  liveCount: () => ['dashboard', 'live-count'] as const,
 };
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
@@ -180,6 +245,44 @@ export const analyticsKeys = {
    */
   overviewBundle: (projectId: string) =>
     [projectId, 'analytics', 'overview-bundle'] as const,
+  /**
+   * T4-012: Per-domain analytics query keys.
+   * Each key corresponds to one of the 7 parallel fetches formerly in loadAll().
+   */
+  overview: (projectId: string) => [projectId, 'analytics', 'overview'] as const,
+  notifications: (projectId: string) => [projectId, 'analytics', 'notifications'] as const,
+  artifacts: (projectId: string) => [projectId, 'analytics', 'artifacts'] as const,
+  correlation: (projectId: string) => [projectId, 'analytics', 'correlation'] as const,
+  costCalibration: (projectId: string) => [projectId, 'analytics', 'cost-calibration'] as const,
+  usageAttribution: (projectId: string) => [projectId, 'analytics', 'usage-attribution'] as const,
+  usageCalibration: (projectId: string) => [projectId, 'analytics', 'usage-calibration'] as const,
+  /**
+   * T4-012: Drilldown key — includes entity coords so each entity gets its own cache slot.
+   */
+  usageDrilldown: (projectId: string, entityType: string | null, entityId: string | null) =>
+    [projectId, 'analytics', 'usage-drilldown', { entityType: entityType ?? null, entityId: entityId ?? null }] as const,
+  /**
+   * P5-001 (sibling lane): Artifact rankings key for the analytics surface.
+   * Scoped to projectId so per-project invalidation works via [projectId].
+   * Signature: analyticsKeys.artifactRankings(projectId) → readonly [string, 'analytics', 'artifact-rankings']
+   */
+  artifactRankings: (projectId: string) =>
+    [projectId, 'analytics', 'artifact-rankings'] as const,
+};
+
+// ─── Capabilities (global, not project-scoped) ────────────────────────────────
+// Runtime capability flags from GET /api/execution/launch/capabilities.
+// Global (no projectId) — invalidated by the sentinel 'capabilities' namespace.
+// staleTime: 60_000 in useLaunchCapabilitiesQuery (flags change infrequently).
+
+export const capabilitiesKeys = {
+  /** Invalidates ALL capabilities cache entries. */
+  all: () => ['capabilities'] as const,
+  /**
+   * Launch capabilities key.
+   * Signature: capabilitiesKeys.launch() → readonly ['capabilities', 'launch']
+   */
+  launch: () => ['capabilities', 'launch'] as const,
 };
 
 // ─── Multi-Project Planning (aggregate / portfolio) ───────────────────────────
@@ -211,8 +314,37 @@ export interface MultiProjectSessionBoardFilters {
 }
 
 export const multiProjectPlanningKeys = {
-  /** Invalidates ALL aggregate planning data (command center + session board). */
+  /** Invalidates ALL aggregate planning data (command center + session board + portfolio). */
   all: () => ['multi-project', 'planning'] as const,
+
+  /**
+   * P5-001 / AC-1: Portfolio rollup key.
+   * GET /api/agent/planning/portfolio/rollup?project_ids=
+   * projectIds is sorted for stable cache identity (same set → same entry).
+   * Signature: multiProjectPlanningKeys.portfolioRollup(projectIds?) → readonly [...]
+   */
+  portfolioRollup: (projectIds?: string[]) =>
+    projectIds && projectIds.length > 0
+      ? (['multi-project', 'planning', 'portfolio-rollup', { projectIds: [...projectIds].sort() }] as const)
+      : (['multi-project', 'planning', 'portfolio-rollup'] as const),
+
+  /**
+   * P5-001 / AC-1: Next-work key.
+   * GET /api/agent/planning/next-work?project_ids=&limit=&cursor=
+   * All params folded into key for stable cache identity per page/filter.
+   * Signature: multiProjectPlanningKeys.nextWork(params?) → readonly [...]
+   */
+  nextWork: (params?: { projectIds?: string[]; limit?: number; cursor?: string | null }) =>
+    [
+      'multi-project',
+      'planning',
+      'next-work',
+      {
+        projectIds: params?.projectIds ? [...params.projectIds].sort() : [],
+        limit: params?.limit ?? null,
+        cursor: params?.cursor ?? null,
+      },
+    ] as const,
 
   /**
    * Aggregate command-center key.

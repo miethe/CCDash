@@ -90,8 +90,40 @@ export function removePlanningRouteFeatureModalSearch(
  * URL for the full-page planning detail for a feature.
  * Navigates to /planning/feature/<id>.
  */
-export function planningFeatureDetailHref(featureId: string): string {
-  return `/planning/feature/${encodeURIComponent(featureId)}`;
+export function planningFeatureDetailHref(featureId: string, tab?: FeatureDetailTab): string {
+  const base = `/planning/feature/${encodeURIComponent(featureId)}`;
+  return tab && tab !== 'overview' ? `${base}?tab=${tab}` : base;
+}
+
+// ── P5-006: FeatureDetailShell tab routing ────────────────────────────────────
+
+export const FEATURE_DETAIL_TABS = [
+  'overview',
+  'plan',
+  'tasks',
+  'sessions',
+  'artifacts',
+  'research',
+  'council',
+  'logs',
+  'decisions',
+  'blockers',
+  'next',
+] as const;
+
+export type FeatureDetailTab = (typeof FEATURE_DETAIL_TABS)[number];
+
+export function isFeatureDetailTab(value: string): value is FeatureDetailTab {
+  return FEATURE_DETAIL_TABS.includes(value as FeatureDetailTab);
+}
+
+/**
+ * Resolve the active tab from URL search params.
+ * Falls back to 'overview' for unknown/missing values.
+ */
+export function resolveFeatureDetailTab(searchParams: URLSearchParams): FeatureDetailTab {
+  const raw = searchParams.get('tab') ?? 'overview';
+  return isFeatureDetailTab(raw) ? raw : 'overview';
 }
 
 /**

@@ -1,4 +1,36 @@
-"""PostgreSQL database schema creation and versioning."""
+"""PostgreSQL database schema creation and versioning.
+
+Schema version history (keep in lockstep with sqlite_migrations.py):
+  v32 — P5-005: features table gains owners_json + linked_docs_json columnar
+         columns (JSONB DEFAULT '[]') with GIN indexes and backfill from data_json.
+         P5-012: council_reviews scaffold table (feature-scoped, tz timestamps).
+         P5-013: research_notes scaffold table (project/feature-scoped, tz timestamps).
+  v31 — P3-003-FU: sessions composite PK (project_id, id) fully activated;
+         all child tables updated to composite FK
+         (project_id, session_id) REFERENCES sessions(project_id, id)
+         ON DELETE CASCADE; four tables (session_messages, session_artifacts,
+         session_sentiment_facts, session_code_churn_facts) gain project_id
+         with backfill; session_relationships both parent/child FKs composite;
+         PostgresSessionRepository upserts use ON CONFLICT(project_id, id).
+  v30 — Phase 3 enterprise registry & job infra: projects table (P3-001)
+         replaces projects.json as authoritative registry; oq_resolutions
+         table (P3-002) persists open-question overlays per project/feature;
+         job_queue table (P3-006) provides durable job queue DDL;
+         session_logs/session_tool_usage/session_file_updates gain nullable
+         project_id with backfill (P3-004).
+  v29 — Phase 2 cache-core: query_cache table for distributed Postgres cache
+         backend (P2-001); CCDASH_QUERY_CACHE_BACKEND=postgres targets this
+         table; memory backend is unchanged.
+  v28 — Phase 1 storage hygiene: session badge columns (command_slug,
+         latest_summary, subagent_type, models/agents/skills_used_json);
+         idx_sessions_source_file + idx_sessions_project_source_file;
+         entity_links.project_id + idx_links_project;
+         idx_analytics_point_daily (partial unique, same-day dedup);
+         idx_analytics_point_latest; idx_telemetry_event_type_partial;
+         idx_sessions_project_status_updated backfill;
+         entity_links UNIQUE folded into initial DDL.
+  v27 — Previous baseline.
+"""
 from __future__ import annotations
 
 import logging
@@ -8,7 +40,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 33
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -41,13 +73,18 @@ CREATE TABLE IF NOT EXISTS entity_links (
     depth         INTEGER DEFAULT 0,
     sort_order    INTEGER DEFAULT 0,
     metadata_json TEXT,
-    created_at    TEXT NOT NULL
+    created_at    TEXT NOT NULL,
+    project_id    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_source ON entity_links(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_links_target ON entity_links(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_links_tree   ON entity_links(source_type, source_id, link_type, depth);
+-- T1-012: UNIQUE index in initial DDL (idempotent; _ensure_entity_link_uniqueness also creates it)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_links_upsert ON entity_links(source_type, source_id, target_type, target_id, link_type);
 CREATE INDEX IF NOT EXISTS idx_links_origin ON entity_links(origin) WHERE origin = 'manual';
+-- T1-019: project_id scoping for Phase 2 multi-project entity graph fingerprinting
+CREATE INDEX IF NOT EXISTS idx_links_project ON entity_links(project_id);
 
 -- External links (URLs, PRs, issues)
 CREATE TABLE IF NOT EXISTS external_links (
@@ -80,7 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_entity_tags_tag ON entity_tags(tag_id);
 
 -- ── 4. Sessions ────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sessions (
-    id               TEXT PRIMARY KEY,
+    id               TEXT NOT NULL,
     project_id       TEXT NOT NULL,
     task_id          TEXT DEFAULT '',
     status           TEXT DEFAULT 'completed',
@@ -143,7 +180,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     timeline_json    TEXT DEFAULT '[]',
     impact_history_json TEXT DEFAULT '[]',
     thinking_level   TEXT DEFAULT '',
-    session_forensics_json TEXT DEFAULT '{}'
+    session_forensics_json TEXT DEFAULT '{}',
+    -- T1-010: materialized badge columns (populated at sync time; avoids per-session log fetch)
+    command_slug     TEXT DEFAULT '',
+    latest_summary   TEXT DEFAULT '',
+    subagent_type    TEXT DEFAULT '',
+    models_used_json TEXT DEFAULT '[]',
+    agents_used_json TEXT DEFAULT '[]',
+    skills_used_json TEXT DEFAULT '[]',
+    PRIMARY KEY (project_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, started_at DESC);
@@ -155,10 +200,18 @@ CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, started_
 CREATE INDEX IF NOT EXISTS idx_sessions_project_status_updated
     ON sessions(project_id, status, updated_at);
 
+-- T1-005: source_file indexes — kills full-scan in repositories/sessions.py list_by_source
+-- and in watcher-triggered delete/lookup per file during sync.
+CREATE INDEX IF NOT EXISTS idx_sessions_source_file
+    ON sessions(source_file);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_source_file
+    ON sessions(project_id, source_file);
+
 -- Normalized log entries
 CREATE TABLE IF NOT EXISTS session_logs (
     id             SERIAL PRIMARY KEY,
-    session_id     TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id     TEXT,
+    session_id     TEXT NOT NULL,
     log_index      INTEGER NOT NULL,
     source_log_id  TEXT DEFAULT '',
     timestamp      TEXT NOT NULL,
@@ -173,7 +226,8 @@ CREATE TABLE IF NOT EXISTS session_logs (
     tool_args      TEXT,
     tool_output    TEXT,
     tool_status    TEXT DEFAULT 'success',
-    metadata_json  TEXT
+    metadata_json  TEXT,
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_logs_session ON session_logs(session_id, log_index);
@@ -186,7 +240,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_source_log_unique
 -- Canonical transcript seam for future enterprise-grade session intelligence.
 CREATE TABLE IF NOT EXISTS session_messages (
     id             BIGSERIAL PRIMARY KEY,
-    session_id     TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id     TEXT,
+    session_id     TEXT NOT NULL,
     message_index  INTEGER NOT NULL,
     source_log_id  TEXT DEFAULT '',
     message_id     TEXT DEFAULT '',
@@ -210,7 +265,8 @@ CREATE TABLE IF NOT EXISTS session_messages (
     input_tokens   INTEGER,
     output_tokens  INTEGER,
     cache_read_input_tokens   INTEGER,
-    cache_creation_input_tokens INTEGER
+    cache_creation_input_tokens INTEGER,
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_messages_family
@@ -220,18 +276,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_session_message
 
 -- Tool usage summary per session
 CREATE TABLE IF NOT EXISTS session_tool_usage (
-    session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id    TEXT,
+    session_id    TEXT NOT NULL,
     tool_name     TEXT NOT NULL,
     call_count    INTEGER DEFAULT 0,
     success_count INTEGER DEFAULT 0,
     total_ms      INTEGER DEFAULT 0,
-    PRIMARY KEY (session_id, tool_name)
+    PRIMARY KEY (session_id, tool_name),
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 -- File changes per session
 CREATE TABLE IF NOT EXISTS session_file_updates (
     id           SERIAL PRIMARY KEY,
-    session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id   TEXT,
+    session_id   TEXT NOT NULL,
     file_path    TEXT NOT NULL,
     action       TEXT DEFAULT 'update',
     file_type    TEXT DEFAULT 'Other',
@@ -242,7 +301,8 @@ CREATE TABLE IF NOT EXISTS session_file_updates (
     thread_session_id TEXT DEFAULT '',
     root_session_id TEXT DEFAULT '',
     source_log_id TEXT,
-    source_tool_name TEXT
+    source_tool_name TEXT,
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_updates_session ON session_file_updates(session_id);
@@ -251,20 +311,22 @@ CREATE INDEX IF NOT EXISTS idx_file_updates_path   ON session_file_updates(file_
 -- Session artifacts
 CREATE TABLE IF NOT EXISTS session_artifacts (
     id           TEXT PRIMARY KEY,
-    session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id   TEXT,
+    session_id   TEXT NOT NULL,
     title        TEXT NOT NULL,
     type         TEXT DEFAULT 'document',
     description  TEXT DEFAULT '',
     source       TEXT DEFAULT '',
     url          TEXT,
     source_log_id TEXT,
-    source_tool_name TEXT
+    source_tool_name TEXT,
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS session_usage_events (
     id                 TEXT PRIMARY KEY,
     project_id         TEXT NOT NULL,
-    session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    session_id         TEXT NOT NULL,
     root_session_id    TEXT NOT NULL,
     linked_session_id  TEXT DEFAULT '',
     source_log_id      TEXT DEFAULT '',
@@ -276,7 +338,8 @@ CREATE TABLE IF NOT EXISTS session_usage_events (
     token_family       TEXT NOT NULL,
     delta_tokens       INTEGER NOT NULL DEFAULT 0 CHECK (delta_tokens >= 0),
     cost_usd_model_io  DOUBLE PRECISION NOT NULL DEFAULT 0.0 CHECK (cost_usd_model_io >= 0),
-    metadata_json      TEXT DEFAULT '{}'
+    metadata_json      TEXT DEFAULT '{}',
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_usage_events_project
@@ -312,8 +375,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_session_usage_attributions_primary
 CREATE TABLE IF NOT EXISTS session_relationships (
     id                  TEXT PRIMARY KEY,
     project_id          TEXT NOT NULL,
-    parent_session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    child_session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    parent_session_id   TEXT NOT NULL,
+    child_session_id    TEXT NOT NULL,
     relationship_type   TEXT NOT NULL,
     context_inheritance TEXT DEFAULT '',
     source_platform     TEXT DEFAULT '',
@@ -322,7 +385,9 @@ CREATE TABLE IF NOT EXISTS session_relationships (
     source_log_id       TEXT,
     metadata_json       TEXT DEFAULT '{}',
     source_file         TEXT DEFAULT '',
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id, parent_session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id, child_session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_relationships_parent
@@ -429,6 +494,8 @@ CREATE TABLE IF NOT EXISTS features (
     status          TEXT DEFAULT 'backlog',
     category        TEXT DEFAULT '',
     tags_json       TEXT DEFAULT '[]',
+    owners_json     JSONB DEFAULT '[]'::jsonb,
+    linked_docs_json JSONB DEFAULT '[]'::jsonb,
     deferred_tasks  INTEGER DEFAULT 0,
     planned_at      TEXT DEFAULT '',
     started_at      TEXT DEFAULT '',
@@ -442,6 +509,41 @@ CREATE TABLE IF NOT EXISTS features (
 );
 
 CREATE INDEX IF NOT EXISTS idx_features_project ON features(project_id);
+CREATE INDEX IF NOT EXISTS idx_features_owners
+    ON features USING GIN (owners_json jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_features_linked_docs
+    ON features USING GIN (linked_docs_json jsonb_path_ops);
+
+-- ── 7b. Council Reviews (feature-scoped AI review scaffold) ────────
+CREATE TABLE IF NOT EXISTS council_reviews (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL,
+    feature_id  TEXT NOT NULL,
+    status      TEXT,
+    summary     TEXT,
+    data_json   JSONB DEFAULT '{}'::jsonb,
+    created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_council_reviews_project_feature
+    ON council_reviews(project_id, feature_id);
+
+-- ── 7c. Research Notes (project/feature-scoped) ─────────────────────
+CREATE TABLE IF NOT EXISTS research_notes (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL,
+    feature_id  TEXT,
+    title       TEXT,
+    url         TEXT,
+    body        TEXT,
+    source      TEXT,
+    created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_notes_project_feature
+    ON research_notes(project_id, feature_id);
 
 CREATE TABLE IF NOT EXISTS feature_phases (
     id              TEXT PRIMARY KEY,
@@ -480,6 +582,15 @@ CREATE INDEX IF NOT EXISTS idx_analytics_lookup
     ON analytics_entries(project_id, metric_type, captured_at);
 CREATE INDEX IF NOT EXISTS idx_analytics_period
     ON analytics_entries(project_id, period, captured_at);
+-- T1-014: partial index serving get_latest_entries (period='point' rows only)
+CREATE INDEX IF NOT EXISTS idx_analytics_point_latest
+    ON analytics_entries(project_id, metric_type, captured_at DESC)
+    WHERE period = 'point';
+-- T1-001: unique partial index backing ON CONFLICT upsert for point-period dedup
+-- Postgres uses (captured_at::date) expression syntax for the date cast
+CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily
+    ON analytics_entries(project_id, metric_type, (captured_at::date))
+    WHERE period = 'point';
 
 CREATE TABLE IF NOT EXISTS analytics_entity_links (
     analytics_id  INTEGER NOT NULL REFERENCES analytics_entries(id) ON DELETE CASCADE,
@@ -526,6 +637,10 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_project_time
     ON telemetry_events(project_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_telemetry_event_type
     ON telemetry_events(project_id, event_type, occurred_at);
+-- T1-014: partial index serving event_type point queries (non-empty event_type rows only)
+CREATE INDEX IF NOT EXISTS idx_telemetry_event_type_partial
+    ON telemetry_events(event_type, project_id, occurred_at)
+    WHERE event_type <> '';
 CREATE INDEX IF NOT EXISTS idx_telemetry_tool
     ON telemetry_events(project_id, tool_name, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_telemetry_model
@@ -538,7 +653,7 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_task
 -- ── 9b. Outbound Telemetry Export Queue ────────────────────────────
 CREATE TABLE IF NOT EXISTS outbound_telemetry_queue (
     id              TEXT PRIMARY KEY,
-    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    session_id      TEXT NOT NULL,
     project_slug    TEXT NOT NULL,
     payload_json    TEXT NOT NULL,
     event_type      TEXT NOT NULL DEFAULT 'execution_outcome',
@@ -596,7 +711,8 @@ CREATE INDEX IF NOT EXISTS idx_commit_corr_feature
 
 CREATE TABLE IF NOT EXISTS session_sentiment_facts (
     id                 BIGSERIAL PRIMARY KEY,
-    session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id         TEXT,
+    session_id         TEXT NOT NULL,
     feature_id         TEXT DEFAULT '',
     root_session_id    TEXT DEFAULT '',
     thread_session_id  TEXT DEFAULT '',
@@ -608,14 +724,16 @@ CREATE TABLE IF NOT EXISTS session_sentiment_facts (
     confidence         DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     heuristic_version  TEXT DEFAULT '',
     evidence_json      JSONB NOT NULL DEFAULT '{}'::jsonb,
-    computed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    computed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_session_sentiment_facts_session
     ON session_sentiment_facts(session_id, message_index, source_log_id);
 
 CREATE TABLE IF NOT EXISTS session_code_churn_facts (
     id                       BIGSERIAL PRIMARY KEY,
-    session_id               TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id               TEXT,
+    session_id               TEXT NOT NULL,
     feature_id               TEXT DEFAULT '',
     root_session_id          TEXT DEFAULT '',
     thread_session_id        TEXT DEFAULT '',
@@ -637,14 +755,16 @@ CREATE TABLE IF NOT EXISTS session_code_churn_facts (
     confidence               DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     heuristic_version        TEXT DEFAULT '',
     evidence_json            JSONB NOT NULL DEFAULT '{}'::jsonb,
-    computed_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    computed_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_session_code_churn_facts_session
     ON session_code_churn_facts(session_id, file_path);
 
 CREATE TABLE IF NOT EXISTS session_scope_drift_facts (
     id                      BIGSERIAL PRIMARY KEY,
-    session_id              TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id              TEXT,
+    session_id              TEXT NOT NULL,
     feature_id              TEXT DEFAULT '',
     root_session_id         TEXT DEFAULT '',
     thread_session_id       TEXT DEFAULT '',
@@ -657,7 +777,8 @@ CREATE TABLE IF NOT EXISTS session_scope_drift_facts (
     confidence              DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     heuristic_version       TEXT DEFAULT '',
     evidence_json           JSONB NOT NULL DEFAULT '{}'::jsonb,
-    computed_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    computed_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_session_scope_drift_facts_session
     ON session_scope_drift_facts(session_id, feature_id);
@@ -849,7 +970,7 @@ CREATE INDEX IF NOT EXISTS idx_pricing_catalog_source
 CREATE TABLE IF NOT EXISTS session_stack_observations (
     id                  SERIAL PRIMARY KEY,
     project_id          TEXT NOT NULL,
-    session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    session_id          TEXT NOT NULL,
     feature_id          TEXT DEFAULT '',
     workflow_ref        TEXT DEFAULT '',
     confidence          DOUBLE PRECISION DEFAULT 0.0,
@@ -857,7 +978,8 @@ CREATE TABLE IF NOT EXISTS session_stack_observations (
     evidence_json       JSONB DEFAULT '{}'::jsonb,
     created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
     updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-    UNIQUE(project_id, session_id)
+    UNIQUE(project_id, session_id),
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_stack_observations_session
@@ -911,7 +1033,7 @@ CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period
 CREATE TABLE IF NOT EXISTS session_memory_drafts (
     id                   BIGSERIAL PRIMARY KEY,
     project_id           TEXT NOT NULL,
-    session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    session_id           TEXT NOT NULL,
     feature_id           TEXT DEFAULT '',
     root_session_id      TEXT DEFAULT '',
     thread_session_id    TEXT DEFAULT '',
@@ -938,7 +1060,8 @@ CREATE TABLE IF NOT EXISTS session_memory_drafts (
     last_publish_error   TEXT DEFAULT '',
     created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
     updated_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-    UNIQUE(project_id, content_hash)
+    UNIQUE(project_id, content_hash),
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_project_status
     ON session_memory_drafts(project_id, status, updated_at DESC);
@@ -1009,6 +1132,106 @@ CREATE TABLE IF NOT EXISTS execution_approvals (
 
 CREATE INDEX IF NOT EXISTS idx_execution_approvals_run
     ON execution_approvals(run_id, requested_at DESC);
+
+-- ── 16. Distributed Query Cache (P2-001) ──────────────────────────
+-- Used when CCDASH_QUERY_CACHE_BACKEND=postgres; provides distributed cache
+-- sharing across API replicas without requiring a separate Valkey/Redis tier.
+CREATE TABLE IF NOT EXISTS query_cache (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    project_id TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_query_cache_project
+    ON query_cache(project_id);
+CREATE INDEX IF NOT EXISTS idx_query_cache_expires_at
+    ON query_cache(expires_at);
+
+-- ── 17. Project Registry (P3-001) ─────────────────────────────────
+-- Authoritative project registry replacing projects.json.
+-- Covers every field the current ProjectManager persists.
+CREATE TABLE IF NOT EXISTS projects (
+    id                   TEXT PRIMARY KEY,
+    name                 TEXT NOT NULL,
+    path                 TEXT NOT NULL DEFAULT '',
+    description          TEXT NOT NULL DEFAULT '',
+    repo_url             TEXT NOT NULL DEFAULT '',
+    agent_platforms_json TEXT NOT NULL DEFAULT '["Claude Code"]',
+    plan_docs_path       TEXT NOT NULL DEFAULT 'docs/project_plans/',
+    sessions_path        TEXT NOT NULL DEFAULT '',
+    progress_path        TEXT NOT NULL DEFAULT 'progress',
+    path_config_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    test_config_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    skillmeat_json       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    display_json         JSONB,
+    is_active            BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_is_active
+    ON projects(is_active);
+
+-- ── 18. Open-Question Resolutions (P3-002) ────────────────────────
+-- Persists resolved open-question overlays per project/feature so that
+-- in-memory _OQ_OVERLAY survives restarts.
+CREATE TABLE IF NOT EXISTS oq_resolutions (
+    id            BIGSERIAL PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    feature_id    TEXT NOT NULL,
+    oq_id         TEXT NOT NULL,
+    question      TEXT NOT NULL DEFAULT '',
+    answer_text   TEXT NOT NULL DEFAULT '',
+    severity      TEXT NOT NULL DEFAULT 'medium',
+    -- INTEGER (0/1) for parity with SQLite and the repo layer, which binds
+    -- int(bool(...)) values. asyncpg's strict bool codec rejects ``int`` binds
+    -- into BOOLEAN columns; the repo uses a single code path for both drivers.
+    resolved      INTEGER NOT NULL DEFAULT 1,
+    pending_sync  INTEGER NOT NULL DEFAULT 0,
+    source_document_id   TEXT NOT NULL DEFAULT '',
+    source_document_path TEXT NOT NULL DEFAULT '',
+    resolved_by   TEXT,
+    -- TEXT (ISO-8601) for parity with SQLite + the repo layer, which binds ISO
+    -- strings. asyncpg's default TIMESTAMPTZ codec rejects ``str`` binds.
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at    TEXT DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE (project_id, feature_id, oq_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_oq_resolutions_project
+    ON oq_resolutions(project_id);
+CREATE INDEX IF NOT EXISTS idx_oq_resolutions_feature
+    ON oq_resolutions(project_id, feature_id);
+
+-- ── 19. Durable Job Queue (P3-006) ────────────────────────────────
+-- DDL-only; no runtime executor in this phase.
+CREATE TABLE IF NOT EXISTS job_queue (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    job_type      TEXT NOT NULL,
+    payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'running', 'done', 'dead', 'crashed')),
+    priority      INTEGER NOT NULL DEFAULT 0,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    max_attempts  INTEGER NOT NULL DEFAULT 3,
+    -- Timestamps are stored as TEXT (ISO-8601) for parity with the SQLite schema
+    -- and the repository layer, which binds ISO-string values. asyncpg's default
+    -- TIMESTAMPTZ codec rejects ``str`` binds, so these MUST stay TEXT.
+    available_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    locked_by     TEXT,
+    locked_at     TEXT,
+    last_error    TEXT,
+    checkpoint    JSONB,
+    created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_queue_status_available_priority
+    ON job_queue(status, available_at, priority);
+CREATE INDEX IF NOT EXISTS idx_job_queue_project
+    ON job_queue(project_id);
 """
 
 _PLANNING_WORKTREE_CONTEXTS_DDL = """
@@ -1375,7 +1598,8 @@ CREATE SCHEMA IF NOT EXISTS app;
 
 CREATE TABLE IF NOT EXISTS app.session_embeddings (
     id                   BIGSERIAL PRIMARY KEY,
-    session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id           TEXT,
+    session_id           TEXT NOT NULL,
     block_kind           TEXT NOT NULL,
     block_index          INTEGER NOT NULL DEFAULT 0,
     content_hash         TEXT NOT NULL,
@@ -1385,7 +1609,8 @@ CREATE TABLE IF NOT EXISTS app.session_embeddings (
     embedding_dimensions INTEGER NOT NULL DEFAULT 0,
     embedding            vector,
     metadata_json        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_session_embeddings_content_hash
@@ -1438,6 +1663,114 @@ async def _ensure_column(db: asyncpg.Connection, table: str, column: str, defini
     await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
+async def _ensure_text_timestamp_column(db: asyncpg.Connection, table: str, column: str) -> None:
+    """Idempotently coerce a timestamp column to TEXT (ISO-8601) parity type.
+
+    Dev/existing Postgres DBs created the durable-queue tables (job_queue,
+    oq_resolutions) with ``TIMESTAMP WITH TIME ZONE`` columns. asyncpg's default
+    timestamptz codec rejects the ISO-8601 ``str`` values the repositories bind,
+    raising DataError at runtime. The repo layer (and SQLite) deal exclusively in
+    ISO strings, so these columns must be TEXT.
+
+    No-op when: the table is absent, the column is absent, or the column is
+    already a text type. Otherwise ``ALTER ... TYPE text USING <col>::text``
+    losslessly converts existing rows (TIMESTAMPTZ → canonical ISO text).
+    """
+    data_type = await db.fetchval(
+        """
+        SELECT data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1
+          AND column_name = $2
+        """,
+        table,
+        column,
+    )
+    if data_type is None:
+        # Table or column does not exist yet — nothing to coerce.
+        return
+    if data_type == "text":
+        # Already the parity type (fresh DBs created via the TEXT DDL land here).
+        return
+    await db.execute(
+        f'ALTER TABLE {table} ALTER COLUMN {column} TYPE text USING {column}::text'
+    )
+    logger.info(
+        "Coerced %s.%s from %s to text for durable-queue ISO-string parity.",
+        table,
+        column,
+        data_type,
+    )
+
+
+async def _ensure_durable_queue_text_timestamps(db: asyncpg.Connection) -> None:
+    """v33: ensure job_queue + oq_resolutions timestamp columns are TEXT.
+
+    Runs unconditionally on every migration pass (not version-gated) so it also
+    repairs dev DBs already recorded at v31/v32 with TIMESTAMPTZ columns, where
+    no ``current_version < N`` block would fire. Fully idempotent.
+    """
+    for column in ("available_at", "locked_at", "created_at", "updated_at"):
+        await _ensure_text_timestamp_column(db, "job_queue", column)
+    for column in ("created_at", "updated_at"):
+        await _ensure_text_timestamp_column(db, "oq_resolutions", column)
+
+
+async def _ensure_integer_bool_column(db: asyncpg.Connection, table: str, column: str) -> None:
+    """Idempotently coerce a BOOLEAN column to INTEGER (0/1) parity type.
+
+    Dev/existing Postgres DBs created oq_resolutions.resolved and
+    oq_resolutions.pending_sync as ``BOOLEAN NOT NULL``. The repo layer computes
+    ``resolved = int(bool(...))`` / ``pending_sync = int(bool(...))`` via a single
+    code path shared by both the SQLite and PG branches. asyncpg's strict bool
+    codec rejects ``int`` binds into BOOLEAN columns (DataError); SQLite stores
+    0/1 integers. INTEGER parity resolves both.
+
+    No-op when: the table is absent, the column is absent, or the column is
+    already an integer type. Otherwise ``ALTER ... TYPE integer USING (CASE WHEN
+    <col> THEN 1 ELSE 0 END)`` losslessly converts existing rows.
+    """
+    data_type = await db.fetchval(
+        """
+        SELECT data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1
+          AND column_name = $2
+        """,
+        table,
+        column,
+    )
+    if data_type is None:
+        # Table or column does not exist yet — nothing to coerce.
+        return
+    if data_type == "integer":
+        # Already the parity type (fresh DBs created via the INTEGER DDL land here).
+        return
+    await db.execute(
+        f"ALTER TABLE {table} ALTER COLUMN {column} TYPE integer"
+        f" USING (CASE WHEN {column} THEN 1 ELSE 0 END)"
+    )
+    logger.info(
+        "Coerced %s.%s from %s to integer for oq_resolutions int(bool) parity.",
+        table,
+        column,
+        data_type,
+    )
+
+
+async def _ensure_oq_resolutions_integer_bools(db: asyncpg.Connection) -> None:
+    """v33 (P3-002-FU): ensure oq_resolutions.resolved + pending_sync are INTEGER.
+
+    Runs unconditionally (same pattern as _ensure_durable_queue_text_timestamps)
+    so DBs already recorded at v31/v32/v33 with BOOLEAN columns are also repaired.
+    Fully idempotent.
+    """
+    for column in ("resolved", "pending_sync"):
+        await _ensure_integer_bool_column(db, "oq_resolutions", column)
+
+
 async def _backfill_feature_query_columns(db: asyncpg.Connection) -> None:
     await db.execute(
         """
@@ -1447,6 +1780,19 @@ async def _backfill_feature_query_columns(db: asyncpg.Connection) -> None:
             deferred_tasks = COALESCE((NULLIF(data_json, '')::jsonb->>'deferredTasks')::integer, 0),
             planned_at = COALESCE(NULLIF(data_json, '')::jsonb->>'plannedAt', ''),
             started_at = COALESCE(NULLIF(data_json, '')::jsonb->>'startedAt', '')
+        """
+    )
+
+
+async def _backfill_feature_owners_linked_docs(db: asyncpg.Connection) -> None:
+    """P5-005: backfill owners_json and linked_docs_json from data_json JSONB."""
+    await db.execute(
+        """
+        UPDATE features
+        SET
+            owners_json = COALESCE(NULLIF(data_json, '')::jsonb->'owners', '[]'::jsonb),
+            linked_docs_json = COALESCE(NULLIF(data_json, '')::jsonb->'linkedDocs', '[]'::jsonb)
+        WHERE owners_json = '[]'::jsonb OR owners_json IS NULL
         """
     )
 
@@ -1472,6 +1818,432 @@ async def _ensure_enterprise_session_intelligence_tables(db: asyncpg.Connection)
     await db.execute(_ENTERPRISE_SESSION_INTELLIGENCE_TABLES)
 
 
+async def _migrate_v30_sessions_composite_pk(db: asyncpg.Connection) -> None:
+    """P3-003: Promote sessions PK to composite (project_id, id).
+
+    Postgres approach: drop the single-column PK constraint and recreate it
+    as a composite constraint.  Forward-only; aborts if project_id column is
+    missing or if (project_id, id) duplicates exist.
+    """
+    # ── Step 1: confirm project_id column exists ──────────────────────────────
+    col_exists = await _column_exists(db, "sessions", "project_id")
+    if not col_exists:
+        logger.error(
+            "P3-003 ABORTED: sessions table is missing project_id column. "
+            "Cannot create composite PK (project_id, id)."
+        )
+        return
+
+    # ── Step 2: check whether composite PK already exists ────────────────────
+    existing_pk = await db.fetchrow(
+        """
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_name = kcu.table_name
+        WHERE tc.table_name = 'sessions'
+          AND tc.constraint_type = 'PRIMARY KEY'
+          AND kcu.column_name = 'project_id'
+        LIMIT 1
+        """
+    )
+    if existing_pk is not None:
+        logger.info("P3-003: sessions composite PK already includes project_id; skipping.")
+        return
+
+    # ── Step 3: collision check ───────────────────────────────────────────────
+    collision = await db.fetchrow(
+        """
+        SELECT project_id, id, COUNT(*) AS cnt
+        FROM sessions
+        GROUP BY project_id, id
+        HAVING COUNT(*) > 1
+        LIMIT 1
+        """
+    )
+    if collision is not None:
+        logger.error(
+            "P3-003 ABORTED: found (project_id, id) collision in sessions: "
+            "project_id=%s id=%s count=%s. Resolve duplicates before re-running.",
+            collision["project_id"],
+            collision["id"],
+            collision["cnt"],
+        )
+        return
+
+    # ── Step 4: drop old PK and recreate as composite ─────────────────────────
+    # Find the current PK constraint name.
+    pk_name_row = await db.fetchrow(
+        """
+        SELECT tc.constraint_name
+        FROM information_schema.table_constraints tc
+        WHERE tc.table_name = 'sessions'
+          AND tc.constraint_type = 'PRIMARY KEY'
+        LIMIT 1
+        """
+    )
+    if pk_name_row is None:
+        logger.warning("P3-003: no existing PK found on sessions; creating composite PK directly.")
+    else:
+        pk_name = pk_name_row["constraint_name"]
+        await db.execute(f"ALTER TABLE sessions DROP CONSTRAINT {pk_name}")
+
+    await db.execute(
+        "ALTER TABLE sessions ADD PRIMARY KEY (project_id, id)"
+    )
+    logger.info("P3-003: sessions composite PK (project_id, id) applied.")
+
+
+async def _migrate_v30_detail_tables_project_id(db: asyncpg.Connection) -> None:
+    """P3-004: Add nullable project_id to session detail tables and backfill.
+
+    Tables: session_logs, session_tool_usage, session_file_updates.
+    Backfills project_id from the parent sessions row; adds an index on
+    project_id for each table.
+    """
+    # ── session_logs ──────────────────────────────────────────────────────────
+    await _ensure_column(db, "session_logs", "project_id", "TEXT")
+    await db.execute(
+        """
+        UPDATE session_logs sl
+        SET project_id = s.project_id
+        FROM sessions s
+        WHERE s.id = sl.session_id
+          AND sl.project_id IS NULL
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_logs_project"
+        " ON session_logs(project_id)"
+    )
+
+    # ── session_tool_usage ────────────────────────────────────────────────────
+    await _ensure_column(db, "session_tool_usage", "project_id", "TEXT")
+    await db.execute(
+        """
+        UPDATE session_tool_usage stu
+        SET project_id = s.project_id
+        FROM sessions s
+        WHERE s.id = stu.session_id
+          AND stu.project_id IS NULL
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_tool_usage_project"
+        " ON session_tool_usage(project_id)"
+    )
+
+    # ── session_file_updates ──────────────────────────────────────────────────
+    await _ensure_column(db, "session_file_updates", "project_id", "TEXT")
+    await db.execute(
+        """
+        UPDATE session_file_updates sfu
+        SET project_id = s.project_id
+        FROM sessions s
+        WHERE s.id = sfu.session_id
+          AND sfu.project_id IS NULL
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_file_updates_project"
+        " ON session_file_updates(project_id)"
+    )
+
+    logger.info("P3-004: project_id columns backfilled on session detail tables.")
+
+
+async def _migrate_v31_sessions_composite_pk_and_child_fks(db: asyncpg.Connection) -> None:
+    """P3-003-FU v31: Promote sessions PK to composite (project_id, id) and update all
+    child table FKs to reference sessions(project_id, id).
+
+    Postgres approach:
+      1. Drop old single-column PK constraint; add composite PK.
+      2. For each child table: add project_id (if missing), backfill from sessions,
+         drop old FK constraint referencing sessions(id), add new composite FK.
+
+    Idempotent: checks if sessions PK already includes project_id and skips if so.
+    Forward-only.
+    """
+    # ── Idempotency check ──────────────────────────────────────────────────────
+    existing_pk = await db.fetchrow(
+        """
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_name = kcu.table_name
+        WHERE tc.table_schema = 'public'
+          AND tc.table_name = 'sessions'
+          AND tc.constraint_type = 'PRIMARY KEY'
+          AND kcu.column_name = 'project_id'
+        LIMIT 1
+        """
+    )
+    if existing_pk is not None:
+        logger.info("P3-003-FU v31: sessions composite PK already includes project_id; skipping.")
+        return
+
+    # ── project_id column must exist ──────────────────────────────────────────
+    col_exists = await _column_exists(db, "sessions", "project_id")
+    if not col_exists:
+        logger.error(
+            "P3-003-FU v31 ABORTED: sessions table missing project_id. "
+            "Cannot create composite PK."
+        )
+        return
+
+    # ── collision check ───────────────────────────────────────────────────────
+    collision = await db.fetchrow(
+        """
+        SELECT project_id, id, COUNT(*) AS cnt
+        FROM sessions
+        GROUP BY project_id, id
+        HAVING COUNT(*) > 1
+        LIMIT 1
+        """
+    )
+    if collision is not None:
+        logger.error(
+            "P3-003-FU v31 ABORTED: (project_id, id) collision in sessions: "
+            "project_id=%s id=%s count=%s.",
+            collision["project_id"], collision["id"], collision["cnt"],
+        )
+        return
+
+    # ── Helper: ensure project_id column and backfill from sessions ────────────
+    async def _ensure_pg_project_id(table: str, session_col: str = "session_id") -> None:
+        await _ensure_column(db, table, "project_id", "TEXT")
+        await db.execute(
+            f"""
+            UPDATE {table} t
+            SET project_id = s.project_id
+            FROM sessions s
+            WHERE s.id = t.{session_col}
+              AND t.project_id IS NULL
+            """
+        )
+
+    # ── Helper: drop FK constraint(s) on a table referencing sessions ─────────
+    async def _drop_sessions_fks(table: str) -> None:
+        rows = await db.fetch(
+            """
+            SELECT tc.constraint_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+             AND tc.table_name = kcu.table_name
+            JOIN information_schema.referential_constraints rc
+              ON tc.constraint_name = rc.constraint_name
+             AND tc.table_schema = rc.constraint_schema
+            JOIN information_schema.table_constraints ccu
+              ON rc.unique_constraint_name = ccu.constraint_name
+             AND rc.unique_constraint_schema = ccu.constraint_schema
+            WHERE tc.table_schema = 'public'
+              AND tc.table_name = $1
+              AND ccu.table_name = 'sessions'
+              AND tc.constraint_type = 'FOREIGN KEY'
+            """,
+            table,
+        )
+        for row in rows:
+            await db.execute(
+                f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {row['constraint_name']}"
+            )
+
+    # ── Step 0: drop legacy outbound_telemetry_queue → sessions(id) FK ─────────
+    # Pre-PR Postgres DBs created outbound_telemetry_queue.session_id with an
+    # inline ``REFERENCES sessions(id) ON DELETE CASCADE`` FK. The _TABLES DDL no
+    # longer declares it, but CREATE TABLE IF NOT EXISTS never alters an existing
+    # table — so on any DB upgrading from v29/v30 that FK still depends on the
+    # single-column sessions PK and would block the DROP CONSTRAINT below. SQLite
+    # achieves the same outcome by rebuilding the table without the FK in
+    # _migrate_outbound_telemetry_queue_add_event_type. Drop it here (idempotent:
+    # DROP CONSTRAINT IF EXISTS over whatever FKs reference sessions, or no-op when
+    # the FK is already gone). The table intentionally gets NO composite FK back —
+    # parity with the SQLite FK-removal step.
+    await _drop_sessions_fks("outbound_telemetry_queue")
+
+    # ── Step 1: rebuild sessions PK ───────────────────────────────────────────
+    pk_name_row = await db.fetchrow(
+        """
+        SELECT tc.constraint_name
+        FROM information_schema.table_constraints tc
+        WHERE tc.table_schema = 'public'
+          AND tc.table_name = 'sessions'
+          AND tc.constraint_type = 'PRIMARY KEY'
+        LIMIT 1
+        """
+    )
+    if pk_name_row:
+        await db.execute(f"ALTER TABLE sessions DROP CONSTRAINT {pk_name_row['constraint_name']}")
+    await db.execute("ALTER TABLE sessions ADD PRIMARY KEY (project_id, id)")
+
+    # ── Step 2: session_logs ───────────────────────────────────────────────────
+    await _ensure_pg_project_id("session_logs")
+    await _drop_sessions_fks("session_logs")
+    await db.execute(
+        "ALTER TABLE session_logs ADD CONSTRAINT fk_session_logs_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_session_logs_project ON session_logs(project_id)")
+
+    # ── Step 3: session_messages (add project_id) ──────────────────────────────
+    await _ensure_pg_project_id("session_messages")
+    await _drop_sessions_fks("session_messages")
+    await db.execute(
+        "ALTER TABLE session_messages ADD CONSTRAINT fk_session_messages_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 4: session_tool_usage ─────────────────────────────────────────────
+    await _ensure_pg_project_id("session_tool_usage")
+    await _drop_sessions_fks("session_tool_usage")
+    await db.execute(
+        "ALTER TABLE session_tool_usage ADD CONSTRAINT fk_session_tool_usage_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 5: session_file_updates ───────────────────────────────────────────
+    await _ensure_pg_project_id("session_file_updates")
+    await _drop_sessions_fks("session_file_updates")
+    await db.execute(
+        "ALTER TABLE session_file_updates ADD CONSTRAINT fk_session_file_updates_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 6: session_artifacts (add project_id) ─────────────────────────────
+    await _ensure_pg_project_id("session_artifacts")
+    await _drop_sessions_fks("session_artifacts")
+    await db.execute(
+        "ALTER TABLE session_artifacts ADD CONSTRAINT fk_session_artifacts_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 7: session_usage_events ──────────────────────────────────────────
+    await _drop_sessions_fks("session_usage_events")
+    await db.execute(
+        "ALTER TABLE session_usage_events ADD CONSTRAINT fk_session_usage_events_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 8: session_relationships (both parent and child FKs) ─────────────
+    await _drop_sessions_fks("session_relationships")
+    await db.execute(
+        "ALTER TABLE session_relationships ADD CONSTRAINT fk_session_relationships_parent "
+        "FOREIGN KEY (project_id, parent_session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+    await db.execute(
+        "ALTER TABLE session_relationships ADD CONSTRAINT fk_session_relationships_child "
+        "FOREIGN KEY (project_id, child_session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 9: session_sentiment_facts (add project_id) ──────────────────────
+    await _ensure_pg_project_id("session_sentiment_facts")
+    await _drop_sessions_fks("session_sentiment_facts")
+    await db.execute(
+        "ALTER TABLE session_sentiment_facts ADD CONSTRAINT fk_session_sentiment_facts_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 10: session_code_churn_facts (add project_id) ────────────────────
+    await _ensure_pg_project_id("session_code_churn_facts")
+    await _drop_sessions_fks("session_code_churn_facts")
+    await db.execute(
+        "ALTER TABLE session_code_churn_facts ADD CONSTRAINT fk_session_code_churn_facts_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 11: session_scope_drift_facts (add project_id) ───────────────────
+    await _ensure_pg_project_id("session_scope_drift_facts")
+    await _drop_sessions_fks("session_scope_drift_facts")
+    await db.execute(
+        "ALTER TABLE session_scope_drift_facts ADD CONSTRAINT fk_session_scope_drift_facts_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 12: session_stack_observations ───────────────────────────────────
+    await _drop_sessions_fks("session_stack_observations")
+    await db.execute(
+        "ALTER TABLE session_stack_observations ADD CONSTRAINT fk_session_stack_observations_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 13: session_memory_drafts ────────────────────────────────────────
+    await _drop_sessions_fks("session_memory_drafts")
+    await db.execute(
+        "ALTER TABLE session_memory_drafts ADD CONSTRAINT fk_session_memory_drafts_session "
+        "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+    )
+
+    # ── Step 14: app.session_embeddings (postgres-only; add project_id) ───────
+    try:
+        # Check if table exists before attempting migration
+        tbl_exists = await db.fetchval(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'app' AND table_name = 'session_embeddings' LIMIT 1"
+        )
+        if tbl_exists:
+            col_ok = await _column_exists_in_schema(db, "app", "session_embeddings", "project_id")
+            if not col_ok:
+                await db.execute(
+                    "ALTER TABLE app.session_embeddings ADD COLUMN IF NOT EXISTS project_id TEXT"
+                )
+                await db.execute(
+                    """
+                    UPDATE app.session_embeddings se
+                    SET project_id = s.project_id
+                    FROM sessions s
+                    WHERE s.id = se.session_id AND se.project_id IS NULL
+                    """
+                )
+            # Drop old FK if it references sessions(id)
+            old_fks = await db.fetch(
+                """
+                SELECT tc.constraint_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.referential_constraints rc
+                  ON tc.constraint_name = rc.constraint_name
+                JOIN information_schema.table_constraints ccu
+                  ON rc.unique_constraint_name = ccu.constraint_name
+                WHERE tc.table_schema = 'app'
+                  AND tc.table_name = 'session_embeddings'
+                  AND ccu.table_name = 'sessions'
+                  AND tc.constraint_type = 'FOREIGN KEY'
+                """
+            )
+            for row in old_fks:
+                await db.execute(
+                    f"ALTER TABLE app.session_embeddings DROP CONSTRAINT IF EXISTS {row['constraint_name']}"
+                )
+            await db.execute(
+                "ALTER TABLE app.session_embeddings ADD CONSTRAINT fk_session_embeddings_session "
+                "FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE"
+            )
+    except Exception as _emb_err:
+        logger.warning(
+            "P3-003-FU v31: app.session_embeddings FK migration skipped (likely missing pgvector "
+            "or schema not initialized): %s", _emb_err
+        )
+
+    logger.info(
+        "P3-003-FU v31: sessions composite PK (project_id, id) + all child composite FKs applied."
+    )
+
+
+async def _column_exists_in_schema(db: asyncpg.Connection, schema: str, table: str, column: str) -> bool:
+    """Check if a column exists in a given schema.table."""
+    result = await db.fetchval(
+        """
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2 AND column_name = $3
+        """,
+        schema, table, column,
+    )
+    return result is not None
+
+
 async def _ensure_entity_link_uniqueness(db: asyncpg.Connection) -> None:
     # Deduplicate legacy rows before enforcing unique upsert key.
     await db.execute(
@@ -1494,8 +2266,33 @@ async def _ensure_entity_link_uniqueness(db: asyncpg.Connection) -> None:
     )
 
 
+# Stable advisory-lock key for migration serialization (Postgres-only).
+# Chosen as a well-known constant; must not collide with application-level
+# advisory locks.  Value: sha256("ccdash:migrations:v1")[:15] decimals = 7413841953141760
+_PG_MIGRATION_ADVISORY_LOCK_KEY = 7413841953141760
+
+
 async def run_migrations(db: asyncpg.Connection) -> None:
-    """Create all tables and seed data. Idempotent."""
+    """Create all tables and seed data. Idempotent.
+
+    On PostgreSQL, a session-level advisory lock (pg_advisory_lock) is acquired
+    before executing any DDL so that concurrent API/worker pods do not race on
+    first-boot.  The lock is released unconditionally in a finally block.
+    SQLite callers never reach this function (see backend.db.migrations).
+    """
+    await db.execute(
+        "SELECT pg_advisory_lock($1)", _PG_MIGRATION_ADVISORY_LOCK_KEY
+    )
+    try:
+        await _run_migrations_inner(db)
+    finally:
+        await db.execute(
+            "SELECT pg_advisory_unlock($1)", _PG_MIGRATION_ADVISORY_LOCK_KEY
+        )
+
+
+async def _run_migrations_inner(db: asyncpg.Connection) -> None:
+    """Actual migration logic, called under the advisory lock."""
     # Check current schema version
     try:
         row = await db.fetchrow("SELECT MAX(version) FROM schema_version")
@@ -1570,6 +2367,18 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_event_type ON outbound_telemetry_queue(event_type, status)"
     )
+
+    # v33 (P3-006-FU): durable-queue timestamps must be TEXT (ISO-8601), not
+    # TIMESTAMPTZ. The repository layer binds ISO strings, which asyncpg's default
+    # timestamptz codec rejects. Run unconditionally so DBs already at v31/v32 with
+    # TIMESTAMPTZ columns are repaired (a version-gated block would skip them).
+    await _ensure_durable_queue_text_timestamps(db)
+
+    # v33 (P3-002-FU): oq_resolutions.resolved + pending_sync must be INTEGER (0/1),
+    # not BOOLEAN. The repo binds int(bool(...)) via a single code path shared by
+    # both SQLite and PG branches; asyncpg's strict bool codec rejects int binds.
+    # Run unconditionally so DBs at v31/v32/v33 with BOOLEAN columns are repaired.
+    await _ensure_oq_resolutions_integer_bools(db)
 
     await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "related_tool_call_id", "TEXT")
@@ -2161,11 +2970,135 @@ async def run_migrations(db: asyncpg.Connection) -> None:
         " ON feature_phases(feature_id, status)"
     )
 
+    # ── T1-004: Backfill idx_sessions_project_status_updated on existing DBs ────
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_status_updated"
+        " ON sessions(project_id, status, updated_at)"
+    )
+
+    # ── T1-005: source_file indexes — kills full-scan in list_by_source ──────────
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_source_file"
+        " ON sessions(source_file)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_source_file"
+        " ON sessions(project_id, source_file)"
+    )
+
+    # ── T1-010: materialized badge columns on sessions (Postgres supports IF NOT EXISTS) ─
+    await _ensure_column(db, "sessions", "command_slug", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "latest_summary", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "subagent_type", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "models_used_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "agents_used_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "skills_used_json", "TEXT DEFAULT '[]'")
+
+    # ── T1-019: entity_links.project_id column + idx_links_project ───────────────
+    await _ensure_column(db, "entity_links", "project_id", "TEXT")
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_links_project ON entity_links(project_id)"
+    )
+
+    # ── T1-012: UNIQUE index for entity_links upsert (moved into _TABLES DDL; also
+    #   ensured here via _ensure_entity_link_uniqueness called above; this call is
+    #   belt-and-suspenders for existing DBs that skipped the DDL path) ───────────
+    # _ensure_entity_link_uniqueness already creates idx_links_upsert after dedup.
+    # No duplicate call needed here; left as comment for traceability.
+
+    # ── T1-014: Partial indexes for analytics_entries (period='point') ───────────
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_analytics_point_latest"
+        " ON analytics_entries(project_id, metric_type, captured_at DESC)"
+        " WHERE period = 'point'"
+    )
+    # ── T1-001: Unique partial index for ON CONFLICT point-period dedup ──────────
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily"
+        " ON analytics_entries(project_id, metric_type, (captured_at::date))"
+        " WHERE period = 'point'"
+    )
+    # ── T1-014: Partial index for telemetry_events event_type queries ─────────────
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_event_type_partial"
+        " ON telemetry_events(event_type, project_id, occurred_at)"
+        " WHERE event_type <> ''"
+    )
+
     # Seed metric types
     await db.execute(_SEED_METRIC_TYPES)
 
     # Seed default alert configs
     await db.execute(_SEED_ALERT_CONFIGS)
+
+    # ── v30 migrations (P3-001/002/006 tables created via _TABLES above) ─────
+    if current_version < 30:
+        # P3-004: add + backfill project_id on session detail tables
+        await _migrate_v30_detail_tables_project_id(db)
+
+    # ── v31 migrations (P3-003-FU: composite PK + composite child FKs) ───────
+    if current_version < 31:
+        # P3-003-FU: promote sessions PK to (project_id, id); update all child
+        # table FKs to composite (project_id, session_id)->sessions(project_id, id).
+        # Idempotent: no-ops if PK is already composite.
+        await _migrate_v31_sessions_composite_pk_and_child_fks(db)
+
+    # ── v32 migrations ────────────────────────────────────────────────────────
+    if current_version < 32:
+        # P5-005: owners_json + linked_docs_json on features (JSONB columnar extraction)
+        await _ensure_column(db, "features", "owners_json", "JSONB DEFAULT '[]'::jsonb")
+        await _ensure_column(db, "features", "linked_docs_json", "JSONB DEFAULT '[]'::jsonb")
+        await _backfill_feature_owners_linked_docs(db)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_features_owners"
+            " ON features USING GIN (owners_json jsonb_path_ops)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_features_linked_docs"
+            " ON features USING GIN (linked_docs_json jsonb_path_ops)"
+        )
+
+        # P5-012: council_reviews scaffold table (feature-scoped)
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS council_reviews (
+                id          TEXT PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                feature_id  TEXT NOT NULL,
+                status      TEXT,
+                summary     TEXT,
+                data_json   JSONB DEFAULT '{}'::jsonb,
+                created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_council_reviews_project_feature"
+            " ON council_reviews(project_id, feature_id)"
+        )
+
+        # P5-013: research_notes scaffold table (project/feature-scoped)
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_notes (
+                id          TEXT PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                feature_id  TEXT,
+                title       TEXT,
+                url         TEXT,
+                body        TEXT,
+                source      TEXT,
+                created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_research_notes_project_feature"
+            " ON research_notes(project_id, feature_id)"
+        )
+        logger.info("v32 migrations complete: owners_json/linked_docs_json on features; council_reviews; research_notes.")
 
     # Record schema version
     if should_record_version:

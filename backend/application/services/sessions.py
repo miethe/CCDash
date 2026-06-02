@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import json
+import logging
 
+import backend.config as config
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.model_identity import derive_model_identity
+from backend.session_badges import derive_session_badges
 from backend.services.session_transcript_contract import (
     canonical_source_provenance,
     compatibility_speaker_from_role,
 )
 
 from backend.application.services.common import resolve_project
+
+logger = logging.getLogger("ccdash.services.sessions")
 
 
 class SessionFacetService:
@@ -92,6 +97,18 @@ class SessionTranscriptService:
         limit: int = 5000,
         offset: int = 0,
     ) -> list[dict[str, object]]:
+        """Return session log entries, canonical-first.
+
+        session_messages is always the authoritative source and is queried
+        first.  When DROP_SESSION_LOGS_ENABLED is True the legacy session_logs
+        fallback is skipped entirely — this is the read-path gate that allows
+        the migration agent to safely issue the DROP TABLE.  When the flag is
+        False (default) the legacy fallback is preserved for back-compat.
+
+        NOTE: The actual data backfill (un-projected session_logs rows →
+        session_messages) is the migration agent's responsibility (P1-002 DDL
+        half).  This service only governs the READ path.
+        """
         session_id = str(session_row.get("id") or "")
         safe_limit = max(1, min(int(limit or 5000), 5001))
         safe_offset = max(0, int(offset or 0))
@@ -104,18 +121,28 @@ class SessionTranscriptService:
         except TypeError:
             canonical_rows = await ports.storage.session_messages().list_by_session(session_id)
             canonical_rows = canonical_rows[safe_offset:safe_offset + safe_limit]
-        if not canonical_rows:
-            try:
-                raw_logs = await ports.storage.sessions().get_logs(
-                    session_id,
-                    limit=safe_limit,
-                    offset=safe_offset,
-                )
-            except TypeError:
-                raw_logs = await ports.storage.sessions().get_logs(session_id)
-                raw_logs = raw_logs[safe_offset:safe_offset + safe_limit]
-            return [self._legacy_log_payload(row) for row in raw_logs]
-        return [self._canonical_log_payload(row) for row in canonical_rows]
+
+        if canonical_rows:
+            return [self._canonical_log_payload(row) for row in canonical_rows]
+
+        # --- legacy session_logs fallback ---
+        # Skipped when DROP_SESSION_LOGS_ENABLED=true so the migration agent
+        # can safely DROP session_logs without any reader depending on it.
+        if getattr(config, "DROP_SESSION_LOGS_ENABLED", False):
+            # Flag is ON: session_logs is being staged for removal; return
+            # the empty canonical result rather than touching the legacy table.
+            return []
+
+        try:
+            raw_logs = await ports.storage.sessions().get_logs(
+                session_id,
+                limit=safe_limit,
+                offset=safe_offset,
+            )
+        except TypeError:
+            raw_logs = await ports.storage.sessions().get_logs(session_id)
+            raw_logs = raw_logs[safe_offset:safe_offset + safe_limit]
+        return [self._legacy_log_payload(row) for row in raw_logs]
 
     def _legacy_log_payload(self, row: dict[str, object]) -> dict[str, object]:
         metadata = _safe_json(row.get("metadata_json"))
@@ -194,6 +221,112 @@ class SessionTranscriptService:
                 status=metadata.get("toolStatus"),
             ),
         }
+
+    # ── Badge computation & persistence ──────────────────────────────────
+
+    @staticmethod
+    def _derive_command_slug(logs: list[dict[str, object]]) -> str:
+        """Return the first command-type log's content as the session command slug."""
+        for log in logs:
+            if str(log.get("type") or "").strip().lower() == "command":
+                name = str(log.get("content") or "").strip()
+                if name:
+                    return name
+        return ""
+
+    @staticmethod
+    def _derive_latest_summary(logs: list[dict[str, object]]) -> str:
+        """Return the last system/summary event's content as latest_summary."""
+        latest = ""
+        for log in logs:
+            if str(log.get("type") or "").strip().lower() != "system":
+                continue
+            meta = log.get("metadata") or {}
+            if not isinstance(meta, dict):
+                try:
+                    meta = json.loads(str(meta)) if meta else {}
+                except Exception:
+                    meta = {}
+            if str(meta.get("eventType") or "").strip().lower() == "summary":
+                text = str(log.get("content") or "").strip()
+                if text:
+                    latest = text
+        return latest
+
+    async def compute_and_persist_badges(
+        self,
+        session_row: dict[str, object],
+        ports: CorePorts,
+    ) -> dict[str, object]:
+        """Compute badge values from logs and persist them to the sessions row.
+
+        Returns the computed badge dict (same shape as derive_session_badges).
+        This is the integration point for sync_engine.py to call after session
+        messages are written.  The method is self-contained: it fetches logs,
+        derives badges, and persists in one operation.
+
+        Integration note for sync_engine (NOT owned by this agent):
+            After writing session messages for a session, call:
+                await session_transcript_service.compute_and_persist_badges(
+                    session_row, ports
+                )
+            where session_transcript_service is an instance of SessionTranscriptService.
+        """
+        session_id = str(session_row.get("id") or "")
+        if not session_id:
+            return {"modelsUsed": [], "agentsUsed": [], "skillsUsed": [], "toolSummary": []}
+
+        logs = await self.list_session_logs(session_row, ports)
+        badge_data = derive_session_badges(
+            logs,
+            primary_model=str(session_row.get("model") or ""),
+            session_agent_id=session_row.get("agent_id"),
+        )
+
+        command_slug = self._derive_command_slug(logs)
+        latest_summary = self._derive_latest_summary(logs)
+
+        # subagent_type is not derived here (needs parent-log context which
+        # requires session_type — the caller in api.py handles that separately).
+        # We persist what we can derive from this session's own logs.
+        subagent_type = ""
+
+        try:
+            repo = ports.storage.sessions()
+            await repo.update_session_badges(
+                session_id,
+                command_slug=command_slug,
+                latest_summary=latest_summary,
+                subagent_type=subagent_type,
+                models_used=badge_data["modelsUsed"],
+                agents_used=badge_data["agentsUsed"],
+                skills_used=badge_data["skillsUsed"],
+            )
+        except Exception:
+            logger.warning(
+                "compute_and_persist_badges: failed to persist badges for session_id=%r",
+                session_id,
+                exc_info=True,
+            )
+
+        return badge_data
+
+    async def backfill_session_badges(
+        self,
+        session_id: str,
+        ports: CorePorts,
+    ) -> dict[str, object]:
+        """Backfill badges for a single session by id.
+
+        Fetches the session row, computes badges from logs, persists them.
+        Returns the computed badge dict.  Safe to call multiple times (idempotent).
+        """
+        repo = ports.storage.sessions()
+        session_row = await repo.get_by_id(session_id)
+        if not session_row:
+            logger.warning("backfill_session_badges: session_id=%r not found", session_id)
+            return {"modelsUsed": [], "agentsUsed": [], "skillsUsed": [], "toolSummary": []}
+        return await self.compute_and_persist_badges(session_row, ports)
 
     def _tool_call_payload(
         self,

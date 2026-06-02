@@ -61,8 +61,8 @@ import {
 } from '../services/execution';
 import { PlanningApiError } from '../services/planning';
 import { usePlanningFeatureContextQuery } from '../services/queries/planning';
-import { planningKeys } from '../services/queryKeys';
-import { useQueryClient } from '@tanstack/react-query';
+import { executionRunsKeys, planningKeys } from '../services/queryKeys';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getLegacyFeatureDetail } from '../services/featureSurface';
 import {
   useFeatureSurface,
@@ -824,43 +824,50 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     };
   }, [selectedRunId]);
 
+  // T4-006-4: visibility-aware refetchInterval replaces manual setInterval polling.
+  // The query is only enabled when a run is live (queued/running) and the live-
+  // update channel is not available (disabled or in backoff/closed state).
+  // refetchIntervalInBackground defaults to false — polling pauses when the tab
+  // is hidden, which is the desired visibility-aware behaviour.
+  const isLivePollActive = Boolean(
+    selectedRun
+    && (selectedRun.status === 'queued' || selectedRun.status === 'running')
+    && (!executionLiveEnabled || ['backoff', 'closed'].includes(selectedRunLiveStatus)),
+  );
+  const livePollQuery = useQuery({
+    queryKey: executionRunsKeys.livePoll(
+      selectedRun?.id ?? '',
+      selectedRunNextSequence,
+    ),
+    queryFn: async () => {
+      const runId = selectedRun!.id;
+      const [latestRun, page] = await Promise.all([
+        getExecutionRun(runId),
+        listExecutionRunEvents(runId, {
+          afterSequence: selectedRunNextSequenceRef.current,
+          limit: 120,
+        }),
+      ]);
+      return { latestRun, page };
+    },
+    enabled: isLivePollActive,
+    refetchInterval: 900,
+    // refetchIntervalInBackground: false (default) — pauses when tab is hidden
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+  // Apply live-poll results to local state whenever a fresh fetch completes.
   useEffect(() => {
-    if (!selectedRun || (selectedRun.status !== 'queued' && selectedRun.status !== 'running')) return;
-    if (executionLiveEnabled && !['backoff', 'closed'].includes(selectedRunLiveStatus)) return;
-
-    let cancelled = false;
-    const runId = selectedRun.id;
-    const poll = async () => {
-      try {
-        const [latestRun, page] = await Promise.all([
-          getExecutionRun(runId),
-          listExecutionRunEvents(runId, {
-            afterSequence: selectedRunNextSequenceRef.current,
-            limit: 120,
-          }),
-        ]);
-        if (cancelled) return;
-        upsertExecutionRun(latestRun);
-        if (page.items.length > 0) {
-          setSelectedRunEvents(prev => mergeExecutionRunEvents(prev, page.items));
-          setSelectedRunNextSequence(page.nextSequence);
-          selectedRunNextSequenceRef.current = page.nextSequence;
-        }
-      } catch {
-        // Polling failures should not break the page.
-      }
-    };
-
-    const timer = window.setInterval(() => {
-      void poll();
-    }, 900);
-    void poll();
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [executionLiveEnabled, selectedRun, selectedRunLiveStatus, upsertExecutionRun]);
+    if (!livePollQuery.data) return;
+    const { latestRun, page } = livePollQuery.data;
+    upsertExecutionRun(latestRun);
+    if (page.items.length > 0) {
+      setSelectedRunEvents(prev => mergeExecutionRunEvents(prev, page.items));
+      setSelectedRunNextSequence(page.nextSequence);
+      selectedRunNextSequenceRef.current = page.nextSequence;
+    }
+  }, [livePollQuery.data, upsertExecutionRun]);
 
   const recoverSelectedRunLiveState = useCallback(async (runId: string) => {
     const [latestRun, page] = await Promise.all([

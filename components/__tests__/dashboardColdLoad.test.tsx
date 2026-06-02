@@ -61,6 +61,7 @@ const SPY_CLIENT = makeTrackedClient();
 // T5-006: Mock the dashboard bundle query hook so renderToStaticMarkup doesn't
 // attempt a real network fetch.  The behavioral fetchQuery tests below use the
 // real queryFn against SPY_CLIENT.getDashboardBundle.
+// T4-011: Also mock useDashboardChartQuery and useLiveAgentsCountQuery.
 vi.mock('../../services/queries/dashboard', () => ({
   useDashboardBundleQuery: () => ({
     sessions: [],
@@ -68,6 +69,13 @@ vi.mock('../../services/queries/dashboard', () => ({
     isLoading: false,
     error: null,
   }),
+  useDashboardChartQuery: () => ({
+    chartData: [],
+    costCalibration: null,
+    isLoading: false,
+    isError: false,
+  }),
+  useLiveAgentsCountQuery: () => null,
 }));
 
 // Keep DataClientContext mock for any remaining hooks that read via useDataClient
@@ -143,6 +151,10 @@ vi.mock('../../services/analytics', () => ({
     getSessionCostCalibration: vi.fn().mockResolvedValue({}),
     getSeries: vi.fn().mockResolvedValue({ items: [] }),
   },
+}));
+
+vi.mock('../../services/queries/analytics', () => ({
+  useAnalyticsOverviewQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 }));
 
 vi.mock('../../services/geminiService', () => ({

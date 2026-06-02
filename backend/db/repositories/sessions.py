@@ -36,9 +36,11 @@ class SqliteSessionRepository:
                 fork_parent_session_id, fork_point_log_id, fork_point_entry_uuid, fork_point_parent_entry_uuid, fork_depth, fork_count,
                 started_at, ended_at, created_at, updated_at, source_file,
                 dates_json, timeline_json, impact_history_json,
-                thinking_level, session_forensics_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
+                thinking_level, session_forensics_json,
+                command_slug, latest_summary, subagent_type,
+                models_used_json, agents_used_json, skills_used_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
                 platform_version=excluded.platform_version,
@@ -81,7 +83,13 @@ class SqliteSessionRepository:
                 timeline_json=excluded.timeline_json,
                 impact_history_json=excluded.impact_history_json,
                 thinking_level=excluded.thinking_level,
-                session_forensics_json=excluded.session_forensics_json
+                session_forensics_json=excluded.session_forensics_json,
+                command_slug=CASE WHEN excluded.command_slug != '' THEN excluded.command_slug ELSE sessions.command_slug END,
+                latest_summary=CASE WHEN excluded.latest_summary != '' THEN excluded.latest_summary ELSE sessions.latest_summary END,
+                subagent_type=CASE WHEN excluded.subagent_type != '' THEN excluded.subagent_type ELSE sessions.subagent_type END,
+                models_used_json=CASE WHEN excluded.models_used_json != '[]' THEN excluded.models_used_json ELSE sessions.models_used_json END,
+                agents_used_json=CASE WHEN excluded.agents_used_json != '[]' THEN excluded.agents_used_json ELSE sessions.agents_used_json END,
+                skills_used_json=CASE WHEN excluded.skills_used_json != '[]' THEN excluded.skills_used_json ELSE sessions.skills_used_json END
             """,
             (
                 session_data["id"], project_id,
@@ -134,6 +142,53 @@ class SqliteSessionRepository:
                 json.dumps(session_data.get("impactHistory", []) or []),
                 str(session_data.get("thinkingLevel", "") or ""),
                 json.dumps(session_data.get("sessionForensics", {}) or {}),
+                # Badge columns — written on initial upsert; also updated via update_session_badges.
+                # These default to '' / '[]' so existing rows without badges are not overwritten
+                # with empty values on re-ingest (see ON CONFLICT CASE expressions above).
+                str(session_data.get("badgeCommandSlug", "") or ""),
+                str(session_data.get("badgeLatestSummary", "") or ""),
+                str(session_data.get("badgeSubagentType", "") or ""),
+                json.dumps(session_data.get("badgeModelsUsed", []) or []),
+                json.dumps(session_data.get("badgeAgentsUsed", []) or []),
+                json.dumps(session_data.get("badgeSkillsUsed", []) or []),
+            ),
+        )
+        await self.db.commit()
+
+    async def update_session_badges(
+        self,
+        session_id: str,
+        *,
+        command_slug: str,
+        latest_summary: str,
+        subagent_type: str,
+        models_used: list,
+        agents_used: list,
+        skills_used: list,
+    ) -> None:
+        """Persist the 6 materialized badge columns for a single session.
+
+        Called by the badge backfill path and from SessionTranscriptService after
+        computing badges from logs.  Designed to be idempotent (safe to call
+        multiple times).  Does NOT commit — caller may batch commits.
+        """
+        await self.db.execute(
+            """UPDATE sessions SET
+                command_slug = ?,
+                latest_summary = ?,
+                subagent_type = ?,
+                models_used_json = ?,
+                agents_used_json = ?,
+                skills_used_json = ?
+               WHERE id = ?""",
+            (
+                str(command_slug or ""),
+                str(latest_summary or ""),
+                str(subagent_type or ""),
+                json.dumps(models_used if isinstance(models_used, list) else []),
+                json.dumps(agents_used if isinstance(agents_used, list) else []),
+                json.dumps(skills_used if isinstance(skills_used, list) else []),
+                session_id,
             ),
         )
         await self.db.commit()
@@ -684,7 +739,7 @@ class SqliteSessionRepository:
 
     # ── Detail tables ───────────────────────────────────────────────
 
-    async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:
+    async def upsert_logs(self, session_id: str, logs: list[dict], project_id: str = "") -> None:
         # Deduplicate by (session_id, source_log_id) for non-empty source_log_id values,
         # keeping the first occurrence.  Duplicates produced by the parser are a known
         # upstream issue (Fix C) — this guard prevents the DB constraint from firing.
@@ -707,11 +762,10 @@ class SqliteSessionRepository:
             )
 
         await self.db.execute("DELETE FROM session_logs WHERE session_id = ?", (session_id,))
+        records = []
         for i, log in enumerate(deduped):
             tool_name = None
             tool_call_id = None
-            related_tool_call_id = None
-            linked_session_id = None
             tool_args = None
             tool_output = None
             tool_status = "success"
@@ -726,54 +780,58 @@ class SqliteSessionRepository:
             metadata = log.get("metadata")
             if isinstance(metadata, dict) and metadata:
                 metadata_json = json.dumps(metadata)
-
-            await self.db.execute(
+            records.append((
+                session_id, i,
+                log.get("id", f"log-{i}"),
+                log.get("timestamp", ""),
+                log.get("speaker", ""),
+                log.get("type", ""),
+                log.get("content", ""),
+                log.get("agentName"),
+                tool_name,
+                tool_call_id,
+                log.get("relatedToolCallId"),
+                log.get("linkedSessionId"),
+                tool_args,
+                tool_output,
+                tool_status,
+                metadata_json,
+                project_id,
+            ))
+        if records:
+            await self.db.executemany(
                 """INSERT OR IGNORE INTO session_logs
                     (session_id, log_index, source_log_id, timestamp, speaker, type, content,
                      agent_name, tool_name, tool_call_id, related_tool_call_id,
-                     linked_session_id, tool_args, tool_output, tool_status, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    session_id, i,
-                    log.get("id", f"log-{i}"),
-                    log.get("timestamp", ""),
-                    log.get("speaker", ""),
-                    log.get("type", ""),
-                    log.get("content", ""),
-                    log.get("agentName"),
-                    tool_name,
-                    tool_call_id,
-                    log.get("relatedToolCallId"),
-                    log.get("linkedSessionId"),
-                    tool_args,
-                    tool_output,
-                    tool_status,
-                    metadata_json,
-                ),
+                     linked_session_id, tool_args, tool_output, tool_status, metadata_json,
+                     project_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                records,
             )
         await self.db.commit()
 
-    async def upsert_tool_usage(self, session_id: str, tools: list[dict]) -> None:
+    async def upsert_tool_usage(self, session_id: str, tools: list[dict], project_id: str = "") -> None:
         await self.db.execute("DELETE FROM session_tool_usage WHERE session_id = ?", (session_id,))
         for t in tools:
             await self.db.execute(
-                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms)
-                   VALUES (?, ?, ?, ?, ?)""",
+                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms, project_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 (session_id, t.get("name", ""), t.get("count", 0),
                  int(t.get("count", 0) * t.get("successRate", 1.0)),
-                 max(0, int(t.get("totalMs", 0) or 0))),
+                 max(0, int(t.get("totalMs", 0) or 0)),
+                 project_id),
             )
         await self.db.commit()
 
-    async def upsert_file_updates(self, session_id: str, updates: list[dict]) -> None:
+    async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
         await self.db.execute("DELETE FROM session_file_updates WHERE session_id = ?", (session_id,))
         for u in updates:
             await self.db.execute(
                 """INSERT INTO session_file_updates (
                     session_id, file_path, action, file_type, action_timestamp,
                     additions, deletions, agent_name, thread_session_id, root_session_id,
-                    source_log_id, source_tool_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source_log_id, source_tool_name, project_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session_id,
                     u.get("filePath", ""),
@@ -787,6 +845,7 @@ class SqliteSessionRepository:
                     u.get("rootSessionId", ""),
                     u.get("sourceLogId"),
                     u.get("sourceToolName"),
+                    project_id,
                 ),
             )
         await self.db.commit()

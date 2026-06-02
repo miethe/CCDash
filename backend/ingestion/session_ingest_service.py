@@ -181,21 +181,21 @@ class SessionIngestService:
             write_legacy_logs = self.should_write_legacy_session_logs(canonical_rows)
             if write_legacy_logs:
                 previous_logs = await self.session_repo.get_logs(session_id)
-                await self.session_repo.upsert_logs(session_id, logs)
+                await self.session_repo.upsert_logs(session_id, logs, project_id)
             else:
                 previous_logs = await self.session_message_repo.list_by_session(session_id)
-                await self.session_repo.upsert_logs(session_id, [])
+                await self.session_repo.upsert_logs(session_id, [], project_id)
             await self.session_message_repo.replace_session_messages(session_id, canonical_rows)
 
             tools = session_dict.get("toolsUsed", [])
             if not isinstance(tools, list):
                 tools = []
-            await self.session_repo.upsert_tool_usage(session_id, tools)
+            await self.session_repo.upsert_tool_usage(session_id, tools, project_id)
 
             files = session_dict.get("updatedFiles", [])
             if not isinstance(files, list):
                 files = []
-            await self.session_repo.upsert_file_updates(session_id, files)
+            await self.session_repo.upsert_file_updates(session_id, files, project_id)
 
             artifacts = session_dict.get("linkedArtifacts", [])
             if not isinstance(artifacts, list):

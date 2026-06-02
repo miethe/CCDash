@@ -6,10 +6,13 @@
  *
  * Strategy (mirrors DashboardLiveAgentsChip.test.tsx and DashboardFeatureSurface.test.tsx):
  *   - renderToStaticMarkup (server-side, synchronous) for all assertions.
- *   - apiFetch is mocked via vi.mock('../../services/apiClient') so the module
- *     resolves cleanly; the hook's useEffect never fires in renderToStaticMarkup,
- *     so state variants are exercised through minimal inline test-harness
- *     components that mirror the component's rendering contract.
+ *   - useSystemMetricsQuery is mocked via vi.mock so the component renders
+ *     without a QueryClientProvider. T4-006-2 migrated the hook from a manual
+ *     setInterval to TanStack Query (refetchInterval: 30 s), which requires a
+ *     QueryClientProvider in the React tree. Mocking the hook here is the
+ *     lightest-weight fix: it follows the same pattern used in
+ *     LayoutAuthShell.test.tsx (mocking useNotificationsQuery / useAlertsQuery)
+ *     and keeps tests synchronous without a real QueryClient.
  *   - The actual exported SystemMetricsChip is also rendered to confirm the
  *     initial-loading state and to verify the component does not throw.
  *
@@ -29,12 +32,30 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ProjectActiveCountSummary } from '../../types';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
-// apiFetch is used by the component's internal hook. Mock the module so the
-// import resolves cleanly; the actual fetch is never exercised by
-// renderToStaticMarkup tests (useEffect does not fire in server render).
 
+// T4-006-2: SystemMetricsChip now calls useSystemMetricsQuery (TanStack Query)
+// instead of a manual setInterval. Mock the hook so the component can render
+// synchronously in server-render tests without a real QueryClientProvider.
+// The initial-loading state (isLoading=true, data=undefined) is the default.
+vi.mock('../../services/queries/systemMetrics', () => ({
+  useSystemMetricsQuery: () => ({
+    data: undefined,
+    isLoading: true,
+    isError: false,
+    dataUpdatedAt: 0,
+  }),
+  SYSTEM_METRICS_POLL_MS: 30_000,
+  systemMetricsKeys: {
+    all: () => ['system-metrics'],
+    activeCount: () => ['system-metrics', 'active-count'],
+  },
+}));
+
+// apiClient is still imported by the query module; keep the stub so the import
+// resolves cleanly (the hook mock above means apiRequestJson is never invoked).
 vi.mock('../../services/apiClient', () => ({
   apiFetch: vi.fn(),
+  apiRequestJson: vi.fn(),
 }));
 
 // lucide-react renders SVG; replace with lightweight stubs to keep assertions
@@ -555,11 +576,15 @@ describe('T4-003 — expand/collapse toggle: aria-expanded reflects expanded sta
 
 describe('T4-003 — SystemMetricsChip actual component: resilience (no error-boundary throw)', () => {
   beforeEach(() => {
-    // Ensure apiFetch mock does not accidentally resolve during this synchronous test
+    // useSystemMetricsQuery is module-mocked above (isLoading=true, data=undefined).
+    // Clearing mocks here keeps the slate clean between tests without affecting
+    // the module-level vi.mock declaration.
     vi.clearAllMocks();
   });
 
   it('renders without throwing in initial loading state', () => {
+    // T4-006-2: hook is now TanStack Query; QueryClientProvider is not needed
+    // because useSystemMetricsQuery is mocked at the module level above.
     expect(() => renderToStaticMarkup(<SystemMetricsChip />)).not.toThrow();
   });
 

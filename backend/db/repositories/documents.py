@@ -441,6 +441,41 @@ class SqliteDocumentRepository:
 
         return facets
 
+    async def list_summary(
+        self,
+        project_id: str,
+        *,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """Return a lightweight column-projected list for planning-agent consumers.
+
+        Selected columns: ``id``, ``title``, ``status``, ``doc_type``,
+        ``updated_at``.  ``content``, ``frontmatter_json``, ``metadata_json``
+        and other heavy fields are **not** included.
+
+        Results are ordered by ``updated_at DESC, title ASC``.
+
+        This method is intentionally *additive* — it does not replace
+        :meth:`list_all`.
+        """
+        sql = """
+            SELECT
+                id,
+                title,
+                status,
+                doc_type,
+                updated_at
+            FROM documents
+            WHERE project_id = ?
+            ORDER BY
+                COALESCE(updated_at, '') DESC,
+                title ASC
+            LIMIT ?
+        """
+        async with self.db.execute(sql, (project_id, limit)) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM documents WHERE source_file = ?", (source_file,))
         await self.db.commit()

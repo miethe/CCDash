@@ -1,0 +1,517 @@
+name: Enterprise E2E Smoke Gate
+
+# Validates the docker compose enterprise profile (api + worker + worker-watch + postgres)
+# boots correctly, ingests a fixture session file, and returns healthy probe responses.
+# This is the P0-013 exit gate for the ccdash-enterprise-liveness-storage-v1 feature.
+#
+# Depends on: P0-001 (enterprise profile wiring), P0-003 (readyz 503 on no paths),
+#             P0-004 (WATCHFILES_FORCE_POLLING), P0-008 (entrypoint dispatch).
+#
+# OPERATOR NOTE — REQUIRED STATUS CHECK:
+# This workflow MUST be configured as a required status check in GitHub branch protection
+# for the `main` branch. This is a GitHub repository setting, not a YAML option:
+#   Settings → Branches → Branch protection rules → main
+#     → Require status checks to pass before merging
+#     → Search for and add: "Enterprise stack smoke (ingest + readyz)"
+#                           "Negative readyz — no watch paths → 503 configured_no_paths"
+# Without this, a broken enterprise profile or regressed live-data flow can merge to main.
+
+on:
+  pull_request:
+    paths:
+      - "deploy/runtime/**"
+      - "backend/runtime/**"
+      - "backend/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "deploy/runtime/**"
+      - "backend/runtime/**"
+      - "backend/**"
+
+concurrency:
+  group: enterprise-e2e-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Main smoke — bring up enterprise stack, ingest fixture, assert health
+  # ---------------------------------------------------------------------------
+  smoke:
+    name: Enterprise stack smoke (ingest + readyz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Smoke project id used in the generated projects.json registry.
+      SMOKE_PROJECT_ID: "e2e-smoke-project"
+      # Container path where the smoke sessions directory is mounted via the
+      # optional extra mount slot 1. Must match the sessionsPath in the smoke
+      # projects.json registry below.
+      SMOKE_SESSIONS_CONTAINER_PATH: "/mnt/ccdash/smoke-sessions"
+      # Worker-watch probe port (default 9466 for worker-watch in compose.yaml)
+      CCDASH_WORKER_WATCH_PROBE_PORT: "9466"
+      # API host port (default 8000 in compose.yaml)
+      CCDASH_API_PORT: "8000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Prepare a minimal smoke projects.json registry.
+      # The registry points the smoke project's sessionsPath at the container
+      # path where the fixture JSONL directory is mounted (extra mount slot 1).
+      # The workspace and agent home mounts are empty stubs; they are included
+      # because compose.yaml references them in the x-backend-service anchor.
+      # -----------------------------------------------------------------------
+      - name: Generate smoke projects.json
+        run: |
+          mkdir -p /tmp/ccdash-smoke
+
+          cat > /tmp/ccdash-smoke/projects.json <<JSON
+          {
+            "activeProjectId": "${SMOKE_PROJECT_ID}",
+            "projects": [
+              {
+                "id": "${SMOKE_PROJECT_ID}",
+                "name": "E2E Smoke Project",
+                "path": "/workspace/smoke-project",
+                "description": "Disposable project for CI enterprise smoke gate.",
+                "repoUrl": "",
+                "agentPlatforms": ["Claude Code"],
+                "planDocsPath": "plans",
+                "sessionsPath": "${SMOKE_SESSIONS_CONTAINER_PATH}",
+                "progressPath": "progress",
+                "pathConfig": {
+                  "root": {
+                    "field": "root",
+                    "sourceKind": "filesystem",
+                    "displayValue": "/workspace/smoke-project",
+                    "filesystemPath": "/workspace/smoke-project",
+                    "relativePath": "",
+                    "repoRef": null
+                  },
+                  "planDocs": {
+                    "field": "plan_docs",
+                    "sourceKind": "project_root",
+                    "displayValue": "plans",
+                    "filesystemPath": "",
+                    "relativePath": "plans",
+                    "repoRef": null
+                  },
+                  "sessions": {
+                    "field": "sessions",
+                    "sourceKind": "filesystem",
+                    "displayValue": "${SMOKE_SESSIONS_CONTAINER_PATH}",
+                    "filesystemPath": "${SMOKE_SESSIONS_CONTAINER_PATH}",
+                    "relativePath": "",
+                    "repoRef": null
+                  },
+                  "progress": {
+                    "field": "progress",
+                    "sourceKind": "project_root",
+                    "displayValue": "progress",
+                    "filesystemPath": "",
+                    "relativePath": "progress",
+                    "repoRef": null
+                  }
+                },
+                "testConfig": {
+                  "flags": {
+                    "testVisualizerEnabled": false,
+                    "integritySignalsEnabled": false,
+                    "liveTestUpdatesEnabled": false,
+                    "semanticMappingEnabled": false
+                  },
+                  "platforms": [],
+                  "autoSyncOnStartup": true,
+                  "maxFilesPerScan": 50,
+                  "maxParseConcurrency": 2,
+                  "instructionProfile": "",
+                  "instructionNotes": ""
+                },
+                "skillMeat": {
+                  "enabled": false,
+                  "baseUrl": "",
+                  "webBaseUrl": "",
+                  "projectId": "",
+                  "collectionId": "",
+                  "aaaEnabled": false,
+                  "apiKey": "",
+                  "requestTimeoutSeconds": 5.0,
+                  "featureFlags": {
+                    "stackRecommendationsEnabled": false,
+                    "workflowAnalyticsEnabled": false,
+                    "usageAttributionEnabled": false,
+                    "sessionBlockInsightsEnabled": false
+                  }
+                },
+                "display": null
+              }
+            ]
+          }
+          JSON
+
+          # Stub workspace and agent home dirs (required by compose bind-mount anchors).
+          mkdir -p /tmp/ccdash-smoke/workspace/smoke-project
+          mkdir -p /tmp/ccdash-smoke/claude-home
+          mkdir -p /tmp/ccdash-smoke/codex-home
+
+          echo "Smoke project registry written to /tmp/ccdash-smoke/projects.json"
+          cat /tmp/ccdash-smoke/projects.json
+
+      # -----------------------------------------------------------------------
+      # Drop the fixture JSONL into the HOST path that maps to
+      # CCDASH_EXTRA_MOUNT_1_CONTAINER inside the container.
+      # Compose.yaml bind-mount slot 1:
+      #   source: "${CCDASH_EXTRA_MOUNT_1_HOST:-./empty-mounts/optional-1}"
+      #   target: "${CCDASH_EXTRA_MOUNT_1_CONTAINER:-/mnt/ccdash/optional-1}"
+      # We override CCDASH_EXTRA_MOUNT_1_HOST to this directory, and set
+      # CCDASH_EXTRA_MOUNT_1_CONTAINER to SMOKE_SESSIONS_CONTAINER_PATH so the
+      # container path matches what the smoke projects.json registry declares as
+      # sessionsPath.
+      # -----------------------------------------------------------------------
+      - name: Stage fixture session file on host
+        run: |
+          mkdir -p /tmp/ccdash-smoke/sessions
+          cp deploy/runtime/test-fixtures/sessions/smoke-session.jsonl \
+             /tmp/ccdash-smoke/sessions/smoke-session.jsonl
+          echo "Fixture staged:"
+          ls -lh /tmp/ccdash-smoke/sessions/
+
+      # -----------------------------------------------------------------------
+      # Bring up the enterprise stack.
+      # Profiles: enterprise (api + worker + worker-watch + frontend) + postgres.
+      # Note: The worker-watch service was folded into the enterprise profile as
+      # part of P0-001. No extra --profile live-watch is needed here.
+      # -----------------------------------------------------------------------
+      - name: Start enterprise stack
+        run: |
+          docker compose \
+            -f deploy/runtime/compose.yaml \
+            --profile enterprise \
+            --profile postgres \
+            up -d --wait \
+            --wait-timeout 300
+        env:
+          # Registry and path overrides for the smoke project.
+          CCDASH_PROJECTS_FILE: /tmp/ccdash-smoke/projects.json
+
+          # Workspace mount: stub workspace dir → /workspace in container.
+          CCDASH_WORKSPACE_HOST_ROOT: /tmp/ccdash-smoke/workspace
+          CCDASH_WORKSPACE_CONTAINER_ROOT: /workspace
+
+          # Agent home stubs (required by compose anchors even if unused).
+          CCDASH_CLAUDE_HOME: /tmp/ccdash-smoke/claude-home
+          CCDASH_CLAUDE_CONTAINER_HOME: /home/ccdash/.claude
+          CCDASH_CODEX_HOME: /tmp/ccdash-smoke/codex-home
+          CCDASH_CODEX_CONTAINER_HOME: /home/ccdash/.codex
+
+          # Extra mount slot 1: the smoke sessions directory.
+          # HOST path → CONTAINER path that matches sessionsPath in projects.json.
+          CCDASH_EXTRA_MOUNT_1_HOST: /tmp/ccdash-smoke/sessions
+          CCDASH_EXTRA_MOUNT_1_CONTAINER: /mnt/ccdash/smoke-sessions
+
+          # Worker binding: both worker and worker-watch use the smoke project id.
+          CCDASH_WORKER_PROJECT_ID: e2e-smoke-project
+          CCDASH_WORKER_WATCH_PROJECT_ID: e2e-smoke-project
+
+          # Force polling for CI bind mounts (inotify may not be reliable in
+          # Docker-in-Docker / GitHub Actions runner environments).
+          WATCHFILES_FORCE_POLLING: "true"
+
+          # Worker-watch owns startup sync; default worker does not.
+          CCDASH_WORKER_STARTUP_SYNC_ENABLED: "false"
+          CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED: "true"
+
+          # Enable filesystem ingestion on worker-watch.
+          CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED: "true"
+          CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED: "true"
+
+          # Keep startup sync light so the smoke completes quickly.
+          CCDASH_STARTUP_SYNC_LIGHT_MODE: "true"
+
+          # Use dev token for bearer auth (smoke only).
+          CCDASH_API_BEARER_TOKEN: ccdash-smoke-token
+
+          # Disable telemetry export for smoke.
+          CCDASH_TELEMETRY_EXPORT_ENABLED: "false"
+
+          # Write back disabled to avoid filesystem mutations in CI.
+          CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED: "false"
+
+          # Port overrides.
+          CCDASH_API_PORT: "8000"
+          CCDASH_WORKER_PROBE_PORT: "9465"
+          CCDASH_WORKER_WATCH_PROBE_PORT: "9466"
+
+      # -----------------------------------------------------------------------
+      # Run the reusable assertion script.
+      # It polls GET /api/sessions (≥1 row) and asserts worker readyz = 200.
+      # -----------------------------------------------------------------------
+      - name: Assert sessions ingested + worker readyz
+        run: |
+          chmod +x deploy/runtime/scripts/smoke-assert.sh
+          deploy/runtime/scripts/smoke-assert.sh \
+            "http://localhost:${CCDASH_API_PORT}" \
+            "http://localhost:${CCDASH_WORKER_WATCH_PROBE_PORT}" \
+            120
+
+      # -----------------------------------------------------------------------
+      # (Follow-on) NEGATIVE ASSERTION — TODO, depends on T0-003 landing:
+      #
+      # When worker-watch is configured with zero valid watch paths (i.e. the
+      # project id in CCDASH_WORKER_WATCH_PROJECT_ID does not exist in the
+      # registry, or sessionsPath resolves to an empty/missing dir), readyz MUST
+      # return HTTP 503 with reason "configured_no_paths".
+      #
+      # Proposed implementation as a second matrix job (see job `smoke-no-paths`
+      # skeleton below). Blocked on T0-003 (Fail-loud readyz when watch-paths==0)
+      # completing. Uncomment and fill in the job once T0-003 lands.
+      # -----------------------------------------------------------------------
+
+      # -----------------------------------------------------------------------
+      # Teardown: always run even on failure.
+      # -----------------------------------------------------------------------
+      - name: Collect compose logs on failure
+        if: failure()
+        run: |
+          echo "=== api logs ==="
+          docker compose -f deploy/runtime/compose.yaml logs api || true
+          echo "=== worker logs ==="
+          docker compose -f deploy/runtime/compose.yaml logs worker || true
+          echo "=== worker-watch logs ==="
+          docker compose -f deploy/runtime/compose.yaml logs worker-watch || true
+          echo "=== postgres logs ==="
+          docker compose -f deploy/runtime/compose.yaml logs postgres || true
+        env:
+          CCDASH_PROJECTS_FILE: /tmp/ccdash-smoke/projects.json
+
+      - name: Upload compose logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs-${{ github.run_id }}
+          path: /tmp/compose-logs/
+          retention-days: 7
+
+      - name: Teardown compose stack
+        if: always()
+        run: |
+          docker compose -f deploy/runtime/compose.yaml down -v --remove-orphans || true
+        env:
+          CCDASH_PROJECTS_FILE: /tmp/ccdash-smoke/projects.json
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Negative readyz assertion.
+  # T0-003 has landed (bootstrap.py returns 503 when watch paths == 0).
+  # This job intentionally misroutes the project id so worker-watch resolves
+  # zero paths, then asserts HTTP 503 + body contains "configured_no_paths".
+  # Runs independently (no `needs:`); can execute in parallel with `smoke`.
+  # ---------------------------------------------------------------------------
+  smoke-no-paths:
+    name: Negative readyz — no watch paths → 503 configured_no_paths
+    runs-on: ubuntu-latest
+    needs: []          # independent; runs in parallel with smoke
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate empty-project registry
+        run: |
+          mkdir -p /tmp/ccdash-nopath
+
+          # The registry contains "other-project" but CCDASH_WORKER_WATCH_PROJECT_ID
+          # is set to "nonexistent-project". worker-watch resolves zero watch paths
+          # and must return 503 with reason "configured_no_paths".
+          cat > /tmp/ccdash-nopath/projects.json <<'JSON'
+          {
+            "activeProjectId": "other-project",
+            "projects": [
+              {
+                "id": "other-project",
+                "name": "Other Project",
+                "path": "/workspace/other",
+                "description": "",
+                "repoUrl": "",
+                "agentPlatforms": ["Claude Code"],
+                "planDocsPath": "plans",
+                "sessionsPath": "/mnt/ccdash/no-such-sessions",
+                "progressPath": "progress",
+                "pathConfig": {
+                  "root": {
+                    "field": "root",
+                    "sourceKind": "filesystem",
+                    "displayValue": "/workspace/other",
+                    "filesystemPath": "/workspace/other",
+                    "relativePath": "",
+                    "repoRef": null
+                  },
+                  "planDocs": {
+                    "field": "plan_docs",
+                    "sourceKind": "project_root",
+                    "displayValue": "plans",
+                    "filesystemPath": "",
+                    "relativePath": "plans",
+                    "repoRef": null
+                  },
+                  "sessions": {
+                    "field": "sessions",
+                    "sourceKind": "filesystem",
+                    "displayValue": "/mnt/ccdash/no-such-sessions",
+                    "filesystemPath": "/mnt/ccdash/no-such-sessions",
+                    "relativePath": "",
+                    "repoRef": null
+                  },
+                  "progress": {
+                    "field": "progress",
+                    "sourceKind": "project_root",
+                    "displayValue": "progress",
+                    "filesystemPath": "",
+                    "relativePath": "progress",
+                    "repoRef": null
+                  }
+                },
+                "testConfig": {
+                  "flags": {
+                    "testVisualizerEnabled": false,
+                    "integritySignalsEnabled": false,
+                    "liveTestUpdatesEnabled": false,
+                    "semanticMappingEnabled": false
+                  },
+                  "platforms": [],
+                  "autoSyncOnStartup": false,
+                  "maxFilesPerScan": 50,
+                  "maxParseConcurrency": 2,
+                  "instructionProfile": "",
+                  "instructionNotes": ""
+                },
+                "skillMeat": {
+                  "enabled": false,
+                  "baseUrl": "",
+                  "webBaseUrl": "",
+                  "projectId": "",
+                  "collectionId": "",
+                  "aaaEnabled": false,
+                  "apiKey": "",
+                  "requestTimeoutSeconds": 5.0,
+                  "featureFlags": {
+                    "stackRecommendationsEnabled": false,
+                    "workflowAnalyticsEnabled": false,
+                    "usageAttributionEnabled": false,
+                    "sessionBlockInsightsEnabled": false
+                  }
+                },
+                "display": null
+              }
+            ]
+          }
+          JSON
+
+          mkdir -p /tmp/ccdash-nopath/workspace/other
+          mkdir -p /tmp/ccdash-nopath/claude-home
+          mkdir -p /tmp/ccdash-nopath/codex-home
+          mkdir -p /tmp/ccdash-nopath/sessions
+
+          echo "No-paths registry written:"
+          cat /tmp/ccdash-nopath/projects.json
+
+      - name: Start enterprise stack (misconfigured watcher — zero paths)
+        run: |
+          docker compose \
+            -f deploy/runtime/compose.yaml \
+            --profile enterprise \
+            --profile postgres \
+            up -d --wait \
+            --wait-timeout 120
+        env:
+          CCDASH_PROJECTS_FILE: /tmp/ccdash-nopath/projects.json
+
+          CCDASH_WORKSPACE_HOST_ROOT: /tmp/ccdash-nopath/workspace
+          CCDASH_WORKSPACE_CONTAINER_ROOT: /workspace
+
+          CCDASH_CLAUDE_HOME: /tmp/ccdash-nopath/claude-home
+          CCDASH_CLAUDE_CONTAINER_HOME: /home/ccdash/.claude
+          CCDASH_CODEX_HOME: /tmp/ccdash-nopath/codex-home
+          CCDASH_CODEX_CONTAINER_HOME: /home/ccdash/.codex
+
+          CCDASH_EXTRA_MOUNT_1_HOST: /tmp/ccdash-nopath/sessions
+          CCDASH_EXTRA_MOUNT_1_CONTAINER: /mnt/ccdash/no-such-sessions
+
+          # Intentionally mismatched: registry has "other-project" but watcher
+          # binds to "nonexistent-project" → worker-watch resolves 0 paths → 503.
+          CCDASH_WORKER_PROJECT_ID: other-project
+          CCDASH_WORKER_WATCH_PROJECT_ID: nonexistent-project
+
+          WATCHFILES_FORCE_POLLING: "true"
+
+          CCDASH_WORKER_STARTUP_SYNC_ENABLED: "false"
+          CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED: "true"
+          CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED: "true"
+          CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED: "true"
+          CCDASH_STARTUP_SYNC_LIGHT_MODE: "true"
+
+          CCDASH_API_BEARER_TOKEN: ccdash-smoke-token
+          CCDASH_TELEMETRY_EXPORT_ENABLED: "false"
+          CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED: "false"
+
+          CCDASH_API_PORT: "8000"
+          CCDASH_WORKER_PROBE_PORT: "9465"
+          CCDASH_WORKER_WATCH_PROBE_PORT: "9466"
+
+      - name: Assert worker-watch readyz returns 503 configured_no_paths
+        run: |
+          # Allow a short window for worker-watch to finish startup and publish readyz.
+          deadline=$(( $(date +%s) + 60 ))
+          while true; do
+            now=$(date +%s)
+            if (( now >= deadline )); then
+              echo "FAIL: timed out waiting for worker-watch readyz to stabilise"
+              exit 1
+            fi
+            http_code=$(curl -s -o /tmp/nopath_readyz.json -w "%{http_code}" \
+              --max-time 10 \
+              http://localhost:9466/readyz 2>/dev/null || echo "000")
+            if [[ "${http_code}" != "000" ]]; then
+              break
+            fi
+            echo "worker-watch not yet reachable, retrying in 5s ..."
+            sleep 5
+          done
+
+          echo "worker-watch readyz HTTP code: ${http_code}"
+          echo "worker-watch readyz body:"
+          cat /tmp/nopath_readyz.json || true
+
+          [[ "${http_code}" == "503" ]] || {
+            echo "FAIL: expected HTTP 503, got ${http_code}"
+            exit 1
+          }
+          grep -q "configured_no_paths" /tmp/nopath_readyz.json || {
+            echo "FAIL: readyz body does not contain reason 'configured_no_paths'"
+            exit 1
+          }
+          echo "PASS: worker-watch readyz returned 503 configured_no_paths as expected."
+
+      - name: Collect compose logs on failure
+        if: failure()
+        run: |
+          echo "=== api logs ==="
+          docker compose -f deploy/runtime/compose.yaml logs api || true
+          echo "=== worker logs ==="
+          docker compose -f deploy/runtime/compose.yaml logs worker || true
+          echo "=== worker-watch logs ==="
+          docker compose -f deploy/runtime/compose.yaml logs worker-watch || true
+          echo "=== postgres logs ==="
+          docker compose -f deploy/runtime/compose.yaml logs postgres || true
+        env:
+          CCDASH_PROJECTS_FILE: /tmp/ccdash-nopath/projects.json
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f deploy/runtime/compose.yaml down -v --remove-orphans || true
+        env:
+          CCDASH_PROJECTS_FILE: /tmp/ccdash-nopath/projects.json

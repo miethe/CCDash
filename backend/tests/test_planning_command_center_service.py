@@ -5,16 +5,30 @@ from types import SimpleNamespace
 
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.services.agent_queries.models import PlanningCommandCenterGitStateDTO
-from backend.application.services.agent_queries.planning_command_center import PlanningCommandCenterQueryService
+from backend.application.services.agent_queries.planning_command_center import (
+    PlanningCommandCenterQueryService,
+    _NullGitProbe,
+    _pcc_params,
+)
 from backend.models import Project
 
 
 class _FeaturesRepo:
     def __init__(self, rows: list[dict]) -> None:
         self.rows = rows
+        self.list_all_call_count = 0
+        self.get_by_id_call_count = 0
 
     async def list_all(self, project_id: str) -> list[dict]:
+        self.list_all_call_count += 1
         return list(self.rows)
+
+    async def get_by_id(self, feature_id: str) -> dict | None:
+        self.get_by_id_call_count += 1
+        for row in self.rows:
+            if row.get("id") == feature_id:
+                return row
+        return None
 
 
 class _DocumentsRepo:
@@ -173,6 +187,174 @@ class PlanningCommandCenterQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item.worktree.branch, "codex/feat-1")
         self.assertEqual(item.git_state.head, "abc1234")
         self.assertTrue(item.capabilities.open_pr)
+
+
+def _make_feature_row(feature_id: str = "feat-1") -> dict:
+    return {
+        "id": feature_id,
+        "name": f"Feature {feature_id}",
+        "status": "in-progress",
+        "updated_at": "2026-05-28T00:00:00+00:00",
+        "data_json": json.dumps(
+            {
+                "id": feature_id,
+                "name": f"Feature {feature_id}",
+                "status": "in-progress",
+                "summary": "Test feature",
+                "priority": "medium",
+                "tags": [],
+                "phases": [
+                    {
+                        "id": f"{feature_id}:phase-1",
+                        "phase": "1",
+                        "title": "Phase 1",
+                        "status": "active",
+                        "progress": 0,
+                        "totalTasks": 1,
+                        "completedTasks": 0,
+                        "tasks": [],
+                    }
+                ],
+            }
+        ),
+    }
+
+
+def _make_storage(feature_row: dict) -> SimpleNamespace:
+    return SimpleNamespace(
+        features=lambda: _FeaturesRepo([feature_row]),
+        documents=lambda: _DocumentsRepo([]),
+        worktree_contexts=lambda: _WorktreeRepo([]),
+    )
+
+
+class P2009MemoizationTests(unittest.TestCase):
+    """P2-009: get_command_center is decorated with @memoized_query."""
+
+    def test_get_command_center_has_memoized_query_wrapper(self) -> None:
+        # The decorator wraps the original function and sets __wrapped__.
+        method = PlanningCommandCenterQueryService.get_command_center
+        self.assertTrue(
+            hasattr(method, "__wrapped__"),
+            "get_command_center must be wrapped by @memoized_query (missing __wrapped__)",
+        )
+
+    def test_pcc_params_extractor_returns_project_id_key(self) -> None:
+        # _pcc_params must return "project_id" so the decorator pops it into
+        # the cache-key scope slot (not double-hashed into the param dict).
+        project = Project(id="proj-1", name="P1", path="/tmp/p1")
+        ctx = _request_context(project)
+        ports = object()
+        svc = PlanningCommandCenterQueryService()
+        params = _pcc_params(svc, ctx, ports, project_id_override="proj-1", q="search", page=2, page_size=25)
+        self.assertIn("project_id", params, "_pcc_params must include 'project_id' for scope-slot derivation")
+        self.assertEqual(params["project_id"], "proj-1")
+        self.assertEqual(params["q"], "search")
+        self.assertEqual(params["page"], 2)
+        self.assertEqual(params["page_size"], 25)
+
+
+class P2011SingleFeatureFastPathTests(unittest.IsolatedAsyncioTestCase):
+    """P2-011: get_command_center_item uses get_by_id, not a 500-item scan."""
+
+    async def test_get_command_center_item_uses_get_by_id(self) -> None:
+        project = Project(id="proj-1", name="Project One", path="/tmp/project-one")
+        feature_row = _make_feature_row("feat-1")
+        features_repo = _FeaturesRepo([feature_row])
+        storage = SimpleNamespace(
+            features=lambda: features_repo,
+            documents=lambda: _DocumentsRepo([]),
+            worktree_contexts=lambda: _WorktreeRepo([]),
+        )
+        ports = SimpleNamespace(storage=storage, workspace_registry=_WorkspaceRegistry(project))
+        service = PlanningCommandCenterQueryService()
+
+        item = await service.get_command_center_item(
+            _request_context(project),
+            ports,
+            feature_id="feat-1",
+            project_id_override="proj-1",
+        )
+
+        self.assertIsNotNone(item, "Expected a non-None item for an existing feature")
+        self.assertEqual(item.feature.feature_id, "feat-1")
+        # get_by_id must have been called exactly once (not a list_all scan).
+        self.assertEqual(features_repo.get_by_id_call_count, 1, "get_by_id must be called exactly once")
+        # list_all must NOT have been called for features (no 500-item scan).
+        self.assertEqual(
+            features_repo.list_all_call_count,
+            0,
+            "list_all must NOT be called on the features repo for get_command_center_item",
+        )
+
+    async def test_get_command_center_item_returns_none_for_missing_feature(self) -> None:
+        project = Project(id="proj-1", name="Project One", path="/tmp/project-one")
+        features_repo = _FeaturesRepo([])
+        storage = SimpleNamespace(
+            features=lambda: features_repo,
+            documents=lambda: _DocumentsRepo([]),
+            worktree_contexts=lambda: _WorktreeRepo([]),
+        )
+        ports = SimpleNamespace(storage=storage, workspace_registry=_WorkspaceRegistry(project))
+        service = PlanningCommandCenterQueryService()
+
+        item = await service.get_command_center_item(
+            _request_context(project),
+            ports,
+            feature_id="nonexistent-feature",
+            project_id_override="proj-1",
+        )
+        self.assertIsNone(item)
+
+
+class P2013NullGitProbeTests(unittest.IsolatedAsyncioTestCase):
+    """P2-013: V1 build defaults to _NullGitProbe; no git subprocess per item."""
+
+    def test_default_git_probe_is_null_probe(self) -> None:
+        svc = PlanningCommandCenterQueryService()
+        self.assertIsInstance(
+            svc.git_probe,
+            _NullGitProbe,
+            "PlanningCommandCenterQueryService must default to _NullGitProbe (parity with MPCC-206)",
+        )
+
+    def test_explicit_git_probe_overrides_null_probe(self) -> None:
+        probe = _GitProbe()
+        svc = PlanningCommandCenterQueryService(git_probe=probe)
+        self.assertIs(svc.git_probe, probe)
+
+    async def test_null_probe_returns_sparse_git_state(self) -> None:
+        probe = _NullGitProbe()
+        state = await probe.probe("/some/path")
+        # path_exists=None is the sentinel that signals "not yet probed".
+        self.assertIsNone(state.path_exists)
+        self.assertGreater(len(state.warnings), 0, "NullGitProbe should include a deferral warning")
+
+    async def test_command_center_with_null_probe_builds_items_without_git_io(self) -> None:
+        """End-to-end: get_command_center with default (NullGitProbe) returns items."""
+        project = Project(id="proj-1", name="Project One", path="/tmp/project-one")
+        feature_row = _make_feature_row("feat-1")
+        storage = _make_storage(feature_row)
+        ports = SimpleNamespace(storage=storage, workspace_registry=_WorkspaceRegistry(project))
+
+        # Service with default _NullGitProbe (no real git I/O).
+        service = PlanningCommandCenterQueryService()
+
+        page = await service.get_command_center(
+            _request_context(project),
+            ports,
+            project_id_override="proj-1",
+            page=1,
+            page_size=10,
+        )
+
+        self.assertIn(page.status, {"ok", "partial"})
+        self.assertEqual(page.total, 1)
+        item = page.items[0]
+        self.assertEqual(item.feature.feature_id, "feat-1")
+        # git_state must be present but sparse (path_exists=None from NullGitProbe).
+        self.assertIsNotNone(item.git_state)
+        self.assertIsNone(item.git_state.path_exists)
 
 
 if __name__ == "__main__":

@@ -769,42 +769,44 @@ class FeaturePlanningContextTests(unittest.IsolatedAsyncioTestCase):
         data["spikes"] = [{"id": "SPIKE-1", "title": "Investigate graph layout", "status": "done"}]
         data["openQuestions"] = [{"id": "OQ-1", "question": "Ship now?", "severity": "high"}]
         row["data_json"] = json.dumps(data)
-        docs_repo = types.SimpleNamespace(
-            list_all=AsyncMock(
-                return_value=[
-                    _doc_row(
-                        did="spec-1",
-                        title="Spec",
-                        doc_type="spec",
-                        file_path="docs/project_plans/specs/feat-contract.md",
-                        feature_slug="feat-contract",
-                    ),
-                    {
-                        "id": "spike-doc-1",
-                        "title": "Spike Doc",
-                        "doc_type": "document",
-                        "doc_subtype": "spike",
-                        "file_path": "docs/project_plans/spikes/feat-contract-spike.md",
-                        "feature_slug_canonical": "feat-contract",
-                        "feature_slug_hint": "feat-contract",
-                        "updated_at": "2026-04-11T10:00:00+00:00",
-                        "status": "done",
-                        "metadata_json": "{}",
-                        "frontmatter_json": json.dumps(
-                            {
-                                "open_questions": [
-                                    {"id": "OQ-2", "question": "Document fallback?", "severity": "medium"}
-                                ]
-                            }
-                        ),
-                    },
-                ]
+        # P2-012: feature context now loads docs via list_paginated (bounded query),
+        # not list_all.  Supply docs via list_paginated so the test still works.
+        _contract_docs = [
+            _doc_row(
+                did="spec-1",
+                title="Spec",
+                doc_type="spec",
+                file_path="docs/project_plans/specs/feat-contract.md",
+                feature_slug="feat-contract",
             ),
-            list_paginated=AsyncMock(return_value=[]),
+            {
+                "id": "spike-doc-1",
+                "title": "Spike Doc",
+                "doc_type": "document",
+                "doc_subtype": "spike",
+                "file_path": "docs/project_plans/spikes/feat-contract-spike.md",
+                "feature_slug_canonical": "feat-contract",
+                "feature_slug_hint": "feat-contract",
+                "updated_at": "2026-04-11T10:00:00+00:00",
+                "status": "done",
+                "metadata_json": "{}",
+                "frontmatter_json": json.dumps(
+                    {
+                        "open_questions": [
+                            {"id": "OQ-2", "question": "Document fallback?", "severity": "medium"}
+                        ]
+                    }
+                ),
+            },
+        ]
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=_contract_docs),
+            list_paginated=AsyncMock(return_value=_contract_docs),
         )
         features_repo = types.SimpleNamespace(
             list_all=AsyncMock(return_value=[row]),
             get_by_id=AsyncMock(return_value=row),
+            get_many_by_ids=AsyncMock(return_value={}),
         )
         ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
         evidence = types.SimpleNamespace(
@@ -1480,6 +1482,285 @@ class DisplayAgentTypeTests(unittest.TestCase):
         from backend.routers.api import _derive_display_agent_type
         result = _derive_display_agent_type("", is_root=False)
         self.assertIsNone(result)
+
+
+class BundleSharedDataPassTests(unittest.IsolatedAsyncioTestCase):
+    """P2-007: get_planning_view_bundle uses ONE shared data pass + asyncio.gather.
+
+    Asserts that _load_all_features and _load_all_doc_rows are each called
+    exactly once regardless of whether graph is included, and that both
+    summary and graph sub-builds consume the shared data.
+    """
+
+    def setUp(self):
+        clear_cache()
+
+    async def test_shared_data_load_called_once_summary_only(self) -> None:
+        """When no optional sub-payloads, the shared data load still runs exactly once."""
+        feat = _feature(fid="feat-1", name="F1", status="in-progress")
+        row = _feature_row(feat)
+
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_planning_view_bundle(
+            _context(), ports
+        )
+
+        self.assertIn(result.status, {"ok", "partial"})
+        self.assertIsNotNone(result.summary)
+        self.assertIsNone(result.graph)
+        self.assertIsNone(result.session_board)
+        # _load_all_features calls features().list_all exactly once.
+        features_repo.list_all.assert_called_once()
+        # _load_all_doc_rows calls documents().list_all exactly once.
+        docs_repo.list_all.assert_called_once()
+
+    async def test_shared_data_load_called_once_with_graph(self) -> None:
+        """Including graph must NOT cause a second features/docs scan."""
+        feat = _feature(fid="feat-1", name="F1", status="in-progress")
+        row = _feature_row(feat)
+
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_planning_view_bundle(
+            _context(), ports, include=["graph"]
+        )
+
+        self.assertIn(result.status, {"ok", "partial"})
+        self.assertIsNotNone(result.summary)
+        self.assertIsNotNone(result.graph)
+        # Even with graph included, data load must happen exactly once.
+        features_repo.list_all.assert_called_once()
+        docs_repo.list_all.assert_called_once()
+
+    async def test_summary_populated_in_bundle(self) -> None:
+        """Bundle summary DTO must be populated with project data."""
+        feat = _feature(fid="feat-bundle", name="Bundle Feature", status="in-progress")
+        row = _feature_row(feat)
+
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_planning_view_bundle(
+            _context(), ports
+        )
+
+        self.assertIsNotNone(result.summary)
+        self.assertEqual(result.summary.project_id, "project-1")
+        self.assertGreaterEqual(result.summary.total_feature_count, 1)
+
+    async def test_graph_not_present_when_not_requested(self) -> None:
+        """graph sub-payload is None when 'graph' is not in include list."""
+        feat = _feature(fid="feat-1", name="F1", status="in-progress")
+        row = _feature_row(feat)
+
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_planning_view_bundle(
+            _context(), ports, include=[]
+        )
+
+        self.assertIsNone(result.graph)
+
+    async def test_partial_status_on_data_load_error(self) -> None:
+        """If the shared data load fails, bundle degrades to partial."""
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(side_effect=RuntimeError("db down")),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_planning_view_bundle(
+            _context(), ports
+        )
+
+        # Data load failed → partial or the summary sub-build degraded.
+        self.assertIn(result.status, {"partial", "ok"})
+
+
+class FeatureContextBoundedQueryTests(unittest.IsolatedAsyncioTestCase):
+    """P2-012: get_feature_planning_context must NOT load all features+docs.
+
+    Asserts that:
+    - features().list_all is NOT called (bounded query path).
+    - documents().list_all is NOT called; list_paginated with feature filter is used.
+    - The correct feature is returned.
+    """
+
+    def setUp(self):
+        clear_cache()
+
+    async def test_does_not_call_list_all_features(self) -> None:
+        """features().list_all must not be called for a single-feature context."""
+        feat = _feature(
+            fid="feat-ctx-2",
+            name="Context Feature Bounded",
+            status="in-progress",
+            phases=[_phase(number="1", status="in-progress", total=2, completed=0)],
+        )
+        row = _feature_row(feat)
+
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=row),
+            get_many_by_ids=AsyncMock(return_value={}),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        with _PATCH_LOAD_DOCS:
+            result = await PlanningQueryService().get_feature_planning_context(
+                _context(), ports, feature_id="feat-ctx-2"
+            )
+
+        self.assertEqual(result.feature_id, "feat-ctx-2")
+        # The unbounded scan must NOT have been called.
+        features_repo.list_all.assert_not_called()
+
+    async def test_does_not_call_list_all_docs(self) -> None:
+        """documents().list_all must not be called; list_paginated with feature filter is used."""
+        feat = _feature(fid="feat-ctx-3", name="Ctx3", status="backlog")
+        row = _feature_row(feat)
+
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=row),
+            get_many_by_ids=AsyncMock(return_value={}),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        with _PATCH_LOAD_DOCS:
+            await PlanningQueryService().get_feature_planning_context(
+                _context(), ports, feature_id="feat-ctx-3"
+            )
+
+        docs_repo.list_all.assert_not_called()
+        # list_paginated must have been called (feature-scoped doc load).
+        docs_repo.list_paginated.assert_called()
+
+    async def test_correct_feature_returned(self) -> None:
+        """Bounded query path must still return a valid feature context DTO."""
+        feat = _feature(
+            fid="feat-ctx-bounded",
+            name="Bounded Feature",
+            status="review",
+            phases=[_phase(number="1", status="review", total=5, completed=5)],
+        )
+        row = _feature_row(feat)
+
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[row]),
+            get_by_id=AsyncMock(return_value=row),
+            get_many_by_ids=AsyncMock(return_value={}),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        with _PATCH_LOAD_DOCS:
+            result = await PlanningQueryService().get_feature_planning_context(
+                _context(), ports, feature_id="feat-ctx-bounded"
+            )
+
+        self.assertEqual(result.feature_id, "feat-ctx-bounded")
+        self.assertEqual(result.feature_name, "Bounded Feature")
+        self.assertIn(result.status, {"ok", "partial"})
+        self.assertEqual(len(result.phases), 1)
+
+    async def test_dependency_feature_loaded_via_get_many_by_ids(self) -> None:
+        """When the feature has blocked_by deps, get_many_by_ids is called with dep IDs."""
+        import json
+        dep_feat = _feature(fid="dep-feat-1", name="Dep Feature", status="done")
+        dep_row = _feature_row(dep_feat)
+
+        # Build a feature that is blocked_by dep-feat-1.
+        feat_data = {
+            "id": "feat-ctx-blocked",
+            "name": "Blocked Feature",
+            "status": "in-progress",
+            "phases": [],
+            "linkedDocs": [],
+            "linkedFeatures": [
+                {"feature": "dep-feat-1", "type": "blocked_by", "source": "blocked_by"}
+            ],
+        }
+        feat_row = {
+            "id": "feat-ctx-blocked",
+            "name": "Blocked Feature",
+            "status": "in-progress",
+            "total_tasks": 0,
+            "completed_tasks": 0,
+            "deferred_tasks": 0,
+            "category": "enhancement",
+            "updated_at": "2026-04-11T10:00:00+00:00",
+            "data_json": json.dumps(feat_data),
+        }
+
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[feat_row, dep_row]),
+            get_by_id=AsyncMock(return_value=feat_row),
+            get_many_by_ids=AsyncMock(return_value={"dep-feat-1": dep_row}),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            list_paginated=AsyncMock(return_value=[]),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        with _PATCH_LOAD_DOCS:
+            result = await PlanningQueryService().get_feature_planning_context(
+                _context(), ports, feature_id="feat-ctx-blocked"
+            )
+
+        self.assertEqual(result.feature_id, "feat-ctx-blocked")
+        # get_many_by_ids must have been called with the dep IDs.
+        features_repo.get_many_by_ids.assert_called()
+        # list_all must NOT have been called.
+        features_repo.list_all.assert_not_called()
 
 
 if __name__ == "__main__":

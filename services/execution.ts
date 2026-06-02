@@ -370,6 +370,10 @@ export interface LaunchCapabilities {
   planningEnabled: boolean;
   /** Whether multi-project command-center UI and endpoints are enabled (MPCC-102). Defaults false; absent = off. */
   multiProjectCommandCenterEnabled?: boolean;
+  /** Whether ARC (Agent Review Council) surfaces are enabled. Defaults false; absent = off. */
+  arcEnabled?: boolean;
+  /** Whether MeatyWiki integration surfaces are enabled. Defaults false; absent = off. */
+  meatyWikiEnabled?: boolean;
 }
 
 export async function getLaunchCapabilities(): Promise<LaunchCapabilities> {

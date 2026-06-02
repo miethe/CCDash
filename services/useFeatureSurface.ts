@@ -331,8 +331,10 @@ export function useFeatureSurface(options: UseFeatureSurfaceOptions = {}): UseFe
   const cacheKey = buildCacheKey(query);
 
   // ── List-tier query ──────────────────────────────────────────────────────────
-  // staleTime: 0 — the list is always considered stale; TQ will refetch on every
-  // mount/focus unless the query key is still in flight.
+  // T4-005: staleTime: 30_000 — the list is considered fresh for 30 s so
+  // remounts within that window skip a redundant network fetch.  SSE-driven
+  // invalidation (queryClient.invalidateQueries) still triggers an immediate
+  // refetch when SSE is active, so freshness is not degraded in that path.
 
   const listQuery = useQuery<ListQueryData, Error>({
     queryKey: featureSurfaceKeys.list(projectId, queryToKeyParams(query), query.page),
@@ -345,7 +347,7 @@ export function useFeatureSurface(options: UseFeatureSurfaceOptions = {}): UseFe
         queryHash: page.queryHash ?? '',
       };
     },
-    staleTime: 0,
+    staleTime: 30_000,
     enabled: !!projectId && featureSurfaceV2Enabled,
   });
 

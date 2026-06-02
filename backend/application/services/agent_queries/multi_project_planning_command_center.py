@@ -60,6 +60,9 @@ from backend.models import (
     AggregatePagination,
     AggregateWorkItem,
     MultiProjectCommandCenterResponse,
+    PortfolioAttentionSummary,
+    PortfolioProjectEntry,
+    PortfolioRollupResponse,
     Project,
     ProjectDisplayMetadata,
     ProjectIdentityFields,
@@ -285,6 +288,21 @@ async def _build_project_summary(
                     exc,
                 )
 
+        # Token and cost rollup from session stats (P5-003a).
+        total_tokens = 0
+        total_cost = 0.0
+        try:
+            sessions_repo = ports.storage.sessions()
+            stats = await sessions_repo.get_project_stats(project.id)
+            total_tokens = int(stats.get("tokens") or 0)
+            total_cost = float(stats.get("cost") or 0.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "mpcc summary: token stats failed for project=%s: %s",
+                project.id,
+                exc,
+            )
+
         counts = ProjectWorkItemCounts(
             work_items=work_items,
             blocked=blocked,
@@ -292,6 +310,8 @@ async def _build_project_summary(
             stale=stale,
             active_sessions=active_sessions,
             errors=error_items,
+            total_tokens=total_tokens,
+            total_cost=total_cost,
         )
 
         return ProjectSummary(
@@ -318,6 +338,19 @@ def _project_identity(
         project_color=display_metadata.color,
         project_group=display_metadata.group,
     )
+
+
+# ── Portfolio rollup cache param extractor ───────────────────────────────────
+
+def _portfolio_rollup_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    *,
+    project_ids: Sequence[str] | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    return {"project_ids": sorted(project_ids) if project_ids else []}
 
 
 # ── Service ──────────────────────────────────────────────────────────────────
@@ -639,3 +672,134 @@ class MultiProjectPlanningCommandCenterQueryService:
             return str(item.last_activity.get("timestamp") or "")
 
         return sorted(items, key=sort_key, reverse=reverse)
+
+    # ------------------------------------------------------------------
+    # P5-003a: Portfolio rollup
+    # ------------------------------------------------------------------
+
+    @memoized_query("planning_portfolio_rollup", param_extractor=_portfolio_rollup_params)
+    async def get_portfolio_rollup(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        project_ids: Sequence[str] | None = None,
+    ) -> PortfolioRollupResponse:
+        """Return a lightweight portfolio rollup spanning all registered projects.
+
+        Reuses ``_build_project_summary`` (MPCC-203) for per-project fan-out.
+        Uses column-projected list_summary path (NOT the data_json BLOB) via
+        the existing ``get_project_stats`` + ``count_active`` primitives.
+
+        Response shape §7.1:
+          { projects:[{projectId,display,statusCounts,activeSessions,
+                       changedRecently,needsAttention,tokenTotal}],
+            attention:{activeNow,changedRecently,needsAttention,nextWork},
+            generatedAt }
+        """
+        t_start = time.monotonic()
+
+        projects = ports.workspace_registry.list_projects()
+        if project_ids is not None:
+            allowed = set(project_ids)
+            projects = [p for p in projects if p.id in allowed]
+
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
+        display_map: dict[str, ProjectDisplayMetadata] = {
+            p.id: resolve_display_metadata(p) for p in projects
+        }
+
+        # Fan-out: collect items (unprobed) for each project so we can derive
+        # status counts cheaply without a full board load.
+        fan_out_tasks = [
+            _collect_project_items(self._v1, ports, project, semaphore)
+            for project in projects
+        ]
+        per_project_results = await asyncio.gather(*fan_out_tasks, return_exceptions=False)
+
+        project_items_map: dict[str, list[PlanningCommandCenterItemDTO]] = {}
+        for proj_id, items, _feat_rows, _doc_rows, _partial, _warnings in per_project_results:
+            project_items_map[proj_id] = items
+
+        # Build summaries in parallel using the MPCC-203 helper.
+        summary_tasks = [
+            _build_project_summary(
+                ports=ports,
+                project=proj,
+                items=project_items_map.get(proj.id, []),
+                partial=False,
+                warnings=[],
+                semaphore=semaphore,
+                display_metadata=display_map[proj.id],
+            )
+            for proj in projects
+        ]
+        project_summaries: list[ProjectSummary] = await asyncio.gather(*summary_tasks)
+
+        # Build per-project entries and attention summary.
+        entries: list[PortfolioProjectEntry] = []
+        active_now = 0
+        changed_recently_count = 0
+        needs_attention_count = 0
+        next_work_ids: list[str] = []
+
+        _STALE_THRESHOLD_SECONDS = 3600  # 1 hour = "changed recently"
+
+        for ps in project_summaries:
+            status_counts: dict[str, int] = {}
+            items = project_items_map.get(ps.project_id, [])
+            for it in items:
+                eff = it.status.effective_status.lower()
+                status_counts[eff] = status_counts.get(eff, 0) + 1
+
+            changed = (
+                ps.freshness_seconds is not None
+                and ps.freshness_seconds <= _STALE_THRESHOLD_SECONDS
+            )
+            needs_attn = ps.is_stale is True or bool(ps.error)
+
+            if ps.counts.active_sessions > 0:
+                active_now += 1
+            if changed:
+                changed_recently_count += 1
+            if needs_attn:
+                needs_attention_count += 1
+
+            # Next-work: ready items in this project.
+            for it in items:
+                if (
+                    it.launch_batch is not None
+                    and it.launch_batch.readiness.lower() == "ready"
+                ):
+                    next_work_ids.append(it.feature.feature_id)
+
+            entries.append(PortfolioProjectEntry(
+                project_id=ps.project_id,
+                display_name=ps.name,
+                status_counts=status_counts,
+                active_sessions=ps.counts.active_sessions,
+                changed_recently=changed,
+                needs_attention=needs_attn,
+                token_total=ps.counts.total_tokens,
+            ))
+
+        attention = PortfolioAttentionSummary(
+            active_now=active_now,
+            changed_recently=changed_recently_count,
+            needs_attention=needs_attention_count,
+            next_work=next_work_ids[:20],  # cap for response size
+        )
+
+        duration_ms = (time.monotonic() - t_start) * 1000
+        logger.info(
+            "mpcc portfolio rollup: completed in %.1f ms — projects=%d",
+            duration_ms,
+            len(projects),
+        )
+
+        return PortfolioRollupResponse(
+            status="ok",
+            projects=entries,
+            attention=attention,
+            generated_at=datetime.now(timezone.utc),
+        )

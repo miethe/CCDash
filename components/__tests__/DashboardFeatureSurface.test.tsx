@@ -203,6 +203,21 @@ vi.mock('../../services/analytics', () => ({
   },
 }));
 
+// T4-011: Mock new TQ hooks added to dashboard.ts (useDashboardChartQuery, useLiveAgentsCountQuery)
+vi.mock('../../services/queries/dashboard', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../services/queries/dashboard')>();
+  return {
+    ...original,
+    useDashboardBundleQuery: () => ({ sessions: [], taskCounts: {}, isLoading: false, error: null }),
+    useDashboardChartQuery: () => ({ chartData: [], costCalibration: null, isLoading: false, isError: false }),
+    useLiveAgentsCountQuery: () => null,
+  };
+});
+
+vi.mock('../../services/queries/analytics', () => ({
+  useAnalyticsOverviewQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+}));
+
 vi.mock('../../services/geminiService', () => ({
   generateDashboardInsight: vi.fn().mockResolvedValue('Mock insight'),
 }));

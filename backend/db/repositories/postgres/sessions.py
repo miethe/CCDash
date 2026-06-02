@@ -40,7 +40,7 @@ class PostgresSessionRepository:
                 dates_json, timeline_json, impact_history_json,
                 thinking_level, session_forensics_json
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52)
-            ON CONFLICT(id) DO UPDATE SET
+            ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
                 platform_version=EXCLUDED.platform_version,
@@ -605,7 +605,7 @@ class PostgresSessionRepository:
 
     # ── Detail tables ───────────────────────────────────────────────
 
-    async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:
+    async def upsert_logs(self, session_id: str, logs: list[dict], project_id: str = "") -> None:
         # Deduplicate by source_log_id (non-empty) before building the record list.
         # Duplicates produced by the parser are a known upstream issue (Fix C) — this
         # guard prevents the partial-unique index constraint from firing.
@@ -656,39 +656,42 @@ class PostgresSessionRepository:
                     log.get("agentName"),
                     tool_name, tool_call_id, log.get("relatedToolCallId"),
                     log.get("linkedSessionId"), tool_args, tool_output, tool_status, metadata_json,
+                    project_id,
                 ))
 
             await conn.executemany(
                 """INSERT INTO session_logs
                     (session_id, log_index, source_log_id, timestamp, speaker, type, content,
                      agent_name, tool_name, tool_call_id, related_tool_call_id,
-                     linked_session_id, tool_args, tool_output, tool_status, metadata_json)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                     linked_session_id, tool_args, tool_output, tool_status, metadata_json,
+                     project_id)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                    ON CONFLICT ON CONSTRAINT idx_logs_source_log_unique DO NOTHING""",
                 records
             )
 
-    async def upsert_tool_usage(self, session_id: str, tools: list[dict]) -> None:
+    async def upsert_tool_usage(self, session_id: str, tools: list[dict], project_id: str = "") -> None:
         async with postgres_transaction(self.db) as conn:
             await conn.execute("DELETE FROM session_tool_usage WHERE session_id = $1", session_id)
             if not tools:
                 return
-            
+
             records = []
             for t in tools:
                 records.append((
                     session_id, t.get("name", ""), t.get("count", 0),
                     int(t.get("count", 0) * t.get("successRate", 1.0)),
                     max(0, int(t.get("totalMs", 0) or 0)),
+                    project_id,
                 ))
-                
+
             await conn.executemany(
-                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms)
-                   VALUES ($1, $2, $3, $4, $5)""",
+                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms, project_id)
+                   VALUES ($1, $2, $3, $4, $5, $6)""",
                 records
             )
 
-    async def upsert_file_updates(self, session_id: str, updates: list[dict]) -> None:
+    async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
         async with postgres_transaction(self.db) as conn:
             await conn.execute("DELETE FROM session_file_updates WHERE session_id = $1", session_id)
             if not updates:
@@ -709,14 +712,15 @@ class PostgresSessionRepository:
                     u.get("rootSessionId", ""),
                     u.get("sourceLogId"),
                     u.get("sourceToolName"),
+                    project_id,
                 ))
-            
+
             await conn.executemany(
                 """INSERT INTO session_file_updates (
                     session_id, file_path, action, file_type, action_timestamp,
                     additions, deletions, agent_name, thread_session_id, root_session_id,
-                    source_log_id, source_tool_name
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)""",
+                    source_log_id, source_tool_name, project_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)""",
                 records
             )
 

@@ -45,6 +45,12 @@ const PlanningHomePage = lazyNamed(PlanningModule, 'PlanningHomePage');
 const PlanningNodeDetail = lazyNamed(PlanningModule, 'PlanningNodeDetail');
 const PlanningRouteLayout = lazyNamed(PlanningModule, 'PlanningRouteLayout');
 const ArtifactDrillDownPage = lazyNamed(() => import('./components/Planning/ArtifactDrillDownPage'), 'ArtifactDrillDownPage');
+// P5-006: Tabbed feature detail shell — replaces PlanningNodeDetail at the route level.
+// PlanningNodeDetail remains importable for reuse in drawer/modal contexts.
+const FeatureDetailShell = lazyNamed(
+  () => import('./components/Planning/FeatureDetailShell'),
+  'FeatureDetailShell',
+);
 
 function RoutePending() {
   return (
@@ -109,7 +115,8 @@ const App: React.FC = () => {
                         <Route path="/execution" element={<FeatureExecutionWorkbench />} />
                         <Route element={<PlanningRouteLayout />}>
                           <Route path="/planning" element={<PlanningHomePage />} />
-                          <Route path="/planning/feature/:featureId" element={<PlanningNodeDetail />} />
+                          {/* P5-006: Swap to tabbed FeatureDetailShell. PlanningNodeDetail kept for modal/drawer reuse. */}
+                          <Route path="/planning/feature/:featureId" element={<FeatureDetailShell />} />
                           <Route path="/planning/artifacts/:type" element={<ArtifactDrillDownPage />} />
                         </Route>
                         <Route path="/tests" element={<TestingPage />} />

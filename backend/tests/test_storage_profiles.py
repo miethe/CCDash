@@ -40,6 +40,8 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(profile.isolation_mode, "dedicated")
 
     def test_derives_enterprise_profile_from_postgres_backend(self) -> None:
+        # T0-001: Default enterprise profile now has filesystem_source_of_truth=True (default-on
+        # ingestion). Phase 0 intent: a bare enterprise deploy must ingest live data by default.
         profile = resolve_storage_profile_config(
             {
                 "CCDASH_DB_BACKEND": "postgres",
@@ -49,8 +51,22 @@ class StorageProfileConfigTests(unittest.TestCase):
 
         self.assertEqual(profile.profile, "enterprise")
         self.assertEqual(profile.db_backend, "postgres")
-        self.assertFalse(profile.filesystem_source_of_truth)
+        self.assertTrue(profile.filesystem_source_of_truth)
         self.assertEqual(profile.database_url, "postgresql://db.example/ccdash")
+
+    def test_enterprise_profile_filesystem_ingestion_can_be_disabled(self) -> None:
+        # Companion to the default-on test: explicit CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED=false
+        # must still override the Phase 0 default, proving the env-var override path is intact.
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "false",
+            }
+        )
+
+        self.assertEqual(profile.profile, "enterprise")
+        self.assertFalse(profile.filesystem_source_of_truth)
 
     def test_explicit_local_profile_rejects_postgres_backend(self) -> None:
         with self.assertRaises(ValidationError):

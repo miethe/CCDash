@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -742,7 +742,7 @@ const getFeatureDateModule = (feature: Feature): {
   };
 };
 
-const ProgressBar = ({
+const ProgressBar = React.memo(({
   completed,
   deferred = 0,
   total,
@@ -775,7 +775,7 @@ const ProgressBar = ({
       </span>
     </div>
   );
-};
+});
 
 const DocTypeIcon = ({ docType }: { docType: string }) => {
   switch (docType) {
@@ -792,7 +792,7 @@ const DocTypeBadge = ({ docType }: { docType: string }) => {
   return <span className="text-[9px] uppercase font-bold">{getDocTypeLabel(docType)}</span>;
 };
 
-const FeatureDateStack = ({ feature }: { feature: Feature }) => {
+const FeatureDateStack = React.memo(({ feature }: { feature: Feature }) => {
   const dateModule = getFeatureDateModule(feature);
   return (
     <div className="rounded-md border border-panel-border bg-surface-overlay/70 px-2.5 py-2">
@@ -806,9 +806,9 @@ const FeatureDateStack = ({ feature }: { feature: Feature }) => {
       </div>
     </div>
   );
-};
+});
 
-const FeatureKanbanDateModule = ({ feature }: { feature: Feature }) => {
+const FeatureKanbanDateModule = React.memo(({ feature }: { feature: Feature }) => {
   const dateModule = getFeatureDateModule(feature);
   const firstLabel = dateModule.first.label === 'Planned' ? 'P' : 'S';
   const firstDate = formatFeatureDateCompact(dateModule.first.value);
@@ -831,11 +831,11 @@ const FeatureKanbanDateModule = ({ feature }: { feature: Feature }) => {
       </div>
     </div>
   );
-};
+});
 
 // ── Status Dropdown ────────────────────────────────────────────────
 
-const StatusDropdown = ({
+const StatusDropdown = React.memo(({
   status,
   onStatusChange,
   size = 'sm',
@@ -865,7 +865,7 @@ const StatusDropdown = ({
       ))}
     </select>
   );
-};
+});
 
 
 
@@ -912,7 +912,7 @@ const groupDocsByPhaseLabel = (docs: LinkedDocument[]): Array<{ label: string; d
     });
 };
 
-const FeatureDocCard = ({
+const FeatureDocCard = React.memo(({
   doc,
   primary,
   compact = false,
@@ -979,11 +979,11 @@ const FeatureDocCard = ({
       )}
     </div>
   </button>
-);
+));
 
 // ── Task Source Dialog ─────────────────────────────────────────────
 
-const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () => void }) => {
+const TaskSourceDialog = React.memo(({ task, onClose }: { task: ProjectTask; onClose: () => void }) => {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1047,7 +1047,7 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
       </div>
     </div>
   );
-};
+});
 
 // ── Feature Detail Modal ───────────────────────────────────────────
 
@@ -1415,29 +1415,37 @@ export const ProjectBoardFeatureModal = ({
     },
   });
 
-  useEffect(() => {
-    if (featureLiveEnabled && !['backoff', 'closed'].includes(featureLiveStatus)) {
-      return undefined;
-    }
-    const interval = setInterval(() => {
+  // Polling fallback: fires only when live-update channel is absent/backoff/closed.
+  // Visibility-aware: refetchIntervalInBackground defaults to false (pauses when tab hidden).
+  const featureModalPollEnabled = featureLiveEnabled
+    ? ['backoff', 'closed'].includes(featureLiveStatus)
+    : true;
+  useQuery({
+    queryKey: ['feature-modal-poll', feature.id, activeTab],
+    queryFn: async () => {
       // Overview shell always refreshes (open-cost; always "active").
-      void refreshFeatureDetail();
+      await refreshFeatureDetail();
 
       // Heavy sections follow the P4-006 policy via applyLiveRefreshPolicy.
       // P4-003 / P4-006: sessions — guard both the legacy fetch ref AND the
       // section status so we never fetch sessions that were never loaded.
-      void applyLiveRefreshPolicy(
-        'sessions',
-        () => sessionsFetchedRef.current ? refreshLinkedSessions() : Promise.resolve(),
-      );
-      void applyLiveRefreshPolicy('phases', () => Promise.resolve());
-      void applyLiveRefreshPolicy('docs', () => Promise.resolve());
-      void applyLiveRefreshPolicy('relations', () => Promise.resolve());
-      void applyLiveRefreshPolicy('history', () => Promise.resolve());
-      void applyLiveRefreshPolicy('test-status', () => refreshFeatureTestHealth());
-    }, FEATURE_MODAL_POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [activeTab, applyLiveRefreshPolicy, featureLiveEnabled, featureLiveStatus, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
+      await Promise.all([
+        applyLiveRefreshPolicy(
+          'sessions',
+          () => sessionsFetchedRef.current ? refreshLinkedSessions() : Promise.resolve(),
+        ),
+        applyLiveRefreshPolicy('phases', () => Promise.resolve()),
+        applyLiveRefreshPolicy('docs', () => Promise.resolve()),
+        applyLiveRefreshPolicy('relations', () => Promise.resolve()),
+        applyLiveRefreshPolicy('history', () => Promise.resolve()),
+        applyLiveRefreshPolicy('test-status', () => refreshFeatureTestHealth()),
+      ]);
+      return null;
+    },
+    enabled: featureModalPollEnabled,
+    staleTime: 0,
+    refetchInterval: featureModalPollEnabled ? FEATURE_MODAL_POLL_INTERVAL_MS : false,
+  });
 
   useEffect(() => {
     if (updatingStatus) return;
@@ -2699,7 +2707,7 @@ export const ProjectBoardFeatureModal = ({
  * Lightweight linked-doc count badge driven from rollup data.
  * Shows a neutral '—' while rollup is still loading (count === null).
  */
-const RollupLinkedDocsBadge = ({
+const RollupLinkedDocsBadge = React.memo(({
   count,
   loading,
   onClick,
@@ -2728,9 +2736,9 @@ const RollupLinkedDocsBadge = ({
       <span className="font-mono">{loading && count === null ? '—' : count}</span>
     </button>
   );
-};
+});
 
-const FeatureSessionIndicator = ({
+const FeatureSessionIndicator = React.memo(({
   summary,
   loading,
 }: {
@@ -2800,9 +2808,9 @@ const FeatureSessionIndicator = ({
       </div>
     </div>
   );
-};
+});
 
-const FeatureCard = ({
+const FeatureCard = React.memo(({
   card,
   rollup,
   rollupLoading,
@@ -2939,11 +2947,11 @@ const FeatureCard = ({
       </div>
     </div>
   );
-};
+});
 
 // ── List View Card ─────────────────────────────────────────────────
 
-const FeatureListCard = ({
+const FeatureListCard = React.memo(({
   card,
   rollup,
   rollupLoading,
@@ -3034,11 +3042,11 @@ const FeatureListCard = ({
       </div>
     </div>
   );
-};
+});
 
 // ── Status Column (Board View) ─────────────────────────────────────
 
-const StatusColumn = ({
+const StatusColumn = React.memo(({
   title,
   status,
   cards,
@@ -3119,7 +3127,7 @@ const StatusColumn = ({
       </div>
     </div>
   );
-};
+});
 
 // ── Main Component ─────────────────────────────────────────────────
 
@@ -3353,6 +3361,10 @@ export const ProjectBoard: React.FC = () => {
       openFeatureModal('phaseCount' in feature ? cardDTOToFeature(feature) : feature, initialTab);
     }
   }, [apiFeatures, surfaceCards, openFeatureModal]);
+
+  // Stable callbacks for StatusColumn props — avoids inline arrow defeat of React.memo.
+  const handleCardClickOverview = useCallback((id: string) => openFeatureModalById(id, 'overview'), [openFeatureModalById]);
+  const handleCardClickDocs = useCallback((id: string) => openFeatureModalById(id, 'docs'), [openFeatureModalById]);
 
   const hasPendingFilterChanges = (
     draftSearchQuery !== searchQuery
@@ -3730,8 +3742,8 @@ export const ProjectBoard: React.FC = () => {
               cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'backlog')}
               rollups={surfaceRollups}
               rollupLoading={surfaceRollupState === 'loading'}
-              onCardClick={(id) => openFeatureModalById(id, 'overview')}
-              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
+              onCardClick={handleCardClickOverview}
+              onCardDocsClick={handleCardClickDocs}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -3747,8 +3759,8 @@ export const ProjectBoard: React.FC = () => {
               cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'in-progress')}
               rollups={surfaceRollups}
               rollupLoading={surfaceRollupState === 'loading'}
-              onCardClick={(id) => openFeatureModalById(id, 'overview')}
-              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
+              onCardClick={handleCardClickOverview}
+              onCardDocsClick={handleCardClickDocs}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -3764,8 +3776,8 @@ export const ProjectBoard: React.FC = () => {
               cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'review')}
               rollups={surfaceRollups}
               rollupLoading={surfaceRollupState === 'loading'}
-              onCardClick={(id) => openFeatureModalById(id, 'overview')}
-              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
+              onCardClick={handleCardClickOverview}
+              onCardDocsClick={handleCardClickDocs}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -3781,8 +3793,8 @@ export const ProjectBoard: React.FC = () => {
               cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'done')}
               rollups={surfaceRollups}
               rollupLoading={surfaceRollupState === 'loading'}
-              onCardClick={(id) => openFeatureModalById(id, 'overview')}
-              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
+              onCardClick={handleCardClickOverview}
+              onCardDocsClick={handleCardClickDocs}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}

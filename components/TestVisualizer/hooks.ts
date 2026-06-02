@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { DomainHealthRollup, TestRun, TestVisualizerConfig } from '../../types';
 import { projectTestsTopic, useLiveInvalidation } from '../../services/live';
@@ -11,6 +13,54 @@ import {
   TestRunsFilter,
   TestVisualizerApiError,
 } from '../../services/testVisualizer';
+
+// ─── Query key factory (local to this module) ─────────────────────────────────
+
+const testVisualizerKeys = {
+  config: (projectId: string) => [projectId, 'testVisualizer', 'config'] as const,
+  domainHealth: (projectId: string, since?: string) =>
+    [projectId, 'testVisualizer', 'domainHealth', { since: since ?? null }] as const,
+  testRuns: (
+    projectId: string,
+    filter: Omit<TestRunsFilter, 'projectId'>,
+    refreshToken: number,
+  ) =>
+    [
+      projectId,
+      'testVisualizer',
+      'testRuns',
+      {
+        agentSessionId: filter.agentSessionId ?? null,
+        featureId: filter.featureId ?? null,
+        domainId: filter.domainId ?? null,
+        gitSha: filter.gitSha ?? null,
+        since: filter.since ?? null,
+        limit: filter.limit ?? null,
+        refreshToken,
+      },
+    ] as const,
+  liveTestUpdates: (
+    projectId: string,
+    filter: { runId?: string; featureId?: string; sessionId?: string },
+  ) =>
+    [
+      projectId,
+      'testVisualizer',
+      'liveTestUpdates',
+      {
+        runId: filter.runId ?? null,
+        featureId: filter.featureId ?? null,
+        sessionId: filter.sessionId ?? null,
+      },
+    ] as const,
+};
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+
+const isFeatureDisabledError = (err: unknown): boolean =>
+  err instanceof TestVisualizerApiError && err.isFeatureDisabled;
+
+// ─── Exported interfaces ──────────────────────────────────────────────────────
 
 interface UseTestStatusOptions {
   since?: string;
@@ -58,121 +108,95 @@ interface UseTestVisualizerConfigResult {
   refresh: () => void;
 }
 
-const isFeatureDisabledError = (err: unknown): boolean =>
-  err instanceof TestVisualizerApiError && err.isFeatureDisabled;
+// ─── useTestVisualizerConfig ──────────────────────────────────────────────────
 
 export function useTestVisualizerConfig(projectId: string, enabled = true): UseTestVisualizerConfigResult {
-  const [config, setConfig] = useState<TestVisualizerConfig | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
+  const queryClient = useQueryClient();
+  const queryKey = testVisualizerKeys.config(projectId);
+
+  const query = useQuery<TestVisualizerConfig | null, Error>({
+    queryKey,
+    queryFn: () => getTestVisualizerConfig(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 30_000,
+  });
 
   const refresh = useCallback(() => {
-    setRefreshTick(prev => prev + 1);
-  }, []);
+    void queryClient.invalidateQueries({ queryKey });
+  }, [queryClient, queryKey]);
 
-  useEffect(() => {
-    if (!projectId || !enabled) {
-      setConfig(null);
-      return;
-    }
-    let alive = true;
-    const load = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const payload = await getTestVisualizerConfig(projectId);
-        if (!alive) return;
-        setConfig(payload);
-      } catch (err) {
-        if (!alive) return;
-        setError(err instanceof Error ? err : new Error('Failed to load test visualizer config'));
-      } finally {
-        if (alive) setIsLoading(false);
-      }
-    };
-    void load();
-    return () => {
-      alive = false;
-    };
-  }, [enabled, projectId, refreshTick]);
-
-  return { config, isLoading, error, refresh };
+  return {
+    config: query.data ?? null,
+    isLoading: query.isLoading,
+    error: query.error ?? null,
+    refresh,
+  };
 }
 
+// ─── useTestStatus ────────────────────────────────────────────────────────────
+
+type DomainHealthData = {
+  domains: DomainHealthRollup[];
+  lastFetchedAt: Date;
+};
+
 export function useTestStatus(projectId: string, options: UseTestStatusOptions = {}): UseTestStatusResult {
-  const pollingInterval = options.pollingInterval ?? 60000;
+  const pollingInterval = options.pollingInterval ?? 60_000;
   const enabled = options.enabled ?? true;
   const liveEnabled = Boolean(options.liveEnabled && enabled);
 
-  const [domains, setDomains] = useState<DomainHealthRollup[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null);
-  const [featureDisabled, setFeatureDisabled] = useState(false);
-  const [refreshTick, setRefreshTick] = useState(0);
+  const queryClient = useQueryClient();
+  const queryKey = testVisualizerKeys.domainHealth(projectId, options.since);
 
-  const refresh = useCallback(() => {
-    setFeatureDisabled(false);
-    setRefreshTick(prev => prev + 1);
-  }, []);
+  const query = useQuery<DomainHealthData, Error>({
+    queryKey,
+    queryFn: async () => {
+      const payload = await getDomainHealth(projectId, options.since);
+      return { domains: payload, lastFetchedAt: new Date() };
+    },
+    enabled: Boolean(projectId) && enabled,
+    staleTime: pollingInterval * 0.9,
+    // Visibility-aware: refetchIntervalInBackground defaults to false so polling
+    // pauses when the tab is hidden.
+    refetchInterval: pollingInterval,
+    retry: (_failureCount, err) => !isFeatureDisabledError(err),
+  });
 
-  const liveStatus = useLiveInvalidation({
+  const featureDisabled = isFeatureDisabledError(query.error);
+
+  // Live invalidation: when the live connection fires, invalidate the TQ cache
+  // which triggers an immediate refetch (no manual setInterval needed).
+  useLiveInvalidation({
     topics: liveEnabled && projectId ? [projectTestsTopic(projectId)] : [],
     enabled: liveEnabled && !featureDisabled,
     pauseWhenHidden: true,
     onInvalidate: () => {
       invalidateTestVisualizerProjectCache(projectId, 'live_invalidation');
-      refresh();
+      void queryClient.invalidateQueries({ queryKey });
     },
   });
 
-  useEffect(() => {
-    if (!projectId || !enabled || featureDisabled) {
-      setDomains([]);
-      return;
-    }
+  const refresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey });
+  }, [queryClient, queryKey]);
 
-    let alive = true;
-
-    const load = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const payload = await getDomainHealth(projectId, options.since);
-        if (!alive) return;
-        setDomains(payload);
-        setLastFetchedAt(new Date());
-        setFeatureDisabled(false);
-      } catch (err) {
-        if (!alive) return;
-        if (isFeatureDisabledError(err)) {
-          setFeatureDisabled(true);
-          setDomains([]);
-        }
-        setError(err instanceof Error ? err : new Error('Failed to load test status'));
-      } finally {
-        if (alive) setIsLoading(false);
-      }
-    };
-
-    load();
-
-    if (liveEnabled && !['backoff', 'closed'].includes(liveStatus)) {
-      return () => {
-        alive = false;
-      };
-    }
-
-    const timer = window.setInterval(load, pollingInterval);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [enabled, featureDisabled, liveEnabled, liveStatus, pollingInterval, projectId, options.since, refreshTick]);
-
-  return { domains, isLoading, error, lastFetchedAt, featureDisabled, refresh };
+  return {
+    domains: query.data?.domains ?? [],
+    isLoading: query.isLoading,
+    error: featureDisabled ? null : (query.error ?? null),
+    lastFetchedAt: query.data?.lastFetchedAt ?? null,
+    featureDisabled,
+    refresh,
+  };
 }
+
+// ─── useTestRuns ──────────────────────────────────────────────────────────────
+
+type TestRunsData = {
+  runs: TestRun[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
 
 export function useTestRuns(
   projectId: string,
@@ -182,122 +206,148 @@ export function useTestRuns(
   const enabled = options.enabled ?? true;
   const externalRefreshToken = options.refreshToken ?? 0;
   const liveEnabled = Boolean(options.liveEnabled && enabled);
-  const agentSessionId = filter.agentSessionId;
-  const featureId = filter.featureId;
-  const domainId = filter.domainId;
-  const gitSha = filter.gitSha;
-  const since = filter.since;
-  const limit = filter.limit;
 
-  const [runs, setRuns] = useState<TestRun[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const [featureDisabled, setFeatureDisabled] = useState(false);
-  const [refreshTick, setRefreshTick] = useState(0);
+  const queryClient = useQueryClient();
+  const queryKey = testVisualizerKeys.testRuns(projectId, filter, externalRefreshToken);
 
-  const refresh = useCallback(() => {
-    setFeatureDisabled(false);
-    setRefreshTick(prev => prev + 1);
-  }, []);
+  const query = useQuery<TestRunsData, Error>({
+    queryKey,
+    queryFn: async () => {
+      const payload = await listTestRuns({
+        projectId,
+        agentSessionId: filter.agentSessionId,
+        featureId: filter.featureId,
+        domainId: filter.domainId,
+        gitSha: filter.gitSha,
+        since: filter.since,
+        limit: filter.limit,
+        cursor: undefined,
+      });
+      return {
+        runs: payload.items,
+        nextCursor: payload.nextCursor,
+        hasMore: Boolean(payload.nextCursor),
+      };
+    },
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 25_000,
+    // When live is enabled the live connection drives invalidation; fall back to
+    // 30-second polling only when live is disabled (mirrors the original
+    // setInterval fallback path).
+    // Visibility-aware: refetchIntervalInBackground defaults to false.
+    refetchInterval: liveEnabled ? false : 30_000,
+    retry: (_failureCount, err) => !isFeatureDisabledError(err),
+  });
 
-  const liveStatus = useLiveInvalidation({
+  const featureDisabled = isFeatureDisabledError(query.error);
+
+  useLiveInvalidation({
     topics: liveEnabled && projectId ? [projectTestsTopic(projectId)] : [],
     enabled: liveEnabled && !featureDisabled,
     pauseWhenHidden: true,
     onInvalidate: () => {
       invalidateTestVisualizerProjectCache(projectId, 'live_invalidation');
-      refresh();
+      void queryClient.invalidateQueries({ queryKey });
     },
   });
 
-  const loadRuns = useCallback(
-    async (cursor?: string | null) => {
-      if (!projectId || !enabled || featureDisabled) return;
+  const refresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey });
+  }, [queryClient, queryKey]);
 
-      setIsLoading(true);
-      setError(null);
-      try {
-        const payload = await listTestRuns({
-          projectId,
-          agentSessionId,
-          featureId,
-          domainId,
-          gitSha,
-          since,
-          limit,
-          cursor: cursor || undefined,
-        });
-        setRuns(prev => (cursor ? [...prev, ...payload.items] : payload.items));
-        setNextCursor(payload.nextCursor);
-        setHasMore(Boolean(payload.nextCursor));
-        setFeatureDisabled(false);
-      } catch (err) {
-        if (isFeatureDisabledError(err)) {
-          setFeatureDisabled(true);
-          setRuns([]);
-          setHasMore(false);
-        }
-        setError(err instanceof Error ? err : new Error('Failed to load test runs'));
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [agentSessionId, domainId, enabled, featureDisabled, featureId, gitSha, limit, projectId, since],
-  );
-
-  useEffect(() => {
-    if (!enabled) {
-      setRuns([]);
-      setNextCursor(null);
-      setHasMore(false);
-      setFeatureDisabled(false);
-      return;
-    }
-    setRuns([]);
-    setNextCursor(null);
-    setHasMore(false);
-    setFeatureDisabled(false);
-    void loadRuns(null);
-  }, [enabled, externalRefreshToken, loadRuns, refreshTick]);
-
-  useEffect(() => {
-    if (!liveEnabled || !enabled) {
-      return undefined;
-    }
-    if (!['backoff', 'closed'].includes(liveStatus)) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      void loadRuns(null);
-    }, 30000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [enabled, liveEnabled, liveStatus, loadRuns]);
-
+  // loadMore appends the next cursor page directly into the cached result so
+  // consumers get an accumulated list without a full reset.
   const loadMore = useCallback(() => {
-    if (!nextCursor || isLoading) return;
-    loadRuns(nextCursor);
-  }, [isLoading, loadRuns, nextCursor]);
+    const cached = queryClient.getQueryData<TestRunsData>(queryKey);
+    if (!cached?.nextCursor || query.isFetching) return;
+    const cursor = cached.nextCursor;
+    void (async () => {
+      const payload = await listTestRuns({
+        projectId,
+        agentSessionId: filter.agentSessionId,
+        featureId: filter.featureId,
+        domainId: filter.domainId,
+        gitSha: filter.gitSha,
+        since: filter.since,
+        limit: filter.limit,
+        cursor,
+      });
+      queryClient.setQueryData<TestRunsData>(queryKey, prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          runs: [...prev.runs, ...payload.items],
+          nextCursor: payload.nextCursor,
+          hasMore: Boolean(payload.nextCursor),
+        };
+      });
+    })();
+  }, [
+    queryClient,
+    queryKey,
+    query.isFetching,
+    projectId,
+    filter.agentSessionId,
+    filter.featureId,
+    filter.domainId,
+    filter.gitSha,
+    filter.since,
+    filter.limit,
+  ]);
 
-  return { runs, isLoading, hasMore, loadMore, refresh, error, featureDisabled };
+  return {
+    runs: query.data?.runs ?? [],
+    isLoading: query.isLoading,
+    hasMore: query.data?.hasMore ?? false,
+    loadMore,
+    refresh,
+    error: featureDisabled ? null : (query.error ?? null),
+    featureDisabled,
+  };
 }
+
+// ─── useLiveTestUpdates ───────────────────────────────────────────────────────
+
+type LiveUpdatesData = {
+  latestRun: TestRun | null;
+  lastUpdated: Date;
+};
 
 export function useLiveTestUpdates(
   projectId: string,
   filter: { runId?: string; featureId?: string; sessionId?: string } = {},
   options: UseLiveTestUpdatesOptions = {},
 ): UseLiveTestUpdatesResult {
-  const pollingInterval = options.pollingInterval ?? 30000;
+  const pollingInterval = options.pollingInterval ?? 30_000;
   const enabled = options.enabled ?? true;
 
-  const [latestRun, setLatestRun] = useState<TestRun | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [error, setError] = useState<Error | null>(null);
-  const [featureDisabled, setFeatureDisabled] = useState(false);
-  const [refreshTick, setRefreshTick] = useState(0);
+  const queryClient = useQueryClient();
+  const queryKey = testVisualizerKeys.liveTestUpdates(projectId, filter);
+
+  const query = useQuery<LiveUpdatesData, Error>({
+    queryKey,
+    queryFn: async () => {
+      if (filter.runId) {
+        const detail = await getTestRun(filter.runId, projectId, { includeResults: false });
+        return { latestRun: detail?.run ?? null, lastUpdated: new Date() };
+      }
+      const payload = await listTestRuns({
+        projectId,
+        featureId: filter.featureId,
+        agentSessionId: filter.sessionId,
+        limit: 1,
+      });
+      return { latestRun: payload.items[0] ?? null, lastUpdated: new Date() };
+    },
+    enabled: Boolean(projectId) && enabled,
+    staleTime: pollingInterval * 0.9,
+    // Visibility-aware: refetchIntervalInBackground defaults to false so polling
+    // pauses when the tab is hidden.
+    refetchInterval: pollingInterval,
+    retry: (_failureCount, err) => !isFeatureDisabledError(err),
+  });
+
+  const featureDisabled = isFeatureDisabledError(query.error);
 
   const liveStatus = useLiveInvalidation({
     topics: enabled && projectId ? [projectTestsTopic(projectId)] : [],
@@ -305,70 +355,15 @@ export function useLiveTestUpdates(
     pauseWhenHidden: true,
     onInvalidate: () => {
       invalidateTestVisualizerProjectCache(projectId, 'live_invalidation');
-      setRefreshTick(prev => prev + 1);
+      void queryClient.invalidateQueries({ queryKey });
     },
   });
 
-  useEffect(() => {
-    if (!projectId || !enabled || featureDisabled) {
-      setLatestRun(null);
-      return;
-    }
-
-    let alive = true;
-
-    const poll = async () => {
-      try {
-        if (filter.runId) {
-          const detail = await getTestRun(filter.runId, projectId, { includeResults: false });
-          if (!alive) return;
-          setLatestRun(detail?.run ?? null);
-          setLastUpdated(new Date());
-          setError(null);
-          setFeatureDisabled(false);
-          return;
-        }
-
-        const payload = await listTestRuns({
-          projectId,
-          featureId: filter.featureId,
-          agentSessionId: filter.sessionId,
-          limit: 1,
-        });
-
-        if (!alive) return;
-        setLatestRun(payload.items[0] ?? null);
-        setLastUpdated(new Date());
-        setError(null);
-        setFeatureDisabled(false);
-      } catch (err) {
-        if (!alive) return;
-        if (isFeatureDisabledError(err)) {
-          setFeatureDisabled(true);
-        }
-        setError(err instanceof Error ? err : new Error('Failed to poll live test updates'));
-      }
-    };
-
-    poll();
-    if (!['backoff', 'closed'].includes(liveStatus)) {
-      return () => {
-        alive = false;
-      };
-    }
-    const timer = window.setInterval(poll, pollingInterval);
-
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [enabled, featureDisabled, filter.featureId, filter.runId, filter.sessionId, liveStatus, pollingInterval, projectId, refreshTick]);
-
   return {
-    latestRun,
+    latestRun: query.data?.latestRun ?? null,
     isLive: enabled && !['backoff', 'closed'].includes(liveStatus),
-    lastUpdated,
-    error,
+    lastUpdated: query.data?.lastUpdated ?? null,
+    error: featureDisabled ? null : (query.error ?? null),
     featureDisabled,
   };
 }

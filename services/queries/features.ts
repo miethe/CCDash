@@ -80,8 +80,9 @@ export function useFeaturesQuery({
     },
     staleTime: 30_000,
     enabled: !!projectId && enabled,
-    // T4-002 AC-SSE: poll every 5 s when live-features (SSE) are disabled;
+    // T4-005: poll every 30 s when live-features (SSE) are disabled;
+    // SSE-driven invalidation handles sub-30 s freshness when SSE is on.
     // SSE gate supersedes poll when enabled.
-    refetchInterval: isFeatureLiveUpdatesEnabled() ? false : 5_000,
+    refetchInterval: isFeatureLiveUpdatesEnabled() ? false : 30_000,
   });
 }

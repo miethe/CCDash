@@ -388,7 +388,9 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
   }
 ];
 
+export const DOCUMENTS_PAGE_SIZE = 500;
 export const MAX_DOCUMENTS_IN_MEMORY = 2000;
+export const MAX_SESSIONS_IN_MEMORY = 2000;
 
 /**
  * MPCC-102: Default for the multi-project command-center capability flag.

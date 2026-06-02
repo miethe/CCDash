@@ -13,6 +13,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useDataClient } from '../../contexts/DataClientContext';
 import type { SessionFilters } from '../../contexts/dataContextShared';
 import { sessionsKeys } from '../queryKeys';
+import { MAX_SESSIONS_IN_MEMORY } from '../../constants';
 
 const SESSIONS_PAGE_SIZE = 50;
 
@@ -48,6 +49,8 @@ export function useSessionsQuery({
     },
     getNextPageParam: (lastPage, allPages) => {
       const fetched = allPages.reduce((sum, p) => sum + p.items.length, 0);
+      // Stop fetching once we hit the memory cap even if more pages exist
+      if (fetched >= MAX_SESSIONS_IN_MEMORY) return undefined;
       if (fetched >= lastPage.total) return undefined;
       return fetched;
     },

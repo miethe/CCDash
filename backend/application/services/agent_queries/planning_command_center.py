@@ -11,13 +11,18 @@ from backend.application.ports import CorePorts
 from backend.application.services.planning_command_resolver import PlanningCommandResolver
 from backend.application.services.worktree_git_state import WorktreeGitStateProbe
 from backend.models import Feature, FeaturePhase, LinkedDocument
+from backend.services.feature_execution import feature_from_row
+from backend.services.integrations.github_settings_store import GitHubSettingsStore
+from backend.services.repo_workspaces.github_client import fetch_pr_status
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
+from .cache import memoized_query
 from .models import (
     PlanningCommandCenterArtifactDTO,
     PlanningCommandCenterBlockerDTO,
     PlanningCommandCenterCapabilitiesDTO,
     PlanningCommandCenterFeatureDTO,
+    PlanningCommandCenterGitStateDTO,
     PlanningCommandCenterItemDTO,
     PlanningCommandCenterLaunchAgentDTO,
     PlanningCommandCenterLaunchBatchDTO,
@@ -44,6 +49,71 @@ from .planning import (
     _raw_status,
     _synthetic_feature_from_doc_rows,
 )
+
+# ── No-op git probe (parity with MPCC-206) ───────────────────────────────────
+
+class _NullGitProbe(WorktreeGitStateProbe):
+    """WorktreeGitStateProbe that skips all filesystem and git I/O.
+
+    Injected into V1 builds (P2-013) so that ``_build_item`` calls inside
+    ``_build_items_for_scope`` do not spawn a git subprocess per item.
+    Parity with the same sentinel defined in
+    ``multi_project_planning_command_center``.
+
+    The returned ``PlanningCommandCenterGitStateDTO`` is intentionally sparse
+    (``path_exists=None``) so callers can detect items whose git state was
+    not yet probed.
+    """
+
+    async def probe(self, worktree_path: str) -> PlanningCommandCenterGitStateDTO:
+        return PlanningCommandCenterGitStateDTO(
+            path_exists=None,
+            probed_at="",
+            warnings=["git probe deferred — NullGitProbe"],
+        )
+
+
+# ── Cache param extractor for V1 command center ───────────────────────────────
+
+def _pcc_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    *,
+    project_id_override: str | None = None,
+    q: str | None = None,
+    status: str | None = None,
+    phase: int | None = None,
+    artifact_type: str | None = None,
+    worktree_state: str | None = None,
+    pr_state: str | None = None,
+    launch_readiness: str | None = None,
+    sort_by: str = "last_activity",
+    sort_direction: str = "desc",
+    page: int = 1,
+    page_size: int = 50,
+    **_: Any,
+) -> dict[str, Any]:
+    """Extract cache-key parameters for the V1 single-project command-center query.
+
+    ``project_id_override`` is returned as ``project_id`` so the
+    ``memoized_query`` decorator pops it into the cache-key scope slot
+    rather than hashing it into the param dict twice.
+    """
+    return {
+        "project_id": project_id_override,
+        "q": q or "",
+        "status": status or "",
+        "phase": phase,
+        "artifact_type": artifact_type or "",
+        "worktree_state": worktree_state or "",
+        "pr_state": pr_state or "",
+        "launch_readiness": launch_readiness or "",
+        "sort_by": sort_by,
+        "sort_direction": sort_direction,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 _TERMINAL_STATUSES = {"done", "completed", "closed", "deferred", "superseded"}
@@ -280,7 +350,17 @@ def _worktree_dto(row: dict[str, Any] | None) -> PlanningCommandCenterWorktreeDT
     )
 
 
-def _pr_dto(feature: Feature) -> PlanningCommandCenterPullRequestDTO | None:
+_github_settings_store = GitHubSettingsStore()
+
+
+async def _pr_dto(feature: Feature) -> PlanningCommandCenterPullRequestDTO | None:
+    """Build a pull-request DTO, optionally enriched with live GitHub status.
+
+    Capability-gated: the GitHub API call is skipped when no token is
+    configured, falling back to ``state="linked"`` (same as before).
+
+    Results are cached in-process by ``fetch_pr_status`` for ~60 s.
+    """
     refs = list(getattr(feature, "prRefs", []) or [])
     if not refs:
         return None
@@ -289,8 +369,37 @@ def _pr_dto(feature: Feature) -> PlanningCommandCenterPullRequestDTO | None:
     number = None
     if number_match:
         number = _safe_int(number_match.group(1) or number_match.group(2), 0) or None
-    provider = "github" if "github.com" in first.lower() else ""
-    return PlanningCommandCenterPullRequestDTO(provider=provider, number=number, url=first, state="linked")
+    is_github = "github.com" in first.lower()
+    provider = "github" if is_github else ""
+
+    state = "linked"
+    review_status: str | None = None
+
+    # Enrich with live GitHub data when a token is available
+    if is_github and number:
+        try:
+            settings = _github_settings_store.load()
+            token = str(settings.token or "").strip()
+        except Exception:
+            token = ""
+
+        if token:
+            # Extract repo slug from the PR URL
+            slug_match = re.search(r"github\.com/([^/]+/[^/]+)/pull/", first, re.IGNORECASE)
+            repo_slug = slug_match.group(1) if slug_match else ""
+            if repo_slug:
+                live = await fetch_pr_status(repo_slug, number, token=token)
+                if live:
+                    state = str(live.get("state") or state)
+                    review_status = live.get("review_status") or None
+
+    return PlanningCommandCenterPullRequestDTO(
+        provider=provider,
+        number=number,
+        url=first,
+        state=state,
+        review_status=review_status or "",
+    )
 
 
 def _blockers(feature: Feature) -> list[PlanningCommandCenterBlockerDTO]:
@@ -342,12 +451,16 @@ class PlanningCommandCenterQueryService:
         git_probe: WorktreeGitStateProbe | None = None,
     ) -> None:
         self.resolver = resolver or PlanningCommandResolver()
-        self.git_probe = git_probe or WorktreeGitStateProbe()
+        # P2-013: default to NullGitProbe so V1 item builds do not spawn a
+        # git subprocess per item.  Callers that need real git state (e.g. the
+        # router after pagination) should pass an explicit WorktreeGitStateProbe.
+        self.git_probe = git_probe if git_probe is not None else _NullGitProbe()
 
     # ------------------------------------------------------------------
     # Public V1 endpoint — behavior-compatible wrapper
     # ------------------------------------------------------------------
 
+    @memoized_query("pcc_command_center", param_extractor=_pcc_params)
     async def get_command_center(
         self,
         context: RequestContext,
@@ -564,18 +677,54 @@ class PlanningCommandCenterQueryService:
         feature_id: str,
         project_id_override: str | None = None,
     ) -> PlanningCommandCenterItemDTO | None:
-        page = await self.get_command_center(
-            context,
-            ports,
-            project_id_override=project_id_override,
-            q=None,
-            page=1,
-            page_size=500,
+        """Return the command-center item for a single feature.
+
+        P2-011: loads ONLY the target feature via ``get_by_id`` instead of
+        issuing a 500-item full-page scan.  The document list is bounded to
+        the resolved project scope.  If the feature is not found in the repo
+        the method returns ``None``.
+
+        NOTE (followup): doc loading still calls ``_load_all_doc_rows`` for
+        the project because there is no per-feature document getter on the
+        repo today.  A targeted ``documents.get_by_feature_slug`` would
+        remove this last full-scan; tracked as a future optimisation.
+        """
+        scope = resolve_project_scope(context, ports, project_id_override)
+        if scope is None:
+            return None
+
+        # ── Single-feature fast path (P2-011) ─────────────────────────────
+        try:
+            feature_row = await ports.storage.features().get_by_id(feature_id)
+        except Exception:
+            feature_row = None
+        if feature_row is None:
+            return None
+
+        feature = feature_from_row(feature_row)
+
+        try:
+            doc_rows = await _load_all_doc_rows(ports, scope.project.id)
+        except Exception:
+            doc_rows = []
+
+        feature_index: dict[str, Feature] = {_feature_key(feature.id): feature}
+        try:
+            feature = _project_with_planning(feature, doc_rows, feature_index)
+        except Exception:
+            pass
+
+        docs = _dedupe_documents(
+            [
+                *list(getattr(feature, "linkedDocs", []) or []),
+                *[_linked_doc_from_row(row) for row in _load_doc_rows_for_feature(doc_rows, feature.id)],
+            ]
         )
-        for item in page.items:
-            if _feature_key(item.feature.feature_id) == _feature_key(feature_id):
-                return item
-        return None
+
+        warnings: list[str] = []
+        worktrees_by_feature = await self._worktrees_by_feature(ports, scope.project.id, warnings)
+        worktree_row = worktrees_by_feature.get(_feature_key(feature.id))
+        return await self._build_item(feature, docs, worktree_row)
 
     async def _worktrees_by_feature(
         self,
@@ -608,7 +757,7 @@ class PlanningCommandCenterQueryService:
         status_detail = getattr(feature, "planningStatus", None)
         raw_status = _raw_status(status_detail) or str(getattr(feature, "status", "") or "")
         effective_status = _effective_status(status_detail) or raw_status
-        pull_request = _pr_dto(feature)
+        pull_request = await _pr_dto(feature)
         capabilities = _capabilities(command, feature)
         launch_phase = command.phase or phase_summary.current_phase or phase_summary.next_phase
         last_activity = str(getattr(feature, "updatedAt", "") or "")

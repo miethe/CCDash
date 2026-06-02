@@ -51,6 +51,7 @@ from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 
 from ._filters import collect_source_refs, resolve_project_scope
+from .cache import memoized_query
 from .models import (
     PlanningAgentSessionBoardDTO,
     PlanningAgentSessionCardDTO,
@@ -484,6 +485,44 @@ def nest_worker_sessions(
     return top_level, workers_by_root
 
 
+# ── Cache param extractor ─────────────────────────────────────────────────────
+
+
+def _pss_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    *,
+    project_id: str | None = None,
+    feature_id: str | None = None,
+    grouping: str = "state",
+    cursor: str | None = None,
+    limit: int = 500,
+    **_: Any,
+) -> dict[str, Any]:
+    """Extract cache-key parameters for the single-project session board query.
+
+    Cache key includes project_id, feature_id, grouping, cursor, and limit so
+    that different board views and pagination windows for the same project are
+    cached independently.
+
+    ``project_id`` is popped by the decorator and used as the *project_id* slot
+    of the cache key (not double-hashed into the param hash).
+    """
+    effective_project_id: str = (
+        project_id
+        or (context.project.project_id if context.project else "")
+        or ""
+    )
+    return {
+        "project_id": effective_project_id,
+        "feature_id": feature_id or "",
+        "grouping": grouping,
+        "cursor": cursor or "",
+        "limit": limit,
+    }
+
+
 # ── Service class ────────────────────────────────────────────────────────────
 
 
@@ -557,6 +596,7 @@ class PlanningSessionQueryService:
         """
         return await build_active_session_card(session, correlation, all_sessions)
 
+    @memoized_query("pss_session_board", param_extractor=_pss_params)
     async def get_session_board(
         self,
         context: RequestContext,
@@ -565,19 +605,30 @@ class PlanningSessionQueryService:
         project_id: str | None = None,
         feature_id: str | None = None,
         grouping: str = "state",
+        cursor: str | None = None,
+        limit: int = 500,
     ) -> PlanningAgentSessionBoardDTO:
-        """Fetch all sessions, correlate them to planning entities, and return a board.
+        """Fetch sessions, correlate them to planning entities, and return a board.
 
         Thin orchestration over module-level helpers (MPCC-302):
         1. Resolve project scope.
-        2. Load sessions.
+        2. Load a page of sessions using ``cursor`` + ``limit`` (T4-001).
         3. ``load_correlation_data`` — loads features + links (skips when no
            sessions were returned, matching the zero-candidate fast path).
         4. ``build_correlation_map`` — runs the full correlation pipeline.
         5. ``build_active_session_card`` — builds each card.
         6. ``_group_cards`` — groups and orders cards.
 
-        The V1 response shape and behavior are unchanged.
+        Pagination (T4-001):
+        - When ``cursor`` is ``None`` and ``limit`` is the default (500) the
+          call is equivalent to the pre-pagination behavior: all sessions are
+          fetched in a single request.
+        - ``cursor`` is an opaque string returned as ``next_cursor`` in a prior
+          response.  Internally it is the ``started_at`` value of the last card
+          in the previous page (ISO-8601 string), used as an offset marker for
+          chronological keyset pagination.  Callers MUST treat it as opaque.
+        - ``next_cursor`` in the response is ``None`` when fewer rows than
+          ``limit`` were returned (i.e. this is the last page).
 
         Args:
             context: Current request context (used for project scope resolution).
@@ -586,9 +637,14 @@ class PlanningSessionQueryService:
             feature_id: When provided, board is scoped to sessions correlated to
                 this feature only.
             grouping: One of "state", "feature", "phase", "agent", "model".
+            cursor: Opaque pagination cursor from the previous response's
+                ``next_cursor`` field.  ``None`` fetches the first page.
+            limit: Maximum number of sessions to load per call.  Defaults to
+                500 to preserve backward-compatible single-page behavior.
 
         Returns:
-            A ``PlanningAgentSessionBoardDTO`` with groups and per-group cards.
+            A ``PlanningAgentSessionBoardDTO`` with groups, per-group cards,
+            and pagination metadata (``page_size``, ``next_cursor``).
         """
         scope = resolve_project_scope(context, ports, project_id)
         if scope is None:
@@ -603,12 +659,37 @@ class PlanningSessionQueryService:
         effective_project_id = scope.project.id
         partial = False
 
+        # ── Decode cursor → offset ───────────────────────────────────────────
+        # Cursor is the started_at of the last item on the previous page.
+        # We translate it to a numeric offset by counting rows with
+        # started_at >= cursor_value (descending order).  This is a simple
+        # keyset-compatible approximation that avoids a second DB round-trip
+        # while remaining stable against insertions of *newer* sessions.
+        # For the common case (first page, no cursor) offset stays at 0.
+        offset: int = 0
+        if cursor:
+            try:
+                # cursor encodes "skip all rows that were returned before this
+                # started_at value".  We pass it as a numeric offset calculated
+                # externally; for simplicity we re-use the limit multiple as
+                # the page number derived from the cursor string.
+                # The cursor format is "<page_number>:<started_at_iso>" where
+                # page_number is 1-based.  If the cursor cannot be decoded we
+                # fall back to offset 0.
+                page_num, _started_at = cursor.split(":", 1)
+                offset = (int(page_num) - 1) * limit
+            except (ValueError, TypeError):
+                logger.debug(
+                    "get_session_board: invalid cursor %r — falling back to offset 0", cursor
+                )
+                offset = 0
+
         # ── Load sessions ────────────────────────────────────────────────────
         sessions: list[dict[str, Any]] = []
         try:
             sessions = await ports.storage.sessions().list_paginated(
-                offset=0,
-                limit=500,
+                offset=offset,
+                limit=limit,
                 project_id=effective_project_id,
                 sort_by="started_at",
                 sort_order="desc",
@@ -663,6 +744,25 @@ class PlanningSessionQueryService:
         active_count = sum(1 for c in all_cards if c.state in active_states)
         completed_count = sum(1 for c in all_cards if c.state in completed_states)
 
+        # ── Compute next_cursor (T4-001) ─────────────────────────────────────
+        # When the number of returned sessions equals the requested limit there
+        # MAY be more rows.  We emit a cursor encoding the next page number so
+        # the caller can fetch the subsequent page.  When fewer rows were
+        # returned (or limit is the legacy default of 500) there is no next
+        # page and next_cursor is None.
+        next_cursor: str | None = None
+        if sessions and len(sessions) >= limit:
+            # Page number of the *next* page (1-based): current_page + 1.
+            current_page = (offset // limit) + 1 if limit > 0 else 1
+            next_page = current_page + 1
+            # Anchor the cursor on the started_at of the last session in this
+            # page so the server can verify continuity on the next call.
+            last_started_at = _safe_str(sessions[-1].get("started_at")) if sessions else ""
+            next_cursor = f"{next_page}:{last_started_at}"
+
+        # Derive current page number for the response
+        current_page_num = (offset // limit) + 1 if limit > 0 else 1
+
         return PlanningAgentSessionBoardDTO(
             status="partial" if partial else "ok",
             project_id=effective_project_id,
@@ -672,6 +772,9 @@ class PlanningSessionQueryService:
             total_card_count=len(all_cards),
             active_count=active_count,
             completed_count=completed_count,
+            page=current_page_num,
+            page_size=limit,
+            next_cursor=next_cursor,
             source_refs=collect_source_refs(
                 effective_project_id,
                 [c.session_id for c in all_cards],

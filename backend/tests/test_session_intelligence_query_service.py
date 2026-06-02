@@ -311,6 +311,112 @@ class SessionIntelligenceQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.items[0].filePath, "backend/service.py")
         self.assertEqual(payload.items[0].label, "low_progress_loop")
 
+    async def test_detail_batches_session_and_fact_reads_in_parallel(self) -> None:
+        """P2-017: session row + three fact reads must be issued concurrently via
+        asyncio.gather, not sequentially.  We verify this in two ways:
+
+        1. Call-log ordering with cooperative yielding: each fake coroutine yields
+           once (asyncio.sleep(0)) so the event loop can interleave. With a real
+           gather all four coroutines will have their :start event logged before
+           any :end event.  A sequential implementation would log start/end pairs
+           back-to-back.
+
+        2. Output shape is unchanged — all fact arrays are populated correctly.
+        """
+        import asyncio as _asyncio
+
+        call_log: list[str] = []
+
+        class _TrackedSessionRepo(_FakeSessionRepo):
+            async def get_by_id(self, session_id):  # type: ignore[override]
+                call_log.append("get_by_id:start")
+                await _asyncio.sleep(0)  # yield to event loop
+                result = await super().get_by_id(session_id)
+                call_log.append("get_by_id:end")
+                return result
+
+        class _TrackedIntelligenceRepo(_FakeSessionIntelligenceRepo):
+            async def list_session_sentiment_facts(self, session_id):  # type: ignore[override]
+                call_log.append("sentiment:start")
+                await _asyncio.sleep(0)
+                result = await super().list_session_sentiment_facts(session_id)
+                call_log.append("sentiment:end")
+                return result
+
+            async def list_session_code_churn_facts(self, session_id):  # type: ignore[override]
+                call_log.append("churn:start")
+                await _asyncio.sleep(0)
+                result = await super().list_session_code_churn_facts(session_id)
+                call_log.append("churn:end")
+                return result
+
+            async def list_session_scope_drift_facts(self, session_id):  # type: ignore[override]
+                call_log.append("scope:start")
+                await _asyncio.sleep(0)
+                result = await super().list_session_scope_drift_facts(session_id)
+                call_log.append("scope:end")
+                return result
+
+        project = types.SimpleNamespace(id="project-1", name="Project 1")
+        ports = CorePorts(
+            identity_provider=_FakeIdentityProvider(),
+            authorization_policy=_FakeAuthorizationPolicy(),
+            workspace_registry=_FakeWorkspaceRegistry(project),
+            storage=_FakeStorage(
+                session_repo=_TrackedSessionRepo(),
+                session_messages_repo=_FakeSessionMessageRepo(),
+                session_intelligence_repo=_TrackedIntelligenceRepo(),
+                session_embeddings_repo=_FakeEmbeddingRepo(),
+            ),
+            job_scheduler=_FakeJobScheduler(),
+            integration_client=_FakeIntegrationClient(),
+        )
+
+        service = SessionIntelligenceQueryService()
+        payload = await service.get_session_intelligence_detail(
+            _request_context(),
+            ports,
+            session_id="session-1",
+        )
+
+        # Output shape must be unchanged
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload.summary.sessionId, "session-1")
+        self.assertEqual(len(payload.sentimentFacts), 1)
+        self.assertEqual(len(payload.churnFacts), 1)
+        self.assertEqual(len(payload.scopeDriftFacts), 1)
+
+        # All four reads (get_by_id + 3 facts) must have been issued.
+        start_events = [e for e in call_log if e.endswith(":start")]
+        self.assertIn("get_by_id:start", start_events)
+        self.assertIn("sentiment:start", start_events)
+        self.assertIn("churn:start", start_events)
+        self.assertIn("scope:start", start_events)
+
+        # Gather concurrency contract for the three fact reads: with cooperative
+        # yielding via sleep(0), asyncio.gather causes all three fact coroutines to
+        # log their :start before any logs its :end (the event loop round-robins
+        # through the ready queue).  A sequential fact implementation would produce
+        # interleaved sentiment:start/end, churn:start/end, scope:start/end pairs.
+        fact_start_events = [e for e in call_log if e.endswith(":start") and e != "get_by_id:start"]
+        fact_end_events = [e for e in call_log if e.endswith(":end") and e != "get_by_id:end"]
+        # All three fact :start events must appear before the first fact :end.
+        last_fact_start_pos = max(call_log.index(e) for e in fact_start_events)
+        first_fact_end_pos = min(call_log.index(e) for e in fact_end_events)
+        self.assertLess(
+            last_fact_start_pos,
+            first_fact_end_pos,
+            msg=(
+                "Expected all three fact :start events before any fact :end "
+                "(gather concurrency for fact reads). "
+                f"call_log={call_log}"
+            ),
+        )
+        # The session row fetch and all three fact reads must all complete
+        # (no sequential skips): 4 start events + 4 end events.
+        self.assertEqual(len([e for e in call_log if e.endswith(":start")]), 4)
+        self.assertEqual(len([e for e in call_log if e.endswith(":end")]), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

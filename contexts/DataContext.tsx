@@ -1,8 +1,13 @@
 /**
  * DataContext — thin facade over TQ hooks + AppSessionContext client-state.
  *
+ * T4-003: useData() is now fully reactive — snapshot getQueryData() calls
+ *   replaced with live useQuery/useInfiniteQuery hooks. useMemo gates prevent
+ *   render storms: derived arrays/objects only change when underlying data changes.
  * T4-005: AppEntityDataProvider removed from provider tree.
  * T4-007: useData() ≤50-line shim re-exporting TQ hook values.
+ * T4-015: switchProject fires scoped invalidateQueries() after scope change
+ *   (replaces queryClient.clear() which nuked non-project-scoped cache entries).
  *
  * useData() is a backward-compatible shim: field shapes are unchanged so all
  * 24 consumer components continue working without modification.
@@ -11,7 +16,7 @@
  * ([], null, false). No consumer breaks when a query has not yet loaded.
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Project, TaskStatus } from '../types';
 import { AppRuntimeProvider, useAppRuntime } from './AppRuntimeContext';
@@ -19,19 +24,21 @@ import { AppSessionProvider, useAppSession } from './AppSessionContext';
 import { AuthSessionProvider, useAuthSession } from './AuthSessionContext';
 import { DataClientProvider } from './DataClientContext';
 import type { SessionFetchOptions, SessionFilters } from './dataContextShared';
-import { projectsKeys, sessionsKeys, tasksKeys, featuresKeys, alertsKeys, notificationsKeys, documentsKeys } from '../services/queryKeys';
+import { projectsKeys, sessionsKeys, tasksKeys, featuresKeys } from '../services/queryKeys';
 import type { RuntimeStatus } from '../services/runtimeProfile';
-import { MAX_DOCUMENTS_IN_MEMORY } from '../constants';
-import type { TasksPage } from '../services/queries/tasks';
-import type { FeaturesPage } from '../services/queries/features';
-import type { InfiniteData } from '@tanstack/react-query';
-import type { PaginatedResponse } from './dataContextShared';
 import type { AgentSession, AlertConfig, Feature, Notification, PlanDocument } from '../types';
 import {
   useUpdateFeatureStatusMutation,
   useUpdatePhaseStatusMutation,
   useUpdateTaskStatusMutation,
 } from '../services/mutations/features';
+import { useSessionsQuery } from '../services/queries/sessions';
+import { useDocumentsQuery } from '../services/queries/documents';
+import { useTasksQuery } from '../services/queries/tasks';
+import { useFeaturesQuery } from '../services/queries/features';
+import { useAlertsQuery } from '../services/queries/alerts';
+import { useNotificationsQuery } from '../services/queries/notifications';
+import { useProjectsQuery } from '../services/queries/projects';
 
 export type { SessionFetchOptions, SessionFilters } from './dataContextShared';
 export { hasSessionDetail, mergeSessionDetail } from './dataContextShared';
@@ -128,61 +135,82 @@ export function useData(): DataContextValue {
   const updatePhaseStatusMutation = useUpdatePhaseStatusMutation();
   const updateTaskStatusMutation = useUpdateTaskStatusMutation();
 
-  // ── Sessions (from TQ cache) ────────────────────────────────────────────────
-  const tqSessionsData = queryClient.getQueryData<InfiniteData<PaginatedResponse<AgentSession>>>(
-    sessionsKeys.list(projectId),
+  // ── T4-003: Reactive TQ hooks (re-render on background refetch) ─────────────
+
+  // Sessions: infinite query; flatten pages here so components stay unchanged.
+  const sessionsQuery = useSessionsQuery({ projectId: projectId || null, enabled: !!projectId });
+  const sessions = useMemo<AgentSession[]>(
+    () => sessionsQuery.data?.pages.flatMap(p => p.items) ?? [],
+    [sessionsQuery.data],
   );
-  const sessions = tqSessionsData != null
-    ? tqSessionsData.pages.flatMap(p => p.items)
-    : [];
-  const sessionTotal = tqSessionsData != null
-    ? (tqSessionsData.pages[tqSessionsData.pages.length - 1]?.total ?? 0)
-    : 0;
-
-  // ── Documents (from TQ cache) ───────────────────────────────────────────────
-  const tqDocsData = queryClient.getQueryData<InfiniteData<PaginatedResponse<PlanDocument>>>(
-    documentsKeys.list(projectId),
+  const sessionTotal = useMemo(
+    () => {
+      const pages = sessionsQuery.data?.pages;
+      return pages != null ? (pages[pages.length - 1]?.total ?? 0) : 0;
+    },
+    [sessionsQuery.data],
   );
-  const documents = tqDocsData != null
-    ? tqDocsData.pages.flatMap(p => p.items).slice(0, MAX_DOCUMENTS_IN_MEMORY)
-    : [];
 
-  // ── Tasks (from TQ cache) ───────────────────────────────────────────────────
-  const tqTasksData = queryClient.getQueryData<TasksPage>(tasksKeys.list(projectId, 0));
-  const tasks = tqTasksData != null ? tqTasksData.items : [];
-
-  // ── Features (from TQ cache) ────────────────────────────────────────────────
-  const tqFeaturesData = queryClient.getQueryData<FeaturesPage>(
-    featuresKeys.list(projectId, undefined, 0),
+  // Documents: select transform in useDocumentsQuery already returns PlanDocument[].
+  const documentsQuery = useDocumentsQuery({ projectId: projectId || null, enabled: !!projectId });
+  const documents = useMemo<PlanDocument[]>(
+    () => (documentsQuery.data as PlanDocument[] | undefined) ?? [],
+    [documentsQuery.data],
   );
-  const features = tqFeaturesData != null ? tqFeaturesData.items : [];
 
-  // ── Alerts (from TQ cache) ──────────────────────────────────────────────────
-  const alerts = (queryClient.getQueryData<AlertConfig[]>(alertsKeys.list(projectId)) ?? []);
+  // Tasks: page 0 list query.
+  const tasksQuery = useTasksQuery({ projectId: projectId || null, page: 0, enabled: !!projectId });
+  const tasks = useMemo(
+    () => tasksQuery.data?.items ?? [],
+    [tasksQuery.data],
+  );
 
-  // ── Notifications (from TQ cache) ───────────────────────────────────────────
-  const notifications = (queryClient.getQueryData<Notification[]>(notificationsKeys.list(projectId)) ?? []);
+  // Features: page 0 list query.
+  const featuresQuery = useFeaturesQuery({ projectId: projectId || null, page: 0, enabled: !!projectId });
+  const features = useMemo<Feature[]>(
+    () => featuresQuery.data?.items ?? [],
+    [featuresQuery.data],
+  );
 
-  // ── Projects (from TQ cache, fallback to session) ───────────────────────────
-  const projects = queryClient.getQueryData<Project[]>(projectsKeys.list()) ?? session.projects;
+  // Alerts: simple list query.
+  const alertsQuery = useAlertsQuery({ projectId: projectId || null, enabled: !!projectId });
+  const alerts = useMemo<AlertConfig[]>(
+    () => alertsQuery.data ?? [],
+    [alertsQuery.data],
+  );
+
+  // Notifications: simple list query.
+  const notificationsQuery = useNotificationsQuery({ projectId: projectId || null, enabled: !!projectId });
+  const notifications = useMemo<Notification[]>(
+    () => notificationsQuery.data ?? [],
+    [notificationsQuery.data],
+  );
+
+  // Projects: global (no projectId). Fallback to session.projects while TQ loads.
+  const projectsQuery = useProjectsQuery();
+  const projects = useMemo<Project[]>(
+    () => projectsQuery.data ?? session.projects,
+    [projectsQuery.data, session.projects],
+  );
 
   // ── Refresh shims (invalidate TQ cache → hooks refetch) ─────────────────────
   const refreshSessions = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: sessionsKeys.all(projectId) });
   }, [queryClient, projectId]);
 
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
   const loadMoreSessions = useCallback(async () => {
     // loadMore is handled by the component-level useSessionsQuery fetchNextPage.
     // No-op in the shim; consumers that need pagination use the hook directly.
   }, []);
 
   const refreshDocuments = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: documentsKeys.all(projectId) });
+    await queryClient.invalidateQueries({ queryKey: [projectId, 'documents'] });
   }, [queryClient, projectId]);
 
   const refreshTasks = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['tasks'] });
-  }, [queryClient]);
+    await queryClient.invalidateQueries({ queryKey: [projectId, 'tasks'] });
+  }, [queryClient, projectId]);
 
   const refreshFeatures = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: featuresKeys.all(projectId) });
@@ -193,11 +221,24 @@ export function useData(): DataContextValue {
     await session.refreshProjects();
   }, [queryClient, session]);
 
+  // T4-015: scoped invalidation after project scope change.
+  // Replaces queryClient.clear() which nuked non-project-scoped entries (e.g.
+  // projects list, health). Invalidate by old projectId prefix; the new project's
+  // queries are disabled until activeProject updates and re-enables them.
   const switchProject = useCallback(async (pid: string) => {
-    queryClient.clear();
+    const prevProjectId = projectId;
     await session.switchProject(pid);
+    // Invalidate all queries scoped to the previous project so the new project
+    // renders fresh data and no stale cross-project data is visible.
+    if (prevProjectId) {
+      await queryClient.invalidateQueries({ queryKey: [prevProjectId] });
+    }
+    // Also invalidate the new project scope in case TQ has stale entries.
+    if (pid) {
+      await queryClient.invalidateQueries({ queryKey: [pid] });
+    }
     await runtime.refreshAll();
-  }, [queryClient, runtime, session]);
+  }, [queryClient, runtime, session, projectId]);
 
   const updateProject = useCallback(async (pid: string, project: Project) => {
     await session.updateProject(pid, project);

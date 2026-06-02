@@ -3,10 +3,15 @@
 from backend.application.services.agent_queries import cache
 from backend.application.services.agent_queries.cache import (
     _query_cache,
+    aclear_project_cache,
+    cache_get,
+    cache_set,
     clear_cache,
+    clear_project_cache,
     compute_cache_key,
     get_cache,
     get_data_version_fingerprint,
+    init_postgres_cache_backend,
 )
 from backend.application.services.agent_queries._filters import (
     AgentQueryProjectScope,
@@ -102,13 +107,16 @@ from backend.application.services.agent_queries.planning_sessions import (
 from backend.application.services.agent_queries.workflow_intelligence import WorkflowDiagnosticsQueryService
 
 __all__ = [
-    # Cache module and helpers (CACHE-003)
+    # Cache module and helpers (CACHE-003, P2-001, P2-002, P2-006)
     "cache",
     "_query_cache",
+    "aclear_project_cache",
     "clear_cache",
+    "clear_project_cache",
     "compute_cache_key",
     "get_cache",
     "get_data_version_fingerprint",
+    "init_postgres_cache_backend",
     # DTOs and shared contracts
     "AARReportDTO",
     "AgentQueryEnvelope",

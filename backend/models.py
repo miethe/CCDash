@@ -1915,6 +1915,22 @@ class PlanningGraph(BaseModel):
     phaseBatches: list[PlanningPhaseBatch] = Field(default_factory=list)
 
 
+class TokenUsageByModel(BaseModel):
+    """Per-feature token rollup bucketed by normalized model family.
+
+    Defined here so ``Feature.tokenUsageByModel`` can default to an empty
+    instance without importing from agent_queries (which would be circular).
+    Shape is intentionally compatible with
+    ``backend.application.services.agent_queries.models.TokenUsageByModel``.
+    """
+
+    opus: int = 0
+    sonnet: int = 0
+    haiku: int = 0
+    other: int = 0
+    total: int = 0
+
+
 class FeaturePhase(BaseModel):
     id: Optional[str] = None
     phase: str  # "1", "2", "all"
@@ -2095,6 +2111,7 @@ class Feature(BaseModel):
     planningStatus: Optional[PlanningEffectiveStatus] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
+    tokenUsageByModel: TokenUsageByModel = Field(default_factory=TokenUsageByModel)
 
 
 SkillMeatDefinitionType = Literal["artifact", "workflow", "context_module", "bundle"]
@@ -3045,6 +3062,8 @@ class LaunchCapabilitiesDTO(BaseModel):
     providers: list[LaunchProviderCapabilityDTO] = Field(default_factory=list)
     planningEnabled: bool = True
     multiProjectCommandCenterEnabled: bool = False
+    arcEnabled: bool = False
+    meatyWikiEnabled: bool = False
 
 
 # ── Test Visualizer DTOs ───────────────────────────────────────────
@@ -3447,6 +3466,12 @@ class ProjectWorkItemCounts(BaseModel):
     errors: int = 0
     """Items or sessions that are in an error state."""
 
+    total_tokens: int = 0
+    """Aggregate token usage across all sessions for this project."""
+
+    total_cost: float = 0.0
+    """Aggregate cost (USD) across all sessions for this project."""
+
 
 class ProjectSummary(BaseModel):
     """Per-project identity, counts, and freshness for multi-project views.
@@ -3632,3 +3657,151 @@ class MultiProjectSessionBoardResponse(BaseModel):
     completed_count: int = 0
     generated_at: Optional[datetime] = None
     data_freshness: Optional[str] = None
+
+
+# ── P5-003/P5-004 Rollup and next-work response models ───────────────────────
+
+
+class PortfolioAttentionSummary(BaseModel):
+    """Attention bucket summary inside the portfolio rollup response (§7.1)."""
+
+    active_now: int = 0
+    changed_recently: int = 0
+    needs_attention: int = 0
+    next_work: list[str] = Field(default_factory=list)
+
+
+class PortfolioProjectEntry(BaseModel):
+    """Single-project summary row in the portfolio rollup response (§7.1)."""
+
+    project_id: str
+    display_name: str = ""
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    active_sessions: int = 0
+    changed_recently: bool = False
+    needs_attention: bool = False
+    token_total: int = 0
+
+
+class PortfolioRollupResponse(BaseModel):
+    """Response for GET /api/agent/planning/portfolio/rollup (§7.1)."""
+
+    status: Literal["ok", "partial", "error"] = "ok"
+    projects: list[PortfolioProjectEntry] = Field(default_factory=list)
+    attention: PortfolioAttentionSummary = Field(default_factory=PortfolioAttentionSummary)
+    generated_at: Optional[datetime] = None
+
+
+class SystemTokenRollupByProject(BaseModel):
+    """Per-project token breakdown inside the system token rollup response (§7.3)."""
+
+    project_id: str
+    tokens_in: int = 0
+    cost_usd: float = 0.0
+
+
+class SystemTokenRollupByModelFamily(BaseModel):
+    """Per-model-family token breakdown inside the system token rollup response (§7.3)."""
+
+    family: str
+    tokens: int = 0
+
+
+class SystemTokenRollupTotals(BaseModel):
+    """Aggregate totals inside the system token rollup response (§7.3)."""
+
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0.0
+
+
+class SystemTokenRollupResponse(BaseModel):
+    """Response for GET /api/agent/system/token-rollup (§7.3)."""
+
+    status: Literal["ok", "partial", "error"] = "ok"
+    period: str = "daily"
+    totals: SystemTokenRollupTotals = Field(default_factory=SystemTokenRollupTotals)
+    by_project: list[SystemTokenRollupByProject] = Field(default_factory=list)
+    by_model_family: list[SystemTokenRollupByModelFamily] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
+class NextWorkItem(BaseModel):
+    """Single next-work item in the next-work response (§7.2)."""
+
+    feature_id: str
+    project_id: str
+    rank: int = 0
+    readiness: str = ""
+    next_phase: Optional[int] = None
+    blockers: list[str] = Field(default_factory=list)
+    story_points: Optional[int] = None
+    command: str = ""
+
+
+class NextWorkResponse(BaseModel):
+    """Response for GET /api/agent/planning/next-work (§7.2)."""
+
+    status: Literal["ok", "partial", "error"] = "ok"
+    items: list[NextWorkItem] = Field(default_factory=list)
+    next_cursor: Optional[str] = None
+    generated_at: Optional[datetime] = None
+
+
+# ── Enterprise add-on stub models (Wave 2 implementation) ──────────────────────
+
+class CouncilReview(BaseModel):
+    """Stub model for ARC (Agent Review Council) review records.
+
+    Wave 2 will populate repositories and routes. Stubs here ensure Wave 1
+    consumers can safely ``getattr(obj, 'councilReview', CouncilReview())``
+    without import errors.
+    """
+
+    id: str = ""
+    projectId: str = ""
+    featureId: str = ""
+    status: str = "pending"
+    summary: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class CouncilReviewResponse(BaseModel):
+    """List response envelope for CouncilReview items.
+
+    ``enabled`` reflects whether the ARC surface is active; when False
+    consumers should hide the UI surface rather than showing an empty list.
+    """
+
+    items: list[CouncilReview] = Field(default_factory=list)
+    enabled: bool = False
+
+
+class ResearchNote(BaseModel):
+    """Stub model for MeatyWiki research notes.
+
+    Wave 2 will populate repositories and routes. Stubs here ensure Wave 1
+    consumers can safely ``getattr(obj, 'researchNote', ResearchNote())``
+    without import errors.
+    """
+
+    id: str = ""
+    projectId: str = ""
+    featureId: Optional[str] = None
+    title: str = ""
+    url: str = ""
+    body: str = ""
+    source: str = ""
+    createdAt: str = ""
+
+
+class ResearchNoteResponse(BaseModel):
+    """List response envelope for ResearchNote items.
+
+    ``enabled`` reflects whether the MeatyWiki surface is active; when False
+    consumers should hide the UI surface rather than showing an empty list.
+    """
+
+    items: list[ResearchNote] = Field(default_factory=list)
+    enabled: bool = False

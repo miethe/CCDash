@@ -121,23 +121,24 @@ describe('T4-002: useHealthQuery — polling config declared in hook source', ()
   });
 });
 
-// ── Feature poll 5s when SSE disabled — source assertion ─────────────────────
+// ── Feature poll 30s when SSE disabled — source assertion (T4-005) ───────────
 
-describe('T4-002: feature poll 5s when SSE disabled — source assertion', () => {
+describe('T4-005: feature poll 30s when SSE disabled — source assertion', () => {
   const featuresSrc = () => readFileSync(resolve(root, 'services', 'queries', 'features.ts'), 'utf-8');
 
-  it('features.ts declares refetchInterval: 5_000 when live-features disabled (SSE fallback)', () => {
-    // When isFeatureLiveUpdatesEnabled() returns false, refetchInterval must be 5_000.
-    // The ternary: isFeatureLiveUpdatesEnabled() ? false : 5_000
+  it('features.ts declares refetchInterval: 30_000 when live-features disabled (SSE fallback)', () => {
+    // T4-005: raised from 5_000 to 30_000 — was too aggressive for enterprise loads.
+    // When isFeatureLiveUpdatesEnabled() returns false, refetchInterval must be 30_000.
+    // The ternary: isFeatureLiveUpdatesEnabled() ? false : 30_000
     expect(featuresSrc()).toContain('refetchInterval:');
-    expect(featuresSrc()).toContain('5_000');
+    expect(featuresSrc()).toContain('30_000');
   });
 
   it('features.ts sets refetchInterval to false when live-features enabled (SSE supersedes poll)', () => {
     // The SSE branch of the ternary must yield false, not a number.
     expect(featuresSrc()).toContain('isFeatureLiveUpdatesEnabled()');
-    // Ternary form: ? false : 5_000 — both branches present in source
-    expect(featuresSrc()).toMatch(/isFeatureLiveUpdatesEnabled\(\)\s*\?\s*false\s*:\s*5_000/);
+    // Ternary form: ? false : 30_000 — both branches present in source
+    expect(featuresSrc()).toMatch(/isFeatureLiveUpdatesEnabled\(\)\s*\?\s*false\s*:\s*30_000/);
   });
 
   it('features.ts reads the env flag via isFeatureLiveUpdatesEnabled from live/config', () => {

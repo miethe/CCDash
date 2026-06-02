@@ -29,10 +29,20 @@ from typing import Any
 
 import aiosqlite
 
+import aiosqlite
+
 from backend import config
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
-from backend.models import ProjectActiveCountSummaryDTO, SystemActiveCountDTO
+from backend.model_identity import derive_model_identity
+from backend.models import (
+    ProjectActiveCountSummaryDTO,
+    SystemActiveCountDTO,
+    SystemTokenRollupByModelFamily,
+    SystemTokenRollupByProject,
+    SystemTokenRollupResponse,
+    SystemTokenRollupTotals,
+)
 from backend.observability import otel
 
 from .cache import memoized_query
@@ -147,7 +157,7 @@ async def _fetch_project_summary(
             )
 
 
-# ── Cache param extractor ────────────────────────────────────────────────────
+# ── Cache param extractors ───────────────────────────────────────────────────
 
 def _system_active_count_params(
     self: Any,
@@ -158,6 +168,107 @@ def _system_active_count_params(
     # No per-invocation parameters vary the result; use an empty dict so the
     # cache key scope resolves to "global" via project_id=None.
     return {}
+
+
+def _system_token_rollup_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    *,
+    project_ids: list[str] | None = None,
+    period: str = "daily",
+    **_: Any,
+) -> dict[str, Any]:
+    return {
+        "project_ids": sorted(project_ids) if project_ids else [],
+        "period": period,
+    }
+
+
+# ── Per-project token aggregation ────────────────────────────────────────────
+
+async def _fetch_project_token_stats(
+    db: Any,
+    project_id: str,
+) -> tuple[int, int, float]:
+    """Return (tokens_in, tokens_out, cost_usd) for *project_id*.
+
+    Dual-path for SQLite (aiosqlite) and PostgreSQL (asyncpg).
+    """
+    sqlite_sql = (
+        "SELECT COALESCE(SUM(tokens_in), 0), COALESCE(SUM(tokens_out), 0), "
+        "COALESCE(SUM(total_cost), 0.0) "
+        "FROM sessions WHERE project_id = ?"  # noqa: S608
+    )
+    pg_sql = (
+        "SELECT COALESCE(SUM(tokens_in), 0), COALESCE(SUM(tokens_out), 0), "
+        "COALESCE(SUM(total_cost), 0.0) "
+        "FROM sessions WHERE project_id = $1"  # noqa: S608
+    )
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(sqlite_sql, (project_id,)) as cur:
+            row = await cur.fetchone()
+    else:
+        row = await db.fetchrow(pg_sql, project_id)
+
+    if not row:
+        return 0, 0, 0.0
+    return int(row[0] or 0), int(row[1] or 0), float(row[2] or 0.0)
+
+
+async def _fetch_model_family_tokens(
+    db: Any,
+    project_ids: list[str],
+) -> list[tuple[str, int]]:
+    """Return [(model, total_tokens)] grouped by model across *project_ids*.
+
+    Dual-path for SQLite (aiosqlite) and PostgreSQL (asyncpg).
+    """
+    if not project_ids:
+        return []
+
+    sqlite_placeholders = ",".join("?" * len(project_ids))
+    pg_placeholders = ",".join(f"${i + 1}" for i in range(len(project_ids)))
+
+    sqlite_sql = f"""
+        SELECT model,
+               COALESCE(SUM(
+                   CASE WHEN observed_tokens > 0 THEN observed_tokens
+                        ELSE tokens_in + tokens_out END
+               ), 0) AS tokens
+        FROM sessions
+        WHERE project_id IN ({sqlite_placeholders})
+        GROUP BY model
+    """  # noqa: S608
+
+    pg_sql = f"""
+        SELECT model,
+               COALESCE(SUM(
+                   CASE WHEN observed_tokens > 0 THEN observed_tokens
+                        ELSE tokens_in + tokens_out END
+               ), 0) AS tokens
+        FROM sessions
+        WHERE project_id = ANY(ARRAY[{pg_placeholders}]::text[])
+        GROUP BY model
+    """  # noqa: S608
+
+    try:
+        if isinstance(db, aiosqlite.Connection):
+            async with db.execute(sqlite_sql, project_ids) as cur:
+                rows = await cur.fetchall()
+        else:
+            rows = await db.fetch(pg_sql, *project_ids)
+    except Exception:  # noqa: BLE001
+        return []
+
+    result: list[tuple[str, int]] = []
+    for row in rows:
+        if isinstance(row, (list, tuple)):
+            model, tokens = str(row[0] or ""), int(row[1] or 0)
+        else:
+            model, tokens = str(row["model"] or ""), int(row["tokens"] or 0)
+        result.append((model, tokens))
+    return result
 
 
 # ── Service ──────────────────────────────────────────────────────────────────
@@ -264,4 +375,102 @@ class SystemMetricsQueryService:
                 generated_at=datetime.now(timezone.utc),
                 window_seconds=window_seconds,
                 status=status,  # type: ignore[arg-type]
+            )
+
+    @memoized_query("system_token_rollup", param_extractor=_system_token_rollup_params)
+    async def get_system_token_rollup(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        project_ids: list[str] | None = None,
+        period: str = "daily",
+    ) -> SystemTokenRollupResponse:
+        """Return cross-project token and cost aggregates (P5-003b, §7.3).
+
+        SQL GROUP BY project_id for per-project rows; GROUP BY model for
+        model-family breakdown.  Both queries run against the sessions table.
+        ``period`` is stored in the response but does not currently filter rows
+        (full-lifetime aggregation matches the "daily" default as a starting
+        point — time-gating is a future extension).
+        """
+        t_start = time.monotonic()
+        with otel.start_span(
+            "system_metrics.get_system_token_rollup",
+            {"period": period},
+        ):
+            projects = ports.workspace_registry.list_projects()
+            if project_ids is not None:
+                allowed = set(project_ids)
+                projects = [p for p in projects if p.id in allowed]
+
+            db = ports.storage.db
+            semaphore = asyncio.Semaphore(config.CCDASH_SYSTEM_METRICS_CONCURRENCY)
+
+            # Per-project token stats.
+            async def _safe_project_stats(project_id: str) -> tuple[str, int, int, float]:
+                async with semaphore:
+                    try:
+                        tin, tout, cost = await _fetch_project_token_stats(db, project_id)
+                        return project_id, tin, tout, cost
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "system_metrics token rollup: error for project=%s: %s",
+                            project_id,
+                            exc,
+                        )
+                        return project_id, 0, 0, 0.0
+
+            per_project_results = await asyncio.gather(
+                *[_safe_project_stats(p.id) for p in projects]
+            )
+
+            grand_tokens_in = 0
+            grand_tokens_out = 0
+            grand_cost = 0.0
+            by_project: list[SystemTokenRollupByProject] = []
+            for proj_id, tin, tout, cost in per_project_results:
+                grand_tokens_in += tin
+                grand_tokens_out += tout
+                grand_cost += cost
+                by_project.append(SystemTokenRollupByProject(
+                    project_id=proj_id,
+                    tokens_in=tin,
+                    cost_usd=cost,
+                ))
+
+            # Model-family breakdown across all queried projects.
+            all_project_ids = [p.id for p in projects]
+            model_rows = await _fetch_model_family_tokens(db, all_project_ids)
+
+            family_accum: dict[str, int] = {}
+            for model, tokens in model_rows:
+                family = str(
+                    derive_model_identity(model).get("modelFamily") or "other"
+                ).strip().lower() or "other"
+                family_accum[family] = family_accum.get(family, 0) + tokens
+
+            by_model_family = [
+                SystemTokenRollupByModelFamily(family=fam, tokens=tok)
+                for fam, tok in sorted(family_accum.items())
+            ]
+
+            duration_ms = (time.monotonic() - t_start) * 1000
+            logger.info(
+                "system_metrics: token rollup completed in %.1f ms — projects=%d",
+                duration_ms,
+                len(projects),
+            )
+
+            return SystemTokenRollupResponse(
+                status="ok",
+                period=period,
+                totals=SystemTokenRollupTotals(
+                    tokens_in=grand_tokens_in,
+                    tokens_out=grand_tokens_out,
+                    cost_usd=round(grand_cost, 6),
+                ),
+                by_project=by_project,
+                by_model_family=by_model_family,
+                generated_at=datetime.now(timezone.utc),
             )

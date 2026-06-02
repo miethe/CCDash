@@ -1,96 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import { Activity, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Surface } from './ui/surface';
 import { cn } from '../lib/utils';
-import { apiFetch } from '../services/apiClient';
-import type { SystemActiveCount, ProjectActiveCountSummary } from '../types';
-
-/** Polling interval in ms — matches the backend cache TTL (Cache-Control: max-age=30). */
-const SYSTEM_METRICS_POLL_MS = 30_000;
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
-
-interface SystemMetricsState {
-  total: number | null;
-  perProject: ProjectActiveCountSummary[];
-  status: 'ok' | 'partial' | null;
-  isLoading: boolean;
-  isError: boolean;
-  lastFetchedAt: Date | null;
-}
-
-/**
- * Polls GET /api/agent/system/active-count every 30 s.
- *
- * Resilience contracts (R-P2):
- * - Pauses when document.visibilityState === 'hidden'; resumes on visibilitychange.
- * - On fetch failure: isError=true; last known total is preserved via the component's
- *   lastKnown ref — the hook itself does not retain stale data.
- * - Never throws to an error boundary.
- */
-function useSystemMetrics(): SystemMetricsState {
-  const [state, setState] = useState<SystemMetricsState>({
-    total: null,
-    perProject: [],
-    status: null,
-    isLoading: true,
-    isError: false,
-    lastFetchedAt: null,
-  });
-
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mountedRef = useRef(true);
-
-  const fetchMetrics = useCallback(async () => {
-    if (document.visibilityState === 'hidden') return;
-    try {
-      const res = await apiFetch('/api/agent/system/active-count');
-      if (!mountedRef.current) return;
-      if (!res.ok) {
-        setState((prev) => ({ ...prev, isLoading: false, isError: true }));
-        return;
-      }
-      const data = (await res.json()) as SystemActiveCount;
-      if (!mountedRef.current) return;
-      setState({
-        total: typeof data?.total === 'number' ? data.total : null,
-        perProject: Array.isArray(data?.per_project) ? data.per_project : [],
-        status: data?.status ?? null,
-        isLoading: false,
-        isError: false,
-        lastFetchedAt: new Date(),
-      });
-    } catch {
-      if (!mountedRef.current) return;
-      setState((prev) => ({ ...prev, isLoading: false, isError: true }));
-    }
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-
-    void fetchMetrics();
-    pollRef.current = setInterval(() => void fetchMetrics(), SYSTEM_METRICS_POLL_MS);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        void fetchMetrics();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    return () => {
-      mountedRef.current = false;
-      if (pollRef.current !== null) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [fetchMetrics]);
-
-  return state;
-}
+import type { ProjectActiveCountSummary } from '../types';
+import { useSystemMetricsQuery } from '../services/queries/systemMetrics';
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
@@ -143,15 +56,28 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ entry }) => {
  * - Fetch failure → renders last-known total with "data may be outdated" indicator.
  * - status === "partial" → small "partial" badge next to total.
  * - Never throws to the React error boundary in any case.
+ *
+ * Polling is handled by TanStack Query (refetchInterval: 30 s).
+ * The interval pauses automatically when the tab is hidden
+ * (refetchIntervalInBackground defaults to false — no manual visibilitychange
+ * listener needed).
  */
 export const SystemMetricsChip: React.FC = () => {
-  const { total, perProject, status, isLoading, isError, lastFetchedAt } = useSystemMetrics();
+  const { data, isLoading, isError, dataUpdatedAt } = useSystemMetricsQuery();
 
-  // lastKnown preserves the most recent good total so we can display it on error.
+  // Normalize data with resilience fallbacks (R-P2).
+  const total = typeof data?.total === 'number' ? data.total : null;
+  const perProject = Array.isArray(data?.per_project) ? data.per_project : [];
+  const status = data?.status ?? null;
+
+  // lastKnownRef preserves the most recent good total for display on error.
   const lastKnownRef = useRef<number | null>(null);
   if (!isError && total !== null) {
     lastKnownRef.current = total;
   }
+
+  // dataUpdatedAt is 0 when no successful fetch has completed yet.
+  const lastFetchedAt = dataUpdatedAt > 0 ? new Date(dataUpdatedAt) : null;
 
   // expanded state — toggling does NOT re-fetch (uses in-memory state).
   const [expanded, setExpanded] = useState(false);

@@ -1,6 +1,7 @@
 """Shared FastAPI app builder for runtime profiles."""
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -12,9 +13,12 @@ from backend.application.context import RequestContext
 from backend import config
 from backend.db import connection
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
+from backend.routers.ai import ai_router
 from backend.routers.analytics import analytics_router
 from backend.routers.agent import agent_router
 from backend.routers.auth import auth_router
+from backend.routers.council import arc_router
+from backend.routers.meatywiki import meatywiki_router
 from backend.routers.client_v1 import client_v1_router
 from backend.routers.api import documents_router, sessions_router, tasks_router
 from backend.routers.cache import cache_router, links_router
@@ -54,13 +58,18 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     app.state.runtime_profile = runtime_profile
     app.state.runtime_container = container
 
+    # Dev CORS origins (localhost) are only included when running the local runtime profile
+    # or when CCDASH_DEV_CORS=true is explicitly set. Enterprise/api profiles allow only
+    # config.FRONTEND_ORIGIN so that hardcoded localhost origins are not present in prod.
+    _dev_cors = runtime_profile.name in ("local",) or (
+        os.getenv("CCDASH_DEV_CORS", "").strip().lower() in {"1", "true", "yes", "on"}
+    )
+    _cors_origins = [config.FRONTEND_ORIGIN]
+    if _dev_cors:
+        _cors_origins += ["http://localhost:3000", "http://127.0.0.1:3000"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            config.FRONTEND_ORIGIN,
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -339,6 +348,7 @@ def _serialize_storage_profile_validation_matrix(entries: object) -> list[dict[s
 
 
 def _register_routers(app: FastAPI) -> None:
+    app.include_router(ai_router)
     app.include_router(auth_router)
     app.include_router(sessions_router)
     app.include_router(documents_router)
@@ -361,3 +371,5 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(pricing_router)
     app.include_router(observability_router)
     app.include_router(client_v1_router)
+    app.include_router(arc_router)
+    app.include_router(meatywiki_router)

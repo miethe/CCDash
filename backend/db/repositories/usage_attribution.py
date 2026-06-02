@@ -19,19 +19,13 @@ class SqliteSessionUsageRepository(SessionUsageRepository):
         events: list[dict[str, object]],
         attributions: list[dict[str, object]],
     ) -> None:
+        # All three operations (delete + two inserts) share one transaction / one commit.
         await self.db.execute(
             "DELETE FROM session_usage_events WHERE project_id = ? AND session_id = ?",
             (project_id, session_id),
         )
-        for event in events:
-            await self.db.execute(
-                """
-                INSERT INTO session_usage_events (
-                    id, project_id, session_id, root_session_id, linked_session_id,
-                    source_log_id, captured_at, event_kind, model, tool_name,
-                    agent_name, token_family, delta_tokens, cost_usd_model_io, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+        if events:
+            event_records = [
                 (
                     event.get("id", ""),
                     project_id,
@@ -48,16 +42,21 @@ class SqliteSessionUsageRepository(SessionUsageRepository):
                     int(event.get("delta_tokens", 0) or 0),
                     float(event.get("cost_usd_model_io", 0.0) or 0.0),
                     json.dumps(event.get("metadata_json") or {}),
-                ),
-            )
-        for attribution in attributions:
-            await self.db.execute(
+                )
+                for event in events
+            ]
+            await self.db.executemany(
                 """
-                INSERT INTO session_usage_attributions (
-                    event_id, entity_type, entity_id, attribution_role,
-                    weight, method, confidence, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO session_usage_events (
+                    id, project_id, session_id, root_session_id, linked_session_id,
+                    source_log_id, captured_at, event_kind, model, tool_name,
+                    agent_name, token_family, delta_tokens, cost_usd_model_io, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
+                event_records,
+            )
+        if attributions:
+            attribution_records = [
                 (
                     attribution.get("event_id", ""),
                     attribution.get("entity_type", ""),
@@ -67,7 +66,17 @@ class SqliteSessionUsageRepository(SessionUsageRepository):
                     attribution.get("method", ""),
                     float(attribution.get("confidence", 0.0) or 0.0),
                     json.dumps(attribution.get("metadata_json") or {}),
-                ),
+                )
+                for attribution in attributions
+            ]
+            await self.db.executemany(
+                """
+                INSERT INTO session_usage_attributions (
+                    event_id, entity_type, entity_id, attribution_role,
+                    weight, method, confidence, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                attribution_records,
             )
         await self.db.commit()
 

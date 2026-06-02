@@ -165,11 +165,18 @@ class SessionIntelligenceQueryService:
         session_id: str,
     ) -> SessionIntelligenceDetailResponse | None:
         project = resolve_project(context, ports)
-        session_row = await ports.storage.sessions().get_by_id(session_id)
-        if project is None or not session_row or str(session_row.get("project_id") or "") != project.id:
+        if project is None:
             return None
 
-        sentiment_rows, churn_rows, scope_rows = await _load_facts(ports, session_id)
+        # Batch the session row fetch and all three fact reads into a single
+        # asyncio.gather call, cutting sequential round-trips from 4 to 1.
+        session_row, (sentiment_rows, churn_rows, scope_rows) = await asyncio.gather(
+            ports.storage.sessions().get_by_id(session_id),
+            _load_facts(ports, session_id),
+        )
+        if not session_row or str(session_row.get("project_id") or "") != project.id:
+            return None
+
         rollup = _rollup_from_facts(session_row, sentiment_rows, churn_rows, scope_rows)
         return SessionIntelligenceDetailResponse(
             sessionId=session_id,

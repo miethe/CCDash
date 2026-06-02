@@ -2,9 +2,10 @@
  * MPCC-501: PlanningCommandCenterShell tests.
  *
  * Strategy: renderToStaticMarkup only — no jsdom / testing-library required.
- * The TanStack Query hooks (useMultiProjectCommandCenterQuery,
- * useMultiProjectSessionBoardQuery) and the underlying service fetch are mocked
- * so that undefined/loading ccData never reaches unguarded property accesses.
+ * The TanStack Query hooks (usePlanningCommandCenterQuery,
+ * useMultiProjectCommandCenterQuery, useMultiProjectSessionBoardQuery) and the
+ * underlying service fetch are mocked so that undefined/loading ccData never
+ * reaches unguarded property accesses.
  *
  * Coverage:
  *   1. renders current-project command center (V1) by default when flag is off
@@ -12,6 +13,9 @@
  *   3. single-project mode renders PlanningCommandCenter not MultiProject
  *   4. mode toggle renders aria attributes for both modes
  *   5. loading/undefined ccData from query does not crash (resilience)
+ *
+ * T4-002: usePlanningCommandCenterQuery replaces useEffect+LoadState in V1.
+ *   Mocked at hook level so no QueryClientProvider is required.
  */
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -41,20 +45,33 @@ vi.mock('../../../services/planningTelemetry', () => ({
   trackCommandCenterAction: vi.fn(),
 }));
 
-// Mock TanStack Query hooks so undefined data doesn't crash MultiProjectCommandCenter.
+// Mock TanStack Query hooks so no QueryClientProvider is needed.
+// T4-002: usePlanningCommandCenterQuery is now used by V1 PlanningCommandCenter;
+// mock it with isLoading=true (pending state) so the spinner renders cleanly.
 vi.mock('../../../services/queries/planning', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../services/queries/planning')>();
   return {
     ...actual,
+    // T4-002: V1 hook — loading state (data: undefined, isLoading: true)
+    usePlanningCommandCenterQuery: vi.fn().mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    }),
+    // MPCC-403: multi-project hooks
     useMultiProjectCommandCenterQuery: vi.fn().mockReturnValue({
       data: undefined,
       isFetching: true,
+      isLoading: true,
       error: null,
       refetch: vi.fn(),
     }),
     useMultiProjectSessionBoardQuery: vi.fn().mockReturnValue({
       data: undefined,
       isFetching: true,
+      isLoading: true,
       error: null,
       refetch: vi.fn(),
     }),
@@ -126,8 +143,9 @@ describe('PlanningCommandCenterShell — flag off (default)', () => {
   });
 
   it('V1 renders loading state without crashing when data is undefined', () => {
-    // This is the core resilience test: on first render, getPlanningCommandCenter
-    // is unresolved so loadState.phase is 'loading'. The component must not throw.
+    // T4-002 resilience: usePlanningCommandCenterQuery returns isLoading=true /
+    // data: undefined on first render; component must not throw when accessing
+    // items = page?.items ?? [].
     const html = renderToStaticMarkup(
       <PlanningCommandCenterShell projectId={null} />,
     );

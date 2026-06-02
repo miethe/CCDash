@@ -1019,5 +1019,153 @@ class NextRunPreviewEdgeCaseTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+# ── Section 5: get_session_board memoization (P2-010) ────────────────────────
+
+# Patch target for get_data_version_fingerprint so the decorator actively caches.
+_PSS_FP_PATCH = "backend.application.services.agent_queries.cache.get_data_version_fingerprint"
+
+# All memoization tests use "project-1" to match the _WorkspaceRegistry stub.
+_MEMO_PROJECT_ID = "project-1"
+
+
+def _ports_with_sessions(sessions_repo) -> CorePorts:
+    """Build CorePorts with a real workspace-registry stub that recognises _MEMO_PROJECT_ID."""
+    return CorePorts(
+        identity_provider=_IdentityProvider(),
+        authorization_policy=_AuthorizationPolicy(),
+        workspace_registry=_WorkspaceRegistry(),
+        storage=_Storage(
+            features_repo=types.SimpleNamespace(
+                list_all=AsyncMock(return_value=[]),
+                get_by_id=AsyncMock(return_value=None),
+            ),
+            sessions_repo=sessions_repo,
+        ),
+        job_scheduler=types.SimpleNamespace(schedule=lambda job, **_: job),
+        integration_client=types.SimpleNamespace(invoke=AsyncMock(return_value={})),
+    )
+
+
+class SessionBoardMemoizationTests(unittest.IsolatedAsyncioTestCase):
+    """PlanningSessionQueryService.get_session_board is memoized via @memoized_query.
+
+    Asserts that a second call within the TTL window does NOT re-query storage
+    (i.e., the sessions repository's list_paginated is called exactly once for
+    identical inputs).
+
+    All tests:
+    - Use project_id=``_MEMO_PROJECT_ID`` ("project-1") so the workspace-registry
+      stub resolves the project successfully and get_session_board reaches storage.
+    - Patch ``get_data_version_fingerprint`` to return a stable non-None value so
+      the cache decorator actually stores and retrieves entries.
+    """
+
+    def setUp(self):
+        clear_cache()
+
+    def tearDown(self):
+        clear_cache()
+
+    async def test_second_call_within_ttl_does_not_re_query_storage(self) -> None:
+        """Storage is consulted only on the first call; cache serves the second."""
+        sessions_repo = types.SimpleNamespace(
+            list_paginated=AsyncMock(return_value=[]),
+            get_by_id=AsyncMock(return_value=None),
+            get_many_by_ids=AsyncMock(return_value={}),
+        )
+        ports = _ports_with_sessions(sessions_repo)
+        ctx = _context(_MEMO_PROJECT_ID)
+
+        svc = PlanningSessionQueryService()
+        with patch(_PSS_FP_PATCH, new=AsyncMock(return_value="fp-stable-memo")):
+            result1 = await svc.get_session_board(ctx, ports, project_id=_MEMO_PROJECT_ID, grouping="state")
+            result2 = await svc.get_session_board(ctx, ports, project_id=_MEMO_PROJECT_ID, grouping="state")
+
+        # Both calls must succeed
+        self.assertIn(result1.status, {"ok", "partial", "error"})
+        self.assertIn(result2.status, {"ok", "partial", "error"})
+
+        # Storage is queried at most once (cache hit on second call)
+        call_count = sessions_repo.list_paginated.await_count
+        self.assertLessEqual(
+            call_count,
+            1,
+            f"Expected at most 1 storage query (cache hit), got {call_count}",
+        )
+
+    async def test_different_grouping_keys_are_cached_independently(self) -> None:
+        """Board requests with different grouping values must NOT share a cache entry."""
+        sessions_repo = types.SimpleNamespace(
+            list_paginated=AsyncMock(return_value=[]),
+            get_by_id=AsyncMock(return_value=None),
+            get_many_by_ids=AsyncMock(return_value={}),
+        )
+        ports = _ports_with_sessions(sessions_repo)
+        ctx = _context(_MEMO_PROJECT_ID)
+
+        svc = PlanningSessionQueryService()
+        with patch(_PSS_FP_PATCH, new=AsyncMock(return_value="fp-stable-grouping")):
+            await svc.get_session_board(ctx, ports, project_id=_MEMO_PROJECT_ID, grouping="state")
+            await svc.get_session_board(ctx, ports, project_id=_MEMO_PROJECT_ID, grouping="feature")
+
+        # Two distinct cache keys → storage queried exactly twice
+        call_count = sessions_repo.list_paginated.await_count
+        self.assertEqual(
+            call_count,
+            2,
+            f"Expected 2 storage queries (distinct cache keys), got {call_count}",
+        )
+
+    async def test_different_feature_ids_are_cached_independently(self) -> None:
+        """Board requests scoped to different feature_id values use distinct cache entries."""
+        sessions_repo = types.SimpleNamespace(
+            list_paginated=AsyncMock(return_value=[]),
+            get_by_id=AsyncMock(return_value=None),
+            get_many_by_ids=AsyncMock(return_value={}),
+        )
+        ports = _ports_with_sessions(sessions_repo)
+        ctx = _context(_MEMO_PROJECT_ID)
+
+        svc = PlanningSessionQueryService()
+        with patch(_PSS_FP_PATCH, new=AsyncMock(return_value="fp-stable-feat")):
+            await svc.get_session_board(
+                ctx, ports, project_id=_MEMO_PROJECT_ID, feature_id="feat-a", grouping="state"
+            )
+            await svc.get_session_board(
+                ctx, ports, project_id=_MEMO_PROJECT_ID, feature_id="feat-b", grouping="state"
+            )
+
+        call_count = sessions_repo.list_paginated.await_count
+        self.assertEqual(
+            call_count,
+            2,
+            f"Expected 2 storage queries (distinct feature scopes), got {call_count}",
+        )
+
+    async def test_bypass_cache_forces_storage_re_query(self) -> None:
+        """Passing bypass_cache=True forces a fresh storage query even after a cached result."""
+        sessions_repo = types.SimpleNamespace(
+            list_paginated=AsyncMock(return_value=[]),
+            get_by_id=AsyncMock(return_value=None),
+            get_many_by_ids=AsyncMock(return_value={}),
+        )
+        ports = _ports_with_sessions(sessions_repo)
+        ctx = _context(_MEMO_PROJECT_ID)
+
+        svc = PlanningSessionQueryService()
+        with patch(_PSS_FP_PATCH, new=AsyncMock(return_value="fp-stable-bypass")):
+            await svc.get_session_board(ctx, ports, project_id=_MEMO_PROJECT_ID, grouping="state")
+            await svc.get_session_board(
+                ctx, ports, project_id=_MEMO_PROJECT_ID, grouping="state", bypass_cache=True
+            )
+
+        call_count = sessions_repo.list_paginated.await_count
+        self.assertEqual(
+            call_count,
+            2,
+            f"Expected 2 storage queries after bypass_cache=True, got {call_count}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

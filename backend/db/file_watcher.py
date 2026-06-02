@@ -2,6 +2,12 @@
 
 Monitors project directories for real-time changes and triggers
 incremental re-sync on modified/added/deleted files.
+
+P3-005: FileWatcherRegistry — one watcher task per registered project;
+        start/stop/snapshot per project; is_running(project_id);
+        aggregate snapshot reports per-project watch state.
+P3-010: asyncio.Lock wraps register/unregister/rebind so concurrent calls
+        are serialised and never produce torn watcher state.
 """
 from __future__ import annotations
 
@@ -303,5 +309,151 @@ class FileWatcher:
         return result
 
 
-# Singleton instance
+# ── P3-005: FileWatcherRegistry ──────────────────────────────────────────────
+
+
+@dataclass
+class _WatcherEntry:
+    """Internal registry entry: one FileWatcher + its creation args."""
+    watcher: FileWatcher
+    # Paths used at start-time (for snapshot display)
+    sessions_dir: Path
+    docs_dir: Path
+    progress_dir: Path
+
+
+class FileWatcherRegistry:
+    """Registry that owns one FileWatcher task per registered project_id.
+
+    Thread-safety / concurrency: all mutating operations (register,
+    unregister) acquire ``_lock`` (asyncio.Lock) so concurrent rebind
+    calls cannot produce torn watcher state (P3-010).
+
+    Usage::
+
+        registry = FileWatcherRegistry()
+
+        # start a watcher for a project
+        await registry.register(project_id, sync_engine, sessions_dir, docs_dir, progress_dir)
+
+        # check running state
+        registry.is_running("proj-1")   # True / False
+
+        # per-project snapshot
+        registry.snapshot("proj-1")     # dict
+
+        # aggregate snapshot (all projects)
+        registry.snapshot_all()         # dict[project_id, dict]
+
+        # tear down one project
+        await registry.unregister("proj-1")
+
+        # tear down all
+        await registry.stop_all()
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, _WatcherEntry] = {}
+        # P3-010: serialise all mutating calls
+        self._lock: asyncio.Lock | None = None  # lazy-init (loop may not exist at import time)
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Return (or lazily create) the asyncio.Lock for the running loop."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    async def register(
+        self,
+        sync_engine,
+        project_id: str,
+        sessions_dir: Path,
+        docs_dir: Path,
+        progress_dir: Path,
+        test_results_dir: Path | None = None,
+        test_sources: list[ResolvedTestSource] | None = None,
+    ) -> None:
+        """Start (or restart) a watcher for *project_id*.
+
+        If a watcher is already running for this project it is stopped first
+        so callers can safely call register on rebind without a prior
+        unregister call.
+        """
+        async with self._get_lock():
+            # Stop existing watcher for this project if present
+            existing = self._entries.get(project_id)
+            if existing is not None:
+                await existing.watcher.stop()
+                del self._entries[project_id]
+
+            watcher = FileWatcher()
+            await watcher.start(
+                sync_engine,
+                project_id,
+                sessions_dir,
+                docs_dir,
+                progress_dir,
+                test_results_dir=test_results_dir,
+                test_sources=test_sources,
+            )
+            self._entries[project_id] = _WatcherEntry(
+                watcher=watcher,
+                sessions_dir=sessions_dir,
+                docs_dir=docs_dir,
+                progress_dir=progress_dir,
+            )
+            logger.info(
+                "FileWatcherRegistry: registered project '%s' (total=%d)",
+                project_id,
+                len(self._entries),
+            )
+
+    async def unregister(self, project_id: str) -> None:
+        """Stop and remove the watcher for *project_id* (no-op if absent)."""
+        async with self._get_lock():
+            entry = self._entries.pop(project_id, None)
+            if entry is not None:
+                await entry.watcher.stop()
+                logger.info(
+                    "FileWatcherRegistry: unregistered project '%s' (remaining=%d)",
+                    project_id,
+                    len(self._entries),
+                )
+
+    def is_running(self, project_id: str) -> bool:
+        """Return True if a running watcher task exists for *project_id*."""
+        entry = self._entries.get(project_id)
+        return entry is not None and entry.watcher.is_running
+
+    def snapshot(self, project_id: str) -> dict[str, object] | None:
+        """Return the snapshot dict for *project_id*, or None if not registered."""
+        entry = self._entries.get(project_id)
+        if entry is None:
+            return None
+        return entry.watcher.snapshot()
+
+    def snapshot_all(self) -> dict[str, dict[str, object]]:
+        """Return a dict keyed by project_id with each project's snapshot."""
+        return {pid: entry.watcher.snapshot() for pid, entry in self._entries.items()}
+
+    @property
+    def registered_project_ids(self) -> list[str]:
+        """Return the list of currently registered project IDs."""
+        return list(self._entries.keys())
+
+    async def stop_all(self) -> None:
+        """Stop and unregister all watchers."""
+        async with self._get_lock():
+            for pid, entry in list(self._entries.items()):
+                await entry.watcher.stop()
+                logger.info("FileWatcherRegistry: stopped watcher for project '%s'", pid)
+            self._entries.clear()
+
+
+# ── Module-level singletons ──────────────────────────────────────────────────
+
+# Legacy singleton (kept for backward compatibility; registry is the preferred API)
 file_watcher = FileWatcher()
+
+# Multi-project registry singleton (P3-005)
+file_watcher_registry = FileWatcherRegistry()

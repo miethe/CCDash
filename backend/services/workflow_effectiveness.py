@@ -12,6 +12,7 @@ from uuid import uuid4
 from backend import config as backend_config
 from backend.db.factory import (
     get_agentic_intelligence_repository,
+    get_artifact_ranking_repository,
     get_entity_link_repository,
     get_session_repository,
     get_telemetry_queue_repository,
@@ -1032,6 +1033,39 @@ async def _maybe_emit_artifact_telemetry(
         if definition_type and external_id:
             definition_by_key[(definition_type, external_id)] = definition
 
+    # Build a (artifact_type, artifact_id) → content_hash map from ranking rows.
+    # Ranking rows carry evidence_json.snapshot.contentHash which is the authoritative
+    # version-level hash; external definitions usually lack it.
+    _ranking_content_hash: dict[tuple[str, str], str] = {}
+    try:
+        ranking_repo = get_artifact_ranking_repository(db)
+        ranking_result = await ranking_repo.list_rankings(
+            project_id=project_id,
+            period=period,
+            limit=500,
+        )
+        for _row in ranking_result.get("rows", []):
+            _atype = str(_row.get("artifact_type") or "").strip()
+            _aid = str(_row.get("artifact_id") or "").strip()
+            if not _atype or not _aid:
+                continue
+            _evidence = _row.get("evidence") or {}
+            if not isinstance(_evidence, dict):
+                try:
+                    _evidence = json.loads(_evidence) if isinstance(_evidence, str) else {}
+                except Exception:
+                    _evidence = {}
+            _snapshot = _evidence.get("snapshot") or {}
+            _ch = str(_snapshot.get("contentHash") or "").strip()
+            if _ch and 64 <= len(_ch) <= 71:
+                _ranking_content_hash[(_atype, _aid)] = _ch
+    except Exception:
+        _wfe_logger.debug(
+            "Could not load ranking content_hash for project %s — version telemetry may fall back to base",
+            project_id,
+            exc_info=True,
+        )
+
     now = datetime.now(timezone.utc)
     queue = get_telemetry_queue_repository(db)
     artifact_payloads: list[ArtifactOutcomePayload] = []
@@ -1051,7 +1085,7 @@ async def _maybe_emit_artifact_telemetry(
         period_start = _parse_iso(str(item.get("generatedAt") or "")) or now
         period_end = now
 
-        # content_hash from definition (if available).
+        # content_hash from definition (if available), with fallback to ranking evidence_json.
         definition = definition_by_key.get((scope_type, scope_id))
         content_hash = None
         if definition:
@@ -1060,6 +1094,9 @@ async def _maybe_emit_artifact_telemetry(
             # Normalise length: must be 64-71 chars to satisfy model constraints.
             if content_hash and not (64 <= len(content_hash) <= 71):
                 content_hash = None
+        # Fall back to content_hash extracted from the ranking row's evidence_json.snapshot.contentHash.
+        if not content_hash:
+            content_hash = _ranking_content_hash.get((scope_type, scope_id))
 
         common_fields = {
             "event_id": uuid4(),

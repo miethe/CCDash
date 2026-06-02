@@ -290,6 +290,8 @@ async def get_launch_capabilities() -> LaunchCapabilitiesDTO:
             providers=providers,
             planningEnabled=bool(config.CCDASH_PLANNING_CONTROL_PLANE_ENABLED),
             multiProjectCommandCenterEnabled=bool(config.CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED),
+            arcEnabled=bool(config.ARC_ENABLED),
+            meatyWikiEnabled=bool(config.MEATYWIKI_ENABLED),
         )
 
 

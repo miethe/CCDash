@@ -13,13 +13,11 @@
 
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useDataClient } from '../../contexts/DataClientContext';
-import { MAX_DOCUMENTS_IN_MEMORY } from '../../constants';
+import { MAX_DOCUMENTS_IN_MEMORY, DOCUMENTS_PAGE_SIZE } from '../../constants';
 import { documentsKeys } from '../queryKeys';
 import type { PlanDocument } from '../../types';
 import type { PaginatedResponse } from '../../contexts/dataContextShared';
 import type { InfiniteData } from '@tanstack/react-query';
-
-const DOCUMENTS_PAGE_SIZE = 500;
 
 // ── useDocumentsQuery ──────────────────────────────────────────────────────────
 

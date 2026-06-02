@@ -31,6 +31,7 @@ from backend.application.live_updates.runtime_state import set_live_event_publis
 from backend.application.ports import CorePorts
 from backend.application.ports.core import ProjectBinding
 from backend import config
+from backend.application.services.agent_queries.cache import init_postgres_cache_backend
 from backend.db import connection, migrations, sync_engine
 from backend.db.migration_governance import validate_migration_governance_contract
 from backend.db.factory import get_telemetry_queue_repository
@@ -106,6 +107,8 @@ class RuntimeContainer:
         self.db = await connection.get_connection()
         await migrations.run_migrations(self.db)
         self.migration_status = "applied"
+        init_postgres_cache_backend(self.db)
+        await self._warn_enterprise_ingestion_misconfiguration()
         self.ports = self._build_core_ports()
         app.state.core_ports = self.ports
         self.live_event_broker = InMemoryLiveEventBroker(replay_buffer_size=config.CCDASH_LIVE_REPLAY_BUFFER_SIZE)
@@ -135,6 +138,10 @@ class RuntimeContainer:
         app.state.telemetry_exporter = self.telemetry_exporter
         self._record_telemetry_export_disabled_state()
 
+        # P3-009: TelemetryExporterJob and ArtifactRollupExportJob run under
+        # both 'worker' and 'worker-watch' profiles so that telemetry export
+        # works regardless of which worker variant is deployed in a cluster.
+        _export_profiles = {"worker", "worker-watch"}
         self.job_adapter = RuntimeJobAdapter(
             profile=self.profile,
             ports=self.require_ports(),
@@ -142,7 +149,7 @@ class RuntimeContainer:
             project_binding=self.project_binding,
             telemetry_exporter_job=(
                 TelemetryExporterJob(self.telemetry_exporter)
-                if self.profile.name == "worker" and self.telemetry_exporter is not None
+                if self.profile.name in _export_profiles and self.telemetry_exporter is not None
                 else None
             ),
             artifact_rollup_export_job=(
@@ -150,7 +157,7 @@ class RuntimeContainer:
                     self.telemetry_exporter,
                     project=self.project_binding.project if self.project_binding is not None else None,
                 )
-                if self.profile.name == "worker" and self.telemetry_exporter is not None
+                if self.profile.name in _export_profiles and self.telemetry_exporter is not None
                 else None
             ),
         )
@@ -240,6 +247,46 @@ class RuntimeContainer:
         if self.storage_profile.profile == "local":
             return True
         return bool(self.storage_profile.filesystem_source_of_truth)
+
+    async def _warn_enterprise_ingestion_misconfiguration(self) -> None:
+        """T0-014: Emit a loud WARNING when enterprise + ingestion-off + zero sessions.
+
+        Runs after migrations so the sessions table is guaranteed to exist.
+        This is a log-only advisory; it does not raise or abort startup.
+        """
+        if self.storage_profile.profile != "enterprise":
+            return
+        if bool(self.storage_profile.filesystem_source_of_truth):
+            return
+        if self.db is None:
+            return
+        try:
+            import aiosqlite
+            if isinstance(self.db, aiosqlite.Connection):
+                async with self.db.execute("SELECT COUNT(*) FROM sessions") as cur:
+                    row = await cur.fetchone()
+                    session_count = int(row[0]) if row else 0
+            else:
+                # asyncpg Pool or Connection
+                row = await self.db.fetchrow("SELECT COUNT(*) FROM sessions")
+                session_count = int(row[0]) if row else 0
+        except Exception:
+            # Table may not exist on a brand-new DB; treat as zero.
+            session_count = 0
+
+        if session_count == 0:
+            logger.warning(
+                "CCDash enterprise profile is running with filesystem ingestion DISABLED "
+                "and the sessions table is EMPTY. The dashboard will show no data. "
+                "To fix: set CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED=true "
+                "and ensure the worker-watch service is running "
+                "(CCDASH_RUNTIME_PROFILE=worker-watch with CCDASH_STARTUP_SYNC_ENABLED=true). "
+                "See docs/guides for the enterprise deployment checklist. "
+                "(profile=%s, filesystem_source_of_truth=%s, session_count=%d)",
+                self.profile.name,
+                bool(self.storage_profile.filesystem_source_of_truth),
+                session_count,
+            )
 
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()
@@ -510,9 +557,18 @@ class RuntimeContainer:
         startup_sync_required = "startup_sync" in required_checks
         sync_provisioned = bool(status.get("syncProvisioned", False))
         watcher_check_status = "not_applicable"
+        watch_path_count = int(watcher_detail.get("watchPathCount", 0) or 0)
         if self.profile.capabilities.watch:
             if watcher_state == "running":
                 watcher_check_status = "pass"
+            elif watch_path_count == 0 and watcher_runtime_required:
+                # T0-003: Watch is configured and REQUIRED but zero paths resolved → hard fail.
+                # Only applies to required-watcher profiles (worker-watch). For optional-watcher
+                # profiles (local), zero paths is a degraded warn, not a hard fail — the watcher
+                # is expected but not configured, not a blocking condition.
+                # Synthesise the configured_no_paths state so the summary line fires.
+                watcher_state = "configured_no_paths"
+                watcher_check_status = "fail"
             elif watcher_runtime_required:
                 watcher_check_status = "fail"
             else:
@@ -1113,7 +1169,24 @@ class RuntimeContainer:
             return None
 
         binding_config = config.resolve_worker_binding_config()
-        if not binding_config.configured:
+
+        # Wire dead config vars:
+        # P3: WORKER_WATCH_PROJECT_ID takes precedence for the worker-watch profile —
+        # lets operators point the watcher at a different project than the scheduler
+        # without changing CCDASH_WORKER_PROJECT_ID (which the api/worker also reads).
+        effective_project_id = binding_config.project_id
+        if self.profile.name == "worker-watch":
+            watch_project_id = getattr(config, "WORKER_WATCH_PROJECT_ID", "")
+            if watch_project_id:
+                effective_project_id = watch_project_id
+                logger.debug(
+                    "worker-watch profile: using CCDASH_WORKER_WATCH_PROJECT_ID=%s "
+                    "(overrides CCDASH_WORKER_PROJECT_ID=%s)",
+                    effective_project_id,
+                    binding_config.project_id,
+                )
+
+        if not effective_project_id:
             raise RuntimeError(
                 f"Runtime profile '{self.profile.name}' requires a non-empty "
                 f"{config.CCDASH_WORKER_PROJECT_ID_ENV} before starting background jobs."
@@ -1123,14 +1196,31 @@ class RuntimeContainer:
             runtime_profile=self.profile,
             storage_profile=self.storage_profile,
         )
+
+        # P3-016: when the registry has multiple projects but no explicit binding
+        # is configured, emit a clear operator warning so the operator knows which
+        # project owns background jobs.
+        all_projects = workspace_registry.list_projects()
+        if len(all_projects) > 1 and not effective_project_id:
+            logger.warning(
+                "CCDash worker (profile=%s) found %d projects in the registry but no "
+                "explicit CCDASH_WORKER_PROJECT_ID is set. "
+                "Background jobs (sync, telemetry export, cache warming) will be bound "
+                "to the active project only. "
+                "Set CCDASH_WORKER_PROJECT_ID to silence this warning and make the "
+                "binding deterministic across restarts.",
+                self.profile.name,
+                len(all_projects),
+            )
+
         binding = workspace_registry.resolve_project_binding(
-            binding_config.project_id,
+            effective_project_id,
             allow_active_fallback=False,
         )
         if binding is None:
             raise RuntimeError(
                 f"Runtime profile '{self.profile.name}' could not resolve project "
-                f"'{binding_config.project_id}' from the workspace registry."
+                f"'{effective_project_id}' from the workspace registry."
             )
 
         logger.info(

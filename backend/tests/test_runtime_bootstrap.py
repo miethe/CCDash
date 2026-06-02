@@ -613,14 +613,6 @@ class RuntimeProfileTests(unittest.TestCase):
 
         self.assertEqual(payload["storageProfileValidationMatrix"], _expected_health_validation_matrix())
 
-    @unittest.skip(
-        "FU-004: production drift — bootstrap._build_health_payload no longer "
-        "emits 'authGuardrail' / 'probeDetailWarningCodes' even though "
-        "RuntimeContainer.runtime_status() still populates them. "
-        "TODO: restore those fields in backend/runtime/bootstrap.py:_build_health_payload "
-        "(or update this test if the contract was intentionally narrowed). "
-        "Tracked: containerized-deployment-v1 follow-up FU-004."
-    )
     def test_health_endpoint_exposes_runtime_contract_metadata(self) -> None:
         app = build_api_app()
         app.state.runtime_container.storage_profile = _enterprise_storage_profile(shared=True)
@@ -677,14 +669,6 @@ class RuntimeProfileTests(unittest.TestCase):
             ),
         )
 
-    @unittest.skip(
-        "FU-004: production drift — bootstrap._build_health_payload no longer "
-        "passes through 'probeDetailWarningCodes'. Same root cause as the "
-        "test_health_endpoint_exposes_runtime_contract_metadata skip; both "
-        "fields are still produced by RuntimeContainer.runtime_status() but "
-        "dropped on the way to the /api/health response. "
-        "Tracked: containerized-deployment-v1 follow-up FU-004."
-    )
     def test_health_endpoint_preserves_legacy_fields_and_exposes_probe_contract(self) -> None:
         app = build_api_app()
         app.state.runtime_container.storage_profile = _enterprise_storage_profile()
@@ -713,14 +697,6 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["authGuardrail"]["anonymousFallbackReasonCode"], "anonymous_fallback_outside_bearer_path")
         self.assertEqual(payload["probeContract"]["ready"]["state"], "ready")
 
-    @unittest.skip(
-        "FU-004: test bug — reloads `backend.runtime.bootstrap` and calls "
-        "`bootstrap_mod.build_local_app()`, but `build_local_app` lives in "
-        "`backend.runtime.bootstrap_local` (re-exported only via that submodule). "
-        "Fix is to reload `backend.runtime.bootstrap_local` instead, or import "
-        "`build_local_app` directly from there. "
-        "Tracked: containerized-deployment-v1 follow-up FU-004."
-    )
     def test_health_endpoint_exposes_runtime_perf_defaults(self) -> None:
         # Verify runtimePerfDefaults is present and typed correctly under
         # both default env and explicit env-var override scenarios.
@@ -755,8 +731,9 @@ class RuntimeProfileTests(unittest.TestCase):
             clear=False,
         ):
             importlib.reload(cfg_mod)
-            # Re-import the bootstrap module so it picks up reloaded config values.
-            import backend.runtime.bootstrap as bootstrap_mod
+            # Re-import bootstrap_local (which owns build_local_app) so it picks
+            # up reloaded config values.  bootstrap.py does not export build_local_app.
+            import backend.runtime.bootstrap_local as bootstrap_mod
             importlib.reload(bootstrap_mod)
             overridden_app = bootstrap_mod.build_local_app()
             overridden_app.state.runtime_container.storage_profile = _local_storage_profile()
@@ -1054,15 +1031,6 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["detail"]["watcher"]["lastChangeCount"], 3)
         self.assertEqual(payload["detail"]["watcher"]["lastSyncStatus"], "succeeded")
 
-    @unittest.skip(
-        "FU-004: production drift — bootstrap._build_detail_probe_payload "
-        "rebuilds the 'detail' block by hand and omits 'warningCodes', 'warnings', "
-        "and the 'auth' subtree, even though the underlying probe contract emitted "
-        "by RuntimeContainer still contains them. "
-        "TODO: have _build_detail_probe_payload pass through detail.get('warningCodes'), "
-        "detail.get('warnings'), and detail.get('auth') in backend/runtime/bootstrap.py. "
-        "Tracked: containerized-deployment-v1 follow-up FU-004."
-    )
     def test_detail_probe_endpoint_surfaces_hosted_auth_guardrail_without_degrading_ready_state(self) -> None:
         app = build_api_app()
         app.state.runtime_container.storage_profile = _enterprise_storage_profile()
@@ -1331,20 +1299,17 @@ class FileWatcherObservationTests(unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skip(
-    "FU-004: collection of this class wedges the Python interpreter on macOS "
-    "(processes hang in uninterruptible 'UE' state and accumulate as "
-    "unkillable zombies). Bisect isolated the trigger to "
-    "test_worker_process_starts_without_http_server, which actually invokes "
-    "serve_worker(...) inside an IsolatedAsyncioTestCase event loop; the "
-    "spawned worker leaks a kernel resource (Mach port / kqueue) that prevents "
-    "subsequent test collection from completing. The other lifecycle tests "
-    "in this class import-time fine in isolation but cannot run here while "
-    "the offending test is colocated. "
-    "Plan: split test_worker_process_starts_without_http_server into its own "
-    "module that runs in a subprocess fixture (so a leaked worker dies when "
-    "the subprocess does), and confirm the remaining lifecycle tests pass on "
-    "their own. "
-    "Tracked: containerized-deployment-v1 follow-up FU-004."
+    "FU-004 (macOS Mach-port / kqueue leak — needs subprocess harness): "
+    "test_worker_process_starts_without_http_server calls serve_worker() inside "
+    "an IsolatedAsyncioTestCase event loop, which causes the spawned worker to "
+    "leak a kernel resource (Mach port / kqueue descriptor) that cannot be "
+    "reclaimed by the test-runner process.  On macOS the leaked resource wedges "
+    "subsequent test collection (processes accumulate in unkillable 'UE' state). "
+    "The remaining lifecycle tests in this class are individually sound but "
+    "cannot be safely colocated with the offending test until it is moved to a "
+    "dedicated module using a subprocess fixture (so any leaked worker is "
+    "reaped when the subprocess exits).  Tracked: containerized-deployment-v1 "
+    "follow-up FU-004."
 )
 class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_api_profile_rejects_local_storage_before_opening_db(self) -> None:

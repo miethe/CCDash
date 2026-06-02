@@ -348,7 +348,7 @@ class PlanningTokenTelemetry(BaseModel):
 
     total_tokens: int | None = None
     by_model_family: list[PlanningTokenTelemetryEntry] = Field(default_factory=list)
-    source: Literal["session_attribution", "unavailable"] = "unavailable"
+    source: Literal["backend", "session_attribution", "unavailable"] = "unavailable"
 
 
 class FeatureSummaryItem(BaseModel):
@@ -851,6 +851,15 @@ class PlanningAgentSessionBoardDTO(AgentQueryEnvelope):
     feature.  ``grouping`` reflects the applied ``PlanningBoardGroupingMode``.
     ``active_count`` and ``completed_count`` are convenience tallies derived
     from the card states across all groups.
+
+    Pagination fields (T4-001):
+    - ``page``: 1-based page number of the returned window (absent when
+      cursor-based pagination is used).
+    - ``page_size``: number of cards requested per page.  Equals the applied
+      ``limit`` query param (default 500 for backward compatibility).
+    - ``next_cursor``: opaque cursor for the next page.  ``None`` when there
+      are no more cards (i.e. this is the last or only page).  FE must tolerate
+      this field being absent — it is ``None`` by default.
     """
 
     project_id: str
@@ -860,6 +869,10 @@ class PlanningAgentSessionBoardDTO(AgentQueryEnvelope):
     total_card_count: int = 0
     active_count: int = 0
     completed_count: int = 0
+    # ── Pagination (T4-001) ──────────────────────────────────────────────────
+    page: int | None = None
+    page_size: int | None = None
+    next_cursor: str | None = None
 
 
 class NextRunContextRef(BaseModel):

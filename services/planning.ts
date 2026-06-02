@@ -36,8 +36,10 @@ import type {
   PromptContextSelection,
 } from '../types';
 import type { AgentQueryEnvelope } from '../types';
+import type { QueryClient } from '@tanstack/react-query';
 import type { PlanningStatusBucket } from './planningRoutes';
 import { apiFetch } from './apiClient';
+import { planningKeys } from './queryKeys';
 
 const API_BASE = '/api/agent/planning';
 
@@ -396,6 +398,10 @@ export interface WirePlanningAgentSessionBoard {
   completed_count: number;
   data_freshness?: string;
   generated_at?: string;
+  // Pagination fields (T4-001) — optional for backward compatibility
+  page?: number;
+  page_size?: number;
+  next_cursor?: string | null;
 }
 
 // ── Adapters (snake_case → camelCase) ─────────────────────────────────────────
@@ -687,7 +693,26 @@ function adaptPlanningBoardGroup(wire: WirePlanningBoardGroup): PlanningBoardGro
   };
 }
 
-export function adaptPlanningAgentSessionBoard(wire: WirePlanningAgentSessionBoard): PlanningAgentSessionBoard {
+/**
+ * PlanningAgentSessionBoard extended with server-side pagination metadata (T4-001).
+ *
+ * These fields are optional so FE callers that don't yet consume pagination
+ * continue to work without changes.  FE components MUST tolerate ``nextCursor``
+ * being absent (null or undefined) — that is the terminal-page sentinel.
+ */
+export interface PlanningAgentSessionBoardPaginated extends PlanningAgentSessionBoard {
+  /** 1-based page number of the returned window. */
+  page?: number;
+  /** Number of sessions requested per page (matches the ``limit`` query param). */
+  pageSize?: number;
+  /**
+   * Opaque cursor for the next page.  ``null`` / absent when there are no
+   * further pages (i.e. this is the last or only page).
+   */
+  nextCursor?: string | null;
+}
+
+export function adaptPlanningAgentSessionBoard(wire: WirePlanningAgentSessionBoard): PlanningAgentSessionBoardPaginated {
   return {
     projectId: wire.project_id ?? '',
     featureId: wire.feature_id,
@@ -698,6 +723,10 @@ export function adaptPlanningAgentSessionBoard(wire: WirePlanningAgentSessionBoa
     completedCount: wire.completed_count ?? 0,
     dataFreshness: wire.data_freshness,
     generatedAt: wire.generated_at,
+    // Pagination (T4-001) — absent when the backend hasn't sent them
+    page: wire.page,
+    pageSize: wire.page_size,
+    nextCursor: wire.next_cursor ?? null,
   };
 }
 
@@ -845,11 +874,40 @@ export async function getFeaturePlanningContext(
   };
 }
 
+/**
+ * Warm the TanStack Query cache for a feature's planning context.
+ *
+ * Uses `queryClient.prefetchQuery` keyed on `planningKeys.featureContext` so
+ * the prefetched data is readable by `usePlanningFeatureContextQuery` without
+ * an additional network round-trip when the modal opens.
+ *
+ * `queryClient` is required to write into the shared cache.  The legacy
+ * fire-and-forget overload (no queryClient) is kept for backward-compat but
+ * will log a warning in development — it no longer writes to any cache.
+ */
 export function prefetchFeaturePlanningContext(
   featureId: string,
   opts?: { projectId?: string },
-): Promise<FeaturePlanningContext | null> {
-  return getFeaturePlanningContext(featureId, opts).catch(() => null);
+  queryClient?: QueryClient,
+): Promise<void> {
+  if (!queryClient) {
+    if (process.env.NODE_ENV !== 'production') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[prefetchFeaturePlanningContext] called without queryClient — ' +
+          'data will not be written to the TanStack Query cache. ' +
+          'Pass the queryClient from useQueryClient() to enable hover-prefetch.',
+      );
+    }
+    return getFeaturePlanningContext(featureId, opts).catch(() => undefined);
+  }
+
+  const projectId = opts?.projectId ?? '';
+  return queryClient.prefetchQuery({
+    queryKey: planningKeys.featureContext(projectId, featureId),
+    queryFn: () => getFeaturePlanningContext(featureId, opts),
+    staleTime: 30_000,
+  });
 }
 
 /**
@@ -917,17 +975,22 @@ export async function getPhaseOperations(
 /**
  * Fetch the project-wide Planning Agent Session Board.
  *
- * Returns all agent sessions grouped by the chosen dimension (default: "state").
+ * Returns agent sessions grouped by the chosen dimension (default: "state").
+ * Supports cursor-based pagination via ``cursor`` + ``limit`` (T4-001).
+ * Omitting both params preserves the legacy single-page behavior (limit=500).
  *
  * Mirrors: GET /api/agent/planning/session-board
  */
 export async function getSessionBoard(
   projectId?: string,
   grouping?: PlanningBoardGroupingMode,
-): Promise<PlanningAgentSessionBoard> {
+  opts?: { cursor?: string | null; limit?: number },
+): Promise<PlanningAgentSessionBoardPaginated> {
   const params = new URLSearchParams();
   if (projectId) params.set('project_id', projectId);
   if (grouping) params.set('grouping', grouping);
+  if (opts?.cursor) params.set('cursor', opts.cursor);
+  if (typeof opts?.limit === 'number') params.set('limit', String(opts.limit));
 
   const wire = await planningFetch<WirePlanningAgentSessionBoard>(
     '/session-board',
@@ -940,6 +1003,7 @@ export async function getSessionBoard(
  * Fetch a feature-scoped Planning Agent Session Board.
  *
  * Only sessions correlated to the given feature are included.
+ * Supports cursor-based pagination via ``cursor`` + ``limit`` (T4-001).
  *
  * Mirrors: GET /api/agent/planning/session-board/{featureId}
  */
@@ -947,10 +1011,13 @@ export async function getFeatureSessionBoard(
   featureId: string,
   projectId?: string,
   grouping?: PlanningBoardGroupingMode,
-): Promise<PlanningAgentSessionBoard> {
+  opts?: { cursor?: string | null; limit?: number },
+): Promise<PlanningAgentSessionBoardPaginated> {
   const params = new URLSearchParams();
   if (projectId) params.set('project_id', projectId);
   if (grouping) params.set('grouping', grouping);
+  if (opts?.cursor) params.set('cursor', opts.cursor);
+  if (typeof opts?.limit === 'number') params.set('limit', String(opts.limit));
 
   const wire = await planningFetch<WirePlanningAgentSessionBoard>(
     `/session-board/${encodeURIComponent(featureId)}`,

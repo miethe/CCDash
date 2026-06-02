@@ -1,6 +1,11 @@
+# OVERLAY FILE — must be used in combination with the base compose file:
+#   docker compose -f compose.yaml -f compose.hosted.yml [--profile enterprise] up
+# This file does NOT define profiles: or the ccdash-postgres-data volume root declaration;
+# those are inherited from compose.yaml. Using this file standalone will fail.
+
 services:
   postgres:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_DB: ${CCDASH_POSTGRES_DB:-ccdash}
       POSTGRES_USER: ${CCDASH_POSTGRES_USER:-ccdash}
@@ -49,7 +54,7 @@ services:
       CCDASH_WORKER_PROBE_HOST: ${CCDASH_WORKER_PROBE_HOST:-0.0.0.0}
       CCDASH_WORKER_PROBE_PORT: ${CCDASH_WORKER_PROBE_PORT:-9465}
       CCDASH_TELEMETRY_EXPORT_ENABLED: ${CCDASH_TELEMETRY_EXPORT_ENABLED:-true}
-      CCDASH_SAM_ENDPOINT: ${CCDASH_SAM_ENDPOINT:-https://telemetry.invalid.example/api/v1/analytics/execution-outcomes}
+      CCDASH_SAM_ENDPOINT: "${CCDASH_SAM_ENDPOINT:-}"
       CCDASH_SAM_API_KEY: ${CCDASH_SAM_API_KEY:-smoke-api-key}
       CCDASH_TELEMETRY_ALLOW_INSECURE: ${CCDASH_TELEMETRY_ALLOW_INSECURE:-false}
     depends_on:

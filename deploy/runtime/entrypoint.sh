@@ -17,9 +17,12 @@ case "$profile" in
   worker)
     exec python -m backend.worker
     ;;
+  worker-watch)
+    exec python -m backend.worker
+    ;;
   *)
     echo "Unsupported CCDASH_RUNTIME_PROFILE: '${profile}'" >&2
-    echo "Expected one of: local, api, worker" >&2
+    echo "Expected one of: local, api, worker, worker-watch" >&2
     exit 1
     ;;
 esac

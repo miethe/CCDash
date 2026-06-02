@@ -3,18 +3,22 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: draft
+status: completed
 category: enhancements
-title: "PRD: Planning Command Center V1"
-description: "Add a planning portfolio console that shows all active, planned, ready, blocked, and reviewable features with deterministic next-command guidance, plan context, worktree state, and launch controls."
-summary: "Consolidate existing Planning, Project Board, Feature Execution Workbench, phase operations, and worktree launch capabilities into one searchable Planning Command Center for managing many features at once."
+title: 'PRD: Planning Command Center V1'
+description: Add a planning portfolio console that shows all active, planned, ready,
+  blocked, and reviewable features with deterministic next-command guidance, plan
+  context, worktree state, and launch controls.
+summary: Consolidate existing Planning, Project Board, Feature Execution Workbench,
+  phase operations, and worktree launch capabilities into one searchable Planning
+  Command Center for managing many features at once.
 created: 2026-05-27
-updated: 2026-05-27
+updated: '2026-06-01'
 priority: high
 risk_level: high
 complexity: High
 track: Planning / Execution / Orchestration
-timeline_estimate: "4-6 weeks across 6 phases"
+timeline_estimate: 4-6 weeks across 6 phases
 feature_slug: planning-command-center-v1
 feature_family: planning-command-center
 feature_version: v1
@@ -24,70 +28,70 @@ lineage_children: []
 lineage_type: enhancement
 owner: platform-engineering
 owners:
-  - platform-engineering
-  - fullstack-engineering
-  - ai-integrations
+- platform-engineering
+- fullstack-engineering
+- ai-integrations
 contributors:
-  - ai-agents
+- ai-agents
 audience:
-  - developers
-  - platform-engineering
-  - engineering-leads
-  - workflow-authors
-  - ai-agents
+- developers
+- platform-engineering
+- engineering-leads
+- workflow-authors
+- ai-agents
 tags:
-  - prd
-  - planning
-  - command-center
-  - execution
-  - orchestration
-  - worktrees
-  - workflow
-  - frontend
-  - backend
+- prd
+- planning
+- command-center
+- execution
+- orchestration
+- worktrees
+- workflow
+- frontend
+- backend
 linked_features:
-  - ccdash-planning-control-plane-v1
-  - feature-execution-workbench-v1
-  - planning-agent-session-board-v1
+- ccdash-planning-control-plane-v1
+- feature-execution-workbench-v1
+- planning-agent-session-board-v1
 related_documents:
-  - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
-  - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
-  - docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
-  - docs/project_plans/implementation_plans/enhancements/planning-agent-session-board-v1.md
-  - docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
-  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md
-  - docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
-  - docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
-  - docs/project_plans/design-specs/spike-execution-wiring-v1.md
-  - docs/project_plans/design-specs/spec-creation-workflow-v1.md
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-command-center-v1/list-view.png
-  - docs/project_plans/implementation_plans/enhancements/wireframes/planning-command-center-v1/board-view.png
+- docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
+- docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
+- docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
+- docs/project_plans/implementation_plans/enhancements/planning-agent-session-board-v1.md
+- docs/project_plans/PRDs/enhancements/ccdash-planning-reskin-v2.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-planning-reskin-v2-interaction-performance-addendum-v1.md
+- docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
+- docs/project_plans/design-specs/spike-execution-wiring-v1.md
+- docs/project_plans/design-specs/spec-creation-workflow-v1.md
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-command-center-v1/list-view.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/planning-command-center-v1/board-view.png
 context_files:
-  - App.tsx
-  - services/planningRoutes.ts
-  - components/Planning/PlanningHomePage.tsx
-  - components/Planning/PlanningAgentSessionBoard.tsx
-  - components/Planning/PlanningLaunchSheet.tsx
-  - components/Planning/PlanningNextRunPreview.tsx
-  - components/Planning/PlanningQuickViewPanel.tsx
-  - components/Planning/primitives/PhaseOperationsPanel.tsx
-  - components/ProjectBoard.tsx
-  - components/FeatureExecutionWorkbench.tsx
-  - components/DocumentModal.tsx
-  - services/useFeatureSurface.ts
-  - services/featureSurface.ts
-  - services/planning.ts
-  - backend/application/services/agent_queries/planning.py
-  - backend/application/services/agent_queries/planning_sessions.py
-  - backend/application/services/agent_queries/cache.py
-  - backend/application/services/launch_preparation.py
-  - backend/services/feature_execution.py
-  - backend/db/repositories/worktree_contexts.py
-  - backend/routers/agent.py
-  - backend/routers/execution.py
-  - backend/routers/live.py
+- App.tsx
+- services/planningRoutes.ts
+- components/Planning/PlanningHomePage.tsx
+- components/Planning/PlanningAgentSessionBoard.tsx
+- components/Planning/PlanningLaunchSheet.tsx
+- components/Planning/PlanningNextRunPreview.tsx
+- components/Planning/PlanningQuickViewPanel.tsx
+- components/Planning/primitives/PhaseOperationsPanel.tsx
+- components/ProjectBoard.tsx
+- components/FeatureExecutionWorkbench.tsx
+- components/DocumentModal.tsx
+- services/useFeatureSurface.ts
+- services/featureSurface.ts
+- services/planning.ts
+- backend/application/services/agent_queries/planning.py
+- backend/application/services/agent_queries/planning_sessions.py
+- backend/application/services/agent_queries/cache.py
+- backend/application/services/launch_preparation.py
+- backend/services/feature_execution.py
+- backend/db/repositories/worktree_contexts.py
+- backend/routers/agent.py
+- backend/routers/execution.py
+- backend/routers/live.py
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/planning-command-center-v1.md
 ---
 

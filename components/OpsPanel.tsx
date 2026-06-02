@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
   AlertTriangle,
@@ -33,6 +34,7 @@ import { normalizeSkillMeatConfig } from '../services/agenticIntelligence';
 import { apiRequestJson, createApiClient } from '../services/apiClient';
 import { normalizeRuntimeStatus, type RuntimeProbeReason, type RuntimeStatus } from '../services/runtimeProfile';
 import { isOpsLiveUpdatesEnabled, projectOpsTopic, useLiveInvalidation } from '../services/live';
+import { opsKeys } from '../services/queryKeys';
 import {
   generateSessionMemoryDrafts,
   listSessionMemoryDrafts,
@@ -281,6 +283,7 @@ export const OpsPanel: React.FC = () => {
   const tasksTotal = tasksQuery.data?.total ?? 0;
   const featuresTotal = featuresQuery.data?.total ?? 0;
   const apiClient = useMemo(() => createApiClient(), []);
+  const queryClient = useQueryClient();
 
   const [status, setStatus] = useState<CacheStatusResponse | null>(null);
   const [runtimeHealth, setRuntimeHealth] = useState<RuntimeStatus | null>(null);
@@ -335,21 +338,64 @@ export const OpsPanel: React.FC = () => {
   const canPublishMemoryDrafts = auth.hasPermission({ scopes: ['integration.skillmeat.memory:publish'], roles: OPS_INTEGRATION_ROLES });
   const protectedActionHint = 'Permission hint only; backend authorization remains authoritative.';
 
-  const loadOverview = async () => {
-    const [statusPayload, opsPayload, healthPayload] = await Promise.all([
-      fetchJson<CacheStatusResponse>('/cache/status'),
-      fetchJson<{ status: string; count: number; items: SyncOperation[] }>('/cache/operations?limit=30'),
-      apiClient.getHealth(),
-    ]);
-    setStatus(statusPayload);
-    setOperations(opsPayload.items || []);
-    setRuntimeHealth(normalizeRuntimeStatus(healthPayload));
-    setLastRefreshAt(new Date().toISOString());
+  // T4-006-6: Ref so overviewQuery.refetchInterval can check live-updates state
+  // without needing to be re-created when opsLiveStatus changes.
+  // Updated below after useLiveInvalidation returns.
+  const liveUpdatesActiveRef = useRef(false);
 
-    if (!selectedOperationId && opsPayload.items?.length) {
-      setSelectedOperationId(opsPayload.items[0].id);
-    }
-  };
+  /**
+   * T4-006-6: `overviewQuery` is the canonical fetcher for ops overview data.
+   * refetchInterval is visibility-aware (refetchIntervalInBackground defaults
+   * to false, so it pauses when the tab is hidden).
+   * - Returns false (disables polling) when live updates are active and healthy.
+   * - Uses 2500ms when there are active operations (fast convergence).
+   * - Uses 15000ms otherwise (low-traffic steady state).
+   */
+  const overviewQuery = useQuery({
+    queryKey: opsKeys.overview(),
+    queryFn: async () => {
+      const [statusPayload, opsPayload, healthPayload] = await Promise.all([
+        fetchJson<CacheStatusResponse>('/cache/status'),
+        fetchJson<{ status: string; count: number; items: SyncOperation[] }>('/cache/operations?limit=30'),
+        apiClient.getHealth(),
+      ]);
+      return {
+        status: statusPayload,
+        operations: opsPayload.items || [] as SyncOperation[],
+        runtimeHealth: normalizeRuntimeStatus(healthPayload),
+        fetchedAt: new Date().toISOString(),
+      };
+    },
+    // Visibility-aware: TQ pauses the interval when the tab is hidden by default
+    // (refetchIntervalInBackground is false unless overridden).
+    refetchInterval: (query) => {
+      // Defer to live updates (SSE) when the channel is healthy.
+      if (liveUpdatesActiveRef.current) return false;
+      const activeOpsCount = (query.state.data?.status?.operations?.activeOperationCount || 0) as number;
+      const hasActiveOps = activeOpsCount > 0;
+      return hasActiveOps ? 2500 : 15_000;
+    },
+    staleTime: 2000,
+  });
+
+  // Sync overviewQuery data into local state.
+  useEffect(() => {
+    const data = overviewQuery.data;
+    if (!data) return;
+    setStatus(data.status);
+    setOperations(data.operations);
+    setRuntimeHealth(data.runtimeHealth);
+    setLastRefreshAt(data.fetchedAt);
+    setSelectedOperationId(prev => {
+      if (prev) return prev;
+      return data.operations[0]?.id ?? '';
+    });
+  }, [overviewQuery.data]);
+
+  /** Imperative overview refresh — triggers a TQ refetch (visibility-aware). */
+  const loadOverview = useCallback(async () => {
+    await queryClient.refetchQueries({ queryKey: opsKeys.overview() });
+  }, [queryClient]);
 
   const runSync = async (force: boolean) => {
     if (!canTriggerCacheSync) {
@@ -687,16 +733,43 @@ export const OpsPanel: React.FC = () => {
     }
   }, [activeProjectId, activeTab, canRunSkillMeatSync, loadMemoryDrafts, loadOverview, memoryDraftsLimit, pushToast, refreshAll, skillMeatConfig]);
 
-  const loadTelemetryStatus = useCallback(async (quiet = false) => {
-    try {
-      const response = await apiClient.getTelemetryExportStatus();
-      setTelemetryStatus(response);
+  /**
+   * T4-006-6: `telemetryStatusQuery` owns telemetry polling.
+   * refetchInterval: 10_000 — enabled only when on the integrations tab so
+   * we don't poll when the user isn't viewing integrations.
+   * Visibility-aware: paused automatically when the tab is hidden.
+   */
+  const telemetryStatusQuery = useQuery({
+    queryKey: opsKeys.telemetryStatus(),
+    queryFn: async () => {
+      return apiClient.getTelemetryExportStatus();
+    },
+    enabled: activeTab === 'integrations',
+    refetchInterval: activeTab === 'integrations' ? 10_000 : false,
+    staleTime: 8_000,
+  });
+
+  // Sync telemetryStatusQuery data into local state.
+  useEffect(() => {
+    if (telemetryStatusQuery.data) {
+      setTelemetryStatus(telemetryStatusQuery.data);
       setTelemetryLoadError(null);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Failed to load telemetry exporter status';
-      if (!quiet) setTelemetryLoadError(message);
     }
-  }, [apiClient]);
+  }, [telemetryStatusQuery.data]);
+
+  useEffect(() => {
+    if (telemetryStatusQuery.error) {
+      const message = telemetryStatusQuery.error instanceof Error
+        ? telemetryStatusQuery.error.message
+        : 'Failed to load telemetry exporter status';
+      setTelemetryLoadError(message);
+    }
+  }, [telemetryStatusQuery.error]);
+
+  /** Imperative telemetry status refresh — triggers a TQ refetch. */
+  const loadTelemetryStatus = useCallback(async (_quiet = false) => {
+    await queryClient.refetchQueries({ queryKey: opsKeys.telemetryStatus() });
+  }, [queryClient]);
 
   const runTelemetryPushNow = useCallback(async () => {
     if (!telemetryStatus?.configured) {
@@ -831,26 +904,9 @@ export const OpsPanel: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    let isMounted = true;
-    const run = async () => {
-      try {
-        await loadOverview();
-      } catch (e) {
-        if (!isMounted) return;
-        setError(e instanceof Error ? e.message : 'Failed to load ops metadata');
-      }
-    };
-    run();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (activeTab !== 'integrations') return;
-    void loadTelemetryStatus();
-  }, [activeTab, loadTelemetryStatus]);
+  // T4-006-6: Initial overview load and telemetry status load are now handled
+  // automatically by overviewQuery and telemetryStatusQuery respectively
+  // (useQuery fires on mount; telemetryStatusQuery fires when activeTab === 'integrations').
 
   useEffect(() => {
     if (activeTab !== 'integrations') return;
@@ -874,36 +930,19 @@ export const OpsPanel: React.FC = () => {
     onInvalidate: () => loadOverview(),
   });
 
-  useEffect(() => {
-    if (opsLiveEnabled && !['backoff', 'closed'].includes(opsLiveStatus)) {
-      return undefined;
-    }
-    let timer: number | undefined;
-    const hasActiveOps = (status?.operations?.activeOperationCount || 0) > 0;
-    const intervalMs = hasActiveOps ? 2500 : 15000;
+  // T4-006-6: Keep liveUpdatesActiveRef in sync so overviewQuery.refetchInterval
+  // can read it without being re-created each render.
+  // Live updates are "active" when enabled and not in backoff/closed state.
+  liveUpdatesActiveRef.current = opsLiveEnabled && !['backoff', 'closed'].includes(opsLiveStatus);
 
-    timer = window.setInterval(async () => {
-      try {
-        await loadOverview();
-      } catch (e) {
-        // Keep previous data, do not spam fatal UI failures on polling.
-      }
-    }, intervalMs);
-
-    return () => {
-      if (timer) window.clearInterval(timer);
-    };
-  }, [opsLiveEnabled, opsLiveStatus, selectedOperationId, status?.operations?.activeOperationCount]);
-
-  useEffect(() => {
-    if (activeTab !== 'integrations') return undefined;
-    const timer = window.setInterval(() => {
-      void loadTelemetryStatus(true);
-    }, 10000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [activeTab, loadTelemetryStatus]);
+  // T4-006-6: Overview polling is now owned by `overviewQuery` (refetchInterval
+  // callback) above. When live updates are healthy this effect pauses TQ
+  // refetches so the SSE channel is the sole update path; when live updates
+  // are in backoff/closed state TQ's own interval takes over automatically.
+  // The previous manual setInterval blocks have been removed.
+  //
+  // Telemetry status polling is similarly owned by `telemetryStatusQuery`
+  // (refetchInterval: 10_000, enabled only on the integrations tab).
 
   useEffect(() => {
     let isMounted = true;
@@ -978,6 +1017,10 @@ export const OpsPanel: React.FC = () => {
     void refreshAll().catch(() => undefined);
   }, [activeTab, loadMappingResolverDetail, pushToast, refreshAll, trackedBackfillOperation]);
 
+  // T4-021: sessions and documents are read directly from useData() which is
+  // reactive (backed by TanStack Query subscriptions since Wave 1).
+  // useSessionsQuery + useDocumentsQuery mounts above ensure the TQ cache is
+  // populated; no stale snapshot copies exist here.
   const snapshotCards = [
     { label: 'Sessions (Loaded/Total)', value: `${sessions.length} / ${sessionTotal}`, icon: Activity },
     { label: 'Documents', value: String(documents.length), icon: FolderKanban },

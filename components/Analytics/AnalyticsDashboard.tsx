@@ -1,20 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { TrendChart } from './TrendChart';
 import { ArtifactRankingsView } from './ArtifactRankingsView';
 import { analyticsService } from '../../services/analytics';
 import { useModelColors } from '../../contexts/ModelColorsContext';
 import { useData } from '../../contexts/DataContext';
 import { isUsageAttributionEnabled, isWorkflowAnalyticsEnabled } from '../../services/agenticIntelligence';
+import { analyticsKeys } from '../../services/queryKeys';
 import {
-    AnalyticsArtifactsResponse,
-    AnalyticsCorrelationItem,
-    AnalyticsOverview,
-    Notification,
-    SessionCostCalibrationSummary,
-    SessionUsageAggregateResponse,
-    SessionUsageCalibrationSummary,
-    SessionUsageDrilldownResponse,
-} from '../../types';
+    useAnalyticsFullOverviewQuery,
+    useAnalyticsNotificationsQuery,
+    useAnalyticsArtifactsQuery,
+    useAnalyticsCorrelationQuery,
+    useAnalyticsCostCalibrationQuery,
+    useAnalyticsUsageAttributionQuery,
+    useAnalyticsUsageCalibrationQuery,
+    useAnalyticsUsageDrilldownQuery,
+} from '../../services/queries/analytics';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     BarChart3,
@@ -107,24 +109,48 @@ export const AnalyticsDashboard: React.FC = () => {
     const searchParamsString = searchParams.toString();
     const { getColorForModel, getBadgeStyleForModel } = useModelColors();
     const { activeProject } = useData();
+    const queryClient = useQueryClient();
+    const projectId = activeProject?.id ?? null;
+
     const [activeTab, setActiveTab] = useState<AnalyticsTab>(() => {
         return isAnalyticsTab(tabParam) ? tabParam : 'overview';
     });
     const [modelGrouping, setModelGrouping] = useState<'model' | 'family'>('model');
-    const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
-    const [notifications, setNotifications] = useState<Notification[]>([]);
-    const [artifacts, setArtifacts] = useState<AnalyticsArtifactsResponse | null>(null);
-    const [correlation, setCorrelation] = useState<AnalyticsCorrelationItem[]>([]);
-    const [costCalibration, setCostCalibration] = useState<SessionCostCalibrationSummary | null>(null);
-    const [usageAttribution, setUsageAttribution] = useState<SessionUsageAggregateResponse | null>(null);
-    const [usageCalibration, setUsageCalibration] = useState<SessionUsageCalibrationSummary | null>(null);
-    const [usageDrilldown, setUsageDrilldown] = useState<SessionUsageDrilldownResponse | null>(null);
     const [selectedUsageEntity, setSelectedUsageEntity] = useState<{ entityType: string; entityId: string } | null>(null);
     const [correlationLinkedOnly, setCorrelationLinkedOnly] = useState(false);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+
     const workflowAnalyticsAvailable = isWorkflowAnalyticsEnabled(activeProject);
     const usageAttributionAvailable = isUsageAttributionEnabled(activeProject);
+
+    // T4-012: Replace 7-parallel-fetch Promise.all useEffect with individual TQ hooks.
+    // Each query is independently enabled and settles independently — no shared loading gate.
+    const { data: overview = null, isLoading: overviewLoading } =
+        useAnalyticsFullOverviewQuery({ projectId });
+    const { data: notifications = [] } =
+        useAnalyticsNotificationsQuery({ projectId });
+    const { data: artifacts = null, isLoading: artifactsLoading } =
+        useAnalyticsArtifactsQuery({ projectId });
+    const { data: correlation = [], isLoading: correlationLoading } =
+        useAnalyticsCorrelationQuery({ projectId });
+    const { data: costCalibration = null } =
+        useAnalyticsCostCalibrationQuery({ projectId });
+    const { data: usageAttribution = null } =
+        useAnalyticsUsageAttributionQuery({ projectId, enabled: usageAttributionAvailable });
+    const { data: usageCalibration = null } =
+        useAnalyticsUsageCalibrationQuery({ projectId, enabled: usageAttributionAvailable });
+
+    // T4-012: Drilldown replaces the per-selectedUsageEntity useEffect.
+    const { data: usageDrilldown = null } = useAnalyticsUsageDrilldownQuery({
+        projectId,
+        entityType: selectedUsageEntity?.entityType ?? null,
+        entityId: selectedUsageEntity?.entityId ?? null,
+    });
+
+    // Derive a lightweight aggregate loading flag for the skeleton gate (overview tab only).
+    // Other tabs render progressively as their queries settle.
+    const loading = overviewLoading;
+    // No global error gate — each hook degrades gracefully to null/[].
+    const error: string | null = null;
 
     const openSession = useCallback((sessionId: string) => {
         if (!sessionId) return;
@@ -135,61 +161,30 @@ export const AnalyticsDashboard: React.FC = () => {
         navigate(`/board?feature=${encodeURIComponent(featureId)}`);
     }, [navigate]);
 
-    const loadAll = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const usagePayloadPromise = usageAttributionAvailable
-                ? analyticsService.getUsageAttribution({ limit: 24 }).then(data => ({ data, error: null as string | null }))
-                    .catch(fetchError => ({ data: null, error: fetchError instanceof Error ? fetchError.message : 'Failed to load usage attribution analytics.' }))
-                : Promise.resolve({ data: null, error: null as string | null });
-            const calibrationPayloadPromise = usageAttributionAvailable
-                ? analyticsService.getUsageAttributionCalibration().then(data => ({ data, error: null as string | null }))
-                    .catch(fetchError => ({ data: null, error: fetchError instanceof Error ? fetchError.message : 'Failed to load usage attribution calibration.' }))
-                : Promise.resolve({ data: null, error: null as string | null });
+    // T4-012: Refresh invalidates all analytics queries for this project.
+    // Replaces loadAll() which called the API directly.
+    const handleRefresh = useCallback(() => {
+        if (!projectId) return;
+        void queryClient.invalidateQueries({ queryKey: analyticsKeys.all(projectId) });
+    }, [queryClient, projectId]);
 
-            const [overviewData, notificationData, artifactData, correlationData, costCalibrationData, usagePayload, calibrationPayload] = await Promise.all([
-                analyticsService.getOverview(),
-                analyticsService.getNotifications(),
-                analyticsService.getArtifacts({ limit: 200 }),
-                analyticsService.getCorrelation(),
-                analyticsService.getSessionCostCalibration(),
-                usagePayloadPromise,
-                calibrationPayloadPromise,
-            ]);
-            setOverview(overviewData);
-            setNotifications(notificationData);
-            setArtifacts(artifactData);
-            setCorrelation(correlationData.items || []);
-            setCostCalibration(costCalibrationData);
-            setUsageAttribution(usagePayload.data);
-            setUsageCalibration(calibrationPayload.data);
-            const firstRow = (usagePayload.data?.rows || [])[0];
-            setSelectedUsageEntity(firstRow?.entityType && firstRow?.entityId
-                ? { entityType: firstRow.entityType, entityId: firstRow.entityId }
-                : null);
-            if (usagePayload.error || calibrationPayload.error) {
-                console.warn('Usage attribution analytics unavailable', usagePayload.error || calibrationPayload.error);
-            }
-        } catch (e) {
-            console.error('Failed to load analytics dashboard payloads', e);
-            setError('Failed to load analytics data.');
-        } finally {
-            setLoading(false);
+    // Auto-select first attribution entity when data first arrives (mirrors old loadAll behaviour).
+    React.useEffect(() => {
+        if (selectedUsageEntity) return; // keep any explicit selection
+        const firstRow = (usageAttribution?.rows || [])[0];
+        if (firstRow?.entityType && firstRow?.entityId) {
+            setSelectedUsageEntity({ entityType: firstRow.entityType, entityId: firstRow.entityId });
         }
-    };
+    }, [usageAttribution]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    useEffect(() => {
-        void loadAll();
-    }, []);
-
-    useEffect(() => {
+    // Keep tab ↔ URL sync (not data-loading — these are pure navigation effects).
+    React.useEffect(() => {
         if (isAnalyticsTab(tabParam)) {
             setActiveTab(prev => (prev === tabParam ? prev : tabParam));
         }
     }, [tabParam]);
 
-    useEffect(() => {
+    React.useEffect(() => {
         const nextParams = new URLSearchParams(searchParamsString);
         if (activeTab === 'overview') {
             nextParams.delete('tab');
@@ -200,27 +195,6 @@ export const AnalyticsDashboard: React.FC = () => {
             setSearchParams(nextParams, { replace: true });
         }
     }, [activeTab, searchParamsString, setSearchParams]);
-
-    useEffect(() => {
-        if (!selectedUsageEntity?.entityType || !selectedUsageEntity?.entityId) {
-            setUsageDrilldown(null);
-            return;
-        }
-        let cancelled = false;
-        void analyticsService.getUsageAttributionDrilldown({
-            entityType: selectedUsageEntity.entityType,
-            entityId: selectedUsageEntity.entityId,
-            limit: 30,
-        }).then(payload => {
-            if (!cancelled) setUsageDrilldown(payload);
-        }).catch(fetchError => {
-            console.error('Failed to load attribution drilldown', fetchError);
-            if (!cancelled) setUsageDrilldown(null);
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, [selectedUsageEntity]);
 
     const handleExport = () => {
         window.open(analyticsService.getPrometheusExportUrl(), '_blank');
@@ -322,9 +296,7 @@ export const AnalyticsDashboard: React.FC = () => {
                     <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => {
-                            void loadAll();
-                        }}
+                        onClick={handleRefresh}
                     >
                         <RefreshCcw size={15} />
                         Refresh
@@ -717,6 +689,7 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'artifacts' && (
                 <div className="space-y-6">
+                    {artifactsLoading && <div className="text-muted-foreground">Loading artifact data...</div>}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <MetricCard
                             label="Artifacts"
@@ -1159,6 +1132,7 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'correlation' && (
                 <div className="space-y-6">
+                    {correlationLoading && <div className="text-muted-foreground">Loading correlation data...</div>}
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                         <MetricCard label="Rows" value={formatNumber(correlationSummary.totalRows)} subtitle="session-feature links" />
                         <MetricCard label="Sessions" value={formatNumber(correlationSummary.uniqueSessions)} subtitle={`${correlationSummary.linkedSessionPct.toFixed(1)}% linked`} />

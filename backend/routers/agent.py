@@ -46,9 +46,20 @@ from backend.application.services.agent_queries.multi_project_planning_command_c
 from backend.application.services.agent_queries.multi_project_planning_sessions import (
     MultiProjectActiveSessionBoardQueryService,
 )
-from backend.models import AggregateWorkItem, MultiProjectCommandCenterResponse, MultiProjectSessionBoardResponse, SystemActiveCountDTO
+from backend.application.services.agent_queries.planning_next_work import NextWorkQueryService
+from backend.models import (
+    AggregateWorkItem,
+    MultiProjectCommandCenterResponse,
+    MultiProjectSessionBoardResponse,
+    NextWorkResponse,
+    PortfolioRollupResponse,
+    SystemActiveCountDTO,
+    SystemTokenRollupResponse,
+)
+from backend.application.services.common import resolve_project_bundle
 from backend.observability import otel
 from backend.request_scope import get_core_ports, get_request_context
+from backend.services.spec_create import create_spec_document
 
 
 agent_router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -110,6 +121,8 @@ system_metrics_query_service = SystemMetricsQueryService()
 multi_project_command_center_query_service = MultiProjectPlanningCommandCenterQueryService()
 # MPCC-304: multi-project aggregate active-session board query surface.
 multi_project_session_board_query_service = MultiProjectActiveSessionBoardQueryService()
+# P5-004: next-work ranked queue service.
+next_work_query_service = NextWorkQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -629,10 +642,31 @@ async def get_planning_session_board(
         default="state",
         description="Board grouping mode: one of 'state', 'feature', 'phase', 'agent', 'model'.",
     ),
+    cursor: str | None = Query(
+        default=None,
+        description=(
+            "Opaque pagination cursor returned as next_cursor in a prior response. "
+            "Omit to fetch the first page."
+        ),
+    ),
+    limit: int = Query(
+        default=500,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum number of sessions per page. "
+            "Defaults to 500 for backward compatibility. "
+            "Use a smaller value (e.g. 50–100) for faster initial loads."
+        ),
+    ),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> PlanningAgentSessionBoardDTO:
-    """Return a project-wide Kanban board of agent sessions correlated to planning entities."""
+    """Return a project-wide Kanban board of agent sessions correlated to planning entities.
+
+    Supports cursor-based pagination via ``cursor`` + ``limit`` query params (T4-001).
+    Omitting both params preserves the legacy single-page behavior (limit=500).
+    """
     with otel.start_span("planning.session_board", {"project_id": project_id or "", "grouping": grouping}):
         app_request = await _resolve_app_request(
             request_context,
@@ -644,6 +678,8 @@ async def get_planning_session_board(
             app_request.ports,
             project_id=project_id,
             grouping=grouping,
+            cursor=cursor,
+            limit=limit,
         )
         if result.status == "error":
             raise HTTPException(status_code=404, detail="Project scope could not be resolved.")
@@ -662,10 +698,31 @@ async def get_planning_session_board_for_feature(
         default="state",
         description="Board grouping mode: one of 'state', 'feature', 'phase', 'agent', 'model'.",
     ),
+    cursor: str | None = Query(
+        default=None,
+        description=(
+            "Opaque pagination cursor returned as next_cursor in a prior response. "
+            "Omit to fetch the first page."
+        ),
+    ),
+    limit: int = Query(
+        default=500,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum number of sessions per page. "
+            "Defaults to 500 for backward compatibility. "
+            "Use a smaller value (e.g. 50–100) for faster initial loads."
+        ),
+    ),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> PlanningAgentSessionBoardDTO:
-    """Return a feature-scoped Kanban board of agent sessions correlated to planning entities."""
+    """Return a feature-scoped Kanban board of agent sessions correlated to planning entities.
+
+    Supports cursor-based pagination via ``cursor`` + ``limit`` query params (T4-001).
+    Omitting both params preserves the legacy single-page behavior (limit=500).
+    """
     with otel.start_span(
         "planning.session_board_feature",
         {"feature_id": feature_id, "project_id": project_id or "", "grouping": grouping},
@@ -681,6 +738,8 @@ async def get_planning_session_board_for_feature(
             project_id=project_id,
             feature_id=feature_id,
             grouping=grouping,
+            cursor=cursor,
+            limit=limit,
         )
         if result.status == "error":
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found or project scope could not be resolved.")
@@ -943,4 +1002,205 @@ async def get_multi_project_session_board(
             include_workers=include_workers,
             page=page,
             page_size=page_size,
+        )
+
+
+# ── P5-003a: Portfolio rollup ─────────────────────────────────────────────────
+
+@agent_router.get(
+    "/planning/portfolio/rollup",
+    response_model=PortfolioRollupResponse,
+    dependencies=[Depends(_require_multi_project_command_center_enabled)],
+)
+async def get_planning_portfolio_rollup(
+    project_ids: list[str] | None = Query(
+        default=None,
+        description="Optional project id allowlist; omit to include all.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> PortfolioRollupResponse:
+    """Return a lightweight portfolio rollup across all registered projects (§7.1)."""
+    with otel.start_span("planning.portfolio_rollup", {}):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await multi_project_command_center_query_service.get_portfolio_rollup(
+            app_request.context,
+            app_request.ports,
+            project_ids=project_ids,
+        )
+
+
+# ── P5-003b: System token rollup ─────────────────────────────────────────────
+
+@agent_router.get(
+    "/system/token-rollup",
+    response_model=SystemTokenRollupResponse,
+)
+async def get_system_token_rollup(
+    project_ids: list[str] | None = Query(
+        default=None,
+        description="Optional project id allowlist; omit to include all.",
+    ),
+    period: str = Query(
+        default="daily",
+        description="Aggregation period label (daily, weekly, all-time). Stored in response.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> SystemTokenRollupResponse:
+    """Return cross-project token and cost aggregates (§7.3)."""
+    with otel.start_span("system_metrics.token_rollup", {}):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await system_metrics_query_service.get_system_token_rollup(
+            app_request.context,
+            app_request.ports,
+            project_ids=project_ids,
+            period=period,
+        )
+
+
+# ── P5-004: Next-work ranked queue ────────────────────────────────────────────
+
+@agent_router.get(
+    "/planning/next-work",
+    response_model=NextWorkResponse,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def get_planning_next_work(
+    project_ids: list[str] | None = Query(
+        default=None,
+        description="Optional project id allowlist; omit to include all.",
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum items per page.",
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque pagination cursor from a previous response's next_cursor.",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> NextWorkResponse:
+    """Return a ranked, cursor-paginated list of ready-to-work features (§7.2)."""
+    with otel.start_span("planning.next_work", {}):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await next_work_query_service.get_next_work(
+            app_request.context,
+            app_request.ports,
+            project_ids=project_ids,
+            limit=limit,
+            cursor=cursor,
+        )
+
+
+# ── P5-010: New Spec creation endpoint ───────────────────────────────────────
+
+
+class SpecCreateRequest(BaseModel):
+    """Request body for POST /api/agent/planning/specs."""
+
+    title: str = Field(
+        description="Human-readable spec title (1–200 chars).",
+        min_length=1,
+        max_length=200,
+    )
+    docType: str = Field(
+        default="design-spec",
+        description="Frontmatter doc_type value (lower-kebab-case).",
+    )
+    projectId: str | None = Field(
+        default=None,
+        description="Target project id. Defaults to the active project.",
+    )
+
+
+class SpecCreateResponse(BaseModel):
+    """Response body for POST /api/agent/planning/specs."""
+
+    id: str = Field(description="DOC-<slug> identifier the sync engine will assign.")
+    path: str = Field(description="Relative path from the project plan-docs root.")
+    status: str = Field(description="Always 'created' on success.")
+
+
+@agent_router.post(
+    "/planning/specs",
+    response_model=SpecCreateResponse,
+    status_code=201,
+    dependencies=[Depends(_require_planning_enabled)],
+)
+async def post_planning_spec_create(
+    body: SpecCreateRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> SpecCreateResponse:
+    """Scaffold a new spec document under the project plan-docs directory.
+
+    Writes a markdown file with YAML frontmatter (schema_version: 2,
+    doc_type, title, status: draft) and a minimal body stub.  The filename
+    is derived from a slugified title + short UID suffix to avoid collisions.
+
+    The returned ``id`` matches what the sync engine will assign (DOC-<slug>).
+    The new file is picked up by the next background sync cycle; for immediate
+    visibility call the cache-invalidation endpoint.
+
+    Returns 422 if the project has no resolvable plan-docs directory or if
+    the request body is invalid.  Returns 400 if the write fails for any
+    other input reason.
+    """
+    with otel.start_span(
+        "planning.spec_create",
+        {"project_id": body.projectId or "", "doc_type": body.docType},
+    ):
+        # Resolve the target project bundle (includes plan_docs path).
+        bundle = resolve_project_bundle(
+            request_context,
+            core_ports,
+            requested_project_id=body.projectId,
+        )
+        if bundle is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "no_active_project",
+                    "message": "No active project found and no projectId supplied.",
+                },
+            )
+
+        plan_docs_path = bundle.paths.plan_docs.path
+        if not plan_docs_path or not str(plan_docs_path).strip():
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "no_plan_docs_path",
+                    "message": (
+                        f"Project '{bundle.project.id}' has no resolvable plan-docs "
+                        "directory.  Configure planDocsPath in project settings."
+                    ),
+                },
+            )
+
+        try:
+            result = create_spec_document(
+                plan_docs_dir=plan_docs_path,
+                title=body.title,
+                doc_type=body.docType,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": "invalid_input", "message": str(exc)}) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "write_failed",
+                    "message": f"Could not write spec file: {exc}",
+                },
+            ) from exc
+
+        return SpecCreateResponse(
+            id=result["id"],
+            path=result["path"],
+            status=result["status"],
         )

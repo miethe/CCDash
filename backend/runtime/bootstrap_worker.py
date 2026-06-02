@@ -83,4 +83,7 @@ def _worker_probe_payload(container: RuntimeContainer) -> dict[str, Any]:
     }
 
 
-container = build_worker_runtime()
+# P3-012: The module-level `container = build_worker_runtime()` was removed.
+# The worker entrypoint (backend/worker.py) must construct the container
+# inside its own startup/lifespan scope.  build_worker_probe_app() accepts an
+# explicit container kwarg; if omitted it calls build_worker_runtime() lazily.

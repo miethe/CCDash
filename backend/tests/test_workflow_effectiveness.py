@@ -406,5 +406,184 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_scope[("workflow", "/dev:execute-phase")]["sampleSize"], 1)
 
 
+class ArtifactTelemetryVersionPayloadTests(unittest.IsolatedAsyncioTestCase):
+    """P5-015: verify _maybe_emit_artifact_telemetry emits ArtifactVersionOutcomePayload
+    when a ranking row supplies evidence_json.snapshot.contentHash."""
+
+    async def asyncSetUp(self) -> None:
+        self._prev_flag = config.CCDASH_TEST_VISUALIZER_ENABLED
+        self._prev_telemetry = config.TELEMETRY_EXPORTER_CONFIG.artifact_telemetry_enabled
+        config.CCDASH_TEST_VISUALIZER_ENABLED = True
+        config.TELEMETRY_EXPORTER_CONFIG.artifact_telemetry_enabled = True
+        self.db = await aiosqlite.connect(":memory:")
+        self.db.row_factory = aiosqlite.Row
+        from backend.db.sqlite_migrations import run_migrations as _run_migrations
+        await _run_migrations(self.db)
+
+    async def asyncTearDown(self) -> None:
+        await self.db.close()
+        config.CCDASH_TEST_VISUALIZER_ENABLED = self._prev_flag
+        config.TELEMETRY_EXPORTER_CONFIG.artifact_telemetry_enabled = self._prev_telemetry
+
+    async def test_ranking_evidence_json_content_hash_upgrades_to_version_payload(self) -> None:
+        """When a ranking row has evidence_json.snapshot.contentHash (64-71 chars),
+        _maybe_emit_artifact_telemetry must enqueue ArtifactVersionOutcomePayload, not base."""
+        from backend.db.factory import get_artifact_ranking_repository, get_telemetry_queue_repository
+        from backend.services.workflow_effectiveness import _maybe_emit_artifact_telemetry
+        from backend.models import ArtifactVersionOutcomePayload
+
+        ranking_repo = get_artifact_ranking_repository(self.db)
+        content_hash = "sha256:" + "a" * 64  # 71 chars — within model constraint
+        await ranking_repo.upsert_rankings([
+            {
+                "project_id": "proj-1",
+                "collection_id": "col-1",
+                "user_scope": "user-1",
+                "artifact_type": "workflow",
+                "artifact_id": "wf-alpha",
+                "artifact_uuid": "uuid-alpha",
+                "version_id": "v1",
+                "workflow_id": "wf-alpha",
+                "period": "all",
+                "exclusive_tokens": 1000,
+                "supporting_tokens": 200,
+                "cost_usd": 0.5,
+                "session_count": 3,
+                "workflow_count": 1,
+                "last_observed_at": "2026-06-01T00:00:00+00:00",
+                "avg_confidence": 0.9,
+                "confidence": 0.9,
+                "success_score": 0.8,
+                "efficiency_score": 0.75,
+                "quality_score": 0.7,
+                "risk_score": 0.2,
+                "context_pressure": 0.1,
+                "sample_size": 3,
+                "identity_confidence": 0.95,
+                "snapshot_fetched_at": "2026-06-01T00:00:00+00:00",
+                "recommendation_types": [],
+                "evidence": {
+                    "snapshot": {"contentHash": content_hash},
+                },
+                "computed_at": "2026-06-01T00:00:00+00:00",
+            }
+        ])
+
+        # No definition carries content_hash — simulates the typical gap.
+        definitions: list[dict] = [
+            {
+                "definition_type": "workflow",
+                "external_id": "wf-alpha",
+                "display_name": "Alpha Workflow",
+            }
+        ]
+
+        items = [
+            {
+                "scopeType": "workflow",
+                "scopeId": "wf-alpha",
+                "period": "all",
+                "sampleSize": 3,
+                "successScore": 0.8,
+                "efficiencyScore": 0.75,
+                "qualityScore": 0.7,
+                "riskScore": 0.2,
+                "attributedTokens": 1000,
+                "attributedCostUsdModelIO": 0.5,
+                "generatedAt": "2026-06-01T00:00:00+00:00",
+                "evidenceSummary": {},
+            }
+        ]
+
+        await _maybe_emit_artifact_telemetry(
+            self.db,
+            "proj-1",
+            items,
+            period="all",
+            definitions=definitions,
+        )
+
+        queue_repo = get_telemetry_queue_repository(self.db)
+        queued = await queue_repo.fetch_pending_batch(batch_size=50)
+        version_events = [e for e in queued if e.get("event_type") == "artifact_version_outcome"]
+        base_events = [e for e in queued if e.get("event_type") == "artifact_outcome"]
+
+        self.assertEqual(len(version_events), 1, "Expected exactly 1 artifact_version_outcome event")
+        self.assertEqual(len(base_events), 0, "Expected 0 base artifact_outcome events")
+
+    async def test_ranking_without_content_hash_falls_back_to_base_payload(self) -> None:
+        """When ranking row has no evidence_json.snapshot.contentHash, base payload is emitted."""
+        from backend.db.factory import get_artifact_ranking_repository, get_telemetry_queue_repository
+        from backend.services.workflow_effectiveness import _maybe_emit_artifact_telemetry
+
+        ranking_repo = get_artifact_ranking_repository(self.db)
+        await ranking_repo.upsert_rankings([
+            {
+                "project_id": "proj-2",
+                "collection_id": "col-2",
+                "user_scope": "user-2",
+                "artifact_type": "workflow",
+                "artifact_id": "wf-beta",
+                "artifact_uuid": "uuid-beta",
+                "version_id": "v1",
+                "workflow_id": "wf-beta",
+                "period": "all",
+                "exclusive_tokens": 500,
+                "supporting_tokens": 100,
+                "cost_usd": 0.25,
+                "session_count": 1,
+                "workflow_count": 1,
+                "last_observed_at": "2026-06-01T00:00:00+00:00",
+                "avg_confidence": 0.8,
+                "confidence": 0.8,
+                "success_score": 0.6,
+                "efficiency_score": 0.6,
+                "quality_score": 0.6,
+                "risk_score": 0.3,
+                "context_pressure": 0.2,
+                "sample_size": 1,
+                "identity_confidence": 0.85,
+                "snapshot_fetched_at": "2026-06-01T00:00:00+00:00",
+                "recommendation_types": [],
+                "evidence": {"snapshot": {}},  # no contentHash
+                "computed_at": "2026-06-01T00:00:00+00:00",
+            }
+        ])
+
+        definitions: list[dict] = []
+        items = [
+            {
+                "scopeType": "workflow",
+                "scopeId": "wf-beta",
+                "period": "all",
+                "sampleSize": 1,
+                "successScore": 0.6,
+                "efficiencyScore": 0.6,
+                "qualityScore": 0.6,
+                "riskScore": 0.3,
+                "attributedTokens": 500,
+                "attributedCostUsdModelIO": 0.25,
+                "generatedAt": "2026-06-01T00:00:00+00:00",
+                "evidenceSummary": {},
+            }
+        ]
+
+        await _maybe_emit_artifact_telemetry(
+            self.db,
+            "proj-2",
+            items,
+            period="all",
+            definitions=definitions,
+        )
+
+        queue_repo = get_telemetry_queue_repository(self.db)
+        queued = await queue_repo.fetch_pending_batch(batch_size=50)
+        version_events = [e for e in queued if e.get("event_type") == "artifact_version_outcome"]
+        base_events = [e for e in queued if e.get("event_type") == "artifact_outcome"]
+
+        self.assertEqual(len(version_events), 0, "Expected 0 version events when no contentHash")
+        self.assertEqual(len(base_events), 1, "Expected exactly 1 base artifact_outcome event")
+
+
 if __name__ == "__main__":
     unittest.main()

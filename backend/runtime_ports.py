@@ -1,9 +1,12 @@
 """Core port composition shared by runtime bootstraps and compatibility paths."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from backend import config
+
+logger = logging.getLogger("ccdash.runtime_ports")
 from backend.adapters.auth import (
     create_auth_identity_provider,
     LocalIdentityProvider,
@@ -18,7 +21,7 @@ from backend.db.migration_governance import (
     build_migration_governance_metadata,
     resolve_storage_composition_contract,
 )
-from backend.project_manager import ProjectManager, project_manager
+from backend.project_manager import DbProjectManager, ProjectManager, db_project_manager, project_manager
 from backend.runtime.profiles import RuntimeProfile
 from backend.runtime.storage_contract import (
     get_runtime_storage_contract,
@@ -58,7 +61,7 @@ def build_core_ports(
             manager=workspace_manager,
         ),
         storage=storage or _build_storage_unit_of_work(db, runtime_profile, resolved_storage_profile),
-        job_scheduler=job_scheduler or InProcessJobScheduler(),
+        job_scheduler=job_scheduler or _build_job_scheduler(db),
         integration_client=integration_client or NoopIntegrationClient(),
     )
 
@@ -128,7 +131,13 @@ def build_workspace_registry(
     manager: ProjectManager | None = None,
 ) -> ProjectManagerWorkspaceRegistry:
     _ = runtime_profile, storage_profile
-    return ProjectManagerWorkspaceRegistry(manager or project_manager)
+    if manager is not None:
+        # Explicit override supplied by caller (tests, container wiring, etc.)
+        return ProjectManagerWorkspaceRegistry(manager)
+    # P3-001: prefer the DB-backed registry so persistence survives restarts
+    # and is consistent across replicas.  Falls back to the JSON-backed
+    # project_manager only when the caller explicitly passes one in.
+    return ProjectManagerWorkspaceRegistry(db_project_manager)
 
 
 def _build_identity_provider(
@@ -169,6 +178,26 @@ def _build_auth_metadata(
         ),
         "missingRequiredVariables": list(resolved_auth_config.missing_required_variables),
     }
+
+
+def _build_job_scheduler(db: Any) -> Any:
+    """Return the appropriate JobScheduler based on JOB_QUEUE_BACKEND config.
+
+    P3-006-FU: when JOB_QUEUE_BACKEND != 'memory', compose a
+    DurableJobScheduler backed by the DB (sqlite or postgres).  The
+    DurableJobScheduler.schedule() method is drop-in-compatible with
+    InProcessJobScheduler — existing call-sites in runtime.py are unchanged.
+    When backend is 'memory' (default for local/dev), InProcessJobScheduler
+    is returned directly so there is zero behaviour change.
+    """
+    backend = str(getattr(config, "JOB_QUEUE_BACKEND", "memory")).strip().lower() or "memory"
+    if backend == "memory":
+        return InProcessJobScheduler()
+    # Durable path: sqlite or postgres — delegate to make_durable_scheduler.
+    from backend.adapters.jobs.durable_queue import make_durable_scheduler  # noqa: PLC0415
+
+    logger.debug("build_core_ports: using DurableJobScheduler (backend=%s)", backend)
+    return make_durable_scheduler(db, backend=backend)
 
 
 def _build_storage_unit_of_work(

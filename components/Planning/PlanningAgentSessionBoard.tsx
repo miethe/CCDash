@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertCircle, ClipboardList, ExternalLink, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -700,14 +701,25 @@ const SessionCard = memo(function SessionCard({
   );
 });
 
+// ── Virtual card count threshold ──────────────────────────────────────────────
+
+/** Columns with more than this many cards use a virtualizer instead of plain render. */
+const COLUMN_VIRTUALIZE_THRESHOLD = 250;
+
+/** Estimated height of a single session card in px (conservative upper bound). */
+const CARD_ESTIMATE_PX = 140;
+
 // ── Board column ──────────────────────────────────────────────────────────────
 
 interface BoardColumnProps {
   group: PlanningBoardGroup;
   filterText: string;
   compact: boolean;
-  highlightedSessionIds: Set<string>;
-  weakHighlightedSessionIds: Set<string>;
+  /**
+   * T4-018: A single Map<sessionId, 'strong' | 'weak'> replaces the two
+   * separate Set allocations so SessionCard memo equality is stable.
+   */
+  sessionHighlightMap: Map<string, 'strong' | 'weak'>;
   selectedSessionId: string | null;
   relationBadgeMap: Map<string, BoardSessionRelationship['relationType']>;
   onCardHover: (sessionId: string | null) => void;
@@ -724,8 +736,7 @@ const BoardColumn = memo(function BoardColumn({
   group,
   filterText,
   compact,
-  highlightedSessionIds,
-  weakHighlightedSessionIds,
+  sessionHighlightMap,
   selectedSessionId,
   relationBadgeMap,
   onCardHover,
@@ -750,6 +761,19 @@ const BoardColumn = memo(function BoardColumn({
       : null;
 
   const isHighlighted = isColumnHighlighted || isUrlHighlighted;
+
+  // T4-004: Virtualise the card list when above the threshold.
+  const shouldVirtualize = visible.length > COLUMN_VIRTUALIZE_THRESHOLD;
+  const cardListRef = useRef<HTMLDivElement>(null);
+  const gapPx = compact ? 6 : 8;
+
+  const virtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => cardListRef.current,
+    estimateSize: () => CARD_ESTIMATE_PX + gapPx,
+    overscan: 5,
+    enabled: shouldVirtualize,
+  });
 
   return (
     <div
@@ -811,10 +835,13 @@ const BoardColumn = memo(function BoardColumn({
         </span>
       </div>
 
+      {/* T4-004: Virtualised card list for columns above the threshold. */}
       <div
+        ref={cardListRef}
         className={cn(
           'flex flex-col overflow-y-auto',
-          compact ? 'gap-1.5 p-2' : 'gap-2 p-2.5',
+          !shouldVirtualize && (compact ? 'gap-1.5 p-2' : 'gap-2 p-2.5'),
+          shouldVirtualize && (compact ? 'px-2 py-2' : 'px-2.5 py-2.5'),
         )}
         style={{ maxHeight: 520 }}
       >
@@ -822,21 +849,61 @@ const BoardColumn = memo(function BoardColumn({
           <p className="py-4 text-center text-[11px] text-[color:var(--ink-4)]">
             {filterText ? 'No matches' : 'Empty'}
           </p>
+        ) : shouldVirtualize ? (
+          /* Virtualised path */
+          <div
+            style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}
+          >
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const card = visible[virtualItem.index];
+              const highlight = sessionHighlightMap.get(card.sessionId);
+              return (
+                <div
+                  key={card.sessionId}
+                  data-index={virtualItem.index}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualItem.start}px)`,
+                    paddingBottom: gapPx,
+                  }}
+                >
+                  <SessionCard
+                    card={card}
+                    compact={compact}
+                    isHighlighted={highlight === 'strong'}
+                    isWeakHighlighted={highlight === 'weak'}
+                    isSelected={selectedSessionId === card.sessionId}
+                    relationBadge={relationBadgeMap.get(card.sessionId)}
+                    onHover={onCardHover}
+                    onSelect={onCardSelect}
+                    isDraggable={isDraggable}
+                  />
+                </div>
+              );
+            })}
+          </div>
         ) : (
-          visible.map((card) => (
-            <SessionCard
-              key={card.sessionId}
-              card={card}
-              compact={compact}
-              isHighlighted={highlightedSessionIds.has(card.sessionId)}
-              isWeakHighlighted={weakHighlightedSessionIds.has(card.sessionId)}
-              isSelected={selectedSessionId === card.sessionId}
-              relationBadge={relationBadgeMap.get(card.sessionId)}
-              onHover={onCardHover}
-              onSelect={onCardSelect}
-              isDraggable={isDraggable}
-            />
-          ))
+          /* Plain path for typical column sizes */
+          visible.map((card) => {
+            const highlight = sessionHighlightMap.get(card.sessionId);
+            return (
+              <SessionCard
+                key={card.sessionId}
+                card={card}
+                compact={compact}
+                isHighlighted={highlight === 'strong'}
+                isWeakHighlighted={highlight === 'weak'}
+                isSelected={selectedSessionId === card.sessionId}
+                relationBadge={relationBadgeMap.get(card.sessionId)}
+                onHover={onCardHover}
+                onSelect={onCardSelect}
+                isDraggable={isDraggable}
+              />
+            );
+          })
         )}
       </div>
     </div>
@@ -873,13 +940,42 @@ function BoardSkeleton() {
 
 // ── Stale indicator ───────────────────────────────────────────────────────────
 
+/**
+ * T4-019 / T4-006-7: The interval that drives the relative-time clock only
+ * starts when data is already stale (age >= BOARD_STALE_TTL_MS).  When the
+ * parent passes a fresh fetchedAt the effect is re-run; if the new age is
+ * still below the threshold the interval is not scheduled at all, avoiding a
+ * needless timer from mount.
+ */
 function StaleIndicator({ fetchedAt }: { fetchedAt: Date }) {
   const [, setTick] = useState(0);
 
   useEffect(() => {
+    // Calculate how long until the data crosses the stale threshold.
+    const ageMs = Date.now() - fetchedAt.getTime();
+    const delayUntilStale = BOARD_STALE_TTL_MS - ageMs;
+
+    if (delayUntilStale > 0) {
+      // Data is still fresh — schedule a one-shot timer to fire when it
+      // becomes stale, then set up the repeating clock tick.
+      let intervalId: ReturnType<typeof setInterval> | null = null;
+      const timeoutId = setTimeout(() => {
+        // Force a re-render so the stale label appears.
+        setTick((t) => t + 1);
+        // Now start the 15-second refresh clock.
+        intervalId = setInterval(() => setTick((t) => t + 1), 15_000);
+      }, delayUntilStale);
+
+      return () => {
+        clearTimeout(timeoutId);
+        if (intervalId !== null) clearInterval(intervalId);
+      };
+    }
+
+    // Data is already stale — start the clock immediately.
     const id = setInterval(() => setTick((t) => t + 1), 15_000);
     return () => clearInterval(id);
-  }, []);
+  }, [fetchedAt]);
 
   const age = Date.now() - fetchedAt.getTime();
   if (age < BOARD_STALE_TTL_MS) return null;
@@ -1148,6 +1244,52 @@ function BoardRightRailSidebar({ groups, onSessionSelect }: BoardRightRailSideba
   );
 }
 
+// ── IntersectionObserver hook (viewport-deferred mounting) ────────────────────
+
+/**
+ * T4-007: Returns a ref to attach to the sentinel element and a boolean that
+ * flips to true (and stays true) the first time the element enters the
+ * viewport.  Once visible it never goes back to false so the subtree mounts
+ * exactly once without repeated unmounts on scroll.
+ */
+function useInView(): [React.RefCallback<Element>, boolean] {
+  const [inView, setInView] = useState(false);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  const ref = useCallback((el: Element | null) => {
+    // Disconnect any previous observer.
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    if (!el) return;
+    // Already in view — nothing to observe.
+    if (inView) return;
+
+    observerRef.current = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setInView(true);
+          observerRef.current?.disconnect();
+          observerRef.current = null;
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    observerRef.current.observe(el);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inView]);
+
+  // Clean up on unmount.
+  useEffect(() => {
+    return () => {
+      observerRef.current?.disconnect();
+    };
+  }, []);
+
+  return [ref, inView];
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 
@@ -1159,6 +1301,9 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   const { activeProject } = useData();
   const { density } = usePlanningRoute();
   const compact = density === 'compact';
+
+  // T4-007: Defer heavy subtree mounting until the board scrolls into view.
+  const [sentinelRef, inView] = useInView();
 
   // ── URL-driven grouping + highlight ──────────────────────────────────────────
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1182,10 +1327,11 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   }, [filterText]);
 
   // TQ-backed session board query (T3-002).
+  // T4-007: Gate on inView so the query doesn't fire until the board is visible.
   const boardQuery = usePlanningSessionBoardQuery({
     projectId: activeProject?.id,
     grouping,
-    enabled: !!activeProject?.id,
+    enabled: !!activeProject?.id && inView,
   });
   const board = boardQuery.data;
   const [refreshing, setRefreshing] = useState(false);
@@ -1279,15 +1425,18 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     return map;
   }, [board]);
 
+  /**
+   * T4-018: A single Map<sessionId, 'strong' | 'weak'> replaces two Set
+   * allocations so SessionCard memo equality is stable on hover — a card that
+   * doesn't change highlight tier will get the same primitive value as before.
+   */
   const {
-    highlightedSessionIds,
-    weakHighlightedSessionIds,
+    sessionHighlightMap,
     relationBadgeMap,
     highlightedFeatureIds,
     highlightedPhaseKeys,
   } = useMemo(() => {
-    const highlighted = new Set<string>();
-    const weakHighlighted = new Set<string>();
+    const highlightMap = new Map<string, 'strong' | 'weak'>();
     const badgeMap = new Map<string, BoardSessionRelationship['relationType']>();
     const featureIds = new Set<string>();
     const phaseKeys = new Set<string>();
@@ -1295,11 +1444,10 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     const activeCard = activeSessionId ? cardBySessionId.get(activeSessionId) : undefined;
     if (activeCard) {
       for (const rel of activeCard.relationships) {
-        const isWeak = rel.relationType === 'sibling';
-        if (isWeak) {
-          weakHighlighted.add(rel.relatedSessionId);
-        } else {
-          highlighted.add(rel.relatedSessionId);
+        const tier: 'strong' | 'weak' = rel.relationType === 'sibling' ? 'weak' : 'strong';
+        // Only write if not already present — first relationship wins.
+        if (!highlightMap.has(rel.relatedSessionId)) {
+          highlightMap.set(rel.relatedSessionId, tier);
         }
         if (!badgeMap.has(rel.relatedSessionId)) {
           badgeMap.set(rel.relatedSessionId, rel.relationType);
@@ -1314,8 +1462,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
     }
 
     return {
-      highlightedSessionIds: highlighted,
-      weakHighlightedSessionIds: weakHighlighted,
+      sessionHighlightMap: highlightMap,
       relationBadgeMap: badgeMap,
       highlightedFeatureIds: featureIds,
       highlightedPhaseKeys: phaseKeys,
@@ -1410,6 +1557,9 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
   }, [board, stateFilter]);
 
   return (
+    // T4-007: Sentinel wrapper — IntersectionObserver fires once when this enters viewport.
+    // The Panel is always rendered so layout space is reserved; data fetch is gated on inView.
+    <div ref={sentinelRef}>
     <Panel className={cn('p-4', className)}>
       {/* Toolbar row with refresh button appended */}
       <div className="flex items-center gap-2 mb-3">
@@ -1501,7 +1651,8 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         </div>
       )}
 
-      {isInitialLoad ? (
+      {/* T4-007: Board content is deferred until in viewport. */}
+      {!inView ? null : isInitialLoad ? (
         <BoardSkeleton />
       ) : boardQuery.isError ? (
         <div className="flex flex-col items-center gap-3 py-10">
@@ -1552,8 +1703,7 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
                       group={group}
                       filterText={debouncedFilterText}
                       compact={compact}
-                      highlightedSessionIds={highlightedSessionIds}
-                      weakHighlightedSessionIds={weakHighlightedSessionIds}
+                      sessionHighlightMap={sessionHighlightMap}
                       selectedSessionId={selectedSessionId}
                       relationBadgeMap={relationBadgeMap}
                       onCardHover={handleCardHover}
@@ -1587,5 +1737,6 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
         </div>
       )}
     </Panel>
+    </div>
   );
 }

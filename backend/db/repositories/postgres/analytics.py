@@ -90,43 +90,155 @@ class PostgresAnalyticsRepository(AnalyticsRepository):
         rows = await self.db.fetch(query)
         return [dict(r) for r in rows]
 
+    async def upsert_point_entry(self, entry: dict) -> int:
+        """Insert or update a period='point' analytics entry.
+
+        Uses the Wave-1 partial unique index idx_analytics_point_daily on
+        (project_id, metric_type, (captured_at::date)) WHERE period='point'
+        to guarantee at most one value per metric per calendar day.  On
+        conflict the row is updated in-place so callers always see the
+        latest same-day value.
+
+        Signature and return value mirror SqliteAnalyticsRepository.insert_entry
+        for period='point' rows so callers are backend-agnostic.
+        """
+        metadata = entry.get("metadata_json")
+        if isinstance(metadata, dict):
+            metadata = json.dumps(metadata)
+
+        query = """
+            INSERT INTO analytics_entries (
+                project_id, metric_type, value, captured_at, period, metadata_json
+            ) VALUES ($1, $2, $3, $4, 'point', $5)
+            ON CONFLICT (project_id, metric_type, (captured_at::date))
+            WHERE period = 'point'
+            DO UPDATE SET
+                value        = EXCLUDED.value,
+                captured_at  = EXCLUDED.captured_at,
+                metadata_json = EXCLUDED.metadata_json
+            RETURNING id
+        """
+        id_val = await self.db.fetchval(
+            query,
+            entry["project_id"],
+            entry["metric_type"],
+            entry["value"],
+            entry["captured_at"],
+            metadata,
+        )
+        return id_val
+
+    async def prune_entries_older_than_days(
+        self,
+        days: int = 90,
+        batch_size: int = 1000,
+    ) -> int:
+        """Batch-DELETE analytics_entries older than `days` days and prune
+        orphaned analytics_entity_links rows.
+
+        Deletes in chunks of `batch_size` to avoid long-running transactions.
+        Loops until no rows remain, then removes orphaned entity links.
+
+        Returns the total number of analytics_entries rows deleted.
+        """
+        import datetime as _dt
+
+        cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+        total_deleted = 0
+
+        while True:
+            status = await self.db.execute(
+                """
+                DELETE FROM analytics_entries
+                WHERE id IN (
+                    SELECT id FROM analytics_entries
+                    WHERE captured_at < $1
+                    LIMIT $2
+                )
+                """,
+                cutoff,
+                batch_size,
+            )
+            # asyncpg returns a status string like "DELETE 42"
+            deleted = int(status.split()[-1])
+            if deleted == 0:
+                break
+            total_deleted += deleted
+
+        # Prune orphaned entity links whose analytics entry no longer exists.
+        await self.db.execute(
+            """
+            DELETE FROM analytics_entity_links
+            WHERE analytics_id NOT IN (SELECT id FROM analytics_entries)
+            """
+        )
+
+        return total_deleted
+
+    async def prune_telemetry_older_than_days(
+        self,
+        days: int = 90,
+        batch_size: int = 1000,
+    ) -> int:
+        """Batch-DELETE telemetry_events older than `days` days.
+
+        Mirrors prune_entries_older_than_days: loops in chunks to avoid
+        long-running transactions; returns the total number of rows deleted.
+        """
+        import datetime as _dt
+
+        cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+        total_deleted = 0
+
+        while True:
+            status = await self.db.execute(
+                """
+                DELETE FROM telemetry_events
+                WHERE id IN (
+                    SELECT id FROM telemetry_events
+                    WHERE occurred_at < $1
+                    LIMIT $2
+                )
+                """,
+                cutoff,
+                batch_size,
+            )
+            deleted = int(status.split()[-1])
+            if deleted == 0:
+                break
+            total_deleted += deleted
+
+        return total_deleted
+
     async def get_latest_entries(self, project_id: str, metric_types: list[str]) -> dict[str, float]:
+        """Get the most recent value for a list of metrics (helper for dashboards).
+
+        Uses a window function (ROW_NUMBER OVER PARTITION BY metric_type ORDER BY
+        captured_at DESC) inside a CTE, filtered to rn=1 AND period='point'.
+        Mirrors the SQLite sibling exactly — same dict shape {metric_type: value}.
+        The partial index idx_analytics_point on (project_id, metric_type,
+        captured_at DESC) WHERE period='point' covers this query.
+        """
         if not metric_types:
             return {}
 
-        # ANY($2) is how params work for arrays in Postgres usually, or separate args
         query = """
             SELECT metric_type, value
-            FROM analytics_entries
-            WHERE project_id = $1
-              AND metric_type = ANY($2::text[])
-              AND period = 'point'
-            GROUP BY metric_type, value, captured_at
-            HAVING captured_at = (
-                SELECT MAX(sub.captured_at) 
-                FROM analytics_entries sub 
-                WHERE sub.metric_type = analytics_entries.metric_type 
-                  AND sub.project_id = $1
-                  AND sub.period = 'point'
-            )
+            FROM (
+                SELECT
+                    metric_type,
+                    value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY metric_type
+                        ORDER BY captured_at DESC
+                    ) AS rn
+                FROM analytics_entries
+                WHERE project_id = $1
+                  AND metric_type = ANY($2::text[])
+                  AND period = 'point'
+            ) ranked
+            WHERE rn = 1
         """
-        # The HAVING clause with MAX(captured_at) in standard SQL (SQLite/Postgres) 
-        # normally works better with window functions for "latest per group", 
-        # but the simple GROUP BY method in SQLite was:
-        # GROUP BY metric_type HAVING captured_at = MAX(captured_at)
-        # In Postgres, you must group by all non-aggregated columns if you select them, 
-        # OR use DISTINCT ON.
-        
-        # Better query for Postgres: use DISTINCT ON
-        query = """
-            SELECT DISTINCT ON (metric_type) metric_type, value
-            FROM analytics_entries
-            WHERE project_id = $1
-              AND metric_type = ANY($2::text[])
-              AND period = 'point'
-            ORDER BY metric_type, captured_at DESC
-        """
-        
         rows = await self.db.fetch(query, project_id, metric_types)
         return {row["metric_type"]: row["value"] for row in rows}
 

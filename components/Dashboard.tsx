@@ -1,19 +1,16 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useData } from '../contexts/DataContext';
-import { useDashboardBundleQuery } from '../services/queries/dashboard';
+import { useDashboardBundleQuery, useDashboardChartQuery, useLiveAgentsCountQuery } from '../services/queries/dashboard';
 import { useAnalyticsOverviewQuery } from '../services/queries/analytics';
 import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu, LayoutGrid, ShieldAlert, CheckCircle2, Clock, Activity } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
-import { analyticsService } from '../services/analytics';
 import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../lib/chartTheme';
-import { type SessionCostCalibrationSummary } from '../types';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { Button } from './ui/button';
 import { Surface, AlertSurface } from './ui/surface';
 import { cn } from '../lib/utils';
 import { useFeatureSurface } from '../services/useFeatureSurface';
-import { apiFetch } from '../services/apiClient';
 import { SystemMetricsChip } from './SystemMetricsChip';
 
 const STAT_TONE_STYLES: Record<string, string> = {
@@ -40,9 +37,6 @@ const StatCard = ({ label, value, sub, icon: Icon, tone }: any) => (
 );
 
 // ── Live agents count chip ────────────────────────────────────────────────────
-
-/** Poll interval for the live active-count widget (matches cache TTL default). */
-const LIVE_AGENTS_POLL_MS = 10_000;
 
 interface LiveAgentsChipProps {
   /** Integer count, or null when data is unavailable. */
@@ -76,57 +70,8 @@ const LiveAgentsChip: React.FC<LiveAgentsChipProps> = ({ count }) => {
     </div>
   );
 };
-
-/**
- * React hook that polls GET /api/agent/live/active-count every 10 s.
- *
- * - Pauses polling while the document is hidden (visibility API) to avoid
- *   background tab thrash (~5400 req / 15-hour idle period without this guard).
- * - Returns null when the API has not yet responded or returned an error,
- *   satisfying the R-P2 resilience contract (render "--" not "0").
- */
-function useLiveAgentsCount(): number | null {
-  const [count, setCount] = useState<number | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const fetchCount = async () => {
-      if (document.visibilityState === 'hidden') return;
-      try {
-        const res = await apiFetch('/api/agent/live/active-count');
-        if (!res.ok) {
-          // Non-2xx: degrade to "--" without throwing to error boundary
-          if (mounted) setCount(null);
-          return;
-        }
-        const data = await res.json();
-        const raw = data?.count;
-        if (mounted) {
-          setCount(typeof raw === 'number' ? raw : null);
-        }
-      } catch {
-        // Network error or JSON parse failure — degrade to "--"
-        if (mounted) setCount(null);
-      }
-    };
-
-    // Kick off immediately, then schedule repeating poll
-    void fetchCount();
-    pollRef.current = setInterval(() => void fetchCount(), LIVE_AGENTS_POLL_MS);
-
-    return () => {
-      mounted = false;
-      if (pollRef.current !== null) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, []);
-
-  return count;
-}
+// useLiveAgentsCount (setInterval) replaced by useLiveAgentsCountQuery (TQ refetchInterval).
+// T4-006-1: no manual setInterval remains in this file.
 
 // ── Feature surface summary chip ──────────────────────────────────────────────
 
@@ -174,10 +119,9 @@ export const Dashboard: React.FC = () => {
     qualityRating: undefined as number | undefined,
   }));
 
-  // Live agents count — polls /api/agent/live/active-count every 10 s.
-  // Returns null on first render (before API responds) or on API error,
-  // satisfying the R-P2 resilience contract.
-  const liveAgentsCount = useLiveAgentsCount();
+  // T4-011 / T4-006-1: Live agents count via TQ refetchInterval (replaces setInterval).
+  // Returns null before first fetch or on error — R-P2 resilience contract.
+  const liveAgentsCount = useLiveAgentsCountQuery();
 
   // Feature surface — one bounded page fetch + one rollup batch.
   // pageSize:1 is sufficient to get totals; rollup fields give cost+session
@@ -217,8 +161,10 @@ export const Dashboard: React.FC = () => {
 
   const [insight, setInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
-  const [costCalibration, setCostCalibration] = useState<SessionCostCalibrationSummary | null>(null);
-  const [chartData, setChartData] = useState<Array<{ date: string; cost: number; velocity: number }>>([]);
+
+  // T4-011: Chart series + calibration via TQ (replaces useEffect + local state).
+  // isLoading is available but not rendered (chart shows empty gracefully while loading).
+  const { chartData, costCalibration } = useDashboardChartQuery({ projectId: activeProject?.id });
 
   // Derive analytics from real session data
   const analyticsData = useMemo(() => {
@@ -241,56 +187,6 @@ export const Dashboard: React.FC = () => {
     setInsight(result);
     setLoadingInsight(false);
   };
-
-  useEffect(() => {
-    let mounted = true;
-    const loadChartData = async () => {
-      // Decouple calibration and chart series — a failure in one cannot zero the other
-      // or affect the TQ-managed KPI cards above.
-      const [calibrationResult, costSeriesResult, velocitySeriesResult] = await Promise.allSettled([
-        analyticsService.getSessionCostCalibration(),
-        analyticsService.getSeries({ metric: 'session_cost', period: 'daily', limit: 120 }),
-        analyticsService.getSeries({ metric: 'task_velocity', period: 'daily', limit: 120 }),
-      ]);
-      if (!mounted) return;
-
-      if (calibrationResult.status === 'fulfilled') {
-        setCostCalibration(calibrationResult.value);
-      } else {
-        console.error('Failed to load cost calibration:', calibrationResult.reason);
-      }
-
-      const costSeries = costSeriesResult.status === 'fulfilled' ? costSeriesResult.value : null;
-      const velocitySeries = velocitySeriesResult.status === 'fulfilled' ? velocitySeriesResult.value : null;
-
-      if (costSeries || velocitySeries) {
-        const byDate = new Map<string, { date: string; cost: number; velocity: number }>();
-        for (const point of costSeries?.items || []) {
-          const date = String(point.captured_at || '').slice(0, 10);
-          if (!date) continue;
-          const current = byDate.get(date) || { date, cost: 0, velocity: 0 };
-          current.cost = Number(point.value || 0);
-          byDate.set(date, current);
-        }
-        for (const point of velocitySeries?.items || []) {
-          const date = String(point.captured_at || '').slice(0, 10);
-          if (!date) continue;
-          const current = byDate.get(date) || { date, cost: 0, velocity: 0 };
-          current.velocity = Number(point.value || 0);
-          byDate.set(date, current);
-        }
-        setChartData(Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date)));
-      } else {
-        const costReason = costSeriesResult.status === 'rejected' ? costSeriesResult.reason : undefined;
-        const velocityReason = velocitySeriesResult.status === 'rejected' ? velocitySeriesResult.reason : undefined;
-        console.error('Failed to load chart series:', costReason ?? velocityReason);
-      }
-    };
-    void loadChartData();
-    return () => {
-      mounted = false;
-    };
-  }, [sessions.length, tasks.length]);
 
   const workloadMetrics = useMemo(
     () => resolveTokenMetrics({
@@ -373,36 +269,36 @@ export const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <StatCard
           label="Observed Workload (30d)"
-          value={overviewLoading && !overviewData ? '—' : formatTokenCount(workloadMetrics.workloadTokens)}
-          sub={overviewLoading && !overviewData ? 'Loading...' : `${formatTokenCount(workloadMetrics.cacheInputTokens)} cache input (${formatPercent(workloadMetrics.cacheShare)})`}
+          value={!overviewData ? '—' : formatTokenCount(workloadMetrics.workloadTokens)}
+          sub={!overviewData ? 'Loading...' : `${formatTokenCount(workloadMetrics.cacheInputTokens)} cache input (${formatPercent(workloadMetrics.cacheShare)})`}
           icon={Cpu}
           tone="info"
         />
         <StatCard
           label="Total Spend (30d)"
-          value={overviewLoading && !overviewData ? '—' : `$${Number(overviewData?.kpis?.sessionCost || 0).toFixed(2)}`}
-          sub={overviewLoading && !overviewData ? 'Loading...' : `${costCalibration?.comparableSessionCount || 0} comparable sessions • ${formatTokenCount(workloadMetrics.modelIOTokens)} model IO`}
+          value={!overviewData ? '—' : `$${Number(overviewData?.kpis?.sessionCost || 0).toFixed(2)}`}
+          sub={!overviewData ? 'Loading...' : `${costCalibration?.comparableSessionCount || 0} comparable sessions • ${formatTokenCount(workloadMetrics.modelIOTokens)} model IO`}
           icon={DollarSign}
           tone="success"
         />
         <StatCard
           label="Avg. Session Quality"
-          value={overviewLoading && !overviewData ? '—' : `${Number(overviewData?.kpis?.taskCompletionPct || 0).toFixed(1)}%`}
+          value={!overviewData ? '—' : `${Number(overviewData?.kpis?.taskCompletionPct || 0).toFixed(1)}%`}
           sub="Task completion across done/deferred/completed"
           icon={TrendingUp}
           tone="primary"
         />
         <StatCard
           label="Tool Success Rate"
-          value={overviewLoading && !overviewData ? '—' : `${Number(overviewData?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
-          sub={overviewLoading && !overviewData ? 'Loading...' : `${Number(overviewData?.kpis?.toolCallCount || 0).toLocaleString()} tool calls tracked`}
+          value={!overviewData ? '—' : `${Number(overviewData?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
+          sub={!overviewData ? 'Loading...' : `${Number(overviewData?.kpis?.toolCallCount || 0).toLocaleString()} tool calls tracked`}
           icon={AlertTriangle}
           tone="danger"
         />
         <StatCard
           label="Features Shipped"
-          value={overviewLoading && !overviewData ? '—' : `${Number(overviewData?.kpis?.taskVelocity || 0).toLocaleString()}`}
-          sub={overviewLoading && !overviewData ? 'Loading...' : `${Number(overviewData?.kpis?.sessionCount || 0).toLocaleString()} sessions • ${taskCounts['done'] ?? 0} done tasks`}
+          value={!overviewData ? '—' : `${Number(overviewData?.kpis?.taskVelocity || 0).toLocaleString()}`}
+          sub={!overviewData ? 'Loading...' : `${Number(overviewData?.kpis?.sessionCount || 0).toLocaleString()} sessions • ${taskCounts['done'] ?? 0} done tasks`}
           icon={Zap}
           tone="warning"
         />

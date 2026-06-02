@@ -13,6 +13,12 @@
  *   4. Empty page renders empty list view without crashing
  *   5. Null-safety: page?.warnings and page?.items fallback correctly
  *   6. PlanningCommandCenterShell renders V1 by default
+ *
+ * T4-002: usePlanningCommandCenterQuery replaces useEffect+LoadState.
+ *   Hook is mocked here so no QueryClientProvider is needed for
+ *   renderToStaticMarkup — mock returns a TQ-shaped result directly.
+ * T4-014: page (default 1) + pageSize (default 50) pagination added;
+ *   toolbar now always includes a pageSize selector when wired.
  */
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -27,6 +33,27 @@ vi.mock('../../../constants', async (importOriginal) => {
   };
 });
 
+// T4-002: mock the TQ hook that replaced useEffect+LoadState.
+// Returns a loading state (data: undefined, isLoading: true) to match the
+// old behaviour of a never-resolving getPlanningCommandCenter promise.
+// Mocking at hook level avoids the need for a QueryClientProvider.
+vi.mock('../../../services/queries/planning', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../services/queries/planning')>();
+  return {
+    ...actual,
+    usePlanningCommandCenterQuery: vi.fn().mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    }),
+  };
+});
+
+// Keep the service mock so transitive imports of planningCommandCenter.ts do
+// not attempt real network calls (getPlanningCommandCenter is still re-exported
+// by the service module).
 vi.mock('../../../services/planningCommandCenter', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../services/planningCommandCenter')>();
   return {
@@ -63,7 +90,7 @@ describe('PlanningCommandCenter — initial render states', () => {
     const html = renderToStaticMarkup(
       <PlanningCommandCenter />,
     );
-    // Initial state is loading (or idle transitioning to loading)
+    // T4-002: isLoading=true → spinner shown
     expect(html).toContain('Loading command center');
   });
 
@@ -71,7 +98,7 @@ describe('PlanningCommandCenter — initial render states', () => {
     const html = renderToStaticMarkup(
       <PlanningCommandCenter />,
     );
-    // List view only renders when phase=ready and page is non-null
+    // List view only renders when page data is non-null; data: undefined → no list
     expect(html).not.toContain('data-testid="command-center-list-view"');
   });
 
@@ -98,8 +125,8 @@ describe('PlanningCommandCenter — initial render states', () => {
 
 describe('PlanningCommandCenter — null-safety guards', () => {
   it('initial render never accesses .items on undefined data', () => {
-    // If the null-safety bug existed (ccData.items without optional chaining),
-    // renderToStaticMarkup would throw here. Not throwing is the passing condition.
+    // T4-002: hook returns data: undefined during loading — component must not
+    // throw when using items = page?.items ?? [].
     let threw = false;
     try {
       renderToStaticMarkup(<PlanningCommandCenter />);
@@ -113,6 +140,28 @@ describe('PlanningCommandCenter — null-safety guards', () => {
     const html = renderToStaticMarkup(<PlanningCommandCenter />);
     expect(html).not.toContain('Cannot read properties of undefined');
     expect(html).toContain('animate-spin');
+  });
+});
+
+// ── T4-014: pagination toolbar ────────────────────────────────────────────────
+
+describe('PlanningCommandCenter — T4-014 pagination', () => {
+  it('toolbar renders with data-testid command-center-toolbar', () => {
+    const html = renderToStaticMarkup(<PlanningCommandCenter />);
+    expect(html).toContain('data-testid="command-center-toolbar"');
+  });
+
+  it('toolbar includes pageSize selector (aria-label "Items per page")', () => {
+    const html = renderToStaticMarkup(<PlanningCommandCenter />);
+    // T4-014: onPageSizeChange is always wired; pageSize select always present.
+    expect(html).toContain('Items per page');
+  });
+
+  it('prev/next pagination controls absent when data is undefined', () => {
+    // Controls only render when page is defined AND totalPages > 1.
+    const html = renderToStaticMarkup(<PlanningCommandCenter />);
+    expect(html).not.toContain('aria-label="Previous page"');
+    expect(html).not.toContain('aria-label="Next page"');
   });
 });
 

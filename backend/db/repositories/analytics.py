@@ -18,17 +18,36 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
         self.db = db
 
     async def insert_entry(self, entry: dict) -> int:
-        """Insert a new analytics data point."""
-        query = """
-            INSERT INTO analytics_entries (
-                project_id, metric_type, value, captured_at, period, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
+        """Insert a new analytics data point.
+
+        For period='point' rows, upserts on the partial unique index
+        idx_analytics_point_daily (project_id, metric_type, date(captured_at))
+        so that only the latest same-day value is kept.
+        Non-point rows use a plain INSERT.
         """
-        # Ensure metadata is a JSON string if dict
         import json
         metadata = entry.get("metadata_json")
         if isinstance(metadata, dict):
             metadata = json.dumps(metadata)
+
+        period = entry.get("period", "point")
+        if period == "point":
+            query = """
+                INSERT INTO analytics_entries (
+                    project_id, metric_type, value, captured_at, period, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, metric_type, date(captured_at)) WHERE period='point'
+                DO UPDATE SET
+                    value=excluded.value,
+                    captured_at=excluded.captured_at,
+                    metadata_json=excluded.metadata_json
+            """
+        else:
+            query = """
+                INSERT INTO analytics_entries (
+                    project_id, metric_type, value, captured_at, period, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """
 
         async with self.db.execute(
             query,
@@ -37,7 +56,7 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
                 entry["metric_type"],
                 entry["value"],
                 entry["captured_at"],
-                entry.get("period", "point"),
+                period,
                 metadata,
             ),
         ) as cursor:
@@ -53,6 +72,94 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
         """
         await self.db.execute(query, (analytics_id, entity_type, entity_id))
         await self.db.commit()
+
+    async def prune_entries_older_than_days(
+        self,
+        days: int = 90,
+        batch_size: int = 1000,
+    ) -> int:
+        """Batch-DELETE analytics_entries older than `days` days and prune
+        orphaned analytics_entity_links rows.
+
+        Deletes in chunks of `batch_size` to avoid holding a long write-lock
+        against SQLite's busy_timeout.  Loops until no rows remain.
+
+        The retention window is controlled by the caller (sync_engine owner);
+        wire CCDASH_ANALYTICS_RETENTION_DAYS (default 90) from config.py and
+        pass it as `days`.  Do NOT call this at import/init time.
+
+        Returns the total number of analytics_entries rows deleted.
+        """
+        total_deleted = 0
+        while True:
+            async with self.db.execute(
+                """
+                DELETE FROM analytics_entries
+                WHERE id IN (
+                    SELECT id FROM analytics_entries
+                    WHERE captured_at < datetime('now', ? || ' days')
+                    LIMIT ?
+                )
+                """,
+                (f"-{days}", batch_size),
+            ) as cursor:
+                deleted = cursor.rowcount
+            await self.db.commit()
+            if deleted == 0:
+                break
+            total_deleted += deleted
+
+        # Prune orphaned entity links whose analytics entry no longer exists.
+        await self.db.execute(
+            """
+            DELETE FROM analytics_entity_links
+            WHERE analytics_id NOT IN (SELECT id FROM analytics_entries)
+            """
+        )
+        await self.db.commit()
+
+        return total_deleted
+
+    async def prune_telemetry_older_than_days(
+        self,
+        days: int = 90,
+        batch_size: int = 1000,
+    ) -> int:
+        """Batch-DELETE telemetry_events older than `days` days.
+
+        Mirrors prune_entries_older_than_days: loops in chunks to respect
+        SQLite busy_timeout; commits after each batch.
+
+        The retention window is controlled by the caller (sync_engine owner);
+        wire CCDASH_TELEMETRY_RETENTION_DAYS (default 90) from config.py and
+        pass it as `days`.  Do NOT call this at import/init time.
+
+        telemetry_events access is co-located in this repository (record_execution_event,
+        list_artifact_analytics_rows, get_prometheus_telemetry_rows), so this prune
+        lives here rather than in a separate file.
+
+        Returns the total number of telemetry_events rows deleted.
+        """
+        total_deleted = 0
+        while True:
+            async with self.db.execute(
+                """
+                DELETE FROM telemetry_events
+                WHERE id IN (
+                    SELECT id FROM telemetry_events
+                    WHERE occurred_at < datetime('now', ? || ' days')
+                    LIMIT ?
+                )
+                """,
+                (f"-{days}", batch_size),
+            ) as cursor:
+                deleted = cursor.rowcount
+            await self.db.commit()
+            if deleted == 0:
+                break
+            total_deleted += deleted
+
+        return total_deleted
 
     async def get_trends(
         self,
@@ -101,19 +208,34 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
             return [dict(zip(columns, row)) for row in rows]
 
     async def get_latest_entries(self, project_id: str, metric_types: list[str]) -> dict[str, float]:
-        """Get the most recent value for a list of metrics (helper for dashboards)."""
+        """Get the most recent value for a list of metrics (helper for dashboards).
+
+        Uses a window function (ROW_NUMBER OVER PARTITION BY metric_type ORDER BY
+        captured_at DESC) instead of GROUP BY/HAVING MAX to correctly select the
+        single latest row per metric type.  The partial index idx_analytics_point
+        on (project_id, metric_type, captured_at DESC) WHERE period='point'
+        covers this query.
+        """
         if not metric_types:
             return {}
-            
+
         placeholders = ",".join(["?"] * len(metric_types))
         query = f"""
             SELECT metric_type, value
-            FROM analytics_entries
-            WHERE project_id = ?
-              AND metric_type IN ({placeholders})
-              AND period = 'point'
-            GROUP BY metric_type
-            HAVING captured_at = MAX(captured_at)
+            FROM (
+                SELECT
+                    metric_type,
+                    value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY metric_type
+                        ORDER BY captured_at DESC
+                    ) AS rn
+                FROM analytics_entries
+                WHERE project_id = ?
+                  AND metric_type IN ({placeholders})
+                  AND period = 'point'
+            ) ranked
+            WHERE rn = 1
         """
         params = [project_id] + metric_types
         async with self.db.execute(query, params) as cursor:

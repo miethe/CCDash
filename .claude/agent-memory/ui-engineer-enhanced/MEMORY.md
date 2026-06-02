@@ -1,2 +1,4 @@
 - [project_pcp709_extraction.md](project_pcp709_extraction.md) — PCP-709 planning primitives extracted to @miethe/ui 0.3.0; test env is Jest from web workspace root
 - [feedback_mietheui_tests.md](feedback_mietheui_tests.md) — Use @testing-library/react (not renderToStaticMarkup) for @miethe/ui tests; react-dom/server.browser breaks in jsdom
+- [project_ee_phase5_fds.md](project_ee_phase5_fds.md) — EE P5 FeatureDetailShell: FeaturePlanningContext type constraints, Chip/ArtifactChip distinction, pre-existing test failures
+- [project_ee_phase5_wave4.md](project_ee_phase5_wave4.md) — EE P5 Wave 4: CommandPalette (P5-009) + NewSpecModal (P5-010) + createSpec; search endpoints, type gotchas

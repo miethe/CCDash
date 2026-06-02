@@ -447,5 +447,42 @@ class PostgresDocumentRepository:
 
         return facets
 
+    async def list_summary(
+        self,
+        project_id: str,
+        *,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """Return a lightweight column-projected list for planning-agent consumers.
+
+        Selected columns: ``id``, ``title``, ``status``, ``doc_type``,
+        ``updated_at``.  ``content``, ``frontmatter_json``, ``metadata_json``
+        and other heavy fields are **not** included.
+
+        Results are ordered by ``updated_at DESC, title ASC``.
+
+        This method is intentionally *additive* — it does not replace
+        :meth:`list_all`.
+        """
+        rows = await self.db.fetch(
+            """
+            SELECT
+                id,
+                title,
+                status,
+                doc_type,
+                updated_at
+            FROM documents
+            WHERE project_id = $1
+            ORDER BY
+                COALESCE(updated_at, '') DESC,
+                title ASC
+            LIMIT $2
+            """,
+            project_id,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM documents WHERE source_file = $1", source_file)

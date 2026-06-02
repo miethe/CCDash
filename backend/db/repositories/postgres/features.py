@@ -192,14 +192,17 @@ class PostgresFeatureRepository:
         query = """
             INSERT INTO features (
                 id, project_id, name, status, category,
-                tags_json, deferred_tasks, planned_at, started_at,
+                tags_json, owners_json, linked_docs_json,
+                deferred_tasks, planned_at, started_at,
                 total_tasks, completed_tasks, parent_feature_id,
                 created_at, updated_at, completed_at, data_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             ON CONFLICT(id) DO UPDATE SET
                 name=EXCLUDED.name, status=EXCLUDED.status,
                 category=EXCLUDED.category,
                 tags_json=EXCLUDED.tags_json,
+                owners_json=EXCLUDED.owners_json,
+                linked_docs_json=EXCLUDED.linked_docs_json,
                 deferred_tasks=EXCLUDED.deferred_tasks,
                 planned_at=EXCLUDED.planned_at,
                 started_at=EXCLUDED.started_at,
@@ -217,6 +220,8 @@ class PostgresFeatureRepository:
             feature_data.get("status", "backlog"),
             feature_data.get("category", ""),
             json.dumps(feature_data.get("tags", [])),
+            json.dumps(feature_data.get("owners", [])),
+            json.dumps(feature_data.get("linkedDocs", [])),
             int(feature_data.get("deferredTasks", 0) or 0),
             feature_data.get("plannedAt", "") or "",
             feature_data.get("startedAt", "") or "",
@@ -495,6 +500,96 @@ class PostgresFeatureRepository:
             *params,
         )
         return int(value or 0)
+
+    # ---------------------------------------------------------------------------
+    # Summary / planning-agent projection (P2-008)
+    # ---------------------------------------------------------------------------
+
+    #: Terminal feature statuses excluded by default from ``list_summary``.
+    _TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "deferred", "completed"})
+
+    async def list_summary(
+        self,
+        project_id: str,
+        *,
+        include_terminal: bool = False,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """Return a lightweight column-projected list for planning-agent consumers.
+
+        Selected columns: ``id``, ``name``, ``status``, ``category``,
+        ``updated_at``, ``phases_json``.  ``data_json`` is **not** included.
+
+        ``phases_json`` is a JSON array where each element has the shape::
+
+            {"phase": "...", "title": "...", "status": "...", "progress": N,
+             "total_tasks": N, "completed_tasks": N}
+
+        By default features with terminal statuses (``done``, ``deferred``,
+        ``completed``) are excluded.  Pass ``include_terminal=True`` to include
+        them.
+
+        This method is intentionally *additive* — it does not replace
+        :meth:`list_all`.
+        """
+        params: list[Any] = [project_id]
+
+        def _p(value: Any) -> str:
+            params.append(value)
+            return f"${len(params)}"
+
+        terminal_clause = ""
+        if not include_terminal:
+            phs = [_p(s) for s in sorted(self._TERMINAL_STATUSES)]
+            terminal_clause = f"AND f.status NOT IN ({', '.join(phs)})"
+
+        limit_ph = _p(limit)
+
+        sql = f"""
+            SELECT
+                f.id,
+                f.name,
+                f.status,
+                f.category,
+                f.updated_at,
+                COALESCE(
+                    (
+                        SELECT json_agg(
+                            json_build_object(
+                                'phase', fp.phase,
+                                'title', fp.title,
+                                'status', fp.status,
+                                'progress', fp.progress,
+                                'total_tasks', fp.total_tasks,
+                                'completed_tasks', fp.completed_tasks
+                            )
+                            ORDER BY fp.phase
+                        )
+                        FROM feature_phases fp
+                        WHERE fp.feature_id = f.id
+                    ),
+                    '[]'::json
+                ) AS phases_json
+            FROM features f
+            WHERE f.project_id = $1
+            {terminal_clause}
+            ORDER BY f.updated_at DESC, f.id ASC
+            LIMIT {limit_ph}
+        """
+        rows = await self.db.fetch(sql, *params)
+        result = []
+        for r in rows:
+            d = dict(r)
+            # asyncpg may return phases_json as a list (decoded JSON) or string;
+            # normalise to a JSON string for consistent interface with SQLite.
+            pj = d.get("phases_json")
+            if pj is None:
+                d["phases_json"] = "[]"
+            elif isinstance(pj, (list, dict)):
+                d["phases_json"] = json.dumps(pj)
+            # str already — leave as-is
+            result.append(d)
+        return result
 
     async def get_project_stats(self, project_id: str) -> dict:
         query = """

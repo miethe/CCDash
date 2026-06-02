@@ -12,8 +12,9 @@ import {
   usePlanningViewQuery,
   usePlanningFeatureContextQuery,
 } from '../../services/queries/planning';
-import { planningKeys } from '../../services/queryKeys';
+import { planningKeys, multiProjectPlanningKeys } from '../../services/queryKeys';
 import { getLaunchCapabilities } from '../../services/execution';
+import { useDashboardChartQuery } from '../../services/queries/dashboard';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
 import {
   planningArtifactsHref,
@@ -121,27 +122,7 @@ function deriveCorpusStats(summary: import('../../types').ProjectPlanningSummary
   // ctx/phase ratio — show as integer if clean, else one decimal place
   const ctxPerPhase = phaseCount > 0 ? ctxCount / phaseCount : 0;
 
-  // Token-saved heuristic: each context doc anchored to a phase saves
-  // an estimated 3KB vs full-file reads (~15KB). We cap the display at 95%.
-  // TODO: replace with real telemetry once the exporter tracks this.
-  const tokensSavedPct = Math.min(
-    95,
-    Math.round((ctxCount / Math.max(phaseCount, 1)) * 4.2),
-  );
-
-  // Spark history: build a 12-point series from the feature health counts.
-  // Real historical data is not yet available; we synthesise a plausible
-  // monotone growth curve ending at the current totals.
-  // TODO: replace with actual per-day aggregate when the backend exposes it.
-  const total = summary?.totalFeatureCount ?? 0;
-  const active = summary?.activeFeatureCount ?? 0;
-  const sparkHistory = Array.from({ length: 12 }, (_, i) => {
-    const t = i / 11;
-    return Math.round(total * (0.3 + 0.7 * t) + active * Math.sin(t * Math.PI) * 0.5);
-  });
-  sparkHistory[11] = total; // pin last point to current total
-
-  return { ctxCount, phaseCount, ctxPerPhase, tokensSavedPct, sparkHistory };
+  return { ctxCount, phaseCount, ctxPerPhase };
 }
 
 /** CLS-safe animated spark: the polyline is drawn on mount via stroke-dasharray trick. */
@@ -208,8 +189,15 @@ function HeroHeader({
 }: {
   summary: import('../../types').ProjectPlanningSummary;
 }) {
-  const { ctxCount, phaseCount, ctxPerPhase, tokensSavedPct, sparkHistory } =
-    deriveCorpusStats(summary);
+  const { ctxCount, phaseCount, ctxPerPhase } = deriveCorpusStats(summary);
+
+  // Real per-day task velocity data from the dashboard chart query.
+  // Falls back to rendering no sparkline rather than fabricated points.
+  const chartQuery = useDashboardChartQuery({ projectId: summary.projectId ?? null });
+  const sparkHistory: number[] | null =
+    chartQuery.chartData.length > 1
+      ? chartQuery.chartData.map((p) => p.velocity)
+      : null;
 
   const todayLabel = new Date().toLocaleDateString(undefined, {
     weekday: 'long',
@@ -271,16 +259,10 @@ function HeroHeader({
           {todayLabel} &middot; {ctxPhaseLabel}
         </div>
 
-        {/* Spark + tokens-saved */}
-        <div className="flex items-center gap-3">
+        {/* Spark — only rendered when real per-day velocity data is available */}
+        {sparkHistory !== null ? (
           <AnimatedSpark data={sparkHistory} color="var(--brand)" width={120} height={28} />
-          <span
-            className="planning-mono planning-tnum"
-            style={{ fontSize: 11, color: 'var(--ok)', fontWeight: 500 }}
-          >
-            +{tokensSavedPct}% tokens saved
-          </span>
-        </div>
+        ) : null}
       </div>
     </div>
   );
@@ -868,6 +850,7 @@ function PlanningShell({
           onDrillDown={onDrillDown}
           activeStatusBucket={activeStatusBucket}
           activeSignal={activeSignal}
+          onSeeAll={onStatusBucketClick}
         />
       </div>
 
@@ -974,6 +957,7 @@ export default function PlanningHomePage() {
       if (activeProject?.id) {
         void queryClient.invalidateQueries({ queryKey: planningKeys.all(activeProject.id) });
       }
+      void queryClient.invalidateQueries({ queryKey: multiProjectPlanningKeys.all() });
     },
   });
 
@@ -983,8 +967,8 @@ export default function PlanningHomePage() {
 
   const prefetchFeature = useCallback((featureId: string) => {
     if (!activeProject?.id) return;
-    void prefetchFeaturePlanningContext(featureId, { projectId: activeProject.id });
-  }, [activeProject?.id]);
+    void prefetchFeaturePlanningContext(featureId, { projectId: activeProject.id }, queryClient);
+  }, [activeProject?.id, queryClient]);
 
   const closeFeatureModal = useCallback(() => {
     navigate(`/planning${removePlanningRouteFeatureModalSearch(searchParams)}`, { replace: true });

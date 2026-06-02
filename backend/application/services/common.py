@@ -109,6 +109,13 @@ def resolve_project(
         if scoped is not None:
             return scoped
 
+    # P3-008: enterprise/hosted fail-fast — never fall through to the global
+    # active-project when the request carries a hosted claim scope but no
+    # resolvable project.  Silently routing to the wrong project is a data-
+    # isolation hazard in multi-tenant deployments.
+    # Local/dev mode retains the active-project fallback (allow_active_fallback
+    # is already False for hosted scopes in build_request_context, so the two
+    # code paths stay consistent).
     if _principal_has_hosted_claim_scope(context.principal):
         if required:
             raise HTTPException(status_code=404, detail="No project selected for hosted request")

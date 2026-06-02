@@ -300,6 +300,7 @@ class TestPushBatchPolymorphicDispatch(unittest.IsolatedAsyncioTestCase):
                 trigger="test",
                 run_id="r1",
                 started=0.0,
+                runtime_metadata={},
                 _fake_client=None,  # ignored; we set _client directly
             )
 
@@ -321,6 +322,7 @@ class TestPushBatchPolymorphicDispatch(unittest.IsolatedAsyncioTestCase):
                 trigger="test",
                 run_id="r1",
                 started=0.0,
+                runtime_metadata={},
             )
         return outcome, fake_client
 
@@ -418,6 +420,7 @@ class TestArtifactTelemetryFeatureFlag(unittest.IsolatedAsyncioTestCase):
                 trigger="test",
                 run_id="r1",
                 started=0.0,
+                runtime_metadata={},
             )
         return outcome, fake_client, coordinator
 
