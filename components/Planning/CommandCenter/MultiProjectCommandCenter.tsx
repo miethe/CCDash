@@ -109,7 +109,10 @@ function AttentionLens({
   accentClass,
   bgClass,
 }: AttentionLensProps) {
-  const count = projectIds.length;
+  // Resilience-by-default: guard against a future contract drift where the
+  // backend returns a non-array (e.g. a count int) for any lens field.
+  const ids = Array.isArray(projectIds) ? projectIds : [];
+  const count = ids.length;
   return (
     <div
       className={cn(
@@ -133,7 +136,7 @@ function AttentionLens({
         <p className="planning-mono text-[10.5px] text-[color:var(--ink-4)]">none</p>
       ) : (
         <ul className="space-y-0.5">
-          {projectIds.slice(0, 5).map((pid) => (
+          {ids.slice(0, 5).map((pid) => (
             <li key={pid} className="planning-mono truncate text-[10.5px] text-[color:var(--ink-3)]">
               {projectDisplayMap.get(pid) ?? pid}
             </li>

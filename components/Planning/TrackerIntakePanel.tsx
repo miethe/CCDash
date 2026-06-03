@@ -190,7 +190,7 @@ function FeatureSlugChip({
     return (
       <button
         type="button"
-        onClick={onSelect}
+        onClick={(e) => { e.stopPropagation(); onSelect(); }}
         aria-label={`Navigate to feature ${slug}`}
         className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-info/10 text-info hover:bg-info/20 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info shrink-0"
       >
@@ -443,10 +443,7 @@ function FeatureSummaryRow({
           {badge}
         </div>
       </div>
-      <FeatureSlugChip
-        slug={item.featureId}
-        onSelect={onSelect}
-      />
+      <FeatureSlugChip slug={item.featureId} />
     </div>
   );
 
@@ -596,13 +593,20 @@ function NodeRow({
 
   if (onNodeClick) {
     return (
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => onNodeClick(node)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onNodeClick(node);
+          }
+        }}
         className="w-full text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info rounded-lg hover:opacity-80 transition-opacity"
       >
         {inner}
-      </button>
+      </div>
     );
   }
 

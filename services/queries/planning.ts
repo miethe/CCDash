@@ -550,7 +550,8 @@ export function useMultiProjectSessionBoardQuery({
  */
 interface PortfolioProjectWire {
   project_id: string;
-  display: string;
+  display_name: string;
+  display?: string;
   status_counts: Record<string, number>;
   active_sessions: number;
   changed_recently: boolean;
@@ -559,9 +560,9 @@ interface PortfolioProjectWire {
 }
 
 interface PortfolioAttentionWire {
-  active_now: string[];
-  changed_recently: string[];
-  needs_attention: string[];
+  active_now: number;
+  changed_recently: number;
+  needs_attention: number;
   next_work: string[];
 }
 
@@ -597,10 +598,11 @@ export interface PortfolioRollupDTO {
 }
 
 function adaptPortfolioRollup(wire: PortfolioRollupWire): PortfolioRollupDTO {
+  const projs = wire.projects ?? [];
   return {
-    projects: (wire.projects ?? []).map((p) => ({
+    projects: projs.map((p) => ({
       projectId: p.project_id ?? '',
-      display: p.display ?? '',
+      display: p.display_name ?? p.display ?? '',
       statusCounts: p.status_counts ?? {},
       activeSessions: p.active_sessions ?? 0,
       changedRecently: p.changed_recently ?? false,
@@ -608,10 +610,10 @@ function adaptPortfolioRollup(wire: PortfolioRollupWire): PortfolioRollupDTO {
       tokenTotal: p.token_total ?? 0,
     })),
     attention: {
-      activeNow: wire.attention?.active_now ?? [],
-      changedRecently: wire.attention?.changed_recently ?? [],
-      needsAttention: wire.attention?.needs_attention ?? [],
-      nextWork: wire.attention?.next_work ?? [],
+      activeNow: projs.filter((p) => (p.active_sessions ?? 0) > 0).map((p) => p.project_id),
+      changedRecently: projs.filter((p) => p.changed_recently).map((p) => p.project_id),
+      needsAttention: projs.filter((p) => p.needs_attention).map((p) => p.project_id),
+      nextWork: Array.isArray(wire.attention?.next_work) ? wire.attention!.next_work : [],
     },
     generatedAt: wire.generated_at ?? '',
   };
