@@ -40,7 +40,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -575,7 +575,9 @@ CREATE TABLE IF NOT EXISTS analytics_entries (
     value         DOUBLE PRECISION NOT NULL,
     captured_at   TEXT NOT NULL,
     period        TEXT DEFAULT 'point',
-    metadata_json TEXT
+    metadata_json TEXT,
+    scope         TEXT NOT NULL DEFAULT 'project',
+    scope_id      TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_analytics_lookup
@@ -586,10 +588,11 @@ CREATE INDEX IF NOT EXISTS idx_analytics_period
 CREATE INDEX IF NOT EXISTS idx_analytics_point_latest
     ON analytics_entries(project_id, metric_type, captured_at DESC)
     WHERE period = 'point';
--- T1-001: unique partial index backing ON CONFLICT upsert for point-period dedup
--- Postgres uses (captured_at::date) expression syntax for the date cast
+-- v34: unique partial index backing ON CONFLICT upsert for point-period dedup.
+-- Key includes scope_id so per-feature rows are DISTINCT from project-level rows.
+-- Postgres uses (captured_at::date) expression syntax for the date cast.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily
-    ON analytics_entries(project_id, metric_type, (captured_at::date))
+    ON analytics_entries(project_id, metric_type, scope_id, (captured_at::date))
     WHERE period = 'point';
 
 CREATE TABLE IF NOT EXISTS analytics_entity_links (
@@ -3012,10 +3015,18 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         " ON analytics_entries(project_id, metric_type, captured_at DESC)"
         " WHERE period = 'point'"
     )
-    # ── T1-001: Unique partial index for ON CONFLICT point-period dedup ──────────
+
+    # ── v34: scope + scope_id columns on analytics_entries (idempotent) ──────────
+    await _ensure_column(db, "analytics_entries", "scope", "TEXT NOT NULL DEFAULT 'project'")
+    await _ensure_column(db, "analytics_entries", "scope_id", "TEXT NOT NULL DEFAULT ''")
+
+    # ── T1-001 / v34: Unique partial index for ON CONFLICT point-period dedup.
+    #   The CREATE UNIQUE INDEX IF NOT EXISTS below is intentionally NOT used to
+    #   swap an existing old-key index — the v34 versioned block below handles that
+    #   on upgraded DBs. For fresh DBs this line creates the final scope-aware index.
     await db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily"
-        " ON analytics_entries(project_id, metric_type, (captured_at::date))"
+        " ON analytics_entries(project_id, metric_type, scope_id, (captured_at::date))"
         " WHERE period = 'point'"
     )
     # ── T1-014: Partial index for telemetry_events event_type queries ─────────────
@@ -3099,6 +3110,23 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
             " ON research_notes(project_id, feature_id)"
         )
         logger.info("v32 migrations complete: owners_json/linked_docs_json on features; council_reviews; research_notes.")
+
+    # ── v34 migrations ────────────────────────────────────────────────────────
+    if current_version < 34:
+        # FC-scope: promote scope/scope_id to real columns on analytics_entries
+        # and swap idx_analytics_point_daily to the scope-aware key so that
+        # per-feature point rows are DISTINCT from project-level rows.
+        #
+        # The _ensure_column calls above already added the columns (with
+        # DEFAULT 'project' / DEFAULT '') so no row-dedup DELETE is needed —
+        # all existing rows get scope_id='' and remain unique under the new key.
+        await db.execute("DROP INDEX IF EXISTS idx_analytics_point_daily")
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily"
+            " ON analytics_entries(project_id, metric_type, scope_id, (captured_at::date))"
+            " WHERE period = 'point'"
+        )
+        logger.info("v34 migrations complete: analytics_entries scope/scope_id columns + scope-aware idx_analytics_point_daily.")
 
     # Record schema version
     if should_record_version:

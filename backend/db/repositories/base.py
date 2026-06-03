@@ -273,9 +273,13 @@ class AnalyticsRepository(Protocol):
     async def get_trends(
         self, project_id: str, metric_type: str, period: str = "daily",
         start: str | None = None, end: str | None = None,
+        *, scope: str = "project", scope_id: str | None = None,
     ) -> list[dict]: ...
     async def get_metric_types(self) -> list[dict]: ...
-    async def get_latest_entries(self, project_id: str, metric_types: list[str]) -> dict[str, float]: ...
+    async def get_latest_entries(
+        self, project_id: str, metric_types: list[str],
+        *, scope: str = "project", scope_id: str | None = None,
+    ) -> dict[str, float]: ...
     async def list_artifact_analytics_rows(
         self,
         *,

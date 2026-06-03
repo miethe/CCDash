@@ -1429,6 +1429,7 @@ async def get_series(
     end: str | None = None,
     group_by: str | None = None,
     session_id: str | None = None,
+    feature_id: str | None = None,
     offset: int = 0,
     limit: int = 500,
     request_context: RequestContext = Depends(get_request_context),
@@ -1552,7 +1553,9 @@ async def get_series(
         total = len(items)
         return {"items": items[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
 
-    raw_points = await analytics_repo.get_trends(project.id, metric, period="point", start=start, end=end)
+    _scope = "feature" if feature_id else "project"
+    _scope_id = feature_id if feature_id else None
+    raw_points = await analytics_repo.get_trends(project.id, metric, period="point", start=start, end=end, scope=_scope, scope_id=_scope_id)
     if period == "point" and not group_by:
         total = len(raw_points)
         return {"items": raw_points[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
@@ -2584,6 +2587,7 @@ async def get_trends(
     period: str = "daily",
     start: str | None = None,
     end: str | None = None,
+    feature_id: str | None = None,
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
@@ -2596,6 +2600,7 @@ async def get_trends(
         end=end,
         group_by=None,
         session_id=None,
+        feature_id=feature_id,
         offset=0,
         limit=500,
         request_context=request_context,

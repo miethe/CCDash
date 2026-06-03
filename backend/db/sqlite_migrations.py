@@ -46,7 +46,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -576,7 +576,9 @@ CREATE TABLE IF NOT EXISTS analytics_entries (
     value         REAL NOT NULL,
     captured_at   TEXT NOT NULL,
     period        TEXT DEFAULT 'point',
-    metadata_json TEXT
+    metadata_json TEXT,
+    scope         TEXT NOT NULL DEFAULT 'project',
+    scope_id      TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_analytics_lookup
@@ -587,9 +589,10 @@ CREATE INDEX IF NOT EXISTS idx_analytics_period
 CREATE INDEX IF NOT EXISTS idx_analytics_point_latest
     ON analytics_entries(project_id, metric_type, captured_at DESC)
     WHERE period = 'point';
--- T1-001: unique partial index backing ON CONFLICT upsert for point-period dedup
+-- T1-001/v33: unique partial index backing ON CONFLICT upsert for point-period dedup.
+-- scope_id discriminates '' (project) from a feature_id so per-feature rows are DISTINCT.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily
-    ON analytics_entries(project_id, metric_type, date(captured_at))
+    ON analytics_entries(project_id, metric_type, scope_id, date(captured_at))
     WHERE period = 'point';
 
 CREATE TABLE IF NOT EXISTS analytics_entity_links (
@@ -3430,6 +3433,12 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_links_project ON entity_links(project_id)",
     )
 
+    # ── v33: scope/scope_id columns on analytics_entries ─────────────────────────
+    # ALTER ADD COLUMN with a constant DEFAULT is an O(1) metadata-only operation —
+    # safe on large databases. All pre-existing rows get scope='project', scope_id=''.
+    await _ensure_column(db, "analytics_entries", "scope", "TEXT NOT NULL DEFAULT 'project'")
+    await _ensure_column(db, "analytics_entries", "scope_id", "TEXT NOT NULL DEFAULT ''")
+
     # ── T1-014: Partial indexes for analytics_entries (period='point') ───────────
     await _ensure_index(
         db,
@@ -3552,6 +3561,25 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         )
         await db.commit()
         logger.info("v32 migrations complete: owners_json/linked_docs_json on features; council_reviews; research_notes.")
+
+    # ── v33 migrations ────────────────────────────────────────────────────────
+    if current_version < 33:
+        # Promote scope/scope_id into the unique dedup index so per-feature analytics
+        # rows are DISTINCT from project-level rows of the same metric+day.
+        # No row-dedup DELETE is needed: all pre-existing rows receive scope_id='' by
+        # DEFAULT (via the _ensure_column calls above), and the old index already
+        # guaranteed uniqueness on (project_id, metric_type, date), so the new wider
+        # key (project_id, metric_type, scope_id='', date) is also unique over existing
+        # data — CREATE UNIQUE INDEX will succeed without any pre-cleanup.
+        await db.execute("DROP INDEX IF EXISTS idx_analytics_point_daily")
+        await _ensure_index(
+            db,
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily"
+            " ON analytics_entries(project_id, metric_type, scope_id, date(captured_at))"
+            " WHERE period = 'point'",
+        )
+        await db.commit()
+        logger.info("v33 migrations complete: scope/scope_id columns + new idx_analytics_point_daily key.")
 
     # Record schema version
     if should_record_version:

@@ -6010,12 +6010,17 @@ class SyncEngine:
                 # same-day snapshots overwrite instead of append.  Until then,
                 # insert_entry appends; consumers use get_latest_entries (HAVING)
                 # to select the most recent row.
+                _meta = metadata or {}
+                _scope = _meta.get("scope", "project")
+                _scope_id = str(_meta.get("featureId", "")) if _scope == "feature" else ""
                 analytics_id = await self.analytics_repo.insert_entry({
                     "project_id": project_id,
                     "metric_type": metric_type,
                     "value": value,
                     "captured_at": now,
-                    "metadata_json": metadata or {},
+                    "metadata_json": _meta,
+                    "scope": _scope,
+                    "scope_id": _scope_id,
                 })
                 _rows_inserted[0] += 1
                 links = entity_links or [("project", project_id)]
