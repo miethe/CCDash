@@ -37,6 +37,8 @@ export interface PlanningCommandCenterQuery {
   sortDirection?: 'asc' | 'desc';
   page?: number;
   pageSize?: number;
+  /** When true, backend excludes items in terminal statuses (done/completed/closed/deferred/superseded). */
+  hideDone?: boolean;
 }
 
 export class PlanningCommandCenterApiError extends Error {
@@ -68,6 +70,7 @@ function queryParams(query: PlanningCommandCenterQuery = {}): URLSearchParams {
   appendParam(params, 'sort_direction', query.sortDirection);
   appendParam(params, 'page', query.page);
   appendParam(params, 'page_size', query.pageSize);
+  if (query.hideDone) params.set('hide_done', 'true');
   return params;
 }
 

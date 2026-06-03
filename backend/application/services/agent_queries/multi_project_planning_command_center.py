@@ -61,6 +61,7 @@ from backend.models import (
     AggregateWorkItem,
     MultiProjectCommandCenterResponse,
     PortfolioAttentionSummary,
+    PortfolioNextWorkItem,
     PortfolioProjectEntry,
     PortfolioRollupResponse,
     Project,
@@ -126,6 +127,7 @@ def _mpcc_params(
     page: int = 1,
     page_size: int = 50,
     project_ids: Sequence[str] | None = None,
+    hide_done: bool = False,
     **_: Any,
 ) -> dict[str, Any]:
     """Extract cache-key parameters for the aggregate command-center query.
@@ -146,6 +148,7 @@ def _mpcc_params(
         "page": page,
         "page_size": page_size,
         "project_ids": sorted(project_ids) if project_ids else [],
+        "hide_done": hide_done,
     }
 
 
@@ -403,6 +406,7 @@ class MultiProjectPlanningCommandCenterQueryService:
         page: int = 1,
         page_size: int = 50,
         project_ids: Sequence[str] | None = None,
+        hide_done: bool = False,
     ) -> MultiProjectCommandCenterResponse:
         """Return a paginated, sorted, filtered work-item list spanning all projects.
 
@@ -493,6 +497,7 @@ class MultiProjectPlanningCommandCenterQueryService:
             if self._v1._matches_filters(
                 item, q, status, phase, artifact_type,
                 worktree_state, pr_state, launch_readiness,
+                hide_done=hide_done,
             )
         ]
 
@@ -669,7 +674,15 @@ class MultiProjectPlanningCommandCenterQueryService:
                 return item.feature.name.lower()
             if key_name == "project":
                 return pair[0].name.lower()
-            return str(item.last_activity.get("timestamp") or "")
+            # last_activity (catch-all): items with a timestamp sort before
+            # items without one, regardless of direction.
+            # Under desc (reverse=True):  (1, ts) > (0, "")  → timestamped first ✓
+            # Under asc  (reverse=False): negate has_ts so no-ts (key 1) sinks last.
+            ts = str(item.last_activity.get("timestamp") or "").strip()
+            if reverse:
+                return (1 if ts else 0, ts)
+            else:
+                return (0 if ts else 1, ts)
 
         return sorted(items, key=sort_key, reverse=reverse)
 
@@ -742,6 +755,7 @@ class MultiProjectPlanningCommandCenterQueryService:
         changed_recently_count = 0
         needs_attention_count = 0
         next_work_ids: list[str] = []
+        next_work_items_list: list[PortfolioNextWorkItem] = []
 
         _STALE_THRESHOLD_SECONDS = 3600  # 1 hour = "changed recently"
 
@@ -765,13 +779,19 @@ class MultiProjectPlanningCommandCenterQueryService:
             if needs_attn:
                 needs_attention_count += 1
 
-            # Next-work: ready items in this project.
+            # Next-work: ready items in this project — carry project_id alongside feature_id.
             for it in items:
                 if (
                     it.launch_batch is not None
                     and it.launch_batch.readiness.lower() == "ready"
                 ):
                     next_work_ids.append(it.feature.feature_id)
+                    next_work_items_list.append(
+                        PortfolioNextWorkItem(
+                            feature_id=it.feature.feature_id,
+                            project_id=ps.project_id,
+                        )
+                    )
 
             entries.append(PortfolioProjectEntry(
                 project_id=ps.project_id,
@@ -787,7 +807,8 @@ class MultiProjectPlanningCommandCenterQueryService:
             active_now=active_now,
             changed_recently=changed_recently_count,
             needs_attention=needs_attention_count,
-            next_work=next_work_ids[:20],  # cap for response size
+            next_work=next_work_ids[:20],  # cap for response size — backward compat
+            next_work_items=next_work_items_list[:20],  # enriched shape with project_id
         )
 
         duration_ms = (time.monotonic() - t_start) * 1000

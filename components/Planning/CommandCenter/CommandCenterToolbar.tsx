@@ -8,6 +8,8 @@ export interface CommandCenterFilters {
   phase: string;
   sortBy: string;
   sortDirection: 'asc' | 'desc';
+  /** When true, the backend excludes terminal-status items. Defaults to true in the single-project center. */
+  hideDone?: boolean;
 }
 
 export type CommandCenterViewMode = 'list' | 'cards' | 'board';
@@ -28,6 +30,8 @@ interface CommandCenterToolbarProps {
   onRefresh: () => void;
   /** T4-014: called when the user selects a new page size. */
   onPageSizeChange?: (pageSize: number) => void;
+  /** Called when the user toggles the "Show done" checkbox. When provided, the checkbox renders. */
+  onHideDoneChange?: (hideDone: boolean) => void;
 }
 
 function updateFilter(
@@ -47,6 +51,7 @@ export function CommandCenterToolbar({
   onViewModeChange,
   onRefresh,
   onPageSizeChange,
+  onHideDoneChange,
 }: CommandCenterToolbarProps) {
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between" data-testid="command-center-toolbar">
@@ -91,10 +96,9 @@ export function CommandCenterToolbar({
           className="planning-mono h-[32px] rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-1)] px-2 text-[11px] text-[color:var(--ink-1)]"
           aria-label="Sort command center"
         >
-          <option value="priority">priority</option>
-          <option value="status">status</option>
-          <option value="phase">phase</option>
-          <option value="activity">activity</option>
+          <option value="last_activity">Activity</option>
+          <option value="status">Status</option>
+          <option value="phase">Phase</option>
         </select>
         <BtnGhost
           size="sm"
@@ -104,6 +108,19 @@ export function CommandCenterToolbar({
           <List size={13} aria-hidden />
           {filters.sortDirection}
         </BtnGhost>
+        {/* "Show done" toggle — only renders when handler is provided */}
+        {onHideDoneChange ? (
+          <label className="flex cursor-pointer items-center gap-1.5 planning-mono text-[11px] text-[color:var(--ink-3)]">
+            <input
+              type="checkbox"
+              checked={filters.hideDone === false}
+              onChange={(e) => onHideDoneChange(!e.currentTarget.checked)}
+              className="h-[14px] w-[14px] rounded accent-[color:var(--brand)]"
+              aria-label="Show done items"
+            />
+            show done
+          </label>
+        ) : null}
         {/* T4-014: pageSize selector — only renders when handler is provided */}
         {onPageSizeChange ? (
           <select

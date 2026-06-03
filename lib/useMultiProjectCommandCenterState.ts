@@ -14,6 +14,7 @@
  *   - sort key                           → ?sort=
  *   - page                               → ?page=
  *   - page size                          → ?page_size=
+ *   - hide done items                    → ?hide_done= (omitted = default ON)
  *
  * Design rules:
  *   - Param names use snake_case to match backend query param conventions.
@@ -27,6 +28,10 @@
  * Reload invariant: all filters survive a page reload because they live in
  * the URL hash fragment.  A detail card or modal target likewise survives
  * reload so deep-links are bookmarkable.
+ *
+ * hideDone default: when ?hide_done= is ABSENT the default is TRUE (hide done
+ * items). An explicit ?hide_done=false overrides this.  This matches Issue-2
+ * requirements (default-on, URL-addressable, survives reload).
  */
 
 import { useCallback } from 'react';
@@ -63,6 +68,7 @@ const PARAM = {
   SORT: 'sort',
   PAGE: 'page',
   PAGE_SIZE: 'page_size',
+  HIDE_DONE: 'hide_done',
 } as const;
 
 // ─── Parsed state shape ───────────────────────────────────────────────────────
@@ -86,12 +92,17 @@ export interface MultiProjectCommandCenterUrlState {
   kind: string | null;
   /** Free-text search. */
   search: string | null;
-  /** Sort key (backend-level). */
+  /** Sort key (backend-level). Defaults to 'last_activity' when absent. */
   sort: string | null;
   /** 1-based page number. */
   page: number;
   /** Items per page. */
   pageSize: number;
+  /**
+   * When true (default when param absent), backend excludes terminal-status items.
+   * Explicitly set to false via ?hide_done=false to show all items.
+   */
+  hideDone: boolean;
 }
 
 // ─── Setter options ───────────────────────────────────────────────────────────
@@ -134,7 +145,7 @@ export interface UseMultiProjectCommandCenterStateReturn {
   /** Set free-text search.  Pass null / '' to clear. */
   setSearch(search: string | null, opts?: SetParamOptions): void;
 
-  /** Set sort key.  Pass null to use backend default. */
+  /** Set sort key.  Pass null to use backend default (last_activity). */
   setSort(sort: string | null, opts?: SetParamOptions): void;
 
   /** Navigate to a specific page. */
@@ -142,6 +153,12 @@ export interface UseMultiProjectCommandCenterStateReturn {
 
   /** Change page size (resets page to 1). */
   setPageSize(pageSize: number, opts?: SetParamOptions): void;
+
+  /**
+   * Set hideDone.  When true (default), terminal-status items are excluded.
+   * Pass false to show all items (writes ?hide_done=false to URL).
+   */
+  setHideDone(hideDone: boolean, opts?: SetParamOptions): void;
 
   /**
    * Reset all filters to defaults while preserving view mode.
@@ -186,6 +203,17 @@ function nullable(raw: string | null): string | null {
   return raw && raw.trim() ? raw.trim() : null;
 }
 
+/**
+ * Parse ?hide_done= with default-ON semantics.
+ * - Absent → true (default: hide done items)
+ * - 'false' → false (explicitly show done items)
+ * - anything else → true
+ */
+function parseHideDone(raw: string | null): boolean {
+  if (raw === null) return true; // default ON
+  return raw !== 'false';
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -211,9 +239,12 @@ export function useMultiProjectCommandCenterState(): UseMultiProjectCommandCente
     status: nullable(searchParams.get(PARAM.STATUS)),
     kind: nullable(searchParams.get(PARAM.KIND)),
     search: nullable(searchParams.get(PARAM.SEARCH)),
+    // Default sort is 'last_activity' — when absent from URL, use null here and
+    // resolve the default in toCommandCenterFilters / toToolbarFilters callers.
     sort: nullable(searchParams.get(PARAM.SORT)),
     page: parsePositiveInt(searchParams.get(PARAM.PAGE), 1),
     pageSize: parsePositiveInt(searchParams.get(PARAM.PAGE_SIZE), 50),
+    hideDone: parseHideDone(searchParams.get(PARAM.HIDE_DONE)),
   };
 
   // ── Generic param setter helper ─────────────────────────────────────────────
@@ -336,7 +367,8 @@ export function useMultiProjectCommandCenterState(): UseMultiProjectCommandCente
   const setSort = useCallback(
     (sort: string | null, opts?: SetParamOptions) => {
       apply((p) => {
-        if (!sort) p.delete(PARAM.SORT);
+        // 'last_activity' is the default — omit it from URL to keep URLs clean.
+        if (!sort || sort === 'last_activity') p.delete(PARAM.SORT);
         else p.set(PARAM.SORT, sort);
         // Sort change should reset to page 1.
         p.delete(PARAM.PAGE);
@@ -367,6 +399,18 @@ export function useMultiProjectCommandCenterState(): UseMultiProjectCommandCente
     [apply],
   );
 
+  const setHideDone = useCallback(
+    (hideDone: boolean, opts?: SetParamOptions) => {
+      apply((p) => {
+        // true is the default — omit from URL to keep URLs clean.
+        if (hideDone) p.delete(PARAM.HIDE_DONE);
+        else p.set(PARAM.HIDE_DONE, 'false');
+        p.delete(PARAM.PAGE);
+      }, opts);
+    },
+    [apply],
+  );
+
   const resetFilters = useCallback(
     (opts?: SetParamOptions) => {
       apply((p) => {
@@ -377,6 +421,8 @@ export function useMultiProjectCommandCenterState(): UseMultiProjectCommandCente
         p.delete(PARAM.SEARCH);
         p.delete(PARAM.SORT);
         p.delete(PARAM.PAGE);
+        // Reset hide_done to default (on) by deleting the param.
+        p.delete(PARAM.HIDE_DONE);
         // Keep view mode, session grouping, and detail selections intact.
       }, opts);
     },
@@ -407,6 +453,7 @@ export function useMultiProjectCommandCenterState(): UseMultiProjectCommandCente
     setSort,
     setPage,
     setPageSize,
+    setHideDone,
     resetFilters,
     closeDetail,
   };
@@ -418,6 +465,9 @@ export function useMultiProjectCommandCenterState(): UseMultiProjectCommandCente
  * Extracts the filter fields from URL state into a shape compatible with
  * MultiProjectCommandCenterFilters (used by the TanStack Query hook).
  * Call this to bridge URL state → query params without manual mapping.
+ *
+ * sort defaults to 'last_activity' when absent from URL state.
+ * hideDone defaults to true (omit done items) — explicit false is forwarded.
  */
 export function toCommandCenterFilters(
   state: MultiProjectCommandCenterUrlState,
@@ -430,6 +480,7 @@ export function toCommandCenterFilters(
   sort?: string;
   page?: number;
   pageSize?: number;
+  hideDone?: boolean;
 } {
   return {
     projectIds: state.projectIds.length > 0 ? state.projectIds : undefined,
@@ -437,9 +488,11 @@ export function toCommandCenterFilters(
     kind: state.kind ?? undefined,
     group: state.group ?? undefined,
     search: state.search ?? undefined,
-    sort: state.sort ?? undefined,
+    // Use 'last_activity' as default sort when sort is null.
+    sort: state.sort ?? 'last_activity',
     page: state.page !== 1 ? state.page : undefined,
     pageSize: state.pageSize !== 50 ? state.pageSize : undefined,
+    hideDone: state.hideDone,
   };
 }
 

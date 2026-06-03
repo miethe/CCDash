@@ -496,6 +496,7 @@ async def get_planning_command_center(
     sort_direction: str = Query(default="desc", pattern="^(asc|desc)$", description="Sort direction."),
     page: int = Query(default=1, ge=1, description="1-based page number."),
     page_size: int = Query(default=50, ge=1, le=200, description="Page size."),
+    hide_done: bool = Query(default=False, description="When true, exclude items whose status is in the terminal set (done/completed/closed/deferred/superseded)."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> PlanningCommandCenterPageDTO:
@@ -521,6 +522,7 @@ async def get_planning_command_center(
             sort_direction=sort_direction,
             page=page,
             page_size=page_size,
+            hide_done=hide_done,
         )
 
 
@@ -909,6 +911,7 @@ async def get_multi_project_command_center(
     page: int = Query(default=1, ge=1, description="1-based page number."),
     page_size: int = Query(default=50, ge=1, le=200, description="Page size."),
     project_ids: list[str] | None = Query(default=None, description="Optional project id allowlist; omit to include all."),
+    hide_done: bool = Query(default=False, description="When true, exclude items whose status is in the terminal set (done/completed/closed/deferred/superseded)."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> MultiProjectCommandCenterResponse:
@@ -930,6 +933,7 @@ async def get_multi_project_command_center(
             page=page,
             page_size=page_size,
             project_ids=project_ids,
+            hide_done=hide_done,
         )
 
 
@@ -981,6 +985,7 @@ async def get_multi_project_session_board(
     feature_id: str | None = Query(default=None, description="Only include cards correlated to this feature."),
     state_filter: str | None = Query(default=None, description="Only include cards in this state (e.g. 'running')."),
     window_seconds: int | None = Query(default=None, ge=1, description="Active-session freshness window in seconds; overrides server default."),
+    active_window_minutes: int | None = Query(default=None, ge=1, description="Active-session freshness window in minutes; converted to seconds. Ignored when window_seconds is also provided."),
     include_workers: bool = Query(default=True, description="When false, worker sessions are omitted from all groups."),
     page: int = Query(default=1, ge=1, description="1-based page number."),
     page_size: int = Query(default=50, ge=1, le=200, description="Page size."),
@@ -988,6 +993,16 @@ async def get_multi_project_session_board(
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> MultiProjectSessionBoardResponse:
     """Return active-session cards grouped across all registered projects."""
+    # Resolve effective window: window_seconds takes precedence, then
+    # active_window_minutes (×60), then service/config default (None → service
+    # uses its own default so the 30-day portfolio window is not overridden).
+    effective_window_seconds: int | None
+    if window_seconds is not None:
+        effective_window_seconds = window_seconds
+    elif active_window_minutes is not None:
+        effective_window_seconds = active_window_minutes * 60
+    else:
+        effective_window_seconds = None
     with otel.start_span("planning.multi_project_session_board", {}):
         app_request = await _resolve_app_request(request_context, core_ports)
         return await multi_project_session_board_query_service.get_multi_project_session_board(
@@ -998,7 +1013,7 @@ async def get_multi_project_session_board(
             group_filter=group_filter,
             feature_id=feature_id,
             state_filter=state_filter,
-            window_seconds=window_seconds,
+            window_seconds=effective_window_seconds,
             include_workers=include_workers,
             page=page,
             page_size=page_size,

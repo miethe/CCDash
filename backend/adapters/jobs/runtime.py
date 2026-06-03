@@ -57,6 +57,22 @@ def _freshness_seconds(value: object) -> int | None:
     return max(0, int((_utc_now() - parsed).total_seconds()))
 
 
+def _resolve_worknotes_dir(paths: Any) -> Path | None:
+    """Return the ``.claude/worknotes`` dir for a ResolvedProjectPaths bundle, or None.
+
+    The worknotes directory is optional — many projects do not have one.  This
+    helper encapsulates the guard so callers stay concise.
+    """
+    try:
+        root_path: Path | None = getattr(getattr(paths, "root", None), "path", None)
+    except Exception:
+        return None
+    if root_path is None:
+        return None
+    candidate = root_path / ".claude" / "worknotes"
+    return candidate if candidate.exists() else None
+
+
 @dataclass(slots=True)
 class RuntimeJobObservation:
     # P3-013: state distinguishes idle/running/dead/crashed (not just running/idle)
@@ -80,6 +96,7 @@ class RuntimeJobObservation:
 @dataclass(slots=True)
 class RuntimeJobState:
     sync_task: asyncio.Task[None] | None = None
+    all_projects_sync_task: asyncio.Task[None] | None = None
     analytics_snapshot_task: asyncio.Task[None] | None = None
     telemetry_export_task: asyncio.Task[None] | None = None
     artifact_rollup_export_task: asyncio.Task[None] | None = None
@@ -229,6 +246,7 @@ class RuntimeJobAdapter:
             # Primary: start the legacy singleton in-place so that existing
             # `from backend.db.file_watcher import file_watcher` bindings (including
             # routers/cache.py) and test patches always see current state.
+            _active_worknotes = _resolve_worknotes_dir(active_bundle)
             await file_watcher.start(
                 self.sync,
                 active_project.id,
@@ -237,6 +255,7 @@ class RuntimeJobAdapter:
                 progress_dir,
                 test_results_dir=test_results_dir,
                 test_sources=test_sources,
+                worknotes_dir=_active_worknotes,
             )
             # P3-005: also register in the multi-project registry so the registry
             # snapshot (watcherRegistry probe field) reflects all active projects.
@@ -248,8 +267,37 @@ class RuntimeJobAdapter:
                 progress_dir,
                 test_results_dir=test_results_dir,
                 test_sources=test_sources,
+                worknotes_dir=_active_worknotes,
             )
             self.state.watcher_started = True
+
+        # ALL-PROJECTS sync/watch: when CCDASH_SYNC_ALL_PROJECTS=True, dispatch
+        # a non-blocking background job that iterates every registered project
+        # (non-active only — active was handled above).  Dispatching as a
+        # background task means start() returns promptly so the app becomes
+        # healthy immediately; the heavy per-project syncs and watcher
+        # registrations run concurrently in the background.
+        sync_all = bool(getattr(config, "SYNC_ALL_PROJECTS", True))
+        _list_fn = getattr(workspace_registry, "list_projects", None)
+        if sync_all and self.sync is not None and callable(_list_fn):
+            active_project_id = str(getattr(active_project, "id", "")) if active_project else ""
+            _coro = self._run_all_projects_sync_job(
+                active_project_id=active_project_id,
+                workspace_registry=workspace_registry,
+                file_watcher_registry=file_watcher_registry,
+                config=config,
+            )
+            if self.ports.job_scheduler is not None:
+                self.state.all_projects_sync_task = self.ports.job_scheduler.schedule(
+                    _coro,
+                    name=f"ccdash:{self.profile.name}:all-projects-sync",
+                )
+            else:
+                # Fallback: no scheduler available for this profile — still non-blocking
+                self.state.all_projects_sync_task = asyncio.create_task(
+                    _coro,
+                    name=f"ccdash:{self.profile.name}:all-projects-sync",
+                )
 
         if self.profile.capabilities.jobs:
             analytics_task = self._start_analytics_snapshot_task()
@@ -702,6 +750,7 @@ class RuntimeJobAdapter:
         test_sources: list[Any],
         test_results_dir: Path | None,
         test_flags: Any,
+        allow_writeback: bool = True,
     ) -> None:
         started = self._mark_job_started("startupSync", backlog_count=1)
         try:
@@ -713,6 +762,7 @@ class RuntimeJobAdapter:
                 test_sources=test_sources,
                 test_results_dir=test_results_dir,
                 test_flags=test_flags,
+                allow_writeback=allow_writeback,
             )
         except asyncio.CancelledError:
             self._mark_job_cancelled("startupSync", started, backlog_count=0)
@@ -730,6 +780,99 @@ class RuntimeJobAdapter:
                     "projectName": str(getattr(active_project, "name", "") or ""),
                 },
             )
+
+    async def _run_all_projects_sync_job(
+        self,
+        *,
+        active_project_id: str,
+        workspace_registry: Any,
+        file_watcher_registry: Any,
+        config: Any,
+    ) -> None:
+        """Background job: sync and register watchers for all non-active projects.
+
+        Extracted from start() so that the heavy per-project work runs in the
+        background and does NOT block start() from returning.  All existing
+        guards and behaviours are preserved:
+        - SYNC_ALL_PROJECTS flag controls whether this is called at all (checked
+          in start() before dispatching).
+        - capabilities.sync + STARTUP_SYNC_ENABLED gate the sync portion.
+        - capabilities.watch gates the watcher-registration portion.
+        - allow_writeback=False is passed for every non-active project.
+        - Per-project exceptions are caught and logged; the loop continues.
+        - Syncs are serialised inside this coroutine to avoid saturating SQLite.
+        """
+        _list_fn = getattr(workspace_registry, "list_projects", None)
+        if not callable(_list_fn):
+            return
+        all_projects = _list_fn()
+        for other_project in all_projects:
+            other_id = str(getattr(other_project, "id", ""))
+            if other_id == active_project_id:
+                continue  # already handled by the active-project startup path
+            try:
+                other_binding = workspace_registry.resolve_project_binding(
+                    other_id, allow_active_fallback=False, refresh=True
+                )
+            except Exception:
+                logger.exception(
+                    "all-projects-sync: resolve_project_binding failed for project '%s' — skipping",
+                    other_id,
+                )
+                continue
+            if other_binding is None:
+                logger.debug(
+                    "all-projects-sync: no binding for project '%s' — skipping",
+                    other_id,
+                )
+                continue
+            other_sessions, other_docs, other_progress = other_binding.paths.as_tuple()
+            other_worknotes = _resolve_worknotes_dir(other_binding.paths)
+
+            if self.profile.capabilities.sync and bool(getattr(config, "STARTUP_SYNC_ENABLED", True)):
+                try:
+                    await self.sync.sync_project(
+                        other_project,
+                        other_sessions,
+                        other_docs,
+                        other_progress,
+                        trigger="startup_all_projects",
+                        rebuild_links=True,
+                        capture_analytics=False,
+                        backfill_session_intelligence=False,
+                        allow_writeback=False,
+                    )
+                    logger.info(
+                        "all-projects-sync: synced non-active project '%s'",
+                        other_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "all-projects-sync: sync failed for project '%s' — continuing",
+                        other_id,
+                    )
+
+            if self.profile.capabilities.watch:
+                try:
+                    await file_watcher_registry.register(
+                        self.sync,
+                        other_id,
+                        other_sessions,
+                        other_docs,
+                        other_progress,
+                        worknotes_dir=other_worknotes,
+                        allow_writeback=False,
+                    )
+                    self.state.watcher_started = True
+                    logger.info(
+                        "all-projects-sync: registered watcher for non-active project '%s'",
+                        other_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "all-projects-sync: watcher register failed for project '%s' — continuing",
+                        other_id,
+                    )
 
     def _mark_job_started(self, job_name: str, *, backlog_count: int | None = None) -> float:
         observation = self.state.job_observations[job_name]
@@ -1027,6 +1170,7 @@ class RuntimeJobAdapter:
         test_sources: list[Any],
         test_results_dir: Path | None,
         test_flags: Any,
+        allow_writeback: bool = True,
     ) -> None:
         delay = max(0, int(getattr(config, "STARTUP_SYNC_DELAY_SECONDS", 0)))
         if delay > 0:
@@ -1050,6 +1194,7 @@ class RuntimeJobAdapter:
             rebuild_links=not light_mode,
             capture_analytics=not light_mode,
             backfill_session_intelligence=not light_mode,
+            allow_writeback=allow_writeback,
         )
 
         if test_flags.testVisualizerEnabled and active_project.testConfig.autoSyncOnStartup:

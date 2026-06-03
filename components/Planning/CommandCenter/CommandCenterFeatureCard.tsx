@@ -17,6 +17,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { formatLastActivity } from '@/lib/planningHelpers';
 
 interface CommandCenterFeatureCardProps {
   item: PlanningCommandCenterItem;
@@ -43,6 +44,12 @@ export function CommandCenterFeatureCard({
   const planPath = commandCenterPlanPath(item);
   const doneLabel = commandCenterDoneLabel(item);
   const canLaunch = canLaunchCommandCenterItem(item);
+
+  // Last-activity display (Issue 4)
+  const lastActivityTimestamp = item.lastActivity?.timestamp;
+  const lastActivityDisplay = formatLastActivity(
+    typeof lastActivityTimestamp === 'string' ? lastActivityTimestamp : null,
+  );
 
   // Local copied affordance for the command copy button
   const [cmdCopied, setCmdCopied] = useState(false);
@@ -186,6 +193,16 @@ export function CommandCenterFeatureCard({
           >
             {planPath ? compactPath(planPath, 74) : 'target plan TBD'}
           </div>
+          {/* Issue 4: Last-activity indicator */}
+          {lastActivityDisplay ? (
+            <div
+              className="planning-mono text-[10px] text-[color:var(--ink-4)]"
+              title={lastActivityDisplay.title}
+              data-testid="command-center-last-activity"
+            >
+              {lastActivityDisplay.label}
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-3 flex flex-wrap gap-1.5">

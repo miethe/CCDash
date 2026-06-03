@@ -15,7 +15,7 @@
  *   command-center: ?status, kind, project_ids (csv), group, search,
  *                    page, page_size, sort (default updated_desc)
  *   session-board:  ?group_by (default state), project_ids, group,
- *                    active_window_minutes (default 30),
+ *                    active_window_minutes (omitted by default; backend config default governs),
  *                    include_workers (default true), page, page_size,
  *                    include_stale (default false)
  */
@@ -61,6 +61,8 @@ export interface MultiProjectCommandCenterQuery {
   pageSize?: number;
   /** Sort order — backend default is "updated_desc". */
   sort?: string;
+  /** When true, backend excludes items in terminal statuses (done/completed/closed/deferred/superseded). */
+  hideDone?: boolean;
 }
 
 export interface MultiProjectSessionBoardQuery {
@@ -70,7 +72,7 @@ export interface MultiProjectSessionBoardQuery {
   group?: string;
   /** Board grouping dimension — backend default is "state". */
   groupBy?: PlanningBoardGroupingMode;
-  /** Active-window look-back in minutes — backend default is 30. */
+  /** Active-window look-back in minutes. Omit (undefined) to let the backend config default govern (30 days). Only send when the user explicitly picks a window. */
   activeWindowMinutes?: number;
   /** Whether to include worker/subagent summaries — backend default is true. */
   includeWorkers?: boolean;
@@ -407,6 +409,7 @@ function buildCommandCenterParams(query: MultiProjectCommandCenterQuery): URLSea
   appendParam(params, 'page', query.page);
   appendParam(params, 'page_size', query.pageSize);
   appendParam(params, 'sort', query.sort);
+  if (query.hideDone) params.set('hide_done', 'true');
   return params;
 }
 
