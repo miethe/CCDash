@@ -21,8 +21,10 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
         """Insert a new analytics data point.
 
         For period='point' rows, upserts on the partial unique index
-        idx_analytics_point_daily (project_id, metric_type, date(captured_at))
-        so that only the latest same-day value is kept.
+        idx_analytics_point_daily (project_id, metric_type, scope_id, date(captured_at))
+        so that only the latest same-day value per scope is kept.  scope='project' /
+        scope_id='' is the project-level row; scope='feature' / scope_id=<feature_id>
+        yields a distinct per-feature row on the same day.
         Non-point rows use a plain INSERT.
         """
         import json
@@ -31,22 +33,30 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
             metadata = json.dumps(metadata)
 
         period = entry.get("period", "point")
+        scope = entry.get("scope", "project")
+        scope_id = entry.get("scope_id", "")
+
         if period == "point":
             query = """
                 INSERT INTO analytics_entries (
-                    project_id, metric_type, value, captured_at, period, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(project_id, metric_type, date(captured_at)) WHERE period='point'
+                    project_id, metric_type, value, captured_at, period, metadata_json,
+                    scope, scope_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, metric_type, scope_id, date(captured_at)) WHERE period='point'
                 DO UPDATE SET
                     value=excluded.value,
                     captured_at=excluded.captured_at,
-                    metadata_json=excluded.metadata_json
+                    metadata_json=excluded.metadata_json,
+                    scope=excluded.scope
+                RETURNING id
             """
         else:
             query = """
                 INSERT INTO analytics_entries (
-                    project_id, metric_type, value, captured_at, period, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    project_id, metric_type, value, captured_at, period, metadata_json,
+                    scope, scope_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
             """
 
         async with self.db.execute(
@@ -58,10 +68,13 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
                 entry["captured_at"],
                 period,
                 metadata,
+                scope,
+                scope_id,
             ),
         ) as cursor:
+            row = await cursor.fetchone()
             await self.db.commit()
-            return cursor.lastrowid
+            return int(row[0]) if row else 0
 
     async def link_to_entity(self, analytics_id: int, entity_type: str, entity_id: str) -> None:
         """Link an analytics entry to a specific entity."""
@@ -168,17 +181,28 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
         period: str = "daily",
         start: str | None = None,
         end: str | None = None,
+        *,
+        scope: str = "project",
+        scope_id: str | None = None,
     ) -> list[dict]:
-        """Get time-series data for a metric."""
+        """Get time-series data for a metric.
+
+        Defaults to scope='project' to preserve existing dashboard behaviour.
+        Pass scope='feature' and scope_id=<feature_id> for per-feature trends.
+        """
         query = """
             SELECT captured_at, value, metadata_json
             FROM analytics_entries
             WHERE project_id = ?
               AND metric_type = ?
               AND period = ?
+              AND scope = ?
         """
-        params: list[Any] = [project_id, metric_type, period]
+        params: list[Any] = [project_id, metric_type, period, scope]
 
+        if scope_id is not None:
+            query += " AND scope_id = ?"
+            params.append(scope_id)
         if start:
             query += " AND captured_at >= ?"
             params.append(start)
@@ -207,8 +231,18 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
             columns = [col[0] for col in cursor.description]
             return [dict(zip(columns, row)) for row in rows]
 
-    async def get_latest_entries(self, project_id: str, metric_types: list[str]) -> dict[str, float]:
+    async def get_latest_entries(
+        self,
+        project_id: str,
+        metric_types: list[str],
+        *,
+        scope: str = "project",
+        scope_id: str | None = None,
+    ) -> dict[str, float]:
         """Get the most recent value for a list of metrics (helper for dashboards).
+
+        Defaults to scope='project' to preserve existing dashboard behaviour.
+        Pass scope='feature' and scope_id=<feature_id> for per-feature KPIs.
 
         Uses a window function (ROW_NUMBER OVER PARTITION BY metric_type ORDER BY
         captured_at DESC) instead of GROUP BY/HAVING MAX to correctly select the
@@ -220,6 +254,12 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
             return {}
 
         placeholders = ",".join(["?"] * len(metric_types))
+        scope_filter = "AND scope = ?"
+        scope_params: list[Any] = [scope]
+        if scope_id is not None:
+            scope_filter += " AND scope_id = ?"
+            scope_params.append(scope_id)
+
         query = f"""
             SELECT metric_type, value
             FROM (
@@ -234,10 +274,11 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
                 WHERE project_id = ?
                   AND metric_type IN ({placeholders})
                   AND period = 'point'
+                  {scope_filter}
             ) ranked
             WHERE rn = 1
         """
-        params = [project_id] + metric_types
+        params: list[Any] = [project_id] + metric_types + scope_params
         async with self.db.execute(query, params) as cursor:
             rows = await cursor.fetchall()
             return {row[0]: row[1] for row in rows}
