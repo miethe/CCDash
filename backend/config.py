@@ -5,6 +5,10 @@ from typing import Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
+from backend.env_bootstrap import autoload_local_env
+
+autoload_local_env()
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
