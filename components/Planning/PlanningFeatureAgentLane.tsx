@@ -622,10 +622,14 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
   const [refreshing, setRefreshing] = useState(false);
 
   // TQ-backed feature session board query (T3-002).
+  // AC-SSE-TOPOLOGY: polling is required because with a separate-process SQLite topology
+  // the API process cannot push cache invalidations.  Server-side @memoized_query ttl=30
+  // plus this 15s client interval bounds worst-case staleness at ≤45s.
   const boardQuery = usePlanningFeatureSessionBoardQuery({
     projectId: activeProject?.id,
     featureId,
     grouping: groupByMode as PlanningBoardGroupingMode,
+    refetchInterval: 15_000,
     enabled: !!activeProject?.id && !!featureId,
   });
   const board = boardQuery.data ?? null;

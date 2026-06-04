@@ -4,6 +4,9 @@ All CREATE TABLE statements for the caching layer.
 Uses IF NOT EXISTS for idempotent runs.
 
 Schema version history (keep in lockstep with postgres_migrations.py):
+  v34 — T1-004: additive index sessions(git_branch, project_id) for branch-aware
+         planning intelligence; IF NOT EXISTS guard; no column or data changes.
+  v33 — scope/scope_id columns on analytics_entries; new idx_analytics_point_daily key.
   v32 — P5-005: features table gains owners_json + linked_docs_json columnar
          columns with backfill from data_json; GIN-searchable via jsonb operators.
          P5-012: council_reviews scaffold table (feature-scoped, project_id + feature_id).
@@ -62,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -3700,6 +3703,27 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         )
         await db.commit()
         logger.info("v33 migrations complete: scope/scope_id columns + new idx_analytics_point_daily key.")
+
+    # ── v34 migrations (T1-004: branch-aware planning intelligence index) ────
+    if current_version < 34:
+        # Additive index only — no column alterations, no data rewrites.
+        # IF NOT EXISTS guard ensures idempotent re-runs are safe.
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_sessions_git_branch"
+            " ON sessions(git_branch, project_id)",
+        )
+        await db.commit()
+        logger.info("v34 migrations complete: idx_sessions_git_branch added.")
+
+    # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────
+    # _ensure_index is idempotent; the IF NOT EXISTS guard means this call is
+    # always safe regardless of whether the v34 block ran above.
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_sessions_git_branch"
+        " ON sessions(git_branch, project_id)",
+    )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
     # Databases that already had schema_version >= SCHEMA_VERSION skip

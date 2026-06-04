@@ -1,6 +1,7 @@
-import { ExternalLink, GitBranch, X } from 'lucide-react';
+import { ExternalLink, GitBranch, LayoutDashboard, X } from 'lucide-react';
 
 import type { PlanningCommandCenterItem } from '@/types';
+import { planningRouteFeatureModalHref } from '@/services/planningRoutes';
 import { commandCenterDisplayName, commandCenterPlanPath, compactPath } from './commandCenterUtils';
 import { PhasePlanTable } from './PhasePlanTable';
 import { WorktreeGitStatePanel } from './WorktreeGitStatePanel';
@@ -21,6 +22,8 @@ export function CommandCenterDetailPanel({
 }: CommandCenterDetailPanelProps) {
   if (!item) return null;
   const planPath = commandCenterPlanPath(item);
+  const featureId = item.feature.featureId || null;
+  const fullDetailHref = featureId ? planningRouteFeatureModalHref(featureId) : null;
 
   return (
     <div className="fixed inset-0 z-40 bg-black/45" role="dialog" aria-modal="true" aria-label={`Command center details for ${item.feature.featureId}`}>
@@ -42,10 +45,34 @@ export function CommandCenterDetailPanel({
                 {item.feature.featureId}
               </p>
             </div>
-            <BtnGhost size="sm" onClick={onClose} aria-label="Close command center detail">
-              <X size={14} aria-hidden />
-              close
-            </BtnGhost>
+            <div className="flex shrink-0 items-center gap-2">
+              {fullDetailHref ? (
+                <BtnGhost
+                  size="sm"
+                  onClick={() => { window.location.hash = fullDetailHref; }}
+                  aria-label="Open full feature detail"
+                  data-testid="command-center-open-full-detail-btn"
+                >
+                  <LayoutDashboard size={13} aria-hidden />
+                  open full detail
+                </BtnGhost>
+              ) : (
+                <BtnGhost
+                  size="sm"
+                  disabled
+                  title="Feature ID not available"
+                  aria-label="Open full feature detail (unavailable)"
+                  data-testid="command-center-open-full-detail-btn"
+                >
+                  <LayoutDashboard size={13} aria-hidden />
+                  open full detail
+                </BtnGhost>
+              )}
+              <BtnGhost size="sm" onClick={onClose} aria-label="Close command center detail">
+                <X size={14} aria-hidden />
+                close
+              </BtnGhost>
+            </div>
           </div>
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
             <section className="space-y-2">

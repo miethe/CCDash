@@ -31,6 +31,7 @@ import type {
   BoardSessionRelationship,
   SessionActivityMarker,
   SessionTokenSummary,
+  SessionLink,
   NextRunContextRef,
   PlanningNextRunPreview,
   PromptContextSelection,
@@ -247,6 +248,13 @@ export interface WireProjectPlanningGraph extends WireEnvelope {
   feature_token_rollups?: Record<string, WireFeatureTokenRollup>;
 }
 
+interface WireSessionLink {
+  session_id: string;
+  agent_name?: string | null;
+  start_time?: string | null;
+  transcript_href?: string | null;
+}
+
 interface WirePhaseContextItem {
   phase_id: string;
   phase_token: string;
@@ -261,6 +269,8 @@ interface WirePhaseContextItem {
   total_tasks: number;
   completed_tasks: number;
   deferred_tasks: number;
+  /** Inverse phase→sessions map populated by backend planning.py.  Key is phase number. */
+  linked_sessions_by_phase?: Record<number, WireSessionLink[]> | null;
 }
 
 interface WireFeaturePlanningContext extends WireEnvelope {
@@ -378,6 +388,10 @@ interface WirePlanningAgentSessionCard {
   token_summary?: WireSessionTokenSummary;
   relationships: WireBoardSessionRelationship[];
   activity_markers: WireSessionActivityMarker[];
+  /** Git branch the session ran on.  Null when not captured. */
+  git_branch?: string | null;
+  /** Abbreviated or full git commit hash for the session.  Null when unavailable. */
+  git_commit_hash?: string | null;
 }
 
 interface WirePlanningBoardGroup {
@@ -541,6 +555,26 @@ function adaptPlanningTokenUsageByModel(
   };
 }
 
+function adaptWireSessionLink(wire: WireSessionLink): SessionLink {
+  return {
+    sessionId: wire.session_id ?? '',
+    agentName: wire.agent_name ?? null,
+    startTime: wire.start_time ?? null,
+    transcriptHref: wire.transcript_href ?? null,
+  };
+}
+
+function adaptLinkedSessionsByPhase(
+  wire: Record<number, WireSessionLink[]> | null | undefined,
+): Record<number, SessionLink[]> | undefined {
+  if (!wire) return undefined;
+  const result: Record<number, SessionLink[]> = {};
+  for (const [key, links] of Object.entries(wire)) {
+    result[Number(key)] = Array.isArray(links) ? links.map(adaptWireSessionLink) : [];
+  }
+  return result;
+}
+
 function adaptPhaseContextItem(wire: WirePhaseContextItem): PhaseContextItem {
   return {
     phaseId: wire.phase_id ?? '',
@@ -556,6 +590,7 @@ function adaptPhaseContextItem(wire: WirePhaseContextItem): PhaseContextItem {
     totalTasks: wire.total_tasks ?? 0,
     completedTasks: wire.completed_tasks ?? 0,
     deferredTasks: wire.deferred_tasks ?? 0,
+    linkedSessionsByPhase: adaptLinkedSessionsByPhase(wire.linked_sessions_by_phase),
   };
 }
 
@@ -680,6 +715,8 @@ function adaptPlanningAgentSessionCard(wire: WirePlanningAgentSessionCard): Plan
     tokenSummary: adaptSessionTokenSummary(wire.token_summary),
     relationships: (wire.relationships ?? []).map(adaptBoardSessionRelationship),
     activityMarkers: (wire.activity_markers ?? []).map(adaptSessionActivityMarker),
+    gitBranch: wire.git_branch ?? null,
+    gitCommitHash: wire.git_commit_hash ?? null,
   };
 }
 

@@ -351,4 +351,165 @@ describe('Planning Command Center list view', () => {
     // The new smaller min-width should be present
     expect(html).toContain('min-w-[900px]');
   });
+
+  // AC-PHASE-SESSION-LINKS: phase rows with linked sessions show session list
+  it('detail panel: phase rows with linked sessions show session list', () => {
+    const ITEM_WITH_SESSIONS: PlanningCommandCenterItem = {
+      ...ITEM,
+      phaseRows: [
+        {
+          phaseNumber: 2,
+          name: 'Frontend command center',
+          storyPoints: 3,
+          phaseFiles: [],
+          domain: 'frontend',
+          model: 'gpt-5.3-codex',
+          agents: ['worker'],
+          status: 'in-progress',
+          details: {},
+          linkedSessions: [
+            { sessionId: 'sess-001', agentName: 'ui-engineer', startTime: '2026-06-04T12:00:00Z' },
+            { sessionId: 'sess-002', agentName: null, startTime: null },
+          ],
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <CommandCenterDetailPanel
+        item={ITEM_WITH_SESSIONS}
+        commandValue=""
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Session list row is rendered
+    expect(html).toContain('data-testid="command-center-phase-session-links"');
+    // Agent name displayed
+    expect(html).toContain('ui-engineer');
+    // Transcript link uses hash route
+    expect(html).toContain('href="#/sessions/sess-001"');
+    // Fallback agent name for null agentName
+    expect(html).toContain('agent');
+  });
+
+  // AC-PHASE-SESSION-LINKS: phase rows without linked sessions render normally without session section
+  it('detail panel: phase rows without linked sessions render normally (resilience)', () => {
+    // ITEM has phaseRows without linkedSessions — standard fixture
+    const html = renderToStaticMarkup(
+      <CommandCenterDetailPanel
+        item={ITEM}
+        commandValue=""
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Phase table renders
+    expect(html).toContain('data-testid="command-center-phase-table"');
+    // No session links row is rendered
+    expect(html).not.toContain('data-testid="command-center-phase-session-links"');
+  });
+
+  // AC-PHASE-SESSION-LINKS: absent linkedSessions field does not throw
+  it('detail panel: phase rows with undefined linkedSessions field render without session section', () => {
+    const ITEM_NO_SESSIONS: PlanningCommandCenterItem = {
+      ...ITEM,
+      phaseRows: [
+        {
+          phaseNumber: 1,
+          name: 'Phase one',
+          storyPoints: 2,
+          phaseFiles: [],
+          domain: 'backend',
+          model: 'sonnet',
+          agents: ['backend-engineer'],
+          status: 'completed',
+          details: {},
+          // linkedSessions intentionally absent
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <CommandCenterDetailPanel
+        item={ITEM_NO_SESSIONS}
+        commandValue=""
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain('data-testid="command-center-phase-table"');
+    expect(html).not.toContain('data-testid="command-center-phase-session-links"');
+  });
+
+  // AC-OPEN-FULL-DETAIL: bridge button visible with valid featureId
+  it('detail panel: "open full detail" button is enabled when featureId is present', () => {
+    const html = renderToStaticMarkup(
+      <CommandCenterDetailPanel
+        item={ITEM}
+        commandValue=""
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain('data-testid="command-center-open-full-detail-btn"');
+    expect(html).toContain('open full detail');
+    // Button should NOT have disabled attribute when featureId is present
+    expect(html).not.toMatch(/data-testid="command-center-open-full-detail-btn"[^>]*disabled/);
+  });
+
+  // AC-OPEN-FULL-DETAIL: bridge button disabled with tooltip when featureId is null/empty
+  it('detail panel: "open full detail" button is disabled with tooltip when featureId is null', () => {
+    const ITEM_NO_ID: PlanningCommandCenterItem = {
+      ...ITEM,
+      feature: { ...ITEM.feature, featureId: '' },
+    };
+
+    const html = renderToStaticMarkup(
+      <CommandCenterDetailPanel
+        item={ITEM_NO_ID}
+        commandValue=""
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain('data-testid="command-center-open-full-detail-btn"');
+    // Button must be disabled (disabled attr appears before data-testid in rendered output)
+    expect(html).toContain('disabled="" title="Feature ID not available"');
+    // Tooltip (title attr) must indicate why
+    expect(html).toContain('Feature ID not available');
+  });
+
+  // AC-PHASE-SESSION-LINKS: transcriptHref takes priority over hash route fallback
+  it('phase session links: transcriptHref from backend takes precedence over fallback hash route', () => {
+    const ITEM_WITH_HREF: PlanningCommandCenterItem = {
+      ...ITEM,
+      phaseRows: [
+        {
+          ...ITEM.phaseRows[0],
+          linkedSessions: [
+            {
+              sessionId: 'sess-with-href',
+              agentName: 'backend-engineer',
+              startTime: null,
+              transcriptHref: '/sessions/direct/sess-with-href',
+            },
+          ],
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <CommandCenterDetailPanel
+        item={ITEM_WITH_HREF}
+        commandValue=""
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Backend-supplied href is used
+    expect(html).toContain('href="/sessions/direct/sess-with-href"');
+    // Hash-based fallback is NOT used
+    expect(html).not.toContain('href="#/sessions/sess-with-href"');
+  });
 });

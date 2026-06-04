@@ -365,6 +365,8 @@ class FeatureSummaryItem(BaseModel):
     blocked_phase_count: int = 0
     node_count: int = 0
     source_artifact_kind: Literal["feature", "design_spec", "prd"] = "feature"
+    commit_refs: list[str] = Field(default_factory=list)
+    pr_refs: list[str] = Field(default_factory=list)
 
 
 class PlanningNodeCountsByType(BaseModel):
@@ -438,6 +440,20 @@ class ProjectPlanningGraphDTO(AgentQueryEnvelope):
     edge_count: int = 0
 
 
+class SessionLink(BaseModel):
+    """Compact session reference surfaced inside a phase context item.
+
+    Used by ``PhaseContextItem.linked_sessions_by_phase`` to expose the
+    inverse phase→sessions mapping.  All fields have safe defaults so the DTO
+    remains resilience-safe when individual DB columns are absent.
+    """
+
+    session_id: str
+    agent_name: str | None = None
+    start_time: str | None = None
+    transcript_href: str | None = None
+
+
 class PhaseContextItem(BaseModel):
     """One phase's planning context inside ``FeaturePlanningContextDTO``."""
 
@@ -454,6 +470,8 @@ class PhaseContextItem(BaseModel):
     total_tasks: int = 0
     completed_tasks: int = 0
     deferred_tasks: int = 0
+    linked_sessions_by_phase: dict[int, list[SessionLink]] | None = None
+    """Inverse phase→sessions mapping.  None when the query returned no results."""
 
 
 class FeaturePlanningContextDTO(AgentQueryEnvelope):
@@ -652,6 +670,8 @@ class PlanningCommandCenterPhaseRowDTO(BaseModel):
     agents: list[str] = Field(default_factory=list)
     status: str = ""
     details: dict[str, Any] = Field(default_factory=dict)
+    linked_sessions: list[SessionLink] = Field(default_factory=list)
+    """Compact session references linked to this phase via the inverse phase→sessions query."""
 
 
 class PlanningCommandCenterLaunchAgentDTO(BaseModel):
@@ -716,6 +736,25 @@ class PlanningCommandCenterCapabilitiesDTO(BaseModel):
     edit_command: bool = True
 
 
+class AggregateWorkItemSession(BaseModel):
+    """Compact running-session reference for the command-center work-item list.
+
+    Populated only for sessions whose board state maps to ``"running"``
+    (raw DB statuses: ``running``, ``in_progress``, ``active``).  Uses the
+    same state classification as ``planning_sessions._STATUS_STATE_MAP``.
+
+    All fields are optional or have safe defaults so the DTO is resilience-safe:
+    missing fields from the DB row are represented as ``None`` / empty string
+    rather than raising.
+    """
+
+    session_id: str
+    state: str = "running"
+    model: str | None = None
+    started_at: str | None = None
+    agent_name: str | None = None
+
+
 class PlanningCommandCenterItemDTO(BaseModel):
     """Single command-center work item consumed by aggregate endpoints."""
 
@@ -736,6 +775,12 @@ class PlanningCommandCenterItemDTO(BaseModel):
     blockers: list[PlanningCommandCenterBlockerDTO] = Field(default_factory=list)
     last_activity: dict[str, Any] = Field(default_factory=dict)
     capabilities: PlanningCommandCenterCapabilitiesDTO = Field(default_factory=PlanningCommandCenterCapabilitiesDTO)
+    active_sessions: list[AggregateWorkItemSession] = Field(default_factory=list)
+    """Running sessions correlated to this feature.  Empty list when none are running."""
+    commit_refs: list[str] = Field(default_factory=list)
+    """Commit SHAs linked to this feature from planning doc frontmatter / document_refs."""
+    pr_refs: list[str] = Field(default_factory=list)
+    """PR references (URLs or '#NNN') linked to this feature."""
 
 
 class PlanningCommandCenterPageDTO(AgentQueryEnvelope):
@@ -829,6 +874,8 @@ class PlanningAgentSessionCardDTO(BaseModel):
     token_summary: SessionTokenSummary | None = None
     relationships: list[SessionRelationship] = Field(default_factory=list)
     activity_markers: list[SessionActivityMarker] = Field(default_factory=list)
+    git_branch: str | None = None
+    git_commit_hash: str | None = None
 
 
 class PlanningBoardGroupDTO(BaseModel):

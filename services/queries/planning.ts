@@ -133,6 +133,8 @@ export interface UsePlanningSessionBoardQueryOptions {
    * Pass a smaller value (e.g. 50–100) for faster initial loads.
    */
   limit?: number;
+  /** Background refetch interval in ms. Omit to disable automatic polling. */
+  refetchInterval?: number;
   /** Set false to suppress the query. */
   enabled?: boolean;
 }
@@ -152,6 +154,7 @@ export function usePlanningSessionBoardQuery({
   grouping,
   cursor,
   limit,
+  refetchInterval,
   enabled = true,
 }: UsePlanningSessionBoardQueryOptions) {
   // Extend the base key with pagination params so different pages occupy
@@ -172,6 +175,8 @@ export function usePlanningSessionBoardQuery({
     },
     staleTime: 30_000,
     gcTime: 300_000,
+    refetchInterval,
+    refetchIntervalInBackground: false,
     enabled: !!projectId && enabled,
   });
 }
@@ -193,6 +198,8 @@ export interface UsePlanningFeatureSessionBoardQueryOptions {
    * Defaults to 500 (backend default) for backward compatibility.
    */
   limit?: number;
+  /** Background refetch interval in ms. Omit to disable automatic polling. */
+  refetchInterval?: number;
   /** Set false to suppress the query. */
   enabled?: boolean;
 }
@@ -212,6 +219,7 @@ export function usePlanningFeatureSessionBoardQuery({
   grouping,
   cursor,
   limit,
+  refetchInterval,
   enabled = true,
 }: UsePlanningFeatureSessionBoardQueryOptions) {
   // Extend the base key with pagination params so different pages occupy
@@ -232,6 +240,8 @@ export function usePlanningFeatureSessionBoardQuery({
     },
     staleTime: 30_000,
     gcTime: 300_000,
+    refetchInterval,
+    refetchIntervalInBackground: false,
     enabled: !!projectId && !!featureId && enabled,
   });
 }

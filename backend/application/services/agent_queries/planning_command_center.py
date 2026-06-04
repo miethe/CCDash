@@ -18,6 +18,7 @@ from backend.services.repo_workspaces.github_client import fetch_pr_status
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
 from .cache import memoized_query
 from .models import (
+    AggregateWorkItemSession,
     PlanningCommandCenterArtifactDTO,
     PlanningCommandCenterBlockerDTO,
     PlanningCommandCenterCapabilitiesDTO,
@@ -35,7 +36,9 @@ from .models import (
     PlanningCommandCenterStoryPointsDTO,
     PlanningCommandCenterTierDTO,
     PlanningCommandCenterWorktreeDTO,
+    SessionLink,
 )
+from .planning_sessions import _STATUS_STATE_MAP as _SESSION_STATE_MAP
 from .planning import (
     _effective_status,
     _feature_key,
@@ -44,6 +47,7 @@ from .planning import (
     _load_all_doc_rows,
     _load_all_features,
     _load_doc_rows_for_feature,
+    _load_phase_session_links,
     _mismatch_state,
     _project_with_planning,
     _raw_status,
@@ -121,6 +125,12 @@ def _pcc_params(
 _TERMINAL_STATUSES = {"done", "completed", "closed", "deferred", "superseded"}
 _ACTIVE_STATUSES = {"active", "in-progress", "in_progress", "review"}
 _REVIEW_STATUSES = {"review", "review-ready", "review_ready"}
+
+# DB statuses that map to board state "running" — derived from _SESSION_STATE_MAP
+# (planning_sessions._STATUS_STATE_MAP) so there is one canonical liveness heuristic.
+_RUNNING_DB_STATUSES: frozenset[str] = frozenset(
+    s for s, state in _SESSION_STATE_MAP.items() if state == "running"
+)
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -280,7 +290,11 @@ def _related_files(docs: Sequence[LinkedDocument]) -> list[PlanningCommandCenter
     return items
 
 
-def _phase_rows(feature: Feature, docs: Sequence[LinkedDocument]) -> list[PlanningCommandCenterPhaseRowDTO]:
+def _phase_rows(
+    feature: Feature,
+    docs: Sequence[LinkedDocument],
+    phase_session_map: dict[int, list[SessionLink]] | None = None,
+) -> list[PlanningCommandCenterPhaseRowDTO]:
     rows: list[PlanningCommandCenterPhaseRowDTO] = []
     doc_paths = [_doc_path(doc) for doc in docs]
     for phase in feature.phases:
@@ -300,6 +314,7 @@ def _phase_rows(feature: Feature, docs: Sequence[LinkedDocument]) -> list[Planni
                 if str(agent or "").strip()
             }
         )
+        linked = (phase_session_map or {}).get(num) if num is not None else None
         rows.append(
             PlanningCommandCenterPhaseRowDTO(
                 phase_number=num,
@@ -313,6 +328,7 @@ def _phase_rows(feature: Feature, docs: Sequence[LinkedDocument]) -> list[Planni
                     "completed_tasks": _safe_int(getattr(phase, "completedTasks", 0)),
                     "deferred_tasks": _safe_int(getattr(phase, "deferredTasks", 0)),
                 },
+                linked_sessions=linked or [],
             )
         )
     return rows
@@ -443,6 +459,65 @@ def _capabilities(command: Any, feature: Feature) -> PlanningCommandCenterCapabi
     )
 
 
+async def _load_running_sessions_by_feature(
+    ports: CorePorts,
+    project_id: str,
+    warnings: list[str],
+) -> dict[str, list[AggregateWorkItemSession]]:
+    """Load running-state sessions for *project_id* and group by feature_id.
+
+    Uses the same state classification as ``planning_sessions._STATUS_STATE_MAP``
+    (R4 hard constraint): only sessions whose DB ``status`` maps to board state
+    ``"running"`` are included.  The mapping is pulled from
+    ``_RUNNING_DB_STATUSES`` which is derived directly from ``_SESSION_STATE_MAP``
+    at import time so there is one canonical liveness heuristic.
+
+    Returns a dict keyed by normalised feature_id.  Sessions without a
+    ``feature_id`` are ignored.  Returns an empty dict on any storage failure
+    (non-fatal; the caller should not surface this as an error to the user).
+    """
+    result: dict[str, list[AggregateWorkItemSession]] = {}
+    try:
+        sessions_repo = ports.storage.sessions()
+        # Query once per running DB status and de-duplicate by session_id.
+        seen: set[str] = set()
+        all_rows: list[dict[str, Any]] = []
+        for db_status in _RUNNING_DB_STATUSES:
+            try:
+                rows = await sessions_repo.list_paginated(
+                    offset=0,
+                    limit=200,
+                    project_id=project_id,
+                    filters={"status": db_status, "include_subagents": True},
+                )
+                for row in rows:
+                    sid = str(row.get("id") or "").strip()
+                    if sid and sid not in seen:
+                        seen.add(sid)
+                        all_rows.append(row)
+            except Exception:
+                pass  # partial: skip this status bucket
+
+        for row in all_rows:
+            feature_id = str(row.get("feature_id") or "").strip()
+            if not feature_id:
+                continue
+            session_id = str(row.get("id") or "").strip()
+            if not session_id:
+                continue
+            agent_session = AggregateWorkItemSession(
+                session_id=session_id,
+                state="running",
+                model=str(row.get("model") or "") or None,
+                started_at=str(row.get("started_at") or "") or None,
+                agent_name=str(row.get("agent_id") or "") or None,
+            )
+            result.setdefault(feature_id, []).append(agent_session)
+    except Exception as exc:
+        warnings.append(f"Running sessions unavailable: {exc}")
+    return result
+
+
 class PlanningCommandCenterQueryService:
     """Compose planning, execution, worktree, and resolver context in one read."""
 
@@ -462,7 +537,7 @@ class PlanningCommandCenterQueryService:
     # Public V1 endpoint — behavior-compatible wrapper
     # ------------------------------------------------------------------
 
-    @memoized_query("pcc_command_center", param_extractor=_pcc_params)
+    @memoized_query("pcc_command_center", param_extractor=_pcc_params, ttl=30)
     async def get_command_center(
         self,
         context: RequestContext,
@@ -656,6 +731,9 @@ class PlanningCommandCenterQueryService:
             projected.append(_synthetic_feature_from_doc_rows(key, rows))
 
         worktrees_by_feature = await self._worktrees_by_feature(ports, project_id, warnings)
+        running_sessions_by_feature = await _load_running_sessions_by_feature(
+            ports, project_id, warnings
+        )
 
         all_items: list[PlanningCommandCenterItemDTO] = []
         filtered_items: list[PlanningCommandCenterItemDTO] = []
@@ -667,7 +745,17 @@ class PlanningCommandCenterQueryService:
                 ]
             )
             worktree_row = worktrees_by_feature.get(_feature_key(feature.id))
-            item = await self._build_item(feature, docs, worktree_row)
+            active_sessions = running_sessions_by_feature.get(
+                str(getattr(feature, "id", "") or "").strip(), []
+            )
+            item = await self._build_item(
+                feature,
+                docs,
+                worktree_row,
+                active_sessions=active_sessions,
+                ports=ports,
+                project_id=project_id,
+            )
             all_items.append(item)
             if self._matches_filters(item, q, status, phase, artifact_type, worktree_state, pr_state, launch_readiness, hide_done=hide_done):
                 filtered_items.append(item)
@@ -729,7 +817,13 @@ class PlanningCommandCenterQueryService:
         warnings: list[str] = []
         worktrees_by_feature = await self._worktrees_by_feature(ports, scope.project.id, warnings)
         worktree_row = worktrees_by_feature.get(_feature_key(feature.id))
-        return await self._build_item(feature, docs, worktree_row)
+        return await self._build_item(
+            feature,
+            docs,
+            worktree_row,
+            ports=ports,
+            project_id=scope.project.id,
+        )
 
     async def _worktrees_by_feature(
         self,
@@ -754,6 +848,10 @@ class PlanningCommandCenterQueryService:
         feature: Feature,
         docs: Sequence[LinkedDocument],
         worktree_row: dict[str, Any] | None,
+        *,
+        active_sessions: list[AggregateWorkItemSession] | None = None,
+        ports: CorePorts | None = None,
+        project_id: str | None = None,
     ) -> PlanningCommandCenterItemDTO:
         command = self.resolver.resolve(feature, docs)
         phase_summary = _phase_summary(feature)
@@ -767,9 +865,26 @@ class PlanningCommandCenterQueryService:
         launch_phase = command.phase or phase_summary.current_phase or phase_summary.next_phase
         last_activity = str(getattr(feature, "updatedAt", "") or "")
 
+        # Populate the inverse phase→sessions map when a storage context is available.
+        phase_session_map: dict[int, list[SessionLink]] | None = None
+        feature_id = str(getattr(feature, "id", "") or "")
+        if ports is not None and project_id and feature_id and feature.phases:
+            try:
+                phase_session_map = await _load_phase_session_links(
+                    ports.storage.db,
+                    project_id,
+                    feature_id,
+                    feature.phases,
+                )
+            except Exception:
+                pass  # non-fatal; phase_session_map stays None
+
+        commit_refs = [str(v) for v in (getattr(feature, "commitRefs", None) or []) if str(v).strip()]
+        pr_refs = [str(v) for v in (getattr(feature, "prRefs", None) or []) if str(v).strip()]
+
         return PlanningCommandCenterItemDTO(
             feature=PlanningCommandCenterFeatureDTO(
-                feature_id=str(getattr(feature, "id", "") or ""),
+                feature_id=feature_id,
                 feature_slug=_feature_slug(feature),
                 name=str(getattr(feature, "name", "") or getattr(feature, "id", "") or ""),
                 category=str(getattr(feature, "category", "") or ""),
@@ -791,7 +906,7 @@ class PlanningCommandCenterQueryService:
             target_artifact=command.target_artifact,
             command=command,
             related_files=_related_files(docs),
-            phase_rows=_phase_rows(feature, docs),
+            phase_rows=_phase_rows(feature, docs, phase_session_map),
             launch_batch=_launch_batch(feature, launch_phase),
             worktree=worktree,
             git_state=git_state,
@@ -799,6 +914,9 @@ class PlanningCommandCenterQueryService:
             blockers=_blockers(feature),
             last_activity={"timestamp": last_activity, "actor": "", "source": "feature"},
             capabilities=capabilities,
+            active_sessions=active_sessions if active_sessions is not None else [],
+            commit_refs=commit_refs,
+            pr_refs=pr_refs,
         )
 
     def _matches_filters(

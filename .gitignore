@@ -52,3 +52,4 @@ projects.json
 
 # Claude Code worktrees (live git worktrees, never commit as files)
 .claude/worktrees/
+.claude/scheduled_tasks.lock

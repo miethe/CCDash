@@ -32,7 +32,8 @@ from backend.application.services.agent_queries.session_correlation import (
     _correlate_task_hints,
     _higher_confidence,
 )
-from backend.application.services.agent_queries.cache import clear_cache
+from backend.application.services.agent_queries import cache as cache_mod
+from backend.application.services.agent_queries.cache import _resolve_ttl, clear_cache
 
 
 # ── Shared fixtures ──────────────────────────────────────────────────────────
@@ -1164,6 +1165,149 @@ class SessionBoardMemoizationTests(unittest.IsolatedAsyncioTestCase):
             call_count,
             2,
             f"Expected 2 storage queries after bypass_cache=True, got {call_count}",
+        )
+
+
+# ── Section 6: build_active_session_card git provenance (T1-001) ─────────────
+
+
+from backend.application.services.agent_queries.planning_sessions import build_active_session_card  # noqa: E402
+
+
+class BuildActiveSessionCardGitProvenanceTests(unittest.IsolatedAsyncioTestCase):
+    """build_active_session_card exposes git_branch / git_commit_hash from session dict."""
+
+    async def _build(self, session: dict) -> "PlanningAgentSessionCardDTO":
+        from backend.application.services.agent_queries.models import PlanningAgentSessionCardDTO  # noqa: F401
+        corr = SessionCorrelation(confidence="unknown")
+        return await build_active_session_card(session, corr, [session])
+
+    async def test_git_branch_is_none_when_key_absent(self) -> None:
+        """Sessions without git_branch key should produce git_branch=None."""
+        session = {"id": "sess-no-git", "status": "completed"}
+        card = await self._build(session)
+        self.assertIsNone(card.git_branch)
+
+    async def test_git_commit_hash_is_none_when_key_absent(self) -> None:
+        """Sessions without git_commit_hash key should produce git_commit_hash=None."""
+        session = {"id": "sess-no-git", "status": "completed"}
+        card = await self._build(session)
+        self.assertIsNone(card.git_commit_hash)
+
+    async def test_git_branch_populated_from_session(self) -> None:
+        """git_branch on the session row appears on the card."""
+        session = {
+            "id": "sess-git-branch",
+            "status": "running",
+            "git_branch": "feat/my-feature",
+        }
+        card = await self._build(session)
+        self.assertEqual(card.git_branch, "feat/my-feature")
+
+    async def test_git_commit_hash_populated_from_session(self) -> None:
+        """git_commit_hash on the session row appears on the card."""
+        session = {
+            "id": "sess-git-hash",
+            "status": "completed",
+            "git_commit_hash": "abc1234def5678",
+        }
+        card = await self._build(session)
+        self.assertEqual(card.git_commit_hash, "abc1234def5678")
+
+    async def test_both_git_fields_populated_together(self) -> None:
+        """Both git fields can be populated simultaneously."""
+        session = {
+            "id": "sess-git-both",
+            "status": "completed",
+            "git_branch": "main",
+            "git_commit_hash": "deadbeef00000000",
+        }
+        card = await self._build(session)
+        self.assertEqual(card.git_branch, "main")
+        self.assertEqual(card.git_commit_hash, "deadbeef00000000")
+
+    async def test_codex_session_has_git_branch_none(self) -> None:
+        """A Codex-platform session (no git fields) produces git_branch=None."""
+        session = {
+            "id": "sess-codex",
+            "status": "completed",
+            "platform": "codex",
+            "model": "gpt-4o",
+        }
+        card = await self._build(session)
+        self.assertIsNone(card.git_branch)
+        self.assertIsNone(card.git_commit_hash)
+
+    async def test_git_branch_none_for_empty_string_value(self) -> None:
+        """An empty string git_branch normalises to None (not empty string)."""
+        session = {
+            "id": "sess-empty-branch",
+            "status": "completed",
+            "git_branch": "",
+        }
+        card = await self._build(session)
+        self.assertIsNone(card.git_branch)
+
+    async def test_existing_fields_unchanged_after_git_fields_added(self) -> None:
+        """Adding git fields does not alter pre-existing card fields."""
+        session = {
+            "id": "sess-compat",
+            "status": "running",
+            "model": "claude-sonnet",
+            "git_branch": "feat/branch-aware",
+            "git_commit_hash": "cafebabe",
+        }
+        card = await self._build(session)
+        self.assertEqual(card.session_id, "sess-compat")
+        self.assertEqual(card.state, "running")
+        self.assertEqual(card.model, "claude-sonnet")
+        self.assertEqual(card.git_branch, "feat/branch-aware")
+        self.assertEqual(card.git_commit_hash, "cafebabe")
+
+
+# ---------------------------------------------------------------------------
+# TTL-guard: pss_session_board must carry ttl=30 (OQ-1 / R1 risk mitigation)
+# ---------------------------------------------------------------------------
+
+
+class PssSessionBoardTTLTests(unittest.TestCase):
+    """Verify that get_session_board uses @memoized_query with ttl=30.
+
+    Analogous to T1002TTLTests for pcc_command_center — enforces that the
+    pss_session_board endpoint also gets the 30-second TTL override required
+    by the Phase 1 quality gate, OQ-1 resolution, and R1 risk mitigation.
+    """
+
+    def test_pss_session_board_decorator_has_ttl_30(self) -> None:
+        """Verify that _resolve_ttl("pss_session_board", 30) returns 30.
+
+        The decorator stores ``ttl=30`` as ``_explicit_ttl`` in the wrapper
+        closure.  ``_resolve_ttl(endpoint_name, explicit_ttl)`` returns the
+        explicit value when it is not None, so passing 30 must yield 30.
+        """
+        effective_ttl = _resolve_ttl("pss_session_board", explicit_ttl=30)
+        self.assertEqual(
+            effective_ttl,
+            30,
+            "_resolve_ttl('pss_session_board', 30) must return 30 (ttl=30 kwarg honoured)",
+        )
+
+    def test_resolve_ttl_explicit_overrides_global_for_pss(self) -> None:
+        """Explicit ttl=30 must beat the global CCDASH_QUERY_CACHE_TTL_SECONDS."""
+        with patch.object(cache_mod.config, "CCDASH_QUERY_CACHE_TTL_SECONDS", 600):
+            effective_ttl = _resolve_ttl("pss_session_board", explicit_ttl=30)
+        self.assertEqual(
+            effective_ttl,
+            30,
+            "Explicit ttl=30 must override CCDASH_QUERY_CACHE_TTL_SECONDS=600",
+        )
+
+    def test_get_session_board_is_memoized_query_wrapped(self) -> None:
+        """get_session_board must have the @memoized_query __wrapped__ sentinel."""
+        method = PlanningSessionQueryService.get_session_board
+        self.assertTrue(
+            hasattr(method, "__wrapped__"),
+            "get_session_board must be decorated with @memoized_query",
         )
 
 

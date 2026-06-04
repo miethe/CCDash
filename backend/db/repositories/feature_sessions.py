@@ -41,6 +41,7 @@ from backend.db.repositories.feature_queries import (
 )
 
 _FAMILY_ROOT_CAP = 50  # max root IDs for list_session_family_refs
+_PHASE_SESSION_CAP = 20  # max sessions returned per phase by list_sessions_by_phase
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +346,64 @@ class SqliteFeatureSessionRepository:
         async with self.db.execute(sql, params) as cur:
             row = await cur.fetchone()
             return int(row[0]) if row else 0
+
+    async def list_sessions_by_phase(
+        self,
+        project_id: str,
+        feature_id: str,
+        phase_number: int,
+        limit: int = _PHASE_SESSION_CAP,
+    ) -> list[dict]:
+        """Return up to ``limit`` sessions linked to ``feature_id`` whose
+        ``session_forensics_json.phaseHints`` (or ``phase_hints``) contains a
+        token matching ``phase_number``.
+
+        Uses the entity_links join to scope to feature-linked sessions, then
+        applies a json_each filter over the phaseHints array in the forensics
+        JSON.  Phases are matched by the integer value extracted from the hint
+        string (e.g. ``"Phase 2"`` → 2), comparing with ``CAST`` and LIKE so
+        that ``"phase 2"`` and ``"Phase 2"`` both match ``phase_number=2``.
+
+        Results are ordered by ``started_at DESC`` and capped at ``limit``
+        (default: ``_PHASE_SESSION_CAP = 20``).
+        """
+        if limit < 1:
+            limit = _PHASE_SESSION_CAP
+        if limit > _PHASE_SESSION_CAP:
+            limit = _PHASE_SESSION_CAP
+
+        # We search both the camelCase key used at write time (phaseHints) and
+        # the snake_case fallback (phase_hints).  Both sub-queries are unioned
+        # to cover whichever key is present.  The phase number is matched as a
+        # whole word within the hint string via CAST + LIKE.
+        phase_pattern = f"%{phase_number}%"
+        sql = f"""
+        SELECT DISTINCT {_SELECT_COLS}
+        FROM entity_links el
+        JOIN sessions s ON s.id = el.target_id AND s.project_id = el.project_id
+        WHERE el.source_type = 'feature'
+          AND el.source_id = ?
+          AND el.target_type = 'session'
+          AND el.link_type = 'related'
+          AND s.project_id = ?
+          AND (
+            EXISTS (
+              SELECT 1 FROM json_each(
+                json_extract(s.session_forensics_json, '$.phaseHints')
+              ) WHERE CAST(value AS TEXT) LIKE ?
+            )
+            OR EXISTS (
+              SELECT 1 FROM json_each(
+                json_extract(s.session_forensics_json, '$.phase_hints')
+              ) WHERE CAST(value AS TEXT) LIKE ?
+            )
+          )
+        ORDER BY s.started_at DESC
+        LIMIT ?
+        """
+        params = [feature_id, project_id, phase_pattern, phase_pattern, limit]
+        async with self.db.execute(sql, params) as cur:
+            return [dict(row) for row in await cur.fetchall()]
 
     # ------------------------------------------------------------------
     # Private helpers — list_session_family_refs

@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Branch-aware planning intelligence**: Surface git branch, commit, and PR provenance across planning surfaces with live session awareness and automatic polling.
+  - Active-session chips on CommandCenterFeatureCard showing running sessions with agent name and transcript links; displays empty state when no sessions are running.
+  - git_branch chip on PlanningAgentSessionBoard session cards with three distinct states: populated branch name, Codex-specific "no branch" indicator, and generic "branch unknown" fallback for non-Codex sessions with null branch.
+  - Commit/PR provenance click-dialog on CommandCenterFeatureCard linking to commit refs and PR refs from feature data with labeled provenance identifiers.
+  - Per-phase session links in CommandCenterDetailPanel showing linked sessions below each phase row with agent name, start time, and clickable transcript links.
+  - "Open full detail" bridge button in CommandCenterDetailPanel providing one-click navigation to full feature detail modal.
+  - Automatic 15s polling (`refetchInterval: 15_000`) on both planning command center and planning agent session board surfaces; backend endpoint cache TTL reduced to 30s for sub-45s end-to-end freshness.
 - **System-wide live agent count chip on the home dashboard**: shows total running agents across all projects with per-project staleness indicators. Available via REST (`GET /api/agent/system/active-count`), MCP (`ccdash_system_active_count`), and CLI (`ccdash system active-count`). Backed by `SystemMetricsQueryService` with bounded fan-out (`CCDASH_SYSTEM_METRICS_CONCURRENCY`, default 10), memoized cache (`CCDASH_SYSTEM_METRICS_CACHE_TTL_SECONDS`, default 30s), and a configurable staleness horizon (`CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS`, default 3600s).
 
 ### Fixed

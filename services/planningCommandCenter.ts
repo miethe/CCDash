@@ -1,4 +1,5 @@
 import type {
+  AggregateWorkItemSession,
   PlanningCommandAlternative,
   PlanningCommandCapability,
   PlanningCommandCenterArtifact,
@@ -19,6 +20,7 @@ import type {
   PlanningCommandCenterWorktree,
   PlanningCommandResolution,
   PlanningCommandTargetArtifact,
+  SessionLink,
 } from '../types';
 import { apiFetch } from './apiClient';
 
@@ -205,6 +207,15 @@ function relatedFile(wire: Record<string, unknown> = {}): PlanningCommandCenterR
   };
 }
 
+function adaptLinkedSession(wire: Record<string, unknown>): SessionLink {
+  return {
+    sessionId: String(wire.session_id ?? ''),
+    agentName: wire.agent_name != null ? String(wire.agent_name) : null,
+    startTime: wire.start_time != null ? String(wire.start_time) : null,
+    transcriptHref: wire.transcript_href != null ? String(wire.transcript_href) : null,
+  };
+}
+
 function phaseRow(wire: Record<string, unknown> = {}): PlanningCommandCenterPhaseRow {
   return {
     phaseNumber: wire.phase_number as number | null | undefined,
@@ -216,6 +227,9 @@ function phaseRow(wire: Record<string, unknown> = {}): PlanningCommandCenterPhas
     agents: Array.isArray(wire.agents) ? wire.agents.map(String) : [],
     status: String(wire.status ?? ''),
     details: (wire.details as Record<string, unknown>) ?? {},
+    linkedSessions: Array.isArray(wire.linked_sessions)
+      ? wire.linked_sessions.map((s) => adaptLinkedSession(s as Record<string, unknown>))
+      : undefined,
   };
 }
 
@@ -299,6 +313,14 @@ function capabilities(wire: Record<string, unknown> = {}): PlanningCommandCenter
   };
 }
 
+function adaptAggregateWorkItemSession(wire: Record<string, unknown>): AggregateWorkItemSession {
+  return {
+    sessionId: String(wire.session_id ?? ''),
+    state: wire.state != null ? String(wire.state) : undefined,
+    agentName: wire.agent_name != null ? String(wire.agent_name) : undefined,
+  };
+}
+
 export function adaptPlanningCommandCenterItem(wire: Record<string, unknown>): PlanningCommandCenterItem {
   return {
     feature: feature((wire.feature as Record<string, unknown>) ?? {}),
@@ -317,6 +339,9 @@ export function adaptPlanningCommandCenterItem(wire: Record<string, unknown>): P
     blockers: Array.isArray(wire.blockers) ? wire.blockers.map((item) => blocker(item as Record<string, unknown>)) : [],
     lastActivity: (wire.last_activity as Record<string, unknown>) ?? {},
     capabilities: capabilities((wire.capabilities as Record<string, unknown>) ?? {}),
+    activeSessions: Array.isArray(wire.active_sessions) ? wire.active_sessions.map((s) => adaptAggregateWorkItemSession(s as Record<string, unknown>)) : [],
+    commitRefs: Array.isArray(wire.commit_refs) ? wire.commit_refs.map(String) : [],
+    prRefs: Array.isArray(wire.pr_refs) ? wire.pr_refs.map(String) : [],
   };
 }
 

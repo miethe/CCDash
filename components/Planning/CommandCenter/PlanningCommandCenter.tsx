@@ -184,6 +184,10 @@ export function PlanningCommandCenter({
     page: currentPage,
     pageSize,
     hideDone: filters.hideDone,
+    // AC-SSE-TOPOLOGY: polling is required because with a separate-process SQLite topology
+    // the API process cannot push cache invalidations.  Server-side @memoized_query ttl=30
+    // plus this 15s client interval bounds worst-case staleness at ≤45s.
+    refetchInterval: 15_000,
     enabled: inView,
   });
 

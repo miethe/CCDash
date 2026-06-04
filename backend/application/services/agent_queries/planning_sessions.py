@@ -188,6 +188,10 @@ async def build_active_session_card(
     # Model
     model: str | None = _safe_str(session.get("model")) or None
 
+    # Git provenance
+    git_branch: str | None = _safe_str(session.get("git_branch")) or None
+    git_commit_hash: str | None = _safe_str(session.get("git_commit_hash")) or None
+
     # Parent / root relationships
     parent_session_id: str | None = _safe_str(session.get("parent_session_id")) or None
     root_session_id: str | None = _safe_str(session.get("root_session_id")) or None
@@ -289,6 +293,8 @@ async def build_active_session_card(
         token_summary=token_summary,
         relationships=relationships,
         activity_markers=activity_markers,
+        git_branch=git_branch,
+        git_commit_hash=git_commit_hash,
     )
 
 
@@ -596,7 +602,7 @@ class PlanningSessionQueryService:
         """
         return await build_active_session_card(session, correlation, all_sessions)
 
-    @memoized_query("pss_session_board", param_extractor=_pss_params)
+    @memoized_query("pss_session_board", param_extractor=_pss_params, ttl=30)
     async def get_session_board(
         self,
         context: RequestContext,

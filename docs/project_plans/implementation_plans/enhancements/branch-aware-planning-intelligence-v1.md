@@ -2,8 +2,8 @@
 title: 'Implementation Plan: Branch-Aware Planning Intelligence v1'
 schema_version: 2
 doc_type: implementation_plan
-status: approved
-created: 2026-06-04
+status: completed
+created: '2026-06-04'
 updated: '2026-06-04'
 feature_slug: branch-aware-planning-intelligence
 feature_version: v1
@@ -37,10 +37,12 @@ spike_ref: docs/project_plans/exploration/branch-aware-planning-intelligence/bra
 adr_refs:
 - docs/project_plans/adrs/adr-006-db-authoritative-project-registry.md
 - docs/project_plans/adrs/adr-007-db-write-failure-surfacing-standard.md
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+- docs/project_plans/design-specs/branch-aware-phase2-multi-branch-watcher.md
+- docs/project_plans/design-specs/command-center-detail-panel-consolidation.md
 findings_doc_ref: null
 charter_ref: docs/project_plans/exploration/branch-aware-planning-intelligence/branch-aware-planning-intelligence-charter.md
-changelog_ref: null
+changelog_ref: CHANGELOG.md
 changelog_required: true
 test_plan_ref: null
 plan_structure: unified
@@ -59,7 +61,31 @@ tags:
 - live-updates
 - display-only
 milestone: null
-commit_refs: []
+commit_refs:
+- 6676b33
+- 49f1110
+- b87ce15
+- 6eadef3
+- f40b304
+- 0027b99
+- 06a4826
+- 38a3483
+- a550af5
+- 238d008
+- 2773a2b
+- '1850985'
+- '2558479'
+- 84bbdb9
+- 756e518
+- 56a4a1b
+- 62fe0de
+- 0ce7f25
+- 6cb4c20
+- 7e71514
+- 22bd18b
+- 6a5097f
+- 55a232a
+- 92c98d3
 pr_refs: []
 files_affected:
 - backend/application/services/agent_queries/models.py
@@ -69,11 +95,31 @@ files_affected:
 - backend/db/repositories/feature_sessions.py
 - backend/db/sqlite_migrations.py
 - backend/routers/agent.py
+- backend/tests/test_branch_aware_planning_contract.py
+- backend/tests/test_branch_index_and_phase_session_links.py
+- backend/tests/test_planning_commit_pr_refs_t1_003.py
+- backend/tests/test_planning_session_board.py
+- backend/tests/test_t1_002_active_sessions_on_command_center_dto.py
 - types.ts
+- services/planning.ts
+- services/planningCommandCenter.ts
 - services/queries/planning.ts
 - components/Planning/CommandCenter/CommandCenterFeatureCard.tsx
 - components/Planning/CommandCenter/CommandCenterDetailPanel.tsx
+- components/Planning/CommandCenter/PhasePlanTable.tsx
+- components/Planning/CommandCenter/PlanningCommandCenter.tsx
+- components/Planning/CommandCenter/__tests__/commandCenterBranchProvenanceDialog.test.tsx
+- components/Planning/CommandCenter/__tests__/commandCenterFeatureCardActiveSessions.test.tsx
 - components/Planning/PlanningAgentSessionBoard.tsx
+- components/Planning/PlanningFeatureAgentLane.tsx
+- components/Planning/__tests__/PlanningAgentSessionBoard.test.tsx
+- components/Planning/__tests__/planningCommandCenter.test.tsx
+- services/__tests__/planningAdapterFields.test.ts
+- docs/project_plans/design-specs/branch-aware-phase2-multi-branch-watcher.md
+- docs/project_plans/design-specs/command-center-detail-panel-consolidation.md
+- docs/project_plans/implementation_plans/enhancements/branch-aware-planning-intelligence-v1.md
+- CHANGELOG.md
+- .claude/worknotes/branch-aware-planning-intelligence/feature-guide.md
 wave_plan:
   serialization_barriers:
   - types.ts

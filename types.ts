@@ -3255,6 +3255,10 @@ export interface FeatureSummaryItem {
   phaseCount: number;
   blockedPhaseCount: number;
   nodeCount: number;
+  /** Commit SHAs linked to this feature from planning doc frontmatter. Empty array when unavailable. */
+  commitRefs?: string[];
+  /** PR references linked to this feature from planning doc frontmatter. Empty array when unavailable. */
+  prRefs?: string[];
 }
 
 export interface PlanningStatusCounts {
@@ -3324,6 +3328,24 @@ export interface ProjectPlanningGraph extends AgentQueryEnvelope {
   featureTokenRollups?: Record<string, FeatureTokenRollup>;
 }
 
+/**
+ * Compact session reference surfaced inside a PhaseContextItem.
+ *
+ * Matches the backend SessionLink DTO exactly (session_id, agent_name,
+ * start_time, transcript_href).  All fields except session_id are nullable
+ * so the interface is resilience-safe when individual DB columns are absent.
+ */
+export interface SessionLink {
+  /** Unique session identifier. */
+  sessionId: string;
+  /** Display name of the agent that ran the session.  Null when unavailable. */
+  agentName?: string | null;
+  /** ISO-8601 start time of the session.  Null when unavailable. */
+  startTime?: string | null;
+  /** Deep-link to the session transcript view.  Null when unavailable. */
+  transcriptHref?: string | null;
+}
+
 /** One phase's planning context inside FeaturePlanningContext. */
 export interface PhaseContextItem {
   phaseId: string;
@@ -3342,6 +3364,13 @@ export interface PhaseContextItem {
   totalTasks: number;
   completedTasks: number;
   deferredTasks: number;
+  /**
+   * Inverse phase→sessions mapping.  Keys are phase numbers (integers); values
+   * are compact session references linked to that phase.  Undefined when the
+   * query returned no results or the field is not yet populated by the backend.
+   * Consumers MUST guard with optional chaining before iterating entries.
+   */
+  linkedSessionsByPhase?: Record<number, SessionLink[]>;
 }
 
 /** Single-feature planning context including graph, status, and phases (PCP-201 query 3). */
@@ -3482,6 +3511,16 @@ export interface PlanningAgentSessionCard {
   tokenSummary?: SessionTokenSummary;
   relationships: BoardSessionRelationship[];
   activityMarkers: SessionActivityMarker[];
+  /** Git branch the session ran on.  Null when not captured or unavailable. */
+  gitBranch?: string | null;
+  /** Abbreviated or full git commit hash associated with the session.  Null when unavailable. */
+  gitCommitHash?: string | null;
+  /**
+   * Platform/agent-runtime identifier (e.g. "codex", "claude-code").
+   * Null or absent when not captured.  FE branches on this field directly —
+   * never infer the platform from other session attributes.
+   */
+  platform?: string | null;
 }
 
 /** A column of cards on the Planning Agent Session Board, keyed by the active grouping. */
@@ -3649,6 +3688,12 @@ export interface PlanningCommandCenterPhaseRow {
   agents: string[];
   status: string;
   details: Record<string, unknown>;
+  /**
+   * Compact session references linked to this phase via the inverse
+   * phase→sessions query.  Absent or undefined when no sessions are linked.
+   * Consumers MUST guard with optional chaining before iterating.
+   */
+  linkedSessions?: SessionLink[] | null;
 }
 
 export interface PlanningCommandCenterLaunchAgent {
@@ -3730,6 +3775,23 @@ export interface PlanningCommandCenterItem {
   blockers: PlanningCommandCenterBlocker[];
   lastActivity: { timestamp?: string; actor?: string; source?: string };
   capabilities: PlanningCommandCenterCapabilities;
+  /**
+   * Compact references to currently-running agent sessions for this work item.
+   * Absent or empty array when no sessions are active.
+   * Consumers MUST guard with optional chaining before dereferencing elements.
+   * Uses the same AggregateWorkItemSession shape defined below for consistency.
+   */
+  activeSessions?: AggregateWorkItemSession[];
+  /**
+   * Commit SHAs linked to this feature from planning doc frontmatter / document_refs.
+   * Absent or empty array when unavailable. Consumers MUST guard before dereferencing.
+   */
+  commitRefs?: string[];
+  /**
+   * PR references (URLs or "#NNN" short forms) linked to this feature.
+   * Absent or empty array when unavailable. Consumers MUST guard before dereferencing.
+   */
+  prRefs?: string[];
 }
 
 export interface PlanningCommandCenterPage extends AgentQueryEnvelope {

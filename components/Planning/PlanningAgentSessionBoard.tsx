@@ -256,6 +256,87 @@ function correlationLeftBorderStyle(
   };
 }
 
+// ── Branch chip ───────────────────────────────────────────────────────────────
+
+/**
+ * Three-state branch chip for session cards.
+ *
+ * State 1 — gitBranch populated:      branch name chip (brand tint).
+ * State 2 — gitBranch null, platform "codex":  "Codex — no branch" chip (warn tint).
+ * State 3 — gitBranch null, platform absent/other: "branch unknown" chip (neutral).
+ *
+ * AC-CWD-EXCLUSION: never reads session_forensics_json workingDirectories.
+ * Resilience: card remains fully visible in all null states; never crashes.
+ */
+function BranchChip({
+  gitBranch,
+  platform,
+}: {
+  gitBranch?: string | null;
+  platform?: string | null;
+}) {
+  // State 1: branch name is available.
+  if (gitBranch) {
+    return (
+      <div className="mt-1.5 flex items-center gap-1" style={{ minHeight: '1.25rem' }}>
+        <span
+          className={cn(
+            'planning-mono inline-flex items-center gap-0.5 rounded px-1.5 py-0.5',
+            'border border-[color:color-mix(in_oklab,var(--brand)_35%,var(--line-1))]',
+            'bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
+            'text-[9px] text-[color:var(--brand)] leading-none truncate max-w-[150px] flex-shrink-0',
+          )}
+          title={gitBranch}
+          aria-label={`Git branch: ${gitBranch}`}
+        >
+          <GitBranch size={8} aria-hidden className="flex-shrink-0" />
+          {gitBranch}
+        </span>
+      </div>
+    );
+  }
+
+  // State 2: gitBranch is null/absent AND platform is "codex".
+  if (platform === 'codex') {
+    return (
+      <div className="mt-1.5 flex items-center gap-1" style={{ minHeight: '1.25rem' }}>
+        <span
+          className={cn(
+            'planning-mono inline-flex items-center gap-0.5 rounded px-1.5 py-0.5',
+            'border border-[color:color-mix(in_oklab,var(--warn)_45%,var(--line-1))]',
+            'bg-[color:color-mix(in_oklab,var(--warn)_10%,transparent)]',
+            'text-[9px] text-[color:var(--warn)] leading-none flex-shrink-0',
+          )}
+          title="Codex sessions do not capture git branch"
+          aria-label="Codex session — no branch captured"
+        >
+          <GitBranch size={8} aria-hidden className="flex-shrink-0 opacity-50" />
+          Codex — no branch
+        </span>
+      </div>
+    );
+  }
+
+  // State 3: gitBranch is null/absent, platform absent or not codex.
+  return (
+    <div className="mt-1.5 flex items-center gap-1" style={{ minHeight: '1.25rem' }}>
+      <span
+        className={cn(
+          'planning-mono inline-flex items-center gap-0.5 rounded px-1.5 py-0.5',
+          'border border-[color:var(--line-2)]',
+          'bg-[color:var(--bg-3)]',
+          'text-[9px] text-[color:var(--ink-4)] leading-none flex-shrink-0',
+        )}
+        title="Git branch not captured for this session"
+        aria-label="Git branch unknown"
+      >
+        <GitBranch size={8} aria-hidden className="flex-shrink-0 opacity-40" />
+        branch unknown
+      </span>
+    </div>
+  );
+}
+
 // ── Card action row ───────────────────────────────────────────────────────────
 
 const ACTION_LINK_CLS = cn(
@@ -580,6 +661,9 @@ const SessionCard = memo(function SessionCard({
           </span>
         )}
       </div>
+
+      {/* Row 3.5: git branch chip — three states: populated / codex-null / unknown */}
+      <BranchChip gitBranch={card.gitBranch} platform={card.platform} />
 
       {/* Row 4: phase / task hints */}
       <div
@@ -1442,9 +1526,13 @@ export function PlanningAgentSessionBoard({ className }: PlanningAgentSessionBoa
 
   // TQ-backed session board query (T3-002).
   // T4-007: Gate on inView so the query doesn't fire until the board is visible.
+  // AC-SSE-TOPOLOGY: polling is required because with a separate-process SQLite topology
+  // the API process cannot push cache invalidations.  Server-side @memoized_query ttl=30
+  // plus this 15s client interval bounds worst-case staleness at ≤45s.
   const boardQuery = usePlanningSessionBoardQuery({
     projectId: activeProject?.id,
     grouping,
+    refetchInterval: 15_000,
     enabled: !!activeProject?.id && inView,
   });
   const board = boardQuery.data;

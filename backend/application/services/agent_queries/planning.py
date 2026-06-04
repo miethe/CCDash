@@ -72,6 +72,7 @@ from .models import (
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     PromptContextSelection,
+    SessionLink,
     TokenUsageByModel,
 )
 
@@ -637,6 +638,76 @@ def _is_ready_to_promote(graph: PlanningGraph) -> bool:
     return False
 
 
+_TRANSCRIPT_ROUTE = "#/sessions/{session_id}"
+_PHASE_SESSION_LINK_CAP = 20  # matches SqliteFeatureSessionRepository._PHASE_SESSION_CAP
+
+
+async def _load_phase_session_links(
+    db: Any,
+    project_id: str,
+    feature_id: str,
+    phases: list[Any],
+) -> dict[int, list[SessionLink]]:
+    """Return an inverse mapping of {phase_number: [SessionLink, ...]} for all
+    phases that have at least one linked session.
+
+    Each phase is identified by extracting its ordinal from the ``phase_token``
+    (e.g. ``"phase-2"`` → 2).  Sessions are fetched via
+    ``SqliteFeatureSessionRepository.list_sessions_by_phase`` and capped at 20
+    per phase.
+
+    Returns an empty dict (not ``None``) when no sessions are found so the
+    caller can decide whether to assign ``None`` or ``{}``.
+    """
+    from backend.db.repositories.feature_sessions import SqliteFeatureSessionRepository  # noqa: PLC0415
+
+    repo = SqliteFeatureSessionRepository(db)
+    result: dict[int, list[SessionLink]] = {}
+
+    for phase in phases:
+        phase_token = str(getattr(phase, "phase", "") or getattr(phase, "phase_token", "") or "")
+        # Extract phase ordinal from tokens like "phase-1", "phase-2", or "P3".
+        import re as _re  # noqa: PLC0415
+        match = _re.search(r"\d+", phase_token)
+        if not match:
+            continue
+        phase_number = int(match.group())
+
+        try:
+            rows = await repo.list_sessions_by_phase(
+                project_id, feature_id, phase_number
+            )
+        except Exception:
+            logger.debug(
+                "phase_session_links: query failed for phase %s feature %s",
+                phase_number,
+                feature_id,
+                exc_info=True,
+            )
+            continue
+
+        if not rows:
+            continue
+
+        links: list[SessionLink] = []
+        for row in rows:
+            sid = str(row.get("session_id") or row.get("id") or "")
+            if not sid:
+                continue
+            links.append(
+                SessionLink(
+                    session_id=sid,
+                    agent_name=row.get("agent_id") or None,
+                    start_time=row.get("started_at") or None,
+                    transcript_href=_TRANSCRIPT_ROUTE.format(session_id=sid),
+                )
+            )
+        if links:
+            result[phase_number] = links
+
+    return result
+
+
 def _feature_key(value: str) -> str:
     """Normalise a feature ID/slug for dict lookup — mirrors feature_execution."""
     from backend.document_linking import canonical_slug  # noqa: PLC0415
@@ -1154,7 +1225,7 @@ class PlanningQueryService:
 
     # ── Query 1: Project planning summary ────────────────────────────────────
 
-    @memoized_query("planning_project_summary", param_extractor=_summary_params)
+    @memoized_query("planning_project_summary", param_extractor=_summary_params, ttl=30)
     async def get_project_planning_summary(
         self,
         context: RequestContext,
@@ -1296,6 +1367,8 @@ class PlanningQueryService:
                     phase_count=len(feature.phases),
                     blocked_phase_count=len(blocked_phases),
                     node_count=node_count,
+                    commit_refs=[str(v) for v in (getattr(feature, "commitRefs", None) or []) if str(v).strip()],
+                    pr_refs=[str(v) for v in (getattr(feature, "prRefs", None) or []) if str(v).strip()],
                 )
             )
 
@@ -1807,6 +1880,19 @@ class PlanningQueryService:
             total_tokens = 0
             partial = True
 
+        # Build inverse phase→sessions mapping (T1-004).
+        phase_session_map: dict[int, list[SessionLink]] = {}
+        try:
+            phase_session_map = await _load_phase_session_links(
+                ports.storage.db, project.id, feature_id, feature.phases or []
+            )
+        except Exception:
+            logger.debug(
+                "phase_session_links load failed for feature %s — continuing without",
+                feature_id,
+                exc_info=True,
+            )
+
         # Build per-phase context items.
         phase_items: list[PhaseContextItem] = []
         all_blocked_batch_ids: list[str] = []
@@ -1820,6 +1906,18 @@ class PlanningQueryService:
                 str(getattr(b, "batchId", "") or "") for b in blocked_batches
             ]
             all_blocked_batch_ids.extend(blocked_batch_ids)
+
+            # Resolve phase ordinal for the link lookup.
+            import re as _re  # noqa: PLC0415
+            _phase_token = str(getattr(phase, "phase", "") or "")
+            _phase_match = _re.search(r"\d+", _phase_token)
+            _phase_num = int(_phase_match.group()) if _phase_match else None
+            _phase_links = phase_session_map.get(_phase_num) if _phase_num is not None else None
+            # linked_sessions_by_phase carries this phase's sessions as a
+            # single-key dict so callers have the phase number as the key.
+            _linked_sessions_by_phase: dict[int, list[SessionLink]] | None = (
+                {_phase_num: _phase_links} if (_phase_num is not None and _phase_links) else None
+            )
 
             phase_items.append(
                 PhaseContextItem(
@@ -1836,6 +1934,7 @@ class PlanningQueryService:
                     total_tasks=_safe_int(phase.totalTasks),
                     completed_tasks=_safe_int(phase.completedTasks),
                     deferred_tasks=_safe_int(phase.deferredTasks),
+                    linked_sessions_by_phase=_linked_sessions_by_phase,
                 )
             )
 
