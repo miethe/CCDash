@@ -1422,11 +1422,16 @@ class RuntimeJobAdapter:
         ports = self.ports
 
         async def _run_vacuum_sqlite(raw_db: Any) -> None:
-            """Issue a plain VACUUM outside any active transaction (SQLite)."""
-            # aiosqlite.Connection.isolation_level can be set to None for
-            # autocommit mode, but the simpler and more portable approach is
-            # to call execute("VACUUM") directly; SQLite automatically treats
-            # VACUUM as an implicit transaction that commits itself.
+            """Issue a plain VACUUM outside any active transaction (SQLite).
+
+            aiosqlite keeps an implicit open transaction whenever a write has
+            been executed without an explicit COMMIT.  SQLite raises
+            ``OperationalError: cannot VACUUM from within a transaction`` if
+            VACUUM is called while any transaction is open.  Commit first to
+            clear the implicit transaction, then VACUUM.
+            """
+            if raw_db.in_transaction:
+                await raw_db.commit()
             await raw_db.execute("VACUUM")
 
         async def _run_vacuum_postgres(pool: Any) -> None:
@@ -1453,7 +1458,7 @@ class RuntimeJobAdapter:
                 analytics_pruned = 0
                 telemetry_pruned = 0
                 try:
-                    analytics_repo = ports.storage.analytics
+                    analytics_repo = ports.storage.analytics()
                     prune_analytics_fn = getattr(analytics_repo, "prune_entries_older_than_days", None)
                     prune_telemetry_fn = getattr(analytics_repo, "prune_telemetry_older_than_days", None)
 

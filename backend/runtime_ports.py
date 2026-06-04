@@ -21,7 +21,7 @@ from backend.db.migration_governance import (
     build_migration_governance_metadata,
     resolve_storage_composition_contract,
 )
-from backend.project_manager import DbProjectManager, ProjectManager, db_project_manager, project_manager
+from backend.project_manager import DbProjectManager, ProjectManager, db_project_manager
 from backend.runtime.profiles import RuntimeProfile
 from backend.runtime.storage_contract import (
     get_runtime_storage_contract,
@@ -45,7 +45,10 @@ def build_core_ports(
     job_scheduler: Any | None = None,
     integration_client: Any | None = None,
 ) -> CorePorts:
-    workspace_manager = manager or project_manager
+    # T1-004 / ADR-006: default to db_project_manager (DB-backed authoritative
+    # registry).  The ``manager`` override is accepted ONLY for test wiring; no
+    # production call site should supply it.
+    workspace_manager = manager or db_project_manager
     resolved_storage_profile = storage_profile or config.STORAGE_PROFILE
     validate_runtime_storage_pairing(runtime_profile, resolved_storage_profile)
     resolved_identity_provider = identity_provider or _build_identity_provider(
@@ -58,6 +61,9 @@ def build_core_ports(
         workspace_registry=workspace_registry or build_workspace_registry(
             runtime_profile=runtime_profile,
             storage_profile=resolved_storage_profile,
+            # T1-007: workspace_manager == db_project_manager in production
+            # (manager kwarg is None at all production call sites).  Only tests
+            # supply a non-None manager= to build_core_ports.
             manager=workspace_manager,
         ),
         storage=storage or _build_storage_unit_of_work(db, runtime_profile, resolved_storage_profile),
@@ -132,11 +138,12 @@ def build_workspace_registry(
 ) -> ProjectManagerWorkspaceRegistry:
     _ = runtime_profile, storage_profile
     if manager is not None:
-        # Explicit override supplied by caller (tests, container wiring, etc.)
+        # T1-007: explicit override accepted ONLY for test wiring.
+        # No production call site should supply ``manager=`` with the legacy
+        # JSON-backed ProjectManager.
         return ProjectManagerWorkspaceRegistry(manager)
-    # P3-001: prefer the DB-backed registry so persistence survives restarts
-    # and is consistent across replicas.  Falls back to the JSON-backed
-    # project_manager only when the caller explicitly passes one in.
+    # ADR-006 / T1-004: DB-backed registry is the sole authoritative runtime
+    # store.  The JSON-backed legacy manager is never used here.
     return ProjectManagerWorkspaceRegistry(db_project_manager)
 
 

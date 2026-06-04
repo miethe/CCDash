@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from typing import Union, Any
 
 import aiosqlite
@@ -20,9 +19,8 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-# Database file location
-DB_DIR = config.PROJECT_ROOT / "data"
-DB_PATH = Path(os.getenv("CCDASH_DB_PATH", str(DB_DIR / "ccdash_cache.db")))
+# Database file location — path is owned by config.DB_PATH (single env-var read point)
+DB_PATH = config.DB_PATH
 SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("CCDASH_SQLITE_BUSY_TIMEOUT_MS", "30000")))
 
 # Type alias for DB connection/pool

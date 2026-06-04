@@ -50,7 +50,8 @@ from backend.models import (
     SkillMeatSyncRequest,
     SkillMeatSyncWarning,
 )
-from backend.project_manager import project_manager
+# T1-007 / ADR-006: use the DB-backed authoritative registry.
+from backend.project_manager import db_project_manager as project_manager
 from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.agentic_intelligence_flags import require_skillmeat_integration_enabled
 from backend.services.integrations.github_settings_store import GitHubSettingsStore

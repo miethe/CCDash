@@ -45,6 +45,7 @@ from backend.runtime.storage_contract import (
     get_storage_capability_contract,
     validate_runtime_storage_pairing,
 )
+from backend.project_manager import db_project_manager
 from backend.runtime_ports import build_core_ports, build_runtime_metadata, build_workspace_registry
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
 
@@ -109,6 +110,13 @@ class RuntimeContainer:
         self.migration_status = "applied"
         init_postgres_cache_backend(self.db)
         await self._warn_enterprise_ingestion_misconfiguration()
+        # T1-003: bootstrap the project registry before the SyncEngine is
+        # created and before job_adapter.start() schedules the startup-sync
+        # task.  This guarantees the registry flush completes (or is recorded
+        # as failed) while the DB is quiescent — eliminating the race where
+        # _flush_snapshot_to_db() fires concurrently with sync's heavy
+        # _replace_* backfill commits (finding F-01).
+        self._bootstrap_registry()
         self.ports = self._build_core_ports()
         app.state.core_ports = self.ports
         self.live_event_broker = InMemoryLiveEventBroker(replay_buffer_size=config.CCDASH_LIVE_REPLAY_BUFFER_SIZE)
@@ -207,6 +215,51 @@ class RuntimeContainer:
             storage_profile=self.storage_profile,
             auth_config=self._resolved_auth_config(),
         )
+
+    def _bootstrap_registry(self) -> None:
+        """Eagerly bootstrap the DB-backed project registry before the sync
+        engine starts.
+
+        T1-003: ensures ``_flush_snapshot_to_db()`` completes (or fails loudly)
+        while the DB is quiescent — before ``_build_sync_engine()`` is called
+        and before ``job_adapter.start()`` schedules the startup-sync background
+        task whose ``_replace_*`` writes compete for the SQLite write lock
+        (finding F-01).
+
+        Failure handling per ADR-007: the exception is logged as ERROR and
+        *not* re-raised so the process can continue with the in-memory snapshot
+        (which is already populated by ``_load_snapshot``).  ``_snapshot_loaded``
+        remains ``False`` on flush failure, so the next registry access will
+        retry the flush automatically.
+        """
+        logger.info(
+            "RuntimeContainer._bootstrap_registry: bootstrapping project registry "
+            "(profile=%s) before SyncEngine startup",
+            self.profile.name,
+        )
+        try:
+            # list_projects() triggers _ensure_snapshot() → _load_snapshot()
+            # which calls _flush_snapshot_to_db() when the table is empty.
+            # On subsequent cold-starts where the table is already populated,
+            # this is a lightweight read-only snapshot load.
+            projects = db_project_manager.list_projects()
+            logger.info(
+                "RuntimeContainer._bootstrap_registry: registry bootstrap complete "
+                "(projects=%d) — sync engine may now start",
+                len(projects),
+            )
+        except Exception as exc:
+            # ADR-007: log loudly but do not crash startup.  The in-memory
+            # snapshot was populated by _load_snapshot (JSON fallback path or
+            # partial DB read).  _snapshot_loaded is False so the next access
+            # retries the flush.
+            logger.error(
+                "RuntimeContainer._bootstrap_registry: registry bootstrap failed "
+                "(profile=%s); sync engine will start but registry flush will be "
+                "retried on next access: %s",
+                self.profile.name,
+                exc,
+            )
 
     def _build_sync_engine(self) -> Any | None:
         if not self._sync_engine_enabled():

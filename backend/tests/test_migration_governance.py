@@ -3,8 +3,11 @@ import unittest
 from backend.data_domains import ENTERPRISE_ONLY_POSTGRES_CONCERNS
 from backend.db.migration_governance import (
     BACKEND_SCHEMA_CAPABILITIES,
+    COLUMN_PARITY_DRIFT_ALLOWLIST,
     SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES,
     SUPPORTED_STORAGE_COMPOSITIONS,
+    column_parity_diff,
+    get_column_parity_diff_all,
     get_enterprise_only_postgres_table_schemas,
     get_enterprise_only_postgres_tables,
     get_postgres_migration_tables,
@@ -123,6 +126,58 @@ class MigrationGovernanceTests(unittest.TestCase):
         composition = resolve_storage_composition_contract(profile)
 
         self.assertEqual(composition.composition, "shared-enterprise-postgres")
+
+    # ── AC-006: Column/constraint-level parity ────────────────────────
+
+    def test_column_parity_all_shared_tables(self) -> None:
+        """All shared tables must have structurally identical columns across backends.
+
+        This is a static DDL-parsing test — no live database connection required.
+        Drift items listed in COLUMN_PARITY_DRIFT_ALLOWLIST are excluded from the
+        assertion; each is documented in migration_governance.py's module docstring
+        and in .claude/findings/ccdash-db-design-remediation-findings.md.
+        """
+        diff = get_column_parity_diff_all()
+        self.assertEqual(
+            diff,
+            {},
+            msg=(
+                "Column-parity drift detected across shared tables.\n"
+                f"Allowlisted exclusions: {sorted(COLUMN_PARITY_DRIFT_ALLOWLIST)}\n"
+                f"Unexpected drift: {diff}"
+            ),
+        )
+
+    def test_column_parity_diff_returns_empty_for_identical_table(self) -> None:
+        """sync_state has simple, identical column definitions on both backends."""
+        result = column_parity_diff("sync_state")
+        self.assertEqual(result, {})
+
+    def test_column_parity_diff_allowlist_covers_known_drift(self) -> None:
+        """The allowlist must document all known drift items (DRIFT-001 through DRIFT-006)."""
+        expected_allowlist_items = {
+            # DRIFT-001
+            ("outbound_telemetry_queue", "event_type"),
+            # DRIFT-002
+            ("session_relationships", "created_at"),
+            # DRIFT-003
+            ("oq_resolutions", "created_at"),
+            ("oq_resolutions", "updated_at"),
+            # DRIFT-004/005/006
+            ("session_sentiment_facts", "evidence_json"),
+            ("session_code_churn_facts", "evidence_json"),
+            ("session_scope_drift_facts", "evidence_json"),
+        }
+        self.assertTrue(
+            expected_allowlist_items.issubset(COLUMN_PARITY_DRIFT_ALLOWLIST),
+            msg=f"Missing expected allowlist entries: "
+                f"{expected_allowlist_items - COLUMN_PARITY_DRIFT_ALLOWLIST}",
+        )
+
+    def test_column_parity_diff_nonexistent_table_returns_empty(self) -> None:
+        """column_parity_diff returns {} for a table not in both backends."""
+        result = column_parity_diff("this_table_does_not_exist")
+        self.assertEqual(result, {})
 
 
 if __name__ == "__main__":

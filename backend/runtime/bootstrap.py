@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -234,6 +235,125 @@ def _build_health_payload(
     }
 
 
+# ---------------------------------------------------------------------------
+# T2-003: Extended health-detail sub-builders
+# Each section is wrapped in its own try/except so a transient failure yields
+# null fields rather than a 500.
+# ---------------------------------------------------------------------------
+
+def _build_registry_detail() -> dict[str, Any]:
+    """Return { project_count, last_flush_status } from the DB-backed project registry.
+
+    last_flush_status derivation:
+    - SqliteProjectRepository.count() is called on the configured DB path.
+    - If the call succeeds → "ok".
+    - If the DB is locked (OperationalError with "locked" in message) → "locked".
+    - Any other exception → "failed".
+    - If the DB path is not yet available (file missing + table not yet created) → "unknown".
+    """
+    project_count: int | None = None
+    last_flush_status: str = "unknown"
+    try:
+        from backend.db.repositories.projects import SqliteProjectRepository
+        repo = SqliteProjectRepository(db_path=str(config.DB_PATH))
+        repo.ensure_table()
+        project_count = repo.count()
+        last_flush_status = "ok"
+    except sqlite3.OperationalError as exc:
+        msg = str(exc).lower()
+        if "locked" in msg:
+            last_flush_status = "locked"
+        else:
+            last_flush_status = "failed"
+    except RuntimeError as exc:
+        # ensure_table() raises RuntimeError when the projects table does not
+        # exist (i.e. migrations have not run yet).  This is the documented
+        # "table not yet created" → "unknown" path, not a genuine flush failure.
+        if "migrations must run" in str(exc).lower() or "does not exist" in str(exc).lower():
+            last_flush_status = "unknown"
+        else:
+            last_flush_status = "failed"
+    except Exception:
+        last_flush_status = "failed"
+    return {
+        "project_count": project_count,
+        "last_flush_status": last_flush_status,
+    }
+
+
+def _build_db_detail() -> dict[str, Any]:
+    """Return { size_bytes, freelist_bytes, backend } for the configured DB.
+
+    For SQLite: reads file size from disk and PRAGMA freelist_count * page_size.
+    For PostgreSQL: size_bytes and freelist_bytes are null (not applicable).
+    backend is always populated from config.DB_BACKEND.
+    """
+    backend: str = str(getattr(config, "DB_BACKEND", "sqlite")).lower() or "sqlite"
+    size_bytes: int | None = None
+    freelist_bytes: int | None = None
+    try:
+        if backend == "sqlite":
+            db_path = config.DB_PATH
+            try:
+                size_bytes = int(os.path.getsize(str(db_path)))
+            except (OSError, TypeError):
+                size_bytes = None
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=5, check_same_thread=False)
+                try:
+                    conn.execute("PRAGMA busy_timeout = 30000")
+                    freelist_count = conn.execute("PRAGMA freelist_count").fetchone()
+                    page_size_row = conn.execute("PRAGMA page_size").fetchone()
+                    if freelist_count and page_size_row:
+                        freelist_bytes = int(freelist_count[0]) * int(page_size_row[0])
+                finally:
+                    conn.close()
+            except Exception:
+                freelist_bytes = None
+    except Exception:
+        size_bytes = None
+        freelist_bytes = None
+    return {
+        "size_bytes": size_bytes,
+        "freelist_bytes": freelist_bytes,
+        "backend": backend,
+    }
+
+
+def _build_retention_detail(runtime_status: dict[str, Any]) -> dict[str, Any]:
+    """Return { last_run, enabled } for the retention job.
+
+    last_run is sourced from the retentionPrune job observation's last_success_at
+    field recorded by RuntimeJobAdapter._mark_job_success() in
+    backend/adapters/jobs/runtime.py.  It is null if the job has never
+    completed successfully.
+
+    enabled reflects config.RETENTION_PRUNE_ENABLED; it is always populated
+    even if last_run retrieval fails.
+    """
+    enabled: bool = bool(getattr(config, "RETENTION_PRUNE_ENABLED", False))
+    last_run: str | None = None
+    try:
+        worker_probe = runtime_status.get("workerProbe")
+        if worker_probe:
+            jobs = worker_probe.get("jobs", {})
+            retention_job = jobs.get("retentionPrune", {})
+            last_run = retention_job.get("lastSuccessAt") or None
+        else:
+            # Non-worker profile: attempt to read from job_observations via
+            # the container stored in the runtime_status dict.
+            job_obs = runtime_status.get("_job_observations")
+            if job_obs and "retentionPrune" in job_obs:
+                obs = job_obs["retentionPrune"]
+                last_run = getattr(obs, "last_success_at", None)
+    except Exception:
+        last_run = None
+    return {
+        "last_run": last_run,
+        "enabled": enabled,
+    }
+
+
 def _build_live_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:
     probe_contract = _require_probe_contract(runtime_status)
     live = _probe_contract_section(probe_contract, "live")
@@ -310,6 +430,10 @@ def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any
         # Feature-surface v2 rollout flag exposed at the detail level so the FE
         # can read it from the same /api/health/detail probe it already polls.
         "featureSurfaceV2Enabled": config.CCDASH_FEATURE_SURFACE_V2_ENABLED,
+        # T2-003: extended health detail fields — reuse sub-builders, no duplication
+        "registry": _build_registry_detail(),
+        "db": _build_db_detail(),
+        "retention": _build_retention_detail(runtime_status),
     }
 
 

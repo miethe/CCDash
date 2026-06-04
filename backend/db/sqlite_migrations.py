@@ -38,13 +38,29 @@ Schema version history (keep in lockstep with postgres_migrations.py):
 """
 from __future__ import annotations
 
+import asyncio
+import fcntl
 import logging
+import os
+import time
+from pathlib import Path
 
 import aiosqlite
 
 from backend import config
 
 logger = logging.getLogger("ccdash.db")
+
+# ── T3-008: SQLite inter-process migration concurrency guard ──────────────────
+# fcntl.flock mirrors the intent of the Postgres pg_advisory_lock used in
+# postgres_migrations.py: only one process executes DDL at a time on the same
+# SQLite file.  No external library dependency; fcntl is stdlib on POSIX.
+#
+# Lock file lives in the same directory as the database so it resolves correctly
+# for custom CCDASH_DB_PATH values.  The directory is created if absent.
+_MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
+    os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
+)
 
 SCHEMA_VERSION = 33
 
@@ -53,6 +69,19 @@ _TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version   INTEGER NOT NULL,
     applied   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Per-version migration ledger (T3-011) ──────────────────────────
+-- OQ-01 decision: both SQLite and Postgres backends use the same logical
+-- schema — migrations_applied(version INTEGER PRIMARY KEY, applied_at <timestamp>).
+-- SQLite stores applied_at as TEXT (ISO-8601); Postgres stores it as
+-- TIMESTAMP WITH TIME ZONE.  Application code treats the column as opaque
+-- for display purposes; only existence of a row is semantically significant.
+-- INSERT OR IGNORE (SQLite) / ON CONFLICT DO NOTHING (Postgres) ensures
+-- re-running migrations never duplicates rows.
+CREATE TABLE IF NOT EXISTS migrations_applied (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- ── 1. Sync State (Incremental Change Detection) ──────────────────
@@ -2638,15 +2667,106 @@ async def _migrate_v30_detail_tables_project_id(db: aiosqlite.Connection) -> Non
     logger.info("P3-004: project_id columns backfilled on session detail tables.")
 
 
+def _resolve_migration_lock_path() -> Path:
+    """Return the path to the inter-process migration lock file.
+
+    Mirrors config.DB_PATH resolution so custom CCDASH_DB_PATH values are
+    respected.  The directory is created (parents=True) if it does not exist.
+    """
+    db_path = config.DB_PATH
+    lock_dir = db_path.parent
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    return lock_dir / ".migration.lock"
+
+
 async def run_migrations(db: aiosqlite.Connection) -> None:
-    """Create all tables and seed data. Idempotent."""
+    """Create all tables and seed data. Idempotent.
+
+    On SQLite, a POSIX exclusive flock on ``data/.migration.lock`` is acquired
+    before any DDL so that concurrent processes (e.g., API + worker booting at
+    the same time) do not race on first-boot schema creation.  The flock is
+    released unconditionally in a finally block, mirroring the advisory-lock
+    pattern used in postgres_migrations.py.
+
+    After acquiring the lock the current schema_version is re-read; if another
+    process already completed the migration the DDL phase is skipped ("migration
+    already complete" logged), preventing redundant work and SQLITE_LOCKED
+    errors.
+
+    The lock timeout is configurable via CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS
+    (default 30 s).
+
+    busy_timeout is set to 30 000 ms as a safety net for contention that
+    occurs *outside* the flock window (e.g. WAL conversion, PRAGMA execution
+    during connection setup before the flock is acquired).  The flock remains
+    the primary serializer; busy_timeout converts any residual SQLITE_BUSY
+    into a wait rather than an immediate OperationalError.
+    """
+    # ── Safety net: wait up to 30 s for any SQLite-level lock before the
+    #    flock is even attempted (WAL conversion needs a momentary exclusive
+    #    lock; without this a racing process gets OperationalError immediately).
+    await db.execute("PRAGMA busy_timeout = 30000")
+
+    # ── T3-008: acquire inter-process flock before any DDL ────────────────────
+    lock_path = _resolve_migration_lock_path()
+    lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY, 0o600)
+    deadline = time.monotonic() + _MIGRATION_LOCK_TIMEOUT_SECONDS
+    acquired = False
+    try:
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Could not acquire SQLite migration lock within "
+                        f"{_MIGRATION_LOCK_TIMEOUT_SECONDS}s "
+                        f"(lock file: {lock_path})"
+                    )
+                # Yield to the event loop so callers are not blocked solid.
+                await asyncio.sleep(0.1)
+
+        # ── Re-check schema_version after acquiring the lock (another process
+        #    may have finished migrations while we were waiting) ────────────────
+        try:
+            async with db.execute("SELECT MAX(version) FROM schema_version") as _cur:
+                _row = await _cur.fetchone()
+                _version_after_lock = _row[0] if _row and _row[0] else 0
+        except Exception:
+            _version_after_lock = 0
+
+        if _version_after_lock >= SCHEMA_VERSION:
+            logger.info(
+                "T3-008: migration already complete (version %d); "
+                "skipping DDL phase.",
+                _version_after_lock,
+            )
+            # Still run idempotent column/index checks and ledger below.
+            await _run_migrations_inner(db, current_version=_version_after_lock)
+            return
+
+        await _run_migrations_inner(db, current_version=_version_after_lock)
+    finally:
+        if acquired:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) -> None:
+    """Actual migration logic, executed under the flock.
+
+    Extracted so run_migrations stays readable and the lock/unlock bracket is
+    unmistakable.
+    """
     # Check current schema version
     try:
         async with db.execute("SELECT MAX(version) FROM schema_version") as cur:
             row = await cur.fetchone()
-            current_version = row[0] if row and row[0] else 0
+            current_version = row[0] if row and row[0] else current_version
     except Exception:
-        current_version = 0
+        pass  # retain caller-supplied current_version
 
     should_record_version = current_version < SCHEMA_VERSION
     if should_record_version:
@@ -3581,11 +3701,34 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         await db.commit()
         logger.info("v33 migrations complete: scope/scope_id columns + new idx_analytics_point_daily key.")
 
+    # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
+    # Databases that already had schema_version >= SCHEMA_VERSION skip
+    # executescript(_TABLES), so the table may not exist yet.  CREATE TABLE IF
+    # NOT EXISTS is always safe.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS migrations_applied (
+            version     INTEGER PRIMARY KEY,
+            applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
     # Record schema version
     if should_record_version:
         await db.execute(
             "INSERT INTO schema_version (version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
+        # ── T3-011: record each applied migration version individually ──────────
+        # INSERT OR IGNORE means re-running (idempotent path) never duplicates.
+        # We record every version from (current_version + 1) to SCHEMA_VERSION
+        # so that databases that skipped intermediate versions still get complete
+        # ledger coverage for their first-boot DDL run.
+        for _v in range(current_version + 1, SCHEMA_VERSION + 1):
+            await db.execute(
+                "INSERT OR IGNORE INTO migrations_applied (version) VALUES (?)",
+                (_v,),
+            )
     await db.commit()
     logger.info(f"Migrations complete — schema version {max(current_version, SCHEMA_VERSION)}")

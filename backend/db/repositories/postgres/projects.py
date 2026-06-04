@@ -57,38 +57,55 @@ class PostgresProjectRepository:
         self._conn = None
 
     # ------------------------------------------------------------------
-    # Table bootstrap  (idempotent; safety-net for isolated tests)
+    # Table bootstrap  (migration-guard; no inline DDL)
     # ------------------------------------------------------------------
 
     def ensure_table(self) -> None:
+        """Assert the projects table exists; raise if migrations have not run.
+
+        The canonical DDL lives in postgres_migrations.py (migration v30).
+        P1 of the DB-remediation plan guarantees that migrations run before
+        any repository method is called in production and worker paths.
+
+        This guard verifies that invariant at runtime rather than silently
+        re-creating the schema, which would mask migration failures and create
+        schema drift.
+
+        Intentional exceptions (tables that still self-create outside
+        migrations, NOT refactored in T3-010):
+          - planning_worktree_contexts / filesystem_scan_manifest:
+            created by _ensure_planning_worktree_contexts_table() in
+            postgres_migrations.py.  NOT returned by
+            get_postgres_migration_tables() via the standard _TABLES scan;
+            self-creation is intentional.
+          - test_runs / test_definitions and related test visualizer tables:
+            created by _ensure_test_visualizer_tables() in
+            postgres_migrations.py (_TEST_VISUALIZER_TABLES constant).
+            These ARE returned by get_postgres_migration_tables(), but are
+            gated by CCDASH_TEST_VISUALIZER_ENABLED and called from the
+            migration runner rather than inline in a repository.
+        """
         conn = self._get_conn()
         with conn.cursor() as cur:
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS projects (
-                    id                   TEXT PRIMARY KEY,
-                    name                 TEXT NOT NULL,
-                    path                 TEXT NOT NULL DEFAULT '',
-                    description          TEXT NOT NULL DEFAULT '',
-                    repo_url             TEXT NOT NULL DEFAULT '',
-                    agent_platforms_json JSONB NOT NULL DEFAULT '["Claude Code"]'::jsonb,
-                    plan_docs_path       TEXT NOT NULL DEFAULT 'docs/project_plans/',
-                    sessions_path        TEXT NOT NULL DEFAULT '',
-                    progress_path        TEXT NOT NULL DEFAULT 'progress',
-                    path_config_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
-                    test_config_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
-                    skillmeat_json       JSONB NOT NULL DEFAULT '{}'::jsonb,
-                    display_json         JSONB,
-                    is_active            BOOLEAN NOT NULL DEFAULT FALSE,
-                    created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                    updated_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'projects'
                 """
             )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_projects_is_active ON projects(is_active)"
+            row = cur.fetchone()
+        if row is None:
+            logger.warning(
+                "ensure_table: 'projects' table is absent — migrations have not run. "
+                "Run the migration runner before starting the application."
             )
-        conn.commit()
+            raise RuntimeError(
+                "projects table does not exist; migrations must run before "
+                "PostgresProjectRepository is used.  "
+                "Ensure run_migrations() has been called (see postgres_migrations.py)."
+            )
 
     # ------------------------------------------------------------------
     # Row ↔ dict helpers

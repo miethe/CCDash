@@ -1,15 +1,22 @@
 """Workspace registry backed by the existing project manager."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Union
+
 from backend.application.context import ProjectScope, WorkspaceScope
 from backend.application.ports.core import ProjectBinding
 from backend.models import Project
 from backend.project_manager import ProjectManager
 from backend.services.project_paths.models import ResolvedProjectPaths
 
+if TYPE_CHECKING:
+    from backend.project_manager import DbProjectManager
+
 
 class ProjectManagerWorkspaceRegistry:
-    def __init__(self, manager: ProjectManager):
+    # T1-004 / ADR-006: accepts both the legacy ProjectManager (test wiring)
+    # and the DB-backed DbProjectManager (all production call sites).
+    def __init__(self, manager: "Union[ProjectManager, DbProjectManager]"):
         self._manager = manager
 
     def list_projects(self) -> list[Project]:

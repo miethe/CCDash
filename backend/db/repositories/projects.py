@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from backend.db.repositories.base import retry_on_locked_sync
+
 logger = logging.getLogger("ccdash.db.repositories.projects")
 
 
@@ -47,7 +49,67 @@ class SqliteProjectRepository:
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
+            # Tell SQLite to wait up to 30 s before raising "database is locked"
+            # instead of failing immediately.  This complements the Python-level
+            # retry loop in _commit_with_retry for the cases where the OS-level
+            # busy handler fires first.
+            self._conn.execute("PRAGMA busy_timeout = 30000")
         return self._conn
+
+    # ------------------------------------------------------------------
+    # Locked-DB commit with exponential-backoff retry
+    # ------------------------------------------------------------------
+
+    def _commit_with_retry(self) -> None:
+        """Commit the current transaction, retrying up to 3 times on lock.
+
+        Delegates to the shared :func:`retry_on_locked_sync` helper so that
+        retry/counter semantics are consistent with all other sync repositories.
+        """
+        conn = self._get_conn()
+        retry_on_locked_sync(conn.commit, repo="projects")
+
+    def _flush_to_db(self, rows: list[dict]) -> None:
+        """Write *rows* (already formatted by ``_project_to_row``) in one
+        transaction, retrying the commit on a locked database.
+
+        All upserts execute inside a single implicit transaction; the commit
+        at the end is retried with exponential backoff.
+        """
+        conn = self._get_conn()
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO projects (
+                    id, name, path, description, repo_url,
+                    agent_platforms_json, plan_docs_path, sessions_path, progress_path,
+                    path_config_json, test_config_json, skillmeat_json, display_json,
+                    is_active, updated_at
+                ) VALUES (
+                    :id, :name, :path, :description, :repo_url,
+                    :agent_platforms_json, :plan_docs_path, :sessions_path, :progress_path,
+                    :path_config_json, :test_config_json, :skillmeat_json, :display_json,
+                    :is_active, :updated_at
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                    name=excluded.name,
+                    path=excluded.path,
+                    description=excluded.description,
+                    repo_url=excluded.repo_url,
+                    agent_platforms_json=excluded.agent_platforms_json,
+                    plan_docs_path=excluded.plan_docs_path,
+                    sessions_path=excluded.sessions_path,
+                    progress_path=excluded.progress_path,
+                    path_config_json=excluded.path_config_json,
+                    test_config_json=excluded.test_config_json,
+                    skillmeat_json=excluded.skillmeat_json,
+                    display_json=excluded.display_json,
+                    is_active=excluded.is_active,
+                    updated_at=excluded.updated_at
+                """,
+                row,
+            )
+        self._commit_with_retry()
 
     def close(self) -> None:
         if self._conn is not None:
@@ -58,43 +120,50 @@ class SqliteProjectRepository:
             self._conn = None
 
     # ------------------------------------------------------------------
-    # Table bootstrap  (idempotent; runs once on first use)
+    # Table bootstrap  (migration-guard; no inline DDL)
     # ------------------------------------------------------------------
 
     def ensure_table(self) -> None:
-        """Create the projects table if it does not already exist.
+        """Assert the projects table exists; raise if migrations have not run.
 
-        The canonical DDL lives in sqlite_migrations.py (v30).  This is a
-        safety-net so the repository works even when the async migration path
-        hasn't run yet (e.g. in isolated unit tests).
+        The canonical DDL lives in sqlite_migrations.py (migration v30).
+        P1 of the DB-remediation plan guarantees that migrations run before
+        any repository method is called in production and worker paths.
+
+        This guard verifies that invariant at runtime rather than silently
+        re-creating the schema, which would mask migration failures and create
+        schema drift.
+
+        Intentional exceptions (tables that still self-create outside
+        migrations, NOT refactored in T3-010):
+          - planning_worktree_contexts / filesystem_scan_manifest:
+            created by _ensure_planning_worktree_contexts_table() in
+            sqlite_migrations.py (stored in _PLANNING_WORKTREE_CONTEXTS_DDL,
+            not in the main _TABLES block).  NOT returned by
+            get_sqlite_migration_tables(); self-creation is intentional.
+          - test_runs / test_definitions / test_case_results /
+            test_case_failure_samples / test_flakiness_observations:
+            created by _ensure_test_visualizer_tables() in
+            sqlite_migrations.py (stored in _TEST_VISUALIZER_TABLES).
+            These ARE returned by get_sqlite_migration_tables() (governance
+            scans _TEST_VISUALIZER_TABLES), but are gated by the
+            CCDASH_TEST_VISUALIZER_ENABLED flag and called from the migration
+            runner rather than inline in a repository.
         """
         conn = self._get_conn()
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS projects (
-                id                   TEXT PRIMARY KEY,
-                name                 TEXT NOT NULL,
-                path                 TEXT NOT NULL DEFAULT '',
-                description          TEXT NOT NULL DEFAULT '',
-                repo_url             TEXT NOT NULL DEFAULT '',
-                agent_platforms_json TEXT NOT NULL DEFAULT '["Claude Code"]',
-                plan_docs_path       TEXT NOT NULL DEFAULT 'docs/project_plans/',
-                sessions_path        TEXT NOT NULL DEFAULT '',
-                progress_path        TEXT NOT NULL DEFAULT 'progress',
-                path_config_json     TEXT NOT NULL DEFAULT '{}',
-                test_config_json     TEXT NOT NULL DEFAULT '{}',
-                skillmeat_json       TEXT NOT NULL DEFAULT '{}',
-                display_json         TEXT,
-                is_active            INTEGER NOT NULL DEFAULT 0,
-                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'"
+        ).fetchone()
+        if row is None:
+            logger.warning(
+                "ensure_table: 'projects' table is absent — migrations have not run. "
+                "Run the migration runner before starting the application."
             )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_projects_is_active ON projects(is_active)"
-        )
-        conn.commit()
+            raise RuntimeError(
+                "projects table does not exist; migrations must run before "
+                "SqliteProjectRepository is used.  "
+                "Ensure run_migrations() has been called (see sqlite_migrations.py)."
+            )
 
     # ------------------------------------------------------------------
     # Row ↔ dict helpers
@@ -171,40 +240,8 @@ class SqliteProjectRepository:
         return self._row_to_dict(row) if row else None
 
     def upsert(self, project_dict: dict) -> None:
-        row = self._project_to_row(project_dict)
-        conn = self._get_conn()
-        conn.execute(
-            """
-            INSERT INTO projects (
-                id, name, path, description, repo_url,
-                agent_platforms_json, plan_docs_path, sessions_path, progress_path,
-                path_config_json, test_config_json, skillmeat_json, display_json,
-                is_active, updated_at
-            ) VALUES (
-                :id, :name, :path, :description, :repo_url,
-                :agent_platforms_json, :plan_docs_path, :sessions_path, :progress_path,
-                :path_config_json, :test_config_json, :skillmeat_json, :display_json,
-                :is_active, :updated_at
-            )
-            ON CONFLICT(id) DO UPDATE SET
-                name=excluded.name,
-                path=excluded.path,
-                description=excluded.description,
-                repo_url=excluded.repo_url,
-                agent_platforms_json=excluded.agent_platforms_json,
-                plan_docs_path=excluded.plan_docs_path,
-                sessions_path=excluded.sessions_path,
-                progress_path=excluded.progress_path,
-                path_config_json=excluded.path_config_json,
-                test_config_json=excluded.test_config_json,
-                skillmeat_json=excluded.skillmeat_json,
-                display_json=excluded.display_json,
-                is_active=excluded.is_active,
-                updated_at=excluded.updated_at
-            """,
-            row,
-        )
-        conn.commit()
+        """Insert or update a single project row, retrying commit on lock."""
+        self._flush_to_db([self._project_to_row(project_dict)])
 
     def set_active(self, project_id: str) -> None:
         """Set exactly one project as active (clears all others first)."""
@@ -215,7 +252,7 @@ class SqliteProjectRepository:
             "UPDATE projects SET is_active = 1, updated_at = ? WHERE id = ?",
             (now, project_id),
         )
-        conn.commit()
+        self._commit_with_retry()
 
     def count(self) -> int:
         conn = self._get_conn()

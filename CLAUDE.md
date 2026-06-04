@@ -157,6 +157,9 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Memory guard flag**: `VITE_CCDASH_MEMORY_GUARD_ENABLED` (default true) gates frontend memory hardening (transcript ring-buffer cap, document pagination cap, in-flight request GC).
 - **Incremental link rebuild**: `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` (default false) enables scoped link-rebuild dispatch on partial syncs.
 - **Light-mode startup sync**: `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default false) enables manifest-based filesystem scan skip on unchanged paths.
+- **Registry is DB-authoritative**: Per ADR-006 (`docs/project_plans/adrs/adr-006-db-authoritative-project-registry.md`), `projects.json` is import-seed/export-only; no production code may use the JSON-backed ProjectManager directly.
+- **DB write paths**: Every new write path in `backend/db/repositories/` must use `repositories/base.py:retry_on_locked` and ship a direct-count assertion test. Per ADR-007 (`docs/project_plans/adrs/adr-007-db-write-failure-surfacing-standard.md`).
+- **Independent SQLite connections**: Must issue `PRAGMA busy_timeout = 30000`.
 
 ---
 

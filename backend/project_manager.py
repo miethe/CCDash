@@ -370,6 +370,9 @@ class DbProjectManager:
 
     def _load_snapshot(self) -> None:
         """Reload the in-memory snapshot from the DB (or JSON fallback)."""
+        logger.info(
+            "DbProjectManager: loading snapshot from DB (backend=%s)", self._db_backend
+        )
         try:
             repo = self._get_repo()
             rows = repo.list_all()
@@ -390,6 +393,12 @@ class DbProjectManager:
                 self._create_default_project_in_snapshot()
                 self._flush_snapshot_to_db()
             self._snapshot_loaded = True
+            logger.info(
+                "DbProjectManager: snapshot bootstrap complete "
+                "(projects=%d, active=%s)",
+                len(self._projects or {}),
+                self._active_project_id,
+            )
             return
 
         self._projects = {}
@@ -408,6 +417,12 @@ class DbProjectManager:
             self._active_project_id = next(iter(self._projects))
 
         self._snapshot_loaded = True
+        logger.info(
+            "DbProjectManager: snapshot loaded from DB "
+            "(projects=%d, active=%s)",
+            len(self._projects),
+            self._active_project_id,
+        )
 
     def _load_snapshot_from_json(self) -> None:
         """Populate _projects from projects.json (fallback/bootstrap path)."""
@@ -445,9 +460,22 @@ class DbProjectManager:
         self._active_project_id = default_project.id
 
     def _flush_snapshot_to_db(self) -> None:
-        """Write the current in-memory snapshot to the DB."""
+        """Write the current in-memory snapshot to the DB.
+
+        On failure the exception is logged and re-raised so the caller knows
+        the write did not complete.  Critically, ``_snapshot_loaded`` is NOT
+        set to ``True`` by this method – only the caller may do that, and only
+        after a successful flush.  This ensures that the next call to
+        ``list_projects()`` or ``get_project()`` will retry the flush rather
+        than silently serving stale/empty data (F-01).
+        """
         if not self._projects:
             return
+        logger.info(
+            "DbProjectManager: flushing %d project(s) to DB (active=%s)",
+            len(self._projects),
+            self._active_project_id,
+        )
         try:
             repo = self._get_repo()
             for project_id, project in self._projects.items():
@@ -457,11 +485,145 @@ class DbProjectManager:
             if self._active_project_id:
                 repo.set_active(self._active_project_id)
         except Exception as exc:
-            logger.error("Failed to flush snapshot to DB: %s", exc)
+            logger.error(
+                "DbProjectManager: flush to DB failed (snapshot_loaded will NOT be "
+                "set; next access will retry): %s",
+                exc,
+            )
+            raise
+        logger.info(
+            "DbProjectManager: flush to DB complete "
+            "(projects=%d, active=%s)",
+            len(self._projects),
+            self._active_project_id,
+        )
 
     def _invalidate_snapshot(self) -> None:
         """Mark snapshot stale so next access reloads from DB."""
         self._snapshot_loaded = False
+
+    # ------------------------------------------------------------------
+    # Import / export helpers (ADR-006 Option B)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def import_from_json(
+        cls,
+        json_path: Path,
+        *,
+        db_path: str | Path | None = None,
+        db_dsn: str | None = None,
+        db_backend: str | None = None,
+        manager: "DbProjectManager | None" = None,
+    ) -> "DbProjectManager":
+        """Additive upsert from *json_path* into the DB registry.
+
+        Creates (or reuses) a ``DbProjectManager`` instance and upserts every
+        project found in the JSON file.  Existing rows are updated in place;
+        rows not present in the JSON are left untouched.  The active-project
+        flag is set to the JSON ``activeProjectId`` if it refers to a project
+        that exists in the DB after the import.
+
+        Parameters
+        ----------
+        json_path:
+            Path to a ``projects.json``-formatted file (same schema as
+            ``export_to_json``).
+        db_path / db_dsn / db_backend:
+            Forwarded to ``DbProjectManager.__init__`` when *manager* is
+            ``None``.
+        manager:
+            Optional pre-constructed ``DbProjectManager`` to import into.
+            When supplied, *db_path* / *db_dsn* / *db_backend* are ignored.
+
+        Returns
+        -------
+        The ``DbProjectManager`` instance that was written to.  Callers can
+        immediately call ``list_projects()`` to inspect the imported state.
+        """
+        if manager is None:
+            storage_path = json_path  # used as the fallback bootstrap path
+            mgr: "DbProjectManager" = cls(
+                storage_path,
+                db_path=db_path,
+                db_dsn=db_dsn,
+                db_backend=db_backend,
+            )
+        else:
+            mgr = manager
+
+        if not json_path.exists():
+            logger.warning("import_from_json: %s does not exist – nothing imported", json_path)
+            return mgr
+
+        try:
+            content = json_path.read_text()
+            if not content.strip():
+                logger.warning("import_from_json: %s is empty – nothing imported", json_path)
+                return mgr
+            data = json.loads(content)
+        except Exception as exc:
+            logger.error("import_from_json: failed to read %s: %s", json_path, exc)
+            return mgr
+
+        active_id: str | None = data.get("activeProjectId")
+        imported = 0
+        for p_data in data.get("projects", []):
+            try:
+                project = Project(**p_data)
+                normalize_project_test_config(project, legacy_test_results_dir=config.TEST_RESULTS_DIR)
+                # Ensure snapshot is loaded so we can upsert into live state too.
+                mgr._ensure_snapshot()
+                mgr._projects[project.id] = project  # type: ignore[index]
+                row = project.model_dump()
+                row["is_active"] = (project.id == active_id)
+                mgr._get_repo().upsert(row)
+                imported += 1
+            except Exception as exc:
+                logger.error("import_from_json: failed to import project %r: %s", p_data, exc)
+
+        # Persist the active flag if the referenced project is now present.
+        if active_id and active_id in (mgr._projects or {}):
+            try:
+                mgr._active_project_id = active_id
+                mgr._get_repo().set_active(active_id)
+            except Exception as exc:
+                logger.error("import_from_json: failed to set active project %r: %s", active_id, exc)
+
+        # Refresh snapshot so callers see the imported rows.
+        mgr._snapshot_loaded = True
+        logger.info("import_from_json: imported %d project(s) from %s", imported, json_path)
+        return mgr
+
+    def export_to_json(self, json_path: Path) -> None:
+        """Write the current DB registry to *json_path* in ``projects.json`` format.
+
+        The output is identical in structure to the file written by the legacy
+        ``ProjectManager._save()`` method so the round-trip is lossless for all
+        project fields.
+
+        Parameters
+        ----------
+        json_path:
+            Destination file path.  Written atomically (write-then-replace).
+        """
+        self._ensure_snapshot()
+        data = {
+            "activeProjectId": self._active_project_id,
+            "projects": [p.model_dump() for p in (self._projects or {}).values()],
+        }
+        tmp_path = json_path.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(json.dumps(data, indent=2))
+            os.replace(tmp_path, json_path)
+        except Exception as exc:
+            logger.error("export_to_json: failed to write %s: %s", json_path, exc)
+            raise RuntimeError(f"Could not export projects to {json_path}: {exc}") from exc
+        logger.info(
+            "export_to_json: wrote %d project(s) to %s",
+            len(self._projects or {}),
+            json_path,
+        )
 
     # ------------------------------------------------------------------
     # Row → Project conversion
@@ -653,11 +815,22 @@ class DbProjectManager:
 # Global instances
 # ---------------------------------------------------------------------------
 
-# Global instance initialized from CCDASH_PROJECTS_FILE (default: <project_root>/projects.json).
-# Setting CCDASH_PROJECTS_FILE allows compose bind-mounts to control the projects registry path.
-project_manager = ProjectManager(config.PROJECTS_FILE)
-
-# DB-backed global registry (P3-001).
-# Lazy – DB is not touched until first method call, so no startup wiring is
-# needed and tests that don't set DB_BACKEND=postgres still work.
+# DB-backed global registry (P3-001 / ADR-006 Option B).
+# This is the AUTHORITATIVE runtime registry — all production code must use
+# db_project_manager.  Lazy: DB is not touched until the first method call,
+# so tests that do not set CCDASH_DB_BACKEND=postgres still work without any
+# extra wiring.
 db_project_manager = DbProjectManager(config.PROJECTS_FILE)
+
+# Legacy JSON-backed manager — RETAINED FOR BACKWARD COMPATIBILITY ONLY.
+# T1-004 (ADR-006): this instance is no longer on the hot-path for any
+# production request.  It exists so that:
+#   1. Existing test patches targeting ``backend.project_manager.project_manager``
+#      continue to resolve without import errors.
+#   2. Modules that imported ``project_manager`` directly (routers, scripts)
+#      have been updated to import ``db_project_manager`` instead (see T1-007
+#      audit below and the per-module comments added by that task).
+# DO NOT pass this instance as ``manager=`` in production code.  Use
+# ``db_project_manager`` directly or let ``build_workspace_registry`` /
+# ``build_core_ports`` resolve the DB-backed registry automatically.
+project_manager = ProjectManager(config.PROJECTS_FILE)

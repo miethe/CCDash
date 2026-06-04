@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied   TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ── Per-version migration ledger (T3-011) ──────────────────────────
+-- OQ-01 decision: both SQLite and Postgres backends use the same logical
+-- schema — migrations_applied(version INTEGER PRIMARY KEY, applied_at <timestamp>).
+-- SQLite stores applied_at as TEXT (ISO-8601); Postgres stores it as
+-- TIMESTAMP WITH TIME ZONE.  Application code treats the column as opaque
+-- for display purposes; only existence of a row is semantically significant.
+-- INSERT OR IGNORE (SQLite) / ON CONFLICT DO NOTHING (Postgres) ensures
+-- re-running migrations never duplicates rows.
+CREATE TABLE IF NOT EXISTS migrations_applied (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ── 1. Sync State (Incremental Change Detection) ──────────────────
 CREATE TABLE IF NOT EXISTS sync_state (
     file_path    TEXT PRIMARY KEY,
@@ -3128,10 +3141,30 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         )
         logger.info("v34 migrations complete: analytics_entries scope/scope_id columns + scope-aware idx_analytics_point_daily.")
 
+    # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
+    # Databases that already had schema_version >= SCHEMA_VERSION skip the
+    # _TABLES execute block, so the table may not exist yet.  CREATE TABLE IF
+    # NOT EXISTS is always safe.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS migrations_applied (
+            version     INTEGER PRIMARY KEY,
+            applied_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
     # Record schema version
     if should_record_version:
         await db.execute(
             "INSERT INTO schema_version (version) VALUES ($1)",
             SCHEMA_VERSION,
         )
+        # ── T3-011: record each applied migration version individually ──────────
+        # ON CONFLICT DO NOTHING means re-running (idempotent path) never duplicates.
+        for _v in range(current_version + 1, SCHEMA_VERSION + 1):
+            await db.execute(
+                "INSERT INTO migrations_applied (version) VALUES ($1) ON CONFLICT DO NOTHING",
+                _v,
+            )
     logger.info(f"Migrations complete — schema version {max(current_version, SCHEMA_VERSION)}")

@@ -54,7 +54,7 @@ PROGRESS_DIR = DATA_DIR / "progress"
 
 # Database
 DEFAULT_DATABASE_URL = "postgresql://user:password@localhost/ccdash"
-DB_PATH = os.getenv("CCDASH_DB_PATH", ".ccdash.db")
+DB_PATH = Path(os.getenv("CCDASH_DB_PATH", str(PROJECT_ROOT / "data" / "ccdash_cache.db")))
 DB_BACKEND = os.getenv("CCDASH_DB_BACKEND", "sqlite")
 DATABASE_URL = os.getenv("CCDASH_DATABASE_URL", DEFAULT_DATABASE_URL)
 LINKING_LOGIC_VERSION = os.getenv("CCDASH_LINKING_LOGIC_VERSION", "1")

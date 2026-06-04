@@ -5,9 +5,178 @@ Abstract interfaces for all DB access. Concrete implementations
 """
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable, Any
+import asyncio
+import logging
+import time
+from typing import Awaitable, Callable, Protocol, TypeVar, runtime_checkable, Any
 
 from backend.models import SkillMeatArtifactSnapshot, SnapshotDiagnostics, SnapshotFreshnessMeta
+
+_logger = logging.getLogger("ccdash.db.repositories")
+
+_T = TypeVar("_T")
+
+
+# ── Shared locked-retry helpers ─────────────────────────────────────────────
+
+
+def _is_locked_msg(exc: Exception) -> bool:
+    """Return True when *exc* signals a SQLite database-lock condition."""
+    msg = str(exc).lower()
+    return "database is locked" in msg or "database table is locked" in msg
+
+
+# Keep the old name as an alias so existing callers in tests are unaffected.
+_is_aiosqlite_locked = _is_locked_msg
+
+
+def retry_on_locked_sync(
+    fn: Callable[[], _T],
+    *,
+    max_retries: int = 3,
+    backoff: float = 0.5,
+    repo: str = "unknown",
+) -> _T:
+    """Call *fn* and return its result, retrying on SQLite database-locked errors.
+
+    Synchronous counterpart to :func:`retry_on_locked` for use with stdlib
+    ``sqlite3`` connections (e.g. :class:`SqliteProjectRepository`).
+
+    On each locked retry, sleeps ``backoff * attempt`` seconds (attempt starts
+    at 1) and increments ``ccdash_db_write_failures_total{repo, reason=locked}``.
+
+    On exhaustion of *max_retries* locked retries, or on any non-locked
+    ``OperationalError``, the original exception is re-raised.  The counter
+    increment for the final failure is emitted before re-raising.  Non-locked
+    errors are re-raised immediately without any retry.
+
+    The counter increment is guarded so it never raises.
+
+    Args:
+        fn:          Callable with no arguments to invoke.
+        max_retries: Maximum number of times to retry on a locked error.
+                     The function is called at most ``max_retries + 1`` times.
+        backoff:     Base sleep duration in seconds; sleep = backoff * attempt.
+        repo:        Repository name for the Prometheus ``repo`` label.
+
+    Returns:
+        The return value of *fn()* on success.
+
+    Raises:
+        sqlite3.OperationalError: After exhausting retries on locked, or
+            immediately for any non-locked OperationalError.
+        Any other exception raised by *fn* propagates immediately.
+    """
+    import sqlite3 as _sqlite3  # local import to avoid hard dependency at module level
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except _sqlite3.OperationalError as exc:
+            if not _is_locked_msg(exc):
+                # Non-locked error: count and re-raise immediately
+                try:
+                    from backend.observability import otel
+                    otel.record_db_write_failure(repo=repo, reason="other")
+                except Exception:
+                    pass
+                raise
+            last_exc = exc
+            # Count each locked failure (including final exhaustion)
+            try:
+                from backend.observability import otel
+                otel.record_db_write_failure(repo=repo, reason="locked")
+            except Exception:
+                pass
+            if attempt >= max_retries:
+                break
+            delay = backoff * (attempt + 1)
+            _logger.warning(
+                "retry_on_locked_sync: repo=%s locked (attempt %d/%d); retrying in %.2f s: %s",
+                repo,
+                attempt + 1,
+                max_retries,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+
+    assert last_exc is not None
+    raise last_exc
+
+
+async def retry_on_locked(
+    fn: Callable[[], Awaitable[_T]],
+    *,
+    max_retries: int = 3,
+    backoff: float = 0.5,
+    repo: str = "unknown",
+) -> _T:
+    """Call *fn* and return its result, retrying on SQLite database-locked errors.
+
+    On each locked retry, sleeps ``backoff * attempt`` seconds (attempt starts
+    at 1) and increments ``ccdash_db_write_failures_total{repo, reason=locked}``.
+
+    On exhaustion of *max_retries* locked retries, or on any non-locked
+    ``OperationalError``, the original exception is re-raised.  The counter
+    increment for the final failure is emitted before re-raising.  Non-locked
+    errors are re-raised immediately without any retry.
+
+    The counter increment is guarded so it never raises.
+
+    Args:
+        fn:          Async callable with no arguments to invoke.
+        max_retries: Maximum number of times to retry on a locked error.
+                     The function is called at most ``max_retries + 1`` times.
+        backoff:     Base sleep duration in seconds; sleep = backoff * attempt.
+        repo:        Repository name for the Prometheus ``repo`` label.
+
+    Returns:
+        The return value of *fn()* on success.
+
+    Raises:
+        aiosqlite.OperationalError: After exhausting retries on locked, or
+            immediately for any non-locked OperationalError.
+        Any other exception raised by *fn* propagates immediately.
+    """
+    import aiosqlite  # local import to avoid hard dependency at module level
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await fn()
+        except aiosqlite.OperationalError as exc:
+            if not _is_aiosqlite_locked(exc):
+                # Non-locked error: count and re-raise immediately
+                try:
+                    from backend.observability import otel
+                    otel.record_db_write_failure(repo=repo, reason="other")
+                except Exception:
+                    pass
+                raise
+            last_exc = exc
+            # Count each locked failure (including final exhaustion)
+            try:
+                from backend.observability import otel
+                otel.record_db_write_failure(repo=repo, reason="locked")
+            except Exception:
+                pass
+            if attempt >= max_retries:
+                break
+            delay = backoff * (attempt + 1)
+            _logger.warning(
+                "retry_on_locked: repo=%s locked (attempt %d/%d); retrying in %.2f s: %s",
+                repo,
+                attempt + 1,
+                max_retries,
+                delay,
+                exc,
+            )
+            await asyncio.sleep(delay)
+
+    assert last_exc is not None
+    raise last_exc
 
 
 # ── Session Repository ──────────────────────────────────────────────

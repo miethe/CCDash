@@ -55,7 +55,8 @@ from backend.observability import start_span
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.parsers.test_results import parse_junit_xml
-from backend.project_manager import project_manager
+# T1-007 / ADR-006: use the DB-backed authoritative registry.
+from backend.project_manager import db_project_manager as project_manager
 from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.test_config import (
     effective_test_flags,

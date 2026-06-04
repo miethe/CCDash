@@ -43,6 +43,10 @@ _auth_session_errors_counter: Any | None = None
 _auth_authorization_decisions_counter: Any | None = None
 _auth_issuer_health_counter: Any | None = None
 
+# ── DB write failure metrics (T2-001) ────────────────────────────────────────
+_db_write_failures_counter: Any | None = None
+_prom_db_write_failures_counter: Any | None = None
+
 # ── Feature-surface hot-path metrics ─────────────────────────────────────────
 _feature_surface_requests_counter: Any | None = None
 _feature_surface_latency_hist: Any | None = None
@@ -242,6 +246,7 @@ def initialize(app: FastAPI | None = None) -> None:
     global _feature_surface_requests_counter, _feature_surface_latency_hist
     global _frontend_poll_teardown_counter, _link_rebuild_scope_counter
     global _filesystem_scan_cached_counter, _workflow_detail_batch_rows_hist
+    global _db_write_failures_counter, _prom_db_write_failures_counter
     global _prom_enabled
     global _prom_ingestion_counter, _prom_ingestion_latency_hist, _prom_parser_failure_counter
     global _prom_tool_calls_counter, _prom_tool_duration_hist, _prom_tokens_counter, _prom_cost_counter
@@ -399,6 +404,11 @@ def initialize(app: FastAPI | None = None) -> None:
         "ccdash_auth_issuer_health_total",
         unit="1",
         description="OIDC/hosted issuer health observations from auth flow seams",
+    )
+    _db_write_failures_counter = meter.create_counter(
+        "ccdash_db_write_failures_total",
+        unit="1",
+        description="DB write failures (e.g. locked retries exhausted) by repo and reason",
     )
     _feature_surface_requests_counter = meter.create_counter(
         "ccdash_feature_surface_requests_total",
@@ -646,6 +656,11 @@ def initialize(app: FastAPI | None = None) -> None:
                 "ccdash_auth_issuer_health_total",
                 "OIDC/hosted issuer health observations from auth flow seams",
                 ["provider", "issuer", "status", "runtime_profile"],
+            )
+            _prom_db_write_failures_counter = Counter(
+                "ccdash_db_write_failures_total",
+                "DB write failures (e.g. locked retries exhausted) by repo and reason",
+                ["repo", "reason"],
             )
             _prom_feature_surface_requests_counter = Counter(
                 "ccdash_feature_surface_requests_total",
@@ -1578,3 +1593,32 @@ def record_link_rebuild_commit(links_created: int) -> None:
             _prom_link_rebuild_commit_counter.labels(links_created_bucket=bucket).inc()
     except Exception:
         logger.debug("record_link_rebuild_commit: metric unavailable", exc_info=True)
+
+
+# ── DB write failure counter (T2-001) ────────────────────────────────────────
+
+
+def record_db_write_failure(*, repo: str, reason: str) -> None:
+    """Increment the DB write failure counter.
+
+    Labels:
+        repo   — repository name, e.g. ``"sessions"``, ``"execution"``
+        reason — failure reason, e.g. ``"locked"``, ``"other"``
+
+    This function is intentionally never-raise: observability must not
+    break write paths.
+    """
+    try:
+        labels = {
+            "repo": _safe_metric_label(repo, default="unknown"),
+            "reason": _safe_metric_label(reason, default="unknown"),
+        }
+        if _enabled and _db_write_failures_counter is not None:
+            _db_write_failures_counter.add(1, labels)
+        if _prom_enabled and _prom_db_write_failures_counter is not None:
+            _prom_db_write_failures_counter.labels(
+                repo=labels["repo"],
+                reason=labels["reason"],
+            ).inc()
+    except Exception:
+        logger.debug("record_db_write_failure: metric unavailable", exc_info=True)

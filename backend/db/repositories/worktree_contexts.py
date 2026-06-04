@@ -1,13 +1,14 @@
 """SQLite implementation of WorktreeContextRepository (PCP-501)."""
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 import aiosqlite
+
+from backend.db.repositories.base import retry_on_locked
 
 
 def _now_iso() -> str:
@@ -27,13 +28,11 @@ def _parse_json_dict(value: object) -> dict:
     return {}
 
 
+# Retry configuration delegated to retry_on_locked (max_retries=8, backoff=0.05)
 _LOCK_RETRY_ATTEMPTS = 8
 _LOCK_RETRY_BASE_SECONDS = 0.05
 
-
-def _is_locked_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return "database is locked" in message or "database table is locked" in message
+_REPO_NAME = "worktree_contexts"
 
 
 class SqliteWorktreeContextRepository:
@@ -43,24 +42,22 @@ class SqliteWorktreeContextRepository:
         self.db = db
 
     async def _execute_write(self, sql: str, params: tuple[Any, ...]) -> None:
-        for attempt in range(_LOCK_RETRY_ATTEMPTS):
-            try:
-                await self.db.execute(sql, params)
-                return
-            except aiosqlite.OperationalError as exc:
-                if not _is_locked_error(exc) or attempt >= _LOCK_RETRY_ATTEMPTS - 1:
-                    raise
-                await asyncio.sleep(_LOCK_RETRY_BASE_SECONDS * (2 ** attempt))
+        """Execute a write statement with locked-retry via the shared helper."""
+        await retry_on_locked(
+            lambda: self.db.execute(sql, params),
+            max_retries=_LOCK_RETRY_ATTEMPTS - 1,
+            backoff=_LOCK_RETRY_BASE_SECONDS,
+            repo=_REPO_NAME,
+        )
 
     async def _commit_with_retry(self) -> None:
-        for attempt in range(_LOCK_RETRY_ATTEMPTS):
-            try:
-                await self.db.commit()
-                return
-            except aiosqlite.OperationalError as exc:
-                if not _is_locked_error(exc) or attempt >= _LOCK_RETRY_ATTEMPTS - 1:
-                    raise
-                await asyncio.sleep(_LOCK_RETRY_BASE_SECONDS * (2 ** attempt))
+        """Commit the current transaction with locked-retry via the shared helper."""
+        await retry_on_locked(
+            lambda: self.db.commit(),
+            max_retries=_LOCK_RETRY_ATTEMPTS - 1,
+            backoff=_LOCK_RETRY_BASE_SECONDS,
+            repo=_REPO_NAME,
+        )
 
     async def create(self, data: dict) -> dict:
         now = _now_iso()

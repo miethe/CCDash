@@ -23,7 +23,8 @@ from backend.models import (
     FeatureExecutionWarning,
     PaginatedResponse,
 )
-from backend.project_manager import project_manager
+# T1-007 / ADR-006: use the DB-backed authoritative registry.
+from backend.project_manager import db_project_manager as project_manager
 from backend.db import connection
 from backend.db.factory import (
     get_analytics_repository,

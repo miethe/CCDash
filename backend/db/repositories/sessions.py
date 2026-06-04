@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import aiosqlite
 from backend.model_identity import model_filter_tokens
+from backend.db.repositories.base import retry_on_locked
 
 logger = logging.getLogger("ccdash.db.sessions")
 
@@ -16,6 +17,10 @@ class SqliteSessionRepository:
 
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
+
+    async def _commit(self) -> None:
+        """Commit with locked-retry, re-raising on exhaustion (fail-loud)."""
+        await retry_on_locked(self.db.commit, repo="sessions")
 
     async def upsert(self, session_data: dict, project_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -153,7 +158,7 @@ class SqliteSessionRepository:
                 json.dumps(session_data.get("badgeSkillsUsed", []) or []),
             ),
         )
-        await self.db.commit()
+        await self._commit()
 
     async def update_session_badges(
         self,
@@ -196,7 +201,7 @@ class SqliteSessionRepository:
                 session_id,
             ),
         )
-        await self.db.commit()
+        await self._commit()
 
     async def get_by_id(self, session_id: str) -> dict | None:
         async with self.db.execute(
@@ -670,7 +675,7 @@ class SqliteSessionRepository:
 
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM sessions WHERE source_file = ?", (source_file,))
-        await self.db.commit()
+        await self._commit()
 
     async def update_usage_fields(
         self,
@@ -708,7 +713,7 @@ class SqliteSessionRepository:
                 session_id,
             ),
         )
-        await self.db.commit()
+        await self._commit()
 
     async def update_observability_fields(
         self,
@@ -752,7 +757,7 @@ class SqliteSessionRepository:
                 session_id,
             ),
         )
-        await self.db.commit()
+        await self._commit()
 
     # ── Detail tables ───────────────────────────────────────────────
 
@@ -832,7 +837,7 @@ class SqliteSessionRepository:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 records,
             )
-        await self.db.commit()
+        await self._commit()
 
     async def upsert_tool_usage(self, session_id: str, tools: list[dict], project_id: str = "") -> None:
         await self.db.execute("DELETE FROM session_tool_usage WHERE session_id = ?", (session_id,))
@@ -845,7 +850,7 @@ class SqliteSessionRepository:
                  max(0, int(t.get("totalMs", 0) or 0)),
                  project_id),
             )
-        await self.db.commit()
+        await self._commit()
 
     async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
         # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
@@ -877,7 +882,7 @@ class SqliteSessionRepository:
                     project_id,
                 ),
             )
-        await self.db.commit()
+        await self._commit()
 
     async def upsert_artifacts(
         self,
@@ -900,14 +905,14 @@ class SqliteSessionRepository:
                  a.get("type", "document"), a.get("description", ""), a.get("source", ""),
                  a.get("url"), a.get("sourceLogId"), a.get("sourceToolName")),
             )
-        await self.db.commit()
+        await self._commit()
 
     async def delete_relationships_for_source(self, project_id: str, source_file: str) -> None:
         await self.db.execute(
             "DELETE FROM session_relationships WHERE project_id = ? AND source_file = ?",
             (project_id, source_file),
         )
-        await self.db.commit()
+        await self._commit()
 
     async def upsert_relationships(self, project_id: str, source_file: str, relationships: list[dict]) -> None:
         import sqlite3
@@ -955,7 +960,7 @@ class SqliteSessionRepository:
                     f" child={relationship.get('childSessionId')!r}"
                     f" type={relationship.get('relationshipType')!r}"
                 ) from exc
-        await self.db.commit()
+        await self._commit()
 
     async def list_relationships(self, project_id: str, session_id: str) -> list[dict]:
         async with self.db.execute(
