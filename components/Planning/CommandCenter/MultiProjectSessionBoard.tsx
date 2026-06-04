@@ -19,7 +19,7 @@
  *   - Refresh button has aria-label.
  *   - Card keyboard handling: Enter/Space selects; cards have aria-label.
  */
-import { memo, useCallback, useId, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertCircle, ChevronDown, ChevronRight, Clock, Globe, Layers, Loader2, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -65,6 +65,23 @@ const GROUPING_LABELS: Record<MultiProjectGroupingMode, string> = {
   agent: 'agent',
   model: 'model',
 };
+
+/**
+ * When grouping by state, columns with these group keys start collapsed by
+ * default (unless the user has manually toggled them).
+ */
+const DONE_STATE_KEYS = new Set(['completed', 'done', 'cancelled']);
+
+/**
+ * Returns the auto-collapse default for a column (before any manual override).
+ * Columns start collapsed when they represent a done/completed state OR have
+ * zero cards.
+ */
+function defaultGroupCollapsed(group: AggregateBoardGroup): boolean {
+  if (group.cards.length === 0) return true;
+  if (group.groupType === 'state' && DONE_STATE_KEYS.has(group.groupKey)) return true;
+  return false;
+}
 
 function fallbackColor(projectId: string): string {
   let hash = 0;
@@ -422,6 +439,66 @@ const BoardGroupColumn = memo(function BoardGroupColumn({
 }: BoardGroupColumnProps) {
   const headingId = useId();
 
+  // ── Collapse state ──────────────────────────────────────────────────────
+  const [collapsed, setCollapsed] = useState(() => defaultGroupCollapsed(group));
+  const [userToggled, setUserToggled] = useState(false);
+
+  // If card count changes to/from zero and user hasn't touched this column,
+  // re-evaluate the auto-default.
+  useEffect(() => {
+    if (!userToggled) {
+      setCollapsed(defaultGroupCollapsed(group));
+    }
+  }, [group, userToggled]);
+
+  const handleToggleCollapse = useCallback(() => {
+    setCollapsed((prev) => !prev);
+    setUserToggled(true);
+  }, []);
+
+  // ── Collapsed strip ─────────────────────────────────────────────────────
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={handleToggleCollapse}
+        aria-expanded={false}
+        aria-label={`Expand ${group.groupLabel} column (${group.cardCount} cards)`}
+        data-testid="board-group-column-collapsed"
+        data-group-key={group.groupKey}
+        className={cn(
+          'flex w-10 flex-shrink-0 flex-col items-center justify-start gap-2',
+          'rounded-[var(--radius,4px)] pt-3 pb-2',
+          'cursor-pointer',
+          'transition-colors duration-150',
+          'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+          'hover:opacity-80',
+        )}
+        style={{ backgroundColor: 'var(--bg-1)', border: '1px solid var(--line-1)' }}
+      >
+        <ChevronRight
+          size={12}
+          aria-hidden
+          style={{ color: 'var(--ink-3)', flexShrink: 0 }}
+        />
+        <span
+          className="planning-mono rounded px-1 text-[9px]"
+          style={{ backgroundColor: 'var(--bg-2)', color: 'var(--ink-3)', border: '1px solid var(--line-2)', flexShrink: 0 }}
+          aria-label={`${group.cardCount} cards`}
+        >
+          {group.cardCount}
+        </span>
+        <span
+          className="planning-caps text-[10px]"
+          style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', color: 'var(--ink-3)' }}
+        >
+          {group.groupLabel}
+        </span>
+      </button>
+    );
+  }
+
+  // ── Expanded column ─────────────────────────────────────────────────────
   return (
     <div
       className="flex min-w-[260px] max-w-[340px] flex-1 flex-col gap-2"
@@ -435,7 +512,7 @@ const BoardGroupColumn = memo(function BoardGroupColumn({
           id={headingId}
           role="heading"
           aria-level={3}
-          className="planning-caps text-[10px] text-[color:var(--ink-3)] m-0"
+          className="planning-caps text-[10px] text-[color:var(--ink-3)] m-0 flex-1 truncate"
         >
           {group.groupLabel}
         </h3>
@@ -446,6 +523,23 @@ const BoardGroupColumn = memo(function BoardGroupColumn({
         >
           {group.cardCount}
         </span>
+        {/* Collapse toggle */}
+        <button
+          type="button"
+          onClick={handleToggleCollapse}
+          aria-expanded={true}
+          aria-label={`Collapse ${group.groupLabel} column`}
+          className={cn(
+            'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded',
+            'transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+          )}
+          style={{ color: 'var(--ink-4)' }}
+        >
+          <ChevronDown
+            size={11}
+            aria-hidden
+          />
+        </button>
       </div>
 
       {/* Cards — virtualized when > VIRTUALIZE_THRESHOLD */}

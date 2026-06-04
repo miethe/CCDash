@@ -25,6 +25,12 @@ interface CommandCenterToolbarProps {
   loading?: boolean;
   /** T4-014: current pageSize; renders a selector when provided. */
   pageSize?: CommandCenterPageSize;
+  /**
+   * Which view mode buttons to show as interactive. Modes not listed are
+   * rendered disabled with a tooltip explaining unavailability. Defaults to
+   * all three modes so single-project behaviour is unchanged.
+   */
+  availableViewModes?: CommandCenterViewMode[];
   onFiltersChange: (filters: CommandCenterFilters) => void;
   onViewModeChange: (viewMode: CommandCenterViewMode) => void;
   onRefresh: () => void;
@@ -41,12 +47,15 @@ function updateFilter(
   return { ...filters, ...patch };
 }
 
+const ALL_VIEW_MODES: CommandCenterViewMode[] = ['list', 'cards', 'board'];
+
 export function CommandCenterToolbar({
   filters,
   viewMode,
   total,
   loading = false,
   pageSize,
+  availableViewModes = ALL_VIEW_MODES,
   onFiltersChange,
   onViewModeChange,
   onRefresh,
@@ -139,23 +148,31 @@ export function CommandCenterToolbar({
             ['list', List, 'List'],
             ['cards', LayoutGrid, 'Cards'],
             ['board', Columns3, 'Board'],
-          ] as const).map(([mode, Icon, label]) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => onViewModeChange(mode)}
-              className={[
-                'inline-flex h-[24px] items-center gap-1 rounded-[var(--radius-sm)] px-2 transition-colors',
-                viewMode === mode
-                  ? 'bg-[color:var(--bg-3)] text-[color:var(--ink-0)]'
-                  : 'text-[color:var(--ink-3)] hover:text-[color:var(--ink-1)]',
-              ].join(' ')}
-              aria-pressed={viewMode === mode}
-            >
-              <Icon size={12} aria-hidden />
-              {label}
-            </button>
-          ))}
+          ] as const).map(([mode, Icon, label]) => {
+            const isAvailable = availableViewModes.includes(mode);
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={isAvailable ? () => onViewModeChange(mode) : undefined}
+                disabled={!isAvailable}
+                title={isAvailable ? undefined : 'Not available in portfolio view'}
+                className={[
+                  'inline-flex h-[24px] items-center gap-1 rounded-[var(--radius-sm)] px-2 transition-colors',
+                  !isAvailable
+                    ? 'cursor-not-allowed opacity-35 text-[color:var(--ink-4)]'
+                    : viewMode === mode
+                      ? 'bg-[color:var(--bg-3)] text-[color:var(--ink-0)]'
+                      : 'text-[color:var(--ink-3)] hover:text-[color:var(--ink-1)]',
+                ].join(' ')}
+                aria-pressed={isAvailable ? viewMode === mode : undefined}
+                aria-disabled={!isAvailable}
+              >
+                <Icon size={12} aria-hidden />
+                {label}
+              </button>
+            );
+          })}
         </div>
         <BtnGhost size="sm" onClick={onRefresh} disabled={loading} aria-label="Refresh command center">
           <RefreshCw size={13} aria-hidden className={loading ? 'animate-spin' : undefined} />

@@ -50,7 +50,9 @@ import { MultiProjectSessionBoard } from './MultiProjectSessionBoard';
 import { MultiProjectWorkItemCard } from './MultiProjectWorkItemCard';
 import { MultiProjectDetailRail, type DetailTarget } from './MultiProjectDetailRail';
 import { CommandCenterToolbar } from './CommandCenterToolbar';
-import type { CommandCenterFilters } from './CommandCenterToolbar';
+import type { CommandCenterFilters, CommandCenterViewMode } from './CommandCenterToolbar';
+import { CommandCenterBoardView } from './CommandCenterBoardView';
+import { commandCenterItemKey } from './commandCenterUtils';
 
 // ── Viewport-defer hook (reuse Phase 4 IntersectionObserver pattern) ──────────
 
@@ -572,6 +574,16 @@ export function MultiProjectCommandCenter({
   const [commandOverrides] = useState<Record<string, string>>({});
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [detailTarget, setDetailTarget] = useState<DetailTarget>(null);
+  // View mode for the work item section. Cards mode is not available in
+  // portfolio view (toolbar button renders disabled via availableViewModes).
+  const [workItemViewMode, setWorkItemViewMode] = useState<CommandCenterViewMode>('list');
+
+  const handleWorkItemViewModeChange = useCallback(
+    (mode: CommandCenterViewMode) => {
+      setWorkItemViewMode(mode);
+    },
+    [],
+  );
   // MPCC-505: Capture the element that had focus when the drawer opens so
   // focus can be returned on close, even without an explicit trigger ref.
   const lastFocusedRef = useRef<HTMLElement | null>(null);
@@ -773,11 +785,12 @@ export function MultiProjectCommandCenter({
         {/* Toolbar (MPCC-501) — shared with V1 toolbar for consistent UX */}
         <CommandCenterToolbar
           filters={toolbarFilters}
-          viewMode="list"
+          viewMode={workItemViewMode}
           total={totalWorkItems}
           loading={ccLoading}
+          availableViewModes={['list', 'board']}
           onFiltersChange={handleToolbarFiltersChange}
-          onViewModeChange={() => void 0}
+          onViewModeChange={handleWorkItemViewModeChange}
           onRefresh={() => { void ccRefetch(); void sbRefetch(); }}
           onHideDoneChange={handleHideDoneChange}
         />
@@ -943,8 +956,41 @@ export function MultiProjectCommandCenter({
             </div>
           )}
 
-          {/* Work item list */}
-          {ccData && (
+          {/* Work item list / board */}
+          {ccData && workItemViewMode === 'board' && (
+            <CommandCenterBoardView
+              items={ccData.items.map((wi) => wi.item)}
+              commandOverrides={Object.fromEntries(
+                ccData.items.map((wi) => {
+                  const k = `${wi.project.projectId}::${wi.item.feature.featureId}`;
+                  return [commandCenterItemKey(wi.item), commandOverrides[k] ?? wi.item.command?.command ?? ''];
+                }),
+              )}
+              onCopyCommand={copyCommand}
+              onOpenLaunch={(featureId) => {
+                trackCommandCenterAction({ action: 'open_launch_sheet', featureId, viewMode: 'board' });
+              }}
+              onOpenExecution={(featureId) => {
+                trackCommandCenterAction({ action: 'open_execution_workbench', featureId, viewMode: 'board' });
+                // Find projectId for the item to pass to the parent handler.
+                const wi = ccData.items.find((w) => w.item.feature.featureId === featureId);
+                if (wi) onOpenExecution?.(featureId, wi.project.projectId);
+              }}
+              onOpenPlan={(path) => {
+                trackCommandCenterAction({ action: 'open_plan', viewMode: 'board' });
+                onOpenPlan?.(path);
+              }}
+              onOpenDetail={(featureId) => {
+                const wi = ccData.items.find((w) => w.item.feature.featureId === featureId);
+                openFeatureDetail(featureId, wi?.project.projectId ?? '');
+              }}
+              onOpenPullRequest={(url) => {
+                trackCommandCenterAction({ action: 'open_pr', hasPullRequest: Boolean(url), viewMode: 'board' });
+                if (url) window.open(url, '_blank', 'noopener,noreferrer');
+              }}
+            />
+          )}
+          {ccData && workItemViewMode === 'list' && (
             <WorkItemList
               items={ccData.items}
               commandOverrides={commandOverrides}

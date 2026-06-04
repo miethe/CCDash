@@ -1,11 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertCircle, ClipboardList, ExternalLink, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
+import { AlertCircle, ChevronRight, ClipboardList, ExternalLink, FileText, GitBranch, HelpCircle, LayoutGrid, Layers, Link2, RefreshCw, Settings2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type {
-  PlanningAgentSessionBoard as PlanningAgentSessionBoardData,
   PlanningBoardGroup,
   PlanningAgentSessionCard,
   PlanningBoardGroupingMode,
@@ -716,6 +715,15 @@ const COLUMN_VIRTUALIZE_THRESHOLD = 250;
 /** Estimated height of a single session card in px (conservative upper bound). */
 const CARD_ESTIMATE_PX = 140;
 
+// ── Collapse auto-default keys ────────────────────────────────────────────────
+
+/**
+ * When grouping by state, columns with these group keys start collapsed by
+ * default (unless the column is highlighted via URL ?highlight= or the user
+ * has manually toggled it).
+ */
+const DONE_STATE_KEYS = new Set(['completed', 'done', 'cancelled']);
+
 // ── Board column ──────────────────────────────────────────────────────────────
 
 interface BoardColumnProps {
@@ -739,6 +747,18 @@ interface BoardColumnProps {
   isDraggable?: boolean;
 }
 
+/**
+ * Returns the auto-collapse default for a column (before any manual override).
+ * Columns start collapsed when they represent a done/completed state OR have
+ * zero cards. A URL-highlighted column always starts expanded regardless.
+ */
+function defaultCollapsed(group: PlanningBoardGroup, isUrlHighlighted: boolean): boolean {
+  if (isUrlHighlighted) return false;
+  if (group.cards.length === 0) return true;
+  if (group.groupType === 'state' && DONE_STATE_KEYS.has(group.groupKey)) return true;
+  return false;
+}
+
 const BoardColumn = memo(function BoardColumn({
   group,
   filterText,
@@ -752,6 +772,25 @@ const BoardColumn = memo(function BoardColumn({
   isUrlHighlighted,
   isDraggable = false,
 }: BoardColumnProps) {
+  // ── Collapse state ────────────────────────────────────────────────────────
+  const [collapsed, setCollapsed] = useState(() => defaultCollapsed(group, isUrlHighlighted));
+  // Track whether the user has manually toggled so auto-rules no longer apply.
+  const [userToggled, setUserToggled] = useState(false);
+
+  // When isUrlHighlighted flips to true (e.g. navigation), force-expand unless
+  // the user has already made an explicit choice.
+  useEffect(() => {
+    if (isUrlHighlighted && !userToggled) {
+      setCollapsed(false);
+    }
+  }, [isUrlHighlighted, userToggled]);
+
+  const handleToggleCollapse = useCallback(() => {
+    setCollapsed((prev) => !prev);
+    setUserToggled(true);
+  }, []);
+
+  // ── Filter + virtualization ───────────────────────────────────────────────
   const lowerFilter = filterText.toLowerCase();
   const visible = filterText
     ? group.cards.filter(
@@ -770,18 +809,64 @@ const BoardColumn = memo(function BoardColumn({
   const isHighlighted = isColumnHighlighted || isUrlHighlighted;
 
   // T4-004: Virtualise the card list when above the threshold.
-  const shouldVirtualize = visible.length > COLUMN_VIRTUALIZE_THRESHOLD;
+  // Skip virtualizer entirely when collapsed (perf win — no DOM, no scroll).
+  const shouldVirtualize = !collapsed && visible.length > COLUMN_VIRTUALIZE_THRESHOLD;
   const cardListRef = useRef<HTMLDivElement>(null);
   const gapPx = compact ? 6 : 8;
 
   const virtualizer = useVirtualizer({
-    count: visible.length,
+    count: collapsed ? 0 : visible.length,
     getScrollElement: () => cardListRef.current,
     estimateSize: () => CARD_ESTIMATE_PX + gapPx,
     overscan: 5,
     enabled: shouldVirtualize,
   });
 
+  // ── Collapsed strip rendering ─────────────────────────────────────────────
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={handleToggleCollapse}
+        aria-expanded={false}
+        aria-label={`Expand ${group.groupLabel} column (${group.cardCount} cards)`}
+        data-testid="board-column-collapsed"
+        data-group-key={group.groupKey}
+        className={cn(
+          'flex w-10 flex-shrink-0 flex-col items-center justify-start gap-2',
+          'rounded-[var(--radius)] border bg-[color:var(--bg-1)]',
+          'cursor-pointer pt-3 pb-2',
+          'transition-[border-color,box-shadow,background-color] duration-200 motion-reduce:transition-none',
+          'hover:bg-[color:var(--bg-2)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+          isHighlighted
+            ? 'border-[color:color-mix(in_oklab,var(--brand)_50%,var(--line-1))] shadow-[0_0_0_1px_color-mix(in_oklab,var(--brand)_15%,transparent)]'
+            : 'border-[color:var(--line-1)]',
+        )}
+      >
+        <ChevronRight
+          size={12}
+          aria-hidden
+          className="flex-shrink-0 text-[color:var(--ink-3)]"
+        />
+        <span
+          className={cn(
+            'planning-mono flex-shrink-0 rounded px-1 py-0.5 text-[9px]',
+            'border border-[color:var(--line-2)] bg-[color:var(--bg-3)] text-[color:var(--ink-3)]',
+          )}
+        >
+          {group.cardCount}
+        </span>
+        <span
+          className="planning-mono text-[10px] font-medium text-[color:var(--ink-2)]"
+          style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+        >
+          {group.groupLabel}
+        </span>
+      </button>
+    );
+  }
+
+  // ── Expanded column rendering ─────────────────────────────────────────────
   return (
     <div
       className={cn(
@@ -793,6 +878,8 @@ const BoardColumn = memo(function BoardColumn({
           : 'border-[color:var(--line-1)]',
         isUrlHighlighted && 'shadow-[0_0_0_2px_color-mix(in_oklab,var(--brand)_25%,transparent)]',
       )}
+      data-testid="board-column-expanded"
+      data-group-key={group.groupKey}
     >
       <div
         className={cn(
@@ -832,14 +919,34 @@ const BoardColumn = memo(function BoardColumn({
           </span>
         )}
 
-        <span
-          className={cn(
-            'planning-mono ml-2 flex-shrink-0 rounded px-1.5 py-0.5 text-[10px]',
-            'border border-[color:var(--line-2)] bg-[color:var(--bg-3)] text-[color:var(--ink-2)]',
-          )}
-        >
-          {group.cardCount}
-        </span>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <span
+            className={cn(
+              'planning-mono rounded px-1.5 py-0.5 text-[10px]',
+              'border border-[color:var(--line-2)] bg-[color:var(--bg-3)] text-[color:var(--ink-2)]',
+            )}
+          >
+            {group.cardCount}
+          </span>
+          {/* Collapse toggle */}
+          <button
+            type="button"
+            onClick={handleToggleCollapse}
+            aria-expanded={true}
+            aria-label={`Collapse ${group.groupLabel} column`}
+            className={cn(
+              'flex h-5 w-5 items-center justify-center rounded',
+              'text-[color:var(--ink-4)] hover:bg-[color:var(--bg-3)] hover:text-[color:var(--ink-2)]',
+              'transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+            )}
+          >
+            <ChevronRight
+              size={11}
+              aria-hidden
+              className="rotate-90 transition-transform duration-150 motion-reduce:transition-none"
+            />
+          </button>
+        </div>
       </div>
 
       {/* T4-004: Virtualised card list for columns above the threshold. */}

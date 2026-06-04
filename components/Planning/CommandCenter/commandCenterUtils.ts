@@ -98,3 +98,22 @@ export function compactPath(path: string, max = 78): string {
   if (path.length <= max) return path;
   return `...${path.slice(-(max - 3))}`;
 }
+
+/**
+ * Returns true when a board bucket column should start collapsed by default.
+ *
+ * Auto-collapse rules:
+ *   - The "done" bucket always starts collapsed.
+ *   - Any bucket with zero items starts collapsed.
+ *
+ * Once the user manually toggles a column this helper is no longer consulted
+ * for that column — the userToggled guard in the component takes over.
+ */
+export function isBoardBucketCollapsedByDefault(
+  bucketId: CommandCenterBoardBucketId,
+  itemCount: number,
+): boolean {
+  if (itemCount === 0) return true;
+  if (bucketId === 'done') return true;
+  return false;
+}
