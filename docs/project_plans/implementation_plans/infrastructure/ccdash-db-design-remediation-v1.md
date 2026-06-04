@@ -57,6 +57,8 @@ commit_refs:
 - 3a8bef9
 - 0d69591
 pr_refs: []
+merge_commit: fb84be7
+merge_branch: main
 files_affected:
 - backend/project_manager.py
 - backend/tests/test_retention_prune.py
