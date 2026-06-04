@@ -87,8 +87,13 @@ logger = logging.getLogger(__name__)
 # SystemMetricsQueryService.
 _MAX_CONCURRENCY: int = getattr(config, "CCDASH_SYSTEM_METRICS_CONCURRENCY", 4)
 
-# Active-session window — aligns with the parser classification constant.
-_ACTIVE_SESSION_WINDOW: int = getattr(config, "CCDASH_LIVE_AGENTS_WINDOW_SECONDS", 600)
+# Active-session window for the portfolio board.  Wider than the 600s live-agents
+# window so recently-indexed sessions (hours / days old) appear in the aggregate
+# board while multi-month phantom rows are still excluded.  Defaults to 30 days.
+# NOTE: the single-project board is intentionally NOT affected by this constant.
+_ACTIVE_SESSION_WINDOW: int = getattr(
+    config, "CCDASH_PLANNING_PORTFOLIO_ACTIVE_WINDOW_SECONDS", 30 * 24 * 60 * 60
+)
 
 # Valid grouping keys (V1 keys + aggregate-specific "project" key).
 _VALID_GROUPINGS = frozenset({"state", "feature", "phase", "agent", "model", "project"})
@@ -240,6 +245,8 @@ async def _build_session_project_summary(
     warnings: list[str],
     semaphore: asyncio.Semaphore,
     display_metadata: ProjectDisplayMetadata,
+    *,
+    window_seconds: int | None = None,
 ) -> ProjectSummary:
     """Build a ``ProjectSummary`` for a project in the session board context.
 
@@ -260,6 +267,7 @@ async def _build_session_project_summary(
         is_stale: bool | None = None
         error_msg: str | None = None
 
+        effective_window = window_seconds if window_seconds is not None else _ACTIVE_SESSION_WINDOW
         if partial and not active_card_count:
             error_msg = "; ".join(warnings) if warnings else "Project session data unavailable"
         else:
@@ -267,7 +275,7 @@ async def _build_session_project_summary(
                 sessions_repo = ports.storage.sessions()
                 active_sessions = await sessions_repo.count_active(
                     project.id,
-                    window_seconds=_ACTIVE_SESSION_WINDOW,
+                    window_seconds=effective_window,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
@@ -628,6 +636,7 @@ class MultiProjectActiveSessionBoardQueryService:
                     warnings=warnings_map.get(proj.id, []),
                     semaphore=semaphore,
                     display_metadata=display_map[proj.id],
+                    window_seconds=effective_window,
                 )
                 for proj in projects
             ]
@@ -775,6 +784,7 @@ class MultiProjectActiveSessionBoardQueryService:
                 warnings=warnings_map.get(proj.id, []),
                 semaphore=semaphore,
                 display_metadata=display_map[proj.id],
+                window_seconds=effective_window,
             )
             for proj in projects
         ]

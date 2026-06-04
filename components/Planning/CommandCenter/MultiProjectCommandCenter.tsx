@@ -19,6 +19,10 @@
  * AC-1 (portfolio default, ≤2 above-fold requests): rollup + capabilities are
  * fetched eagerly.  The session board and work item list are viewport-deferred
  * via IntersectionObserver (reuses the useInView pattern from PlanningCommandCenter).
+ *
+ * Issue 2: hideDone defaults to true (URL-addressable via ?hide_done=false).
+ * Issue 3: default sort is 'last_activity'.
+ * Issue 5: portfolio overview items are clickable (<button> elements).
  */
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -32,6 +36,7 @@ import {
   usePortfolioRollupQuery,
   type PortfolioRollupDTO,
   type PortfolioProject,
+  type PortfolioNextWorkItem,
 } from '@/services/queries/planning';
 import {
   useMultiProjectCommandCenterState,
@@ -99,6 +104,8 @@ interface AttentionLensProps {
   accentClass: string;
   /** Tailwind bg token class for the badge. */
   bgClass: string;
+  /** When provided, each project entry is rendered as a clickable button. */
+  onSelectProject?: (projectId: string) => void;
 }
 
 function AttentionLens({
@@ -108,6 +115,7 @@ function AttentionLens({
   projectDisplayMap,
   accentClass,
   bgClass,
+  onSelectProject,
 }: AttentionLensProps) {
   // Resilience-by-default: guard against a future contract drift where the
   // backend returns a non-array (e.g. a count int) for any lens field.
@@ -137,8 +145,90 @@ function AttentionLens({
       ) : (
         <ul className="space-y-0.5">
           {ids.slice(0, 5).map((pid) => (
-            <li key={pid} className="planning-mono truncate text-[10.5px] text-[color:var(--ink-3)]">
-              {projectDisplayMap.get(pid) ?? pid}
+            <li key={pid}>
+              {onSelectProject ? (
+                <button
+                  type="button"
+                  onClick={() => onSelectProject(pid)}
+                  className="planning-mono truncate text-[10.5px] text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--ink-0)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)] rounded-[var(--radius-sm)] px-0.5 -mx-0.5 w-full text-left"
+                >
+                  {projectDisplayMap.get(pid) ?? pid}
+                </button>
+              ) : (
+                <span className="planning-mono truncate text-[10.5px] text-[color:var(--ink-3)]">
+                  {projectDisplayMap.get(pid) ?? pid}
+                </span>
+              )}
+            </li>
+          ))}
+          {count > 5 && (
+            <li className="planning-mono text-[10.5px] text-[color:var(--ink-4)]">
+              +{count - 5} more
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ── Next Work lens (featureId + projectId items) ───────────────────────────────
+
+interface NextWorkLensProps {
+  items: PortfolioNextWorkItem[];
+  projectDisplayMap: Map<string, string>;
+  /** Called when the user clicks a next-work entry. featureId + optional projectId. */
+  onOpenFeature?: (featureId: string, projectId: string) => void;
+}
+
+function NextWorkLens({ items, projectDisplayMap, onOpenFeature }: NextWorkLensProps) {
+  const safeItems = Array.isArray(items) ? items : [];
+  const count = safeItems.length;
+
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-1.5 rounded-[var(--radius-sm)] border p-3',
+        'border-[color:var(--line-1)]',
+      )}
+      style={{ minWidth: 0 }}
+    >
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-[color:var(--ink-2)]">
+        <ArrowRight size={12} aria-hidden />
+        <span>Next Work</span>
+        {count > 0 && (
+          <span className="ml-auto rounded px-1.5 text-[10px] planning-mono bg-[color:var(--bg-2)] text-[color:var(--ink-2)]">
+            {count}
+          </span>
+        )}
+      </div>
+      {count === 0 ? (
+        <p className="planning-mono text-[10.5px] text-[color:var(--ink-4)]">none</p>
+      ) : (
+        <ul className="space-y-0.5">
+          {safeItems.slice(0, 5).map((it) => (
+            <li key={it.featureId}>
+              {onOpenFeature && it.projectId ? (
+                // Resilience: only render as a button when projectId is present.
+                <button
+                  type="button"
+                  onClick={() => onOpenFeature(it.featureId, it.projectId!)}
+                  className="planning-mono truncate text-[10.5px] text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--ink-0)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)] rounded-[var(--radius-sm)] px-0.5 -mx-0.5 w-full text-left"
+                  title={`Open feature ${it.featureId}${it.projectId ? ` · ${projectDisplayMap.get(it.projectId) ?? it.projectId}` : ''}`}
+                >
+                  {it.featureId}
+                  {it.projectId && (
+                    <span className="text-[color:var(--ink-4)]">
+                      {' '}· {projectDisplayMap.get(it.projectId) ?? it.projectId}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                // Non-clickable fallback when projectId is missing (resilience-by-default).
+                <span className="planning-mono truncate text-[10.5px] text-[color:var(--ink-3)]">
+                  {it.featureId}
+                </span>
+              )}
             </li>
           ))}
           {count > 5 && (
@@ -155,24 +245,32 @@ function AttentionLens({
 interface PortfolioAttentionLensesProps {
   rollup: PortfolioRollupDTO | undefined;
   isLoading: boolean;
+  onSelectProject: (projectId: string) => void;
+  onOpenFeature: (featureId: string, projectId: string) => void;
 }
 
 /**
  * P5-001 AC-1: Four attention lenses rendered above fold.
  * Data from portfolioRollup.attention + per-project statusCounts/tokenTotal.
  * Every field has a defined fallback (missing → empty/zero).
+ * Issue 5: project entries are clickable buttons.
  */
-function PortfolioAttentionLenses({ rollup, isLoading }: PortfolioAttentionLensesProps) {
+function PortfolioAttentionLenses({
+  rollup,
+  isLoading,
+  onSelectProject,
+  onOpenFeature,
+}: PortfolioAttentionLensesProps) {
   // Build a display-name map from rollup projects for resolving project IDs.
   const projectDisplayMap = new Map<string, string>(
     (rollup?.projects ?? []).map((p: PortfolioProject) => [p.projectId, p.display || p.projectId]),
   );
 
   const attention = rollup?.attention ?? {
-    activeNow: [],
-    changedRecently: [],
-    needsAttention: [],
-    nextWork: [],
+    activeNow: [] as string[],
+    changedRecently: [] as string[],
+    needsAttention: [] as string[],
+    nextWork: [] as PortfolioNextWorkItem[],
   };
 
   if (isLoading && !rollup) {
@@ -202,6 +300,7 @@ function PortfolioAttentionLenses({ rollup, isLoading }: PortfolioAttentionLense
         projectDisplayMap={projectDisplayMap}
         accentClass="text-[color:var(--ok)]"
         bgClass="bg-[color:color-mix(in_oklab,var(--ok)_12%,var(--bg-1))]"
+        onSelectProject={onSelectProject}
       />
       <AttentionLens
         icon={<Clock size={12} aria-hidden />}
@@ -210,6 +309,7 @@ function PortfolioAttentionLenses({ rollup, isLoading }: PortfolioAttentionLense
         projectDisplayMap={projectDisplayMap}
         accentClass="text-[color:var(--accent)]"
         bgClass="bg-[color:color-mix(in_oklab,var(--accent)_12%,var(--bg-1))]"
+        onSelectProject={onSelectProject}
       />
       <AttentionLens
         icon={<TriangleAlert size={12} aria-hidden />}
@@ -218,14 +318,12 @@ function PortfolioAttentionLenses({ rollup, isLoading }: PortfolioAttentionLense
         projectDisplayMap={projectDisplayMap}
         accentClass="text-[color:var(--warn)]"
         bgClass="bg-[color:color-mix(in_oklab,var(--warn)_12%,var(--bg-1))]"
+        onSelectProject={onSelectProject}
       />
-      <AttentionLens
-        icon={<ArrowRight size={12} aria-hidden />}
-        label="Next Work"
-        projectIds={attention.nextWork}
+      <NextWorkLens
+        items={attention.nextWork}
         projectDisplayMap={projectDisplayMap}
-        accentClass="text-[color:var(--ink-2)]"
-        bgClass="bg-[color:var(--bg-2)]"
+        onOpenFeature={onOpenFeature}
       />
     </div>
   );
@@ -233,12 +331,23 @@ function PortfolioAttentionLenses({ rollup, isLoading }: PortfolioAttentionLense
 
 // ── Per-project token summary strip ───────────────────────────────────────────
 
+interface PortfolioProjectStripProps {
+  projects: PortfolioProject[];
+  selectedProjectIds: string[];
+  onSelectProject: (projectId: string) => void;
+}
+
 /**
  * Compact strip showing per-project active-sessions count and total tokens.
- * Rendered below the attention lenses, above the viewport-deferred sections.
+ * Issue 5: each project chip is a <button> with aria-pressed.
+ * Clicking the already-selected project clears to all (toggle behaviour).
  * Resilience: activeSessions/tokenTotal default to 0 when absent.
  */
-function PortfolioProjectStrip({ projects }: { projects: PortfolioProject[] }) {
+function PortfolioProjectStrip({
+  projects,
+  selectedProjectIds,
+  onSelectProject,
+}: PortfolioProjectStripProps) {
   if (projects.length === 0) return null;
   return (
     <div
@@ -246,50 +355,65 @@ function PortfolioProjectStrip({ projects }: { projects: PortfolioProject[] }) {
       role="list"
       aria-label="Per-project summaries"
     >
-      {projects.map((p) => (
-        <div
-          key={p.projectId}
-          role="listitem"
-          className={cn(
-            'flex items-center gap-2 rounded-[var(--radius-sm)] border px-2.5 py-1.5',
-            'border-[color:var(--line-1)] bg-[color:var(--bg-2)]',
-            p.needsAttention && 'border-[color:color-mix(in_oklab,var(--warn)_40%,var(--line-1))]',
-          )}
-          style={{ minWidth: 0 }}
-        >
-          <span className="planning-mono max-w-[120px] truncate text-[11px] text-[color:var(--ink-2)]">
-            {p.display || p.projectId}
-          </span>
-          {(p.activeSessions ?? 0) > 0 && (
-            <span className="planning-mono text-[10px] text-[color:var(--ok)]">
-              {p.activeSessions} active
+      {projects.map((p) => {
+        const isSelected = selectedProjectIds.includes(p.projectId);
+        return (
+          <button
+            key={p.projectId}
+            type="button"
+            role="listitem"
+            aria-pressed={isSelected}
+            onClick={() => onSelectProject(p.projectId)}
+            className={cn(
+              'flex items-center gap-2 rounded-[var(--radius-sm)] border px-2.5 py-1.5 transition-colors',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand)] focus-visible:ring-offset-1',
+              isSelected
+                ? 'border-[color:var(--line-2)] bg-[color:var(--bg-3)]'
+                : 'border-[color:var(--line-1)] bg-[color:var(--bg-2)] hover:border-[color:var(--line-2)] hover:bg-[color:var(--bg-3)]',
+              p.needsAttention && 'border-[color:color-mix(in_oklab,var(--warn)_40%,var(--line-1))]',
+            )}
+            style={{ minWidth: 0 }}
+            title={`${p.display || p.projectId}${isSelected ? ' · click to deselect' : ' · click to filter'}`}
+          >
+            <span className="planning-mono max-w-[120px] truncate text-[11px] text-[color:var(--ink-2)]">
+              {p.display || p.projectId}
             </span>
-          )}
-          {(p.tokenTotal ?? 0) > 0 && (
-            <span className="planning-mono text-[10px] text-[color:var(--ink-4)]">
-              {(p.tokenTotal / 1_000_000).toFixed(1)}M tok
-            </span>
-          )}
-        </div>
-      ))}
+            {(p.activeSessions ?? 0) > 0 && (
+              <span className="planning-mono text-[10px] text-[color:var(--ok)]">
+                {p.activeSessions} active
+              </span>
+            )}
+            {(p.tokenTotal ?? 0) > 0 && (
+              <span className="planning-mono text-[10px] text-[color:var(--ink-4)]">
+                {(p.tokenTotal / 1_000_000).toFixed(1)}M tok
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Map URL state filters into CommandCenterFilters for the toolbar. */
+/**
+ * Map URL state filters into CommandCenterFilters for the toolbar.
+ * Issue 3: default sort is 'last_activity' (not 'priority').
+ */
 function toToolbarFilters(
   search: string | null,
   status: string | null,
   sort: string | null,
+  hideDone: boolean,
 ): CommandCenterFilters {
   return {
     q: search ?? '',
     status: status ?? '',
     phase: '',
-    sortBy: sort ?? 'priority',
+    sortBy: sort ?? 'last_activity',
     sortDirection: 'desc',
+    hideDone,
   };
 }
 
@@ -441,7 +565,7 @@ export function MultiProjectCommandCenter({
   className,
 }: MultiProjectCommandCenterProps) {
   const urlState = useMultiProjectCommandCenterState();
-  const { state, setProjectIds, setGroup, setSessionGrouping, setSelectedCardId, setModalFeatureId, setStatus, setSearch, setSort, setPage } = urlState;
+  const { state, setProjectIds, setGroup, setSessionGrouping, setSelectedCardId, setModalFeatureId, setStatus, setSearch, setSort, setPage, setHideDone } = urlState;
 
   // commandOverrides is read-only in this component (no edit UI for multi-project);
   // we use a const record so command values fall back to item.command?.command.
@@ -526,15 +650,21 @@ export function MultiProjectCommandCenter({
     }
   }, []);
 
+  /**
+   * Issue 5: handleProjectSelect — toggle behaviour.
+   * Clicking the already-selected project clears to all (setProjectIds([])).
+   * Clicking a different project sets the filter to [pid].
+   */
   const handleProjectSelect = useCallback(
-    (projectId: string | null) => {
-      if (projectId === null) {
+    (projectId: string) => {
+      if (state.projectIds.length === 1 && state.projectIds[0] === projectId) {
+        // Toggle off: clear to show all projects.
         setProjectIds([]);
       } else {
         setProjectIds([projectId]);
       }
     },
-    [setProjectIds],
+    [state.projectIds, setProjectIds],
   );
 
   const handleGroupSelect = useCallback(
@@ -603,9 +733,16 @@ export function MultiProjectCommandCenter({
     (filters: CommandCenterFilters) => {
       if (filters.q !== state.search) setSearch(filters.q || null);
       if (filters.status !== state.status) setStatus(filters.status || null);
-      if (filters.sortBy !== state.sort) setSort(filters.sortBy);
+      if (filters.sortBy !== (state.sort ?? 'last_activity')) setSort(filters.sortBy);
     },
     [state.search, state.status, state.sort, setSearch, setStatus, setSort],
+  );
+
+  const handleHideDoneChange = useCallback(
+    (hideDone: boolean) => {
+      setHideDone(hideDone);
+    },
+    [setHideDone],
   );
 
   // ── Pagination ───────────────────────────────────────────────────────────────
@@ -619,7 +756,8 @@ export function MultiProjectCommandCenter({
 
   const projectSummaries = ccData?.projectSummaries ?? sbData?.projectSummaries ?? [];
   const totalWorkItems = ccData?.pagination.total ?? 0;
-  const toolbarFilters = toToolbarFilters(state.search, state.status, state.sort);
+  // Issue 3: default sort fallback is 'last_activity', not 'priority'.
+  const toolbarFilters = toToolbarFilters(state.search, state.status, state.sort, state.hideDone);
 
   const detailCommandValue =
     detailTarget?.kind === 'workItem'
@@ -641,6 +779,7 @@ export function MultiProjectCommandCenter({
           onFiltersChange={handleToolbarFiltersChange}
           onViewModeChange={() => void 0}
           onRefresh={() => { void ccRefetch(); void sbRefetch(); }}
+          onHideDoneChange={handleHideDoneChange}
         />
 
         {/* Copy state banner */}
@@ -667,9 +806,18 @@ export function MultiProjectCommandCenter({
             portfolio overview
           </h2>
           <div className="space-y-3">
-            <PortfolioAttentionLenses rollup={rollupData} isLoading={rollupLoading} />
+            <PortfolioAttentionLenses
+              rollup={rollupData}
+              isLoading={rollupLoading}
+              onSelectProject={handleProjectSelect}
+              onOpenFeature={openFeatureDetail}
+            />
             {rollupData && rollupData.projects.length > 0 && (
-              <PortfolioProjectStrip projects={rollupData.projects} />
+              <PortfolioProjectStrip
+                projects={rollupData.projects}
+                selectedProjectIds={state.projectIds}
+                onSelectProject={handleProjectSelect}
+              />
             )}
           </div>
         </section>

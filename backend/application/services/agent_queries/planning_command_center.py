@@ -92,6 +92,7 @@ def _pcc_params(
     sort_direction: str = "desc",
     page: int = 1,
     page_size: int = 50,
+    hide_done: bool = False,
     **_: Any,
 ) -> dict[str, Any]:
     """Extract cache-key parameters for the V1 single-project command-center query.
@@ -113,6 +114,7 @@ def _pcc_params(
         "sort_direction": sort_direction,
         "page": page,
         "page_size": page_size,
+        "hide_done": hide_done,
     }
 
 
@@ -478,6 +480,7 @@ class PlanningCommandCenterQueryService:
         sort_direction: str = "desc",
         page: int = 1,
         page_size: int = 50,
+        hide_done: bool = False,
     ) -> PlanningCommandCenterPageDTO:
         scope = resolve_project_scope(context, ports, project_id_override)
         if scope is None:
@@ -505,6 +508,7 @@ class PlanningCommandCenterQueryService:
             worktree_state=worktree_state,
             pr_state=pr_state,
             launch_readiness=launch_readiness,
+            hide_done=hide_done,
         )
 
         partial = partial or had_build_errors
@@ -599,6 +603,7 @@ class PlanningCommandCenterQueryService:
         worktree_state: str | None = None,
         pr_state: str | None = None,
         launch_readiness: str | None = None,
+        hide_done: bool = False,
     ) -> tuple[list[PlanningCommandCenterItemDTO], list[PlanningCommandCenterItemDTO], bool]:
         """Build and filter work-item DTOs for an *explicit* project scope.
 
@@ -664,7 +669,7 @@ class PlanningCommandCenterQueryService:
             worktree_row = worktrees_by_feature.get(_feature_key(feature.id))
             item = await self._build_item(feature, docs, worktree_row)
             all_items.append(item)
-            if self._matches_filters(item, q, status, phase, artifact_type, worktree_state, pr_state, launch_readiness):
+            if self._matches_filters(item, q, status, phase, artifact_type, worktree_state, pr_state, launch_readiness, hide_done=hide_done):
                 filtered_items.append(item)
 
         return filtered_items, all_items, had_errors
@@ -806,7 +811,15 @@ class PlanningCommandCenterQueryService:
         worktree_state: str | None,
         pr_state: str | None,
         launch_readiness: str | None,
+        *,
+        hide_done: bool = False,
     ) -> bool:
+        if hide_done:
+            if (
+                item.status.raw_status.lower() in _TERMINAL_STATUSES
+                or item.status.effective_status.lower() in _TERMINAL_STATUSES
+            ):
+                return False
         query = str(q or "").strip().lower()
         if query:
             haystack = " ".join(
@@ -855,6 +868,17 @@ class PlanningCommandCenterQueryService:
                 return item.command.command if item.command is not None else ""
             if key == "name":
                 return item.feature.name.lower()
-            return str(item.last_activity.get("timestamp") or "")
+            # last_activity (catch-all): items with a timestamp sort before
+            # items without one, regardless of direction.
+            # Under desc (reverse=True):  (1, ts) > (0, "")  → timestamped first ✓
+            # Under asc  (reverse=False): we negate has_ts so (0, ts) < (1, "") and
+            #   timestamped items still precede no-timestamp items after sorting.
+            ts = str(item.last_activity.get("timestamp") or "").strip()
+            if reverse:
+                # desc: higher has_ts floats to top
+                return (1 if ts else 0, ts)
+            else:
+                # asc: lower key floats to top; negate has_ts so no-ts (key 1) sinks
+                return (0 if ts else 1, ts)
 
         return sorted(items, key=sort_key, reverse=reverse)

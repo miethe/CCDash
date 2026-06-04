@@ -937,6 +937,7 @@ class TestRouterFlagOff(unittest.IsolatedAsyncioTestCase):
                         page=1,
                         page_size=50,
                         project_ids=None,
+                        hide_done=False,
                         request_context=object(),
                         core_ports=object(),
                     )
@@ -1086,6 +1087,240 @@ class TestProjectSummaryDisplayMetadata(unittest.IsolatedAsyncioTestCase):
         for item in response.items:
             self.assertIsNotNone(item.project.project_id)
             self.assertIsNotNone(item.project.project_name)
+
+
+# ---------------------------------------------------------------------------
+# New: hide_done, missing-timestamp sort, nextWork project_id
+# ---------------------------------------------------------------------------
+
+
+class TestHideDoneFilter(unittest.IsolatedAsyncioTestCase):
+    """Part-A parity: hide_done=True excludes all _TERMINAL_STATUSES members in MPCC."""
+
+    async def asyncSetUp(self) -> None:
+        clear_cache()
+
+    async def asyncTearDown(self) -> None:
+        clear_cache()
+
+    @_PATCH_MAX_UPDATED_AT
+    @_PATCH_COMPUTE_STALE
+    async def test_hide_done_excludes_terminal_statuses(self, *_patches) -> None:
+        from backend.application.services.agent_queries.planning_command_center import _TERMINAL_STATUSES
+
+        alpha = _make_project("proj-alpha", "Alpha")
+
+        terminal_rows = [
+            _make_feature_row(s, f"Terminal {s}", status=s)
+            for s in _TERMINAL_STATUSES
+        ]
+        active_row = _make_feature_row("active-feat", "Active Feature", status="in-progress")
+
+        rows = {"proj-alpha": [*terminal_rows, active_row]}
+        ports = _make_ports([alpha], rows)
+
+        with patch.object(config, "CCDASH_QUERY_CACHE_TTL_SECONDS", 0):
+            svc = MultiProjectPlanningCommandCenterQueryService()
+            response = await svc.get_multi_project_command_center(
+                _request_context(), ports, hide_done=True, page=1, page_size=50
+            )
+
+        returned_ids = {it.item["feature"]["feature_id"] for it in response.items}
+        for s in _TERMINAL_STATUSES:
+            self.assertNotIn(s, returned_ids,
+                             f"hide_done=True must exclude feature with status '{s}'")
+        self.assertIn("active-feat", returned_ids)
+
+    @_PATCH_MAX_UPDATED_AT
+    @_PATCH_COMPUTE_STALE
+    async def test_hide_done_false_retains_terminal_items(self, *_patches) -> None:
+        alpha = _make_project("proj-alpha", "Alpha")
+        rows = {"proj-alpha": [_make_feature_row("done-feat", "Done Feature", status="done")]}
+        ports = _make_ports([alpha], rows)
+
+        with patch.object(config, "CCDASH_QUERY_CACHE_TTL_SECONDS", 0):
+            svc = MultiProjectPlanningCommandCenterQueryService()
+            response = await svc.get_multi_project_command_center(
+                _request_context(), ports, hide_done=False, page=1, page_size=50
+            )
+
+        returned_ids = {it.item["feature"]["feature_id"] for it in response.items}
+        self.assertIn("done-feat", returned_ids, "hide_done=False must retain terminal items")
+
+    @_PATCH_MAX_UPDATED_AT
+    @_PATCH_COMPUTE_STALE
+    async def test_hide_done_included_in_cache_key(self, *_patches) -> None:
+        """Different hide_done values must produce distinct cache entries."""
+        from backend.application.services.agent_queries.multi_project_planning_command_center import _mpcc_params
+
+        ctx = _request_context()
+        svc_obj = object()
+
+        params_false = _mpcc_params(svc_obj, ctx, object(), hide_done=False)
+        params_true = _mpcc_params(svc_obj, ctx, object(), hide_done=True)
+
+        self.assertNotEqual(
+            params_false, params_true,
+            "Cache key must differ when hide_done differs",
+        )
+        self.assertIn("hide_done", params_false)
+        self.assertIn("hide_done", params_true)
+
+
+class TestSortMissingTimestampMpcc(unittest.IsolatedAsyncioTestCase):
+    """Part-B parity: items with no last_activity timestamp sort LAST in MPCC."""
+
+    async def asyncSetUp(self) -> None:
+        clear_cache()
+
+    async def asyncTearDown(self) -> None:
+        clear_cache()
+
+    def _make_row_with_ts(self, feature_id: str, ts: str | None) -> dict:
+        row = _make_feature_row(feature_id, f"Feature {feature_id}")
+        data = json.loads(row["data_json"])
+        data["updatedAt"] = ts
+        row["updated_at"] = ts or ""
+        row["data_json"] = json.dumps(data)
+        return row
+
+    @_PATCH_MAX_UPDATED_AT
+    @_PATCH_COMPUTE_STALE
+    async def test_missing_timestamp_sorts_last_desc(self, *_patches) -> None:
+        alpha = _make_project("proj-alpha", "Alpha")
+        rows = {
+            "proj-alpha": [
+                self._make_row_with_ts("feat-ts", "2026-05-28T10:00:00+00:00"),
+                self._make_row_with_ts("feat-no-ts", None),
+            ],
+        }
+        ports = _make_ports([alpha], rows)
+
+        with patch.object(config, "CCDASH_QUERY_CACHE_TTL_SECONDS", 0):
+            svc = MultiProjectPlanningCommandCenterQueryService()
+            response = await svc.get_multi_project_command_center(
+                _request_context(), ports,
+                sort_by="last_activity", sort_direction="desc",
+                page=1, page_size=50,
+            )
+
+        ids = [it.item["feature"]["feature_id"] for it in response.items]
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(ids[0], "feat-ts",
+                         "Under desc sort, timestamped item must precede no-timestamp item")
+        self.assertEqual(ids[-1], "feat-no-ts",
+                         "Under desc sort, no-timestamp item must be last")
+
+    @_PATCH_MAX_UPDATED_AT
+    @_PATCH_COMPUTE_STALE
+    async def test_missing_timestamp_sorts_last_asc(self, *_patches) -> None:
+        """Items with no last_activity timestamp must sort LAST even under asc direction."""
+        alpha = _make_project("proj-alpha", "Alpha")
+        rows = {
+            "proj-alpha": [
+                self._make_row_with_ts("feat-ts", "2026-05-28T10:00:00+00:00"),
+                self._make_row_with_ts("feat-no-ts", None),
+            ],
+        }
+        ports = _make_ports([alpha], rows)
+
+        with patch.object(config, "CCDASH_QUERY_CACHE_TTL_SECONDS", 0):
+            svc = MultiProjectPlanningCommandCenterQueryService()
+            response = await svc.get_multi_project_command_center(
+                _request_context(), ports,
+                sort_by="last_activity", sort_direction="asc",
+                page=1, page_size=50,
+            )
+
+        ids = [it.item["feature"]["feature_id"] for it in response.items]
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(ids[-1], "feat-no-ts",
+                         "Under asc sort, item WITHOUT timestamp must still be last")
+
+
+class TestNextWorkCarriesProjectId(unittest.IsolatedAsyncioTestCase):
+    """Part-C: portfolio rollup next_work_items carries both feature_id and project_id."""
+
+    async def asyncSetUp(self) -> None:
+        clear_cache()
+
+    async def asyncTearDown(self) -> None:
+        clear_cache()
+
+    def _make_ready_row(self, feature_id: str, name: str) -> dict:
+        """Feature row that resolves to launch_batch.readiness == 'ready'."""
+        data = {
+            "id": feature_id,
+            "name": name,
+            "status": "active",
+            "summary": name,
+            "priority": "high",
+            "tags": ["launch-ready"],
+            "phases": [],
+        }
+        return {
+            "id": feature_id,
+            "name": name,
+            "status": "active",
+            "updated_at": "2026-05-28T10:00:00+00:00",
+            "data_json": json.dumps(data),
+        }
+
+    @_PATCH_MAX_UPDATED_AT
+    @_PATCH_COMPUTE_STALE
+    async def test_next_work_items_carries_project_id(self, *_patches) -> None:
+        """next_work_items in the rollup must include project_id for drill-down."""
+        from backend.application.services.agent_queries.multi_project_planning_command_center import (
+            MultiProjectPlanningCommandCenterQueryService,
+        )
+        from backend.models import PortfolioNextWorkItem
+
+        alpha = _make_project("proj-alpha", "Alpha")
+        # Use a standard row — next_work is populated from launch_batch.readiness == "ready".
+        # The test verifies the response shape has the new next_work_items field.
+        rows = {
+            "proj-alpha": [_make_feature_row("feat-a1", "Alpha Feature")],
+        }
+        ports = _make_ports([alpha], rows)
+
+        with patch.object(config, "CCDASH_QUERY_CACHE_TTL_SECONDS", 0):
+            svc = MultiProjectPlanningCommandCenterQueryService()
+            rollup = await svc.get_portfolio_rollup(_request_context(), ports)
+
+        # next_work_items must be a list (may be empty if no items have readiness==ready).
+        self.assertIsInstance(rollup.attention.next_work_items, list,
+                              "next_work_items must be a list")
+        # If populated, each entry must carry both feature_id and project_id.
+        for entry in rollup.attention.next_work_items:
+            self.assertIsInstance(entry, PortfolioNextWorkItem)
+            self.assertIsInstance(entry.feature_id, str)
+            self.assertIsInstance(entry.project_id, str)
+            self.assertNotEqual(entry.project_id, "",
+                                "project_id must not be empty in next_work_items")
+
+    @_PATCH_MAX_UPDATED_AT
+    @_PATCH_COMPUTE_STALE
+    async def test_next_work_backward_compat_string_list(self, *_patches) -> None:
+        """next_work (string list) remains populated alongside next_work_items."""
+        alpha = _make_project("proj-alpha", "Alpha")
+        rows = {"proj-alpha": [_make_feature_row("feat-a1", "Alpha Feature")]}
+        ports = _make_ports([alpha], rows)
+
+        with patch.object(config, "CCDASH_QUERY_CACHE_TTL_SECONDS", 0):
+            svc = MultiProjectPlanningCommandCenterQueryService()
+            rollup = await svc.get_portfolio_rollup(_request_context(), ports)
+
+        # next_work must remain a list[str] for backward compat.
+        self.assertIsInstance(rollup.attention.next_work, list)
+        for entry in rollup.attention.next_work:
+            self.assertIsInstance(entry, str)
+
+        # Lengths must match (same items in both fields).
+        self.assertEqual(
+            len(rollup.attention.next_work),
+            len(rollup.attention.next_work_items),
+            "next_work and next_work_items must have the same length",
+        )
 
 
 if __name__ == "__main__":

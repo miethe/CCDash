@@ -3728,7 +3728,7 @@ export interface PlanningCommandCenterItem {
   gitState?: PlanningCommandCenterGitState | null;
   pullRequest?: PlanningCommandCenterPullRequest | null;
   blockers: PlanningCommandCenterBlocker[];
-  lastActivity: Record<string, unknown>;
+  lastActivity: { timestamp?: string; actor?: string; source?: string };
   capabilities: PlanningCommandCenterCapabilities;
 }
 

@@ -2999,10 +2999,14 @@ class SyncEngine:
         rebuild_links: bool = True,
         capture_analytics: bool = True,
         backfill_session_intelligence: bool = True,
+        allow_writeback: bool = True,
     ) -> dict:
         """Full incremental sync for a project.
 
         Returns stats dict with counts of synced entities.
+
+        *allow_writeback*: when False, inferred frontmatter write-back is
+        suppressed so CCDash never mutates non-active project repos.
         """
         stats = {
             "sessions_synced": 0,
@@ -3144,7 +3148,12 @@ class SyncEngine:
                 )
 
                 # Phase 4: Features (derived from docs + progress)
-                f_stats = await self._sync_features(project.id, docs_dir, progress_dir)
+                f_stats = await self._sync_features(
+                    project.id,
+                    docs_dir,
+                    progress_dir,
+                    allow_writeback=allow_writeback,
+                )
                 stats["features_synced"] = f_stats["synced"]
                 link_state = await self._load_link_state(project.id)
                 rebuild_scope = self._should_rebuild_links_after_full_sync(
@@ -3957,6 +3966,7 @@ class SyncEngine:
         test_sources: list[ResolvedTestSource] | None = None,
         operation_id: str | None = None,
         trigger: str = "watcher",
+        allow_writeback: bool = True,
     ) -> dict:
         """Sync only specific changed files. Used by file watcher.
 
@@ -4147,6 +4157,7 @@ class SyncEngine:
                     project_root=project_root,
                     git_date_index=git_date_index,
                     dirty_paths=dirty_paths,
+                    allow_writeback=allow_writeback,
                 )
                 stats["features"] = f_stats.get("synced", 0)
                 if stats["features"] > 0:
@@ -4649,8 +4660,13 @@ class SyncEngine:
         project_root: Path | None = None,
         git_date_index: dict[str, dict[str, str]] | None = None,
         dirty_paths: set[str] | None = None,
+        allow_writeback: bool = True,
     ) -> dict:
-        """Re-derive features from docs + progress and upsert all."""
+        """Re-derive features from docs + progress and upsert all.
+
+        *allow_writeback*: forwarded to scan_features; set False for non-active
+        projects to prevent frontmatter mutation on disk.
+        """
         stats = {"synced": 0, "pruned_aliases": 0}
 
         project_root = project_root or infer_project_root(docs_dir, progress_dir)
@@ -4669,11 +4685,19 @@ class SyncEngine:
         else:
             resolved_git_date_index = dict(git_date_index)
 
+        # Derive worknotes_dir from project_root (.claude/worknotes relative to root).
+        _worknotes_dir: Path | None = None
+        if project_root is not None:
+            _candidate = project_root / ".claude" / "worknotes"
+            if _candidate.exists():
+                _worknotes_dir = _candidate
         features = scan_features(
             docs_dir,
             progress_dir,
             git_date_index=resolved_git_date_index,
             dirty_paths=resolved_dirty_paths,
+            allow_writeback=allow_writeback,
+            worknotes_dir=_worknotes_dir,
         )
         for feature in features:
             try:

@@ -340,6 +340,8 @@ export interface UsePlanningCommandCenterQueryOptions {
   page?: number;
   /** Items per page. Defaults to 50. */
   pageSize?: number;
+  /** When true, backend excludes items in terminal statuses. Default false (backend opt-in). */
+  hideDone?: boolean;
   /** Background refetch interval in ms. Omit to disable automatic polling. */
   refetchInterval?: number;
   /** Set false to suppress the query. */
@@ -365,6 +367,7 @@ export function usePlanningCommandCenterQuery({
   sortDirection,
   page,
   pageSize,
+  hideDone,
   refetchInterval,
   enabled = true,
 }: UsePlanningCommandCenterQueryOptions = {}) {
@@ -377,6 +380,7 @@ export function usePlanningCommandCenterQuery({
     sortDirection,
     page,
     pageSize,
+    hideDone,
   };
 
   return useQuery<PlanningCommandCenterPage, PlanningCommandCenterApiError>({
@@ -388,6 +392,7 @@ export function usePlanningCommandCenterQuery({
       sortDirection,
       page,
       pageSize,
+      hideDone,
     }),
     queryFn: () => getPlanningCommandCenter(filters),
     staleTime: 30_000,
@@ -478,6 +483,7 @@ export function useMultiProjectCommandCenterQuery({
         page: filters.page,
         pageSize: filters.pageSize,
         sort: filters.sort,
+        hideDone: filters.hideDone,
       };
       return fetchMultiProjectCommandCenter(fetchQuery);
     },
@@ -559,11 +565,17 @@ interface PortfolioProjectWire {
   token_total: number;
 }
 
+interface PortfolioNextWorkItemWire {
+  feature_id: string;
+  project_id?: string;
+}
+
 interface PortfolioAttentionWire {
   active_now: number;
   changed_recently: number;
   needs_attention: number;
   next_work: string[];
+  next_work_items?: PortfolioNextWorkItemWire[];
 }
 
 interface PortfolioRollupWire {
@@ -584,11 +596,18 @@ export interface PortfolioProject {
   tokenTotal: number;
 }
 
+export interface PortfolioNextWorkItem {
+  featureId: string;
+  /** May be undefined when the server returns the old string[] shape or the field is missing. */
+  projectId: string | undefined;
+}
+
 export interface PortfolioAttention {
   activeNow: string[];
   changedRecently: string[];
   needsAttention: string[];
-  nextWork: string[];
+  /** Enriched next-work items carrying both featureId and projectId. */
+  nextWork: PortfolioNextWorkItem[];
 }
 
 export interface PortfolioRollupDTO {
@@ -613,7 +632,22 @@ function adaptPortfolioRollup(wire: PortfolioRollupWire): PortfolioRollupDTO {
       activeNow: projs.filter((p) => (p.active_sessions ?? 0) > 0).map((p) => p.project_id),
       changedRecently: projs.filter((p) => p.changed_recently).map((p) => p.project_id),
       needsAttention: projs.filter((p) => p.needs_attention).map((p) => p.project_id),
-      nextWork: Array.isArray(wire.attention?.next_work) ? wire.attention!.next_work : [],
+      nextWork: (() => {
+        const wireAttn = wire.attention;
+        if (!wireAttn) return [];
+        // Prefer the enriched next_work_items shape (carries project_id).
+        if (Array.isArray(wireAttn.next_work_items) && wireAttn.next_work_items.length > 0) {
+          return wireAttn.next_work_items.map((it) => ({
+            featureId: String(it.feature_id ?? ''),
+            projectId: it.project_id != null ? String(it.project_id) : undefined,
+          }));
+        }
+        // Fallback: old string[] shape — map to {featureId, projectId: undefined}.
+        if (Array.isArray(wireAttn.next_work)) {
+          return wireAttn.next_work.map((fid) => ({ featureId: String(fid), projectId: undefined }));
+        }
+        return [];
+      })(),
     },
     generatedAt: wire.generated_at ?? '',
   };

@@ -73,6 +73,7 @@ class FileWatcher:
     def __init__(self):
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        self._allow_writeback: bool = True
         self._snapshot = FileWatcherSnapshot()
 
     async def start(
@@ -84,6 +85,8 @@ class FileWatcher:
         progress_dir: Path,
         test_results_dir: Path | None = None,
         test_sources: list[ResolvedTestSource] | None = None,
+        worknotes_dir: Path | None = None,
+        allow_writeback: bool = True,
     ) -> None:
         """Start watching project directories in a background task."""
         if self._running:
@@ -99,6 +102,7 @@ class FileWatcher:
             progress_dir,
             test_results_dir,
             test_sources,
+            worknotes_dir=worknotes_dir,
         )
         self._snapshot.configured = True
         self._snapshot.project_id = project_id
@@ -117,6 +121,7 @@ class FileWatcher:
             )
             return
 
+        self._allow_writeback = allow_writeback
         self._running = True
         self._snapshot.running = True
         self._task = asyncio.create_task(
@@ -129,6 +134,7 @@ class FileWatcher:
                 watch_paths,
                 test_results_dir,
                 test_sources,
+                allow_writeback=allow_writeback,
             )
         )
         logger.info(
@@ -174,6 +180,7 @@ class FileWatcher:
         watch_paths: list[Path],
         test_results_dir: Path | None = None,
         test_sources: list[ResolvedTestSource] | None = None,
+        allow_writeback: bool = True,
     ) -> None:
         """Main watching loop. Watches all project dirs for changes."""
         logger.info(
@@ -215,6 +222,7 @@ class FileWatcher:
                             sessions_dir, docs_dir, progress_dir,
                             test_results_dir=test_results_dir,
                             test_sources=test_sources,
+                            allow_writeback=allow_writeback,
                         )
                     except Exception as e:
                         if _otel is not None:
@@ -262,8 +270,11 @@ class FileWatcher:
         progress_dir: Path,
         test_results_dir: Path | None = None,
         test_sources: list[ResolvedTestSource] | None = None,
+        worknotes_dir: Path | None = None,
     ) -> list[Path]:
         watch_paths = [p for p in [sessions_dir, docs_dir, progress_dir] if p.exists()]
+        if worknotes_dir is not None and worknotes_dir.exists():
+            watch_paths.append(worknotes_dir)
         if test_results_dir and test_results_dir.exists():
             watch_paths.append(test_results_dir)
         for source in test_sources or []:
@@ -372,6 +383,8 @@ class FileWatcherRegistry:
         progress_dir: Path,
         test_results_dir: Path | None = None,
         test_sources: list[ResolvedTestSource] | None = None,
+        worknotes_dir: Path | None = None,
+        allow_writeback: bool = True,
     ) -> None:
         """Start (or restart) a watcher for *project_id*.
 
@@ -395,6 +408,8 @@ class FileWatcherRegistry:
                 progress_dir,
                 test_results_dir=test_results_dir,
                 test_sources=test_sources,
+                worknotes_dir=worknotes_dir,
+                allow_writeback=allow_writeback,
             )
             self._entries[project_id] = _WatcherEntry(
                 watcher=watcher,

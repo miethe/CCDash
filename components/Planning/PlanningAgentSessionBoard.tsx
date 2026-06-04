@@ -30,6 +30,7 @@ import { PlanningAgentSessionDetailPanel } from './PlanningAgentSessionDetailPan
 import { PlanningNextRunPreview } from './PlanningNextRunPreview';
 import { Panel, Dot } from './primitives';
 import type { StateFilter } from './PlanningBoardToolbar';
+import { formatLastActivity } from '@/lib/planningHelpers';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -628,11 +629,17 @@ const SessionCard = memo(function SessionCard({
 
         <span className="flex-1" />
 
-        {card.startedAt && (
-          <span className="planning-mono text-[9px] text-[color:var(--ink-4)] flex-shrink-0">
-            {relativeTime(card.startedAt)}
-          </span>
-        )}
+        {(() => {
+          const activityDisplay = formatLastActivity(card.lastActivityAt ?? card.startedAt ?? null);
+          return activityDisplay ? (
+            <span
+              className="planning-mono text-[9px] text-[color:var(--ink-4)] flex-shrink-0"
+              title={activityDisplay.title}
+            >
+              {activityDisplay.label}
+            </span>
+          ) : null;
+        })()}
 
         {latestMarker && (
           <span

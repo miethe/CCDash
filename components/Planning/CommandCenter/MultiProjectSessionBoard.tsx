@@ -31,6 +31,7 @@ import type {
   PlanningBoardGroupingMode,
 } from '@/types';
 import { BtnGhost } from '../primitives';
+import { formatLastActivity } from '@/lib/planningHelpers';
 
 // Multi-project grouping extends V1 PlanningBoardGroupingMode with 'project'
 // exported so callers can reference the extended type.
@@ -74,19 +75,6 @@ function fallbackColor(projectId: string): string {
   return `oklch(65% 0.18 ${h})`;
 }
 
-function relativeTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const secs = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (secs < 5) return 'just now';
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
 // ── Worker summary row ─────────────────────────────────────────────────────────
 
 const WorkerRow = memo(function WorkerRow({ worker }: { worker: AggregateSessionWorkerSummary }) {
@@ -107,11 +95,14 @@ const WorkerRow = memo(function WorkerRow({ worker }: { worker: AggregateSession
       <span className="planning-mono text-[color:var(--ink-4)] ml-auto shrink-0">
         {worker.state}
       </span>
-      {worker.lastActivityAt && (
-        <span className="planning-mono text-[color:var(--ink-4)] shrink-0">
-          {relativeTime(worker.lastActivityAt)}
-        </span>
-      )}
+      {(() => {
+        const act = formatLastActivity(worker.lastActivityAt);
+        return act ? (
+          <span className="planning-mono text-[color:var(--ink-4)] shrink-0" title={act.title}>
+            {act.label}
+          </span>
+        ) : null;
+      })()}
     </div>
   );
 });
@@ -238,11 +229,18 @@ const AggregateSessionCardView = memo(function AggregateSessionCardView({
                 {card.model}
               </span>
             )}
-            {card.startedAt && (
-              <span className="planning-mono text-[10px] ml-auto" style={{ color: 'var(--ink-4)' }}>
-                {relativeTime(card.startedAt)}
-              </span>
-            )}
+            {(() => {
+              const activityDisplay = formatLastActivity(card.lastActivityAt ?? card.startedAt ?? null);
+              return activityDisplay ? (
+                <span
+                  className="planning-mono text-[10px] ml-auto"
+                  style={{ color: 'var(--ink-4)' }}
+                  title={activityDisplay.title}
+                >
+                  {activityDisplay.label}
+                </span>
+              ) : null;
+            })()}
           </div>
 
           {/* Phase correlation */}

@@ -8,6 +8,7 @@ from backend.application.services.agent_queries.models import PlanningCommandCen
 from backend.application.services.agent_queries.planning_command_center import (
     PlanningCommandCenterQueryService,
     _NullGitProbe,
+    _TERMINAL_STATUSES,
     _pcc_params,
 )
 from backend.models import Project
@@ -305,6 +306,152 @@ class P2011SingleFeatureFastPathTests(unittest.IsolatedAsyncioTestCase):
             project_id_override="proj-1",
         )
         self.assertIsNone(item)
+
+
+class HideDoneFilterTests(unittest.IsolatedAsyncioTestCase):
+    """Part-A: hide_done excludes all members of _TERMINAL_STATUSES."""
+
+    def _make_terminal_row(self, feature_id: str, status: str) -> dict:
+        return {
+            "id": feature_id,
+            "name": f"Feature {feature_id}",
+            "status": status,
+            "updated_at": "2026-05-28T00:00:00+00:00",
+            "data_json": json.dumps({
+                "id": feature_id,
+                "name": f"Feature {feature_id}",
+                "status": status,
+                "summary": "Terminal feature",
+                "priority": "low",
+                "tags": [],
+                "phases": [],
+            }),
+        }
+
+    async def test_hide_done_excludes_full_terminal_set(self) -> None:
+        project = Project(id="proj-1", name="P1", path="/tmp/p1")
+        rows = [self._make_terminal_row(s, s) for s in _TERMINAL_STATUSES]
+        # Also add one active feature that must NOT be excluded.
+        rows.append(_make_feature_row("active-feat"))
+        storage = SimpleNamespace(
+            features=lambda: _FeaturesRepo(rows),
+            documents=lambda: _DocumentsRepo([]),
+            worktree_contexts=lambda: _WorktreeRepo([]),
+        )
+        ports = SimpleNamespace(storage=storage, workspace_registry=_WorkspaceRegistry(project))
+        service = PlanningCommandCenterQueryService()
+
+        page = await service.get_command_center(
+            _request_context(project),
+            ports,
+            project_id_override="proj-1",
+            hide_done=True,
+            page=1,
+            page_size=50,
+        )
+
+        returned_ids = {item.feature.feature_id for item in page.items}
+        for terminal_status in _TERMINAL_STATUSES:
+            self.assertNotIn(terminal_status, returned_ids,
+                             f"hide_done=True must exclude feature with status '{terminal_status}'")
+        self.assertIn("active-feat", returned_ids,
+                      "hide_done=True must keep the active feature")
+
+    async def test_hide_done_false_retains_terminal_items(self) -> None:
+        project = Project(id="proj-1", name="P1", path="/tmp/p1")
+        rows = [self._make_terminal_row("done-feat", "done")]
+        storage = SimpleNamespace(
+            features=lambda: _FeaturesRepo(rows),
+            documents=lambda: _DocumentsRepo([]),
+            worktree_contexts=lambda: _WorktreeRepo([]),
+        )
+        ports = SimpleNamespace(storage=storage, workspace_registry=_WorkspaceRegistry(project))
+        service = PlanningCommandCenterQueryService()
+
+        page = await service.get_command_center(
+            _request_context(project),
+            ports,
+            project_id_override="proj-1",
+            hide_done=False,
+            page=1,
+            page_size=50,
+        )
+
+        returned_ids = {item.feature.feature_id for item in page.items}
+        self.assertIn("done-feat", returned_ids, "hide_done=False must retain terminal items")
+
+
+class SortMissingTimestampTests(unittest.IsolatedAsyncioTestCase):
+    """Part-B: items with no last_activity timestamp sort LAST under desc."""
+
+    def _make_row_with_ts(self, feature_id: str, ts: str | None) -> dict:
+        base = _make_feature_row(feature_id)
+        data = json.loads(base["data_json"])
+        data["updatedAt"] = ts
+        base["updated_at"] = ts or ""
+        base["data_json"] = json.dumps(data)
+        return base
+
+    async def test_missing_timestamp_sorts_last_desc(self) -> None:
+        project = Project(id="proj-1", name="P1", path="/tmp/p1")
+        rows = [
+            self._make_row_with_ts("feat-ts", "2026-05-28T10:00:00+00:00"),
+            self._make_row_with_ts("feat-no-ts", None),
+        ]
+        storage = SimpleNamespace(
+            features=lambda: _FeaturesRepo(rows),
+            documents=lambda: _DocumentsRepo([]),
+            worktree_contexts=lambda: _WorktreeRepo([]),
+        )
+        ports = SimpleNamespace(storage=storage, workspace_registry=_WorkspaceRegistry(project))
+        service = PlanningCommandCenterQueryService()
+
+        page = await service.get_command_center(
+            _request_context(project),
+            ports,
+            project_id_override="proj-1",
+            sort_by="last_activity",
+            sort_direction="desc",
+            page=1,
+            page_size=50,
+        )
+
+        ids = [item.feature.feature_id for item in page.items]
+        self.assertEqual(len(ids), 2)
+        # timestamped item must be first under desc
+        self.assertEqual(ids[0], "feat-ts",
+                         "Under desc sort, item WITH timestamp must precede item WITHOUT")
+        self.assertEqual(ids[-1], "feat-no-ts",
+                         "Under desc sort, item WITHOUT timestamp must be last")
+
+    async def test_missing_timestamp_sorts_last_asc(self) -> None:
+        project = Project(id="proj-1", name="P1", path="/tmp/p1")
+        rows = [
+            self._make_row_with_ts("feat-ts", "2026-05-28T10:00:00+00:00"),
+            self._make_row_with_ts("feat-no-ts", None),
+        ]
+        storage = SimpleNamespace(
+            features=lambda: _FeaturesRepo(rows),
+            documents=lambda: _DocumentsRepo([]),
+            worktree_contexts=lambda: _WorktreeRepo([]),
+        )
+        ports = SimpleNamespace(storage=storage, workspace_registry=_WorkspaceRegistry(project))
+        service = PlanningCommandCenterQueryService()
+
+        page = await service.get_command_center(
+            _request_context(project),
+            ports,
+            project_id_override="proj-1",
+            sort_by="last_activity",
+            sort_direction="asc",
+            page=1,
+            page_size=50,
+        )
+
+        ids = [item.feature.feature_id for item in page.items]
+        # Under asc sort, missing timestamps must still be last.
+        self.assertEqual(ids[-1], "feat-no-ts",
+                         "Under asc sort, item WITHOUT timestamp must still be last")
 
 
 class P2013NullGitProbeTests(unittest.IsolatedAsyncioTestCase):

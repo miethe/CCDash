@@ -128,8 +128,9 @@ const DEFAULT_FILTERS: CommandCenterFilters = {
   q: '',
   status: '',
   phase: '',
-  sortBy: 'priority',
+  sortBy: 'last_activity',
   sortDirection: 'desc',
+  hideDone: true,
 };
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
@@ -182,13 +183,14 @@ export function PlanningCommandCenter({
     sortDirection: filters.sortDirection,
     page: currentPage,
     pageSize,
+    hideDone: filters.hideDone,
     enabled: inView,
   });
 
   // Reset to page 1 whenever filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [filters.q, filters.status, filters.phase, filters.sortBy, filters.sortDirection]);
+  }, [filters.q, filters.status, filters.phase, filters.sortBy, filters.sortDirection, filters.hideDone]);
 
   const total = page?.total ?? page?.items.length ?? 0;
   const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(total / pageSize)) : 1;
@@ -270,6 +272,10 @@ export function PlanningCommandCenter({
     }
   }, [viewMode]);
 
+  const handleHideDoneChange = useCallback((hideDone: boolean) => {
+    setFilters((prev) => ({ ...prev, hideDone }));
+  }, []);
+
   const errorMessage = isError
     ? (error instanceof Error ? error.message : 'Unable to load Planning Command Center data.')
     : null;
@@ -289,6 +295,7 @@ export function PlanningCommandCenter({
           onViewModeChange={changeViewMode}
           onRefresh={() => void refetch()}
           onPageSizeChange={(next) => { setPageSize(next as PageSizeOption); setCurrentPage(1); }}
+          onHideDoneChange={handleHideDoneChange}
         />
         {copyState === 'copied' ? (
           <div className="planning-mono rounded-[var(--radius-sm)] border border-[color:color-mix(in_oklab,var(--ok)_35%,var(--line-1))] bg-[color:color-mix(in_oklab,var(--ok)_10%,var(--bg-1))] px-3 py-2 text-[11px] text-[color:var(--ok)]">

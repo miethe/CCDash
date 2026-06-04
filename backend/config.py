@@ -978,6 +978,14 @@ WORKER_WATCH_STARTUP_SYNC_ENABLED: bool = _env_bool("CCDASH_WORKER_WATCH_STARTUP
 
 # Startup sync tuning
 STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)
+# CCDASH_SYNC_ALL_PROJECTS (default: true)
+# When true, startup sync and file-watcher registration run for ALL registered
+# projects (not just the active one). Each project is synced sequentially to
+# avoid saturating the shared SQLite connection. Non-active projects are synced
+# in read-only mode — frontmatter write-back is suppressed so CCDash never
+# mutates the user's other repos. Set to false to restore the legacy
+# active-project-only behaviour.
+SYNC_ALL_PROJECTS = _env_bool("CCDASH_SYNC_ALL_PROJECTS", True)
 STARTUP_SYNC_DELAY_SECONDS = _env_int("CCDASH_STARTUP_SYNC_DELAY_SECONDS", 2)
 # CCDASH_STARTUP_SYNC_LIGHT_MODE (default: false)
 # Enables manifest-based scan skip on unchanged filesystem paths. Skips re-scanning entire subtrees
@@ -1033,6 +1041,16 @@ CCDASH_LIVE_COUNT_CACHE_TTL_SECONDS = _env_int("CCDASH_LIVE_COUNT_CACHE_TTL_SECO
 # controls how the parser *classifies* session status from JSONL files.  The two
 # happen to share the same 600 s default by convention, but serve different roles.
 CCDASH_LIVE_AGENTS_WINDOW_SECONDS = _env_int("CCDASH_LIVE_AGENTS_WINDOW_SECONDS", 600)
+# CCDASH_PLANNING_PORTFOLIO_ACTIVE_WINDOW_SECONDS (default: 2592000 = 30 days)
+# Freshness window used by the multi-project (portfolio) session-board service when
+# determining which sessions are "active" for the aggregate board and per-project badge
+# count.  Wider than the 600s live-agents window so recently-indexed sessions (hours or
+# days old) appear in the portfolio board while multi-month phantom rows (57–93 days,
+# status='active' from switched-away projects) are still excluded.
+CCDASH_PLANNING_PORTFOLIO_ACTIVE_WINDOW_SECONDS = _env_int(
+    "CCDASH_PLANNING_PORTFOLIO_ACTIVE_WINDOW_SECONDS",
+    30 * 24 * 60 * 60,
+)
 
 # System-wide metrics
 # CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS (default: 3600)

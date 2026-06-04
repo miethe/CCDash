@@ -1290,10 +1290,15 @@ def _scan_auxiliary_docs(
     project_root: Path,
     git_date_index: dict[str, dict[str, str]] | None = None,
     dirty_paths: set[str] | None = None,
+    worknotes_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     docs: list[dict[str, Any]] = []
     seen_paths: set[str] = set()
     roots = [docs_dir, progress_dir]
+    # Include .claude/worknotes when present — worknote dirs are named after the
+    # feature base slug so they link naturally via existing slug-family matching.
+    if worknotes_dir is not None and worknotes_dir.exists():
+        roots.append(worknotes_dir)
     for root in roots:
         if not root.exists():
             continue
@@ -2166,8 +2171,19 @@ def _read_frontmatter_status_cached(
     return status_value
 
 
-def _reconcile_completion_equivalence(features: list[Feature], project_root: Path) -> int:
-    """Infer feature completion from equivalent doc collections and write through inferred status."""
+def _reconcile_completion_equivalence(
+    features: list[Feature],
+    project_root: Path,
+    *,
+    allow_writeback: bool = True,
+) -> int:
+    """Infer feature completion from equivalent doc collections and write through inferred status.
+
+    When *allow_writeback* is False the completion status is still inferred and
+    applied to the in-memory Feature objects but no frontmatter files are
+    mutated on disk.  Use this for non-active projects so CCDash never edits
+    the user's other repositories.
+    """
     status_cache: dict[str, str] = {}
     write_updates = 0
 
@@ -2215,6 +2231,13 @@ def _reconcile_completion_equivalence(features: list[Feature], project_root: Pat
             absolute_path = project_root / normalized
             if not absolute_path.exists():
                 continue
+            if not allow_writeback:
+                logger.debug(
+                    "Skipping inferred status write for %s because allow_writeback=False "
+                    "(non-active project read-only mode)",
+                    absolute_path,
+                )
+                continue
             if not bool(getattr(config, "INFERRED_STATUS_WRITEBACK_ENABLED", True)):
                 logger.debug(
                     "Skipping inferred status write for %s because inferred status writeback is disabled",
@@ -2247,11 +2270,23 @@ def scan_features(
     progress_dir: Path,
     git_date_index: dict[str, dict[str, str]] | None = None,
     dirty_paths: set[str] | None = None,
+    *,
+    allow_writeback: bool = True,
+    worknotes_dir: Path | None = None,
 ) -> list[Feature]:
     """
     Discover features by cross-referencing impl plans, PRDs, and progress dirs.
 
     Priority: impl plans seed features, enriched with PRD + progress data.
+
+    *allow_writeback*: when False, completion-equivalence inference still runs
+    but no frontmatter files are written back to disk.  Pass False for
+    non-active projects to prevent CCDash from mutating the user's other repos.
+
+    *worknotes_dir*: optional path to the project's ``.claude/worknotes``
+    directory.  When provided and the directory exists it is included as an
+    additional auxiliary-doc scan root so worknote markdown files are linked
+    to their corresponding features.
     """
     project_root = infer_project_root(docs_dir, progress_dir)
     impl_plans = _scan_impl_plans(
@@ -2278,6 +2313,7 @@ def scan_features(
         project_root,
         git_date_index=git_date_index,
         dirty_paths=dirty_paths,
+        worknotes_dir=worknotes_dir,
     )
 
     features: dict[str, Feature] = {}
@@ -2815,7 +2851,11 @@ def scan_features(
             relation_refs_by_id.get(feat_id, []),
         )
 
-    inferred_updates = _reconcile_completion_equivalence(feature_list, project_root)
+    inferred_updates = _reconcile_completion_equivalence(
+        feature_list,
+        project_root,
+        allow_writeback=allow_writeback,
+    )
 
     result = sorted(feature_list, key=lambda f: f.updatedAt or "", reverse=True)
     terminal_count = sum(1 for f in result if f.status in _TERMINAL_STATUSES)

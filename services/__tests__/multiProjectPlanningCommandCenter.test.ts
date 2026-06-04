@@ -1002,3 +1002,84 @@ describe('fixture cross-check — adapter contract with shared fixtures', () => 
     expect(result.groups[1].cards[0].card.sessionId).toBe('sess-beta-001');
   });
 });
+
+// ─── Issue 2: hideDone query param construction ───────────────────────────────
+
+describe('fetchMultiProjectCommandCenter — hideDone param', () => {
+  it('sends hide_done=true when hideDone is true', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        status: 'ok',
+        items: [],
+        project_summaries: [],
+        pagination: makeWirePagination({ total: 0 }),
+        warnings: [],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchMultiProjectCommandCenter({ hideDone: true });
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('hide_done=true');
+  });
+
+  it('omits hide_done param when hideDone is false (backend default is false)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        status: 'ok',
+        items: [],
+        project_summaries: [],
+        pagination: makeWirePagination({ total: 0 }),
+        warnings: [],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchMultiProjectCommandCenter({ hideDone: false });
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    // Backend default is false so we omit the param when FE wants to show all
+    expect(url).not.toContain('hide_done=false');
+  });
+
+  it('omits hide_done param when hideDone is undefined', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        status: 'ok',
+        items: [],
+        project_summaries: [],
+        pagination: makeWirePagination({ total: 0 }),
+        warnings: [],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchMultiProjectCommandCenter({});
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).not.toContain('hide_done');
+  });
+});
+
+// ─── Issue 3: default sort is last_activity ───────────────────────────────────
+
+describe('fetchMultiProjectCommandCenter — sort=last_activity default', () => {
+  it('sends sort=last_activity when sort is explicitly set', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        status: 'ok',
+        items: [],
+        project_summaries: [],
+        pagination: makeWirePagination({ total: 0 }),
+        warnings: [],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchMultiProjectCommandCenter({ sort: 'last_activity' });
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('sort=last_activity');
+  });
+});

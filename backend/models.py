@@ -3662,13 +3662,23 @@ class MultiProjectSessionBoardResponse(BaseModel):
 # ── P5-003/P5-004 Rollup and next-work response models ───────────────────────
 
 
+class PortfolioNextWorkItem(BaseModel):
+    """A single next-work entry carrying both feature and project identity (Part C)."""
+
+    feature_id: str
+    project_id: str = ""
+
+
 class PortfolioAttentionSummary(BaseModel):
     """Attention bucket summary inside the portfolio rollup response (§7.1)."""
 
     active_now: int = 0
     changed_recently: int = 0
     needs_attention: int = 0
+    # Backward-compatible string list (feature_id only).
     next_work: list[str] = Field(default_factory=list)
+    # Enriched list carrying both feature_id and project_id.
+    next_work_items: list[PortfolioNextWorkItem] = Field(default_factory=list)
 
 
 class PortfolioProjectEntry(BaseModel):

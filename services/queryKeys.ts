@@ -144,6 +144,7 @@ export const planningKeys = {
       sortDirection?: 'asc' | 'desc';
       page?: number;
       pageSize?: number;
+      hideDone?: boolean;
     } = {},
   ) =>
     [
@@ -158,6 +159,7 @@ export const planningKeys = {
         sortDirection: filters.sortDirection ?? 'desc',
         page: filters.page ?? 1,
         pageSize: filters.pageSize ?? 50,
+        hideDone: filters.hideDone ?? false,
       },
     ] as const,
 };
@@ -300,6 +302,8 @@ export interface MultiProjectCommandCenterFilters {
   sort?: string;
   page?: number;
   pageSize?: number;
+  /** When true, backend excludes terminal-status items. */
+  hideDone?: boolean;
 }
 
 export interface MultiProjectSessionBoardFilters {
@@ -366,6 +370,7 @@ export const multiProjectPlanningKeys = {
         sort: filters.sort ?? null,
         page: filters.page ?? 1,
         pageSize: filters.pageSize ?? 50,
+        hideDone: filters.hideDone ?? false,
       },
     ] as const,
 
@@ -383,7 +388,7 @@ export const multiProjectPlanningKeys = {
         projectIds: filters.projectIds ? [...filters.projectIds].sort() : [],
         group: filters.group ?? null,
         groupBy: filters.groupBy ?? 'state',
-        activeWindowMinutes: filters.activeWindowMinutes ?? 30,
+        activeWindowMinutes: filters.activeWindowMinutes ?? null,
         includeWorkers: filters.includeWorkers ?? true,
         page: filters.page ?? 1,
         pageSize: filters.pageSize ?? 50,
