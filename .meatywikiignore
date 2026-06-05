@@ -14,3 +14,11 @@ out/
 .tmp/
 .DS_Store
 .claude/worktrees/
+
+# Restrict MeatyWiki sync to root-level docs (connector globs are recursive)
+**/README.md
+**/CLAUDE.md
+**/docs/project_plans/*.md
+!/README.md
+!/CLAUDE.md
+!/docs/project_plans/*.md
