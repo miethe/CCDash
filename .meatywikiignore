@@ -1,0 +1,16 @@
+.git/
+node_modules/
+.venv/
+venv/
+__pycache__/
+dist/
+build/
+target/
+.next/
+out/
+.env.local
+*.log
+.cache/
+.tmp/
+.DS_Store
+.claude/worktrees/
