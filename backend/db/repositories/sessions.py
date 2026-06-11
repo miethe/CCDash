@@ -203,23 +203,49 @@ class SqliteSessionRepository:
         )
         await self._commit()
 
-    async def get_by_id(self, session_id: str) -> dict | None:
-        async with self.db.execute(
-            "SELECT * FROM sessions WHERE id = ?", (session_id,)
-        ) as cur:
+    async def get_by_id(self, session_id: str, project_id: str | None = None) -> dict | None:
+        """Fetch a single session by id.
+
+        When ``project_id`` is a non-empty string it is added to the WHERE clause
+        as a strict-equality predicate alongside ``id`` (the table's composite PK
+        is ``(project_id, id)``), so callers reading a non-active project never
+        receive another project's row.  When ``project_id`` is ``None`` or ``''``
+        the read is unscoped and falls back to the existing active-project hot-path
+        behaviour (a session id is globally unique in single-project deployments).
+        """
+        if project_id:
+            query = "SELECT * FROM sessions WHERE project_id = ? AND id = ?"
+            params: tuple = (project_id, session_id)
+        else:
+            query = "SELECT * FROM sessions WHERE id = ?"
+            params = (session_id,)
+        async with self.db.execute(query, params) as cur:
             row = await cur.fetchone()
             if not row:
                 return None
             return self._row_to_dict(row)
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple sessions in a single query. Returns a dict keyed by session id."""
+    async def get_many_by_ids(
+        self, ids: list[str], project_id: str | None = None
+    ) -> dict[str, dict]:
+        """Fetch multiple sessions in a single query. Returns a dict keyed by session id.
+
+        ``project_id`` follows the same semantics as :meth:`get_by_id`: a non-empty
+        value scopes the query to that project (strict equality), while ``None``/``''``
+        leaves the read unscoped (active-project hot path unchanged).
+        """
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
-        async with self.db.execute(
-            f"SELECT * FROM sessions WHERE id IN ({placeholders})", tuple(ids)
-        ) as cur:
+        if project_id:
+            query = (
+                f"SELECT * FROM sessions WHERE project_id = ? AND id IN ({placeholders})"
+            )
+            params: tuple = (project_id, *ids)
+        else:
+            query = f"SELECT * FROM sessions WHERE id IN ({placeholders})"
+            params = tuple(ids)
+        async with self.db.execute(query, params) as cur:
             rows = await cur.fetchall()
         return {row["id"]: self._row_to_dict(row) for row in rows}
 

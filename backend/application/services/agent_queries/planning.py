@@ -2412,7 +2412,7 @@ class PlanningQueryService:
         unique_session_ids = sorted(set(selection.session_ids))
         if unique_session_ids:
             try:
-                session_map = await ports.storage.sessions().get_many_by_ids(unique_session_ids)
+                session_map = await ports.storage.sessions().get_many_by_ids(unique_session_ids, project_id=project.id)
             except Exception:
                 session_map = {}
         else:

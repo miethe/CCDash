@@ -139,19 +139,48 @@ class PostgresSessionRepository:
             json.dumps(session_data.get("sessionForensics", {}) or {}),
         )
 
-    async def get_by_id(self, session_id: str) -> dict | None:
-        row = await self.db.fetchrow("SELECT * FROM sessions WHERE id = $1", session_id)
+    async def get_by_id(self, session_id: str, project_id: str | None = None) -> dict | None:
+        """Fetch a single session by id.
+
+        Mirrors the SQLite backend (``backend/db/repositories/sessions.py``) with
+        identical predicate semantics: a non-empty ``project_id`` adds a strict
+        equality predicate alongside ``id`` (composite PK ``(project_id, id)``);
+        ``None``/``''`` leaves the read unscoped (active-project hot path unchanged).
+        """
+        if project_id:
+            row = await self.db.fetchrow(
+                "SELECT * FROM sessions WHERE project_id = $1 AND id = $2",
+                project_id,
+                session_id,
+            )
+        else:
+            row = await self.db.fetchrow(
+                "SELECT * FROM sessions WHERE id = $1", session_id
+            )
         if not row:
             return None
         return dict(row)
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple sessions in a single query. Returns a dict keyed by session id."""
+    async def get_many_by_ids(
+        self, ids: list[str], project_id: str | None = None
+    ) -> dict[str, dict]:
+        """Fetch multiple sessions in a single query. Returns a dict keyed by session id.
+
+        ``project_id`` follows the same semantics as :meth:`get_by_id` and mirrors
+        the SQLite backend predicate exactly (Risk Hotspot: backend drift).
+        """
         if not ids:
             return {}
-        rows = await self.db.fetch(
-            "SELECT * FROM sessions WHERE id = ANY($1::text[])", ids
-        )
+        if project_id:
+            rows = await self.db.fetch(
+                "SELECT * FROM sessions WHERE project_id = $1 AND id = ANY($2::text[])",
+                project_id,
+                ids,
+            )
+        else:
+            rows = await self.db.fetch(
+                "SELECT * FROM sessions WHERE id = ANY($1::text[])", ids
+            )
         return {row["id"]: dict(row) for row in rows}
 
     async def list_by_source(self, source_file: str) -> list[dict]:

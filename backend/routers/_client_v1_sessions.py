@@ -255,8 +255,17 @@ async def get_session_family_v1(
     app_request = await _resolve_app_request(request_context, core_ports)
     session_repo = get_session_repository(core_ports.storage.db)
 
-    # Step 1: resolve the anchor session.
-    anchor = await session_repo.get_by_id(session_id)
+    # Resolve the requested project (active-project resolution when unscoped).
+    requested_project_id: str | None = (
+        app_request.context.project.project_id if app_request.context.project else None
+    )
+
+    # Step 1: resolve the anchor session, scoped to the requested project so a
+    # family request for a non-active project never resolves the wrong project's
+    # row. When no project is in scope (None/''), the lookup is unscoped and falls
+    # back to the active-project hot path. Anchor-not-found-in-project yields a 404
+    # with NO silent fallback to the active project.
+    anchor = await session_repo.get_by_id(session_id, project_id=requested_project_id)
     if anchor is None:
         raise HTTPException(
             status_code=404,
@@ -265,8 +274,11 @@ async def get_session_family_v1(
 
     root_id: str = anchor.get("root_session_id") or session_id
 
-    # Step 2: fetch all family members.
-    project_id: str = app_request.context.project.project_id if app_request.context.project else ""
+    # Step 2: fetch all family members. Derive project_id from the ANCHOR ROW (its
+    # authoritative project), not the active-project singleton, and thread that
+    # derived id into the family lookup so descendants/ancestors are scoped to the
+    # anchor's project end-to-end.
+    project_id: str = anchor.get("project_id") or requested_project_id or ""
     rows: list[dict] = await session_repo.list_paginated(
         offset=0,
         limit=500,

@@ -251,7 +251,7 @@ class FeatureEvidenceSummaryService:
         session_rows: list[dict[str, Any]] = []
         if session_ids:
             try:
-                fetched = await ports.storage.sessions().get_many_by_ids(session_ids)
+                fetched = await ports.storage.sessions().get_many_by_ids(session_ids, project_id=scope.project.id)
                 session_rows = [fetched[sid] for sid in session_ids if sid in fetched]
             except Exception:
                 partial = True

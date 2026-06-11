@@ -926,8 +926,8 @@ async def get_session(
     repo = core_ports.storage.sessions()
     project = resolve_project(request_context, core_ports)
     mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
-    
-    s = await repo.get_by_id(session_id)
+
+    s = await repo.get_by_id(session_id, project_id=project.id if project else None)
     if not s:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         
@@ -1272,7 +1272,7 @@ async def get_session_linked_features(
     mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
     workflow_markers = workflow_command_markers(mappings) if mappings else workflow_command_markers()
     session_repo = core_ports.storage.sessions()
-    session_row = await session_repo.get_by_id(session_id)
+    session_row = await session_repo.get_by_id(session_id, project_id=project.id if project else None)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
