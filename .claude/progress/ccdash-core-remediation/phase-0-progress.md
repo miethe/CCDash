@@ -11,13 +11,14 @@ feature_slug: ccdash-core-remediation
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-core-remediation-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-core-remediation-v1.md
 phase_plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-core-remediation-v1/phase-0-correctness.md
-overall_progress: 10
-completion_estimate: '0'
+overall_progress: 100
+completion_estimate: '100'
 owners:
 - data-layer-expert
 - senior-code-reviewer
 contributors: []
-commit_refs: []
+commit_refs:
+- 830a879
 pr_refs: []
 tasks:
 - id: T0-001
