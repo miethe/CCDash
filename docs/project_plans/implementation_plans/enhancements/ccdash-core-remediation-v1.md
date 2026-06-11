@@ -3,7 +3,7 @@ title: CCDash Core Remediation v1 - Implementation Plan
 schema_version: 2
 doc_type: implementation_plan
 status: in-progress
-created: 2026-06-10
+created: '2026-06-10'
 updated: '2026-06-11'
 feature_slug: ccdash-core-remediation
 feature_version: v1
@@ -54,7 +54,8 @@ tags:
 - postgres
 - mcp
 milestone: null
-commit_refs: []
+commit_refs:
+- 0018978
 pr_refs: []
 files_affected:
 - backend/db/repositories/sessions.py
