@@ -2,7 +2,7 @@
 title: CCDash Core Remediation v1 - Implementation Plan
 schema_version: 2
 doc_type: implementation_plan
-status: approved
+status: in-progress
 created: 2026-06-10
 updated: '2026-06-11'
 feature_slug: ccdash-core-remediation
