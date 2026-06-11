@@ -256,14 +256,31 @@ def _session_cost_metrics(row: dict[str, Any]) -> dict[str, Any]:
     if cost_mismatch_pct is None and reported_cost_usd is not None and recalculated_cost_usd is not None:
         baseline = max(abs(reported_cost_usd), abs(recalculated_cost_usd), 1e-9)
         cost_mismatch_pct = round(abs(reported_cost_usd - recalculated_cost_usd) / baseline, 4)
+    pricing_model_source = str(row.get("pricing_model_source") or row.get("pricingModelSource") or "")
+    cost_provenance = str(row.get("cost_provenance") or row.get("costProvenance") or "unknown")
+    # Phase 6: derive costPricingStatus for FE consumption (AC-6.2 propagation_contract).
+    # An empty pricing_model_source means the model was not found via exact/family catalog
+    # lookup (fell through to platform-default or absent entirely).  cost_provenance=="unpriced"
+    # is set by pricing_catalog.py for the same condition.
+    # "unpriced" is a contract state — FE must render an explicit indicator, never crash.
+    explicit_pricing_status = str(row.get("cost_pricing_status") or row.get("costPricingStatus") or "")
+    if explicit_pricing_status in {"unpriced", "priced"}:
+        cost_pricing_status = explicit_pricing_status
+    elif not pricing_model_source or cost_provenance == "unpriced":
+        cost_pricing_status = "unpriced"
+    else:
+        cost_pricing_status = "priced"
     return {
         "reportedCostUsd": reported_cost_usd,
         "recalculatedCostUsd": recalculated_cost_usd,
         "displayCostUsd": display_cost_usd,
-        "costProvenance": str(row.get("cost_provenance") or row.get("costProvenance") or "unknown"),
+        "costProvenance": cost_provenance,
         "costConfidence": cost_confidence,
         "costMismatchPct": cost_mismatch_pct,
-        "pricingModelSource": str(row.get("pricing_model_source") or row.get("pricingModelSource") or ""),
+        "pricingModelSource": pricing_model_source,
+        # costPricingStatus: "priced" | "unpriced" — explicit contract state for the FE unpriced badge.
+        # Missing model in catalog → "unpriced"; FE renders badge/indicator, never NaN/$null/crash.
+        "costPricingStatus": cost_pricing_status,
     }
 
 

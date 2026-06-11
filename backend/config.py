@@ -125,10 +125,12 @@ CCDASH_NEXT_RUN_PREVIEW_ENABLED = _env_bool("CCDASH_NEXT_RUN_PREVIEW_ENABLED", T
 # Gates all multi-project command-center UI surfaces and endpoints (MPCC Phase 1+).
 # Keep OFF until Phase 2/3 endpoints and FE components are wired; flip ON to enable the feature.
 CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED = _env_bool("CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED", False)
-# CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED (default: false)
-# Gates incremental rebuild scope dispatch in document-link operations. Enable after validating
-# stability in dev/staging environments; reduces cold-start latency when rebuilding partial link graphs.
-INCREMENTAL_LINK_REBUILD_ENABLED = _env_bool("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED", False)
+# CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED (default: true)
+# Gates family-scoped incremental rebuild on the watcher hot path. When True, a new JSONL file
+# triggers rebuild_links_for_entities (scoped delete + re-derive) instead of the global
+# _rebuild_entity_links scan. Proven on the watcher hot path in Phase 4 (CCDash Core Remediation).
+# Set to false/0 to revert to the global full-scan fallback.
+INCREMENTAL_LINK_REBUILD_ENABLED = _env_bool("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED", True)
 CCDASH_PROJECT_ROOT = os.getenv("CCDASH_PROJECT_ROOT", str(PROJECT_ROOT)).strip() or str(PROJECT_ROOT)
 TEST_RESULTS_DIR = os.getenv("CCDASH_TEST_RESULTS_DIR", "").strip()
 INTEGRATIONS_SETTINGS_FILE = Path(
@@ -1144,3 +1146,39 @@ PORT = int(os.getenv("CCDASH_PORT", "8000"))
 
 # CORS
 FRONTEND_ORIGIN = os.getenv("CCDASH_FRONTEND_ORIGIN", "http://localhost:3000")
+
+# ── Phase 7: Sync coalescing + recent-first + startup hygiene ─────────────────
+# CCDASH_SYNC_COALESCING_ENABLED (default: true)
+# Gates the (project_id, trigger)-keyed in-process coalescing guard in
+# SyncEngine.sync_project.  When true, concurrent/duplicate sync dispatches
+# for the same key collapse to one in-flight run; deduped dispatches are logged
+# (structured: key + status), never silently dropped.  When false, the guard is
+# bypassed and all dispatches run independently (legacy behaviour).
+# Also gates the durable-queue idempotent-enqueue check in DurableJobScheduler
+# (enqueue_durable_idempotent) when JOB_QUEUE_BACKEND != memory.
+SYNC_COALESCING_ENABLED = _env_bool("CCDASH_SYNC_COALESCING_ENABLED", True)
+
+# CCDASH_SYNC_RECENT_FIRST_ENABLED (default: true)
+# Gates recent-first session parsing in SyncEngine._sync_sessions.  When true,
+# the N most-recently-modified JSONL files are processed first (making recent
+# sessions queryable within seconds); the remaining files are backfilled in the
+# same sync call.  When false, the full mtime-descending scan runs unmodified
+# (no regression).
+SYNC_RECENT_FIRST_ENABLED = _env_bool("CCDASH_SYNC_RECENT_FIRST_ENABLED", True)
+
+# CCDASH_SYNC_RECENT_FIRST_N (default: 200)
+# OQ-3 decision: N-most-recent with mtime tiebreak.
+#
+# Rationale for N-most-recent (vs last-K-days vs mtime-budget):
+#   • Count-bounded, not time-bounded — works identically on workspaces of any
+#     age or size; avoids empty windows on new projects and runaway windows on
+#     large archives.
+#   • Predictable operator knob (single integer); no calendar dependency.
+#   • No silent partial — full backfill follows immediately in the same sync
+#     call; backfill_count is asserted == baseline_count.
+#   • mtime tiebreak: files are already sorted by mtime descending, so the N
+#     boundary is deterministic even when multiple files share a second.
+#
+# Default 200 comfortably covers single-project volumes; operators with large
+# session archives can increase without side-effects.
+SYNC_RECENT_FIRST_N = _env_int("CCDASH_SYNC_RECENT_FIRST_N", 200)

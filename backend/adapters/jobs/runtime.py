@@ -203,16 +203,27 @@ class RuntimeJobAdapter:
                 _sched = self.ports.job_scheduler
                 if isinstance(_sched, DurableJobScheduler) and _sched._backend != "memory":
                     try:
-                        await _sched.enqueue_durable(
+                        # Phase 7: use idempotent enqueue so a reload or second
+                        # startup dispatch does not queue a duplicate sync job
+                        # when one is already pending or running (AC 7.2 durable).
+                        _enqueued_id = await _sched.enqueue_durable_idempotent(
                             "sync",
                             {"project_id": str(getattr(active_project, "id", "") or "")},
                             str(getattr(active_project, "id", "") or ""),
                             max_attempts=3,
                         )
-                        logger.debug(
-                            "P3-006-FU: enqueued durable startup-sync for project_id=%s",
-                            getattr(active_project, "id", "?"),
-                        )
+                        if _enqueued_id is not None:
+                            logger.debug(
+                                "P3-006-FU: enqueued durable startup-sync for project_id=%s job_id=%s",
+                                getattr(active_project, "id", "?"),
+                                _enqueued_id,
+                            )
+                        else:
+                            logger.info(
+                                "P3-006-FU: startup-sync coalesced (idempotent) for project_id=%s — "
+                                "pending/running job already exists",
+                                getattr(active_project, "id", "?"),
+                            )
                     except Exception:
                         logger.exception(
                             "P3-006-FU: failed to enqueue durable startup-sync — proceeding in-process"

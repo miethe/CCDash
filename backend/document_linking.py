@@ -923,6 +923,34 @@ def classify_doc_category(path_value: str, frontmatter: dict[str, Any] | None = 
     return ""
 
 
+def session_family_scope_key(session_path: str, project_id: str) -> str:
+    """Return a logical scope key that identifies the session family for a watched JSONL path.
+
+    Used by the incremental link-rebuild path (sync_engine.sync_changed_files) to derive
+    the family scope from a watcher filesystem event.  The key format is:
+    ``<project_id>/<session-slug>`` where session-slug is the stem of the JSONL filename.
+
+    This is a pure, filesystem-only function (no DB access).  Callers use it for
+    observability logging to describe which session family is being rebuilt, not for
+    database routing (which is driven by the session IDs returned by the repository).
+
+    Args:
+        session_path: Raw path string of the JSONL session file.
+        project_id:   Project identifier from the watcher registration.
+
+    Returns:
+        A non-empty scope string (e.g. ``"proj-1/session-abc123"``) or an empty
+        string if the path cannot be normalised to a meaningful stem.
+    """
+    normalized = normalize_ref_path(session_path)
+    if not normalized:
+        return ""
+    stem = Path(normalized).stem
+    if not stem or stem.startswith("."):
+        return ""
+    return f"{project_id}/{stem}"
+
+
 def extract_frontmatter_references(frontmatter: dict[str, Any] | None) -> dict[str, Any]:
     fm = frontmatter or {}
     refs_raw: list[str] = []

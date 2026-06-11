@@ -81,14 +81,25 @@ def _pricing_family(raw_model: str) -> str:
     canonical = canonical_model_name(raw_model)
     if not canonical:
         return ""
+    # Explicit known families with catalog entries — checked first (most specific).
     if "opus" in canonical:
         return "opus"
     if "sonnet" in canonical:
         return "sonnet"
     if "haiku" in canonical:
         return "haiku"
+    if "fable" in canonical:
+        return "fable"
     if "codex" in canonical:
         return "codex"
+    # Generic family derivation: claude-<family>-<version> → <family>.
+    # Novel claude-X models derive a family slug so lookup_entry can attempt a catalog
+    # lookup; if no family:X entry exists the model surfaces as "unpriced" rather than
+    # inheriting a silent platform-default pricing.
+    if canonical.startswith("claude-"):
+        parts = canonical.split("-")
+        if len(parts) >= 2 and parts[1]:
+            return parts[1]
     return ""
 
 
@@ -199,6 +210,8 @@ def _bundled_default_entries() -> list[dict[str, Any]]:
         _entry("Claude Code", _family_entry_id("sonnet"), context_window_size=200000, input_cost=3.0, output_cost=15.0, cache_creation_cost=3.75, cache_read_cost=0.3),
         _entry("Claude Code", _family_entry_id("opus"), context_window_size=200000, input_cost=5.0, output_cost=25.0, cache_creation_cost=6.25, cache_read_cost=0.5),
         _entry("Claude Code", _family_entry_id("haiku"), context_window_size=200000, input_cost=1.0, output_cost=5.0, cache_creation_cost=1.25, cache_read_cost=0.1),
+        # Fable: distinct tier ($2.0 input / $10.0 output per million), NOT Sonnet-defaulted.
+        _entry("Claude Code", _family_entry_id("fable"), context_window_size=200000, input_cost=2.0, output_cost=10.0, cache_creation_cost=2.5, cache_read_cost=0.2),
         _entry("Codex", ""),
         _entry("Codex", _family_entry_id("codex"), input_cost=1.75, output_cost=14.0, cache_read_cost=0.175),
     ]
@@ -220,6 +233,9 @@ def _bundled_exact_reference_entries() -> list[dict[str, Any]]:
         _entry("Claude Code", "claude-haiku-3-5", context_window_size=200000, input_cost=0.8, output_cost=4.0, cache_creation_cost=1.0, cache_read_cost=0.08),
         _entry("Claude Code", "claude-3-opus", context_window_size=200000, input_cost=15.0, output_cost=75.0, cache_creation_cost=18.75, cache_read_cost=1.5),
         _entry("Claude Code", "claude-3-haiku", context_window_size=200000, input_cost=0.25, output_cost=1.25, cache_creation_cost=0.3, cache_read_cost=0.03),
+        # Fable exact model entries — distinct tier ($2.0/$10.0 per million).
+        _entry("Claude Code", "claude-fable-4-5", context_window_size=200000, input_cost=2.0, output_cost=10.0, cache_creation_cost=2.5, cache_read_cost=0.2),
+        _entry("Claude Code", "claude-fable-4", context_window_size=200000, input_cost=2.0, output_cost=10.0, cache_creation_cost=2.5, cache_read_cost=0.2),
         _entry("Codex", "gpt-5.2-codex", input_cost=1.75, output_cost=14.0, cache_read_cost=0.175),
         _entry("Codex", "gpt-5.1-codex-max", input_cost=1.25, output_cost=10.0, cache_read_cost=0.125),
         _entry("Codex", "gpt-5.1-codex", input_cost=1.25, output_cost=10.0, cache_read_cost=0.125),
@@ -252,6 +268,7 @@ def _preferred_family_models() -> dict[str, str]:
         "Claude Code:sonnet": "claude-sonnet-4-6",
         "Claude Code:opus": "claude-opus-4-6",
         "Claude Code:haiku": "claude-haiku-4-5",
+        "Claude Code:fable": "claude-fable-4-5",
         "Codex:codex": "gpt-5.2-codex",
     }
 
@@ -612,25 +629,46 @@ class PricingCatalogService:
                     6,
                 )
 
+        # Phase 6: detect unpriced state — pricing_model_source is empty when no exact/family
+        # catalog match was found (model fell through to platform-level default, which carries no
+        # per-model rates, or no entry existed at all).  We do NOT fall back to the parser-level
+        # estimated cost (which silently defaults to Sonnet rates for unknown models); instead we
+        # mark the session explicitly as "unpriced" so consumers can render a clear indicator.
+        # "unpriced" is a contract state, not an error.
+        is_unpriced = not pricing_model_source  # empty string ↔ no exact/family catalog hit
+
         reported_cost_usd = _normalize_float(enriched.get("reported_cost_usd"))
         estimated_cost_usd = _normalize_float(session_payload.get("totalCost") or session_payload.get("total_cost")) or 0.0
         display_cost_usd: float | None
         cost_provenance = "unknown"
         cost_confidence = 0.0
-        if reported_cost_usd is not None:
-            display_cost_usd = reported_cost_usd
-            cost_provenance = "reported"
-            cost_confidence = 0.98 if recalculated_cost_usd is not None else 0.92
-        elif recalculated_cost_usd is not None:
-            display_cost_usd = recalculated_cost_usd
-            cost_provenance = "recalculated"
-            cost_confidence = 0.9
-        elif estimated_cost_usd > 0:
-            display_cost_usd = round(estimated_cost_usd, 6)
-            cost_provenance = "estimated"
-            cost_confidence = 0.45
+
+        if is_unpriced:
+            # Model not in pricing catalog.  Only trust the Anthropic-reported charge if present;
+            # never surface the parser-estimated Sonnet-fallback value as a real cost.
+            if reported_cost_usd is not None:
+                display_cost_usd = reported_cost_usd
+                cost_provenance = "reported"
+                cost_confidence = 0.92
+            else:
+                display_cost_usd = None
+                cost_provenance = "unpriced"
+                cost_confidence = 0.0
         else:
-            display_cost_usd = None
+            if reported_cost_usd is not None:
+                display_cost_usd = reported_cost_usd
+                cost_provenance = "reported"
+                cost_confidence = 0.98 if recalculated_cost_usd is not None else 0.92
+            elif recalculated_cost_usd is not None:
+                display_cost_usd = recalculated_cost_usd
+                cost_provenance = "recalculated"
+                cost_confidence = 0.9
+            elif estimated_cost_usd > 0:
+                display_cost_usd = round(estimated_cost_usd, 6)
+                cost_provenance = "estimated"
+                cost_confidence = 0.45
+            else:
+                display_cost_usd = None
 
         cost_mismatch_pct: float | None = None
         if reported_cost_usd is not None and recalculated_cost_usd is not None:
@@ -645,7 +683,12 @@ class PricingCatalogService:
                 "cost_confidence": cost_confidence,
                 "cost_mismatch_pct": cost_mismatch_pct,
                 "pricing_model_source": pricing_model_source,
-                "total_cost": float(display_cost_usd if display_cost_usd is not None else estimated_cost_usd),
+                # cost_pricing_status: explicit unpriced contract state surfaced to API consumers
+                # and the FE layer (see analytics.py _session_cost_metrics → costPricingStatus).
+                "cost_pricing_status": "unpriced" if is_unpriced else "priced",
+                "total_cost": float(display_cost_usd) if display_cost_usd is not None else (
+                    0.0 if is_unpriced else float(estimated_cost_usd)
+                ),
             }
         )
         return enriched

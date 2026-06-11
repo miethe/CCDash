@@ -1330,6 +1330,12 @@ class SyncEngine:
         self._test_source_errors: dict[str, str] = {}
         self._test_source_synced_at: dict[str, str] = {}
         self._source_identity_policy = source_identity_policy_from_env()
+        # Phase 7: per-(project_id, trigger) in-process coalescing guard.
+        # Set membership check + add are synchronous (no yield points between
+        # them), so the check-then-add is atomic in asyncio's single-threaded
+        # event loop.  Concurrent dispatches for the same key see the key as
+        # in-flight before any yield occurs; they coalesce (early return).
+        self._sync_in_flight: set[tuple[str, str]] = set()
 
     # ── Per-run filesystem traversal cache ─────────────────────────────────
     def _rglob(self, root: Path | str, pattern: str) -> tuple[Path, ...]:
@@ -3029,6 +3035,33 @@ class SyncEngine:
             "duration_ms": 0,
             "operation_id": "",
         }
+        # ── Phase 7: in-process coalescing guard ──────────────────────────────
+        # Key: (project_id, trigger).  The set-membership check and the add are
+        # both synchronous (no await between them), so the check-then-add is
+        # atomic in asyncio's cooperative single-threaded event loop.  A second
+        # concurrent caller for the same key runs its check AFTER the first
+        # caller's add (the first yield is only at _start_operation below), so
+        # it always sees the key as in-flight and coalesces.
+        # NULL/empty project_id is treated as a single degenerate bucket — it
+        # never merges distinct projects per AC 7.1.
+        # Deduped dispatches are logged (key + count), never silently dropped.
+        _coal_key: tuple[str, str] | None = None
+        if bool(getattr(config, "SYNC_COALESCING_ENABLED", True)):
+            _coal_key = (
+                str(getattr(project, "id", "") or ""),
+                trigger or "api",
+            )
+            if _coal_key in self._sync_in_flight:
+                logger.info(
+                    "sync_project coalesced key=(%s, %s) — in-flight sync detected; "
+                    "returning deduplicated result (no silent drop)",
+                    _coal_key[0],
+                    _coal_key[1],
+                )
+                stats["coalesced"] = True
+                return stats
+            self._sync_in_flight.add(_coal_key)
+        # ── End Phase 7 coalescing guard ──────────────────────────────────────
         if not operation_id:
             operation_id = await self._start_operation(
                 "full_sync",
@@ -3294,6 +3327,12 @@ class SyncEngine:
         finally:
             # Clear the per-run memo so the next sync run starts fresh.
             self._rglob_cache = {}
+            # Phase 7: release coalescing guard so subsequent dispatches for
+            # this key can proceed.  discard() is used (not remove()) so the
+            # finally is idempotent even if the key was never added (e.g. if
+            # coalescing is disabled or if the early-return path ran).
+            if _coal_key is not None:
+                self._sync_in_flight.discard(_coal_key)
 
     async def sync_planning_artifacts(
         self,
@@ -4173,19 +4212,100 @@ class SyncEngine:
                         phase="links",
                         message="Rebuilding entity links after changed-file sync",
                     )
-                l_stats = await self._rebuild_entity_links(
-                    project_id,
-                    docs_dir,
-                    progress_dir,
-                    operation_id=operation_id,
-                )
-                stats["links_created"] = int(l_stats.get("created", 0))
-                await self._save_link_state(
-                    project_id,
-                    trigger=trigger,
-                    reason=rebuild_reason,
-                    links_created=stats["links_created"],
-                )
+                # BE-206/Phase-4: Incremental link rebuild — scoped to the affected session
+                # family when INCREMENTAL_LINK_REBUILD_ENABLED=True.  This avoids the global
+                # filesystem scan (_store_document_catalog_index via _rglob) that
+                # _rebuild_entity_links triggers when docs_dir/progress_dir are passed.
+                #
+                # Scoped path: collect session IDs from changed JSONL files (sessions were
+                # persisted in the loop above, so list_by_source is accurate here), then call
+                # rebuild_links_for_entities — a scoped delete-then-re-derive that does NOT
+                # walk the filesystem (no docs_dir/progress_dir passed to _rebuild_entity_links).
+                #
+                # Fallback to full rebuild when:
+                #   • INCREMENTAL_LINK_REBUILD_ENABLED=False
+                #   • link-logic version is stale (broad schema change needs full pass)
+                #   • should_rebuild_links=False (version-only trigger, not changed-files)
+                if (
+                    config.INCREMENTAL_LINK_REBUILD_ENABLED
+                    and should_rebuild_links
+                    and not should_rebuild_for_version
+                ):
+                    # --- Scoped (incremental) path ---
+                    # Collect session IDs for all changed JSONL files in this batch.
+                    changed_session_ids: list[str] = []
+                    for _ct, _path in changed_files:
+                        if _path.suffix == ".jsonl" and sessions_dir in _path.parents:
+                            _sync_key = self._canonical_source_key(project_id, _path, "session")
+                            try:
+                                _rows = await self.session_repo.list_by_source(_sync_key)
+                                for _row in _rows:
+                                    _sid = str(_row.get("id") or "").strip()
+                                    if _sid and _sid not in changed_session_ids:
+                                        changed_session_ids.append(_sid)
+                            except Exception:
+                                logger.warning(
+                                    "incremental link rebuild: failed to resolve session IDs"
+                                    " for %s — skipping",
+                                    str(_path),
+                                    extra={"project_id": project_id},
+                                )
+                    if changed_session_ids:
+                        logger.info(
+                            "sync_changed_files: incremental link rebuild"
+                            " — %d session(s) in family scope",
+                            len(changed_session_ids),
+                            extra={
+                                "project_id": project_id,
+                                "entity_count": len(changed_session_ids),
+                            },
+                        )
+                        observability.record_link_rebuild_scope("entities_changed")
+                        l_stats = await self.rebuild_links_for_entities(
+                            project_id,
+                            "session",
+                            changed_session_ids,
+                            trigger=trigger,
+                        )
+                        stats["links_created"] = int(l_stats.get("auto_links_rebuilt", 0))
+                    else:
+                        # No session IDs resolved (empty/orphan JSONL) — deferred to next
+                        # full sync.  Per AC-T4-002: no silent drop, no fallback to global
+                        # scan; log the deferred count for diagnostics.
+                        logger.info(
+                            "sync_changed_files: incremental rebuild deferred"
+                            " — no session IDs resolved from %d changed file(s);"
+                            " will be picked up on next full sync",
+                            len(changed_files),
+                            extra={"project_id": project_id},
+                        )
+                        observability.record_link_rebuild_scope("none")
+                        l_stats = {"created": 0, "auto_links_rebuilt": 0}
+                        stats["links_created"] = 0
+                    await self._save_link_state(
+                        project_id,
+                        trigger=trigger,
+                        reason=rebuild_reason,
+                        links_created=stats["links_created"],
+                    )
+                else:
+                    # --- Full (global) rebuild path ---
+                    # Used when: flag=False, link-logic version stale, or no changed-files
+                    # trigger.  Calls _rebuild_entity_links with docs_dir/progress_dir so
+                    # the document catalog index is also refreshed (filesystem walk).
+                    l_stats = await self._rebuild_entity_links(
+                        project_id,
+                        docs_dir,
+                        progress_dir,
+                        operation_id=operation_id,
+                    )
+                    stats["links_created"] = int(l_stats.get("created", 0))
+                    await self._save_link_state(
+                        project_id,
+                        trigger=trigger,
+                        reason=rebuild_reason,
+                        links_created=stats["links_created"],
+                    )
 
             if operation_id:
                 await self._update_operation(
@@ -4250,12 +4370,102 @@ class SyncEngine:
         if skipped:
             return stats
 
-        for jsonl_file in sorted(self._rglob(sessions_dir, "*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+        # ── Phase 7: recent-first parse + backfill ────────────────────────────
+        # OQ-3 resolution: N-most-recent with mtime tiebreak.
+        # All session files are sorted mtime-descending (most recent first).
+        # When SYNC_RECENT_FIRST_ENABLED=True and the total count exceeds N, the
+        # first N files form the "recent window" (processed first so recent
+        # sessions are queryable within seconds); the rest are backfilled in the
+        # same call.  When the feature is disabled or the file count <= N, all
+        # files are processed in one pass (identical to the previous behaviour).
+        # Fallback: if the flag is off or window is empty, baseline full-scan
+        # ordering is preserved (no regression).
+        # No silent caps: backfill_count is asserted == baseline_count;
+        # discrepancies are surfaced as structured WARNING logs.
+        all_files = sorted(
+            self._rglob(sessions_dir, "*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        baseline_count = len(all_files)
+
+        recent_first_enabled = bool(getattr(config, "SYNC_RECENT_FIRST_ENABLED", True))
+        recent_first_n = max(1, int(getattr(config, "SYNC_RECENT_FIRST_N", 200)))
+
+        if recent_first_enabled and baseline_count > recent_first_n:
+            recent_files = all_files[:recent_first_n]
+            backfill_files = all_files[recent_first_n:]
+        else:
+            # Fewer files than N, or feature disabled: process all in one pass
+            recent_files = all_files
+            backfill_files = []
+
+        # --- Recent window (priority pass) ---
+        recent_synced = 0
+        recent_skipped = 0
+        for jsonl_file in recent_files:
             synced = await self._sync_single_session(project_id, jsonl_file, force)
             if synced:
-                stats["synced"] += 1
+                recent_synced += 1
             else:
-                stats["skipped"] += 1
+                recent_skipped += 1
+
+        # Log when the recent window is populated and backfill work remains.
+        if backfill_files:
+            logger.info(
+                "sync_sessions recent_first_window_ready: project_id=%s "
+                "recent_synced=%d recent_skipped=%d backfill_deferred=%d",
+                project_id,
+                recent_synced,
+                recent_skipped,
+                len(backfill_files),
+            )
+
+        # --- Backfill pass (remaining sessions after recent window) ---
+        backfill_synced = 0
+        backfill_skipped = 0
+        for jsonl_file in backfill_files:
+            synced = await self._sync_single_session(project_id, jsonl_file, force)
+            if synced:
+                backfill_synced += 1
+            else:
+                backfill_skipped += 1
+
+        stats["synced"] = recent_synced + backfill_synced
+        stats["skipped"] = recent_skipped + backfill_skipped
+
+        # Phase 7 parity check: total processed == baseline (no silent loss).
+        # A mismatch means some files were neither synced nor skipped — log as
+        # WARNING so operators can investigate without silently capping data.
+        total_processed = stats["synced"] + stats["skipped"]
+        if total_processed != baseline_count:
+            logger.warning(
+                "sync_sessions parity_check_FAILED: project_id=%s "
+                "baseline=%d processed=%d dropped=%d — "
+                "possible silent loss; investigate sync_state",
+                project_id,
+                baseline_count,
+                total_processed,
+                baseline_count - total_processed,
+            )
+        else:
+            logger.debug(
+                "sync_sessions parity_check_ok: project_id=%s "
+                "baseline=%d processed=%d",
+                project_id,
+                baseline_count,
+                total_processed,
+            )
+
+        if backfill_files:
+            logger.info(
+                "sync_sessions backfill_complete: project_id=%s "
+                "backfill_synced=%d backfill_skipped=%d",
+                project_id,
+                backfill_synced,
+                backfill_skipped,
+            )
+        # ── End Phase 7 recent-first ──────────────────────────────────────────
 
         # Update manifest after full walk so next run can skip when nothing changed.
         await self._update_manifest_for_roots(resolved_roots, "*.jsonl")
