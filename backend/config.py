@@ -125,10 +125,19 @@ CCDASH_NEXT_RUN_PREVIEW_ENABLED = _env_bool("CCDASH_NEXT_RUN_PREVIEW_ENABLED", T
 # Gates all multi-project command-center UI surfaces and endpoints (MPCC Phase 1+).
 # Keep OFF until Phase 2/3 endpoints and FE components are wired; flip ON to enable the feature.
 CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED = _env_bool("CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED", False)
-# CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED (default: false)
-# Gates incremental rebuild scope dispatch in document-link operations. Enable after validating
-# stability in dev/staging environments; reduces cold-start latency when rebuilding partial link graphs.
-INCREMENTAL_LINK_REBUILD_ENABLED = _env_bool("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED", False)
+# CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED (default: true)
+# Gates family-scoped incremental rebuild on the watcher hot path. When True, a new JSONL file
+# triggers rebuild_links_for_entities (scoped delete + re-derive) instead of the global
+# _rebuild_entity_links scan. Proven on the watcher hot path in Phase 4 (CCDash Core Remediation).
+# Set to false/0 to revert to the global full-scan fallback.
+INCREMENTAL_LINK_REBUILD_ENABLED = _env_bool("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED", True)
+# CCDASH_SIDECAR_CONTEXT_JOIN_ENABLED (default: true)
+# Gates the Phase 5 (T5-003) workflow.json sidecar → session join in sync_engine.
+# When True, sessions are matched to a nearby workflow.json sidecar on runId/taskId
+# within a ±1 min window and the session's context_window (e.g. "1M") is attributed.
+# Behaviorally additive: no match leaves context_window null (AC-5.1 resilience).
+# Set to false/0 to skip the join entirely.
+SIDECAR_CONTEXT_JOIN_ENABLED = _env_bool("CCDASH_SIDECAR_CONTEXT_JOIN_ENABLED", True)
 CCDASH_PROJECT_ROOT = os.getenv("CCDASH_PROJECT_ROOT", str(PROJECT_ROOT)).strip() or str(PROJECT_ROOT)
 TEST_RESULTS_DIR = os.getenv("CCDASH_TEST_RESULTS_DIR", "").strip()
 INTEGRATIONS_SETTINGS_FILE = Path(
@@ -843,6 +852,32 @@ def resolve_runtime_environment_contract(
             active=runtime_profile in {"local", "test"},
             notes="Local/test no-auth mode is enabled by default and can be made explicit for operator review.",
         ),
+        # T10-003: extra CORS origins for LAN / IntentTree agents (additive, all profiles)
+        _build_env_contract_entry(
+            name="CCDASH_CORS_ALLOWED_ORIGINS",
+            scope="shared",
+            environ=env,
+            default_when_missing=True,
+            notes=(
+                "Comma-separated additional CORS origins for LAN / IntentTree agents. "
+                "Merged with CCDASH_FRONTEND_ORIGIN. Unset = existing permissive-on-LAN default. "
+                "No existing deployment is affected when absent."
+            ),
+        ),
+        # T10-004 / OQ-6: optional LAN bearer token for /api/v1 routes
+        _build_env_contract_entry(
+            name="CCDASH_API_TOKEN",
+            scope="shared",
+            environ=env,
+            secret=True,
+            default_when_missing=True,
+            notes=(
+                "Optional bearer token gating all /api/v1 routes. "
+                "Unset = no auth (local-trust default). "
+                "Set = every /api/v1 request must present a matching Authorization: Bearer header. "
+                "Separate from the hosted-API CCDASH_API_BEARER_TOKEN / static_bearer provider."
+            ),
+        ),
     )
 
     errors: list[str] = []
@@ -978,14 +1013,20 @@ WORKER_WATCH_STARTUP_SYNC_ENABLED: bool = _env_bool("CCDASH_WORKER_WATCH_STARTUP
 
 # Startup sync tuning
 STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)
-# CCDASH_SYNC_ALL_PROJECTS (default: true)
-# When true, startup sync and file-watcher registration run for ALL registered
-# projects (not just the active one). Each project is synced sequentially to
-# avoid saturating the shared SQLite connection. Non-active projects are synced
-# in read-only mode — frontmatter write-back is suppressed so CCDash never
-# mutates the user's other repos. Set to false to restore the legacy
-# active-project-only behaviour.
-SYNC_ALL_PROJECTS = _env_bool("CCDASH_SYNC_ALL_PROJECTS", True)
+# CCDASH_SYNC_ALL_PROJECTS (default: false)
+# Gates the BOOT-TIME all-projects hot-path sweep + watcher registration in
+# RuntimeJobAdapter.start().  When true, startup sync and file-watcher
+# registration run for ALL registered projects (not just the active one),
+# synced sequentially in read-only mode (frontmatter write-back suppressed so
+# CCDash never mutates the user's other repos).
+#
+# Phase 8 default change (True -> False): cross-project freshness is now
+# provided by the periodic reconcile job (CCDASH_RECONCILE_INTERVAL_SECONDS),
+# DECOUPLED from the boot hot path.  With the flag off, only the active project
+# is swept at boot; non-active projects are synced + watcher-registered within
+# one reconcile interval (no restart).  Set to true to restore the eager
+# boot-time all-projects sweep.
+SYNC_ALL_PROJECTS = _env_bool("CCDASH_SYNC_ALL_PROJECTS", False)
 STARTUP_SYNC_DELAY_SECONDS = _env_int("CCDASH_STARTUP_SYNC_DELAY_SECONDS", 2)
 # CCDASH_STARTUP_SYNC_LIGHT_MODE (default: false)
 # Enables manifest-based scan skip on unchanged filesystem paths. Skips re-scanning entire subtrees
@@ -1144,3 +1185,92 @@ PORT = int(os.getenv("CCDASH_PORT", "8000"))
 
 # CORS
 FRONTEND_ORIGIN = os.getenv("CCDASH_FRONTEND_ORIGIN", "http://localhost:3000")
+
+# CCDASH_CORS_ALLOWED_ORIGINS (T10-003)
+# Comma-separated list of ADDITIONAL allowed CORS origins for LAN / IntentTree
+# agents.  Merged with CCDASH_FRONTEND_ORIGIN and the dev-CORS localhost entries.
+# Unset (or empty) → only the existing FRONTEND_ORIGIN + dev-CORS origins are
+# allowed (permissive-on-LAN default for the local runtime profile, documented).
+# No existing deployment is affected when this variable is not set.
+# Example: CCDASH_CORS_ALLOWED_ORIGINS=http://192.168.1.50:3000,http://mylan.local:3000
+CCDASH_CORS_ALLOWED_ORIGINS: str = os.getenv("CCDASH_CORS_ALLOWED_ORIGINS", "").strip()
+
+# CCDASH_API_TOKEN (T10-004 / OQ-6)
+# Optional bearer token that gates ALL /api/v1 routes for LAN / local deployments.
+# When unset (default): no auth required — local-trust, all /api/v1 requests are
+# allowed without a token.
+# When set: every /api/v1 request must present "Authorization: Bearer <token>";
+# missing token → HTTP 401; wrong token → HTTP 403.
+# This is SEPARATE from the hosted-API CCDASH_API_BEARER_TOKEN / static_bearer
+# provider — it applies independently of the runtime profile.
+# Forward-compat (ADR-008): identity is resolved in a single injectable FastAPI
+# Depends (backend/routers/_client_v1_auth.py:require_v1_auth).  A future
+# workspace-scoped resolver replaces that function without touching handler bodies.
+CCDASH_API_TOKEN: str = os.getenv("CCDASH_API_TOKEN", "").strip()
+
+# ── Phase 7: Sync coalescing + recent-first + startup hygiene ─────────────────
+# CCDASH_SYNC_COALESCING_ENABLED (default: true)
+# Gates the (project_id, trigger)-keyed in-process coalescing guard in
+# SyncEngine.sync_project.  When true, concurrent/duplicate sync dispatches
+# for the same key collapse to one in-flight run; deduped dispatches are logged
+# (structured: key + status), never silently dropped.  When false, the guard is
+# bypassed and all dispatches run independently (legacy behaviour).
+# Also gates the durable-queue idempotent-enqueue check in DurableJobScheduler
+# (enqueue_durable_idempotent) when JOB_QUEUE_BACKEND != memory.
+SYNC_COALESCING_ENABLED = _env_bool("CCDASH_SYNC_COALESCING_ENABLED", True)
+
+# CCDASH_SYNC_RECENT_FIRST_ENABLED (default: true)
+# Gates recent-first session parsing in SyncEngine._sync_sessions.  When true,
+# the N most-recently-modified JSONL files are processed first (making recent
+# sessions queryable within seconds); the remaining files are backfilled in the
+# same sync call.  When false, the full mtime-descending scan runs unmodified
+# (no regression).
+SYNC_RECENT_FIRST_ENABLED = _env_bool("CCDASH_SYNC_RECENT_FIRST_ENABLED", True)
+
+# CCDASH_SYNC_RECENT_FIRST_N (default: 200)
+# OQ-3 decision: N-most-recent with mtime tiebreak.
+#
+# Rationale for N-most-recent (vs last-K-days vs mtime-budget):
+#   • Count-bounded, not time-bounded — works identically on workspaces of any
+#     age or size; avoids empty windows on new projects and runaway windows on
+#     large archives.
+#   • Predictable operator knob (single integer); no calendar dependency.
+#   • No silent partial — full backfill follows immediately in the same sync
+#     call; backfill_count is asserted == baseline_count.
+#   • mtime tiebreak: files are already sorted by mtime descending, so the N
+#     boundary is deterministic even when multiple files share a second.
+#
+# Default 200 comfortably covers single-project volumes; operators with large
+# session archives can increase without side-effects.
+SYNC_RECENT_FIRST_N = _env_int("CCDASH_SYNC_RECENT_FIRST_N", 200)
+
+# ── Phase 8: Cross-project freshness hardening ───────────────────────────────
+# CCDASH_RECONCILE_INTERVAL_SECONDS (default: 300 = 5 min)
+# OQ-4 decision: interval-based polling reconcile.
+#
+# A periodic background job (RuntimeJobAdapter._start_reconcile_task) enumerates
+# every project from the DB-authoritative registry (ADR-006) each tick and
+# dispatches a per-project freshness pass THROUGH the Phase 7 coalescing guard
+# (SyncEngine.sync_project, trigger="reconcile").  This catches filesystem
+# events the watcher missed and projects/directories added AFTER boot — no
+# restart and no active-project switch required.  Non-active projects are
+# read/ingest-only (allow_writeback=False).
+#
+# <= 0 disables the reconcile job entirely (resilience: cross-project freshness
+# then relies solely on live watchers + the boot sweep; baseline behaviour, no
+# error).
+#
+# Fast-follow (noted, not yet implemented): a registry-change-event push could
+# trigger reconcile on project add/remove instead of polling.  We approximate
+# this cheaply today by invalidating the registry snapshot at the start of each
+# tick (reload_projects()) so post-boot rows surface within one interval.
+RECONCILE_INTERVAL_SECONDS = _env_int("CCDASH_RECONCILE_INTERVAL_SECONDS", 300)
+
+# CCDASH_WATCHER_HEAL_ENABLED (default: true)
+# Gates watcher liveness self-heal inside the reconcile tick.  When true, a
+# crashed/dead watcher (registered-but-not-running, or expected-but-absent) is
+# detected and re-bound within one reconcile interval; self-heal events are
+# logged (project + reason), and a re-bind failure is logged and retried on the
+# next tick (never a silently permanently-dead watcher).  When false, self-heal
+# is skipped (legacy behaviour).
+WATCHER_HEAL_ENABLED = _env_bool("CCDASH_WATCHER_HEAL_ENABLED", True)

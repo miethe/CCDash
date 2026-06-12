@@ -22,6 +22,17 @@ class ProjectManagerWorkspaceRegistry:
     def list_projects(self) -> list[Project]:
         return self._manager.list_projects()
 
+    def reload_projects(self) -> None:
+        """Phase 8 (T8-004): invalidate the underlying manager's snapshot so the
+        next ``list_projects()`` re-reads the DB-authoritative registry (ADR-006).
+
+        Only the DB-backed manager exposes ``reload``; the call is guarded so
+        legacy / mock managers without it are a silent no-op.
+        """
+        _reload = getattr(self._manager, "reload", None)
+        if callable(_reload):
+            _reload()
+
     def get_project(self, project_id: str) -> Project | None:
         return self._manager.get_project(project_id)
 

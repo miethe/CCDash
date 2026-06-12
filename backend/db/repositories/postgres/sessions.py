@@ -38,8 +38,10 @@ class PostgresSessionRepository:
                 fork_parent_session_id, fork_point_log_id, fork_point_entry_uuid, fork_point_parent_entry_uuid, fork_depth, fork_count,
                 started_at, ended_at, created_at, updated_at, source_file,
                 dates_json, timeline_json, impact_history_json,
-                thinking_level, session_forensics_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52)
+                thinking_level, session_forensics_json,
+                model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
+                launcher, profile, effort_tier, model_variant
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -83,7 +85,22 @@ class PostgresSessionRepository:
                 timeline_json=EXCLUDED.timeline_json,
                 impact_history_json=EXCLUDED.impact_history_json,
                 thinking_level=EXCLUDED.thinking_level,
-                session_forensics_json=EXCLUDED.session_forensics_json
+                session_forensics_json=EXCLUDED.session_forensics_json,
+                -- Phase 5 detection columns (T5-006).
+                model_slug=CASE WHEN EXCLUDED.model_slug != '' THEN EXCLUDED.model_slug ELSE sessions.model_slug END,
+                workflow_id=EXCLUDED.workflow_id,
+                subagent_parent_id=EXCLUDED.subagent_parent_id,
+                skill_name=EXCLUDED.skill_name,
+                -- context_window comes from the sidecar join (T5-003); never wipe a
+                -- prior attribution when the sidecar is transiently absent.
+                context_window=COALESCE(EXCLUDED.context_window, sessions.context_window),
+                -- Phase 11 launch-time capture columns (T11-003). All four are
+                -- capture-once: a re-ingest with a null value must never clobber a
+                -- previously-captured value (idempotency, AC-11.C).
+                launcher=COALESCE(EXCLUDED.launcher, sessions.launcher),
+                profile=COALESCE(EXCLUDED.profile, sessions.profile),
+                effort_tier=COALESCE(EXCLUDED.effort_tier, sessions.effort_tier),
+                model_variant=COALESCE(EXCLUDED.model_variant, sessions.model_variant)
         """
         await self.db.execute(
             query,
@@ -137,21 +154,62 @@ class PostgresSessionRepository:
             json.dumps(session_data.get("impactHistory", []) or []),
             str(session_data.get("thinkingLevel", "") or ""),
             json.dumps(session_data.get("sessionForensics", {}) or {}),
+            # Phase 5 detection columns (T5-006).
+            str(session_data.get("modelSlug", "") or ""),
+            session_data.get("workflowId"),
+            session_data.get("subagentParentId"),
+            session_data.get("skillName"),
+            session_data.get("contextWindow"),
+            # Phase 11 launch-time capture columns (T11-003). All nullable;
+            # null == "not captured" (contract state, no default, no backfill).
+            session_data.get("launcher"),
+            session_data.get("profile"),
+            session_data.get("effortTier"),
+            session_data.get("modelVariant"),
         )
 
-    async def get_by_id(self, session_id: str) -> dict | None:
-        row = await self.db.fetchrow("SELECT * FROM sessions WHERE id = $1", session_id)
+    async def get_by_id(self, session_id: str, project_id: str | None = None) -> dict | None:
+        """Fetch a single session by id.
+
+        Mirrors the SQLite backend (``backend/db/repositories/sessions.py``) with
+        identical predicate semantics: a non-empty ``project_id`` adds a strict
+        equality predicate alongside ``id`` (composite PK ``(project_id, id)``);
+        ``None``/``''`` leaves the read unscoped (active-project hot path unchanged).
+        """
+        if project_id:
+            row = await self.db.fetchrow(
+                "SELECT * FROM sessions WHERE project_id = $1 AND id = $2",
+                project_id,
+                session_id,
+            )
+        else:
+            row = await self.db.fetchrow(
+                "SELECT * FROM sessions WHERE id = $1", session_id
+            )
         if not row:
             return None
         return dict(row)
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple sessions in a single query. Returns a dict keyed by session id."""
+    async def get_many_by_ids(
+        self, ids: list[str], project_id: str | None = None
+    ) -> dict[str, dict]:
+        """Fetch multiple sessions in a single query. Returns a dict keyed by session id.
+
+        ``project_id`` follows the same semantics as :meth:`get_by_id` and mirrors
+        the SQLite backend predicate exactly (Risk Hotspot: backend drift).
+        """
         if not ids:
             return {}
-        rows = await self.db.fetch(
-            "SELECT * FROM sessions WHERE id = ANY($1::text[])", ids
-        )
+        if project_id:
+            rows = await self.db.fetch(
+                "SELECT * FROM sessions WHERE project_id = $1 AND id = ANY($2::text[])",
+                project_id,
+                ids,
+            )
+        else:
+            rows = await self.db.fetch(
+                "SELECT * FROM sessions WHERE id = ANY($1::text[])", ids
+            )
         return {row["id"]: dict(row) for row in rows}
 
     async def list_by_source(self, source_file: str) -> list[dict]:

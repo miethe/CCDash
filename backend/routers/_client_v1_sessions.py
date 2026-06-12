@@ -4,15 +4,30 @@ This module defines pure handler functions (no router).  Each handler is
 intended to be wired onto ``client_v1_router`` by the router registration
 layer.  All handlers follow the ``_resolve_app_request`` pattern used
 throughout the analytics and agent routers.
+
+Phase 2 additions
+-----------------
+``get_session_full_detail_v1`` and ``get_session_transcript_page_v1`` are the
+new transcript-bearing detail endpoints.  They delegate to the Phase 1 service
+(``backend.application.services.agent_queries.session_detail.get_session_detail``)
+and require an explicit ``project_id`` query param — there is NO active-project
+fallback (HTTP 400 if ``project_id`` is missing).
 """
 from __future__ import annotations
 
 from fastapi import HTTPException
 
+from ccdash_contracts import SessionDetailV1, SessionTranscriptPageV1
+
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.agent_queries.models import SessionRef
+from backend.application.services.agent_queries.session_detail import (
+    DEFAULT_TRANSCRIPT_LIMIT,
+    INCLUDE_TRANSCRIPT,
+    get_session_detail,
+)
 from backend.application.services.session_intelligence import (
     SessionIntelligenceReadService,
     TranscriptSearchService,
@@ -255,8 +270,17 @@ async def get_session_family_v1(
     app_request = await _resolve_app_request(request_context, core_ports)
     session_repo = get_session_repository(core_ports.storage.db)
 
-    # Step 1: resolve the anchor session.
-    anchor = await session_repo.get_by_id(session_id)
+    # Resolve the requested project (active-project resolution when unscoped).
+    requested_project_id: str | None = (
+        app_request.context.project.project_id if app_request.context.project else None
+    )
+
+    # Step 1: resolve the anchor session, scoped to the requested project so a
+    # family request for a non-active project never resolves the wrong project's
+    # row. When no project is in scope (None/''), the lookup is unscoped and falls
+    # back to the active-project hot path. Anchor-not-found-in-project yields a 404
+    # with NO silent fallback to the active project.
+    anchor = await session_repo.get_by_id(session_id, project_id=requested_project_id)
     if anchor is None:
         raise HTTPException(
             status_code=404,
@@ -265,8 +289,11 @@ async def get_session_family_v1(
 
     root_id: str = anchor.get("root_session_id") or session_id
 
-    # Step 2: fetch all family members.
-    project_id: str = app_request.context.project.project_id if app_request.context.project else ""
+    # Step 2: fetch all family members. Derive project_id from the ANCHOR ROW (its
+    # authoritative project), not the active-project singleton, and thread that
+    # derived id into the family lookup so descendants/ancestors are scoped to the
+    # anchor's project end-to-end.
+    project_id: str = anchor.get("project_id") or requested_project_id or ""
     rows: list[dict] = await session_repo.list_paginated(
         offset=0,
         limit=500,
@@ -303,5 +330,146 @@ async def get_session_family_v1(
     return ClientV1Envelope(
         status="ok",
         data=dto,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Handler: full session detail (transcript-bearing) — Phase 2 / T2-002/T2-003
+# ---------------------------------------------------------------------------
+
+
+async def get_session_full_detail_v1(
+    session_id: str,
+    project_id: str | None,
+    include: list[str] | None,
+    cursor: str | None,
+    limit: int,
+    request_context: RequestContext,
+    core_ports: CorePorts,
+) -> ClientV1Envelope[SessionDetailV1]:
+    """Return full session detail bundle (transcript-bearing) for **any** project.
+
+    Delegates to the Phase 1 transport-neutral service
+    ``session_detail.get_session_detail``.  The service applies redaction
+    before returning, so secrets are scrubbed before this handler serialises
+    the response.
+
+    ``project_id`` is **required** — HTTP 400 if absent.  There is no
+    active-project fallback.  Unknown ``session_id`` yields HTTP 404.
+
+    ``include`` is a repeatable query param (``?include=transcript&include=tokens``);
+    omitting it defaults to ALL segments.
+    """
+    if not project_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "project_id is required for GET /sessions/{id}/detail. "
+                "Pass ?project_id=<project_id>. "
+                "Active-project fallback is not supported on this endpoint."
+            ),
+        )
+
+    effective_include = frozenset(include) if include is not None else None
+
+    bundle = await get_session_detail(
+        project_id=project_id,
+        session_id=session_id,
+        ports=core_ports,
+        include=effective_include,
+        cursor=cursor,
+        limit=limit if limit > 0 else None,
+        context=request_context,
+    )
+
+    if bundle is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not found in project '{project_id}'",
+        )
+
+    data = SessionDetailV1.model_validate(bundle.as_dict())
+    return ClientV1Envelope(
+        status="ok",
+        data=data,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Handler: transcript page — Phase 2 / T2-002/T2-003
+# ---------------------------------------------------------------------------
+
+
+async def get_session_transcript_page_v1(
+    session_id: str,
+    project_id: str | None,
+    cursor: str | None,
+    limit: int,
+    request_context: RequestContext,
+    core_ports: CorePorts,
+) -> ClientV1Envelope[SessionTranscriptPageV1]:
+    """Return a cursor-paginated transcript page for **any** project.
+
+    Delegates to the Phase 1 service with ``include={transcript}`` only —
+    no subagents, tokens, artifacts, or links are fetched.  Redaction is
+    applied by the service before this handler serialises the response.
+
+    ``project_id`` is **required** — HTTP 400 if absent.  There is no
+    active-project fallback.  Unknown ``session_id`` yields HTTP 404.
+    """
+    if not project_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "project_id is required for GET /sessions/{id}/transcript. "
+                "Pass ?project_id=<project_id>. "
+                "Active-project fallback is not supported on this endpoint."
+            ),
+        )
+
+    bundle = await get_session_detail(
+        project_id=project_id,
+        session_id=session_id,
+        ports=core_ports,
+        include={INCLUDE_TRANSCRIPT},
+        cursor=cursor,
+        limit=limit if limit > 0 else None,
+        context=request_context,
+    )
+
+    if bundle is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not found in project '{project_id}'",
+        )
+
+    transcript = bundle.transcript
+    if transcript is not None:
+        page_data = SessionTranscriptPageV1(
+            sessionId=bundle.session_id,
+            projectId=bundle.project_id,
+            items=transcript.items,
+            cursor=transcript.cursor,
+            limit=transcript.limit,
+            nextCursor=transcript.next_cursor,
+            redactedFieldCount=bundle.redacted_field_count,
+        )
+    else:
+        # Transcript segment was not populated — resilient empty response.
+        page_data = SessionTranscriptPageV1(
+            sessionId=bundle.session_id,
+            projectId=bundle.project_id,
+            items=[],
+            cursor="",
+            limit=limit,
+            nextCursor=None,
+            redactedFieldCount=0,
+        )
+
+    return ClientV1Envelope(
+        status="ok",
+        data=page_data,
         meta=build_client_v1_meta(instance_id=_instance_id()),
     )

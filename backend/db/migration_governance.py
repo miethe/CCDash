@@ -473,6 +473,12 @@ COLUMN_PARITY_DRIFT_ALLOWLIST: frozenset[tuple[str, str]] = frozenset({
     ("session_sentiment_facts", "evidence_json"),
     ("session_code_churn_facts", "evidence_json"),
     ("session_scope_drift_facts", "evidence_json"),
+    # Phase 5 detection columns (T5-006/T5-007): model_slug, workflow_id,
+    # subagent_parent_id, skill_name, context_window are declared identically in
+    # BOTH the SQLite and Postgres `sessions` CREATE TABLE DDL (same type TEXT,
+    # same nullability, same default). They are therefore PARITY-CLEAN by
+    # construction and intentionally NOT allowlisted — any drift here is a real
+    # regression the parity test must catch.
 })
 
 # Regex for splitting a column line into (name, type-and-rest)

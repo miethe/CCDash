@@ -215,6 +215,105 @@ def session_drilldown(
     )
 
 
+@session_app.command("get")
+def session_get(
+    session_id: str = typer.Argument(..., help="Session ID to retrieve (transcript-bearing)."),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        help=(
+            "Required. Project that owns the session. "
+            "No active-project fallback (Phase 2 REST invariant)."
+        ),
+    ),
+    include: list[str] | None = typer.Option(
+        None,
+        "--include",
+        help=(
+            "Segment(s) to include: transcript, tokens, subagents, artifacts, links. "
+            "Omit to return all segments."
+        ),
+    ),
+    cursor: str | None = typer.Option(
+        None,
+        "--cursor",
+        help="Opaque transcript page cursor from a previous nextCursor.",
+    ),
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        help="Max transcript items per page (default 50).",
+    ),
+    output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
+    json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
+    markdown_output: bool = typer.Option(False, "--md", help="Shortcut for --output markdown."),
+) -> None:
+    """Return full session detail (transcript-bearing) for any project's session.
+
+    Calls the Phase 2 REST endpoint GET /api/v1/sessions/{id}/detail which
+    requires an explicit --project flag (no active-project fallback).
+
+    Flags:
+      --project TEXT    Required. Project that owns the session.
+      --include TEXT    Segment filter (repeatable): transcript, tokens, subagents,
+                        artifacts, links.  Omit for all segments.
+      --cursor TEXT     Transcript page cursor (from previous nextCursor).
+      --limit INT       Max transcript items per page (default 50).
+      --json            JSON output.
+      --md              Markdown output.
+    """
+    effective_project = project.strip() if project and project.strip() else None
+    if not effective_project:
+        typer.echo(
+            "Error: --project is required for `session get`. "
+            "Pass --project <project_id>. "
+            "No active-project fallback is supported on this endpoint.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    target = resolve_target(target_flag=app_state.TARGET_FLAG)
+
+    params: dict = {"project_id": effective_project}
+    if include:
+        params["include"] = include  # will be repeated query params
+    if cursor:
+        params["cursor"] = cursor
+    if limit and limit > 0:
+        params["limit"] = limit
+
+    try:
+        with build_client(target) as client:
+            body = client.get(f"/api/v1/sessions/{session_id}/detail", params=params)
+    except CCDashClientError as exc:
+        typer.echo(f"Error: {exc.message}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+    if body.get("status") == "error":
+        typer.echo(
+            f"Error: Could not fetch detail for session {session_id}.", err=True
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        mode = resolve_output_mode(
+            output=output,
+            json_output=json_output,
+            markdown_output=markdown_output,
+            default=app_state.OUTPUT_MODE,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(
+        get_formatter(mode).render(
+            body.get("data", {}),
+            title=f"Session {session_id} (project: {effective_project})",
+        )
+    )
+
+
 @session_app.command("family")
 def session_family(
     session_id: str = typer.Argument(..., help="Session ID to fetch family for."),

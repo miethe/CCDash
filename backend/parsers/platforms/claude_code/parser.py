@@ -30,6 +30,7 @@ from backend.parsers.platforms.test_runs import (
     flatten_test_run_metadata,
     parse_test_run_from_command,
 )
+from backend.parsers.capture_sidecar import parse_capture_sidecar
 
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
@@ -819,6 +820,74 @@ def _resolve_session_sidecar_root(path: Path, raw_session_id: str, is_subagent: 
     return path.parent / raw_session_id
 
 
+def _collect_capture_sidecar(
+    path: Path,
+    raw_session_id: str,
+    is_subagent: bool,
+) -> dict[str, Any]:
+    """Locate and parse the launch-time capture sidecar for a session (T11-004).
+
+    Returns a dict with keys ``launcher``, ``profile``, ``effortTier``,
+    ``modelVariant`` (all ``None`` on any miss).
+
+    Capture targets the **root** session only: subagent records legitimately carry
+    null capture fields (a contract state, not a defect). Family-root propagation
+    is out of scope — best-effort null is acceptable per AC-11.A/E.
+
+    Search order:
+    1. Co-located sibling: ``<session-dir>/<stem>.capture.json``
+    2. Fallback dir: ``data/capture/<session-id>.capture.json`` relative to the
+       CCDash project root (two parents above ``path.parent``).
+    """
+    _null: dict[str, Any] = {
+        "launcher": None,
+        "profile": None,
+        "effortTier": None,
+        "modelVariant": None,
+    }
+
+    if is_subagent or not raw_session_id:
+        return _null
+
+    # Primary: sibling of the JSONL by stem.
+    colocated = path.with_name(f"{path.stem}.capture.json")
+    sidecar = parse_capture_sidecar(colocated)
+
+    # Fallback: data/capture/<session-id>.capture.json (relative to project root).
+    if sidecar is None:
+        # The project root is four levels up from the JSONL:
+        #   ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+        # → ~/.claude/projects/<encoded-cwd>/           (path.parent)
+        # → ccdash repo root is not necessarily derivable from path here, so we
+        #   check a sibling "data" dir relative to the JSONL's grandparent as a
+        #   best-effort fallback. This path is only populated by hooks that cannot
+        #   resolve transcript_path at write time.
+        fallback_dir = path.parent.parent / "data" / "capture"
+        fallback = fallback_dir / f"{raw_session_id}.capture.json"
+        sidecar = parse_capture_sidecar(fallback)
+
+    if sidecar is None:
+        return _null
+
+    # Session-id correlation check: ignore a sidecar whose sessionId field does
+    # not match the JSONL stem (guards against stem collisions / stale sidecars).
+    if sidecar.session_id and sidecar.session_id != raw_session_id:
+        import logging as _logging
+        _logging.getLogger("ccdash.parsers.capture_sidecar").debug(
+            "capture sidecar session_id mismatch: sidecar=%r jsonl_stem=%r, ignoring",
+            sidecar.session_id,
+            raw_session_id,
+        )
+        return _null
+
+    return {
+        "launcher": sidecar.launcher,
+        "profile": sidecar.profile,
+        "effortTier": sidecar.effort_tier,   # snake_case → camelCase for AgentSession
+        "modelVariant": sidecar.model_variant,  # snake_case → camelCase for AgentSession
+    }
+
+
 def _collect_tool_results_sidecar(
     path: Path,
     raw_session_id: str,
@@ -1140,6 +1209,44 @@ def _canonical_feature_slug(raw_slug: str) -> str:
     if not slug:
         return ""
     return _VERSION_SUFFIX_PATTERN.sub("", slug)
+
+
+# T5-001: variant suffix decorations appended to a model id that are NOT part of
+# the canonical bare slug (e.g. a 1M-context marker ``claude-sonnet-4-5[1m]``).
+# The canonical slug stays bare so downstream pricing (Phase 6) and the FE key
+# off a stable value; the context-window marker is handled by the sidecar join
+# (T5-003), not by mutating the slug.
+_MODEL_VARIANT_SUFFIX_PATTERN = re.compile(r"\s*\[[^\]]*\]\s*$")
+
+
+def _canonical_model_slug(raw_model: str) -> str:
+    """Normalize a raw model id into a stable canonical *bare* slug.
+
+    Lowercases, trims whitespace, and strips bracketed variant suffixes such as
+    ``[1m]`` so that ``Claude-Sonnet-4-5[1M]`` and ``claude-sonnet-4-5`` collapse
+    to the same canonical value. Returns ``""`` when the input is empty.
+    """
+    slug = (raw_model or "").strip()
+    if not slug:
+        return ""
+    # Strip a single trailing bracketed variant suffix, then lowercase.
+    slug = _MODEL_VARIANT_SUFFIX_PATTERN.sub("", slug).strip()
+    return slug.lower()
+
+
+def _primary_skill_name(skill_loads: list[Any] | None) -> str | None:
+    """Derive the primary (first) log-attributed skill name.
+
+    Returns ``None`` (explicit null contract state) when no skill is derivable —
+    never an empty-string sentinel (T5-005).
+    """
+    for entry in skill_loads or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("skill") or "").strip()
+        if name and not name.startswith("/"):
+            return name
+    return None
 
 
 def _feature_slug_from_path(raw_path: str) -> str:
@@ -3813,6 +3920,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
     team_sidecar = _collect_team_sidecar(claude_root, raw_session_id, forensics_schema)
     session_env_sidecar = _collect_session_env_sidecar(claude_root, raw_session_id, forensics_schema)
     tool_results_sidecar = _collect_tool_results_sidecar(path, raw_session_id, is_subagent, forensics_schema)
+    # T11-004: launch-time capture sidecar — launcher/profile/effortTier/modelVariant.
+    # Root sessions only; subagent records carry null capture fields by contract.
+    capture_sidecar = _collect_capture_sidecar(path, raw_session_id, is_subagent)
     latest_statusline_snapshot = session_env_sidecar.get("latestStatuslineSnapshot")
     root_context_fields = _agent_session_context_fields(logs, model, latest_statusline_snapshot)
     reported_cost_usd: float | None = None
@@ -4302,6 +4412,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 taskId=task_id,
                 status=session_status,
                 model=model,
+                modelSlug=_canonical_model_slug(model),
                 platformType=platform_type,
                 platformVersion=platform_version,
                 platformVersions=platform_versions,
@@ -4309,6 +4420,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 sessionType="fork",
                 parentSessionId=None,
                 rootSessionId=fork_session_id,
+                # T5-004 / T5-005: log-derived workflow grouping + skill attribution
+                # for derived fork sessions (no sidecar dependency).
+                workflowId=session_id or None,
+                subagentParentId=None,
+                skillName=_primary_skill_name(session_context.get("skillLoads", [])),
                 agentId=agent_id,
                 threadKind="fork",
                 conversationFamilyId=session_id,
@@ -4358,6 +4474,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         taskId=task_id,
         status=session_status,
         model=model,
+        modelSlug=_canonical_model_slug(model),
         platformType=platform_type,
         platformVersion=platform_version,
         platformVersions=platform_versions,
@@ -4365,6 +4482,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
         sessionType=session_type,
         parentSessionId=parent_session_id or None,
         rootSessionId=root_session_id,
+        # T5-004: log-derived workflow grouping + subagent linkage. Derived purely
+        # from log fields so it survives a null/absent sidecar (AC-5.2): the
+        # workflow id is the family root; subagent_parent_id resolves only for
+        # subagent sessions. The sidecar join (T5-003) never feeds this linkage.
+        workflowId=(root_session_id if (is_subagent and root_session_id) else session_id) or None,
+        subagentParentId=(parent_session_id or None) if is_subagent else None,
+        # T5-005: skill attribution from log-derived skill loads; None == explicit
+        # null contract state (not an empty-string sentinel).
+        skillName=_primary_skill_name(session_context.get("skillLoads", [])),
         agentId=agent_id,
         threadKind="subagent" if is_subagent else "root",
         conversationFamilyId=root_session_id if is_subagent and root_session_id else session_id,
@@ -4401,6 +4527,13 @@ def parse_session_file(path: Path) -> AgentSession | None:
         derivedSessions=derived_sessions,
         dates=session_dates,
         timeline=timeline,
+        # T11-004: launch-time capture sidecar fields (all nullable; null == not captured).
+        # Root sessions: populated from <session-id>.capture.json when present.
+        # Subagent records: null by contract (capture_sidecar returns all-null dict).
+        launcher=capture_sidecar.get("launcher"),
+        profile=capture_sidecar.get("profile"),
+        effortTier=capture_sidecar.get("effortTier"),
+        modelVariant=capture_sidecar.get("modelVariant"),
     )
 
 

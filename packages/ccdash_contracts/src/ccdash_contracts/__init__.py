@@ -10,6 +10,7 @@ from ccdash_contracts.envelopes import (
     ClientV1PaginatedMeta,
 )
 from ccdash_contracts.models import (
+    CapabilityV1,
     DTOFreshness,
     DocumentRef,
     FeatureCardDTO,
@@ -41,6 +42,10 @@ from ccdash_contracts.models import (
     LinkedSessionEnrichmentDTO,
     SessionFamilyDTO,
     SessionRef,
+    # Phase 2: session detail + transcript v1 contracts
+    SessionDetailV1,
+    SessionTranscriptPageV1,
+    TranscriptPageV1,
 )
 
 __all__ = [
@@ -52,6 +57,7 @@ __all__ = [
     "ClientV1PaginatedEnvelope",
     "ClientV1PaginatedMeta",
     # models
+    "CapabilityV1",
     "DTOFreshness",
     "DocumentRef",
     "FeatureCardDTO",
@@ -83,4 +89,8 @@ __all__ = [
     "LinkedSessionEnrichmentDTO",
     "SessionFamilyDTO",
     "SessionRef",
+    # Phase 2
+    "SessionDetailV1",
+    "SessionTranscriptPageV1",
+    "TranscriptPageV1",
 ]

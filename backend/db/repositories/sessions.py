@@ -43,8 +43,10 @@ class SqliteSessionRepository:
                 dates_json, timeline_json, impact_history_json,
                 thinking_level, session_forensics_json,
                 command_slug, latest_summary, subagent_type,
-                models_used_json, agents_used_json, skills_used_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                models_used_json, agents_used_json, skills_used_json,
+                model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
+                launcher, profile, effort_tier, model_variant
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -94,7 +96,22 @@ class SqliteSessionRepository:
                 subagent_type=CASE WHEN excluded.subagent_type != '' THEN excluded.subagent_type ELSE sessions.subagent_type END,
                 models_used_json=CASE WHEN excluded.models_used_json != '[]' THEN excluded.models_used_json ELSE sessions.models_used_json END,
                 agents_used_json=CASE WHEN excluded.agents_used_json != '[]' THEN excluded.agents_used_json ELSE sessions.agents_used_json END,
-                skills_used_json=CASE WHEN excluded.skills_used_json != '[]' THEN excluded.skills_used_json ELSE sessions.skills_used_json END
+                skills_used_json=CASE WHEN excluded.skills_used_json != '[]' THEN excluded.skills_used_json ELSE sessions.skills_used_json END,
+                -- Phase 5 detection columns (T5-006).
+                model_slug=CASE WHEN excluded.model_slug != '' THEN excluded.model_slug ELSE sessions.model_slug END,
+                workflow_id=excluded.workflow_id,
+                subagent_parent_id=excluded.subagent_parent_id,
+                skill_name=excluded.skill_name,
+                -- context_window comes from the sidecar join (T5-003), which may be
+                -- transiently absent on re-ingest; never wipe a prior attribution.
+                context_window=COALESCE(excluded.context_window, sessions.context_window),
+                -- Phase 11 launch-time capture columns (T11-003). All four are
+                -- capture-once: a re-ingest with a null value must never clobber a
+                -- previously-captured value (idempotency, AC-11.C).
+                launcher=COALESCE(excluded.launcher, sessions.launcher),
+                profile=COALESCE(excluded.profile, sessions.profile),
+                effort_tier=COALESCE(excluded.effort_tier, sessions.effort_tier),
+                model_variant=COALESCE(excluded.model_variant, sessions.model_variant)
             """,
             (
                 session_data["id"], project_id,
@@ -156,6 +173,19 @@ class SqliteSessionRepository:
                 json.dumps(session_data.get("badgeModelsUsed", []) or []),
                 json.dumps(session_data.get("badgeAgentsUsed", []) or []),
                 json.dumps(session_data.get("badgeSkillsUsed", []) or []),
+                # Phase 5 detection columns (T5-006). model_slug defaults to ''
+                # (string contract); workflow/skill/context are nullable.
+                str(session_data.get("modelSlug", "") or ""),
+                session_data.get("workflowId"),
+                session_data.get("subagentParentId"),
+                session_data.get("skillName"),
+                session_data.get("contextWindow"),
+                # Phase 11 launch-time capture columns (T11-003). All nullable;
+                # null == "not captured" (contract state, no default, no backfill).
+                session_data.get("launcher"),
+                session_data.get("profile"),
+                session_data.get("effortTier"),
+                session_data.get("modelVariant"),
             ),
         )
         await self._commit()
@@ -203,23 +233,49 @@ class SqliteSessionRepository:
         )
         await self._commit()
 
-    async def get_by_id(self, session_id: str) -> dict | None:
-        async with self.db.execute(
-            "SELECT * FROM sessions WHERE id = ?", (session_id,)
-        ) as cur:
+    async def get_by_id(self, session_id: str, project_id: str | None = None) -> dict | None:
+        """Fetch a single session by id.
+
+        When ``project_id`` is a non-empty string it is added to the WHERE clause
+        as a strict-equality predicate alongside ``id`` (the table's composite PK
+        is ``(project_id, id)``), so callers reading a non-active project never
+        receive another project's row.  When ``project_id`` is ``None`` or ``''``
+        the read is unscoped and falls back to the existing active-project hot-path
+        behaviour (a session id is globally unique in single-project deployments).
+        """
+        if project_id:
+            query = "SELECT * FROM sessions WHERE project_id = ? AND id = ?"
+            params: tuple = (project_id, session_id)
+        else:
+            query = "SELECT * FROM sessions WHERE id = ?"
+            params = (session_id,)
+        async with self.db.execute(query, params) as cur:
             row = await cur.fetchone()
             if not row:
                 return None
             return self._row_to_dict(row)
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple sessions in a single query. Returns a dict keyed by session id."""
+    async def get_many_by_ids(
+        self, ids: list[str], project_id: str | None = None
+    ) -> dict[str, dict]:
+        """Fetch multiple sessions in a single query. Returns a dict keyed by session id.
+
+        ``project_id`` follows the same semantics as :meth:`get_by_id`: a non-empty
+        value scopes the query to that project (strict equality), while ``None``/``''``
+        leaves the read unscoped (active-project hot path unchanged).
+        """
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
-        async with self.db.execute(
-            f"SELECT * FROM sessions WHERE id IN ({placeholders})", tuple(ids)
-        ) as cur:
+        if project_id:
+            query = (
+                f"SELECT * FROM sessions WHERE project_id = ? AND id IN ({placeholders})"
+            )
+            params: tuple = (project_id, *ids)
+        else:
+            query = f"SELECT * FROM sessions WHERE id IN ({placeholders})"
+            params = tuple(ids)
+        async with self.db.execute(query, params) as cur:
             rows = await cur.fetchall()
         return {row["id"]: self._row_to_dict(row) for row in rows}
 

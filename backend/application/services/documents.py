@@ -400,7 +400,7 @@ class DocumentQueryService:
 
         feature_map, session_map, doc_map = await asyncio.gather(
             feature_repo.get_many_by_ids(feature_id_list),
-            session_repo.get_many_by_ids(session_id_list),
+            session_repo.get_many_by_ids(session_id_list, project_id=project.id),
             doc_repo.get_many_by_ids(doc_id_list),
         )
 

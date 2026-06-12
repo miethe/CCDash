@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from watchfiles import awatch, Change
 
@@ -111,6 +111,12 @@ class FileWatcher:
         self._snapshot.last_change_count = None
         self._snapshot.last_sync_status = None
         self._snapshot.last_sync_error = None
+
+        # T12-005: pre-register in the watcher-event-age gauge so the probe
+        # emits the sentinel (-1.0) rather than omitting this project until
+        # its first change event arrives (AC R12.5).
+        if _otel is not None:
+            _otel.set_watcher_project_registered(project_id)
 
         if not watch_paths:
             self._running = False
@@ -227,6 +233,9 @@ class FileWatcher:
                     except Exception as e:
                         if _otel is not None:
                             _otel.record_watcher_sync_latency((time.monotonic() - _t0) * 1000.0)
+                            # T12-005: record event age even on sync failure — the
+                            # watcher DID fire; it's the downstream sync that failed.
+                            _otel.record_watcher_event(project_id)
                         self._snapshot.last_change_sync_at = _utc_now_iso()
                         self._snapshot.last_change_count = len(classified)
                         self._snapshot.last_sync_status = "failed"
@@ -242,6 +251,8 @@ class FileWatcher:
                     else:
                         if _otel is not None:
                             _otel.record_watcher_sync_latency((time.monotonic() - _t0) * 1000.0)
+                            # T12-005: record event age on success.
+                            _otel.record_watcher_event(project_id)
                         self._snapshot.last_change_sync_at = _utc_now_iso()
                         self._snapshot.last_change_count = len(classified)
                         self._snapshot.last_sync_status = "succeeded"
@@ -439,6 +450,26 @@ class FileWatcherRegistry:
         """Return True if a running watcher task exists for *project_id*."""
         entry = self._entries.get(project_id)
         return entry is not None and entry.watcher.is_running
+
+    def dead_project_ids(self, expected_ids: Iterable[str]) -> list[str]:
+        """Phase 8 (T8-003): liveness predicate for watcher self-heal.
+
+        Returns every id in *expected_ids* whose watcher is NOT currently
+        running — covering both the registered-but-crashed case (entry exists
+        but ``watcher.is_running`` is False because ``_watch_loop`` set
+        ``_running=False`` on exception) and the expected-but-never-registered
+        case (post-boot project the reconcile tick should bind).  Pure read; no
+        lock required.  The reconcile tick re-registers each returned id from
+        the DB-authoritative registry binding.
+        """
+        dead: list[str] = []
+        for pid in expected_ids:
+            pid_s = str(pid or "")
+            if not pid_s:
+                continue
+            if not self.is_running(pid_s):
+                dead.append(pid_s)
+        return dead
 
     def snapshot(self, project_id: str) -> dict[str, object] | None:
         """Return the snapshot dict for *project_id*, or None if not registered."""

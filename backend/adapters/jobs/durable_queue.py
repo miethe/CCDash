@@ -123,6 +123,59 @@ class DurableJobScheduler:
             job_id=job_id,
         )
 
+    async def enqueue_durable_idempotent(
+        self,
+        job_type: str,
+        payload: dict[str, Any],
+        project_id: str,
+        *,
+        priority: int = 0,
+        max_attempts: int = 3,
+        available_at: str | None = None,
+    ) -> str | None:
+        """Idempotent enqueue: skip if a pending or running job already exists.
+
+        Phase 7 durable-queue coalescing guard (AC 7.2 durable variant).
+
+        When a job of *job_type* for *project_id* is already ``pending`` or
+        ``running`` in the queue, the enqueue is a no-op and ``None`` is
+        returned (deduplicated).  The dedupe event is logged (structured:
+        job_type + project_id + status counts), never silently dropped.
+
+        Memory backend (repo is None): the in-process ``_sync_in_flight`` guard
+        in SyncEngine is the authoritative coalescing mechanism; this method
+        returns ``None`` immediately (no-op) since there is no durable queue to
+        deduplicate.
+
+        Falls back to ``enqueue_durable`` when no active job is found.
+        """
+        repo = self._get_repo()
+        if repo is None:
+            # Memory backend: in-process guard is authoritative; nothing to do.
+            return None
+
+        pending = await repo.depth(project_id=project_id, job_type=job_type, status="pending")
+        running = await repo.depth(project_id=project_id, job_type=job_type, status="running")
+        if pending > 0 or running > 0:
+            logger.info(
+                "enqueue_durable_idempotent coalesced: job_type=%s project_id=%s "
+                "pending=%d running=%d — skipping duplicate enqueue",
+                job_type,
+                project_id,
+                pending,
+                running,
+            )
+            return None
+
+        return await self.enqueue_durable(
+            job_type,
+            payload,
+            project_id,
+            priority=priority,
+            max_attempts=max_attempts,
+            available_at=available_at,
+        )
+
     async def claim_next(
         self,
         job_type: str | None = None,

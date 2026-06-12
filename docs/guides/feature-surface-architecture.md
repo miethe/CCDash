@@ -1,6 +1,6 @@
 # Feature Surface Architecture Guide
 
-Last updated: 2026-05-29
+Last updated: 2026-06-12
 
 This guide documents the redesigned feature-surface data contracts, caching strategy, and performance budgets for CCDash developers. It describes which API endpoint to use for card-level metrics vs modal sections, how the frontend caches work, and what invalidation events clear which caches.
 
@@ -296,10 +296,161 @@ When adding a new feature surface consumer:
 
 ---
 
+---
+
+## Session-Detail Surface
+
+The session-detail surface is a separate read domain from the feature surface. It is used to retrieve full session data (transcript, tokens, subagents, artifacts, entity links) for any project's session. The entry point is transport-neutral; all three transports (REST, MCP, CLI) delegate to the same service function.
+
+### Transport-Neutral Service (`agent_queries/session_detail.py`)
+
+`backend/application/services/agent_queries/session_detail.py` is the **single source of truth** for all session detail reads. No transport implements its own transcript reader or redaction logic.
+
+The public entry point:
+
+```python
+# backend/application/services/agent_queries/session_detail.py
+async def get_session_detail(
+    project_id: str,
+    session_id: str,
+    ports: CorePorts,
+    *,
+    include: FrozenSet[str] | set[str] | None = None,
+    cursor: str | None = None,
+    limit: int | None = None,
+    context: RequestContext | None = None,
+) -> SessionDetailBundle | None
+```
+
+**Include flags** (any subset, or `None` for all):
+
+| Flag | Segment returned |
+|------|----------------|
+| `transcript` | Cursor-paginated log entries (already redacted) |
+| `subagents` | Child session rows resolved via `list_relationships` |
+| `tokens` | Token telemetry dict extracted from the session row |
+| `artifacts` | Entity links whose `source_type` or `target_type` is an artifact variant (`artifact`, `document`, `file`, `attachment`) |
+| `links` | All remaining (non-artifact) entity links for the session |
+
+Unknown flags are logged and ignored — they do not raise.
+
+**Service constants:**
+- `DEFAULT_TRANSCRIPT_LIMIT = 200` items per page
+- `MAX_TRANSCRIPT_LIMIT = 1000` items per page (over-limit values are clamped, not rejected)
+
+**Returns:** `SessionDetailBundle` when found, `None` when the session does not exist or the `project_id` does not match the row's own project.
+
+---
+
+### Cursor-Pagination Envelope
+
+All transcript responses use the cursor-pagination envelope:
+
+```json
+{
+  "items":      [...],
+  "cursor":     "<opaque base64 string — the cursor used for this page>",
+  "limit":      200,
+  "nextCursor": "<opaque base64 string>  | null"
+}
+```
+
+`cursor` and `nextCursor` are opaque URL-safe base64-encoded JSON strings (`{"o": <offset>}`). `nextCursor` is `null` when this is the last page. Pass the previous `nextCursor` value as the `cursor` parameter on the next call to advance the page. Invalid or empty cursors reset silently to offset 0.
+
+The `SessionTranscriptPageV1` contract (standalone `/transcript` endpoint) adds `sessionId`, `projectId`, and `redactedFieldCount` identity fields to the same envelope:
+
+```json
+{
+  "sessionId":          "<id>",
+  "projectId":          "<id>",
+  "items":              [...],
+  "cursor":             "<opaque>",
+  "limit":              200,
+  "nextCursor":         "<opaque> | null",
+  "redactedFieldCount": 0
+}
+```
+
+---
+
+### Redaction Layer
+
+Redaction is applied by `agent_queries/session_detail.py` via `agent_queries/redaction.redact_entries` **before** the bundle is returned to any transport. Secrets are scrubbed at a single egress boundary; no transport adds its own redaction logic. `redactedFieldCount` in the bundle (and in every transcript envelope) is the aggregate count of fields redacted across the page.
+
+Redaction failures are logged and the entry passes through unredacted — delivery safety is preferred over a 500 in edge cases.
+
+---
+
+### REST Transport
+
+Two Phase 2 endpoints in `backend/routers/client_v1.py` (handler logic in `backend/routers/_client_v1_sessions.py`):
+
+| Endpoint | Purpose | Notes |
+|----------|---------|-------|
+| `GET /api/v1/sessions/{id}/detail` | Full bundle — all include segments | `?project_id=` required (HTTP 400 if absent); `?include=` repeatable; `?cursor=`, `?limit=` (1–1000, default 200) |
+| `GET /api/v1/sessions/{id}/transcript` | Transcript page only | `?project_id=` required (HTTP 400 if absent); same cursor/limit params |
+
+Both endpoints:
+- Require an explicit `project_id` — there is **no active-project fallback** (HTTP 400 if absent).
+- Return HTTP 404 when the session is not found in the given project.
+- Delegate entirely to `get_session_detail`; the handler adds no business logic.
+
+---
+
+### MCP Transport
+
+Three tools registered in `backend/mcp/tools/sessions.py` (all require explicit `project_id`; no active-project fallback):
+
+| Tool | Purpose |
+|------|---------|
+| `ccdash_session_detail` | Full bundle — all or selected include segments |
+| `ccdash_session_transcript` | Transcript page only |
+| `ccdash_session_search` | Full-text / keyword search across transcripts |
+
+**MCP payload budget constants** (transport-specific, more conservative than REST):
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `MCP_TRANSCRIPT_DEFAULT_LIMIT` | 50 | Default items per MCP call |
+| `MCP_TRANSCRIPT_MAX_LIMIT` | 200 | Per-call ceiling (below the service max of 1 000) |
+| `MCP_ENVELOPE_MAX_BYTES` | 1 048 576 (1 MiB) | Hard byte ceiling after serialisation |
+
+When the serialised response exceeds `MCP_ENVELOPE_MAX_BYTES`, transcript items are trimmed from the tail and `meta.truncated: true` is set with a `meta.truncated_reason` containing cursor guidance. Over-budget responses never silently drop items.
+
+---
+
+### CLI Transport (repo-local)
+
+Three commands in `backend/cli/commands/session.py`:
+
+| Command | Purpose |
+|---------|---------|
+| `ccdash session get <id> --project <pid>` | Full detail bundle |
+| `ccdash session transcript <id> --project <pid>` | Transcript page only |
+| `ccdash session search <query> [--project]` | Search transcripts |
+
+`--project` is **required** for `get` and `transcript` (mirrors the REST invariant). The standalone `ccdash` CLI (`packages/ccdash_cli/`) exposes the same commands over HTTP via `GET /api/v1/sessions/{id}/detail` and `GET /api/v1/sessions/{id}/transcript`.
+
+---
+
+### Cache Tiers
+
+| Layer | Cache | Notes |
+|-------|-------|-------|
+| Backend service (`session_detail.py`) | None — **no `@memoized_query`** | Transcript content is cursor-paginated per-request; caching at the service layer would break cursor semantics. Each call fetches fresh data from the repository. |
+| Frontend — detail (`useSessionDetailQuery`) | TanStack Query `staleTime: 30 000 ms`, `gcTime: 300 000 ms` | Keyed via `sessionsKeys.detail(projectId, sessionId)`. Concurrent calls within the stale window deduplicate automatically. |
+| Frontend — list (`useSessionsQuery`) | TanStack Query `staleTime: 30 000 ms` | Infinite-scroll list keyed via `sessionsKeys.list(projectId, filters)`. |
+
+**Key principle:** The session-detail bundle is not `@memoized_query` cached on the server. Client-side TQ caching provides the dedup and back-navigation performance guarantee.
+
+---
+
 ## Related Documentation
 
 - **Rollback Guide:** [`docs/guides/feature-surface-v2-rollback.md`](./feature-surface-v2-rollback.md) — How to disable v2 and revert to legacy paths in an emergency.
 - **QueryClient Configuration:** `lib/queryClient.ts` — TanStack Query client setup with staleTime defaults and global configuration.
-- **QueryKey Registry:** `services/queryKeys.ts` — Centralized query key definitions for all feature surface and feature modal queries.
+- **QueryKey Registry:** `services/queryKeys.ts` — Centralized query key definitions for all feature surface, feature modal, and session queries.
 - **Implementation Plan:** [`docs/project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1.md`](../project_plans/implementation_plans/refactors/feature-surface-data-loading-redesign-v1.md) § Architecture Direction — Authoritative contract table and layering rules.
 - **CLAUDE.md § Frontend Data Layer:** [./CLAUDE.md](../../CLAUDE.md) — Project-wide architecture context for TQ QueryClient and service queries.
+- **Contracts package:** `packages/ccdash_contracts/src/ccdash_contracts/models.py` — `SessionDetailV1`, `SessionTranscriptPageV1`, `TranscriptPageV1` Pydantic models; authoritative camelCase field names.
+- **MCP session tools:** `backend/mcp/tools/sessions.py` — `register_session_tools`; MCP payload budget constants.

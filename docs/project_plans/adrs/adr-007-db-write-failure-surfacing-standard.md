@@ -14,6 +14,8 @@ tags: ["adr", "database", "observability", "reliability", "error-handling", "mon
 
 **Accepted** — Ratified by operator 2026-06-03 following audit and findings review (see Findings F-01, F-06, F-09, RQ7).
 
+> ⚠ **ADR-number collision:** the unmerged `feat/remote-ccdash-streaming*` branches independently authored an ADR-007 (local-daemon packaging as a `ccdash` CLI subcommand), part of their ADR-006..010 set. This accepted, ratified ADR-007 holds the number on `main`. **On resume/merge, the streaming branch must renumber its set (006–010) to the next free block (011–015).**
+
 **Ratification Note (2026-06-03):** Phase 2 enforcement mechanisms shipped and verified:
 - Shared retry helpers `retry_on_locked()` and `retry_on_locked_sync()` deployed in `backend/db/repositories/base.py` (lines 109–179, 33–108)
 - Prometheus counter `ccdash_db_write_failures_total` (with `repo` and `reason` labels) instrumented in `backend/observability/otel.py` (lines 408–409, 660–661, 1616–1619)

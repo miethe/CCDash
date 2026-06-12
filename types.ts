@@ -396,6 +396,21 @@ export interface AgentSession {
   taskId: string;
   status: 'active' | 'completed';
   model: string;
+  // ── Phase 5 detection fields (log-derivable; all optional/nullable) ──
+  // Each absence is a contract state, never an error: render a fallback, never "null".
+  modelSlug?: string; // canonical bare model slug ("" when absent)
+  workflowId?: string | null; // workflow grouping id (null == standalone)
+  subagentParentId?: string | null; // parent session id for subagents (null otherwise)
+  skillName?: string | null; // primary attributed skill (null == none derivable)
+  contextWindow?: string | null; // e.g. "1M" when a sidecar matched; null otherwise
+  // ── Phase 11 launch-time capture fields (T11-005; R-P2 / AC-11.D) ──
+  // Written by the SessionStart hook via the <session-id>.capture.json sidecar.
+  // null/absent == "not captured" (a contract state, never an error): the FE
+  // renders an explicit muted fallback, never "undefined" and never a crash.
+  launcher?: string | null; // launch path identity (e.g. "ica-claude.sh")
+  profile?: string | null; // launch profile (e.g. "ica-delegate")
+  effortTier?: string | null; // effort/ultracode tier; never defaulted
+  modelVariant?: string | null; // launch-time model id (e.g. "claude-opus-4-8[1m]")
   modelDisplayName?: string;
   modelProvider?: string;
   modelFamily?: string;

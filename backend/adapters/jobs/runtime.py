@@ -102,6 +102,8 @@ class RuntimeJobState:
     artifact_rollup_export_task: asyncio.Task[None] | None = None
     cache_warming_task: asyncio.Task[None] | None = None
     retention_prune_task: asyncio.Task[None] | None = None
+    reconcile_task: asyncio.Task[None] | None = None
+    _drain_task: asyncio.Task[None] | None = None
     watcher_started: bool = False
     job_observations: dict[str, RuntimeJobObservation] = field(default_factory=dict)
 
@@ -165,6 +167,13 @@ class RuntimeJobAdapter:
                     backlog_unit="rows",
                     stale_threshold_seconds=172800,  # 2× the default 24h interval
                 ),
+                "reconcile": RuntimeJobObservation(
+                    backlog_count=0,
+                    backlog_unit="projects",
+                    # 6× the default 300s interval — alarm only on a clearly
+                    # stalled reconcile loop, not on a single missed tick.
+                    stale_threshold_seconds=1800,
+                ),
             }
         )
 
@@ -203,16 +212,27 @@ class RuntimeJobAdapter:
                 _sched = self.ports.job_scheduler
                 if isinstance(_sched, DurableJobScheduler) and _sched._backend != "memory":
                     try:
-                        await _sched.enqueue_durable(
+                        # Phase 7: use idempotent enqueue so a reload or second
+                        # startup dispatch does not queue a duplicate sync job
+                        # when one is already pending or running (AC 7.2 durable).
+                        _enqueued_id = await _sched.enqueue_durable_idempotent(
                             "sync",
                             {"project_id": str(getattr(active_project, "id", "") or "")},
                             str(getattr(active_project, "id", "") or ""),
                             max_attempts=3,
                         )
-                        logger.debug(
-                            "P3-006-FU: enqueued durable startup-sync for project_id=%s",
-                            getattr(active_project, "id", "?"),
-                        )
+                        if _enqueued_id is not None:
+                            logger.debug(
+                                "P3-006-FU: enqueued durable startup-sync for project_id=%s job_id=%s",
+                                getattr(active_project, "id", "?"),
+                                _enqueued_id,
+                            )
+                        else:
+                            logger.info(
+                                "P3-006-FU: startup-sync coalesced (idempotent) for project_id=%s — "
+                                "pending/running job already exists",
+                                getattr(active_project, "id", "?"),
+                            )
                     except Exception:
                         logger.exception(
                             "P3-006-FU: failed to enqueue durable startup-sync — proceeding in-process"
@@ -315,6 +335,10 @@ class RuntimeJobAdapter:
             retention_prune_task = self._start_retention_prune_task()
             if retention_prune_task is not None:
                 self.state.retention_prune_task = retention_prune_task
+            # Phase 8 (T8-002): periodic cross-project reconcile sweep.
+            reconcile_task = self._start_reconcile_task()
+            if reconcile_task is not None:
+                self.state.reconcile_task = reconcile_task
 
         # P3-006-FU: start the durable drain loop when JOB_QUEUE_BACKEND != memory.
         # The drain loop claims pending sync/cache-warming jobs from the DB queue
@@ -636,6 +660,14 @@ class RuntimeJobAdapter:
                 pass
             self.state.cache_warming_task = None
 
+        if self.state.reconcile_task is not None:
+            self.state.reconcile_task.cancel()
+            try:
+                await self.state.reconcile_task
+            except asyncio.CancelledError:
+                pass
+            self.state.reconcile_task = None
+
         if self.state.watcher_started:
             # Stop the singleton in-place (keeps all from-import bindings valid).
             if file_watcher.is_running:
@@ -873,6 +905,212 @@ class RuntimeJobAdapter:
                         "all-projects-sync: watcher register failed for project '%s' — continuing",
                         other_id,
                     )
+
+    def _start_reconcile_task(self) -> asyncio.Task[None] | None:
+        """Phase 8 (T8-002/003/004): periodic cross-project reconcile sweep.
+
+        Every ``CCDASH_RECONCILE_INTERVAL_SECONDS`` (default 300) the job:
+          1. Invalidates the registry snapshot (post-boot project pickup) and
+             enumerates ALL projects from the DB-authoritative registry
+             (ADR-006) — never projects.json directly.
+          2. Dispatches a per-project freshness pass THROUGH the Phase 7
+             coalescing guard (``SyncEngine.sync_project``, trigger="reconcile")
+             so missed filesystem events and post-boot changes are caught.
+             Non-active projects are read/ingest-only (``allow_writeback=False``,
+             AC 8.5 regression contract); the active project keeps writeback.
+          3. Self-heals dead/crashed watchers (T8-003): any expected watcher that
+             is not running is re-bound from the registry; failures are logged
+             and retried next tick (never silently dead).
+
+        Disabled when the interval is ``<= 0`` (resilience: cross-project
+        freshness then relies on live watchers + the boot sweep — baseline
+        behaviour, no error).  Requires ``capabilities.sync`` and a sync_engine.
+        """
+        interval_seconds = max(0, int(getattr(config, "RECONCILE_INTERVAL_SECONDS", 300)))
+        if interval_seconds <= 0:
+            return None
+        if not self.profile.capabilities.sync or self.sync is None:
+            return None
+
+        self.state.job_observations["reconcile"].interval_seconds = interval_seconds
+        workspace_registry = self.ports.workspace_registry
+        active_project_id = (
+            str(getattr(self.project_binding.project, "id", "") or "")
+            if self.project_binding is not None
+            else ""
+        )
+        heal_enabled = bool(getattr(config, "WATCHER_HEAL_ENABLED", True))
+        can_watch = bool(self.profile.capabilities.watch)
+
+        async def _run_periodic_reconcile() -> None:
+            while True:
+                await asyncio.sleep(interval_seconds)
+
+                # Post-boot pickup: invalidate the cached registry snapshot so a
+                # project/dir added AFTER boot surfaces (no restart). Guarded —
+                # legacy/mock registries without reload_projects() are a no-op.
+                _reload = getattr(workspace_registry, "reload_projects", None)
+                if callable(_reload):
+                    try:
+                        _reload()
+                    except Exception:
+                        logger.exception("reconcile: registry reload_projects() failed — continuing")
+
+                _list_fn = getattr(workspace_registry, "list_projects", None)
+                projects = list(_list_fn()) if callable(_list_fn) else []
+                if not projects:
+                    logger.debug("reconcile: no projects in registry — skipping this tick")
+                    continue
+
+                started = self._mark_job_started("reconcile", backlog_count=len(projects))
+                reconciled = 0
+                healed = 0
+                failed_project_ids: list[str] = []
+                expected_ids: list[str] = []
+
+                for project in projects:
+                    pid = str(getattr(project, "id", "") or "")
+                    if not pid:
+                        # AC 8.1: one malformed/empty project row never stalls
+                        # the sweep — skip with a logged warning and continue.
+                        logger.warning(
+                            "reconcile: malformed/empty project row (no id) — skipping"
+                        )
+                        continue
+
+                    try:
+                        binding = workspace_registry.resolve_project_binding(
+                            pid, allow_active_fallback=False, refresh=True
+                        )
+                    except asyncio.CancelledError:
+                        self._mark_job_cancelled("reconcile", started, backlog_count=0)
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "reconcile: resolve_project_binding failed for project '%s' — skipping",
+                            pid,
+                        )
+                        failed_project_ids.append(pid)
+                        continue
+                    if binding is None:
+                        logger.debug(
+                            "reconcile: no binding for project '%s' — skipping", pid
+                        )
+                        continue
+
+                    sessions_dir, docs_dir, progress_dir = binding.paths.as_tuple()
+                    worknotes_dir = _resolve_worknotes_dir(binding.paths)
+                    is_active = pid == active_project_id
+                    expected_ids.append(pid)
+
+                    # Freshness pass via the Phase 7 coalescing guard. sync_project
+                    # keys (project_id, trigger) on self._sync_in_flight, so an
+                    # overlapping reconcile tick for the same project coalesces
+                    # (no double-scan). Non-active stays read/ingest-only.
+                    try:
+                        await self.sync.sync_project(
+                            project,
+                            sessions_dir,
+                            docs_dir,
+                            progress_dir,
+                            trigger="reconcile",
+                            rebuild_links=True,
+                            capture_analytics=False,
+                            backfill_session_intelligence=False,
+                            allow_writeback=is_active,
+                        )
+                        reconciled += 1
+                    except asyncio.CancelledError:
+                        self._mark_job_cancelled("reconcile", started, backlog_count=0)
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "reconcile: sync_project failed for project '%s' — continuing",
+                            pid,
+                        )
+                        failed_project_ids.append(pid)
+
+                # Watcher liveness self-heal (T8-003).
+                if heal_enabled and can_watch and expected_ids:
+                    dead = file_watcher_registry.dead_project_ids(expected_ids)
+                    for pid in dead:
+                        try:
+                            binding = workspace_registry.resolve_project_binding(
+                                pid, allow_active_fallback=False, refresh=True
+                            )
+                        except Exception:
+                            logger.exception(
+                                "reconcile self-heal: resolve binding failed for '%s' — retry next tick",
+                                pid,
+                            )
+                            continue
+                        if binding is None:
+                            continue
+                        s_dir, d_dir, p_dir = binding.paths.as_tuple()
+                        w_dir = _resolve_worknotes_dir(binding.paths)
+                        try:
+                            await file_watcher_registry.register(
+                                self.sync,
+                                pid,
+                                s_dir,
+                                d_dir,
+                                p_dir,
+                                worknotes_dir=w_dir,
+                                allow_writeback=(pid == active_project_id),
+                            )
+                            self.state.watcher_started = True
+                            healed += 1
+                            logger.info(
+                                "watcher self-heal: re-bound project '%s' (reason=not_running)",
+                                pid,
+                            )
+                        except asyncio.CancelledError:
+                            self._mark_job_cancelled("reconcile", started, backlog_count=0)
+                            raise
+                        except Exception:
+                            logger.exception(
+                                "watcher self-heal: re-bind failed for project '%s' — "
+                                "retry next tick (never silently dead)",
+                                pid,
+                            )
+
+                details = {
+                    "projectsReconciled": reconciled,
+                    "watchersHealed": healed,
+                    "failedProjectIds": failed_project_ids,
+                }
+                if failed_project_ids:
+                    self._mark_job_failure(
+                        "reconcile",
+                        started,
+                        RuntimeError(f"reconcile_failed:{','.join(failed_project_ids)}"),
+                        backlog_count=0,
+                        details=details,
+                    )
+                else:
+                    self._mark_job_success(
+                        "reconcile", started, backlog_count=0, details=details
+                    )
+
+                # T12-005: emit reconcile heartbeat probe — fires on cadence
+                # regardless of individual project watcher activity (AC R12.5).
+                observability.record_reconcile_heartbeat(
+                    result="partial_failure" if failed_project_ids else "success",
+                    reconciled=reconciled,
+                    healed=healed,
+                    failed=len(failed_project_ids),
+                )
+
+        logger.info(
+            "Started periodic reconcile (profile=%s interval=%ss heal=%s)",
+            self.profile.name,
+            interval_seconds,
+            heal_enabled,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_reconcile(),
+            name=f"ccdash:{self.profile.name}:reconcile",
+        )
 
     def _mark_job_started(self, job_name: str, *, backlog_count: int | None = None) -> float:
         observation = self.state.job_observations[job_name]

@@ -790,6 +790,19 @@ async def list_sessions(
             taskId=s["task_id"] or "",
             status=s["status"] or "completed",
             model=s["model"] or "",
+            # Phase 5 detection fields (nullable; missing == contract state).
+            modelSlug=s.get("model_slug") or "",
+            workflowId=s.get("workflow_id"),
+            subagentParentId=s.get("subagent_parent_id"),
+            skillName=s.get("skill_name"),
+            contextWindow=s.get("context_window"),
+            # Phase 11 launch-time capture (T11-005). DB columns are snake_case
+            # (effort_tier/model_variant); the contract is camelCase. None ==
+            # not captured (contract state; FE renders an explicit fallback).
+            launcher=s.get("launcher"),
+            profile=s.get("profile"),
+            effortTier=s.get("effort_tier"),
+            modelVariant=s.get("model_variant"),
             modelDisplayName=model_identity["modelDisplayName"],
             modelProvider=model_identity["modelProvider"],
             modelFamily=model_identity["modelFamily"],
@@ -926,8 +939,8 @@ async def get_session(
     repo = core_ports.storage.sessions()
     project = resolve_project(request_context, core_ports)
     mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
-    
-    s = await repo.get_by_id(session_id)
+
+    s = await repo.get_by_id(session_id, project_id=project.id if project else None)
     if not s:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         
@@ -1168,6 +1181,19 @@ async def get_session(
         taskId=s["task_id"] or "",
         status=s["status"] or "completed",
         model=s["model"] or "",
+        # Phase 5 detection fields (nullable; missing == contract state).
+        modelSlug=s.get("model_slug") or "",
+        workflowId=s.get("workflow_id"),
+        subagentParentId=s.get("subagent_parent_id"),
+        skillName=s.get("skill_name"),
+        contextWindow=s.get("context_window"),
+        # Phase 11 launch-time capture (T11-005). DB columns are snake_case
+        # (effort_tier/model_variant); the contract is camelCase. None ==
+        # not captured (contract state; FE renders an explicit fallback).
+        launcher=s.get("launcher"),
+        profile=s.get("profile"),
+        effortTier=s.get("effort_tier"),
+        modelVariant=s.get("model_variant"),
         modelDisplayName=model_identity["modelDisplayName"],
         modelProvider=model_identity["modelProvider"],
         modelFamily=model_identity["modelFamily"],
@@ -1272,7 +1298,7 @@ async def get_session_linked_features(
     mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
     workflow_markers = workflow_command_markers(mappings) if mappings else workflow_command_markers()
     session_repo = core_ports.storage.sessions()
-    session_row = await session_repo.get_by_id(session_id)
+    session_row = await session_repo.get_by_id(session_id, project_id=project.id if project else None)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 

@@ -1,6 +1,9 @@
 """PostgreSQL database schema creation and versioning.
 
 Schema version history (keep in lockstep with sqlite_migrations.py):
+  v35 — Phase 11 launch-time capture columns (T11-003): sessions table gains
+         launcher, profile, effort_tier, model_variant (all nullable TEXT).
+         Mirrors sqlite_migrations.py v35. Additive, no backfill required.
   v32 — P5-005: features table gains owners_json + linked_docs_json columnar
          columns (JSONB DEFAULT '[]') with GIN indexes and backfill from data_json.
          P5-012: council_reviews scaffold table (feature-scoped, tz timestamps).
@@ -40,7 +43,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -201,6 +204,19 @@ CREATE TABLE IF NOT EXISTS sessions (
     models_used_json TEXT DEFAULT '[]',
     agents_used_json TEXT DEFAULT '[]',
     skills_used_json TEXT DEFAULT '[]',
+    -- Phase 5 detection columns (T5-006). model_slug carries the canonical bare
+    -- model slug; the rest are nullable detection facts (null == contract state).
+    model_slug         TEXT DEFAULT '',
+    workflow_id        TEXT,
+    subagent_parent_id TEXT,
+    skill_name         TEXT,
+    context_window     TEXT,
+    -- Phase 11 launch-time capture columns (T11-003). All nullable TEXT;
+    -- null == "not captured" (contract state, never defaulted, no backfill).
+    launcher           TEXT,
+    profile            TEXT,
+    effort_tier        TEXT,
+    model_variant      TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -603,9 +619,12 @@ CREATE INDEX IF NOT EXISTS idx_analytics_point_latest
     WHERE period = 'point';
 -- v34: unique partial index backing ON CONFLICT upsert for point-period dedup.
 -- Key includes scope_id so per-feature rows are DISTINCT from project-level rows.
--- Postgres uses (captured_at::date) expression syntax for the date cast.
+-- Postgres uses (left(captured_at, 10)) instead of (captured_at::date) because a
+-- text->date cast is STABLE (DateStyle-dependent) and Postgres rejects STABLE
+-- functions in index expressions; left(text,int) is IMMUTABLE and yields the
+-- YYYY-MM-DD day key for any ISO-8601 captured_at string.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily
-    ON analytics_entries(project_id, metric_type, scope_id, (captured_at::date))
+    ON analytics_entries(project_id, metric_type, scope_id, (left(captured_at, 10)))
     WHERE period = 'point';
 
 CREATE TABLE IF NOT EXISTS analytics_entity_links (
@@ -2350,6 +2369,13 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "sessions", "context_utilization_pct", "DOUBLE PRECISION DEFAULT 0.0")
     await _ensure_column(db, "sessions", "context_measurement_source", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "context_measured_at", "TEXT DEFAULT ''")
+    # Phase 5 detection columns (T5-006). Existing rows read as '' / NULL —
+    # null is a valid contract state, no backfill required (AC-5.3 resilience).
+    await _ensure_column(db, "sessions", "model_slug", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "workflow_id", "TEXT")
+    await _ensure_column(db, "sessions", "subagent_parent_id", "TEXT")
+    await _ensure_column(db, "sessions", "skill_name", "TEXT")
+    await _ensure_column(db, "sessions", "context_window", "TEXT")
     await _ensure_column(db, "sessions", "tool_reported_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_output_tokens", "INTEGER DEFAULT 0")
@@ -3039,7 +3065,7 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
     #   on upgraded DBs. For fresh DBs this line creates the final scope-aware index.
     await db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily"
-        " ON analytics_entries(project_id, metric_type, scope_id, (captured_at::date))"
+        " ON analytics_entries(project_id, metric_type, scope_id, (left(captured_at, 10)))"
         " WHERE period = 'point'"
     )
     # ── T1-014: Partial index for telemetry_events event_type queries ─────────────
@@ -3133,13 +3159,33 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         # The _ensure_column calls above already added the columns (with
         # DEFAULT 'project' / DEFAULT '') so no row-dedup DELETE is needed —
         # all existing rows get scope_id='' and remain unique under the new key.
+        # Upgrade-path safety note: _now_iso() always emits zero-padded ISO-8601
+        # "YYYY-MM-DD..." strings, so left(captured_at, 10) == the calendar date for
+        # all production data.  Any rowset that was unique under the old
+        # (captured_at::date) index remains unique under left(captured_at, 10).
+        # A populated DB containing non-ISO captured_at values would trigger a
+        # duplicate-key error on the CREATE below — intentional fail-loud (actionable)
+        # rather than silent data corruption.
         await db.execute("DROP INDEX IF EXISTS idx_analytics_point_daily")
         await db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_analytics_point_daily"
-            " ON analytics_entries(project_id, metric_type, scope_id, (captured_at::date))"
+            " ON analytics_entries(project_id, metric_type, scope_id, (left(captured_at, 10)))"
             " WHERE period = 'point'"
         )
         logger.info("v34 migrations complete: analytics_entries scope/scope_id columns + scope-aware idx_analytics_point_daily.")
+
+    # ── v35 migrations ────────────────────────────────────────────────────────
+    if current_version < 35:
+        # Phase 11 (T11-003): launch-time capture columns on sessions.
+        # All four are nullable TEXT — null == "not captured" (contract state).
+        # The columns are already present in the _TABLES DDL above for fresh
+        # instances; the _ensure_column calls here add them to existing DBs.
+        # No backfill required; absent sidecar == all-null (per §5 of the memo).
+        await _ensure_column(db, "sessions", "launcher", "TEXT")
+        await _ensure_column(db, "sessions", "profile", "TEXT")
+        await _ensure_column(db, "sessions", "effort_tier", "TEXT")
+        await _ensure_column(db, "sessions", "model_variant", "TEXT")
+        logger.info("v35 migrations complete: launch-time capture columns added to sessions.")
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
     # Databases that already had schema_version >= SCHEMA_VERSION skip the

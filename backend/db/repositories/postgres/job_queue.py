@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -89,6 +90,21 @@ class PostgresJobQueueRepository:
         # db is an asyncpg.Connection or asyncpg.Pool (or protocol-compatible)
         self._db = db
 
+    @asynccontextmanager
+    async def _acquire(self):
+        """Yield a single asyncpg Connection for a multi-statement transaction.
+
+        ``self._db`` may be a Pool (exposes ``.acquire()``) or an
+        already-acquired Connection (no ``.acquire()``). A transaction and its
+        ``FOR UPDATE SKIP LOCKED`` queries MUST share one connection, so acquire
+        once here and run the whole block against the yielded connection.
+        """
+        if hasattr(self._db, "acquire"):
+            async with self._db.acquire() as conn:
+                yield conn
+        else:
+            yield self._db
+
     # ── enqueue ────────────────────────────────────────────────────────────────
 
     async def enqueue(
@@ -149,62 +165,63 @@ class PostgresJobQueueRepository:
         """
         now = _now_iso()
 
-        async with self._db.transaction():
-            # Backpressure: count how many jobs this worker currently holds.
-            in_flight = await self._db.fetchval(
-                "SELECT COUNT(*) FROM job_queue WHERE status = 'running' AND locked_by = $1",
-                worker_id,
-            )
-            in_flight = int(in_flight or 0)
-            if in_flight >= max_in_flight:
-                logger.debug(
-                    "Worker '%s' at in-flight limit (%d/%d) — skipping claim",
+        async with self._acquire() as conn:
+            async with conn.transaction():
+                # Backpressure: count how many jobs this worker currently holds.
+                in_flight = await conn.fetchval(
+                    "SELECT COUNT(*) FROM job_queue WHERE status = 'running' AND locked_by = $1",
                     worker_id,
-                    in_flight,
-                    max_in_flight,
                 )
-                return None
+                in_flight = int(in_flight or 0)
+                if in_flight >= max_in_flight:
+                    logger.debug(
+                        "Worker '%s' at in-flight limit (%d/%d) — skipping claim",
+                        worker_id,
+                        in_flight,
+                        max_in_flight,
+                    )
+                    return None
 
-            # Build dynamic WHERE clause
-            where_clauses = ["status = 'pending'", "available_at <= $1"]
-            params: list[Any] = [now]
-            idx = 2
-            if job_type is not None:
-                where_clauses.append(f"job_type = ${idx}")
-                params.append(job_type)
-                idx += 1
-            if project_id is not None:
-                where_clauses.append(f"project_id = ${idx}")
-                params.append(project_id)
-                idx += 1
+                # Build dynamic WHERE clause
+                where_clauses = ["status = 'pending'", "available_at <= $1"]
+                params: list[Any] = [now]
+                idx = 2
+                if job_type is not None:
+                    where_clauses.append(f"job_type = ${idx}")
+                    params.append(job_type)
+                    idx += 1
+                if project_id is not None:
+                    where_clauses.append(f"project_id = ${idx}")
+                    params.append(project_id)
+                    idx += 1
 
-            where = " AND ".join(where_clauses)
-            select_sql = f"""
-                SELECT id FROM job_queue
-                WHERE {where}
-                ORDER BY priority DESC, created_at ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            """
-            row = await self._db.fetchrow(select_sql, *params)
-            if row is None:
-                return None
-
-            job_id = row["id"]
-            await self._db.execute(
+                where = " AND ".join(where_clauses)
+                select_sql = f"""
+                    SELECT id FROM job_queue
+                    WHERE {where}
+                    ORDER BY priority DESC, created_at ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
                 """
-                UPDATE job_queue
-                   SET status     = 'running',
-                       locked_by  = $1,
-                       locked_at  = $2,
-                       updated_at = $3
-                 WHERE id = $4 AND status = 'pending'
-                """,
-                worker_id,
-                now,
-                now,
-                job_id,
-            )
+                row = await conn.fetchrow(select_sql, *params)
+                if row is None:
+                    return None
+
+                job_id = row["id"]
+                await conn.execute(
+                    """
+                    UPDATE job_queue
+                       SET status     = 'running',
+                           locked_by  = $1,
+                           locked_at  = $2,
+                           updated_at = $3
+                     WHERE id = $4 AND status = 'pending'
+                    """,
+                    worker_id,
+                    now,
+                    now,
+                    job_id,
+                )
 
         return await self.get(job_id)
 
@@ -341,33 +358,34 @@ class PostgresJobQueueRepository:
         Returns the job dict (with ``checkpoint`` populated) or None.
         """
         now = _now_iso()
-        async with self._db.transaction():
-            row = await self._db.fetchrow(
-                """
-                SELECT id FROM job_queue
-                 WHERE status='crashed'
-                 ORDER BY updated_at ASC
-                 LIMIT 1
-                 FOR UPDATE SKIP LOCKED
-                """
-            )
-            if row is None:
-                return None
-            job_id = row["id"]
-            await self._db.execute(
-                """
-                UPDATE job_queue
-                   SET status    = 'running',
-                       locked_by = $1,
-                       locked_at = $2,
-                       updated_at= $3
-                 WHERE id = $4 AND status = 'crashed'
-                """,
-                worker_id,
-                now,
-                now,
-                job_id,
-            )
+        async with self._acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    SELECT id FROM job_queue
+                     WHERE status='crashed'
+                     ORDER BY updated_at ASC
+                     LIMIT 1
+                     FOR UPDATE SKIP LOCKED
+                    """
+                )
+                if row is None:
+                    return None
+                job_id = row["id"]
+                await conn.execute(
+                    """
+                    UPDATE job_queue
+                       SET status    = 'running',
+                           locked_by = $1,
+                           locked_at = $2,
+                           updated_at= $3
+                     WHERE id = $4 AND status = 'crashed'
+                    """,
+                    worker_id,
+                    now,
+                    now,
+                    job_id,
+                )
         return await self.get(job_id)
 
     # ── reads ──────────────────────────────────────────────────────────────────

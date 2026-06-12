@@ -134,9 +134,10 @@ async def _load_feature_session_rows(
     ports: CorePorts,
     feature_id: str,
     linked_session_ids: list[str],
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     if linked_session_ids:
-        fetched = await ports.storage.sessions().get_many_by_ids(linked_session_ids)
+        fetched = await ports.storage.sessions().get_many_by_ids(linked_session_ids, project_id=project_id)
         # Preserve input order and drop missing ids
         rows: list[dict[str, Any]] = [fetched[sid] for sid in linked_session_ids if sid in fetched]
         if rows:
@@ -292,7 +293,7 @@ class FeatureForensicsQueryService:
 
         session_rows: list[dict[str, Any]] = []
         try:
-            session_rows = await _load_feature_session_rows(context, ports, feature_id, session_ids)
+            session_rows = await _load_feature_session_rows(context, ports, feature_id, session_ids, project_id=scope.project.id)
         except Exception:
             partial = True
 

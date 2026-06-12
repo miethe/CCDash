@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -225,6 +225,21 @@ CREATE TABLE IF NOT EXISTS sessions (
     models_used_json TEXT DEFAULT '[]',
     agents_used_json TEXT DEFAULT '[]',
     skills_used_json TEXT DEFAULT '[]',
+    -- Phase 5 detection columns (T5-006). model_slug carries the canonical bare
+    -- model slug; the rest are nullable detection facts (null == contract state).
+    model_slug         TEXT DEFAULT '',
+    workflow_id        TEXT,
+    subagent_parent_id TEXT,
+    skill_name         TEXT,
+    context_window     TEXT,
+    -- Phase 11 launch-time capture columns (T11-003). All nullable; null == not
+    -- captured (sidecar absent, session not launched via a capture-aware path, or
+    -- launched before the hook was installed).  COALESCE-guarded on upsert so a
+    -- missing sidecar on re-ingest never clobbers a previously-captured value.
+    launcher           TEXT,
+    profile            TEXT,
+    effort_tier        TEXT,
+    model_variant      TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -2821,6 +2836,18 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
     await _ensure_column(db, "sessions", "thread_kind", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "conversation_family_id", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "context_inheritance", "TEXT DEFAULT ''")
+    # Phase 5 detection columns (T5-006). Existing rows read these as '' / NULL —
+    # null is a valid contract state, no backfill required (AC-5.3 resilience).
+    await _ensure_column(db, "sessions", "model_slug", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "workflow_id", "TEXT")
+    await _ensure_column(db, "sessions", "subagent_parent_id", "TEXT")
+    await _ensure_column(db, "sessions", "skill_name", "TEXT")
+    await _ensure_column(db, "sessions", "context_window", "TEXT")
+    # Phase 11 launch-time capture columns (T11-003). All nullable.
+    await _ensure_column(db, "sessions", "launcher", "TEXT")
+    await _ensure_column(db, "sessions", "profile", "TEXT")
+    await _ensure_column(db, "sessions", "effort_tier", "TEXT")
+    await _ensure_column(db, "sessions", "model_variant", "TEXT")
     await _ensure_column(db, "sessions", "fork_parent_session_id", "TEXT")
     await _ensure_column(db, "sessions", "fork_point_log_id", "TEXT")
     await _ensure_column(db, "sessions", "fork_point_entry_uuid", "TEXT")
@@ -3715,6 +3742,17 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         )
         await db.commit()
         logger.info("v34 migrations complete: idx_sessions_git_branch added.")
+
+    if current_version < 35:
+        # Phase 11 launch-time capture columns (T11-003). All nullable TEXT;
+        # no backfill — null == not captured (legitimate contract state).
+        # COALESCE-guarded upsert ensures re-ingest never clobbers a prior value.
+        await _ensure_column(db, "sessions", "launcher", "TEXT")
+        await _ensure_column(db, "sessions", "profile", "TEXT")
+        await _ensure_column(db, "sessions", "effort_tier", "TEXT")
+        await _ensure_column(db, "sessions", "model_variant", "TEXT")
+        await db.commit()
+        logger.info("v35 migrations complete: launch-time capture columns added.")
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────
     # _ensure_index is idempotent; the IF NOT EXISTS guard means this call is

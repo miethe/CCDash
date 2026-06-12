@@ -135,6 +135,107 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                     WorkflowDiagnosticsQueryService.get_diagnostics = workflow_diagnostics
                     ReportingQueryService.generate_aar = generate_aar
                     ArtifactIntelligenceQueryService.get_recommendations = artifact_recommendations
+
+                    # ── Session tool mocks (Phase 3 / T3-007) ─────────────────────────────
+                    # Patch get_session_detail so session tools work without a seeded DB.
+                    # The mock returns a minimal SessionDetailBundle with token telemetry.
+                    # Missing session_id "missing-session" returns None (not-found path).
+                    # The mock bundle intentionally has no secrets — redaction parity is
+                    # proven in test_session_parity.py (T3-005) using the real service.
+
+                    import base64 as _b64, json as _json
+
+                    def _enc_cursor(offset):
+                        raw = _json.dumps({"o": offset}, separators=(",", ":"))
+                        return _b64.urlsafe_b64encode(raw.encode()).decode()
+
+                    class _FakePage:
+                        def __init__(self, items, offset, limit):
+                            self.items = items
+                            self.cursor = _enc_cursor(offset)
+                            self.limit = limit
+                            self.next_cursor = None
+                        def as_dict(self):
+                            return {
+                                "items": self.items,
+                                "cursor": self.cursor,
+                                "limit": self.limit,
+                                "nextCursor": self.next_cursor,
+                            }
+
+                    class _FakeBundle:
+                        def __init__(self, session_id, project_id, page):
+                            self.session_id = session_id
+                            self.project_id = project_id
+                            self.session = {
+                                "id": session_id,
+                                "project_id": project_id,
+                                "status": "completed",
+                                "model": "claude-3-5-sonnet",
+                            }
+                            self.transcript = page
+                            self.subagents = []
+                            self.tokens = {
+                                "tokensIn": 100,
+                                "tokensOut": 200,
+                                "modelIOTokens": 300,
+                                "cacheCreationInputTokens": 0,
+                                "cacheReadInputTokens": 0,
+                                "cacheInputTokens": 0,
+                                "observedTokens": 0,
+                                "toolReportedTokens": 0,
+                                "totalCost": 0.01,
+                                "durationSeconds": 60.0,
+                            }
+                            self.artifacts = []
+                            self.links = []
+                            self.redacted_field_count = 0
+
+                        def as_dict(self):
+                            d = {
+                                "sessionId": self.session_id,
+                                "projectId": self.project_id,
+                                "session": self.session,
+                                "subagents": self.subagents,
+                                "tokens": self.tokens,
+                                "artifacts": self.artifacts,
+                                "links": self.links,
+                                "redactedFieldCount": self.redacted_field_count,
+                            }
+                            if self.transcript is not None:
+                                d["transcript"] = self.transcript.as_dict()
+                            return d
+
+                    async def _mock_get_session_detail(
+                        project_id,
+                        session_id,
+                        ports,
+                        *,
+                        include=None,
+                        cursor=None,
+                        limit=None,
+                        context=None,
+                    ):
+                        if session_id == "missing-session" or not session_id:
+                            return None
+                        eff_limit = min(limit or 50, 200)
+                        page_items = [
+                            {
+                                "id": "mcp-log-0",
+                                "content": "mcp test transcript content",
+                                "type": "message",
+                                "timestamp": "2026-06-01T10:00:00Z",
+                            }
+                        ]
+                        page = _FakePage(page_items, 0, eff_limit)
+                        return _FakeBundle(session_id, project_id, page)
+
+                    # Patch the source module and the sessions tool module's local binding
+                    import backend.application.services.agent_queries.session_detail as _sd_mod
+                    _sd_mod.get_session_detail = _mock_get_session_detail
+
+                    import backend.mcp.tools.sessions as _sessions_tool_mod
+                    _sessions_tool_mod.get_session_detail = _mock_get_session_detail
                 """
             ).strip()
             + "\n",
@@ -204,6 +305,10 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 "ccdash_live_active_count",
                 # system-wide-metrics-v1
                 "ccdash_system_active_count",
+                # session intelligence (Phase 3 / T3-001)
+                "ccdash_session_search",
+                "ccdash_session_detail",
+                "ccdash_session_transcript",
             },
         )
 
@@ -257,6 +362,134 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Artifact recommendations for test-project", payload)
         self.assertIn("artifact-alpha", payload)
         self.assertIn("optimization_target", payload)
+
+
+    # ── Session tool tests (Phase 3 / T3-007) ─────────────────────────────────
+
+    async def test_session_detail_missing_project_id_returns_error(self) -> None:
+        """ccdash_session_detail without project_id must return status='error'."""
+        payload = await self._call_tool(
+            "ccdash_session_detail",
+            {"session_id": "test-sess-001"},
+        )
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("project_id", payload.get("error", "").lower())
+
+    async def test_session_transcript_missing_project_id_returns_error(self) -> None:
+        """ccdash_session_transcript without project_id must return status='error'."""
+        payload = await self._call_tool(
+            "ccdash_session_transcript",
+            {"session_id": "test-sess-001"},
+        )
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("project_id", payload.get("error", "").lower())
+
+    async def test_session_search_missing_project_id_returns_error(self) -> None:
+        """ccdash_session_search without project_id must return status='error'."""
+        payload = await self._call_tool(
+            "ccdash_session_search",
+            {"query": "some search term"},
+        )
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("project_id", payload.get("error", "").lower())
+
+    async def test_session_search_missing_query_returns_error(self) -> None:
+        """ccdash_session_search with project_id but no query must return status='error'."""
+        payload = await self._call_tool(
+            "ccdash_session_search",
+            {"project_id": "test-project"},
+        )
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("query", payload.get("error", "").lower())
+
+    async def test_session_detail_missing_session_id_returns_error(self) -> None:
+        """ccdash_session_detail with project_id but no session_id returns status='error'."""
+        payload = await self._call_tool(
+            "ccdash_session_detail",
+            {"project_id": "non-active-project-001"},
+        )
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("session_id", payload.get("error", "").lower())
+
+    async def test_session_detail_unknown_session_returns_not_found(self) -> None:
+        """ccdash_session_detail with unknown session_id returns status='not_found'."""
+        payload = await self._call_tool(
+            "ccdash_session_detail",
+            {"project_id": "non-active-project-001", "session_id": "missing-session"},
+        )
+        self.assertEqual(payload["status"], "not_found")
+        self.assertIn("missing-session", payload.get("error", ""))
+
+    async def test_session_detail_non_active_project_returns_full_detail(self) -> None:
+        """ccdash_session_detail with a non-active project_id returns full detail bundle."""
+        payload = await self._call_tool(
+            "ccdash_session_detail",
+            {
+                "project_id": "non-active-project-001",
+                "session_id": "test-session-parity-001",
+            },
+        )
+        self.assertEqual(payload["status"], "ok")
+        data = payload["data"]
+        # Core identity fields
+        self.assertEqual(data.get("projectId"), "non-active-project-001")
+        self.assertEqual(data.get("sessionId"), "test-session-parity-001")
+        # Transcript segment present with cursor envelope
+        transcript = data.get("transcript")
+        self.assertIsNotNone(transcript)
+        self.assertIsInstance(transcript.get("items"), list)
+        for field in ("items", "cursor", "limit", "nextCursor"):
+            self.assertIn(field, transcript, f"transcript missing cursor field: {field}")
+        # Token telemetry present
+        tokens = data.get("tokens")
+        self.assertIsNotNone(tokens)
+        self.assertIn("tokensIn", tokens)
+        self.assertIn("totalCost", tokens)
+
+    async def test_session_detail_meta_carries_project_and_session_id(self) -> None:
+        """ccdash_session_detail response meta must carry project_id and session_id."""
+        payload = await self._call_tool(
+            "ccdash_session_detail",
+            {
+                "project_id": "non-active-project-001",
+                "session_id": "test-session-parity-001",
+            },
+        )
+        self.assertEqual(payload["status"], "ok")
+        meta = payload.get("meta", {})
+        self.assertEqual(meta.get("project_id"), "non-active-project-001")
+        self.assertEqual(meta.get("session_id"), "test-session-parity-001")
+
+    async def test_session_transcript_non_active_project_returns_page(self) -> None:
+        """ccdash_session_transcript returns a valid transcript page envelope."""
+        payload = await self._call_tool(
+            "ccdash_session_transcript",
+            {
+                "project_id": "non-active-project-001",
+                "session_id": "test-session-parity-001",
+            },
+        )
+        self.assertEqual(payload["status"], "ok")
+        data = payload["data"]
+        self.assertIsInstance(data.get("items"), list)
+        for field in ("sessionId", "projectId", "items", "cursor", "limit", "nextCursor"):
+            self.assertIn(field, data, f"transcript page missing field: {field}")
+        self.assertEqual(data["projectId"], "non-active-project-001")
+
+    async def test_session_transcript_cursor_is_string(self) -> None:
+        """ccdash_session_transcript cursor field must be a string (opaque base64)."""
+        payload = await self._call_tool(
+            "ccdash_session_transcript",
+            {
+                "project_id": "non-active-project-001",
+                "session_id": "test-session-parity-001",
+                "limit": 10,
+            },
+        )
+        self.assertEqual(payload["status"], "ok")
+        cursor = payload["data"].get("cursor")
+        self.assertIsInstance(cursor, str)
+        self.assertTrue(cursor, "cursor must be non-empty")
 
 
 if __name__ == "__main__":

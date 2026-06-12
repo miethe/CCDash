@@ -157,6 +157,26 @@ class AgentSession(BaseModel):
     taskId: str = ""
     status: str = "completed"
     model: str = ""
+    # ── Phase 5 detection fields (log-derivable) ──────────────────────────
+    # T5-001: canonical bare model slug (variant suffixes like ``[1m]`` stripped);
+    # consumed by pricing (Phase 6) and the FE. Empty string == absent.
+    modelSlug: str = ""
+    # T5-004: workflow grouping + subagent linkage, derived from log fields so
+    # they survive a null/absent sidecar. None == standalone / unlinked.
+    workflowId: Optional[str] = None
+    subagentParentId: Optional[str] = None
+    # T5-005: primary log-attributed skill; None == explicit null contract state.
+    skillName: Optional[str] = None
+    # T5-003: context-window label (e.g. "1M") attributed via the workflow.json
+    # sidecar join in sync_engine. None == no sidecar matched (contract state).
+    contextWindow: Optional[str] = None
+    # Phase 11 launch-time capture fields (T11-003). Written by the SessionStart
+    # hook via the capture sidecar. None == not captured (contract state, no default).
+    # Sidecar schema uses camelCase; DB stores snake_case equivalents.
+    launcher: Optional[str] = None
+    profile: Optional[str] = None
+    effortTier: Optional[str] = None
+    modelVariant: Optional[str] = None
     modelDisplayName: str = ""
     modelProvider: str = ""
     modelFamily: str = ""

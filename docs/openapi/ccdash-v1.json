@@ -1,0 +1,6188 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CCDash External API v1",
+    "description": "Versioned external API for IntentTree and LAN agents. See docs/guides/external-api-lan-deployment.md for operator guidance.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/instance": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Get Instance Metadata",
+        "description": "Return instance identity, version, and capability advertisement.",
+        "operationId": "get_instance_metadata_api_v1_instance_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_InstanceMetaDTO_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/capabilities": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Capability discovery for IntentTree and LAN agents",
+        "description": "Return the server-declared capability set for feature-detection by agents.\n\nCallers SHOULD check ``capabilities`` before using a capability-dependent\nendpoint.  An absent capability means the server predates that feature; a\npresent one means the server honours the documented contract for that\ncapability string.  Unknown strings must be treated as future additions\nand MUST NOT cause the client to error.\n\nServed without active-project state — safe to call before establishing a\nproject context.",
+        "operationId": "get_capabilities_api_v1_capabilities_get",
+        "responses": {
+          "200": {
+            "description": "Advertised API capabilities and version string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_CapabilityV1_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/project/status": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Project Status",
+        "description": "Return the project status snapshot.",
+        "operationId": "project_status_api_v1_project_status_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project override.",
+              "title": "Project Id"
+            },
+            "description": "Optional project override."
+          },
+          {
+            "name": "bypass_cache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Bypass the server-side query cache and fetch fresh data.",
+              "default": false,
+              "title": "Bypass Cache"
+            },
+            "description": "Bypass the server-side query cache and fetch fresh data."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_ProjectStatusDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Dashboard Bundle",
+        "description": "Return the Dashboard fat-read bundle.\n\nComposes the most-recent sessions page (limit 20, ``started_at`` desc) and\ntask counts by status into a single above-fold response, collapsing ≤N\nparallel Dashboard requests to exactly 1.",
+        "operationId": "dashboard_bundle_api_v1_dashboard_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project override.",
+              "title": "Project Id"
+            },
+            "description": "Optional project override."
+          },
+          {
+            "name": "bypass_cache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Bypass the server-side query cache and fetch fresh data.",
+              "default": false,
+              "title": "Bypass Cache"
+            },
+            "description": "Bypass the server-side query cache and fetch fresh data."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_DashboardBundleDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/failures": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Workflow Failures",
+        "description": "Return workflow failure patterns and diagnostics.",
+        "operationId": "workflow_failures_api_v1_workflows_failures_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional feature filter.",
+              "title": "Feature Id"
+            },
+            "description": "Optional feature filter."
+          },
+          {
+            "name": "bypass_cache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Bypass the server-side query cache and fetch fresh data.",
+              "default": false,
+              "title": "Bypass Cache"
+            },
+            "description": "Bypass the server-side query cache and fetch fresh data."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_WorkflowDiagnosticsDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/features": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Features List",
+        "description": "Return the legacy summary list or the richer Phase 2 feature-card view.",
+        "operationId": "features_list_api_v1_features_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Response view: 'summary' preserves the legacy list, 'cards' uses the Phase 2 feature surface.",
+              "default": "summary",
+              "title": "View"
+            },
+            "description": "Response view: 'summary' preserves the legacy list, 'cards' uses the Phase 2 feature surface."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status (repeatable).",
+              "title": "Status"
+            },
+            "description": "Filter by status (repeatable)."
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by derived board stage (cards view only, repeatable).",
+              "title": "Stage"
+            },
+            "description": "Filter by derived board stage (cards view only, repeatable)."
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by category.",
+              "title": "Category"
+            },
+            "description": "Filter by category."
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by tags (cards view only, repeatable).",
+              "title": "Tags"
+            },
+            "description": "Filter by tags (cards view only, repeatable)."
+          },
+          {
+            "name": "has_deferred",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to features with deferred tasks (cards view only).",
+              "title": "Has Deferred"
+            },
+            "description": "Filter to features with deferred tasks (cards view only)."
+          },
+          {
+            "name": "planned_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Planned lower date bound (cards view only).",
+              "title": "Planned From"
+            },
+            "description": "Planned lower date bound (cards view only)."
+          },
+          {
+            "name": "planned_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Planned upper date bound (cards view only).",
+              "title": "Planned To"
+            },
+            "description": "Planned upper date bound (cards view only)."
+          },
+          {
+            "name": "started_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Started lower date bound (cards view only).",
+              "title": "Started From"
+            },
+            "description": "Started lower date bound (cards view only)."
+          },
+          {
+            "name": "started_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Started upper date bound (cards view only).",
+              "title": "Started To"
+            },
+            "description": "Started upper date bound (cards view only)."
+          },
+          {
+            "name": "completed_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Completed lower date bound (cards view only).",
+              "title": "Completed From"
+            },
+            "description": "Completed lower date bound (cards view only)."
+          },
+          {
+            "name": "completed_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Completed upper date bound (cards view only).",
+              "title": "Completed To"
+            },
+            "description": "Completed upper date bound (cards view only)."
+          },
+          {
+            "name": "updated_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Updated lower date bound (cards view only).",
+              "title": "Updated From"
+            },
+            "description": "Updated lower date bound (cards view only)."
+          },
+          {
+            "name": "updated_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Updated upper date bound (cards view only).",
+              "title": "Updated To"
+            },
+            "description": "Updated upper date bound (cards view only)."
+          },
+          {
+            "name": "progress_min",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Minimum progress ratio (cards view only).",
+              "title": "Progress Min"
+            },
+            "description": "Minimum progress ratio (cards view only)."
+          },
+          {
+            "name": "progress_max",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Maximum progress ratio (cards view only).",
+              "title": "Progress Max"
+            },
+            "description": "Maximum progress ratio (cards view only)."
+          },
+          {
+            "name": "task_count_min",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Minimum task count (cards view only).",
+              "title": "Task Count Min"
+            },
+            "description": "Minimum task count (cards view only)."
+          },
+          {
+            "name": "task_count_max",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Maximum task count (cards view only).",
+              "title": "Task Count Max"
+            },
+            "description": "Maximum task count (cards view only)."
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Sort key for cards view.",
+              "default": "updated_at",
+              "title": "Sort By"
+            },
+            "description": "Sort key for cards view."
+          },
+          {
+            "name": "sort_direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort direction for cards view.",
+              "title": "Sort Direction"
+            },
+            "description": "Sort direction for cards view."
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional include fields for cards view.",
+              "title": "Include"
+            },
+            "description": "Optional include fields for cards view."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Page size.",
+              "default": 200,
+              "title": "Limit"
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Page offset.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Page offset."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keyword substring filter on feature name and slug (case-insensitive).",
+              "title": "Q"
+            },
+            "description": "Keyword substring filter on feature name and slug (case-insensitive)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Features List Api V1 Features Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/features/rollups": {
+      "post": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Feature Rollups",
+        "description": "Return bounded Phase 2 rollups for a list of feature IDs.",
+        "operationId": "feature_rollups_api_v1_features_rollups_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureRollupsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_FeatureRollupResponseDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/features/{feature_id}": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Feature Detail",
+        "description": "Return full forensic detail for a single feature.",
+        "operationId": "feature_detail_api_v1_features__feature_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Feature ID to inspect.",
+              "title": "Feature Id"
+            },
+            "description": "Feature ID to inspect."
+          },
+          {
+            "name": "bypass_cache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Bypass the server-side query cache and fetch fresh data.",
+              "default": false,
+              "title": "Bypass Cache"
+            },
+            "description": "Bypass the server-side query cache and fetch fresh data."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_FeatureForensicsDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/features/{feature_id}/sessions": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Feature Sessions",
+        "description": "Return sessions linked to a feature.",
+        "operationId": "feature_sessions_api_v1_features__feature_id__sessions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Feature ID.",
+              "title": "Feature Id"
+            },
+            "description": "Feature ID."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Page size.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Page offset.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Page offset."
+          },
+          {
+            "name": "bypass_cache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Bypass the server-side query cache and fetch fresh data.",
+              "default": false,
+              "title": "Bypass Cache"
+            },
+            "description": "Bypass the server-side query cache and fetch fresh data."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_FeatureSessionsDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/features/{feature_id}/sessions/page": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Feature Sessions Page",
+        "description": "Return the Phase 2 linked-session page DTO for a feature.",
+        "operationId": "feature_sessions_page_api_v1_features__feature_id__sessions_page_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Feature ID.",
+              "title": "Feature Id"
+            },
+            "description": "Feature ID."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "description": "Page size.",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Page offset.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Page offset."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_LinkedFeatureSessionPageDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/features/{feature_id}/documents": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Feature Documents",
+        "description": "Return documents linked to a feature.",
+        "operationId": "feature_documents_api_v1_features__feature_id__documents_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Feature ID.",
+              "title": "Feature Id"
+            },
+            "description": "Feature ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_FeatureDocumentsDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/features/{feature_id}/modal": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Feature Modal Overview",
+        "description": "Return the Phase 2 modal overview payload for a feature.",
+        "operationId": "feature_modal_overview_api_v1_features__feature_id__modal_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Feature ID.",
+              "title": "Feature Id"
+            },
+            "description": "Feature ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_FeatureModalOverviewDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/features/{feature_id}/modal/{section}": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Feature Modal Section",
+        "description": "Return a single Phase 2 modal section/tab payload for a feature.",
+        "operationId": "feature_modal_section_api_v1_features__feature_id__modal__section__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Feature ID.",
+              "title": "Feature Id"
+            },
+            "description": "Feature ID."
+          },
+          {
+            "name": "section",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Modal section key.",
+              "title": "Section"
+            },
+            "description": "Modal section key."
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional include fields for the requested section.",
+              "title": "Include"
+            },
+            "description": "Optional include fields for the requested section."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Page size for pageable sections.",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Page size for pageable sections."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Page offset for pageable sections.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Page offset for pageable sections."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_FeatureModalSectionDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/search": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Sessions Search",
+        "description": "Full-text / semantic search across session transcripts.",
+        "operationId": "sessions_search_api_v1_sessions_search_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "description": "Transcript query text.",
+              "title": "Q"
+            },
+            "description": "Transcript query text."
+          },
+          {
+            "name": "feature_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a specific feature.",
+              "title": "Feature Id"
+            },
+            "description": "Filter to a specific feature."
+          },
+          {
+            "name": "root_session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a root session family.",
+              "title": "Root Session Id"
+            },
+            "description": "Filter to a root session family."
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a single session.",
+              "title": "Session Id"
+            },
+            "description": "Filter to a single session."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size.",
+              "default": 25,
+              "title": "Limit"
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Page offset.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Page offset."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_SessionSemanticSearchResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Sessions List",
+        "description": "Return a paginated list of session intelligence rollups.",
+        "operationId": "sessions_list_api_v1_sessions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a specific feature.",
+              "title": "Feature Id"
+            },
+            "description": "Filter to a specific feature."
+          },
+          {
+            "name": "root_session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a root session family.",
+              "title": "Root Session Id"
+            },
+            "description": "Filter to a root session family."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Page offset.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Page offset."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1PaginatedEnvelope_SessionIntelligenceSessionRollup_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Session Detail",
+        "description": "Return detailed intelligence for a single session.",
+        "operationId": "session_detail_api_v1_sessions__session_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Session ID to inspect.",
+              "title": "Session Id"
+            },
+            "description": "Session ID to inspect."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_SessionIntelligenceDetailResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/drilldown": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Session Drilldown",
+        "description": "Return drilldown intelligence for a specific concern on a session.",
+        "operationId": "session_drilldown_api_v1_sessions__session_id__drilldown_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Session ID.",
+              "title": "Session Id"
+            },
+            "description": "Session ID."
+          },
+          {
+            "name": "concern",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "sentiment",
+                "churn",
+                "scope_drift"
+              ],
+              "type": "string",
+              "description": "Which intelligence concern to inspect.",
+              "title": "Concern"
+            },
+            "description": "Which intelligence concern to inspect."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_SessionIntelligenceDrilldownResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/family": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Session Family",
+        "description": "Return all sessions sharing the same root session.",
+        "operationId": "session_family_api_v1_sessions__session_id__family_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Session ID.",
+              "title": "Session Id"
+            },
+            "description": "Session ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_SessionFamilyDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/detail": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Session Full Detail",
+        "description": "Return full session detail bundle (transcript-bearing) for any project.\n\n``project_id`` is **required** (HTTP 400 if absent).  Unknown session yields\nHTTP 404.  Optional segments (transcript/subagents/tokens/artifacts/links)\nare selected via the repeatable ``include`` param; omit to include all.\nRedaction is applied by the Phase 1 service before serialisation.",
+        "operationId": "session_full_detail_api_v1_sessions__session_id__detail_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Session ID to inspect.",
+              "title": "Session Id"
+            },
+            "description": "Session ID to inspect."
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Required. The project that owns the session. Missing project_id returns HTTP 400 — there is no active-project fallback.",
+              "title": "Project Id"
+            },
+            "description": "Required. The project that owns the session. Missing project_id returns HTTP 400 — there is no active-project fallback."
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable include flags: transcript, subagents, tokens, artifacts, links. Omit to include all segments.",
+              "title": "Include"
+            },
+            "description": "Repeatable include flags: transcript, subagents, tokens, artifacts, links. Omit to include all segments."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque transcript pagination cursor (base64-encoded offset). Omit to start from the beginning.",
+              "title": "Cursor"
+            },
+            "description": "Opaque transcript pagination cursor (base64-encoded offset). Omit to start from the beginning."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "description": "Max transcript items per page (1-1000; default 200).",
+              "default": 200,
+              "title": "Limit"
+            },
+            "description": "Max transcript items per page (1-1000; default 200)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_SessionDetailV1_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/transcript": {
+      "get": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Session Transcript",
+        "description": "Return a cursor-paginated transcript page for any project.\n\n``project_id`` is **required** (HTTP 400 if absent).  Unknown session yields\nHTTP 404.  Redaction is applied by the Phase 1 service before serialisation.\nUses ``{items, cursor, limit, nextCursor}`` envelope.",
+        "operationId": "session_transcript_api_v1_sessions__session_id__transcript_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Session ID.",
+              "title": "Session Id"
+            },
+            "description": "Session ID."
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Required. The project that owns the session. Missing project_id returns HTTP 400 — there is no active-project fallback.",
+              "title": "Project Id"
+            },
+            "description": "Required. The project that owns the session. Missing project_id returns HTTP 400 — there is no active-project fallback."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque pagination cursor (base64-encoded offset). Omit to start from the beginning.",
+              "title": "Cursor"
+            },
+            "description": "Opaque pagination cursor (base64-encoded offset). Omit to start from the beginning."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "description": "Max transcript items per page (1-1000; default 200).",
+              "default": 200,
+              "title": "Limit"
+            },
+            "description": "Max transcript items per page (1-1000; default 200)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_SessionTranscriptPageV1_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reports/aar": {
+      "post": {
+        "tags": [
+          "client-v1"
+        ],
+        "summary": "Generate Aar Report",
+        "description": "Generate a deterministic after-action report for a feature.",
+        "operationId": "generate_aar_report_api_v1_reports_aar_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "feature_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Feature ID for the after-action report.",
+              "title": "Feature Id"
+            },
+            "description": "Feature ID for the after-action report."
+          },
+          {
+            "name": "bypass_cache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Bypass the server-side query cache and fetch fresh data.",
+              "default": false,
+              "title": "Bypass Cache"
+            },
+            "description": "Bypass the server-side query cache and fetch fresh data."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientV1Envelope_AARReportDTO_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AARReportDTO": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data_freshness": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Data Freshness"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "source_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Refs"
+          },
+          "feature_id": {
+            "type": "string",
+            "title": "Feature Id"
+          },
+          "feature_slug": {
+            "type": "string",
+            "title": "Feature Slug",
+            "default": ""
+          },
+          "scope_statement": {
+            "type": "string",
+            "title": "Scope Statement",
+            "default": ""
+          },
+          "timeline": {
+            "$ref": "#/components/schemas/TimelineData"
+          },
+          "key_metrics": {
+            "$ref": "#/components/schemas/KeyMetrics"
+          },
+          "turning_points": {
+            "items": {
+              "$ref": "#/components/schemas/TurningPoint"
+            },
+            "type": "array",
+            "title": "Turning Points"
+          },
+          "workflow_observations": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowObservation"
+            },
+            "type": "array",
+            "title": "Workflow Observations"
+          },
+          "bottlenecks": {
+            "items": {
+              "$ref": "#/components/schemas/Bottleneck"
+            },
+            "type": "array",
+            "title": "Bottlenecks"
+          },
+          "successful_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Successful Patterns"
+          },
+          "lessons_learned": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lessons Learned"
+          },
+          "evidence_links": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Links"
+          }
+        },
+        "type": "object",
+        "required": [
+          "feature_id"
+        ],
+        "title": "AARReportDTO"
+      },
+      "Bottleneck": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "cost_impact": {
+            "type": "number",
+            "title": "Cost Impact",
+            "default": 0.0
+          },
+          "sessions_affected": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sessions Affected"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Refs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "description"
+        ],
+        "title": "Bottleneck"
+      },
+      "CapabilityV1": {
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "title": "Api Version",
+            "default": "1"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id",
+            "default": ""
+          },
+          "server_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Time"
+          }
+        },
+        "type": "object",
+        "title": "CapabilityV1",
+        "description": "Capability advertisement for IntentTree and LAN agents.\n\nClients feature-detect against ``capabilities``.  ``api_version`` is a\nstring (currently ``\"1\"``) — a mismatch means the client should warn but\nshould NOT hard-fail: future minor revisions increment the version string\nwhile preserving backward compat.\n\nServer-declared capability identifiers (v1):\n- ``sessions:cross-project``  — list/search/detail/transcript accept an\n  explicit ``project_id`` param; detail+transcript REQUIRE it (400 if\n  missing).\n- ``sessions:detail``         — full transcript-bearing detail bundle\n  available at ``/sessions/{id}/detail``."
+      },
+      "ClientV1Envelope_AARReportDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AARReportDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[AARReportDTO]"
+      },
+      "ClientV1Envelope_CapabilityV1_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CapabilityV1"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[CapabilityV1]"
+      },
+      "ClientV1Envelope_DashboardBundleDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/DashboardBundleDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[DashboardBundleDTO]"
+      },
+      "ClientV1Envelope_FeatureDocumentsDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FeatureDocumentsDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[FeatureDocumentsDTO]"
+      },
+      "ClientV1Envelope_FeatureForensicsDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FeatureForensicsDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[FeatureForensicsDTO]"
+      },
+      "ClientV1Envelope_FeatureModalOverviewDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FeatureModalOverviewDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[FeatureModalOverviewDTO]"
+      },
+      "ClientV1Envelope_FeatureModalSectionDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FeatureModalSectionDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[FeatureModalSectionDTO]"
+      },
+      "ClientV1Envelope_FeatureRollupResponseDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FeatureRollupResponseDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[FeatureRollupResponseDTO]"
+      },
+      "ClientV1Envelope_FeatureSessionsDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FeatureSessionsDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[FeatureSessionsDTO]"
+      },
+      "ClientV1Envelope_InstanceMetaDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/InstanceMetaDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[InstanceMetaDTO]"
+      },
+      "ClientV1Envelope_LinkedFeatureSessionPageDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LinkedFeatureSessionPageDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[LinkedFeatureSessionPageDTO]"
+      },
+      "ClientV1Envelope_ProjectStatusDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ProjectStatusDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[ProjectStatusDTO]"
+      },
+      "ClientV1Envelope_SessionDetailV1_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionDetailV1"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[SessionDetailV1]"
+      },
+      "ClientV1Envelope_SessionFamilyDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionFamilyDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[SessionFamilyDTO]"
+      },
+      "ClientV1Envelope_SessionIntelligenceDetailResponse_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionIntelligenceDetailResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[SessionIntelligenceDetailResponse]"
+      },
+      "ClientV1Envelope_SessionIntelligenceDrilldownResponse_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionIntelligenceDrilldownResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[SessionIntelligenceDrilldownResponse]"
+      },
+      "ClientV1Envelope_SessionSemanticSearchResponse_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionSemanticSearchResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[SessionSemanticSearchResponse]"
+      },
+      "ClientV1Envelope_SessionTranscriptPageV1_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionTranscriptPageV1"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[SessionTranscriptPageV1]"
+      },
+      "ClientV1Envelope_WorkflowDiagnosticsDTO_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/WorkflowDiagnosticsDTO"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1Envelope[WorkflowDiagnosticsDTO]"
+      },
+      "ClientV1Meta": {
+        "properties": {
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id",
+            "default": ""
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "ClientV1Meta"
+      },
+      "ClientV1PaginatedEnvelope_SessionIntelligenceSessionRollup_": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SessionIntelligenceSessionRollup"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ClientV1PaginatedMeta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ClientV1PaginatedEnvelope[SessionIntelligenceSessionRollup]"
+      },
+      "ClientV1PaginatedMeta": {
+        "properties": {
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id",
+            "default": ""
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "default": ""
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More",
+            "default": false
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "default": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ClientV1PaginatedMeta"
+      },
+      "CostSummary": {
+        "properties": {
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost",
+            "default": 0.0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "default": 0
+          },
+          "by_model": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "By Model"
+          },
+          "by_workflow": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "By Workflow"
+          }
+        },
+        "type": "object",
+        "title": "CostSummary"
+      },
+      "DTOFreshness": {
+        "properties": {
+          "observedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observedat"
+          },
+          "sourceRevision": {
+            "type": "string",
+            "title": "Sourcerevision",
+            "default": ""
+          },
+          "cacheVersion": {
+            "type": "string",
+            "title": "Cacheversion",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "DTOFreshness"
+      },
+      "DashboardBundleDTO": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data_freshness": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Data Freshness"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "source_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Refs"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionCardDTO"
+            },
+            "type": "array",
+            "title": "Sessions"
+          },
+          "task_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Task Counts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "DashboardBundleDTO",
+        "description": "Fat-read bundle for the Dashboard view (T5-001).\n\nComposes the most-recent sessions page (limit 20, desc ``started_at``) and\ntask counts by status into a single above-fold response.  Both fields are\nresilience-safe: missing values default to empty list / empty dict.\n\nField notes:\n- ``sessions``: up to 20 most-recent session cards sorted by ``started_at`` desc.\n- ``task_counts``: dict mapping status string to integer count for the project."
+      },
+      "DocumentRef": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "file_path": {
+            "type": "string",
+            "title": "File Path",
+            "default": ""
+          },
+          "canonical_path": {
+            "type": "string",
+            "title": "Canonical Path",
+            "default": ""
+          },
+          "doc_type": {
+            "type": "string",
+            "title": "Doc Type",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          },
+          "feature_slug": {
+            "type": "string",
+            "title": "Feature Slug",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id"
+        ],
+        "title": "DocumentRef"
+      },
+      "FeatureCardDTO": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "effectiveStatus": {
+            "type": "string",
+            "title": "Effectivestatus",
+            "default": ""
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": ""
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
+          },
+          "descriptionPreview": {
+            "type": "string",
+            "title": "Descriptionpreview",
+            "default": ""
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority",
+            "default": ""
+          },
+          "riskLevel": {
+            "type": "string",
+            "title": "Risklevel",
+            "default": ""
+          },
+          "complexity": {
+            "type": "string",
+            "title": "Complexity",
+            "default": ""
+          },
+          "executionReadiness": {
+            "type": "string",
+            "title": "Executionreadiness",
+            "default": ""
+          },
+          "testImpact": {
+            "type": "string",
+            "title": "Testimpact",
+            "default": ""
+          },
+          "planningStatus": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planningstatus"
+          },
+          "totalTasks": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Totaltasks",
+            "default": 0
+          },
+          "completedTasks": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Completedtasks",
+            "default": 0
+          },
+          "deferredTasks": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Deferredtasks",
+            "default": 0
+          },
+          "phaseCount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Phasecount",
+            "default": 0
+          },
+          "plannedAt": {
+            "type": "string",
+            "title": "Plannedat",
+            "default": ""
+          },
+          "startedAt": {
+            "type": "string",
+            "title": "Startedat",
+            "default": ""
+          },
+          "completedAt": {
+            "type": "string",
+            "title": "Completedat",
+            "default": ""
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat",
+            "default": ""
+          },
+          "documentCoverage": {
+            "$ref": "#/components/schemas/FeatureDocumentCoverageDTO"
+          },
+          "qualitySignals": {
+            "$ref": "#/components/schemas/FeatureQualitySignalsDTO"
+          },
+          "dependencyState": {
+            "$ref": "#/components/schemas/FeatureDependencySummaryDTO"
+          },
+          "primaryDocuments": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureDocumentSummaryDTO"
+            },
+            "type": "array",
+            "title": "Primarydocuments"
+          },
+          "familyPosition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeatureFamilyPositionDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relatedFeatureCount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Relatedfeaturecount",
+            "default": 0
+          },
+          "precision": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "eventually_consistent",
+              "partial"
+            ],
+            "title": "Precision",
+            "default": "exact"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DTOFreshness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "FeatureCardDTO"
+      },
+      "FeatureDependencySummaryDTO": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State",
+            "default": ""
+          },
+          "blockingReason": {
+            "type": "string",
+            "title": "Blockingreason",
+            "default": ""
+          },
+          "blockedByCount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Blockedbycount",
+            "default": 0
+          },
+          "readyDependencyCount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Readydependencycount",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureDependencySummaryDTO"
+      },
+      "FeatureDocumentCoverageDTO": {
+        "properties": {
+          "present": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Present"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing"
+          },
+          "countsByType": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Countsbytype"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureDocumentCoverageDTO"
+      },
+      "FeatureDocumentSummaryDTO": {
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "title": "Documentid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "docType": {
+            "type": "string",
+            "title": "Doctype",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "filePath": {
+            "type": "string",
+            "title": "Filepath",
+            "default": ""
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "documentId"
+        ],
+        "title": "FeatureDocumentSummaryDTO"
+      },
+      "FeatureDocumentsDTO": {
+        "properties": {
+          "feature_id": {
+            "type": "string",
+            "title": "Feature Id"
+          },
+          "feature_slug": {
+            "type": "string",
+            "title": "Feature Slug",
+            "default": ""
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentRef"
+            },
+            "type": "array",
+            "title": "Documents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "feature_id"
+        ],
+        "title": "FeatureDocumentsDTO"
+      },
+      "FeatureFamilyPositionDTO": {
+        "properties": {
+          "position": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "nextItemId": {
+            "type": "string",
+            "title": "Nextitemid",
+            "default": ""
+          },
+          "nextItemLabel": {
+            "type": "string",
+            "title": "Nextitemlabel",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureFamilyPositionDTO"
+      },
+      "FeatureForensicsDTO": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data_freshness": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Data Freshness"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "source_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Refs"
+          },
+          "feature_id": {
+            "type": "string",
+            "title": "Feature Id"
+          },
+          "feature_slug": {
+            "type": "string",
+            "title": "Feature Slug",
+            "default": ""
+          },
+          "feature_status": {
+            "type": "string",
+            "title": "Feature Status",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "telemetry_available": {
+            "$ref": "#/components/schemas/TelemetryAvailability"
+          },
+          "linked_sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRef"
+            },
+            "type": "array",
+            "title": "Linked Sessions"
+          },
+          "linked_documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentRef"
+            },
+            "type": "array",
+            "title": "Linked Documents"
+          },
+          "linked_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskRef"
+            },
+            "type": "array",
+            "title": "Linked Tasks"
+          },
+          "iteration_count": {
+            "type": "integer",
+            "title": "Iteration Count",
+            "default": 0
+          },
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost",
+            "default": 0.0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "default": 0
+          },
+          "token_usage_by_model": {
+            "$ref": "#/components/schemas/backend__application__services__agent_queries__models__TokenUsageByModel"
+          },
+          "workflow_mix": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Workflow Mix"
+          },
+          "rework_signals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rework Signals"
+          },
+          "failure_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failure Patterns"
+          },
+          "representative_sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRef"
+            },
+            "type": "array",
+            "title": "Representative Sessions"
+          },
+          "summary_narrative": {
+            "type": "string",
+            "title": "Summary Narrative",
+            "default": ""
+          },
+          "sessions_note": {
+            "type": "string",
+            "title": "Sessions Note",
+            "default": "Session linkage is eventually-consistent (populated by the background sync engine). For the canonical session list use GET /v1/features/{id}/sessions."
+          }
+        },
+        "type": "object",
+        "required": [
+          "feature_id"
+        ],
+        "title": "FeatureForensicsDTO",
+        "description": "Feature execution history and evidence forensics.\n\nAlias fields: ``name`` mirrors the canonical feature name; ``feature_status`` is the\nfeature lifecycle status. Use ``feature_status`` (not the envelope ``status``) for\nfeature state — the envelope ``status`` represents query-result status (ok/partial/error).\n``telemetry_available`` indicates data completeness (tasks/documents/sessions populated)."
+      },
+      "FeatureModalOverviewDTO": {
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "title": "Featureid"
+          },
+          "card": {
+            "$ref": "#/components/schemas/FeatureCardDTO"
+          },
+          "rollup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/backend__application__services__feature_surface__dtos__FeatureRollupDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "precision": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "eventually_consistent",
+              "partial"
+            ],
+            "title": "Precision",
+            "default": "exact"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DTOFreshness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "featureId",
+          "card"
+        ],
+        "title": "FeatureModalOverviewDTO"
+      },
+      "FeatureModalSectionDTO": {
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "title": "Featureid"
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "overview",
+              "phases",
+              "documents",
+              "relations",
+              "sessions",
+              "test_status",
+              "activity"
+            ],
+            "title": "Section"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureModalSectionItemDTO"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "default": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "default": 50
+          },
+          "hasMore": {
+            "type": "boolean",
+            "title": "Hasmore",
+            "default": false
+          },
+          "includes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Includes"
+          },
+          "precision": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "eventually_consistent",
+              "partial"
+            ],
+            "title": "Precision",
+            "default": "exact"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DTOFreshness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "featureId",
+          "section"
+        ],
+        "title": "FeatureModalSectionDTO"
+      },
+      "FeatureModalSectionItemDTO": {
+        "properties": {
+          "itemId": {
+            "type": "string",
+            "title": "Itemid"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "href": {
+            "type": "string",
+            "title": "Href",
+            "default": ""
+          },
+          "badges": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Badges"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "itemId"
+        ],
+        "title": "FeatureModalSectionItemDTO"
+      },
+      "FeatureQualitySignalsDTO": {
+        "properties": {
+          "blockerCount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Blockercount",
+            "default": 0
+          },
+          "atRiskTaskCount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Atrisktaskcount",
+            "default": 0
+          },
+          "hasBlockingSignals": {
+            "type": "boolean",
+            "title": "Hasblockingsignals",
+            "default": false
+          },
+          "testImpact": {
+            "type": "string",
+            "title": "Testimpact",
+            "default": ""
+          },
+          "integritySignalRefs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Integritysignalrefs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureQualitySignalsDTO"
+      },
+      "FeatureRollupErrorDTO": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "default": ""
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "detail": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureRollupErrorDTO"
+      },
+      "FeatureRollupFreshnessDTO": {
+        "properties": {
+          "observedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observedat"
+          },
+          "sourceRevision": {
+            "type": "string",
+            "title": "Sourcerevision",
+            "default": ""
+          },
+          "cacheVersion": {
+            "type": "string",
+            "title": "Cacheversion",
+            "default": ""
+          },
+          "sessionSyncAt": {
+            "type": "string",
+            "title": "Sessionsyncat",
+            "default": ""
+          },
+          "linksUpdatedAt": {
+            "type": "string",
+            "title": "Linksupdatedat",
+            "default": ""
+          },
+          "testHealthAt": {
+            "type": "string",
+            "title": "Testhealthat",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureRollupFreshnessDTO"
+      },
+      "FeatureRollupResponseDTO": {
+        "properties": {
+          "rollups": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ccdash_contracts__models__FeatureRollupDTO"
+            },
+            "type": "object",
+            "title": "Rollups"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing"
+          },
+          "errors": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FeatureRollupErrorDTO"
+            },
+            "type": "object",
+            "title": "Errors"
+          },
+          "generatedAt": {
+            "type": "string",
+            "title": "Generatedat",
+            "default": ""
+          },
+          "cacheVersion": {
+            "type": "string",
+            "title": "Cacheversion",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureRollupResponseDTO"
+      },
+      "FeatureRollupsRequest": {
+        "properties": {
+          "featureIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Featureids"
+          },
+          "fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Fields"
+          },
+          "includeInheritedThreads": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Includeinheritedthreads"
+          },
+          "includeFreshness": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Includefreshness"
+          },
+          "includeTestMetrics": {
+            "type": "boolean",
+            "title": "Includetestmetrics",
+            "default": false
+          },
+          "includeSubthreadResolution": {
+            "type": "boolean",
+            "title": "Includesubthreadresolution",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "featureIds"
+        ],
+        "title": "FeatureRollupsRequest"
+      },
+      "FeatureSessionsDTO": {
+        "properties": {
+          "feature_id": {
+            "type": "string",
+            "title": "Feature Id"
+          },
+          "feature_slug": {
+            "type": "string",
+            "title": "Feature Slug",
+            "default": ""
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRef"
+            },
+            "type": "array",
+            "title": "Sessions"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "feature_id"
+        ],
+        "title": "FeatureSessionsDTO"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "InstanceMetaDTO": {
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id",
+            "default": ""
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": ""
+          },
+          "environment": {
+            "type": "string",
+            "title": "Environment",
+            "default": ""
+          },
+          "db_backend": {
+            "type": "string",
+            "title": "Db Backend",
+            "default": ""
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "server_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Time"
+          }
+        },
+        "type": "object",
+        "title": "InstanceMetaDTO"
+      },
+      "KeyMetrics": {
+        "properties": {
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost",
+            "default": 0.0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "default": 0
+          },
+          "session_count": {
+            "type": "integer",
+            "title": "Session Count",
+            "default": 0
+          },
+          "iteration_count": {
+            "type": "integer",
+            "title": "Iteration Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "KeyMetrics"
+      },
+      "LinkedFeatureSessionDTO": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "modelProvider": {
+            "type": "string",
+            "title": "Modelprovider",
+            "default": ""
+          },
+          "modelFamily": {
+            "type": "string",
+            "title": "Modelfamily",
+            "default": ""
+          },
+          "startedAt": {
+            "type": "string",
+            "title": "Startedat",
+            "default": ""
+          },
+          "endedAt": {
+            "type": "string",
+            "title": "Endedat",
+            "default": ""
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat",
+            "default": ""
+          },
+          "totalCost": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Totalcost",
+            "default": 0.0
+          },
+          "observedTokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Observedtokens",
+            "default": 0
+          },
+          "rootSessionId": {
+            "type": "string",
+            "title": "Rootsessionid",
+            "default": ""
+          },
+          "parentSessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentsessionid"
+          },
+          "workflowType": {
+            "type": "string",
+            "title": "Workflowtype",
+            "default": ""
+          },
+          "isPrimaryLink": {
+            "type": "boolean",
+            "title": "Isprimarylink",
+            "default": false
+          },
+          "isSubthread": {
+            "type": "boolean",
+            "title": "Issubthread",
+            "default": false
+          },
+          "threadChildCount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Threadchildcount",
+            "default": 0
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "commands": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Commands"
+          },
+          "relatedTasks": {
+            "items": {
+              "$ref": "#/components/schemas/LinkedFeatureSessionTaskDTO"
+            },
+            "type": "array",
+            "title": "Relatedtasks"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sessionId"
+        ],
+        "title": "LinkedFeatureSessionDTO"
+      },
+      "LinkedFeatureSessionPageDTO": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LinkedFeatureSessionDTO"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "default": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "default": 20
+          },
+          "hasMore": {
+            "type": "boolean",
+            "title": "Hasmore",
+            "default": false
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          },
+          "enrichment": {
+            "$ref": "#/components/schemas/LinkedSessionEnrichmentDTO"
+          },
+          "precision": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "eventually_consistent",
+              "partial"
+            ],
+            "title": "Precision",
+            "default": "eventually_consistent"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DTOFreshness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LinkedFeatureSessionPageDTO"
+      },
+      "LinkedFeatureSessionTaskDTO": {
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "title": "Taskid"
+          },
+          "taskTitle": {
+            "type": "string",
+            "title": "Tasktitle",
+            "default": ""
+          },
+          "phaseId": {
+            "type": "string",
+            "title": "Phaseid",
+            "default": ""
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase",
+            "default": ""
+          },
+          "matchedBy": {
+            "type": "string",
+            "title": "Matchedby",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "taskId"
+        ],
+        "title": "LinkedFeatureSessionTaskDTO"
+      },
+      "LinkedSessionEnrichmentDTO": {
+        "properties": {
+          "includes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Includes"
+          },
+          "logsRead": {
+            "type": "boolean",
+            "title": "Logsread",
+            "default": false
+          },
+          "commandCountIncluded": {
+            "type": "boolean",
+            "title": "Commandcountincluded",
+            "default": false
+          },
+          "taskRefsIncluded": {
+            "type": "boolean",
+            "title": "Taskrefsincluded",
+            "default": false
+          },
+          "threadChildrenIncluded": {
+            "type": "boolean",
+            "title": "Threadchildrenincluded",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LinkedSessionEnrichmentDTO"
+      },
+      "ProjectStatusDTO": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data_freshness": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Data Freshness"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "source_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Refs"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "project_name": {
+            "type": "string",
+            "title": "Project Name",
+            "default": ""
+          },
+          "feature_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Feature Counts"
+          },
+          "recent_sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSummary"
+            },
+            "type": "array",
+            "title": "Recent Sessions"
+          },
+          "cost_last_7d": {
+            "$ref": "#/components/schemas/CostSummary"
+          },
+          "top_workflows": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowSummary"
+            },
+            "type": "array",
+            "title": "Top Workflows"
+          },
+          "sync_freshness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Freshness"
+          },
+          "blocked_features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blocked Features"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "ProjectStatusDTO"
+      },
+      "SessionCardDTO": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At",
+            "default": ""
+          },
+          "ended_at": {
+            "type": "string",
+            "title": "Ended At",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost",
+            "default": 0.0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "default": 0
+          },
+          "feature_id": {
+            "type": "string",
+            "title": "Feature Id",
+            "default": ""
+          },
+          "root_session_id": {
+            "type": "string",
+            "title": "Root Session Id",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionCardDTO",
+        "description": "Lightweight session card for the Dashboard bundle sessions list."
+      },
+      "SessionCodeChurnFact": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "featureId": {
+            "type": "string",
+            "title": "Featureid",
+            "default": ""
+          },
+          "rootSessionId": {
+            "type": "string",
+            "title": "Rootsessionid",
+            "default": ""
+          },
+          "threadSessionId": {
+            "type": "string",
+            "title": "Threadsessionid",
+            "default": ""
+          },
+          "filePath": {
+            "type": "string",
+            "title": "Filepath",
+            "default": ""
+          },
+          "firstSourceLogId": {
+            "type": "string",
+            "title": "Firstsourcelogid",
+            "default": ""
+          },
+          "lastSourceLogId": {
+            "type": "string",
+            "title": "Lastsourcelogid",
+            "default": ""
+          },
+          "firstMessageIndex": {
+            "type": "integer",
+            "title": "Firstmessageindex",
+            "default": 0
+          },
+          "lastMessageIndex": {
+            "type": "integer",
+            "title": "Lastmessageindex",
+            "default": 0
+          },
+          "touchCount": {
+            "type": "integer",
+            "title": "Touchcount",
+            "default": 0
+          },
+          "distinctEditTurnCount": {
+            "type": "integer",
+            "title": "Distincteditturncount",
+            "default": 0
+          },
+          "repeatTouchCount": {
+            "type": "integer",
+            "title": "Repeattouchcount",
+            "default": 0
+          },
+          "rewritePassCount": {
+            "type": "integer",
+            "title": "Rewritepasscount",
+            "default": 0
+          },
+          "additionsTotal": {
+            "type": "integer",
+            "title": "Additionstotal",
+            "default": 0
+          },
+          "deletionsTotal": {
+            "type": "integer",
+            "title": "Deletionstotal",
+            "default": 0
+          },
+          "netDiffTotal": {
+            "type": "integer",
+            "title": "Netdifftotal",
+            "default": 0
+          },
+          "churnScore": {
+            "type": "number",
+            "title": "Churnscore",
+            "default": 0.0
+          },
+          "progressScore": {
+            "type": "number",
+            "title": "Progressscore",
+            "default": 0.0
+          },
+          "lowProgressLoop": {
+            "type": "boolean",
+            "title": "Lowprogressloop",
+            "default": false
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence",
+            "default": 0.0
+          },
+          "heuristicVersion": {
+            "type": "string",
+            "title": "Heuristicversion",
+            "default": ""
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId"
+        ],
+        "title": "SessionCodeChurnFact"
+      },
+      "SessionDetailV1": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid",
+            "default": ""
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid",
+            "default": ""
+          },
+          "session": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Session"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TranscriptPageV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subagents": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagents"
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens"
+          },
+          "artifacts": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifacts"
+          },
+          "links": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Links"
+          },
+          "redactedFieldCount": {
+            "type": "integer",
+            "title": "Redactedfieldcount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "SessionDetailV1",
+        "description": "Full session detail bundle — transcript-bearing v1 response.\n\nMirrors ``SessionDetailBundle.as_dict()`` from the Phase 1 service.\nOptional segments (``transcript``, ``subagents``, ``tokens``,\n``artifacts``, ``links``) are ``None`` when the consumer did not request\nthem via the ``include`` query param — this is a CONTRACT STATE, not a\nbug.  Empty list / empty dict means the segment was requested but the\nsession has no data."
+      },
+      "SessionFamilyDTO": {
+        "properties": {
+          "root_session_id": {
+            "type": "string",
+            "title": "Root Session Id"
+          },
+          "session_count": {
+            "type": "integer",
+            "title": "Session Count",
+            "default": 0
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRef"
+            },
+            "type": "array",
+            "title": "Members"
+          }
+        },
+        "type": "object",
+        "required": [
+          "root_session_id"
+        ],
+        "title": "SessionFamilyDTO"
+      },
+      "SessionIntelligenceCapability": {
+        "properties": {
+          "supported": {
+            "type": "boolean",
+            "title": "Supported",
+            "default": false
+          },
+          "authoritative": {
+            "type": "boolean",
+            "title": "Authoritative",
+            "default": false
+          },
+          "storageProfile": {
+            "type": "string",
+            "title": "Storageprofile",
+            "default": ""
+          },
+          "searchMode": {
+            "type": "string",
+            "title": "Searchmode",
+            "default": "unsupported"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "SessionIntelligenceCapability"
+      },
+      "SessionIntelligenceConcernSummary": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "default": 0.0
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence",
+            "default": 0.0
+          },
+          "factCount": {
+            "type": "integer",
+            "title": "Factcount",
+            "default": 0
+          },
+          "flaggedCount": {
+            "type": "integer",
+            "title": "Flaggedcount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "SessionIntelligenceConcernSummary"
+      },
+      "SessionIntelligenceDetailResponse": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "v1"
+          },
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "featureId": {
+            "type": "string",
+            "title": "Featureid",
+            "default": ""
+          },
+          "rootSessionId": {
+            "type": "string",
+            "title": "Rootsessionid",
+            "default": ""
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionIntelligenceSessionRollup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sentimentFacts": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSentimentFact"
+            },
+            "type": "array",
+            "title": "Sentimentfacts"
+          },
+          "churnFacts": {
+            "items": {
+              "$ref": "#/components/schemas/SessionCodeChurnFact"
+            },
+            "type": "array",
+            "title": "Churnfacts"
+          },
+          "scopeDriftFacts": {
+            "items": {
+              "$ref": "#/components/schemas/SessionScopeDriftFact"
+            },
+            "type": "array",
+            "title": "Scopedriftfacts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId"
+        ],
+        "title": "SessionIntelligenceDetailResponse"
+      },
+      "SessionIntelligenceDrilldownItem": {
+        "properties": {
+          "concern": {
+            "type": "string",
+            "enum": [
+              "sentiment",
+              "churn",
+              "scope_drift"
+            ],
+            "title": "Concern"
+          },
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "featureId": {
+            "type": "string",
+            "title": "Featureid",
+            "default": ""
+          },
+          "rootSessionId": {
+            "type": "string",
+            "title": "Rootsessionid",
+            "default": ""
+          },
+          "startedAt": {
+            "type": "string",
+            "title": "Startedat",
+            "default": ""
+          },
+          "endedAt": {
+            "type": "string",
+            "title": "Endedat",
+            "default": ""
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "default": 0.0
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence",
+            "default": 0.0
+          },
+          "messageIndex": {
+            "type": "integer",
+            "title": "Messageindex",
+            "default": 0
+          },
+          "sourceMessageId": {
+            "type": "string",
+            "title": "Sourcemessageid",
+            "default": ""
+          },
+          "sourceLogId": {
+            "type": "string",
+            "title": "Sourcelogid",
+            "default": ""
+          },
+          "filePath": {
+            "type": "string",
+            "title": "Filepath",
+            "default": ""
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concern",
+          "sessionId"
+        ],
+        "title": "SessionIntelligenceDrilldownItem"
+      },
+      "SessionIntelligenceDrilldownResponse": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "v1"
+          },
+          "concern": {
+            "type": "string",
+            "enum": [
+              "sentiment",
+              "churn",
+              "scope_drift"
+            ],
+            "title": "Concern"
+          },
+          "generatedAt": {
+            "type": "string",
+            "title": "Generatedat",
+            "default": ""
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 0
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionIntelligenceDrilldownItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concern"
+        ],
+        "title": "SessionIntelligenceDrilldownResponse"
+      },
+      "SessionIntelligenceSessionRollup": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "featureId": {
+            "type": "string",
+            "title": "Featureid",
+            "default": ""
+          },
+          "rootSessionId": {
+            "type": "string",
+            "title": "Rootsessionid",
+            "default": ""
+          },
+          "startedAt": {
+            "type": "string",
+            "title": "Startedat",
+            "default": ""
+          },
+          "endedAt": {
+            "type": "string",
+            "title": "Endedat",
+            "default": ""
+          },
+          "sentiment": {
+            "$ref": "#/components/schemas/SessionIntelligenceConcernSummary"
+          },
+          "churn": {
+            "$ref": "#/components/schemas/SessionIntelligenceConcernSummary"
+          },
+          "scopeDrift": {
+            "$ref": "#/components/schemas/SessionIntelligenceConcernSummary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId"
+        ],
+        "title": "SessionIntelligenceSessionRollup"
+      },
+      "SessionRef": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "feature_id": {
+            "type": "string",
+            "title": "Feature Id",
+            "default": ""
+          },
+          "root_session_id": {
+            "type": "string",
+            "title": "Root Session Id",
+            "default": ""
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At",
+            "default": ""
+          },
+          "ended_at": {
+            "type": "string",
+            "title": "Ended At",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost",
+            "default": 0.0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "default": 0
+          },
+          "workflow_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Workflow Refs"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "title": "Duration Seconds",
+            "default": 0.0
+          },
+          "tool_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tool Names"
+          },
+          "source_ref": {
+            "type": "string",
+            "title": "Source Ref",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionRef"
+      },
+      "SessionScopeDriftFact": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "featureId": {
+            "type": "string",
+            "title": "Featureid",
+            "default": ""
+          },
+          "rootSessionId": {
+            "type": "string",
+            "title": "Rootsessionid",
+            "default": ""
+          },
+          "threadSessionId": {
+            "type": "string",
+            "title": "Threadsessionid",
+            "default": ""
+          },
+          "plannedPathCount": {
+            "type": "integer",
+            "title": "Plannedpathcount",
+            "default": 0
+          },
+          "actualPathCount": {
+            "type": "integer",
+            "title": "Actualpathcount",
+            "default": 0
+          },
+          "matchedPathCount": {
+            "type": "integer",
+            "title": "Matchedpathcount",
+            "default": 0
+          },
+          "outOfScopePathCount": {
+            "type": "integer",
+            "title": "Outofscopepathcount",
+            "default": 0
+          },
+          "driftRatio": {
+            "type": "number",
+            "title": "Driftratio",
+            "default": 0.0
+          },
+          "adherenceScore": {
+            "type": "number",
+            "title": "Adherencescore",
+            "default": 0.0
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence",
+            "default": 0.0
+          },
+          "heuristicVersion": {
+            "type": "string",
+            "title": "Heuristicversion",
+            "default": ""
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId"
+        ],
+        "title": "SessionScopeDriftFact"
+      },
+      "SessionSemanticSearchMatch": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "featureId": {
+            "type": "string",
+            "title": "Featureid",
+            "default": ""
+          },
+          "rootSessionId": {
+            "type": "string",
+            "title": "Rootsessionid",
+            "default": ""
+          },
+          "threadSessionId": {
+            "type": "string",
+            "title": "Threadsessionid",
+            "default": ""
+          },
+          "blockKind": {
+            "type": "string",
+            "title": "Blockkind",
+            "default": "message"
+          },
+          "blockIndex": {
+            "type": "integer",
+            "title": "Blockindex",
+            "default": 0
+          },
+          "eventTimestamp": {
+            "type": "string",
+            "title": "Eventtimestamp",
+            "default": ""
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "default": 0.0
+          },
+          "matchedTerms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matchedterms"
+          },
+          "messageIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Messageids"
+          },
+          "sourceLogIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sourcelogids"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "default": ""
+          },
+          "snippet": {
+            "type": "string",
+            "title": "Snippet",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId"
+        ],
+        "title": "SessionSemanticSearchMatch"
+      },
+      "SessionSemanticSearchResponse": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "v1"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "default": ""
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 0
+          },
+          "capability": {
+            "$ref": "#/components/schemas/SessionIntelligenceCapability"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSemanticSearchMatch"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "title": "SessionSemanticSearchResponse"
+      },
+      "SessionSentimentFact": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "featureId": {
+            "type": "string",
+            "title": "Featureid",
+            "default": ""
+          },
+          "rootSessionId": {
+            "type": "string",
+            "title": "Rootsessionid",
+            "default": ""
+          },
+          "threadSessionId": {
+            "type": "string",
+            "title": "Threadsessionid",
+            "default": ""
+          },
+          "sourceMessageId": {
+            "type": "string",
+            "title": "Sourcemessageid",
+            "default": ""
+          },
+          "sourceLogId": {
+            "type": "string",
+            "title": "Sourcelogid",
+            "default": ""
+          },
+          "messageIndex": {
+            "type": "integer",
+            "title": "Messageindex",
+            "default": 0
+          },
+          "sentimentLabel": {
+            "type": "string",
+            "title": "Sentimentlabel",
+            "default": "neutral"
+          },
+          "sentimentScore": {
+            "type": "number",
+            "title": "Sentimentscore",
+            "default": 0.0
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence",
+            "default": 0.0
+          },
+          "heuristicVersion": {
+            "type": "string",
+            "title": "Heuristicversion",
+            "default": ""
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId"
+        ],
+        "title": "SessionSentimentFact"
+      },
+      "SessionSummary": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "feature_id": {
+            "type": "string",
+            "title": "Feature Id",
+            "default": ""
+          },
+          "root_session_id": {
+            "type": "string",
+            "title": "Root Session Id",
+            "default": ""
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At",
+            "default": ""
+          },
+          "ended_at": {
+            "type": "string",
+            "title": "Ended At",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost",
+            "default": 0.0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "default": 0
+          },
+          "workflow_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Workflow Refs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionSummary"
+      },
+      "SessionTranscriptPageV1": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid",
+            "default": ""
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid",
+            "default": ""
+          },
+          "items": {
+            "items": {},
+            "type": "array",
+            "title": "Items"
+          },
+          "cursor": {
+            "type": "string",
+            "title": "Cursor",
+            "default": ""
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 0
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          },
+          "redactedFieldCount": {
+            "type": "integer",
+            "title": "Redactedfieldcount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "SessionTranscriptPageV1",
+        "description": "Standalone cursor-paginated transcript page for the /transcript endpoint.\n\nExtends ``TranscriptPageV1`` with ``sessionId``/``projectId`` identity\nfields and the aggregate ``redactedFieldCount`` so the dedicated\ntranscript endpoint is self-describing."
+      },
+      "TaskRef": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority",
+            "default": ""
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "default": ""
+          },
+          "phase_id": {
+            "type": "string",
+            "title": "Phase Id",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id"
+        ],
+        "title": "TaskRef"
+      },
+      "TelemetryAvailability": {
+        "properties": {
+          "tasks": {
+            "type": "boolean",
+            "title": "Tasks",
+            "default": false
+          },
+          "documents": {
+            "type": "boolean",
+            "title": "Documents",
+            "default": false
+          },
+          "sessions": {
+            "type": "boolean",
+            "title": "Sessions",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "TelemetryAvailability",
+        "description": "Indicates whether each evidence category contains populated data."
+      },
+      "TimelineData": {
+        "properties": {
+          "started_at": {
+            "type": "string",
+            "title": "Started At",
+            "default": ""
+          },
+          "ended_at": {
+            "type": "string",
+            "title": "Ended At",
+            "default": ""
+          },
+          "duration_days": {
+            "type": "number",
+            "title": "Duration Days",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "TimelineData"
+      },
+      "TranscriptPageV1": {
+        "properties": {
+          "items": {
+            "items": {},
+            "type": "array",
+            "title": "Items"
+          },
+          "cursor": {
+            "type": "string",
+            "title": "Cursor",
+            "default": ""
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 0
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "type": "object",
+        "title": "TranscriptPageV1",
+        "description": "Cursor-paginated transcript page.\n\nMirrors ``TranscriptPage.as_dict()`` from the Phase 1 service:\n``{items, cursor, limit, nextCursor}``.  ``items`` are pre-redacted\nlog-entry dicts.  ``nextCursor`` is ``None`` when this is the last page."
+      },
+      "TurningPoint": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp",
+            "default": ""
+          },
+          "event": {
+            "type": "string",
+            "title": "Event",
+            "default": ""
+          },
+          "impact": {
+            "type": "string",
+            "title": "Impact",
+            "default": ""
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Refs"
+          }
+        },
+        "type": "object",
+        "title": "TurningPoint"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WorkflowDiagnostic": {
+        "properties": {
+          "workflow_id": {
+            "type": "string",
+            "title": "Workflow Id"
+          },
+          "workflow_name": {
+            "type": "string",
+            "title": "Workflow Name",
+            "default": ""
+          },
+          "effectiveness_score": {
+            "type": "number",
+            "title": "Effectiveness Score",
+            "default": 0.0
+          },
+          "session_count": {
+            "type": "integer",
+            "title": "Session Count",
+            "default": 0
+          },
+          "success_count": {
+            "type": "integer",
+            "title": "Success Count",
+            "default": 0
+          },
+          "failure_count": {
+            "type": "integer",
+            "title": "Failure Count",
+            "default": 0
+          },
+          "cost_efficiency": {
+            "type": "number",
+            "title": "Cost Efficiency",
+            "default": 0.0
+          },
+          "common_failures": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Common Failures"
+          },
+          "representative_sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionRef"
+            },
+            "type": "array",
+            "title": "Representative Sessions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow_id"
+        ],
+        "title": "WorkflowDiagnostic"
+      },
+      "WorkflowDiagnosticsDTO": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "data_freshness": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Data Freshness"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "source_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Refs"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "feature_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Id"
+          },
+          "workflows": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDiagnostic"
+            },
+            "type": "array",
+            "title": "Workflows"
+          },
+          "top_performers": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDiagnostic"
+            },
+            "type": "array",
+            "title": "Top Performers"
+          },
+          "problem_workflows": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDiagnostic"
+            },
+            "type": "array",
+            "title": "Problem Workflows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "WorkflowDiagnosticsDTO"
+      },
+      "WorkflowObservation": {
+        "properties": {
+          "workflow_id": {
+            "type": "string",
+            "title": "Workflow Id"
+          },
+          "workflow_name": {
+            "type": "string",
+            "title": "Workflow Name",
+            "default": ""
+          },
+          "frequency": {
+            "type": "integer",
+            "title": "Frequency",
+            "default": 0
+          },
+          "effectiveness_score": {
+            "type": "number",
+            "title": "Effectiveness Score",
+            "default": 0.0
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Refs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow_id"
+        ],
+        "title": "WorkflowObservation"
+      },
+      "WorkflowSummary": {
+        "properties": {
+          "workflow_id": {
+            "type": "string",
+            "title": "Workflow Id"
+          },
+          "workflow_name": {
+            "type": "string",
+            "title": "Workflow Name",
+            "default": ""
+          },
+          "session_count": {
+            "type": "integer",
+            "title": "Session Count",
+            "default": 0
+          },
+          "success_rate": {
+            "type": "number",
+            "title": "Success Rate",
+            "default": 0.0
+          },
+          "last_observed_at": {
+            "type": "string",
+            "title": "Last Observed At",
+            "default": ""
+          },
+          "representative_session_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Representative Session Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow_id"
+        ],
+        "title": "WorkflowSummary"
+      },
+      "backend__application__services__agent_queries__models__TokenUsageByModel": {
+        "properties": {
+          "opus": {
+            "type": "integer",
+            "title": "Opus",
+            "default": 0
+          },
+          "sonnet": {
+            "type": "integer",
+            "title": "Sonnet",
+            "default": 0
+          },
+          "haiku": {
+            "type": "integer",
+            "title": "Haiku",
+            "default": 0
+          },
+          "other": {
+            "type": "integer",
+            "title": "Other",
+            "default": 0
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "TokenUsageByModel",
+        "description": "Per-feature token rollup bucketed by normalized model family."
+      },
+      "backend__application__services__feature_surface__dtos__FeatureRollupBucketDTO": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "FeatureRollupBucketDTO"
+      },
+      "backend__application__services__feature_surface__dtos__FeatureRollupDTO": {
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "title": "Featureid"
+          },
+          "sessionCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessioncount"
+          },
+          "primarySessionCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primarysessioncount"
+          },
+          "subthreadCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subthreadcount"
+          },
+          "totalCost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totalcost"
+          },
+          "displayCost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Displaycost"
+          },
+          "observedTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observedtokens"
+          },
+          "modelIoTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modeliotokens"
+          },
+          "cacheInputTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cacheinputtokens"
+          },
+          "latestSessionAt": {
+            "type": "string",
+            "title": "Latestsessionat",
+            "default": ""
+          },
+          "latestActivityAt": {
+            "type": "string",
+            "title": "Latestactivityat",
+            "default": ""
+          },
+          "modelFamilies": {
+            "items": {
+              "$ref": "#/components/schemas/backend__application__services__feature_surface__dtos__FeatureRollupBucketDTO"
+            },
+            "type": "array",
+            "title": "Modelfamilies"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/backend__application__services__feature_surface__dtos__FeatureRollupBucketDTO"
+            },
+            "type": "array",
+            "title": "Providers"
+          },
+          "workflowTypes": {
+            "items": {
+              "$ref": "#/components/schemas/backend__application__services__feature_surface__dtos__FeatureRollupBucketDTO"
+            },
+            "type": "array",
+            "title": "Workflowtypes"
+          },
+          "linkedDocCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkeddoccount"
+          },
+          "linkedTaskCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkedtaskcount"
+          },
+          "testCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testcount"
+          },
+          "failingTestCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failingtestcount"
+          },
+          "precision": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "eventually_consistent",
+              "partial"
+            ],
+            "title": "Precision",
+            "default": "eventually_consistent"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeatureRollupFreshnessDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "featureId"
+        ],
+        "title": "FeatureRollupDTO"
+      },
+      "ccdash_contracts__models__FeatureRollupBucketDTO": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "default": ""
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureRollupBucketDTO"
+      },
+      "ccdash_contracts__models__FeatureRollupDTO": {
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "title": "Featureid",
+            "default": ""
+          },
+          "sessionCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessioncount"
+          },
+          "primarySessionCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primarysessioncount"
+          },
+          "subthreadCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subthreadcount"
+          },
+          "unresolvedSubthreadCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unresolvedsubthreadcount"
+          },
+          "totalCost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totalcost"
+          },
+          "displayCost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Displaycost"
+          },
+          "observedTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observedtokens"
+          },
+          "modelIoTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modeliotokens"
+          },
+          "cacheInputTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cacheinputtokens"
+          },
+          "latestSessionAt": {
+            "type": "string",
+            "title": "Latestsessionat",
+            "default": ""
+          },
+          "latestActivityAt": {
+            "type": "string",
+            "title": "Latestactivityat",
+            "default": ""
+          },
+          "modelFamilies": {
+            "items": {
+              "$ref": "#/components/schemas/ccdash_contracts__models__FeatureRollupBucketDTO"
+            },
+            "type": "array",
+            "title": "Modelfamilies"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ccdash_contracts__models__FeatureRollupBucketDTO"
+            },
+            "type": "array",
+            "title": "Providers"
+          },
+          "workflowTypes": {
+            "items": {
+              "$ref": "#/components/schemas/ccdash_contracts__models__FeatureRollupBucketDTO"
+            },
+            "type": "array",
+            "title": "Workflowtypes"
+          },
+          "linkedDocCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkeddoccount"
+          },
+          "linkedDocCountsByType": {
+            "items": {
+              "$ref": "#/components/schemas/ccdash_contracts__models__FeatureRollupBucketDTO"
+            },
+            "type": "array",
+            "title": "Linkeddoccountsbytype"
+          },
+          "linkedTaskCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkedtaskcount"
+          },
+          "linkedCommitCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkedcommitcount"
+          },
+          "linkedPrCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkedprcount"
+          },
+          "testCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testcount"
+          },
+          "failingTestCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failingtestcount"
+          },
+          "precision": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "eventually_consistent",
+              "partial"
+            ],
+            "title": "Precision",
+            "default": "eventually_consistent"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeatureRollupFreshnessDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FeatureRollupDTO"
+      }
+    }
+  }
+}

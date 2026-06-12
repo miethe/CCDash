@@ -14,6 +14,8 @@ tags: ["adr", "database", "registry", "sqlite", "persistence", "multi-process", 
 
 **Accepted** — Ratified by operator 2026-06-03 following audit and findings review (see Finding F-02, RQ3).
 
+> ⚠ **ADR-number collision:** the unmerged `feat/remote-ccdash-streaming*` branches independently authored an ADR-006 (remote-session ingest transport / NDJSON-HTTP) and ADR-007 (local-daemon packaging), plus ADR-008..010. This accepted, ratified ADR-006 holds the number on `main`. **On resume/merge, the streaming branch must renumber its set (006–010) to the next free block (011–015).**
+
 ## Context
 
 CCDash maintains a registry of projects (metadata, paths, active selection) that must be consistent across multiple processes (api server + background worker) and, in the enterprise case, across replicas. The registry currently has two independent storage layers with no reconciliation:

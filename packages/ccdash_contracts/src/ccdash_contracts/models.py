@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -334,3 +334,97 @@ class LinkedFeatureSessionPageDTO(FeatureSurfaceDTO):
     )
     precision: FeatureSurfacePrecision = "eventually_consistent"
     freshness: DTOFreshness | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Session detail + transcript v1 response contracts
+# ---------------------------------------------------------------------------
+# These models are the contracts package source of truth for the
+# GET /api/v1/sessions/{id}/detail  and
+# GET /api/v1/sessions/{id}/transcript  response shapes.
+#
+# Field names are intentionally camelCase to match the keys emitted by
+# SessionDetailBundle.as_dict() / TranscriptPage.as_dict() so that
+# model_validate(bundle.as_dict()) works without alias resolution.
+# Consumers that prefer snake_case can iterate .model_fields.
+# ---------------------------------------------------------------------------
+
+
+class TranscriptPageV1(BaseModel):
+    """Cursor-paginated transcript page.
+
+    Mirrors ``TranscriptPage.as_dict()`` from the Phase 1 service:
+    ``{items, cursor, limit, nextCursor}``.  ``items`` are pre-redacted
+    log-entry dicts.  ``nextCursor`` is ``None`` when this is the last page.
+    """
+
+    items: list[Any] = Field(default_factory=list)
+    cursor: str = ""
+    limit: int = 0
+    nextCursor: Optional[str] = None  # noqa: N815 — intentional camelCase (service contract)
+
+
+class SessionDetailV1(BaseModel):
+    """Full session detail bundle — transcript-bearing v1 response.
+
+    Mirrors ``SessionDetailBundle.as_dict()`` from the Phase 1 service.
+    Optional segments (``transcript``, ``subagents``, ``tokens``,
+    ``artifacts``, ``links``) are ``None`` when the consumer did not request
+    them via the ``include`` query param — this is a CONTRACT STATE, not a
+    bug.  Empty list / empty dict means the segment was requested but the
+    session has no data.
+    """
+
+    sessionId: str = ""  # noqa: N815
+    projectId: str = ""  # noqa: N815
+    session: dict[str, Any] = Field(default_factory=dict)
+    transcript: Optional[TranscriptPageV1] = None
+    subagents: Optional[list[Any]] = None
+    tokens: Optional[dict[str, Any]] = None
+    artifacts: Optional[list[Any]] = None
+    links: Optional[list[Any]] = None
+    redactedFieldCount: int = 0  # noqa: N815
+
+
+class SessionTranscriptPageV1(BaseModel):
+    """Standalone cursor-paginated transcript page for the /transcript endpoint.
+
+    Extends ``TranscriptPageV1`` with ``sessionId``/``projectId`` identity
+    fields and the aggregate ``redactedFieldCount`` so the dedicated
+    transcript endpoint is self-describing.
+    """
+
+    sessionId: str = ""  # noqa: N815
+    projectId: str = ""  # noqa: N815
+    items: list[Any] = Field(default_factory=list)
+    cursor: str = ""
+    limit: int = 0
+    nextCursor: Optional[str] = None  # noqa: N815
+    redactedFieldCount: int = 0  # noqa: N815
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 (T10-001): Capability discovery contract
+# ---------------------------------------------------------------------------
+
+
+class CapabilityV1(BaseModel):
+    """Capability advertisement for IntentTree and LAN agents.
+
+    Clients feature-detect against ``capabilities``.  ``api_version`` is a
+    string (currently ``"1"``) — a mismatch means the client should warn but
+    should NOT hard-fail: future minor revisions increment the version string
+    while preserving backward compat.
+
+    Server-declared capability identifiers (v1):
+    - ``sessions:cross-project``  — list/search/detail/transcript accept an
+      explicit ``project_id`` param; detail+transcript REQUIRE it (400 if
+      missing).
+    - ``sessions:detail``         — full transcript-bearing detail bundle
+      available at ``/sessions/{id}/detail``.
+    """
+
+    api_version: str = "1"
+    capabilities: list[str] = Field(default_factory=list)
+    instance_id: str = ""
+    server_time: datetime | None = None

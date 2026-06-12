@@ -664,6 +664,16 @@ class DbProjectManager:
     # Public WorkspaceRegistry-compatible interface (all sync)
     # ------------------------------------------------------------------
 
+    def reload(self) -> None:
+        """Phase 8 (T8-004): invalidate the cached snapshot so the next
+        ``list_projects()`` re-reads the DB-authoritative registry (ADR-006).
+
+        Used by the periodic reconcile job to pick up projects/directories added
+        AFTER boot without requiring a server restart.  Cheap: only marks the
+        snapshot stale; the actual reload happens lazily on next access.
+        """
+        self._invalidate_snapshot()
+
     def list_projects(self) -> list[Project]:
         self._ensure_snapshot()
         return list(self._projects.values())

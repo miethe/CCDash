@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import time
 from contextlib import contextmanager
 from typing import Any, Mapping
 from uuid import uuid4
@@ -134,6 +135,18 @@ _telemetry_queue_depth_state: dict[tuple[str, str, str, str, str], int] = {}
 _telemetry_export_disabled_state = 1
 _worker_job_freshness_state: dict[tuple[str, str, str, str, str], float] = {}
 _worker_job_backpressure_state: dict[tuple[str, str, str, str, str], float] = {}
+
+# ── Watcher liveness freshness probes (T12-005) ──────────────────────────────
+#: Sentinel emitted by the age gauge when a project has no watcher events yet.
+#: Negative age is unambiguous to operators/alerts ("never fired" vs "just fired").
+WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL: float = -1.0
+
+# project_id → epoch-seconds of last processed watcher event; None = registered
+# but no events yet (AC R12.5 sentinel state).
+_watcher_event_last_ts: dict[str, float | None] = {}
+_watcher_event_age_gauge: Any | None = None
+_reconcile_heartbeat_counter: Any | None = None
+_prom_reconcile_heartbeat_counter: Any | None = None
 
 _RUNTIME_PROM_LABEL_NAMES = ("runtime_profile", "deployment_mode", "storage_profile")
 _RESOURCE_INSTANCE_ID = os.getenv("OTEL_SERVICE_INSTANCE_ID", "").strip() or str(uuid4())
@@ -272,6 +285,7 @@ def initialize(app: FastAPI | None = None) -> None:
     global _startup_sync_latency_hist, _prom_startup_sync_latency_hist
     global _feature_poll_interval_gauge, _prom_feature_poll_interval_gauge
     global _link_rebuild_commit_counter, _prom_link_rebuild_commit_counter
+    global _watcher_event_age_gauge, _reconcile_heartbeat_counter, _prom_reconcile_heartbeat_counter
 
     if _initialized:
         if _enabled and app and _fastapi_instrumentor:
@@ -553,6 +567,29 @@ def initialize(app: FastAPI | None = None) -> None:
         description="Link-rebuild commit completions with links_created count.",
     )
 
+    # ── Watcher liveness freshness probes (T12-005) ───────────────────────────
+    # 1. Per-project watcher-event age (seconds since last event; -1 = no events yet)
+    _watcher_event_age_gauge = meter.create_observable_gauge(
+        "ccdash_watcher_event_age_seconds",
+        callbacks=[_observe_watcher_event_age(Observation)],
+        unit="s",
+        description=(
+            "Seconds since the last file-watcher change event per project. "
+            f"Value {WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL} (sentinel) means no events "
+            "observed yet for that project (AC R12.5)."
+        ),
+    )
+
+    # 2. Reconcile heartbeat counter — one increment per reconcile tick completion
+    _reconcile_heartbeat_counter = meter.create_counter(
+        "ccdash_reconcile_heartbeat_total",
+        unit="1",
+        description=(
+            "Reconcile-tick completions by result. "
+            "Fires on cadence regardless of individual project watcher activity."
+        ),
+    )
+
     _trace_provider = trace_provider
     _meter_provider = meter_provider
     _tracer = tracer
@@ -763,6 +800,15 @@ def initialize(app: FastAPI | None = None) -> None:
                 "ccdash_link_rebuild_commits_total",
                 "Link-rebuild commit completions with links_created count.",
                 ["links_created_bucket"],
+            )
+            # ── Watcher liveness freshness probes (T12-005) ──────────────────
+            # Reconcile heartbeat counter (Prom mirror; no Prom gauge for age —
+            # the OTel observable gauge computes age at scrape time; a Prom gauge
+            # would require a background updater and is deferred).
+            _prom_reconcile_heartbeat_counter = Counter(
+                "ccdash_reconcile_heartbeat_total",
+                "Reconcile-tick completions by result.",
+                ["result"],
             )
             logger.info("Prometheus fallback metrics server listening on port %s", config.PROM_PORT)
         except Exception as exc:  # noqa: BLE001
@@ -1359,6 +1405,31 @@ def _observe_sqlite_cache_miss_depth(observation_type: Any):
     return _callback
 
 
+def _observe_watcher_event_age(observation_type: Any):
+    """Observable callback for ``ccdash_watcher_event_age_seconds``.
+
+    Emits one Observation per registered project.  Projects with no watcher
+    events yet emit ``WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL`` (-1.0) so
+    dashboards and alert rules can distinguish "never fired" from a freshly
+    active watcher (AC R12.5).
+    """
+
+    def _callback(_options: Any) -> list[Any]:
+        now = time.time()
+        results: list[Any] = []
+        for project_id, last_ts in sorted(_watcher_event_last_ts.items()):
+            if last_ts is None:
+                age = WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL
+            else:
+                age = max(0.0, now - last_ts)
+            results.append(
+                observation_type(age, {"project_id": project_id or "unknown"})
+            )
+        return results
+
+    return _callback
+
+
 def _observe_feature_poll_interval(observation_type: Any):
     def _callback(_options: Any) -> list[Any]:
         return [observation_type(_feature_poll_interval_seconds)]
@@ -1622,3 +1693,92 @@ def record_db_write_failure(*, repo: str, reason: str) -> None:
             ).inc()
     except Exception:
         logger.debug("record_db_write_failure: metric unavailable", exc_info=True)
+
+
+# ── Watcher liveness freshness probe helpers (T12-005) ───────────────────────
+
+
+def set_watcher_project_registered(project_id: str) -> None:
+    """Register *project_id* as an expected watcher target (sentinel state).
+
+    Must be called when a file-watcher starts so the age gauge emits
+    ``WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL`` (-1.0) for this project until
+    its first change event arrives, rather than omitting it entirely
+    (AC R12.5 — "no events observed" must be a defined state, not an omission).
+
+    Safe to call multiple times: subsequent calls do NOT reset the timestamp
+    if the project already has a recorded event.
+    """
+    if not _initialized:
+        return
+    project_key = (project_id or "unknown").strip() or "unknown"
+    if project_key not in _watcher_event_last_ts:
+        _watcher_event_last_ts[project_key] = None
+
+
+def record_watcher_event(project_id: str) -> None:
+    """Record that the file-watcher processed a change-event batch for *project_id*.
+
+    Updates the per-project last-event timestamp consumed by the observable
+    age gauge ``ccdash_watcher_event_age_seconds``.  Emits a structured DEBUG
+    log (field counts only — no path/payload contents per the redaction contract).
+
+    Safe to call from hot-path watcher code — never raises.
+    """
+    if not _initialized:
+        return
+    project_key = (project_id or "unknown").strip() or "unknown"
+    try:
+        _watcher_event_last_ts[project_key] = time.time()
+        logger.debug(
+            "watcher.event_recorded project=%s event_count=1",
+            project_key,
+            extra={"project_id": project_key, "event_count": 1},
+        )
+    except Exception:
+        logger.debug("record_watcher_event: probe unavailable", exc_info=True)
+
+
+def record_reconcile_heartbeat(
+    *,
+    result: str = "success",
+    reconciled: int = 0,
+    healed: int = 0,
+    failed: int = 0,
+) -> None:
+    """Record one reconcile-tick heartbeat signal.
+
+    Fires on every reconcile sweep completion regardless of individual project
+    watcher activity (AC R12.5 — heartbeat cadence is independent of events).
+
+    Labels:
+        result — ``"success"`` when no projects failed the sweep;
+                 ``"partial_failure"`` when one or more project syncs failed.
+
+    Emits a structured INFO log alongside the counter so operators can observe
+    reconcile cadence in log aggregators without OTel/Prom configured.
+    """
+    if not _initialized:
+        return
+    safe_result = "success" if (result or "").strip() == "success" else "partial_failure"
+    try:
+        labels = {"result": safe_result}
+        if _enabled and _reconcile_heartbeat_counter is not None:
+            _reconcile_heartbeat_counter.add(1, labels)
+        if _prom_enabled and _prom_reconcile_heartbeat_counter is not None:
+            _prom_reconcile_heartbeat_counter.labels(result=safe_result).inc()
+        logger.info(
+            "reconcile.heartbeat result=%s reconciled=%d healed=%d failed=%d",
+            safe_result,
+            max(0, int(reconciled)),
+            max(0, int(healed)),
+            max(0, int(failed)),
+            extra={
+                "result": safe_result,
+                "projects_reconciled": max(0, int(reconciled)),
+                "watchers_healed": max(0, int(healed)),
+                "failed_count": max(0, int(failed)),
+            },
+        )
+    except Exception:
+        logger.debug("record_reconcile_heartbeat: probe unavailable", exc_info=True)

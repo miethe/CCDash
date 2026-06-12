@@ -171,7 +171,7 @@ class SessionIntelligenceQueryService:
         # Batch the session row fetch and all three fact reads into a single
         # asyncio.gather call, cutting sequential round-trips from 4 to 1.
         session_row, (sentiment_rows, churn_rows, scope_rows) = await asyncio.gather(
-            ports.storage.sessions().get_by_id(session_id),
+            ports.storage.sessions().get_by_id(session_id, project_id=project.id),
             _load_facts(ports, session_id),
         )
         if not session_row or str(session_row.get("project_id") or "") != project.id:

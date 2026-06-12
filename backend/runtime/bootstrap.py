@@ -1,14 +1,18 @@
 """Shared FastAPI app builder for runtime profiles."""
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Request, status
+import aiosqlite
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger("ccdash.runtime.bootstrap")
 
 from backend.application.context import RequestContext
 from backend import config
@@ -40,6 +44,95 @@ from backend.runtime.dependencies import get_request_context
 from backend.runtime.profiles import RuntimeProfile, RuntimeProfileName, get_runtime_profile
 
 
+# ── T9-008: /readyz check helpers ────────────────────────────────────────────
+# Module-level async functions so tests can patch them independently.
+
+async def _readyz_check_db() -> tuple[bool, str | None]:
+    """Return (ok, error_detail). ok=True if the DB connection is reachable.
+
+    Attempts a lightweight SELECT 1 on the existing singleton connection.
+    Returns False (with a detail string) if the connection is absent or the
+    query raises an exception.  Never raises.
+    """
+    try:
+        db = connection._connection
+        if db is None:
+            # Connection not yet established; return not-ready without creating one.
+            # A readiness probe must observe state, not change it.
+            return False, "db not connected"
+        if isinstance(db, aiosqlite.Connection):
+            await db.execute("SELECT 1")
+        else:
+            # asyncpg Pool — acquire and ping
+            async with db.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+        return True, None
+    except Exception as exc:
+        return False, str(exc)[:200]
+
+
+async def _readyz_check_migration_head() -> tuple[bool, str | None]:
+    """Return (ok, error_detail). ok=True if the migration head version is applied.
+
+    Queries the ``migrations_applied`` ledger table and verifies that the
+    current SCHEMA_VERSION row exists.  Returns False with a detail string when
+    the row is absent or the query fails.  Never raises.
+    """
+    try:
+        db = connection._connection
+        if db is None:
+            return False, "db not connected"
+        if config.DB_BACKEND == "postgres":
+            from backend.db.postgres_migrations import SCHEMA_VERSION
+        else:
+            from backend.db.sqlite_migrations import SCHEMA_VERSION  # type: ignore[assignment]
+
+        if isinstance(db, aiosqlite.Connection):
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM migrations_applied WHERE version = ?",
+                (SCHEMA_VERSION,),
+            )
+            row = await cursor.fetchone()
+            applied = bool(row and row[0] >= 1)
+        else:
+            async with db.acquire() as conn:
+                count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM migrations_applied WHERE version = $1",
+                    SCHEMA_VERSION,
+                )
+                applied = bool(count and count >= 1)
+        if applied:
+            return True, None
+        return False, f"migration head v{SCHEMA_VERSION} not found in migrations_applied"
+    except Exception as exc:
+        return False, str(exc)[:200]
+
+
+async def _readyz_check_queue_backend() -> tuple[bool, str | None]:
+    """Return (ok, error_detail). ok=True if the queue backend is reachable.
+
+    * Memory backend (JOB_QUEUE_BACKEND=memory): always ok (no external dep).
+    * SQLite/Postgres backends: probes the ``job_queue`` table with a cheap
+      COUNT(*) query.  Returns False if the connection or query fails.
+    Never raises.
+    """
+    queue_backend = getattr(config, "JOB_QUEUE_BACKEND", "memory").strip().lower()
+    if queue_backend == "memory":
+        return True, None
+    try:
+        db = connection._connection
+        if db is None:
+            return False, "db not connected"
+        if isinstance(db, aiosqlite.Connection):
+            await db.execute("SELECT 1 FROM job_queue LIMIT 1")
+        else:
+            async with db.acquire() as conn:
+                await conn.fetchval("SELECT COUNT(*) FROM job_queue")
+        return True, None
+    except Exception as exc:
+        return False, str(exc)[:200]
+
+
 def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     runtime_profile = get_runtime_profile(profile) if isinstance(profile, str) else profile
     container = RuntimeContainer(profile=runtime_profile)
@@ -68,6 +161,28 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     _cors_origins = [config.FRONTEND_ORIGIN]
     if _dev_cors:
         _cors_origins += ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # T10-003: merge CCDASH_CORS_ALLOWED_ORIGINS (LAN / IntentTree agent origins).
+    # Additive only — existing origins are preserved; unset = no change.
+    _extra_cors_origins = [
+        o.strip()
+        for o in getattr(config, "CCDASH_CORS_ALLOWED_ORIGINS", "").split(",")
+        if o.strip()
+    ]
+    # Safety: wildcard origins must not be used with allow_credentials=True — a
+    # browser will refuse the response and CORS would silently break for all
+    # credentialed callers.  Drop any "*" entries and warn the operator.
+    _wildcard_dropped = [o for o in _extra_cors_origins if o == "*"]
+    if _wildcard_dropped:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "CCDASH_CORS_ALLOWED_ORIGINS contained wildcard origin(s) ('*') which are "
+            "not permitted when allow_credentials=True (browser security requirement). "
+            "Wildcard entries were removed from the CORS allow-list.  "
+            "Specify explicit origins instead."
+        )
+        _extra_cors_origins = [o for o in _extra_cors_origins if o != "*"]
+    if _extra_cors_origins:
+        _cors_origins = _cors_origins + _extra_cors_origins
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
@@ -118,6 +233,42 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     ) -> dict[str, Any]:
         runtime_status = container.runtime_status()
         return _build_health_payload(runtime_status, runtime_profile)
+
+    # T9-008: richer /readyz probe for the API runtime.
+    # Checks DB connectivity, migration-head-applied, and queue-backend reachability.
+    # Returns HTTP 200 only when all three checks pass. Non-200 (503) with a
+    # structured reason payload naming the failing dependency on any failure.
+    # The check functions are module-level so they can be patched in tests.
+    @app.get("/readyz")
+    async def readyz_api(resp: Response) -> dict[str, Any]:
+        db_ok, db_err = await _readyz_check_db()
+        mig_ok, mig_err = await _readyz_check_migration_head()
+        queue_ok, queue_err = await _readyz_check_queue_backend()
+
+        checks: dict[str, bool] = {
+            "db_connected": db_ok,
+            "migration_head_applied": mig_ok,
+            "queue_reachable": queue_ok,
+        }
+        reasons: list[dict[str, str]] = []
+        if not db_ok:
+            reasons.append({"code": "db_unreachable", "detail": db_err or ""})
+        if not mig_ok:
+            reasons.append({"code": "migration_behind", "detail": mig_err or ""})
+        if not queue_ok:
+            reasons.append({"code": "queue_unreachable", "detail": queue_err or ""})
+
+        ready = not reasons
+        if not ready:
+            resp.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "schemaVersion": "1",
+            "runtimeProfile": str(getattr(runtime_profile, "name", "api")),
+            "ready": ready,
+            "checks": checks,
+            "reasons": reasons,
+            "reasonCodes": [r["code"] for r in reasons],
+        }
 
     return app
 

@@ -159,6 +159,20 @@ export const Dashboard: React.FC = () => {
     return cost;
   }, [surfaceRollups]);
 
+  // Phase 5 (T5-008): detection coverage summary derived from the session bundle.
+  // Resilience: fields the bundle omits simply don't count — a session with no
+  // context_window / skill_name is "not detected", never an error or "null" text.
+  const detectionCoverage = useMemo(() => {
+    let contextDetected = 0;
+    const skills = new Set<string>();
+    for (const s of bundleSessions) {
+      if ((s.context_window ?? '').toString().trim()) contextDetected += 1;
+      const skill = (s.skill_name ?? '').toString().trim();
+      if (skill) skills.add(skill);
+    }
+    return { contextDetected, skillCount: skills.size };
+  }, [bundleSessions]);
+
   const [insight, setInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
 
@@ -311,6 +325,22 @@ export const Dashboard: React.FC = () => {
       <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
         Calibration coverage: {Number(costCalibration?.comparableSessionCount || 0).toLocaleString()} comparable sessions, average mismatch {(Number(costCalibration?.avgMismatchPct || 0) * 100).toFixed(1)}%, average cost confidence {(Number(costCalibration?.avgCostConfidence || 0) * 100).toFixed(0)}%.
       </AlertSurface>
+
+      {/* Phase 5 detection coverage — only rendered when something was detected.
+          Missing context_window / skill_name → this note is simply omitted (the
+          explicit missing-field fallback for the Dashboard surface, R-P2). */}
+      {(detectionCoverage.contextDetected > 0 || detectionCoverage.skillCount > 0) && (
+        <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
+          Detection coverage:{' '}
+          {detectionCoverage.contextDetected > 0
+            ? `${detectionCoverage.contextDetected.toLocaleString()} session(s) with a detected context window`
+            : 'no context-window sidecar matches'}
+          {detectionCoverage.skillCount > 0
+            ? ` • ${detectionCoverage.skillCount.toLocaleString()} distinct skill(s) attributed`
+            : ''}
+          .
+        </AlertSurface>
+      )}
 
       {/* Main Chart Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

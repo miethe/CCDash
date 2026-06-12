@@ -43,6 +43,10 @@ export interface SessionCardDTO {
   total_tokens: number | null;
   feature_id: string | null;
   root_session_id: string | null;
+  // Phase 5 detection facts (optional/nullable; the bundle may omit them — a
+  // missing value is a contract state, surfaced as "not detected", never an error).
+  context_window?: string | null;
+  skill_name?: string | null;
 }
 
 export interface DashboardBundleDTO {

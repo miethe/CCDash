@@ -3243,6 +3243,13 @@ const SessionForensicsView = React.memo<{ session: AgentSession }>(({ session })
                         <div className="text-[11px] text-foreground font-mono break-all">{String(forensics.sessionFile || '')}</div>
                         <div className="text-muted-foreground">Claude Root</div>
                         <div className="text-[11px] text-foreground font-mono break-all">{String(forensics.claudeRoot || '')}</div>
+                        {/* T11-005: Launch-time capture fields (R-P2 / AC-11.D).
+                            null/absent == "not captured" — a contract state, never an error.
+                            Render an explicit muted fallback; never "undefined", never crash. */}
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Launcher</span><span className={`font-mono truncate max-w-[60%] ${session.launcher ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.launcher || 'Not captured'}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Profile</span><span className={`font-mono truncate max-w-[60%] ${session.profile ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.profile || 'Not captured'}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Effort Tier</span><span className={`font-mono truncate max-w-[60%] ${session.effortTier ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.effortTier || 'Not captured'}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Model Variant</span><span className={`font-mono truncate max-w-[60%] ${session.modelVariant ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.modelVariant || 'Not captured'}</span></div>
                     </div>
                 </div>
 
@@ -5057,6 +5064,33 @@ const SessionDetail = React.memo<{
                                 <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${threadKindBadge.style}`}>
                                     {threadKindBadge.label}
                                 </span>
+                                {/* Phase 5 detection badges (T5-008). Each is a contract
+                                    state: absent field → badge simply not rendered, never
+                                    a placeholder, "null", or crash (AC-5.4 resilience). */}
+                                {session.contextWindow ? (
+                                    <span
+                                        className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/30"
+                                        title={`Context window: ${session.contextWindow}`}
+                                    >
+                                        {session.contextWindow} ctx
+                                    </span>
+                                ) : null}
+                                {session.skillName ? (
+                                    <span
+                                        className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/30"
+                                        title={`Skill: ${session.skillName}`}
+                                    >
+                                        {session.skillName}
+                                    </span>
+                                ) : null}
+                                {session.subagentParentId ? (
+                                    <span
+                                        className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-surface-muted text-muted-foreground border border-panel-border font-mono"
+                                        title={`Subagent of ${session.subagentParentId}`}
+                                    >
+                                        ↳ subagent
+                                    </span>
+                                ) : null}
                             </div>
                         </div>
                     </div>

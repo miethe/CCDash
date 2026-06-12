@@ -1,0 +1,50 @@
+# routing.local.toml — per-project delegation-router coupling.
+# The engine + model-registry.yaml are global; this file carries ONLY what differs per repo.
+#
+# NOTE: ccdash shares .claude/skills, .claude/agents, and .claude/commands via
+# git-tracked symlinks into skillmeat (the global router engine is reached that
+# way). This file is a config TOP-UP only; the symlinks are left intact.
+
+[meta]
+project = "ccdash"
+updated = "2026-06-09"
+
+# ── Mode-D path patterns ──────────────────────────────────────────────────────
+# Any task whose files match these patterns is a Mode-D boundary → MUST stay on
+# primary Claude. Tailored from a scan of this repo (Python backend + Next.js).
+[mode_d]
+path_patterns = [
+  # auth — backend (routers/auth.py, adapters/auth/**, authorization service)
+  # and frontend (AuthSessionContext, auth UI components/tests)
+  "**/auth/**",
+  "**/*auth*",
+  "**/authorization*",
+  "**/AuthSessionContext*",
+  # migrations — backend/db/*migration*.py + sqlite/postgres migrations + lock
+  "**/migrations/**",
+  "**/*migration*.py",
+  "**/*migrations*.py",
+  "**/.migration.lock",
+  # secrets / credentials
+  "**/.env",
+  "**/.env.*",
+  "**/*secret*",
+  "**/*credential*",
+  # deploy / infra (deploy/ + deploy/runtime env + Dockerfiles)
+  "deploy/**",
+]
+
+# ── Per-project overrides (optional) ──────────────────────────────────────────
+# Override registry enable/priority for THIS repo only. Omit to inherit global.
+[overrides]
+# (none — inherits global registry enable/priority)
+
+# ── Opted-in workflows ────────────────────────────────────────────────────────
+# Workflows in this repo allowed to route off-primary. Empty = none opted in
+# (provider_routing_enabled stays the governing gate).
+[workflows]
+opted_in = []
+
+# ── Audit log ─────────────────────────────────────────────────────────────────
+[audit]
+log_path = ".claude/logs/routing-decisions.jsonl"

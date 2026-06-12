@@ -177,7 +177,10 @@ class PricingCatalogServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(enriched["cost_mismatch_pct"], 0.06)
         self.assertEqual(enriched["pricing_model_source"], "claude-sonnet-4-5")
 
-    async def test_hydrate_session_observability_falls_back_to_estimated_for_unsupported_model(self) -> None:
+    async def test_hydrate_session_observability_unsupported_model_is_unpriced(self) -> None:
+        # Phase 6 remediation: unknown/novel model slugs must surface as "unpriced" rather
+        # than silently falling back to the parser's Sonnet-defaulted estimate (0.123).
+        # "unpriced" is a contract state, not an error.
         enriched = await self.service.hydrate_session_observability(
             "project-1",
             {
@@ -185,7 +188,7 @@ class PricingCatalogServiceTests(unittest.IsolatedAsyncioTestCase):
                 "model": "claude-unknown-9-9",
                 "tokensIn": 1000,
                 "tokensOut": 500,
-                "totalCost": 0.123,
+                "totalCost": 0.123,  # parser-level Sonnet fallback — must NOT leak through
             },
             {
                 "current_context_tokens": 0,
@@ -202,10 +205,12 @@ class PricingCatalogServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(enriched["recalculated_cost_usd"])
-        self.assertEqual(enriched["display_cost_usd"], 0.123)
-        self.assertEqual(enriched["cost_provenance"], "estimated")
-        self.assertAlmostEqual(enriched["cost_confidence"], 0.45)
+        # Phase 6: display_cost_usd must be None — no Sonnet-default leakage
+        self.assertIsNone(enriched["display_cost_usd"])
+        self.assertEqual(enriched["cost_provenance"], "unpriced")
+        self.assertEqual(enriched["cost_confidence"], 0.0)
         self.assertEqual(enriched["pricing_model_source"], "")
+        self.assertEqual(enriched["cost_pricing_status"], "unpriced")
 
     async def test_hydrate_session_observability_applies_fast_speed_multiplier_when_all_usage_is_fast(self) -> None:
         await self.service.upsert_entry(

@@ -1,0 +1,286 @@
+{
+  "summary": "Deep diagnostic of CCDash session parsing, sync, profile/workflow detection, cross-project, MCP/CLI session-detail surfaces, enterprise/postgres, and external API exposure; synthesize a prioritized remediation roadmap",
+  "agentCount": 9,
+  "logs": [
+    "[audit:external-api-exposure] failed: Prompt is too long",
+    "[audit:startup-sync] failed: Prompt is too long",
+    "[audit:profile-model-detection] failed: Prompt is too long",
+    "[audit:enterprise-postgres-container] failed: Prompt is too long",
+    "[audit:live-session-lag] failed: Prompt is too long",
+    "[audit:cross-project-sync] failed: Prompt is too long",
+    "[audit:mcp-cli-session-detail] failed: Prompt is too long",
+    "Collected 0/7 subsystem audits"
+  ],
+  "result": {
+    "findings": [],
+    "roadmap": {
+      "enterprise_decision": "DEFER the enterprise Postgres/container path; do NOT make it a prerequisite for goals 1-5 and 7. Evidence: Enterprise Edition v1 (Phases 0-6 + two Phase-3 follow-ups) is already COMPLETE and merged to main (squash 2a7baa6; schema v33 Postgres / v32 SQLite; composite session PK (project_id,id); durable telemetry queue is the live dispatch path). The container-pulls-no-live-data root cause was already diagnosed and addressed (defaults-on ingestion/startup-sync, auto-derived path aliases, fail-loud readyz, compose e2e smoke). The remaining Postgres item is a single documented deferral (T6-003 Postgres time-series partitioning, infeasible as an additive migration) — not load-bearing for the operator's core pains. Therefore: (a) keep SQLite as the development/default backend for this remediation; (b) run all of W1-W6 against SQLite first since every defect (link lag, detection, cross-project sync, MCP session tools, multi-sync) is backend-agnostic and lives in parser/sync/router/MCP layers, not the storage engine; (c) PARALLEL-reconcile Postgres only at the seam where a new write path or column is introduced — specifically W2 (new model/profile/effort columns) and any new session-detail rollup table in W4 must ship the dual SQLite+Postgres DDL and the migration-governance parity allowlist update in the SAME change (per ADR-007 + migration_governance.py COLUMN_PARITY_DRIFT_ALLOWLIST), so Postgres never drifts. Schedule a small dedicated Postgres-seam validation pass (run a senior reviewer WITH Bash — the memory note records that the edit-less reviewer silently produced no verdict on PG-only bugs) after W2 and W4 land. Resume T6-003 partitioning only when a real Postgres deployment hits telemetry_events/analytics_entries volume — it is not on the critical path for IntentTree or the top deliverable.",
+      "executive_summary": "The seven audits do not describe seven independent bugs; they describe one architecture optimized for a single active project being asked to serve all projects, all agents, and external consumers. Four root themes recur. First, \"active-project-centric\" scoping: the app session API (backend/routers/api.py list_sessions) resolves to one project via resolve_project and has no cross-project parameter, while the all-projects sweep (backend/adapters/jobs/runtime.py _run_all_projects_sync_job) runs only at startup and disables writeback for non-active projects — so cross-project sessions and plans go stale between restarts and the operator's \"TOP deliverable\" (any session in any project) is structurally blocked on the app surface. Second, the transport-neutral promise is half-kept: REST and the /api/v1 client_v1 surface already expose rich session detail (get_session_detail_v1, get_session_drilldown_v1, get_session_family_v1, search_sessions_v1), but the MCP server registers only seven analytics-shaped tools (feature_forensics, project_status, workflow_failure_patterns, AAR, artifact_recommendations, two live-count tools) and NONE for session listing, search, or full detail; the repo-local CLI has no session command group at all. So an agent via the ccdash skill/MCP literally cannot fetch a session transcript today. Third, detection is enumerated rather than derived: model cost/pricing is a hardcoded table (parser.py _estimate_cost lines 998-1007; provider_pricing.py _ANTHROPIC_MODEL_ID_BY_LABEL lines 28-40) that lists Opus/Haiku/Sonnet but not Fable, so a new/codenamed model is uncosted and mis-attributed; the launching profile (ica-delegate via ~/ica-claude.sh) is never detected — the session-env sidecar is captured only as an artifact directory reference, not parsed for launcher/env; effort capture stops at thinkingMetadata.level (lines 2346-2369) with no Ultracode tier; and subagent linkage (link_subagent_to_task_call, taskSubagentType, subagents/*.jsonl) breaks silently when the sidecar or parent tool-call id is absent. Fourth, link freshness is feature-flagged off: CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED defaults False (config.py:131), so after an incremental/partial sync the session-to-feature and linked-session relationships are not rebuilt, which is the direct cause of linked sessions lagging. Startup also stacks work: a startup_sync job, an all-projects_sync job, plus dev --reload re-triggers each run a full per-project scan with no recent-first ordering or lazy backfill, so the box does heavy redundant parsing before any fresh data appears. The good news is leverage: the same active-only theme causes both cross-project staleness AND link lag, and the same transport-neutral gap blocks both the top deliverable and the IntentTree API. Fixing scoping + MCP/CLI session parity (W1) unblocks the most operator pain per unit effort, and it can ship on SQLite without waiting on the already-complete Postgres path.",
+      "root_cause_themes": [
+        {
+          "theme": "Active-project-centric scoping leaks into every read and the steady-state sync path",
+          "spans_subsystems": [
+            "sync-engine",
+            "file-watcher",
+            "rest-api",
+            "agent-queries"
+          ],
+          "explanation": "backend/routers/api.py:list_sessions calls resolve_project() and queries repo with a single project.id — no cross-project param. The all-projects sync (backend/adapters/jobs/runtime.py:_run_all_projects_sync_job) covers sessions+docs+progress+worknotes with rebuild_links=True but ONLY at startup and with allow_writeback=False for non-active projects; steady-state freshness for non-active projects depends entirely on watcher registration surviving. Net effect: cross-project sessions AND plans go stale between restarts, and the top deliverable (any session/any project) is blocked on the app surface even though the data is in the DB."
+        },
+        {
+          "theme": "Transport-neutral intelligence layer is only wired to REST/CLI-v1, not to MCP or the repo-local CLI",
+          "spans_subsystems": [
+            "mcp",
+            "cli",
+            "agent-queries"
+          ],
+          "explanation": "Rich session detail exists at REST (sessions_router GET /{session_id}, /{session_id}/logs) and /api/v1 (get_session_detail_v1, get_session_drilldown_v1, get_session_family_v1, search_sessions_v1 in backend/routers/_client_v1_sessions.py). But backend/mcp/tools/ registers only 7 analytics tools and zero session tools; backend/cli/commands/ has no session group. The CLAUDE.md transport-neutral pattern (agent_queries -> REST + CLI + MCP) was followed for features/workflows/reports but never for sessions/transcripts — the single biggest gap behind the TOP deliverable."
+        },
+        {
+          "theme": "Detection by hardcoded enumeration instead of derivation/normalization",
+          "spans_subsystems": [
+            "parser",
+            "pricing",
+            "model-identity"
+          ],
+          "explanation": "model_identity.canonical_model_name derives family generically from id parts (so claude-fable-* would yield family 'Fable'), but the COST/PRICING maps are hardcoded enumerations: parser.py:_estimate_cost (lines 998-1007) and provider_pricing.py:_ANTHROPIC_MODEL_ID_BY_LABEL (lines 28-40) list Opus/Haiku/Sonnet only — Fable falls through to default, so cost=0 and pricing label is unmatched. Launching profile (ica-delegate via ~/ica-claude.sh) is not detected at all (session-env sidecar captured only as an artifact ref, parser.py ~3872). Effort capture stops at thinkingMetadata (parser.py:2346-2369) — no Ultracode/reasoning-effort tier. Same fix shape across all: derive + normalize into first-class fields rather than enumerate."
+        },
+        {
+          "theme": "Freshness work is feature-flagged off or run redundantly at startup",
+          "spans_subsystems": [
+            "sync-engine",
+            "runtime-jobs",
+            "links"
+          ],
+          "explanation": "CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED defaults False (config.py:131) so partial syncs skip link rebuild -> linked sessions lag. Meanwhile startup stacks a startup_sync job + all_projects_sync job (backend/adapters/jobs/runtime.py:221,284) and dev --reload re-triggers them, each a full per-project scan with no recent-first ordering or lazy backfill — heavy redundant parsing delays first fresh data. The two halves are mirror images: too little incremental work in steady state, too much full work at boot."
+        }
+      ],
+      "prioritized_workstreams": [
+        {
+          "name": "Cross-project + MCP/CLI session detail parity (TOP deliverable)",
+          "priority": "P0",
+          "goal": "Any agent, via MCP / CLI / REST, can list/search sessions in ANY project and fetch the FULL detail of any single session — transcript, tool calls, subagent transcripts, token counts, artifacts, analytics, linked sessions — without switching the active project.",
+          "addresses_defects": [
+            "MCP exposes 0 session tools (only 7 analytics tools in backend/mcp/tools/)",
+            "repo-local CLI has no session command group (backend/cli/commands/)",
+            "app list_sessions is active-project scoped via resolve_project (backend/routers/api.py:554)",
+            "session detail exists at REST/v1 but is not transport-neutral to MCP/CLI"
+          ],
+          "approach": "1) Add a transport-neutral session query service in backend/application/services/agent_queries/ (e.g. session_detail.py) wrapping the existing SessionTranscriptService + session_intelligence_read_service + usage attribution, taking an explicit project_id (default active). 2) Add project_id query param to app list_sessions and the v1 list/search/detail paths so cross-project reads work without changing the active project; reuse the workspace registry to resolve any project's binding. 3) Register new MCP tools: ccdash_session_search(project_id, query, filters) and ccdash_session_detail(session_id, project_id, include=[transcript,subagents,tokens,artifacts,analytics,links]) plus ccdash_session_transcript(session_id, project_id, page) with pagination. 4) Add a repo-local CLI 'session' group (list/search/show/transcript) mirroring the standalone packages/ccdash_cli session commands. 5) Ensure subagent + linked-session contents are retrievable (drilldown/family already exist at v1 — wire them through).",
+          "effort": "large",
+          "risk": "medium",
+          "key_files": [
+            "backend/mcp/tools/__init__.py",
+            "backend/mcp/tools/(new) sessions.py",
+            "backend/cli/commands/(new) session.py",
+            "backend/cli/main.py",
+            "backend/application/services/agent_queries/(new) session_detail.py",
+            "backend/routers/api.py",
+            "backend/routers/_client_v1_sessions.py",
+            "backend/routers/client_v1.py",
+            "packages/ccdash_cli/src/ccdash_cli/commands/session.py"
+          ],
+          "acceptance": [
+            "From an MCP client, ccdash_session_search returns sessions from a NON-active project given project_id",
+            "ccdash_session_detail returns full transcript + subagent transcripts + token counts + artifacts + analytics + linked sessions for a session in any project",
+            "Large sessions are retrievable via paginated transcript tool (no silent truncation)",
+            "Repo-local ccdash CLI 'session show <id> --project <id>' returns the same payload as REST GET /api/sessions/{id}",
+            "A regression test asserts MCP/CLI/REST return structurally equivalent session-detail envelopes (transport-neutral parity)"
+          ]
+        },
+        {
+          "name": "Live link freshness for sessions and linked sessions",
+          "priority": "P0",
+          "goal": "Sessions and especially LINKED sessions update live (sub-minute), not lagging until a restart or full sync.",
+          "addresses_defects": [
+            "CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED defaults False (config.py:131) so partial syncs skip link rebuild",
+            "linked sessions only refresh on full sync / rebuild_links=True"
+          ],
+          "approach": "1) Flip CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED default to True after validating the scoped link-rebuild dispatch path (sync_engine link-rebuild scope described near sync_engine.py:1264). 2) On incremental/watcher-driven session changes, dispatch a scoped link rebuild for the affected session family (root_session_id) rather than a global entity_links fingerprint scan. 3) Verify the watcher-driven path (sync_changed_files) carries through to link rebuild for the changed project. 4) Add a freshness assertion: after a new subagent jsonl lands, the parent session's linked-session list reflects it within one watcher cycle.",
+          "effort": "medium",
+          "risk": "medium",
+          "key_files": [
+            "backend/config.py",
+            "backend/db/sync_engine.py",
+            "backend/db/file_watcher.py",
+            "backend/db/repositories/links.py"
+          ],
+          "acceptance": [
+            "Dropping a new subagent transcript into a watched project surfaces the linked session in GET /api/sessions/{parent}/... within one watcher cycle without restart",
+            "Incremental sync triggers a scoped (family-level) link rebuild, not a full scan",
+            "No global entity_links fingerprint scan on the hot per-request path for linked-session reads",
+            "Default-on flag validated by a test that fails if incremental link rebuild is skipped on a partial sync"
+          ]
+        },
+        {
+          "name": "Profile / model / effort / subagent attribution correctness",
+          "priority": "P1",
+          "goal": "Correctly detect and attribute launching profile (ica-delegate via ~/ica-claude.sh), model (Fable/Opus/Haiku/Sonnet), multi-agent workflows, subagents, and Ultracode/effort.",
+          "addresses_defects": [
+            "model cost/pricing hardcoded, Fable missing (parser.py:998-1007; provider_pricing.py:28-40)",
+            "no launcher/profile detection — session-env sidecar captured only as artifact ref (parser.py ~3872)",
+            "effort capture stops at thinkingMetadata, no Ultracode tier (parser.py:2346-2369)",
+            "subagent linkage fragile when sidecar/parent-tool-id missing (link_subagent_to_task_call, taskSubagentType)"
+          ],
+          "approach": "1) MODEL: stop enumerating for family/cost — derive family/version from canonical_model_name and add a data-driven pricing catalog fallback (pricing_catalog.py already exists) so unknown models (Fable) get a derived family + a clearly-flagged 'pricing unknown' instead of 0; add Fable to the catalog/labels. 2) PROFILE: parse the session-env sidecar contents (env/argv) and/or cwd+wrapper markers to attribute the launching profile (ica-delegate); persist as a first-class session field profile/launcher. 3) EFFORT: normalize thinkingMetadata into an effort tier and add an Ultracode marker derived from level/maxThinkingTokens or explicit slug; persist as session field. 4) SUBAGENT/WORKFLOW: harden link_subagent_to_task_call to fall back to agentId/parentToolUseID when the subagents sidecar is missing, and group multi-agent runs into a workflow/conversation family. Ship new session columns with dual SQLite+Postgres DDL and a migration-governance allowlist update in the same change (ADR-007).",
+          "effort": "large",
+          "risk": "medium",
+          "key_files": [
+            "backend/parsers/platforms/claude_code/parser.py",
+            "backend/model_identity.py",
+            "backend/services/provider_pricing.py",
+            "backend/services/pricing_catalog.py",
+            "backend/db/repositories/sessions.py",
+            "backend/db/migration_governance.py",
+            "types.ts"
+          ],
+          "acceptance": [
+            "A session run via ~/ica-claude.sh is attributed profile=ica-delegate in session detail",
+            "A Fable-model session derives family=Fable and shows pricing status explicitly (no silent $0) and is filterable via /facets/models",
+            "Ultracode/effort tier is a first-class queryable field, populated from thinkingMetadata or explicit marker",
+            "A multi-agent workflow groups its root + subagent sessions into one conversation/workflow family",
+            "Subagent linkage still resolves when the subagents/*.jsonl sidecar is absent (agentId/parentToolUseID fallback), covered by a parser test",
+            "New columns present and parity-clean on BOTH SQLite and Postgres (migration_governance parity test green)"
+          ]
+        },
+        {
+          "name": "Cross-project steady-state freshness for sessions AND plans",
+          "priority": "P1",
+          "goal": "Sessions and plans for ALL registered projects stay fresh continuously, not just at startup and not just for the active project.",
+          "addresses_defects": [
+            "_run_all_projects_sync_job runs only at startup (backend/adapters/jobs/runtime.py:784)",
+            "non-active project freshness depends on watcher registration surviving; writeback disabled for non-active (by design)",
+            "no periodic all-projects refresh cadence"
+          ],
+          "approach": "1) Add a periodic (configurable interval) all-projects light refresh job that re-runs sync_project for non-active projects on a cadence, reusing the existing _run_all_projects_sync_job body (already covers sessions+docs+progress+worknotes). 2) Confirm watcher registration for non-active projects is durable across the active-project switch (reuse watcher-rebind-on-active-project-switch work). 3) Keep allow_writeback=False for non-active projects (no foreign-repo mutation) — confirm this is preserved. 4) Make the refresh light-mode aware (manifest-based skip on unchanged paths) to avoid heavy re-scans.",
+          "effort": "medium",
+          "risk": "low",
+          "key_files": [
+            "backend/adapters/jobs/runtime.py",
+            "backend/db/file_watcher.py",
+            "backend/config.py",
+            "backend/db/sync_engine.py"
+          ],
+          "acceptance": [
+            "A plan/PRD added to a NON-active project appears in CCDash within the configured refresh interval without a restart",
+            "All-projects refresh covers sessions AND docs/progress/worknotes (not sessions-only)",
+            "Writeback remains disabled for non-active projects (no mutation of other repos), asserted by test",
+            "Refresh respects light-mode manifest skip so unchanged projects are not fully re-scanned"
+          ]
+        },
+        {
+          "name": "Startup sync de-duplication + recent-first parse with lazy backfill",
+          "priority": "P2",
+          "goal": "Eliminate redundant full syncs at startup; show recent data fast via recent-first parse, then lazily backfill history.",
+          "addresses_defects": [
+            "startup_sync job + all_projects_sync job both run at boot (runtime.py:221,284)",
+            "dev --reload re-triggers full scans (per memory note: reload resets job timers / startup sync starves timers)",
+            "no recent-first ordering or lazy backfill — always full scan per project"
+          ],
+          "approach": "1) Add an idempotency/coalescing guard so the active-project startup sync and the all-projects sweep do not double-scan the active project (the all-projects loop already skips active id — extend the guard to overlapping triggers and reload re-entry). 2) Implement recent-first parse ordering: sort session files by mtime desc and parse the most recent window first, marking the project queryable, then enqueue a low-priority lazy backfill for older files. 3) Gate behind a flag (e.g. CCDASH_RECENT_FIRST_SYNC) defaulting on for local. 4) Ensure dev --reload does not stack a fresh full sync on top of an in-flight one.",
+          "effort": "medium",
+          "risk": "medium",
+          "key_files": [
+            "backend/adapters/jobs/runtime.py",
+            "backend/db/sync_engine.py",
+            "backend/config.py",
+            "backend/runtime/container.py"
+          ],
+          "acceptance": [
+            "At startup the active project is scanned at most once; logs show no duplicate full-sync for the same project/trigger",
+            "Recent sessions are queryable within seconds while older history backfills in the background",
+            "A dev --reload does not launch a second full sync while one is in flight",
+            "Lazy backfill completes and the full corpus matches a baseline full-scan count (no dropped sessions)"
+          ]
+        },
+        {
+          "name": "External-consumer (IntentTree) API surface hardening",
+          "priority": "P2",
+          "goal": "Expose the cross-project session/plan/detail intelligence as a stable, documented API for external consumers like IntentTree.",
+          "addresses_defects": [
+            "/api/v1 client_v1 is the natural external seam but lacks cross-project session reads and MCP parity",
+            "no documented external contract for session detail across projects"
+          ],
+          "approach": "1) Standardize on /api/v1 (client_v1) as the external contract; add the cross-project project_id param across session endpoints (depends on W1). 2) Freeze and document the session-detail + search envelope (OpenAPI) so IntentTree can consume it without coupling to internal app routes. 3) Add capability advertisement (instance metadata already lists capabilities) including 'sessions:cross-project' and 'sessions:detail'. 4) Provide a thin example client / contract test that IntentTree can mirror.",
+          "effort": "medium",
+          "risk": "low",
+          "key_files": [
+            "backend/routers/client_v1.py",
+            "backend/routers/_client_v1_sessions.py",
+            "packages/ccdash_contracts/",
+            "docs/guides/feature-surface-architecture.md"
+          ],
+          "acceptance": [
+            "IntentTree can list/search/detail sessions for any project_id via /api/v1 with a stable documented schema",
+            "OpenAPI for /api/v1 session endpoints is generated and checked in",
+            "Instance metadata advertises cross-project + session-detail capabilities",
+            "A contract test pins the external session-detail envelope shape"
+          ]
+        },
+        {
+          "name": "Token accounting model: observed tokens + cache + subagent attribution",
+          "priority": "P3",
+          "goal": "Report accurate, multi-metric token counts (model IO, cache, observed, tool-reported) so session/feature/analytics totals stop undercounting by ~100-400x.",
+          "addresses_defects": [
+            "session/analytics totals use only tokens_in+tokens_out, ignoring cache_creation/cache_read (~376x undercount on the audited file)",
+            "usageSummary parsed but not persisted as first-class columns or consumed by analytics",
+            "double-count risk when both subagent transcript and toolUseResult.totalTokens are present"
+          ],
+          "approach": "1) Persist normalized usageSummary (observedTokens, cacheInput, modelIO, toolReported) as first-class session columns/rollup (per the 2026-03-08 audit recommendations). 2) Default session/feature/analytics 'total tokens' to observedTokens with cache shown separately. 3) Apply the fallback rule: use toolResultReportedTotals.totalTokens only when a linked subagent session is missing (avoid double count). 4) Backfill historical sessions. Ship columns dual-backend (SQLite+Postgres) with parity allowlist update.",
+          "effort": "large",
+          "risk": "medium",
+          "key_files": [
+            "backend/parsers/platforms/claude_code/parser.py",
+            "backend/db/repositories/sessions.py",
+            "backend/db/repositories/postgres/sessions.py",
+            "backend/db/sync_engine.py",
+            "backend/routers/analytics.py",
+            "components/SessionInspector.tsx",
+            "components/Analytics/AnalyticsDashboard.tsx"
+          ],
+          "acceptance": [
+            "Session detail reports observedTokens, cacheInput, modelIO, and toolReported separately",
+            "Feature/analytics totals default to observedTokens and no longer undercount cache-heavy sessions",
+            "Linked subagent tokens are not double-counted with toolUseResult.totalTokens (fallback rule tested)",
+            "Historical backfill populates new metrics; new columns parity-clean on SQLite and Postgres"
+          ]
+        }
+      ],
+      "sequencing": "Execute in three tracks. BLOCKING / DO FIRST (P0, mostly parallel): W1 (cross-project + MCP/CLI session detail parity) and W2 (live link freshness) are the two highest-leverage items and address the operator's #1 and #4 goals. W2 is small/medium and can land first or in parallel since it only flips a flag + scopes link rebuild; W1 is the large flagship and should start immediately because the new transport-neutral session_detail service it introduces is reused by W6 and W8. W1 and W2 touch different layers (MCP/CLI/routers vs sync/links) so they parallelize cleanly. SECOND WAVE (P1, sequence-sensitive): W3 (detection correctness) and W4 (cross-project steady-state freshness) both touch the parser/sync/runtime hot files (parser.py, runtime.py, config.py) and W3 adds new session columns — run W3 then W4, or single-thread them, to avoid migration/edit collisions on the shared files. W3 must include its Postgres DDL + migration-governance parity update in the same change. THIRD WAVE (P2): W5 (startup de-dup + recent-first) builds on the sync changes from W4 and should follow it; W6 (IntentTree API) depends on W1's cross-project param and should follow W1. W5 and W6 can run in parallel (different concerns). LAST (P3): W7 (token accounting) is the largest data-model change and least blocking on the operator's stated pains — sequence it last, after W3's column-addition pattern and Postgres-seam validation are proven, so it reuses the same dual-backend migration approach. Insert a dedicated Postgres-seam validation pass (reviewer WITH Bash) after W3 and again after W7 land their columns. Parallelizable: {W1, W2}; then {W3 then W4}; then {W5, W6}; then W7. Blocking edges: W6→W1, W5→W4, W8(token)→W3 pattern.",
+      "top_risks": [
+        "Shared-file collisions: W3, W4, and W5 all edit backend/adapters/jobs/runtime.py, backend/db/sync_engine.py, and backend/config.py — parallel agents will conflict. Single-thread the sync/runtime edits or stage them with clear file ownership per the multiproject-fixes precedent (sequential execution because of shared agent.py/planning.ts/config.py).",
+        "Postgres drift on new columns: W3 and W7 add session columns; if the SQLite DDL ships without the matching Postgres DDL + COLUMN_PARITY_DRIFT_ALLOWLIST update (migration_governance.py), the parity test breaks or Postgres silently diverges. The memory note records 3 real Postgres-only bugs caught only by a reviewer WITH Bash — the edit-less senior-code-reviewer produced no verdict. Mandate a Bash-enabled PG seam review after W3/W7.",
+        "Cross-project reads bypassing project scoping could leak or mis-attribute data if resolve_project fallback is not carefully replaced with explicit project_id resolution via the workspace registry; add tests asserting a project_id param never returns another project's rows unfiltered.",
+        "Flipping CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED to True (W2) could regress performance if the scoped rebuild accidentally falls back to the global entity_links fingerprint scan (a known slowness source from the EE investigation). Validate the scoped path before defaulting on.",
+        "Recent-first + lazy backfill (W5) risks an incomplete corpus if the backfill silently fails — query results would look fresh but be partial. Acceptance must assert backfilled counts match a baseline full scan.",
+        "Runtime smoke gate (CLAUDE.md): W1's CLI/MCP and any FE surface changes cannot be marked complete on unit tests alone — they require a live runtime smoke check; plan for a running dev server during W1 verification.",
+        "Subagent/profile detection (W3) depends on filesystem sidecars (session-env, subagents/*.jsonl) that may be absent in container/bind-mount deployments — detection must degrade gracefully and not regress the existing linkage when sidecars are missing.",
+        "Multiple full syncs at startup currently mask staleness; de-duplicating them (W5) before W4's periodic refresh is in place could briefly reduce freshness — sequence W4 before/with W5 so a steady-state refresh exists once redundant boot syncs are removed."
+      ]
+    },
+    "critique": {
+      "gaps": [
+        "TRANSPORT GAP MISFRAMED — the top deliverable is NOT reachable via /api/v1 at all. The roadmap asserts v1 'already expose rich session detail' (get_session_detail_v1 etc.). Verified: get_session_detail_v1 returns SessionIntelligenceDetailResponse (backend/models.py:961) = summary + sentimentFacts/churnFacts/scopeDriftFacts ONLY. It carries NO transcript, NO tool calls, NO subagent transcripts, NO token breakdown, NO artifacts. The actual full transcript is served ONLY by the APP router GET /{session_id}/logs (backend/routers/api.py:890) and GET /{session_id} (returns AgentSession with tools/files/artifacts/relationships, api.py:919). Neither has a /api/v1 equivalent and neither is in agent_queries. The standalone CLI 'session show' hits /api/v1/sessions/{id} (packages/ccdash_cli/.../session.py:90) — so it ALSO cannot fetch a transcript today. W1 must FIRST lift transcript+tools+artifacts+subagent-logs into a transport-neutral service and add /api/v1 transcript endpoints; the roadmap treats this as 'wire existing v1 through' which understates the work by a tier.",
+        "UNSCOPED get_by_id IS A CROSS-PROJECT CORRECTNESS BUG, not just a missing param. backend/db/repositories/sessions.py:206 — get_by_id runs 'SELECT * FROM sessions WHERE id = ?' with NO project_id filter, despite the composite PK (project_id,id). The app GET /{session_id}/logs (api.py:899) and GET /{session_id} (api.py:931) and get_session_family_v1 step 1 (_client_v1_sessions.py:259) all call get_by_id. With cross-project reads enabled (W1's goal), two projects with colliding session ids return arbitrary rows. The roadmap's risk #3 mentions 'mis-attribute data' abstractly but does not name get_by_id as the concrete defect that must be made project-aware (overload to get_by_id(session_id, project_id)) before any cross-project param is exposed.",
+        "get_session_family_v1 is hard-bound to the ACTIVE project (step 2 uses app_request.context.project.project_id, _client_v1_sessions.py:269). The roadmap says 'drilldown/family already exist at v1 — wire them through', implying they are project-agnostic. They are not: family resolution will return ZERO members for a session in a non-active project even after the param is added, unless step 1 get_by_id is scoped AND step 2 derives project_id from the resolved anchor row rather than the active context. This is the subagent/linked-session retrieval path the top deliverable depends on.",
+        "No transport-neutral session service exists to wrap. The roadmap names a NEW file backend/application/services/agent_queries/session_detail.py 'wrapping the existing SessionTranscriptService + session_intelligence_read_service'. Verified there is NO session_detail.py today (closest is session_correlation.py, which is feature-correlation, not detail). The transcript path (SessionTranscriptService.list_session_logs) is invoked directly from app routers, not via agent_queries. So W1 is net-new service authoring + extraction from the app router, not a thin wrapper — effort 'large' is right but the dependency that W6/W7 'reuse the W1 session_detail service' assumes a service that has to be designed from scratch including pagination/include-flags semantics."
+      ],
+      "unverified_claims": [
+        "'_run_all_projects_sync_job runs only at startup' — PARTIALLY VERIFIED. runtime.py:784 defines it; it is scheduled at boot (runtime.py:284-297) with rebuild_links=True and allow_writeback=False for non-active (runtime.py:840-864). But the roadmap's claim that steady-state freshness 'depends entirely on watcher registration surviving' is NOT verified — need to confirm whether the file_watcher actually registers and survives for non-active projects across an active-project switch before W4 assumes 'watcher rebind already exists'. If watchers are never registered for non-active projects, W4's periodic refresh is the ONLY freshness path, raising its priority.",
+        "'model_identity.canonical_model_name derives family generically so claude-fable-* yields family Fable' — PLAUSIBLE but UNVERIFIED for Fable specifically. model_identity.py:45-69 builds family from parts[1] via _title_case. For 'claude-fable-...' parts[1]='fable' -> 'Fable' only if the regex split + index assumptions hold for that exact id shape. The pricing miss is real (provider_pricing.py:28-40 lists only Opus/Sonnet/Haiku — NO Fable), but verify canonical_model_name on the real Fable id string before claiming family derivation 'just works' and only pricing needs fixing.",
+        "'CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED default False is the DIRECT cause of linked sessions lagging' — flag default verified (config.py:131). The CAUSAL claim is unverified: confirm that with the flag True the scoped link rebuild actually fires on the watcher-driven sync_changed_files path (not just on full sync). The roadmap itself flags this as risk #4; treat the causal attribution as a hypothesis to prove in W2 step 3, not a given.",
+        "'effort capture stops at thinkingMetadata.level with no Ultracode tier' — the thinkingMetadata block (parser.py:2346) already handles level, disabled, AND maxThinkingTokens -> _thinking_level_from_tokens inference. So effort capture is richer than 'stops at level'. Verify whether an 'Ultracode' tier is a distinct signal absent from the forensics_schema, or just an unmapped value of the existing level field, before scoping a new column vs. a schema/enum addition.",
+        "'session/analytics totals undercount by ~100-400x ignoring cache_creation/cache_read' (W7) — this magnitude comes from 'the audited file' but the underlying audits array passed to this review is EMPTY ([]). The 376x figure and the usageSummary-parsed-but-not-persisted claim cannot be verified from the roadmap alone; require the actual audit evidence before committing W7 (largest data-model change).",
+        "'all 7 MCP tools / 0 session tools' — VERIFIED by listing backend/mcp/tools/ (artifacts, features, live, project, reports, system, workflows; no sessions.py). Accurate."
+      ],
+      "missing_workstreams": [
+        "FRONTEND consumption of new session fields is entirely absent from W1-W6. CLAUDE.md mandates a Resilience-by-default FE fallback AC for every new optional backend field and a runtime smoke gate for FE changes. W3 adds profile/launcher/effort/model columns and W7 adds token columns, but only W7 lists FE files (SessionInspector, AnalyticsDashboard). W3's new first-class fields (profile=ica-delegate, Fable pricing-unknown badge, Ultracode tier) have NO FE surfacing/fallback workstream — they will be invisible or crash on missing. Add an explicit FE-surfacing + fallback workstream tied to W3.",
+        "AUTHORIZATION / multi-tenant safety for cross-project reads. W1 opens any project_id to MCP/CLI/external (IntentTree) consumers. There is no workstream addressing whether an external consumer should be able to read ANY project's transcripts (which may contain secrets/PII from foreign repos), nor a project-allowlist/capability scoping for the external /api/v1 seam. W6 advertises 'sessions:cross-project' capability but no access-control gate. This is a security gap, not just an API-shape gap.",
+        "TRANSCRIPT VOLUME / payload-size limits for MCP. W1 acceptance says 'no silent truncation' via pagination, but MCP tool responses have practical size ceilings and the existing /logs endpoint caps limit at 5000 (api.py:893). A multi-megabyte transcript over MCP needs a defined chunking contract + a documented max; the roadmap asserts pagination exists but does not define the MCP-side envelope/size budget or how subagent transcripts (separate jsonl families) are paginated jointly.",
+        "OBSERVABILITY/regression for the freshness claims. W2/W4/W5 change sync/link/startup timing but there is no workstream to add metrics/assertions proving 'sub-minute' link freshness and 'recent-first queryable in seconds' in CI or via the existing observability layer (backend/observability). Acceptance criteria describe manual drops ('dropping a new subagent transcript'); these need automated freshness probes given the memory note that reload resets job timers and startup sync starves timers — the test environment itself can mask or fake freshness.",
+        "MIGRATION/BACKFILL ORDERING across W3 and W7 both adding session columns. The roadmap sequences W7 last 'to reuse W3's pattern' but does not address that two separate column-adding migrations + two historical backfills over the full session corpus may be expensive and must be idempotent/resumable. No workstream owns migration governance test updates as deliverables (COLUMN_PARITY_DRIFT_ALLOWLIST at migration_governance.py:462 must be touched twice) — it is mentioned as a constraint, not scheduled work."
+      ],
+      "verdict": "needs-followup"
+    }
+  }
+}

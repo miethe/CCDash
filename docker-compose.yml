@@ -1,0 +1,247 @@
+# CCDash docker-compose.yml — Phase 9 Postgres/Container convergence gate
+#
+# Topology:
+#   postgres  — Postgres 15 (authoritative DB, internal to the stack)
+#   api       — CCDash API server (uvicorn :8000, `api` runtime profile)
+#   worker    — CCDash background worker (no HTTP, `worker` profile)
+#
+# Quick start (all-in-one stack):
+#   docker compose up -d
+#
+# The stack wires all services together by default.  CCDASH_DATABASE_URL
+# defaults to the in-stack postgres — no extra env vars are required for
+# local testing.
+#
+# For production / external Postgres deployments, set CCDASH_DATABASE_URL
+# explicitly before running:
+#   export CCDASH_DATABASE_URL=postgresql://user:pass@db.example.com:5432/ccdash
+#   docker compose up -d api worker   # omit postgres to use external PG
+#
+# ENV MATRIX (operator reference):
+# ─────────────────────────────────────────────────────────────────────────────
+#  Variable                          Default             Notes
+#  ────────────────────────────────  ──────────────────  ───────────────────
+#  CCDASH_DB_BACKEND                 postgres            Must stay postgres for this compose
+#  CCDASH_DATABASE_URL               (see below)         Override for external PG
+#  CCDASH_POSTGRES_USER              ccdash              Postgres user
+#  CCDASH_POSTGRES_PASSWORD          ccdash              Postgres password (change in prod)
+#  CCDASH_POSTGRES_DB                ccdash              Postgres database name
+#  CCDASH_POSTGRES_PORT              5432                Host-side Postgres port (binds 127.0.0.1 by default)
+#  CCDASH_API_PORT                   8000                Host-side API port (binds 127.0.0.1 by default)
+#  CCDASH_WORKER_PROBE_PORT          9465                Host-side worker probe port (binds 127.0.0.1 by default)
+#  NOTE: all three ports bind 127.0.0.1 by default. To expose on the LAN, override the bind
+#  prefix in the ports: entry (e.g. "0.0.0.0:${CCDASH_API_PORT}:8000") AND set
+#  CCDASH_API_TOKEN / strong CCDASH_POSTGRES_PASSWORD before doing so.
+#  CCDASH_RUNTIME_PROFILE            api / worker        Set per-service (do not change)
+#  JOB_QUEUE_BACKEND                 postgres            Durable queue backend
+#  CCDASH_SESSION_LOG_PATH           (unset)             Bind-mount for session JSONL logs
+#  CCDASH_UID                        1000                Container user UID for volume perms
+#  CCDASH_GID                        1000                Container user GID for volume perms
+#  CCDASH_AUTH_PROVIDER              local               No-auth posture for LAN; set static_bearer for authed deploy
+#  CCDASH_LOCAL_NO_AUTH_ENABLED      true                Set false when switching to static_bearer auth
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# POSTGRES IMAGE REQUIREMENT:
+#   This stack requires a pgvector-capable Postgres image (pgvector/pgvector:pg15).
+#   Enterprise session-intelligence uses the vector extension
+#   (app.session_embeddings.embedding vector column; CREATE EXTENSION vector in migrations).
+#   A plain postgres image (without pgvector) does NOT ship the extension and will crash migrations.
+#
+# MISSING CCDASH_DATABASE_URL guard:
+#   When this compose file is used WITHOUT the bundled postgres service
+#   (e.g. with an external PG), CCDASH_DATABASE_URL MUST be set in the
+#   environment.  The compose file enforces this via the
+#   ${CCDASH_DATABASE_URL:?...} syntax on any override of DATABASE_URL.
+#   The in-stack default (postgresql://ccdash:ccdash@postgres:5432/ccdash)
+#   is set via an explicit environment block so missing-variable detection
+#   fires only when the operator explicitly clears it.
+
+name: ccdash-pg
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: deploy/runtime/Dockerfile
+  args:
+    BUILD_UID: "${CCDASH_UID:-1000}"
+    BUILD_GID: "${CCDASH_GID:-1000}"
+
+x-shared-backend-env: &shared-backend-env
+  CCDASH_DB_BACKEND: "postgres"
+  CCDASH_DATABASE_URL: "${CCDASH_DATABASE_URL:-postgresql://${CCDASH_POSTGRES_USER:-ccdash}:${CCDASH_POSTGRES_PASSWORD:-ccdash}@postgres:5432/${CCDASH_POSTGRES_DB:-ccdash}}"
+  CCDASH_STORAGE_PROFILE: "enterprise"
+  CCDASH_HOST: "0.0.0.0"
+  CCDASH_PORT: "8000"
+  JOB_QUEUE_BACKEND: "postgres"
+  CCDASH_JOB_QUEUE_BACKEND: "postgres"
+  CCDASH_STARTUP_SYNC_ENABLED: "${CCDASH_STARTUP_SYNC_ENABLED:-false}"
+  CCDASH_STARTUP_SYNC_LIGHT_MODE: "true"
+  GIT_OPTIONAL_LOCKS: "0"
+  # ── Auth posture ─────────────────────────────────────────────────────────────
+  # This compose stack defaults to LOCAL-TRUST no-auth (suitable for a private
+  # LAN / single-operator deployment).  The 'api' runtime profile satisfies the
+  # validate_runtime_environment_contract hosted_no_auth_enabled path when
+  # CCDASH_AUTH_PROVIDER=local and CCDASH_LOCAL_NO_AUTH_ENABLED=true.
+  #
+  # For an authenticated deployment, set instead:
+  #   CCDASH_AUTH_PROVIDER=static_bearer
+  #   CCDASH_API_BEARER_TOKEN=<secret>
+  # Optionally also set CCDASH_API_TOKEN for the external /api/v1 LAN token
+  # introduced in Phase 10 — that token is SEPARATE from CCDASH_API_BEARER_TOKEN.
+  CCDASH_AUTH_PROVIDER: "local"
+  CCDASH_LOCAL_NO_AUTH_ENABLED: "true"
+
+services:
+  # ── Postgres 15 ────────────────────────────────────────────────────────────
+  postgres:
+    # pgvector image (Postgres 15 + pgvector) — required for app.session_embeddings.embedding
+    # vector column / CREATE EXTENSION vector (enterprise session-intelligence).
+    # A plain postgres image will fail migrations (vector.control: No such file or directory).
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${CCDASH_POSTGRES_USER:-ccdash}"
+      POSTGRES_PASSWORD: "${CCDASH_POSTGRES_PASSWORD:-ccdash}"
+      POSTGRES_DB: "${CCDASH_POSTGRES_DB:-ccdash}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -h 127.0.0.1 -U "${CCDASH_POSTGRES_USER:-ccdash}" -d "${CCDASH_POSTGRES_DB:-ccdash}"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    ports:
+      # Loopback-only by default: host-side debugging/tests reach PG at 127.0.0.1:${CCDASH_POSTGRES_PORT}.
+      # To expose on the LAN you MUST also set a strong CCDASH_POSTGRES_PASSWORD (never the ccdash default).
+      - "127.0.0.1:${CCDASH_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ccdash-postgres-data:/var/lib/postgresql/data
+
+  # ── API server ──────────────────────────────────────────────────────────────
+  # Serves the REST API on :8000. /readyz is the health gate (T9-008).
+  # Waits for postgres to be healthy before starting.
+  api:
+    build:
+      <<: *backend-build
+      target: api
+    restart: unless-stopped
+    init: true
+    user: "${CCDASH_UID:-1000}:${CCDASH_GID:-1000}"
+    environment:
+      <<: *shared-backend-env
+      CCDASH_RUNTIME_PROFILE: "api"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5)"
+      interval: 15s
+      timeout: 6s
+      retries: 6
+      start_period: 45s
+    ports:
+      # Loopback-only by default (local-first, no-auth posture). To serve the LAN, change to
+      # 0.0.0.0:${CCDASH_API_PORT}:8000 AND set CCDASH_API_TOKEN (see external-api-lan-deployment.md).
+      - "127.0.0.1:${CCDASH_API_PORT:-8000}:8000"
+    volumes:
+      # Session-log mount: bind the host session-log directory (if set).
+      # Operators must set CCDASH_SESSION_LOG_PATH to their local Claude sessions dir.
+      # If unset, the volume is omitted and the worker has no filesystem source-of-truth.
+      - type: bind
+        source: "${CCDASH_SESSION_LOG_PATH:-/tmp/ccdash-sessions-placeholder}"
+        target: /data/sessions
+        read_only: true
+        bind:
+          create_host_path: true
+
+  # One-shot seed: register the worker's bound project in the DB-authoritative
+  # registry (ADR-006) so the worker can resolve CCDASH_WORKER_PROJECT_ID on a
+  # fresh DB. Exits 0 on success (or 409 already-exists); the worker waits on
+  # service_completed_successfully before starting. add_project does a plain DB
+  # upsert with no path validation, so /data/sessions need not exist on the api.
+  seed:
+    build:
+      <<: *backend-build
+      target: api
+    restart: "no"
+    user: "${CCDASH_UID:-1000}:${CCDASH_GID:-1000}"
+    depends_on:
+      api:
+        condition: service_healthy
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        import json, sys, urllib.request, urllib.error, os
+        pid = os.environ.get("CCDASH_WORKER_PROJECT_ID", "smoke-stack")
+        body = json.dumps({
+            "id": pid,
+            "name": "Smoke Stack",
+            "path": "/data/sessions",
+            "sessionsPath": "/data/sessions",
+        }).encode()
+        req = urllib.request.Request(
+            "http://api:8000/api/projects",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            r = urllib.request.urlopen(req, timeout=15)
+            print("SEED_OK", r.status, pid)
+        except urllib.error.HTTPError as e:
+            msg = e.read().decode()[:200]
+            print("SEED_HTTP", e.code, msg)
+            # 409/200 = already present / created → tolerate; else fail loudly
+            sys.exit(0 if e.code in (200, 201, 409) else 1)
+
+  # ── Background worker ────────────────────────────────────────────────────────
+  # Runs sync, analytics, and job-queue processing. No HTTP API.
+  # /readyz on :9465 is the probe endpoint.
+  # Waits for api to be healthy (ensuring migrations have run first).
+  worker:
+    build:
+      <<: *backend-build
+      target: worker
+    restart: unless-stopped
+    init: true
+    user: "${CCDASH_UID:-1000}:${CCDASH_GID:-1000}"
+    environment:
+      <<: *shared-backend-env
+      CCDASH_RUNTIME_PROFILE: "worker"
+      CCDASH_WORKER_PROBE_HOST: "0.0.0.0"
+      CCDASH_WORKER_PROBE_PORT: "${CCDASH_WORKER_PROBE_PORT:-9465}"
+      CCDASH_WORKER_PROJECT_ID: "${CCDASH_WORKER_PROJECT_ID:-smoke-stack}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('CCDASH_WORKER_PROBE_PORT', '9465') + '/readyz', timeout=5)"
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 30s
+    ports:
+      - "127.0.0.1:${CCDASH_WORKER_PROBE_PORT:-9465}:9465"
+    volumes:
+      - type: bind
+        source: "${CCDASH_SESSION_LOG_PATH:-/tmp/ccdash-sessions-placeholder}"
+        target: /data/sessions
+        read_only: true
+        bind:
+          create_host_path: true
+
+volumes:
+  ccdash-postgres-data:
+    driver: local

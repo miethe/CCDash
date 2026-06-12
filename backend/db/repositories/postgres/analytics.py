@@ -29,7 +29,7 @@ class PostgresAnalyticsRepository(AnalyticsRepository):
                     project_id, metric_type, value, captured_at, period,
                     metadata_json, scope, scope_id
                 ) VALUES ($1, $2, $3, $4, 'point', $5, $6, $7)
-                ON CONFLICT (project_id, metric_type, scope_id, (captured_at::date))
+                ON CONFLICT (project_id, metric_type, scope_id, (left(captured_at, 10)))
                 WHERE period = 'point'
                 DO UPDATE SET
                     value         = EXCLUDED.value,
@@ -139,7 +139,7 @@ class PostgresAnalyticsRepository(AnalyticsRepository):
         """Insert or update a period='point' analytics entry.
 
         Uses the v34 partial unique index idx_analytics_point_daily on
-        (project_id, metric_type, scope_id, (captured_at::date)) WHERE period='point'
+        (project_id, metric_type, scope_id, (left(captured_at, 10))) WHERE period='point'
         to guarantee at most one value per metric per scope per calendar day.
         On conflict the row is updated in-place so callers always see the
         latest same-day value.
@@ -159,7 +159,7 @@ class PostgresAnalyticsRepository(AnalyticsRepository):
                 project_id, metric_type, value, captured_at, period,
                 metadata_json, scope, scope_id
             ) VALUES ($1, $2, $3, $4, 'point', $5, $6, $7)
-            ON CONFLICT (project_id, metric_type, scope_id, (captured_at::date))
+            ON CONFLICT (project_id, metric_type, scope_id, (left(captured_at, 10)))
             WHERE period = 'point'
             DO UPDATE SET
                 value         = EXCLUDED.value,
