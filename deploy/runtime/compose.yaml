@@ -91,6 +91,9 @@ x-postgres-connection: &postgres-connection
 services:
   backend:
     <<: *backend-service
+    build:
+      <<: *backend-build
+      target: runtime
     profiles: ["local"]
     environment:
       <<: *backend-shared-env
@@ -109,6 +112,9 @@ services:
 
   api:
     <<: *backend-service
+    build:
+      <<: *backend-build
+      target: api
     profiles: ["enterprise"]
     environment:
       <<: [*backend-shared-env, *postgres-connection]
@@ -126,6 +132,9 @@ services:
 
   worker:
     <<: *backend-service
+    build:
+      <<: *backend-build
+      target: worker
     profiles: ["enterprise"]
     environment:
       <<: [*backend-shared-env, *postgres-connection]
@@ -165,6 +174,9 @@ services:
   #   docker compose --profile enterprise --profile postgres --profile live-watch up
   worker-watch:
     <<: *backend-service
+    build:
+      <<: *backend-build
+      target: worker
     profiles: ["enterprise", "live-watch"]
     command: ["python", "-m", "backend.worker"]
     environment:
