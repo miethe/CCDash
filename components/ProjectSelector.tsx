@@ -4,6 +4,7 @@ import { useData } from '../contexts/DataContext';
 import { summarizeAuthMembershipContext, useAuthSession } from '../contexts/AuthSessionContext';
 import { AddProjectModal } from './AddProjectModal';
 import { useProjectsQuery } from '../services/queries/projects';
+import { Badge } from './ui/badge';
 
 const PROJECT_OPERATOR_ROLES = ['EA', 'TA', 'PM', 'owner', 'admin', 'operator', 'project_maintainer', 'project-maintainer', 'project:maintainer'];
 
@@ -68,8 +69,19 @@ export const ProjectSelector: React.FC<{ initialOpen?: boolean }> = ({ initialOp
                                     className="w-full text-left px-3 py-2 hover:bg-slate-700 flex items-center justify-between group transition-colors"
                                 >
                                     <span className="min-w-0">
-                                        <span className="block text-sm text-slate-300 group-hover:text-white truncate">
-                                            {p.name}
+                                        <span className="flex items-center gap-1.5 text-sm text-slate-300 group-hover:text-white">
+                                            <span className="truncate">{p.name}</span>
+                                            {p.is_seed === true && (
+                                                <Badge
+                                                    tone="warning"
+                                                    size="sm"
+                                                    className="flex-shrink-0"
+                                                    title="Bootstrap seed project"
+                                                    aria-label="seed project"
+                                                >
+                                                    seed
+                                                </Badge>
+                                            )}
                                         </span>
                                         {p.id === activeProject?.id && contextLine && (
                                             <span className="mt-0.5 block truncate text-[10px] text-slate-500">
