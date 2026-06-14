@@ -220,21 +220,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     PRIMARY KEY (project_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, started_at DESC);
+-- NOTE (T1-002 P1-fix): idx_sessions_project, idx_sessions_project_status_updated, and
+-- idx_sessions_project_source_file previously lived here and caused UndefinedColumnError
+-- on pre-v30 DBs (sessions.project_id not yet added when _TABLES runs on an existing DB).
+-- They have been moved into the if current_version < 30: block in _run_migrations_inner,
+-- placed after _migrate_v30_detail_tables_project_id() which ensures the column exists.
+-- IF NOT EXISTS guards make them idempotent on fresh DBs and existing v35 DBs.
 
--- Composite index for live active-count queries (live-agents-count-v1).
--- Supports the count_active query: WHERE project_id = ? AND status = ? AND updated_at >= ?
--- Also defends against stale-active rows (OQ-3 finding: rows up to 93 days old with
--- status='active') by making the updated_at predicate cheap to execute.
-CREATE INDEX IF NOT EXISTS idx_sessions_project_status_updated
-    ON sessions(project_id, status, updated_at);
-
--- T1-005: source_file indexes — kills full-scan in repositories/sessions.py list_by_source
+-- T1-005: source_file index — kills full-scan in repositories/sessions.py list_by_source
 -- and in watcher-triggered delete/lookup per file during sync.
+-- This index does NOT reference project_id and is safe to keep in _TABLES.
 CREATE INDEX IF NOT EXISTS idx_sessions_source_file
     ON sessions(source_file);
-CREATE INDEX IF NOT EXISTS idx_sessions_project_source_file
-    ON sessions(project_id, source_file);
 
 -- Normalized log entries
 CREATE TABLE IF NOT EXISTS session_logs (
@@ -3012,20 +3009,17 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         " ON feature_phases(feature_id, status)"
     )
 
-    # ── T1-004: Backfill idx_sessions_project_status_updated on existing DBs ────
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_project_status_updated"
-        " ON sessions(project_id, status, updated_at)"
-    )
-
-    # ── T1-005: source_file indexes — kills full-scan in list_by_source ──────────
+    # ── T1-005: source_file index — kills full-scan in list_by_source ───────────
+    # NOTE (T1-002 P1-fix): idx_sessions_project_status_updated and
+    # idx_sessions_project_source_file were previously created unconditionally here
+    # (T1-004/T1-005 backfill) AND inside _TABLES.  Both locations reference
+    # sessions.project_id before v30 adds it, causing UndefinedColumnError on
+    # pre-v30 upgrade paths.  They have been moved exclusively into the
+    # if current_version < 30: block above.  The non-project_id source_file index
+    # is safe here and kept for idempotency on DBs that upgraded before the move.
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_source_file"
         " ON sessions(source_file)"
-    )
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_project_source_file"
-        " ON sessions(project_id, source_file)"
     )
 
     # ── T1-010: materialized badge columns on sessions (Postgres supports IF NOT EXISTS) ─
@@ -3083,8 +3077,35 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
 
     # ── v30 migrations (P3-001/002/006 tables created via _TABLES above) ─────
     if current_version < 30:
+        # T1-002 (P1-fix): ensure sessions.project_id exists before creating
+        # project_id-dependent indexes.  On a fresh DB (version=0) the column is
+        # already present in _TABLES DDL; _ensure_column is a no-op.  On a pre-v30
+        # DB the column was absent when _TABLES ran (CREATE TABLE IF NOT EXISTS is
+        # a no-op on an existing table), so we add it here with a safe default.
+        await _ensure_column(db, "sessions", "project_id", "TEXT NOT NULL DEFAULT ''")
+
         # P3-004: add + backfill project_id on session detail tables
         await _migrate_v30_detail_tables_project_id(db)
+
+        # T1-002 (P1-fix): create project_id-dependent sessions indexes AFTER
+        # the column exists.  IF NOT EXISTS makes all three idempotent on
+        # re-run and on DBs already at v35 (where these indexes already exist).
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_project"
+            " ON sessions(project_id, started_at DESC)"
+        )
+        # Composite index for live active-count queries (live-agents-count-v1).
+        # Supports count_active: WHERE project_id = ? AND status = ? AND updated_at >= ?
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_project_status_updated"
+            " ON sessions(project_id, status, updated_at)"
+        )
+        # T1-005 (original comment): source_file composite index — kills full-scan in
+        # repositories/sessions.py list_by_source and watcher-triggered delete/lookup.
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_project_source_file"
+            " ON sessions(project_id, source_file)"
+        )
 
     # ── v31 migrations (P3-003-FU: composite PK + composite child FKs) ───────
     if current_version < 31:
