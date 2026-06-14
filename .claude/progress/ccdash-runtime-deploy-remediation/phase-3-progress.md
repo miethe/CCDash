@@ -94,7 +94,7 @@ tasks:
 
   - id: T3-006
     name: "Compose / env / docs update"
-    status: pending
+    status: completed
     assigned_to: documentation-writer
     assigned_model: haiku
     model_effort: adaptive
@@ -102,6 +102,8 @@ tasks:
       Update deploy/ compose files and .env.example: CCDASH_WORKER_WATCH_PROJECT_ID
       marked optional with comment. Update watcher section in
       docs/guides/containerized-deployment-quickstart.md — optional semantics.
+    completed_at: 2026-06-14T00:18Z
+    evidence: "commit 9fe62d8 — .env.example, deploy/runtime/compose.yaml, docs/guides/containerized-deployment-quickstart.md updated with registry-driven fan-out semantics"
 
   - id: T3-007
     name: "Manual livewatch smoke"
