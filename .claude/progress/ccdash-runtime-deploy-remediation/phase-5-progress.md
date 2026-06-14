@@ -2,17 +2,25 @@
 schema_version: 2
 doc_type: progress
 phase: 5
-phase_title: "Docs finalization, deferred specs, and CHANGELOG"
+phase_title: Docs finalization, deferred specs, and CHANGELOG
 feature_slug: ccdash-runtime-deploy-remediation
-status: not-started
+status: completed
 created: 2026-06-12
-updated: 2026-06-12
-overall_progress: 0
+updated: '2026-06-14'
+overall_progress: 100
 completion_estimate: null
 parallelization:
   strategy: batch-parallel
-  batch_1: [T5-001, T5-002, T5-003, T5-005, T5-006, T5-007]
-  batch_2: [T5-004, T5-008]
+  batch_1:
+  - T5-001
+  - T5-002
+  - T5-003
+  - T5-005
+  - T5-006
+  - T5-007
+  batch_2:
+  - T5-004
+  - T5-008
 ---
 
 # Phase 5 Progress — Docs finalization, deferred specs, and CHANGELOG
@@ -32,7 +40,8 @@ karen end-of-feature gate required before phase is sealed.
 tasks:
   - id: T5-001
     name: "CHANGELOG [Unreleased] entry"
-    status: pending
+    status: completed
+    commit_ref: bec2e56
     assigned_to: changelog-generator
     assigned_model: haiku
     model_effort: adaptive
@@ -44,7 +53,8 @@ tasks:
 
   - id: T5-002
     name: "Deployment guide update"
-    status: pending
+    status: completed
+    commit_ref: 3eb2da8
     assigned_to: documentation-writer
     assigned_model: haiku
     model_effort: adaptive
@@ -55,7 +65,8 @@ tasks:
 
   - id: T5-003
     name: "CLAUDE.md pointer"
-    status: pending
+    status: completed
+    commit_ref: 56845d3
     assigned_to: documentation-writer
     assigned_model: haiku
     model_effort: adaptive
@@ -66,7 +77,8 @@ tasks:
 
   - id: T5-004
     name: "Plan frontmatter close-out"
-    status: pending
+    status: completed
+    commit_ref: 145fc39
     assigned_to: documentation-writer
     assigned_model: haiku
     model_effort: adaptive
@@ -77,7 +89,8 @@ tasks:
 
   - id: T5-005
     name: "DOC-006: F-W6-001 design spec"
-    status: pending
+    status: completed
+    commit_ref: cc08859
     assigned_to: documentation-writer
     assigned_model: sonnet
     model_effort: adaptive
@@ -88,7 +101,8 @@ tasks:
 
   - id: T5-006
     name: "DOC-006: W2 dynamic rebind spec"
-    status: pending
+    status: completed
+    commit_ref: d4f27fd
     assigned_to: documentation-writer
     assigned_model: sonnet
     model_effort: adaptive
@@ -99,7 +113,8 @@ tasks:
 
   - id: T5-007
     name: "Findings doc finalize"
-    status: pending
+    status: completed
+    commit_ref: ce62faf
     assigned_to: documentation-writer
     assigned_model: haiku
     model_effort: adaptive
@@ -109,7 +124,8 @@ tasks:
 
   - id: T5-008
     name: "Feature guide"
-    status: pending
+    status: completed
+    commit_ref: ce62faf
     assigned_to: documentation-writer
     assigned_model: haiku
     model_effort: adaptive
@@ -125,12 +141,12 @@ tasks:
 
 | AC ID | Description | Verified By | Verdict |
 |-------|-------------|-------------|---------|
-| AC-T5-001 | `CHANGELOG.md [Unreleased]` contains W1/W3/W2/W4 entries | T5-001 | pending |
-| AC-T5-005 | D-001 design spec exists at `docs/project_plans/design-specs/f-w6-001-correlation-overcounting.md` | T5-005 | pending |
-| AC-T5-006 | D-002 design spec exists at `docs/project_plans/design-specs/w2-dynamic-watcher-rebind.md` | T5-006 | pending |
-| AC-T5-004 | `deferred_items_spec_refs` populated with D-001 + D-002 paths; plan `status: completed` | T5-004 | pending |
-| AC-T5-007 | `.claude/findings/ccdash-core-remediation-findings.md` `status: accepted`; `promoted_to` set | T5-007 | pending |
-| AC-T5-008 | Feature guide exists; all 5 sections present | T5-008 | pending |
+| AC-T5-001 | `CHANGELOG.md [Unreleased]` contains W1/W3/W2/W4 entries | T5-001 | verified |
+| AC-T5-005 | D-001 design spec exists at `docs/project_plans/design-specs/f-w6-001-correlation-overcounting.md` | T5-005 | verified |
+| AC-T5-006 | D-002 design spec exists at `docs/project_plans/design-specs/w2-dynamic-watcher-rebind.md` | T5-006 | verified |
+| AC-T5-004 | `deferred_items_spec_refs` populated with D-001 + D-002 paths; plan `status: completed` | T5-004 | verified |
+| AC-T5-007 | `.claude/findings/ccdash-core-remediation-findings.md` `status: accepted`; `promoted_to` set | T5-007 | verified |
+| AC-T5-008 | Feature guide exists; all 5 sections present | T5-008 | verified |
 
 ---
 

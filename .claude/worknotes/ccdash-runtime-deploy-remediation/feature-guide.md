@@ -19,7 +19,7 @@ This guide summarizes the four workstreams delivered in the Runtime & Deploy Rem
 
 **W1: Registry-Authoritative Project Resolution (P0)**
 
-The API `/api/projects` endpoint now honors the DB registry's `is_active` flag. Projects are ordered `ORDER BY is_active DESC, name ASC`, ensuring active projects appear first. A computed `is_seed` field identifies example projects (`default-skillmeat`, etc.) without adding a DB column. The FE app-shell scope guard (`resolveScopeOutcome` in `contexts/AppSessionContext.tsx`) clears stale non-active project scope and defaults to the first active project on load. **Seam verified**: P0-T0-005 integration test + browser smoke test confirm default landing on active project with data visible.
+The API `/api/projects` endpoint now honors the DB registry's `is_active` flag. Projects are ordered `ORDER BY is_active DESC, created_at ASC`, ensuring active projects appear first. A computed `is_seed` field identifies example projects (`default-skillmeat`, etc.) without adding a DB column. The FE app-shell scope guard (`resolveScopeOutcome` in `contexts/AppSessionContext.tsx`) clears stale non-active project scope and defaults to the first active project on load. **Seam verified**: P0-T0-005 integration test + browser smoke test confirm default landing on active project with data visible.
 
 **W2: Registry-Driven Watcher Fan-Out (P2→P3)**
 
@@ -39,7 +39,7 @@ Six findings from the investigation report were triaged: F-W1-001 (seed project 
 
 ### W1 & W3 — Two-Layer Ordering Fix
 
-**Project layer**: `DbProjectManager.list_projects()` (P0-BE) fetches from DB with `ORDER BY is_active DESC, name ASC`. The `is_seed` field is computed client-side from a hardcoded allowlist (no DB schema change). **API layer**: `routers/projects.py:get_projects()` (P0-BE) returns the ordered list. **FE app-shell**: `contexts/AppSessionContext.tsx:refreshProjects()` (P0-FE) applies scope guard logic: if a persisted scope exists AND that project is still `is_active`, use it; otherwise default to the first `is_active` project.
+**Project layer**: `DbProjectManager.list_projects()` (P0-BE) fetches from DB with `ORDER BY is_active DESC, created_at ASC`. The `is_seed` field is computed client-side from a hardcoded allowlist (no DB schema change). **API layer**: `routers/projects.py:get_projects()` (P0-BE) returns the ordered list. **FE app-shell**: `contexts/AppSessionContext.tsx:refreshProjects()` (P0-FE) applies scope guard logic: if a persisted scope exists AND that project is still `is_active`, use it; otherwise default to the first `is_active` project.
 
 **Migration ordering**: `backend/db/postgres_migrations.py:_run_migrations_inner()` (P1) sequences table creation, column ALTERs (v30+), then index/FK creation. Pre-v35 baselines that hit the v29→v35 gap now migrate cleanly.
 
