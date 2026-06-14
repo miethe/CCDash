@@ -1,3 +1,9 @@
+"""
+Run as a named module only:
+    backend/.venv/bin/python -m pytest backend/tests/test_runtime_bootstrap.py
+
+Do NOT run with a dev server active — causes a segfault/hang.
+"""
 import asyncio
 from contextlib import ExitStack
 import json
