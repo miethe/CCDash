@@ -3,6 +3,36 @@ import type { Project } from '../types';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { useDataClient } from './DataClientContext';
 
+/**
+ * Pure scope-resolution decision for refreshProjects().
+ *
+ * Returns one of three outcomes:
+ *   - 'keep'  — the scoped project is valid and active; retain it as the active project
+ *   - 'clear' — the scoped project exists but is explicitly inactive while another is
+ *               server-active; clear the stale scope so getActiveProject() can elect the
+ *               correct one
+ *   - 'keep-legacy' — the scoped project exists but no server-active project is known
+ *                     (older backend or all projects inactive); preserve the stored scope
+ *   - 'query' — no usable scoped project; fall through to getActiveProject()
+ *
+ * Exported for unit testing.
+ */
+export type ScopeResolutionOutcome = 'keep' | 'clear' | 'keep-legacy' | 'query';
+
+export function resolveScopeOutcome(
+  scopedProject: Project | null | undefined,
+  normalizedProjects: Project[],
+): ScopeResolutionOutcome {
+  if (!scopedProject) return 'query';
+
+  const scopedIsInactive = !scopedProject.is_active;
+  const anyProjectIsActive = normalizedProjects.some(p => p.is_active === true);
+
+  if (!scopedIsInactive) return 'keep';
+  if (anyProjectIsActive) return 'clear';
+  return 'keep-legacy';
+}
+
 interface AppSessionContextValue {
   projects: Project[];
   activeProject: Project | null;
@@ -29,24 +59,21 @@ export const AppSessionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       ? normalizedProjects.find(project => project.id === scopedProjectId)
       : null;
 
-    // Scope guard: if the localStorage-scoped project is explicitly inactive AND at least
-    // one project in the registry is active, the stored scope is stale — clear it and let
-    // getActiveProject() pick the correct one. Treat missing/null is_active as false.
-    const scopedIsInactive = scopedProject != null && !scopedProject.is_active;
-    const anyProjectIsActive = normalizedProjects.some(p => p.is_active === true);
-    if (scopedProject && !scopedIsInactive) {
+    // Scope guard: delegate to the exported pure helper so the decision is unit-testable.
+    const outcome = resolveScopeOutcome(scopedProject ?? null, normalizedProjects);
+    if (outcome === 'keep') {
       // Scoped project is present and not explicitly inactive — honour the stored scope.
-      setActiveProject(scopedProject);
+      setActiveProject(scopedProject!);
       return;
     }
-    if (scopedIsInactive && anyProjectIsActive) {
+    if (outcome === 'clear') {
       // Stale scope: clear it so we fall through to getActiveProject() below.
       client.setProjectScope(null);
-    } else if (scopedProject) {
+    } else if (outcome === 'keep-legacy') {
       // Scoped project exists but no server-active project is known yet (older backend that
       // doesn't send is_active, or all projects inactive). Keep the stored scope as-is to
       // avoid regressing the happy-path selection on backends that predate this field.
-      setActiveProject(scopedProject);
+      setActiveProject(scopedProject!);
       return;
     }
 
