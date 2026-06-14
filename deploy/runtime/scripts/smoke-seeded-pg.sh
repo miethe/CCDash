@@ -31,6 +31,11 @@ SMOKE_PROJECT="ccdash-seeded-smoke"
 API_PORT="${CCDASH_SEEDED_SMOKE_API_PORT:-18000}"
 API_URL="http://127.0.0.1:${API_PORT}"
 TIMEOUT="${CCDASH_SEEDED_SMOKE_TIMEOUT:-90}"
+# Isolated host PG port so the smoke never collides with a running ccdash stack on 5432.
+# (The api reaches PG over the compose network as postgres:5432; this host publish is for debug only.)
+PG_PORT="${CCDASH_SEEDED_SMOKE_PG_PORT:-15432}"
+ENV_FILE=""
+OVERRIDE_FILE=""
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -65,6 +70,7 @@ cleanup() {
         --profile enterprise \
         --profile postgres \
         down --volumes --remove-orphans 2>/dev/null || true
+    rm -f "${ENV_FILE:-}" "${OVERRIDE_FILE:-}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -75,7 +81,6 @@ cleanup
 # Build a minimal env file with overrides for the seeded smoke run
 # ---------------------------------------------------------------------------
 ENV_FILE="$(mktemp /tmp/ccdash-seeded-smoke.XXXXXX.env)"
-trap 'rm -f "${ENV_FILE}"' EXIT
 
 cat >"${ENV_FILE}" <<ENV
 CCDASH_STORAGE_PROFILE=enterprise
@@ -86,6 +91,7 @@ CCDASH_POSTGRES_USER=ccdash
 CCDASH_POSTGRES_PASSWORD=ccdash
 CCDASH_API_BEARER_TOKEN=ccdash-seeded-smoke-token
 CCDASH_API_PORT=${API_PORT}
+CCDASH_POSTGRES_PORT=${PG_PORT}
 CCDASH_API_UPSTREAM=http://api:8000
 CCDASH_WORKER_PROJECT_ID=seeded-smoke-project
 CCDASH_WORKER_PROBE_HOST=0.0.0.0
@@ -100,7 +106,6 @@ ENV
 # Write a minimal compose override that mounts the seed SQL as PG init script
 # ---------------------------------------------------------------------------
 OVERRIDE_FILE="$(mktemp /tmp/ccdash-seeded-smoke-override.XXXXXX.yaml)"
-trap 'rm -f "${OVERRIDE_FILE}" "${ENV_FILE}"' EXIT
 
 cat >"${OVERRIDE_FILE}" <<YAML
 services:

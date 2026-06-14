@@ -8,7 +8,7 @@ status: completed
 created: 2026-06-12
 updated: '2026-06-14'
 overall_progress: 100
-completion_estimate: "2026-06-14"
+completion_estimate: '2026-06-14'
 parallelization:
   strategy: batch-parallel
   batch_1:
@@ -23,52 +23,81 @@ parallelization:
   batch_4:
   - T3-007
 tasks:
-  - id: T3-001
-    status: completed
-    started: "2026-06-13T00:00Z"
-    completed: "2026-06-13T23:59Z"
-    evidence:
-      - "commit: backend/runtime/container.py _resolve_watcher_fan_out_bindings implemented (ADR-006)"
-  - id: T3-002
-    status: completed
-    started: "2026-06-13T00:00Z"
-    completed: "2026-06-13T23:59Z"
-    evidence:
-      - "commit: backend/config.py WORKER_WATCH_PROJECT_ID inline doc updated with registry-driven semantics"
-  - id: T3-003
-    status: completed
-    started: "2026-06-13T00:00Z"
-    completed: "2026-06-13T23:59Z"
-    evidence:
-      - "commit: /api/health/detail watcher section extended with per-project projects map (T3-003 AC verified)"
-  - id: T3-004
-    status: completed
-    started: "2026-06-13T00:00Z"
-    completed: "2026-06-13T23:59Z"
-    evidence:
-      - "commit: reconcile loop implemented; WATCHER_RECONCILE_INTERVAL_SECONDS default 60s; logs confirm lastReconcileAt"
-  - id: T3-005
-    status: completed
-    started: "2026-06-13T00:00Z"
-    completed: "2026-06-13T23:59Z"
-    evidence:
-      - "commit: backend/tests/test_p3_worker_bootstrap.py — empty-env fan-out and env-pin single-project cases"
-  - id: T3-006
-    status: completed
-    started: "2026-06-14T00:00Z"
-    completed: "2026-06-14T00:18Z"
-    evidence:
-      - "commit 9fe62d8: .env.example, deploy/runtime/compose.yaml, docs/guides/containerized-deployment-quickstart.md updated"
-      - "commit f8357c4: corrected is_active wording in all three locations to match SPIKE OQ-2 decision"
-  - id: T3-007
-    status: completed
-    started: "2026-06-14T04:00Z"
-    completed: "2026-06-14T05:00Z"
-    evidence:
-      - "smoke:registry-fanout (no CCDASH_WORKER_WATCH_PROJECT_ID): DB registry returned 5 projects; watcher_runtime.data.projects confirms fan-out — test-project-1(1 path), 3df0ff70/SkillMeat(4 paths), 3da60e0c/CCDash(4 paths), 479ae45d/MeatyWiki(3 paths), default-skillmeat(0 paths/expected). All 5 watched. curl :9466/readyz watcher_runtime.data.lastReconcileAt=2026-06-14T04:35:02.653506Z"
-      - "P3-reviewer-fix (compose passthrough): deploy/runtime/compose.yaml was missing CCDASH_WORKER_WATCH_PROJECT_ID in worker-watch env section; container always saw empty string and entered fan-out path even when operator set CCDASH_WORKER_WATCH_PROJECT_ID. Fixed: added CCDASH_WORKER_WATCH_PROJECT_ID: '${CCDASH_WORKER_WATCH_PROJECT_ID:-}' to compose service env block (deploy/runtime/compose.yaml:197)."
-      - "smoke:env-pin post-fix verification (current codebase, CCDASH_WORKER_WATCH_PROJECT_ID=3df0ff70-85fd-402f-a028-83cae8bcedc2 forwarded via compose): compose now passes env var into container namespace; backend config.py reads non-empty WORKER_WATCH_PROJECT_ID; _resolve_startup_project_binding takes single-project path; worker_binding probe reports pass with requestedProjectId=3df0ff70, resolvedProjectId=3df0ff70; watcher state=running, watchPathCount=5. worker_binding fanOutMode=false in probe data confirms single-project scope."
-      - "P3-reviewer-fix (worker_binding probe fan-out): backend/runtime/container.py worker_binding probe now treats non-empty watcher_fan_out_bindings as a passing variant — Docker healthcheck no longer reports unhealthy for a fully functioning fan-out deployment. Probe data now exposes fanOutMode, fanOutProjectCount, fanOutProjectIds fields."
+- id: T3-001
+  status: completed
+  started: 2026-06-13T00:00Z
+  completed: 2026-06-13T23:59Z
+  evidence:
+  - 'commit: backend/runtime/container.py _resolve_watcher_fan_out_bindings implemented
+    (ADR-006)'
+- id: T3-002
+  status: completed
+  started: 2026-06-13T00:00Z
+  completed: 2026-06-13T23:59Z
+  evidence:
+  - 'commit: backend/config.py WORKER_WATCH_PROJECT_ID inline doc updated with registry-driven
+    semantics'
+- id: T3-003
+  status: completed
+  started: 2026-06-13T00:00Z
+  completed: 2026-06-13T23:59Z
+  evidence:
+  - 'commit: /api/health/detail watcher section extended with per-project projects
+    map (T3-003 AC verified)'
+- id: T3-004
+  status: completed
+  started: 2026-06-13T00:00Z
+  completed: 2026-06-13T23:59Z
+  evidence:
+  - 'commit: reconcile loop implemented; WATCHER_RECONCILE_INTERVAL_SECONDS default
+    60s; logs confirm lastReconcileAt'
+- id: T3-005
+  status: completed
+  started: 2026-06-13T00:00Z
+  completed: 2026-06-13T23:59Z
+  evidence:
+  - 'commit: backend/tests/test_p3_worker_bootstrap.py — empty-env fan-out and env-pin
+    single-project cases'
+- id: T3-006
+  status: completed
+  started: 2026-06-14T00:00Z
+  completed: 2026-06-14T00:18Z
+  evidence:
+  - 'commit 9fe62d8: .env.example, deploy/runtime/compose.yaml, docs/guides/containerized-deployment-quickstart.md
+    updated'
+  - 'commit f8357c4: corrected is_active wording in all three locations to match SPIKE
+    OQ-2 decision'
+- id: T3-007
+  status: completed
+  started: 2026-06-14T04:00Z
+  completed: 2026-06-14T05:00Z
+  evidence:
+  - 'smoke:registry-fanout (no CCDASH_WORKER_WATCH_PROJECT_ID): DB registry returned
+    5 projects; watcher_runtime.data.projects confirms fan-out — test-project-1(1
+    path), 3df0ff70/SkillMeat(4 paths), 3da60e0c/CCDash(4 paths), 479ae45d/MeatyWiki(3
+    paths), default-skillmeat(0 paths/expected). All 5 watched. curl :9466/readyz
+    watcher_runtime.data.lastReconcileAt=2026-06-14T04:35:02.653506Z'
+  - 'P3-reviewer-fix (compose passthrough): deploy/runtime/compose.yaml was missing
+    CCDASH_WORKER_WATCH_PROJECT_ID in worker-watch env section; container always saw
+    empty string and entered fan-out path even when operator set CCDASH_WORKER_WATCH_PROJECT_ID.
+    Fixed: added CCDASH_WORKER_WATCH_PROJECT_ID: ''${CCDASH_WORKER_WATCH_PROJECT_ID:-}''
+    to compose service env block (deploy/runtime/compose.yaml:197).'
+  - 'smoke:env-pin post-fix verification (current codebase, CCDASH_WORKER_WATCH_PROJECT_ID=3df0ff70-85fd-402f-a028-83cae8bcedc2
+    forwarded via compose): compose now passes env var into container namespace; backend
+    config.py reads non-empty WORKER_WATCH_PROJECT_ID; _resolve_startup_project_binding
+    takes single-project path; worker_binding probe reports pass with requestedProjectId=3df0ff70,
+    resolvedProjectId=3df0ff70; watcher state=running, watchPathCount=5. worker_binding
+    fanOutMode=false in probe data confirms single-project scope.'
+  - 'P3-reviewer-fix (worker_binding probe fan-out): backend/runtime/container.py
+    worker_binding probe now treats non-empty watcher_fan_out_bindings as a passing
+    variant — Docker healthcheck no longer reports unhealthy for a fully functioning
+    fan-out deployment. Probe data now exposes fanOutMode, fanOutProjectCount, fanOutProjectIds
+    fields.'
+total_tasks: 7
+completed_tasks: 7
+in_progress_tasks: 0
+blocked_tasks: 0
+progress: 100
 ---
 
 # Phase 3 Progress — Registry-driven watcher fan-out implementation (W2)
