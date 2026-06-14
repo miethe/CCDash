@@ -172,6 +172,9 @@ services:
 
   # Start watcher ingest with:
   #   docker compose --profile enterprise --profile postgres --profile live-watch up
+  # Registry-driven fan-out: when CCDASH_WORKER_WATCH_PROJECT_ID is empty,
+  # worker-watch derives watch targets from DB registry (all is_active=true projects).
+  # Non-empty: scopes to that specific project id (v1 behavior, one project per process).
   worker-watch:
     <<: *backend-service
     build:
@@ -185,12 +188,15 @@ services:
       CCDASH_QUERY_CACHE_BACKEND: "${CCDASH_QUERY_CACHE_BACKEND:-postgres}"
       # P3-006-FU: durable job queue now live — enterprise services default to postgres.
       CCDASH_JOB_QUEUE_BACKEND: "${CCDASH_JOB_QUEUE_BACKEND:-postgres}"
+      # P3-T3-006: Optional project id scope. Empty → registry-driven fan-out.
       CCDASH_WORKER_PROJECT_ID: "${CCDASH_WORKER_WATCH_PROJECT_ID:-${CCDASH_WORKER_PROJECT_ID:-smoke-stack}}"
       CCDASH_WORKER_PROBE_HOST: "${CCDASH_WORKER_WATCH_PROBE_HOST:-0.0.0.0}"
       CCDASH_WORKER_PROBE_PORT: "${CCDASH_WORKER_WATCH_PROBE_PORT:-9466}"
       CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED: "${CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED:-true}"
       CCDASH_STARTUP_SYNC_ENABLED: "${CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED:-true}"
       CCDASH_STARTUP_SYNC_LIGHT_MODE: "${CCDASH_STARTUP_SYNC_LIGHT_MODE:-true}"
+      CCDASH_WATCHER_SYNC_CONCURRENCY: "${CCDASH_WATCHER_SYNC_CONCURRENCY:-20}"
+      CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS: "${CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS:-60}"
       CCDASH_TELEMETRY_EXPORT_ENABLED: "${CCDASH_TELEMETRY_EXPORT_ENABLED:-false}"
       CCDASH_SAM_ENDPOINT: "${CCDASH_SAM_ENDPOINT:-}"
       CCDASH_SAM_API_KEY: "${CCDASH_SAM_API_KEY:-}"

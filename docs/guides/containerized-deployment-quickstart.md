@@ -242,12 +242,36 @@ What you get:
 
 Add `live-watch` when you need enterprise live session ingest from mounted Claude Code or Codex session directories. The watcher co-runs with the default enterprise worker; it does not replace it. The default worker keeps probe port `9465`, and `worker-watch` uses `9466` by default.
 
-1. Confirm `deploy/runtime/.env` has a project id that exists in the mounted registry:
+The watcher supports two operating modes controlled by `CCDASH_WORKER_WATCH_PROJECT_ID`:
+
+### Registry-Driven Fan-Out Mode (Recommended for Multi-Project)
+
+When `CCDASH_WORKER_WATCH_PROJECT_ID` is empty, `worker-watch` performs registry-driven fan-out: it queries the DB registry at startup and during periodic reconciliation (default every 60s) to discover all `is_active=true` projects and spawns one WatcherBinding per project. This mode is ideal for deployments with multiple active projects.
 
 ```bash
-CCDASH_WORKER_PROJECT_ID=your-project-id
+# Leave CCDASH_WORKER_WATCH_PROJECT_ID empty for registry-driven mode
+CCDASH_WORKER_PROJECT_ID=your-default-project-id
 CCDASH_WORKER_PROBE_PORT=9465
-CCDASH_WORKER_WATCH_PROJECT_ID=your-project-id
+# Omit CCDASH_WORKER_WATCH_PROJECT_ID or set to empty string
+CCDASH_WORKER_WATCH_PROJECT_ID=
+CCDASH_WORKER_WATCH_PROBE_PORT=9466
+CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED=true
+CCDASH_WORKER_STARTUP_SYNC_ENABLED=false
+CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED=true
+CCDASH_WATCHER_SYNC_CONCURRENCY=20
+CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS=60
+CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED=false
+GIT_OPTIONAL_LOCKS=0
+```
+
+### Single-Project Scope Mode (v1 Backward Compatibility)
+
+When `CCDASH_WORKER_WATCH_PROJECT_ID` is set to a specific project id, `worker-watch` binds to only that project. One project per worker process; use multiple `worker-watch` containers with unique project ids and probe ports for multi-project ingest.
+
+```bash
+CCDASH_WORKER_PROJECT_ID=your-default-project-id
+CCDASH_WORKER_PROBE_PORT=9465
+CCDASH_WORKER_WATCH_PROJECT_ID=your-specific-project-id  # Scopes to one project
 CCDASH_WORKER_WATCH_PROBE_PORT=9466
 CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED=true
 CCDASH_WORKER_STARTUP_SYNC_ENABLED=false
@@ -256,7 +280,7 @@ CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED=false
 GIT_OPTIONAL_LOCKS=0
 ```
 
-2. Confirm the required read-only ingest mounts point at host paths Docker can see:
+Confirm the required read-only ingest mounts point at host paths Docker can see:
 
 ```bash
 CCDASH_PROJECTS_FILE=../../projects.json
@@ -268,23 +292,26 @@ CCDASH_CODEX_HOME=~/.codex
 CCDASH_CODEX_CONTAINER_HOME=/home/ccdash/.codex
 ```
 
-3. Start the stack:
+Start the stack:
 
 ```bash
 docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml \
   --profile enterprise --profile postgres --profile live-watch up --build
 ```
 
-4. Verify both worker roles:
+Verify both worker roles:
 
 ```bash
 curl http://localhost:9465/readyz
 curl http://localhost:9466/readyz
 ```
 
-`worker-watch` supports one project id per worker process in v1. It uses `CCDASH_WORKER_WATCH_PROJECT_ID` when set and otherwise falls back to `CCDASH_WORKER_PROJECT_ID`. Run another watcher worker instance with a unique project id and probe port when you need another project.
-
 On macOS Docker Desktop, bind-mounted filesystem events may not arrive. If the watcher starts but does not detect new session JSONL changes, pass `WATCHFILES_FORCE_POLLING=true` into the `worker-watch` container and restart it.
+
+### Watcher Concurrency and Reconciliation Tuning
+
+- `CCDASH_WATCHER_SYNC_CONCURRENCY` (default 20): Max parallel file sync operations per project. Increase on high-throughput deployments; decrease for memory-constrained environments.
+- `CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS` (default 60): How often the watcher re-reads the registry to detect added/removed/activated projects. Only relevant in registry-driven fan-out mode (empty `CCDASH_WORKER_WATCH_PROJECT_ID`).
 
 ## Data Visibility Checks
 
@@ -364,9 +391,11 @@ Common variables for container profiles:
 | `CCDASH_FRONTEND_PORT` | All | Frontend port (default 3000) |
 | `CCDASH_API_UPSTREAM` | frontend | Backend upstream for nginx reverse-proxy (default `http://api:8000`) |
 | `CCDASH_WORKER_PROJECT_ID` | enterprise (worker) | Project ID the worker binds to on startup; required for worker container readiness. Default in compose.yaml is `smoke-stack`. |
-| `CCDASH_WORKER_WATCH_PROJECT_ID` | live-watch | Project ID the watcher worker binds to on startup; falls back to `CCDASH_WORKER_PROJECT_ID` when unset. |
+| `CCDASH_WORKER_WATCH_PROJECT_ID` | live-watch | **Optional** scope filter for the watcher worker. Empty → registry-driven fan-out (derive targets from DB, one WatcherBinding per is_active project). Non-empty → scope to that specific project id (v1 single-project mode). When unset, defaults to empty for registry-driven behavior. |
 | `CCDASH_WORKER_WATCH_PROBE_PORT` | live-watch | Watcher worker probe port. Default is `9466` so it can co-run with the default worker. |
 | `CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED` | live-watch | Enables filesystem ingest for `worker-watch`; default is `true`. |
+| `CCDASH_WATCHER_SYNC_CONCURRENCY` | live-watch | Max parallel file sync operations per project. Default is `20`. Increase on high-throughput deployments; decrease for memory-constrained environments. |
+| `CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS` | live-watch | Registry reconciliation interval (seconds). Default is `60`. Only relevant in registry-driven fan-out mode (empty `CCDASH_WORKER_WATCH_PROJECT_ID`). How often the watcher re-reads the DB registry to detect added/removed/activated projects. |
 | `CCDASH_WORKER_STARTUP_SYNC_ENABLED` | enterprise (worker) | Keeps the standard worker from racing watcher-owned filesystem startup sync when live-watch is running; default is `false` in compose. |
 | `CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED` | live-watch | Lets the watcher worker own startup filesystem sync; default is `true` in compose. |
 | `CCDASH_INFERRED_STATUS_WRITEBACK_ENABLED` | enterprise/local | Controls inferred planning-status writes back to markdown. Defaults to `false` for enterprise storage and `true` for local storage. |
