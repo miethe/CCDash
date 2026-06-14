@@ -45,6 +45,7 @@ class SessionIntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                     "evidence_json": {"cue": "blocked"},
                 }
             ],
+            project_id="project-1",
         )
         await self.repo.replace_session_sentiment_facts(
             "session-1",
@@ -63,6 +64,7 @@ class SessionIntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                     "evidence_json": {"cue": "fixed"},
                 }
             ],
+            project_id="project-1",
         )
         rows = await self.repo.list_session_sentiment_facts("session-1")
         self.assertEqual(len(rows), 1)
@@ -97,6 +99,7 @@ class SessionIntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                     "evidence_json": {"updates": 3},
                 }
             ],
+            project_id="project-1",
         )
         rows = await self.repo.list_session_code_churn_facts("session-1")
         self.assertEqual(len(rows), 1)
@@ -122,6 +125,7 @@ class SessionIntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                     "evidence_json": {"outOfScopePaths": ["docs/extra.md"]},
                 }
             ],
+            project_id="project-1",
         )
         rows = await self.repo.list_session_scope_drift_facts("session-1")
         self.assertEqual(len(rows), 1)
