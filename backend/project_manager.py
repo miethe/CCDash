@@ -33,6 +33,18 @@ def _mark_seed(project: Project) -> Project:
     return project
 
 
+def _mark_active(project: Project, active_project_id: Optional[str]) -> Project:
+    """Return *project* with ``is_active`` set based on the current active id.
+
+    Used by both ``ProjectManager`` and ``DbProjectManager`` so that every
+    list_projects() / get_project() response carries the correct ``is_active``
+    value.  For the DB-backed manager the DB column is the source of truth and
+    this helper acts as an override gate for the in-memory representation.
+    """
+    project.is_active = project.id == active_project_id
+    return project
+
+
 # ---------------------------------------------------------------------------
 # Display-config fallback helpers
 # ---------------------------------------------------------------------------
@@ -191,11 +203,13 @@ class ProjectManager:
         self._save()
 
     def list_projects(self) -> list[Project]:
-        return [_mark_seed(p) for p in self._projects.values()]
+        return [_mark_active(_mark_seed(p), self._active_project_id) for p in self._projects.values()]
 
     def get_project(self, project_id: str) -> Optional[Project]:
         project = self._projects.get(project_id)
-        return _mark_seed(project) if project is not None else None
+        if project is None:
+            return None
+        return _mark_active(_mark_seed(project), self._active_project_id)
 
     def add_project(self, project: Project):
         normalize_project_test_config(project, legacy_test_results_dir=config.TEST_RESULTS_DIR)
@@ -432,6 +446,12 @@ class DbProjectManager:
         # If no active project is flagged in the DB, pick the first one
         if self._active_project_id is None and self._projects:
             self._active_project_id = next(iter(self._projects))
+            # Ensure the elected project has is_active=True on its model object
+            # so that the REST response reflects the runtime state.
+            if self._active_project_id:
+                elected = self._projects.get(self._active_project_id)
+                if elected is not None:
+                    elected.is_active = True
 
         self._snapshot_loaded = True
         logger.info(
@@ -660,6 +680,9 @@ class DbProjectManager:
             "planDocsPath": row.get("plan_docs_path", "docs/project_plans/"),
             "sessionsPath": row.get("sessions_path", ""),
             "progressPath": row.get("progress_path", "progress"),
+            # is_active is stored in the DB and must be surfaced on the model
+            # so the REST response includes it and the FE scope guard works.
+            "is_active": bool(row.get("is_active", False)),
         }
         path_cfg = row.get("path_config_json")
         if path_cfg:
@@ -693,12 +716,14 @@ class DbProjectManager:
 
     def list_projects(self) -> list[Project]:
         self._ensure_snapshot()
-        return [_mark_seed(p) for p in self._projects.values()]
+        return [_mark_active(_mark_seed(p), self._active_project_id) for p in self._projects.values()]
 
     def get_project(self, project_id: str) -> Optional[Project]:
         self._ensure_snapshot()
         project = self._projects.get(project_id)
-        return _mark_seed(project) if project is not None else None
+        if project is None:
+            return None
+        return _mark_active(_mark_seed(project), self._active_project_id)
 
     def add_project(self, project: Project) -> None:
         self._ensure_snapshot()

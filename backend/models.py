@@ -1702,6 +1702,11 @@ class Project(BaseModel):
     path: str
     description: str = ""
     repoUrl: str = ""
+    # Populated at read-time by the project manager from the DB is_active flag.
+    # Never written back to the DB via the Project model itself (the repository
+    # manages the flag directly).
+    # COLUMN_PARITY_DRIFT_ALLOWLIST: N/A — model-computed, not a DB column.
+    is_active: bool = False
     # Computed at read-time by the project manager; never stored in the DB.
     # True when the project id belongs to the well-known bootstrap seed set.
     # COLUMN_PARITY_DRIFT_ALLOWLIST: N/A — model-computed, not a DB column.

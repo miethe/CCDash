@@ -345,5 +345,82 @@ class TestGetActiveProject(unittest.TestCase):
         self.assertEqual(row[0], 1, "Exactly one project must be active after set_active()")
 
 
+# ---------------------------------------------------------------------------
+# is_active model field tests (T0-005 seam gate — API contract verification)
+# ---------------------------------------------------------------------------
+
+class TestIsActiveField(unittest.TestCase):
+    """is_active must be present on Project objects returned by list_projects()
+    and get_project(), and must match the DB is_active flag.
+
+    This covers the seam gate from T0-005: the API contract requires that
+    GET /api/projects → [0].is_active == True when an active project exists.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._db_path = self._tmp.name
+        self._tmp.close()
+        _bootstrap_db(self._db_path)
+
+        self._manager = DbProjectManager.__new__(DbProjectManager)
+        self._manager.storage_path = Path(self._db_path)
+        self._manager._path_resolver = None
+        self._manager._db_backend = "sqlite"
+        self._manager._db_path = self._db_path
+        self._manager._db_dsn = ""
+        self._manager._repo = None
+        self._manager._projects = None
+        self._manager._active_project_id = None
+        self._manager._snapshot_loaded = False
+
+        repo = SqliteProjectRepository(self._db_path)
+        repo.upsert(_make_project_dict("proj-active", name="Active Project", is_active=True))
+        repo.upsert(_make_project_dict("proj-inactive", name="Inactive Project", is_active=False))
+        repo.close()
+
+    def tearDown(self) -> None:
+        Path(self._db_path).unlink(missing_ok=True)
+
+    def test_list_projects_first_has_is_active_true(self) -> None:
+        """list_projects()[0].is_active must be True when a project is active in DB."""
+        projects = self._manager.list_projects()
+        self.assertGreater(len(projects), 0)
+        first = projects[0]
+        self.assertEqual(first.id, "proj-active", "Active project must be list[0]")
+        self.assertTrue(first.is_active, "list_projects()[0].is_active must be True")
+
+    def test_list_projects_inactive_has_is_active_false(self) -> None:
+        """Non-active projects must have is_active=False on the returned model."""
+        projects = self._manager.list_projects()
+        by_id = {p.id: p for p in projects}
+        self.assertIn("proj-inactive", by_id)
+        self.assertFalse(by_id["proj-inactive"].is_active, "Inactive project must have is_active=False")
+
+    def test_get_project_active_has_is_active_true(self) -> None:
+        """get_project() for the active project must return is_active=True."""
+        project = self._manager.get_project("proj-active")
+        self.assertIsNotNone(project)
+        self.assertTrue(project.is_active, "get_project() for active project must have is_active=True")
+
+    def test_get_project_inactive_has_is_active_false(self) -> None:
+        """get_project() for an inactive project must return is_active=False."""
+        project = self._manager.get_project("proj-inactive")
+        self.assertIsNotNone(project)
+        self.assertFalse(project.is_active, "get_project() for inactive project must have is_active=False")
+
+    def test_is_active_field_on_project_model(self) -> None:
+        """Project model must have is_active as a declared field with default False."""
+        p = Project(id="x", name="X", path="/tmp/x")
+        self.assertFalse(p.is_active, "Project.is_active must default to False")
+        self.assertIn("is_active", Project.model_fields, "is_active must be a declared Pydantic field")
+
+    def test_is_active_in_model_dump(self) -> None:
+        """is_active must appear in model_dump() so FastAPI serialises it in the response."""
+        p = Project(id="x", name="X", path="/tmp/x")
+        dumped = p.model_dump()
+        self.assertIn("is_active", dumped, "is_active must appear in model_dump() output")
+
+
 if __name__ == "__main__":
     unittest.main()
