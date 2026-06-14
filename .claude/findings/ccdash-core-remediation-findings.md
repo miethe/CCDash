@@ -4,6 +4,8 @@ doc_type: worknote
 created: 2026-06-11
 feature_slug: ccdash-core-remediation
 findings_for: docs/project_plans/implementation_plans/enhancements/ccdash-core-remediation-v1.md
+status: accepted
+promoted_to: docs/project_plans/implementation_plans/enhancements/ccdash-runtime-deploy-remediation-v1.md
 ---
 
 # CCDash Core Remediation — Execution-Time Findings
