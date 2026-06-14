@@ -1942,6 +1942,10 @@ export interface Project {
   path: string;
   description: string;
   repoUrl: string;
+  /** True when this project is the server-designated active project. Missing/null === false. */
+  is_active?: boolean | null;
+  /** True when this project belongs to the bootstrap seed set. Missing/null === false. */
+  is_seed?: boolean | null;
   agentPlatforms: string[];
   planDocsPath: string;
   sessionsPath: string;
