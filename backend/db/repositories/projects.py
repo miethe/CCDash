@@ -221,7 +221,7 @@ class SqliteProjectRepository:
     def list_all(self) -> list[dict]:
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT * FROM projects ORDER BY created_at ASC"
+            "SELECT * FROM projects ORDER BY is_active DESC, created_at ASC"
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
