@@ -476,6 +476,36 @@ Compose `depends_on: condition: service_healthy` ensures correct startup orderin
 | SELinux `Permission denied` (RHEL/Fedora/CentOS) | Bind-mount needs relabeling | Add `:Z` suffix to bind-mount sources |
 | Container build fails: `archive/tar: write too long` | Build context too large | Check `.dockerignore` excludes `data/`, `node_modules/`, `.git/`, `.venv/` |
 
+## Rollback Plan for Postgres In-Place Upgrades
+
+CCDash's Postgres migration runner is forward-only: it adds columns and indexes but never drops or recreates existing schema objects. When upgrading a production database to a new `SCHEMA_VERSION`, take a snapshot first so you can restore the prior state if an unexpected migration failure occurs.
+
+**Recommended pre-upgrade steps:**
+
+1. Stop the CCDash API and worker containers so no writes occur during the backup.
+2. Run `pg_dump` against the live database:
+
+```bash
+pg_dump -h localhost -U ccdash -d ccdash \
+  -F c -f ccdash-backup-$(date +%Y%m%d%H%M%S).dump
+```
+
+3. Store the dump outside the Postgres data volume (the volume is lost if you use `docker compose down --volumes`).
+4. Start the updated stack. CCDash applies versioned migrations atomically under an advisory lock. If startup fails:
+
+```bash
+# Restore from dump into a fresh database
+pg_restore -h localhost -U ccdash -d ccdash --clean ccdash-backup-*.dump
+```
+
+**Seeded-v29 smoke:** to verify the upgrade path against a pre-v30 schema before touching production data:
+
+```bash
+npm run docker:hosted:smoke:seeded-pg
+```
+
+This boots a PG container from `deploy/runtime/fixtures/pg-seed-v29.sql` (schema_version=29, sessions table without `project_id`), upgrades it to SCHEMA_VERSION=35, and asserts `migrationStatus=="applied"` with no `UndefinedColumnError` in logs.
+
 ## Image Tagging Convention
 
 If publishing container images to a registry, use:
