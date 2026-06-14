@@ -24,11 +24,23 @@ def _make_scheduler_capturing() -> tuple[MagicMock, list]:
 
     schedule() appends each coroutine to captured_coros_list and returns a
     completed future so start() continues without blocking.
+
+    Coroutines whose name does NOT contain "all-projects-sync" are closed
+    immediately to avoid RuntimeWarning: coroutine was never awaited.  Tests
+    that need to drive a specific coro can inspect captured_coros_list and
+    await the matching entry directly.
     """
+    import inspect
+
     captured: list = []
 
     def _schedule_side_effect(coro, *, name=""):
-        captured.append((name, coro))
+        if inspect.iscoroutine(coro) and "all-projects-sync" not in name:
+            # This coro will never be driven by the test — close it now so
+            # Python does not emit RuntimeWarning about unawaited coroutines.
+            coro.close()
+        else:
+            captured.append((name, coro))
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         fut.set_result(None)
         return fut
@@ -85,8 +97,19 @@ def _make_sync_engine() -> MagicMock:
 
 
 def _make_scheduler() -> MagicMock:
+    import inspect
+
+    def _discard_schedule(coro, *, name=""):
+        # Close any coroutine immediately so Python does not raise
+        # RuntimeWarning: coroutine was never awaited.
+        if inspect.iscoroutine(coro):
+            coro.close()
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut.set_result(None)
+        return fut
+
     sched = MagicMock()
-    sched.schedule = MagicMock(return_value=asyncio.get_event_loop().create_future())
+    sched.schedule = MagicMock(side_effect=_discard_schedule)
     sched.__class__.__name__ = "InMemoryJobScheduler"
     return sched
 
@@ -217,10 +240,8 @@ class TestSyncAllProjects(unittest.IsolatedAsyncioTestCase):
             mock_fw.start = AsyncMock()
             mock_reg.register = AsyncMock()
 
-            future = asyncio.get_event_loop().create_future()
-            future.set_result(None)
-            ports.job_scheduler.schedule.return_value = future
-
+            # _make_scheduler() already installs a side_effect that closes
+            # coroutines and returns a resolved future; no override needed here.
             adapter = RuntimeJobAdapter(
                 profile=profile,
                 ports=ports,
@@ -333,6 +354,13 @@ class TestStartDoesNotBlockOnAllProjectsSync(unittest.IsolatedAsyncioTestCase):
 
         # Cancel the never-resolving future to avoid ResourceWarning
         never_resolving_future.cancel()
+
+        # Close any all-projects-sync coroutines that were captured but not
+        # driven by this test (we only needed to verify they were scheduled).
+        import inspect
+        for _name, coro in captured_coros:
+            if inspect.iscoroutine(coro):
+                coro.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
