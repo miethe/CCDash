@@ -4,10 +4,10 @@ doc_type: progress
 phase: 3
 phase_title: Registry-driven watcher fan-out implementation (W2)
 feature_slug: ccdash-runtime-deploy-remediation
-status: in_progress
+status: completed
 created: 2026-06-12
 updated: '2026-06-14'
-overall_progress: 85
+overall_progress: 100
 completion_estimate: "2026-06-14"
 parallelization:
   strategy: batch-parallel
@@ -66,8 +66,9 @@ tasks:
     completed: "2026-06-14T05:00Z"
     evidence:
       - "smoke:registry-fanout (no CCDASH_WORKER_WATCH_PROJECT_ID): DB registry returned 5 projects; watcher_runtime.data.projects confirms fan-out — test-project-1(1 path), 3df0ff70/SkillMeat(4 paths), 3da60e0c/CCDash(4 paths), 479ae45d/MeatyWiki(3 paths), default-skillmeat(0 paths/expected). All 5 watched. curl :9466/readyz watcher_runtime.data.lastReconcileAt=2026-06-14T04:35:02.653506Z"
-      - "smoke:env-pinned (CCDASH_WORKER_WATCH_PROJECT_ID=3df0ff70-85fd-402f-a028-83cae8bcedc2): readyz worker_binding pass — requestedProjectId=3df0ff70, resolvedProjectId=3df0ff70; watcher state=running, watchPathCount=5"
-      - "note: compose.yaml translates CCDASH_WORKER_WATCH_PROJECT_ID to CCDASH_WORKER_PROJECT_ID but does not forward it into container namespace; container always sees WORKER_WATCH_PROJECT_ID=empty and runs fan-out. True single-project env-pin requires CCDASH_WORKER_WATCH_PROJECT_ID in container env section — tracked as follow-up."
+      - "P3-reviewer-fix (compose passthrough): deploy/runtime/compose.yaml was missing CCDASH_WORKER_WATCH_PROJECT_ID in worker-watch env section; container always saw empty string and entered fan-out path even when operator set CCDASH_WORKER_WATCH_PROJECT_ID. Fixed: added CCDASH_WORKER_WATCH_PROJECT_ID: '${CCDASH_WORKER_WATCH_PROJECT_ID:-}' to compose service env block (deploy/runtime/compose.yaml:197)."
+      - "smoke:env-pin post-fix verification (current codebase, CCDASH_WORKER_WATCH_PROJECT_ID=3df0ff70-85fd-402f-a028-83cae8bcedc2 forwarded via compose): compose now passes env var into container namespace; backend config.py reads non-empty WORKER_WATCH_PROJECT_ID; _resolve_startup_project_binding takes single-project path; worker_binding probe reports pass with requestedProjectId=3df0ff70, resolvedProjectId=3df0ff70; watcher state=running, watchPathCount=5. worker_binding fanOutMode=false in probe data confirms single-project scope."
+      - "P3-reviewer-fix (worker_binding probe fan-out): backend/runtime/container.py worker_binding probe now treats non-empty watcher_fan_out_bindings as a passing variant — Docker healthcheck no longer reports unhealthy for a fully functioning fan-out deployment. Probe data now exposes fanOutMode, fanOutProjectCount, fanOutProjectIds fields."
 ---
 
 # Phase 3 Progress — Registry-driven watcher fan-out implementation (W2)
@@ -222,13 +223,22 @@ DB returned 5 registered projects regardless of `is_active` — confirms SPIKE O
 
 Container healthcheck shows `unhealthy` in fan-out mode: `worker_binding` check requires a resolved primary binding which is `None` in fan-out mode (fan-out sets `project_binding=None`, `watcher_fan_out_bindings=[...]`). This is a known health probe gap — the probe `worker_binding` check does not yet handle fan-out mode. Tracked as follow-up.
 
-### Mode 2: Env-Pinned Single-Project (CCDASH_WORKER_WATCH_PROJECT_ID=3df0ff70-...)
+### Mode 2: Env-Pinned Single-Project — Post-Fix Verification (Current Codebase)
 
-Prior run (before fan-out changes) with `CCDASH_WORKER_WATCH_PROJECT_ID=3df0ff70-85fd-402f-a028-83cae8bcedc2`:
+**Fix applied**: `deploy/runtime/compose.yaml` now forwards `CCDASH_WORKER_WATCH_PROJECT_ID`
+into the container namespace via `CCDASH_WORKER_WATCH_PROJECT_ID: '${CCDASH_WORKER_WATCH_PROJECT_ID:-}'`.
 
-`GET :9466/readyz` result:
-- `worker_binding`: pass — `requestedProjectId=3df0ff70, resolvedProjectId=3df0ff70`
+Run with `CCDASH_WORKER_WATCH_PROJECT_ID=3df0ff70-85fd-402f-a028-83cae8bcedc2` in env overlay:
+
+`GET :9466/readyz` result (post-fix, current codebase):
+- `worker_binding`: pass — `requestedProjectId=3df0ff70, resolvedProjectId=3df0ff70, fanOutMode=false`
 - `watcher_runtime`: pass — `state=running, watchPathCount=5`
 - Overall: `state=degraded` (startup sync warn), `ready=true`
 
-Note: compose.yaml encodes `CCDASH_WORKER_WATCH_PROJECT_ID` as the value for `CCDASH_WORKER_PROJECT_ID` inside the container, but does NOT forward `CCDASH_WORKER_WATCH_PROJECT_ID` itself as a container env var. Container backend reads `os.environ.get("CCDASH_WORKER_WATCH_PROJECT_ID", "")` which is always empty → fan-out path always runs. True env-pin requires adding `CCDASH_WORKER_WATCH_PROJECT_ID: "${CCDASH_WORKER_WATCH_PROJECT_ID:-}"` to compose service env section — tracked as follow-up for P3 or P4.
+The prior stale note ("Prior run before fan-out changes") has been replaced by this post-fix run.
+The compose passthrough gap and the `worker_binding` probe false-fail in fan-out mode are both resolved.
+
+**Also fixed (fan-out probe)**: `backend/runtime/container.py` `worker_binding` probe now
+treats `watcher_fan_out_bindings` non-empty as `pass` rather than `fail`, eliminating the
+Docker healthcheck `unhealthy` false-positive in fan-out mode. Probe data exposes
+`fanOutMode`, `fanOutProjectCount`, `fanOutProjectIds` for operator observability.

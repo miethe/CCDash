@@ -750,15 +750,26 @@ class RuntimeContainer:
             self._probe_check(
                 code="worker_binding",
                 category="worker",
+                # T3-fix: fan-out mode (watcher_fan_out_bindings non-empty) is a fully valid
+                # binding resolution — primary project_binding is intentionally None in that
+                # mode because background scheduler jobs (sync, analytics) are not launched on
+                # the worker-watch profile.  Reporting "fail" for a healthy fan-out deployment
+                # was a production-blocking false-positive (Docker healthcheck → "unhealthy").
                 status=(
                     "not_applicable"
                     if not worker_binding_required
-                    else "pass" if self.project_binding is not None else "fail"
+                    else "pass"
+                    if self.project_binding is not None or bool(self.watcher_fan_out_bindings)
+                    else "fail"
                 ),
                 required="worker_binding" in required_checks,
                 summary=(
                     "Worker project binding is not required for this runtime."
                     if not worker_binding_required
+                    else "Worker project binding is resolved (fan-out mode: {} project(s)).".format(
+                        len(self.watcher_fan_out_bindings)
+                    )
+                    if self.watcher_fan_out_bindings
                     else "Worker project binding is resolved."
                     if self.project_binding is not None
                     else "Worker project binding is unresolved."
@@ -766,6 +777,12 @@ class RuntimeContainer:
                 detail=(
                     "Only worker runtimes require an explicit project binding."
                     if not worker_binding_required
+                    else (
+                        f"fan_out_mode=true fan_out_project_count={len(self.watcher_fan_out_bindings)} "
+                        f"configured={worker_binding_config.configured} "
+                        f"requested_project_id={worker_binding_config.project_id or 'n/a'}"
+                    )
+                    if self.watcher_fan_out_bindings
                     else (
                         f"configured={worker_binding_config.configured} "
                         f"requested_project_id={worker_binding_config.project_id or 'n/a'}"
@@ -778,6 +795,12 @@ class RuntimeContainer:
                     "resolvedProjectId": (
                         self.project_binding.project.id if self.project_binding is not None else None
                     ),
+                    # T3-fix: expose fan-out state so operators can see why primary binding is None.
+                    "fanOutMode": bool(self.watcher_fan_out_bindings),
+                    "fanOutProjectCount": len(self.watcher_fan_out_bindings),
+                    "fanOutProjectIds": [
+                        b.project.id for b in self.watcher_fan_out_bindings
+                    ],
                 },
             ),
             self._probe_check(

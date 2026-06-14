@@ -191,6 +191,11 @@ services:
       CCDASH_JOB_QUEUE_BACKEND: "${CCDASH_JOB_QUEUE_BACKEND:-postgres}"
       # P3-T3-006: Optional project id scope. Empty → registry-driven fan-out.
       CCDASH_WORKER_PROJECT_ID: "${CCDASH_WORKER_WATCH_PROJECT_ID:-${CCDASH_WORKER_PROJECT_ID:-smoke-stack}}"
+      # P3-fix: forward CCDASH_WORKER_WATCH_PROJECT_ID into the container namespace so that
+      # backend/config.py os.environ.get("CCDASH_WORKER_WATCH_PROJECT_ID", "") reads the
+      # operator-supplied value and the env-pin single-project path is exercisable via compose.
+      # Empty default → registry-driven fan-out remains the default when not set.
+      CCDASH_WORKER_WATCH_PROJECT_ID: "${CCDASH_WORKER_WATCH_PROJECT_ID:-}"
       CCDASH_WORKER_PROBE_HOST: "${CCDASH_WORKER_WATCH_PROBE_HOST:-0.0.0.0}"
       CCDASH_WORKER_PROBE_PORT: "${CCDASH_WORKER_WATCH_PROBE_PORT:-9466}"
       CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED: "${CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED:-true}"
