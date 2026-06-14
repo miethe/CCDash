@@ -103,6 +103,8 @@ class RuntimeJobState:
     cache_warming_task: asyncio.Task[None] | None = None
     retention_prune_task: asyncio.Task[None] | None = None
     reconcile_task: asyncio.Task[None] | None = None
+    # T3-004: watcher fan-out reconcile loop task (distinct from the sync reconcile loop).
+    watcher_reconcile_task: asyncio.Task[None] | None = None
     _drain_task: asyncio.Task[None] | None = None
     watcher_started: bool = False
     # T3-001: per-project watcher tasks (fan-out mode).  Keyed by project_id.
@@ -150,6 +152,10 @@ class RuntimeJobAdapter:
         # T3-001: shared semaphore bounding concurrent sync executions across all
         # per-project fan-out watcher tasks.  Lazily initialised in start().
         self._watcher_sync_semaphore: asyncio.Semaphore | None = None
+        # T3-004: watcher fan-out reconcile loop health state.
+        # Set by _start_watcher_reconcile_task() on each tick.
+        self._watcher_reconcile_last_at: str | None = None
+        self._watcher_reconcile_last_error: str | None = None
         self.state.job_observations.update(
             {
                 "startupSync": RuntimeJobObservation(
@@ -283,6 +289,12 @@ class RuntimeJobAdapter:
             # schedules backoff restart.  Sibling tasks are unaffected.
             # Shared semaphore bounds concurrent sync executions across all projects.
             await self._start_fan_out_watchers()
+            # T3-004: periodic watcher reconcile loop — re-reads the project registry
+            # every CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS (default 60) and
+            # idempotently adds/removes watcher bindings for new/deregistered projects.
+            watcher_reconcile_task = self._start_watcher_reconcile_task()
+            if watcher_reconcile_task is not None:
+                self.state.watcher_reconcile_task = watcher_reconcile_task
 
         elif active_project and self.profile.capabilities.watch and self.sync is not None:
             # Legacy single-project path: start the singleton in-place so that
@@ -690,6 +702,15 @@ class RuntimeJobAdapter:
                 pass
             self.state.reconcile_task = None
 
+        # T3-004: stop watcher fan-out reconcile loop before stopping the watcher tasks.
+        if self.state.watcher_reconcile_task is not None:
+            self.state.watcher_reconcile_task.cancel()
+            try:
+                await self.state.watcher_reconcile_task
+            except asyncio.CancelledError:
+                pass
+            self.state.watcher_reconcile_task = None
+
         # T3-001: stop fan-out watcher tasks (registry-driven mode).
         if self.state.fan_out_watcher_tasks:
             for project_id, task in list(self.state.fan_out_watcher_tasks.items()):
@@ -920,6 +941,186 @@ class RuntimeJobAdapter:
             task.get_name(),
         )
 
+    def _start_watcher_reconcile_task(self) -> asyncio.Task[None] | None:
+        """T3-004: periodic watcher fan-out reconcile loop.
+
+        Runs every ``CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS`` (default 60,
+        min 10, max 3600).  On each tick:
+          1. Re-reads ``workspace_registry.list_projects()`` (all registered
+             projects, no ``is_active`` filter — ADR-006).
+          2. Computes the symmetric diff against the currently active watcher set
+             (``state.fan_out_watcher_tasks``).
+          3. Idempotently adds a watcher for each new project id.
+          4. Idempotently cancels and unregisters each removed project id.
+
+        A tick failure is logged as WARNING and the next tick is scheduled
+        normally — one bad tick never crashes the loop.
+
+        ``lastReconcileAt`` / ``lastReconcileError`` are written to
+        ``self._watcher_reconcile_last_at`` / ``self._watcher_reconcile_last_error``
+        so that ``_watcher_probe_detail`` can surface them in the health rollup
+        (T3-003 OQ-5 contract).
+
+        Only started when the profile is ``worker-watch`` and fan-out mode is
+        active (``self._watcher_fan_out_bindings`` is non-empty at startup).
+        In single-project or legacy mode this method returns ``None``.
+        """
+        interval_seconds = int(getattr(config, "WATCHER_RECONCILE_INTERVAL_SECONDS", 60))
+        if interval_seconds <= 0:
+            return None
+        if not self.profile.capabilities.watch:
+            return None
+        # Only run the reconcile loop when fan-out mode is active.
+        if not self._watcher_fan_out_bindings:
+            return None
+
+        adapter_ref = self
+        semaphore = self._watcher_sync_semaphore
+
+        async def _run_watcher_reconcile() -> None:
+            while True:
+                await asyncio.sleep(interval_seconds)
+                tick_error: str | None = None
+                try:
+                    workspace_registry = adapter_ref.ports.workspace_registry
+
+                    # Reload the registry snapshot so newly added projects surface
+                    # without a process restart.
+                    _reload = getattr(workspace_registry, "reload_projects", None)
+                    if callable(_reload):
+                        try:
+                            _reload()
+                        except Exception:
+                            logger.exception(
+                                "T3-004 watcher reconcile: reload_projects() failed — continuing"
+                            )
+
+                    _list_fn = getattr(workspace_registry, "list_projects", None)
+                    all_projects = list(_list_fn()) if callable(_list_fn) else []
+                    registry_ids: set[str] = set()
+                    for proj in all_projects:
+                        pid = str(getattr(proj, "id", "") or "")
+                        if pid:
+                            registry_ids.add(pid)
+
+                    active_ids: set[str] = set(adapter_ref.state.fan_out_watcher_tasks.keys())
+                    new_ids = registry_ids - active_ids
+                    removed_ids = active_ids - registry_ids
+
+                    # Add watchers for new projects.
+                    for pid in new_ids:
+                        try:
+                            binding = workspace_registry.resolve_project_binding(
+                                pid, allow_active_fallback=False, refresh=True
+                            )
+                            if binding is None:
+                                logger.warning(
+                                    "T3-004 watcher reconcile: no binding for new project '%s' — "
+                                    "will retry next tick",
+                                    pid,
+                                )
+                                continue
+                            # Use the existing fan-out infrastructure (semaphore + supervisor).
+                            # Build a minimal supervisor callback for dynamically added projects.
+                            def _make_minimal_cb(project_id: str):
+                                def _cb(task: asyncio.Task[None]) -> None:
+                                    if task.cancelled():
+                                        return
+                                    exc = task.exception() if not task.cancelled() else None
+                                    if exc is not None:
+                                        logger.error(
+                                            "T3-004 reconcile: fan-out watcher for project_id=%s "
+                                            "raised exception: %s",
+                                            project_id, exc, exc_info=exc,
+                                        )
+                                        adapter_ref.state.fan_out_watcher_health[project_id] = "degraded"
+                                        adapter_ref.state.fan_out_watcher_tasks.pop(project_id, None)
+                                return _cb
+
+                            _cb = _make_minimal_cb(pid)
+                            await adapter_ref._start_single_fan_out_watcher(
+                                binding=binding,
+                                semaphore=semaphore or asyncio.Semaphore(
+                                    getattr(config, "WATCHER_SYNC_CONCURRENCY", 20)
+                                ),
+                                supervisor_callback=_cb,
+                                start_singleton=False,
+                            )
+                            logger.info(
+                                "T3-004 watcher reconcile: added watcher for new project '%s'", pid
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            logger.exception(
+                                "T3-004 watcher reconcile: failed to add watcher for project '%s' — "
+                                "will retry next tick",
+                                pid,
+                            )
+
+                    # Remove watchers for deregistered projects.
+                    for pid in removed_ids:
+                        try:
+                            task = adapter_ref.state.fan_out_watcher_tasks.pop(pid, None)
+                            if task is not None and not task.done():
+                                task.cancel()
+                                try:
+                                    await task
+                                except (asyncio.CancelledError, Exception):
+                                    pass
+                            adapter_ref.state.fan_out_watcher_health.pop(pid, None)
+                            await file_watcher_registry.unregister(pid)
+                            logger.info(
+                                "T3-004 watcher reconcile: removed watcher for deregistered project '%s'",
+                                pid,
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            logger.exception(
+                                "T3-004 watcher reconcile: failed to remove watcher for project '%s' — "
+                                "will retry next tick",
+                                pid,
+                            )
+
+                    if new_ids or removed_ids:
+                        logger.info(
+                            "T3-004 watcher reconcile tick: added=%d removed=%d active=%d",
+                            len(new_ids),
+                            len(removed_ids),
+                            len(adapter_ref.state.fan_out_watcher_tasks),
+                        )
+                    else:
+                        logger.debug(
+                            "T3-004 watcher reconcile tick: no changes (active=%d)",
+                            len(adapter_ref.state.fan_out_watcher_tasks),
+                        )
+
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    tick_error = str(exc) or exc.__class__.__name__
+                    logger.warning(
+                        "T3-004 watcher reconcile tick failed — scheduling next tick normally: %s",
+                        tick_error,
+                        exc_info=exc,
+                    )
+
+                # Update health state regardless of success/failure so the probe
+                # always reflects the last tick outcome (T3-003 lastReconcileAt/Error).
+                adapter_ref._watcher_reconcile_last_at = _isoformat(_utc_now())
+                adapter_ref._watcher_reconcile_last_error = tick_error
+
+        logger.info(
+            "T3-004 watcher reconcile loop started (profile=%s interval=%ds)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return asyncio.create_task(
+            _run_watcher_reconcile(),
+            name=f"ccdash:{self.profile.name}:watcher-reconcile",
+        )
+
     def status_snapshot(self) -> dict[str, Any]:
         watcher_detail = self._watcher_probe_detail()
         snapshot: dict[str, Any] = {
@@ -993,6 +1194,31 @@ class RuntimeJobAdapter:
         else:
             state = "not_configured"
 
+        # T3-003: per-project health breakdown derived from the registry snapshot.
+        # Shape per OQ-5: {project_id: {state, watchPathCount, lastChangeSyncAt}}
+        per_project: dict[str, dict[str, Any]] = {}
+        all_registry_snapshots = file_watcher_registry.snapshot_all()
+        for pid, proj_snap in all_registry_snapshots.items():
+            proj_running = bool(proj_snap.get("running", False))
+            proj_configured = bool(proj_snap.get("configured", False))
+            proj_wpc = int(proj_snap.get("watchPathCount", 0) or 0)
+            if proj_running:
+                proj_state = "running"
+            elif proj_configured and proj_wpc == 0:
+                proj_state = "configured_no_paths"
+            elif proj_configured:
+                proj_state = "stopped"
+            else:
+                proj_state = "not_configured"
+            # Also honour fan-out health map if degraded.
+            if self.state.fan_out_watcher_health.get(pid) == "degraded":
+                proj_state = "degraded"
+            per_project[pid] = {
+                "state": proj_state,
+                "watchPathCount": proj_wpc,
+                "lastChangeSyncAt": proj_snap.get("lastChangeSyncAt"),
+            }
+
         return {
             "state": state,
             "expected": True,
@@ -1005,6 +1231,11 @@ class RuntimeJobAdapter:
             "lastChangeCount": watcher_snapshot.get("lastChangeCount"),
             "lastSyncStatus": watcher_snapshot.get("lastSyncStatus"),
             "lastSyncError": watcher_snapshot.get("lastSyncError"),
+            # T3-003: per-project breakdown (OQ-5); consumer fallback: missing → {}
+            "projects": per_project,
+            # T3-004: watcher reconcile loop health state
+            "lastReconcileAt": self._watcher_reconcile_last_at,
+            "lastReconcileError": self._watcher_reconcile_last_error,
         }
 
     def _watcher_registry_snapshot(self) -> dict[str, Any]:

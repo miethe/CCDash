@@ -617,7 +617,26 @@ class RuntimeContainer:
         watcher_check_status = "not_applicable"
         watch_path_count = int(watcher_detail.get("watchPathCount", 0) or 0)
         if self.profile.capabilities.watch:
-            if watcher_state == "running":
+            # T3-003: Aggregate readyz rule incorporating per-project health (OQ-5).
+            # When projects map is populated (fan-out mode), derive aggregate from per-project
+            # states; otherwise fall back to the existing scalar watcher_state logic.
+            per_project_states = {
+                str(pid): str(entry.get("state", "unknown"))
+                for pid, entry in (watcher_detail.get("projects") or {}).items()
+                if isinstance(entry, dict)
+            }
+            if per_project_states:
+                # pass: all running; warn: any degraded/stopped but not required;
+                # fail: any not-running and profile requires watcher.
+                all_running = all(s == "running" for s in per_project_states.values())
+                any_not_running = any(s != "running" for s in per_project_states.values())
+                if all_running:
+                    watcher_check_status = "pass"
+                elif any_not_running and watcher_runtime_required:
+                    watcher_check_status = "fail"
+                else:
+                    watcher_check_status = "warn"
+            elif watcher_state == "running":
                 watcher_check_status = "pass"
             elif watch_path_count == 0 and watcher_runtime_required:
                 # T0-003: Watch is configured and REQUIRED but zero paths resolved → hard fail.
@@ -1020,6 +1039,22 @@ class RuntimeContainer:
                 "lastSyncError": None,
             }
 
+        # T3-003: per-project health breakdown (OQ-5 contract).
+        # Consumer resilience: missing `projects` → {}; per-entry missing fields
+        # → state='unknown', watchPathCount=0, lastChangeSyncAt=null.
+        raw_projects = detail.get("projects")
+        if not isinstance(raw_projects, dict):
+            raw_projects = {}
+        projects: dict[str, Any] = {}
+        for pid, entry in raw_projects.items():
+            if not isinstance(entry, dict):
+                entry = {}
+            projects[str(pid)] = {
+                "state": str(entry.get("state", "unknown")),
+                "watchPathCount": int(entry.get("watchPathCount", 0) or 0),
+                "lastChangeSyncAt": entry.get("lastChangeSyncAt"),
+            }
+
         return {
             "state": str(detail.get("state", "unknown")),
             "expected": bool(detail.get("expected", self.profile.capabilities.watch)),
@@ -1032,6 +1067,11 @@ class RuntimeContainer:
             "lastChangeCount": detail.get("lastChangeCount"),
             "lastSyncStatus": detail.get("lastSyncStatus"),
             "lastSyncError": detail.get("lastSyncError"),
+            # T3-003: per-project breakdown (OQ-5); missing → {} on older server versions
+            "projects": projects,
+            # T3-004: watcher reconcile loop last tick state
+            "lastReconcileAt": detail.get("lastReconcileAt"),
+            "lastReconcileError": detail.get("lastReconcileError"),
         }
 
     def _probe_check(
