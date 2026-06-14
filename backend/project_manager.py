@@ -18,6 +18,22 @@ from backend.services.test_config import normalize_project_test_config
 logger = logging.getLogger("ccdash")
 
 # ---------------------------------------------------------------------------
+# Seed project ids — computed at read-time, never persisted
+# ---------------------------------------------------------------------------
+
+# Projects whose ids belong to this set have is_seed=True on the returned
+# Project model.  This is a model-computed field; there is no DB column.
+# COLUMN_PARITY_DRIFT_ALLOWLIST: N/A — model-computed, not a DB column.
+_SEED_PROJECT_IDS: frozenset[str] = frozenset({"default-skillmeat", "test-project-1"})
+
+
+def _mark_seed(project: Project) -> Project:
+    """Return *project* with ``is_seed`` set based on ``_SEED_PROJECT_IDS``."""
+    project.is_seed = project.id in _SEED_PROJECT_IDS
+    return project
+
+
+# ---------------------------------------------------------------------------
 # Display-config fallback helpers
 # ---------------------------------------------------------------------------
 
@@ -175,10 +191,11 @@ class ProjectManager:
         self._save()
 
     def list_projects(self) -> list[Project]:
-        return list(self._projects.values())
+        return [_mark_seed(p) for p in self._projects.values()]
 
     def get_project(self, project_id: str) -> Optional[Project]:
-        return self._projects.get(project_id)
+        project = self._projects.get(project_id)
+        return _mark_seed(project) if project is not None else None
 
     def add_project(self, project: Project):
         normalize_project_test_config(project, legacy_test_results_dir=config.TEST_RESULTS_DIR)
@@ -676,11 +693,12 @@ class DbProjectManager:
 
     def list_projects(self) -> list[Project]:
         self._ensure_snapshot()
-        return list(self._projects.values())
+        return [_mark_seed(p) for p in self._projects.values()]
 
     def get_project(self, project_id: str) -> Optional[Project]:
         self._ensure_snapshot()
-        return self._projects.get(project_id)
+        project = self._projects.get(project_id)
+        return _mark_seed(project) if project is not None else None
 
     def add_project(self, project: Project) -> None:
         self._ensure_snapshot()

@@ -1702,6 +1702,10 @@ class Project(BaseModel):
     path: str
     description: str = ""
     repoUrl: str = ""
+    # Computed at read-time by the project manager; never stored in the DB.
+    # True when the project id belongs to the well-known bootstrap seed set.
+    # COLUMN_PARITY_DRIFT_ALLOWLIST: N/A — model-computed, not a DB column.
+    is_seed: bool = False
     agentPlatforms: list[str] = Field(default_factory=lambda: ["Claude Code"])
     planDocsPath: str = "docs/project_plans/"
     sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)
