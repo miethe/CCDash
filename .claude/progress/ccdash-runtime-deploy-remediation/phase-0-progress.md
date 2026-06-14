@@ -9,9 +9,9 @@ created: 2026-06-12
 updated: '2026-06-13'
 overall_progress: 100
 completion_estimate: '2026-06-13'
-runtime_smoke: completed
+runtime_smoke: api-verified  # T0-005 seam: live GET /api/projects → active project first + is_seed present (curl, backend :8137); /api/projects/active correct. FE scope-guard logic unit-tested (9 vitest, resolveScopeOutcome). Browser visual smoke not run (autonomous background run).
 commit_refs:
-  - c71304e
+- c71304e
 parallelization:
   strategy: batch-parallel
   batch_1:

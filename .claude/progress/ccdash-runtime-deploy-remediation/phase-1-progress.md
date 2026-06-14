@@ -2,19 +2,27 @@
 schema_version: 2
 doc_type: progress
 phase: 1
-phase_title: "Postgres in-place upgrade-path fix (W3)"
+phase_title: Postgres in-place upgrade-path fix (W3)
 feature_slug: ccdash-runtime-deploy-remediation
-status: not-started
+status: completed
 created: 2026-06-12
-updated: 2026-06-12
-overall_progress: 0
-completion_estimate: null
+updated: '2026-06-13'
+overall_progress: 100
+completion_estimate: "100%"
+runtime_smoke: skipped  # docker daemon unavailable; seeded-pg smoke script authored + unit-test guard green (17 passed)
 parallelization:
   strategy: batch-parallel
-  batch_1: [T1-001]
-  batch_2: [T1-002, T1-004]
-  batch_3: [T1-003, T1-005, T1-006]
-  batch_4: [T1-007]
+  batch_1:
+  - T1-001
+  batch_2:
+  - T1-002
+  - T1-004
+  batch_3:
+  - T1-003
+  - T1-005
+  - T1-006
+  batch_4:
+  - T1-007
 ---
 
 # Phase 1 Progress — Postgres in-place upgrade-path fix (W3)

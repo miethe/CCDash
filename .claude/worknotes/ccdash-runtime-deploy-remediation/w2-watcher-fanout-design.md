@@ -2,11 +2,15 @@
 schema_version: 2
 doc_type: worknote
 title: "W2 Watcher Fan-Out SPIKE — Design Specification"
-status: draft
+status: approved
+approved_by: opus-orchestrator
+approved_at: 2026-06-13
 created: 2026-06-13
 feature_slug: ccdash-runtime-deploy-remediation
 phase: P2
 task: T2-001
+t3_004_scope_decision: in-P3 (periodic reconcile loop, 60s default; hot-reload signaling deferred to D-002)
+watch_target_decision: all-registered-projects (is_active is a UI signal, not an ingest gate; PRD AC-W2-1 permits)
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-runtime-deploy-remediation-v1.md
 impl_plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-runtime-deploy-remediation-v1.md
 adr_refs:
