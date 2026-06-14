@@ -1077,9 +1077,17 @@ class TestPostgresMigrationContracts(unittest.TestCase):
                 break
 
     def test_v31_drops_outbound_telemetry_queue_fk(self):
-        """BUG 1: the v31 composite-PK migration must drop the legacy
-        outbound_telemetry_queue → sessions(id) FK before rebuilding the PK,
-        otherwise Postgres refuses the PK DROP."""
+        """BUG 1 (refactored guard): the v31 composite-PK migration must drop ALL
+        legacy FK constraints referencing sessions — including the
+        outbound_telemetry_queue → sessions(id) FK — BEFORE rebuilding the
+        sessions PK, otherwise Postgres refuses the PK DROP.
+
+        v31 was refactored (composite-FK in-place-upgrade fix) to a bulk Step-0
+        pre-drop that discovers every sessions-referencing FK via
+        information_schema and drops them in one pass (covering
+        outbound_telemetry_queue and all child tables), instead of naming each
+        table explicitly. This guards that the bulk pre-drop runs before the PK
+        rebuild."""
         import inspect
 
         from backend.db import postgres_migrations
@@ -1087,18 +1095,25 @@ class TestPostgresMigrationContracts(unittest.TestCase):
         src = inspect.getsource(
             postgres_migrations._migrate_v31_sessions_composite_pk_and_child_fks
         )
+        # Step 0 bulk pre-drop: discover + drop all FK constraints referencing sessions.
         self.assertIn(
-            '_drop_sessions_fks("outbound_telemetry_queue")',
+            "all_sessions_fk_rows",
             src,
-            "v31 must drop outbound_telemetry_queue's sessions FK",
+            "v31 must bulk-drop all sessions-referencing FKs in Step 0 "
+            "(covers outbound_telemetry_queue and every child table)",
         )
-        # The drop must occur BEFORE the sessions PK is dropped.
-        drop_idx = src.index('_drop_sessions_fks("outbound_telemetry_queue")')
-        pk_drop_idx = src.index("DROP CONSTRAINT {pk_name_row")
+        self.assertIn(
+            "ccu.table_name = 'sessions'",
+            src,
+            "the Step 0 bulk drop must target FK constraints referencing sessions",
+        )
+        # The bulk pre-drop must occur BEFORE the sessions PK is rebuilt/dropped.
+        bulk_drop_idx = src.index("all_sessions_fk_rows")
+        pk_rebuild_idx = src.index("Step 1: rebuild sessions PK")
         self.assertLess(
-            drop_idx,
-            pk_drop_idx,
-            "outbound_telemetry_queue FK must be dropped before the sessions PK drop",
+            bulk_drop_idx,
+            pk_rebuild_idx,
+            "sessions-referencing FKs must be bulk-dropped before the sessions PK rebuild",
         )
 
     def test_oq_resolutions_bool_columns_are_integer(self):

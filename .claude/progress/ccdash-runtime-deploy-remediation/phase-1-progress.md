@@ -6,10 +6,10 @@ phase_title: Postgres in-place upgrade-path fix (W3)
 feature_slug: ccdash-runtime-deploy-remediation
 status: completed
 created: 2026-06-12
-updated: '2026-06-13'
+updated: '2026-06-14'
 overall_progress: 100
 completion_estimate: "100%"
-runtime_smoke: skipped  # docker daemon unavailable; seeded-pg smoke script authored + unit-test guard green (17 passed)
+runtime_smoke: passed  # seeded-PG container smoke green: real v29→v35 in-place upgrade, migrationStatus="applied", UndefinedColumnError ABSENT. Index-ordering fix (442cfa2/3fe88f0) + composite child-FK fix (acfd626) discovered via the smoke. Unit guard: test_postgres_migrations_upgrade.py 26 passed.
 parallelization:
   strategy: batch-parallel
   batch_1:
