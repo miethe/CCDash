@@ -153,7 +153,15 @@ while true; do
 import json, sys
 try:
     data = json.load(open(sys.argv[1]))
-    print(data.get("migrationStatus", ""))
+    # migrationStatus lives in checks[*].data.migrationStatus (schema_migrations check).
+    # Fall back to top-level for older response schemas.
+    ms = data.get("migrationStatus", "")
+    if not ms:
+        for check in data.get("checks", []):
+            if check.get("code") == "schema_migrations":
+                ms = check.get("data", {}).get("migrationStatus", "")
+                break
+    print(ms)
 except Exception:
     print("")
 PY

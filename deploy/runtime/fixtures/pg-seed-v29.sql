@@ -1,16 +1,24 @@
 -- TEST FIXTURE ONLY — not production DDL.
 --
--- Minimal PostgreSQL schema snapshot at schema_version=29 for use as a
+-- Realistic PostgreSQL schema snapshot at schema_version=29 for use as a
 -- Docker init-script in the docker:hosted:smoke:seeded-pg smoke flow.
 --
 -- Purpose: verify that _run_migrations_inner can upgrade a pre-v30 Postgres
--- database to SCHEMA_VERSION=35 without raising UndefinedColumnError when
--- creating project_id-dependent indexes on sessions.
+-- database to SCHEMA_VERSION=35 without errors — including the composite-FK
+-- issue that surfaces when child tables are created fresh by _TABLES while
+-- sessions still has a single-column PK (no project_id column yet).
 --
--- This fixture intentionally omits sessions.project_id (added at v30) and
--- omits idx_sessions_project, idx_sessions_project_status_updated, and
--- idx_sessions_project_source_file (all depend on that column).
--- A correct migration run must add the column and create those indexes.
+-- This fixture includes the v29-era child tables (session_logs, session_tool_usage,
+-- session_file_updates, session_artifacts) with their v29-era REFERENCES sessions(id)
+-- foreign keys (simple, non-composite). The v31 migration drops those FKs and
+-- rewrites them as composite (project_id, session_id) -> sessions(project_id, id).
+--
+-- session_messages, session_usage_events, session_relationships are intentionally
+-- ABSENT — they were introduced after v29 and _TABLES creates them fresh, which
+-- exercises the exact path that previously crashed with UndefinedColumnError
+-- (child table created fresh while sessions has no composite PK yet).
+--
+-- At v29 sessions has no project_id (added at v30) and uses a single TEXT PK on id.
 --
 -- Used by: deploy/runtime/scripts/smoke-seeded-pg.sh
 --          npm run docker:hosted:smoke:seeded-pg
@@ -37,7 +45,7 @@ INSERT INTO migrations_applied (version) VALUES (1),(2),(3),(4),(5),(6),(7),(8),
     (21),(22),(23),(24),(25),(26),(27),(28),(29)
 ON CONFLICT DO NOTHING;
 
--- ── Sessions table (pre-v30: no project_id column, no composite PK) ────────
+-- ── Sessions table (pre-v30: no project_id column, single TEXT PK) ─────────
 -- At v29 the sessions table used a single-column TEXT primary key on id.
 -- project_id is intentionally absent — this is what the v30 migration adds.
 CREATE TABLE IF NOT EXISTS sessions (
@@ -119,6 +127,77 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 -- Source file index (no project_id dependency — safe at v29)
 CREATE INDEX IF NOT EXISTS idx_sessions_source_file ON sessions(source_file);
+
+-- ── Session logs (v29-era: simple FK to sessions(id)) ─────────────────────
+-- Present at v29 with a simple single-column FK referencing sessions(id).
+-- The v31 migration drops this FK and rewrites it as a composite FK.
+CREATE TABLE IF NOT EXISTS session_logs (
+    id             SERIAL PRIMARY KEY,
+    session_id     TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    log_index      INTEGER NOT NULL,
+    source_log_id  TEXT DEFAULT '',
+    timestamp      TEXT NOT NULL,
+    speaker        TEXT NOT NULL,
+    type           TEXT NOT NULL,
+    content        TEXT DEFAULT '',
+    agent_name     TEXT,
+    tool_name      TEXT,
+    tool_call_id   TEXT,
+    related_tool_call_id TEXT,
+    linked_session_id TEXT,
+    tool_args      TEXT,
+    tool_output    TEXT,
+    tool_status    TEXT DEFAULT 'success',
+    metadata_json  TEXT
+    -- NOTE: project_id column absent at v29; added by _migrate_v30_detail_tables_project_id.
+);
+
+CREATE INDEX IF NOT EXISTS idx_logs_session ON session_logs(session_id, log_index);
+
+-- ── Session tool usage (v29-era: simple FK to sessions(id)) ───────────────
+CREATE TABLE IF NOT EXISTS session_tool_usage (
+    session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tool_name     TEXT NOT NULL,
+    call_count    INTEGER DEFAULT 0,
+    success_count INTEGER DEFAULT 0,
+    total_ms      INTEGER DEFAULT 0,
+    PRIMARY KEY (session_id, tool_name)
+    -- NOTE: project_id column absent at v29.
+);
+
+-- ── Session file updates (v29-era: simple FK to sessions(id)) ─────────────
+CREATE TABLE IF NOT EXISTS session_file_updates (
+    id           SERIAL PRIMARY KEY,
+    session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    file_path    TEXT NOT NULL,
+    action       TEXT DEFAULT 'update',
+    file_type    TEXT DEFAULT 'Other',
+    action_timestamp TEXT DEFAULT '',
+    additions    INTEGER DEFAULT 0,
+    deletions    INTEGER DEFAULT 0,
+    agent_name   TEXT DEFAULT '',
+    thread_session_id TEXT DEFAULT '',
+    root_session_id TEXT DEFAULT '',
+    source_log_id TEXT,
+    source_tool_name TEXT
+    -- NOTE: project_id column absent at v29.
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_updates_session ON session_file_updates(session_id);
+
+-- ── Session artifacts (v29-era: simple FK to sessions(id)) ────────────────
+CREATE TABLE IF NOT EXISTS session_artifacts (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    type         TEXT DEFAULT 'document',
+    description  TEXT DEFAULT '',
+    source       TEXT DEFAULT '',
+    url          TEXT,
+    source_log_id TEXT,
+    source_tool_name TEXT
+    -- NOTE: project_id column absent at v29.
+);
 
 -- ── Sync state ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sync_state (

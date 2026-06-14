@@ -252,8 +252,13 @@ CREATE TABLE IF NOT EXISTS session_logs (
     tool_args      TEXT,
     tool_output    TEXT,
     tool_status    TEXT DEFAULT 'success',
-    metadata_json  TEXT,
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    metadata_json  TEXT
+    -- NOTE: composite FK (project_id, session_id) -> sessions(project_id, id)
+    -- is NOT declared inline. On fresh DBs and in-place upgrades alike, it is
+    -- added by _migrate_v31_sessions_composite_pk_and_child_fks which runs under
+    -- the `if current_version < 31` guard after sessions has its composite PK.
+    -- Inline composite FKs fail on in-place upgrades from v29 where sessions
+    -- exists without project_id / without a composite PK yet.
 );
 
 CREATE INDEX IF NOT EXISTS idx_logs_session ON session_logs(session_id, log_index);
@@ -291,8 +296,8 @@ CREATE TABLE IF NOT EXISTS session_messages (
     input_tokens   INTEGER,
     output_tokens  INTEGER,
     cache_read_input_tokens   INTEGER,
-    cache_creation_input_tokens INTEGER,
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    cache_creation_input_tokens INTEGER
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_messages_family
@@ -308,8 +313,8 @@ CREATE TABLE IF NOT EXISTS session_tool_usage (
     call_count    INTEGER DEFAULT 0,
     success_count INTEGER DEFAULT 0,
     total_ms      INTEGER DEFAULT 0,
-    PRIMARY KEY (session_id, tool_name),
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    PRIMARY KEY (session_id, tool_name)
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 
 -- File changes per session
@@ -327,8 +332,8 @@ CREATE TABLE IF NOT EXISTS session_file_updates (
     thread_session_id TEXT DEFAULT '',
     root_session_id TEXT DEFAULT '',
     source_log_id TEXT,
-    source_tool_name TEXT,
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    source_tool_name TEXT
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_updates_session ON session_file_updates(session_id);
@@ -345,8 +350,8 @@ CREATE TABLE IF NOT EXISTS session_artifacts (
     source       TEXT DEFAULT '',
     url          TEXT,
     source_log_id TEXT,
-    source_tool_name TEXT,
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    source_tool_name TEXT
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 
 CREATE TABLE IF NOT EXISTS session_usage_events (
@@ -364,8 +369,8 @@ CREATE TABLE IF NOT EXISTS session_usage_events (
     token_family       TEXT NOT NULL,
     delta_tokens       INTEGER NOT NULL DEFAULT 0 CHECK (delta_tokens >= 0),
     cost_usd_model_io  DOUBLE PRECISION NOT NULL DEFAULT 0.0 CHECK (cost_usd_model_io >= 0),
-    metadata_json      TEXT DEFAULT '{}',
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    metadata_json      TEXT DEFAULT '{}'
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_usage_events_project
@@ -411,9 +416,8 @@ CREATE TABLE IF NOT EXISTS session_relationships (
     source_log_id       TEXT,
     metadata_json       TEXT DEFAULT '{}',
     source_file         TEXT DEFAULT '',
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id, parent_session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (project_id, child_session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    -- Composite FKs (parent + child) added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_relationships_parent
@@ -756,8 +760,8 @@ CREATE TABLE IF NOT EXISTS session_sentiment_facts (
     confidence         DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     heuristic_version  TEXT DEFAULT '',
     evidence_json      JSONB NOT NULL DEFAULT '{}'::jsonb,
-    computed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    computed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 CREATE INDEX IF NOT EXISTS idx_session_sentiment_facts_session
     ON session_sentiment_facts(session_id, message_index, source_log_id);
@@ -787,8 +791,8 @@ CREATE TABLE IF NOT EXISTS session_code_churn_facts (
     confidence               DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     heuristic_version        TEXT DEFAULT '',
     evidence_json            JSONB NOT NULL DEFAULT '{}'::jsonb,
-    computed_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    computed_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 CREATE INDEX IF NOT EXISTS idx_session_code_churn_facts_session
     ON session_code_churn_facts(session_id, file_path);
@@ -809,8 +813,8 @@ CREATE TABLE IF NOT EXISTS session_scope_drift_facts (
     confidence              DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     heuristic_version       TEXT DEFAULT '',
     evidence_json           JSONB NOT NULL DEFAULT '{}'::jsonb,
-    computed_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    computed_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 CREATE INDEX IF NOT EXISTS idx_session_scope_drift_facts_session
     ON session_scope_drift_facts(session_id, feature_id);
@@ -1010,8 +1014,8 @@ CREATE TABLE IF NOT EXISTS session_stack_observations (
     evidence_json       JSONB DEFAULT '{}'::jsonb,
     created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
     updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-    UNIQUE(project_id, session_id),
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    UNIQUE(project_id, session_id)
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_stack_observations_session
@@ -1092,8 +1096,8 @@ CREATE TABLE IF NOT EXISTS session_memory_drafts (
     last_publish_error   TEXT DEFAULT '',
     created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
     updated_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
-    UNIQUE(project_id, content_hash),
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    UNIQUE(project_id, content_hash)
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks.
 );
 CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_project_status
     ON session_memory_drafts(project_id, status, updated_at DESC);
@@ -1641,8 +1645,8 @@ CREATE TABLE IF NOT EXISTS app.session_embeddings (
     embedding_dimensions INTEGER NOT NULL DEFAULT 0,
     embedding            vector,
     metadata_json        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id, session_id) REFERENCES sessions(project_id, id) ON DELETE CASCADE
+    created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    -- Composite FK added by _migrate_v31_sessions_composite_pk_and_child_fks (Step 14).
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_session_embeddings_content_hash
@@ -1997,8 +2001,13 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: asyncpg.Connectio
     Idempotent: checks if sessions PK already includes project_id and skips if so.
     Forward-only.
     """
-    # ── Idempotency check ──────────────────────────────────────────────────────
-    existing_pk = await db.fetchrow(
+    # ── Check whether composite PK already exists ──────────────────────────────
+    # We do NOT return early when the PK already exists, because inline composite
+    # FKs were removed from _TABLES to prevent UndefinedColumnError on in-place
+    # upgrades (sessions exists without project_id when _TABLES runs).  Both fresh
+    # DBs and in-place upgrades therefore need the child-FK ALTER TABLE steps
+    # below.  Only the PK-rebuild step (Step 1) is skipped when already composite.
+    pk_already_composite = await db.fetchrow(
         """
         SELECT kcu.column_name
         FROM information_schema.table_constraints tc
@@ -2012,34 +2021,13 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: asyncpg.Connectio
         LIMIT 1
         """
     )
-    if existing_pk is not None:
-        logger.info("P3-003-FU v31: sessions composite PK already includes project_id; skipping.")
-        return
 
-    # ── project_id column must exist ──────────────────────────────────────────
+    # ── project_id column must exist (required for composite PK and all child FKs)
     col_exists = await _column_exists(db, "sessions", "project_id")
     if not col_exists:
         logger.error(
             "P3-003-FU v31 ABORTED: sessions table missing project_id. "
-            "Cannot create composite PK."
-        )
-        return
-
-    # ── collision check ───────────────────────────────────────────────────────
-    collision = await db.fetchrow(
-        """
-        SELECT project_id, id, COUNT(*) AS cnt
-        FROM sessions
-        GROUP BY project_id, id
-        HAVING COUNT(*) > 1
-        LIMIT 1
-        """
-    )
-    if collision is not None:
-        logger.error(
-            "P3-003-FU v31 ABORTED: (project_id, id) collision in sessions: "
-            "project_id=%s id=%s count=%s.",
-            collision["project_id"], collision["id"], collision["cnt"],
+            "Cannot create composite PK or child composite FKs."
         )
         return
 
@@ -2084,33 +2072,81 @@ async def _migrate_v31_sessions_composite_pk_and_child_fks(db: asyncpg.Connectio
                 f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {row['constraint_name']}"
             )
 
-    # ── Step 0: drop legacy outbound_telemetry_queue → sessions(id) FK ─────────
-    # Pre-PR Postgres DBs created outbound_telemetry_queue.session_id with an
-    # inline ``REFERENCES sessions(id) ON DELETE CASCADE`` FK. The _TABLES DDL no
-    # longer declares it, but CREATE TABLE IF NOT EXISTS never alters an existing
-    # table — so on any DB upgrading from v29/v30 that FK still depends on the
-    # single-column sessions PK and would block the DROP CONSTRAINT below. SQLite
-    # achieves the same outcome by rebuilding the table without the FK in
-    # _migrate_outbound_telemetry_queue_add_event_type. Drop it here (idempotent:
-    # DROP CONSTRAINT IF EXISTS over whatever FKs reference sessions, or no-op when
-    # the FK is already gone). The table intentionally gets NO composite FK back —
-    # parity with the SQLite FK-removal step.
-    await _drop_sessions_fks("outbound_telemetry_queue")
-
-    # ── Step 1: rebuild sessions PK ───────────────────────────────────────────
-    pk_name_row = await db.fetchrow(
+    # ── Step 0: drop ALL existing FK constraints referencing sessions (any PK) ──
+    # Before we can drop/replace the sessions PK, ALL foreign-key constraints that
+    # reference it (whether to sessions(id) on a simple PK or to sessions(project_id, id)
+    # on a composite PK) must be dropped first.  We discover them all via the
+    # information_schema and drop them in one pass.  Steps 2–13 then re-add the
+    # composite FK variants for each table that needs one.  Tables that intentionally
+    # receive no composite FK (e.g. outbound_telemetry_queue) are not re-added below.
+    # This is idempotent: if no FKs exist (fresh DB path where PK is already composite
+    # and Steps 2–13 haven't run yet), this is a no-op.
+    all_sessions_fk_rows = await db.fetch(
         """
-        SELECT tc.constraint_name
+        SELECT tc.table_name, tc.constraint_name
         FROM information_schema.table_constraints tc
+        JOIN information_schema.referential_constraints rc
+          ON tc.constraint_name = rc.constraint_name
+         AND tc.constraint_schema = rc.constraint_schema
+        JOIN information_schema.table_constraints ccu
+          ON rc.unique_constraint_name = ccu.constraint_name
+         AND rc.unique_constraint_schema = ccu.constraint_schema
         WHERE tc.table_schema = 'public'
-          AND tc.table_name = 'sessions'
-          AND tc.constraint_type = 'PRIMARY KEY'
-        LIMIT 1
+          AND ccu.table_name = 'sessions'
+          AND tc.constraint_type = 'FOREIGN KEY'
         """
     )
-    if pk_name_row:
-        await db.execute(f"ALTER TABLE sessions DROP CONSTRAINT {pk_name_row['constraint_name']}")
-    await db.execute("ALTER TABLE sessions ADD PRIMARY KEY (project_id, id)")
+    for _fk_row in all_sessions_fk_rows:
+        await db.execute(
+            f"ALTER TABLE {_fk_row['table_name']} "
+            f"DROP CONSTRAINT IF EXISTS {_fk_row['constraint_name']}"
+        )
+    if all_sessions_fk_rows:
+        logger.info(
+            "P3-003-FU v31 Step 0: dropped %d FK constraint(s) referencing sessions "
+            "(will be re-added as composite FKs in Steps 2–13).",
+            len(all_sessions_fk_rows),
+        )
+
+    # ── Step 1: rebuild sessions PK (skipped when PK already composite) ───────
+    # When pk_already_composite is set, sessions already has PRIMARY KEY (project_id, id)
+    # — this happens on fresh DBs where _TABLES created sessions with the composite PK.
+    # We still proceed to add child FKs below (they were NOT declared inline in _TABLES).
+    if not pk_already_composite:
+        # collision check — only needed before we drop+rebuild the PK
+        collision = await db.fetchrow(
+            """
+            SELECT project_id, id, COUNT(*) AS cnt
+            FROM sessions
+            GROUP BY project_id, id
+            HAVING COUNT(*) > 1
+            LIMIT 1
+            """
+        )
+        if collision is not None:
+            logger.error(
+                "P3-003-FU v31 ABORTED: (project_id, id) collision in sessions: "
+                "project_id=%s id=%s count=%s.",
+                collision["project_id"], collision["id"], collision["cnt"],
+            )
+            return
+
+        pk_name_row = await db.fetchrow(
+            """
+            SELECT tc.constraint_name
+            FROM information_schema.table_constraints tc
+            WHERE tc.table_schema = 'public'
+              AND tc.table_name = 'sessions'
+              AND tc.constraint_type = 'PRIMARY KEY'
+            LIMIT 1
+            """
+        )
+        if pk_name_row:
+            await db.execute(f"ALTER TABLE sessions DROP CONSTRAINT {pk_name_row['constraint_name']}")
+        await db.execute("ALTER TABLE sessions ADD PRIMARY KEY (project_id, id)")
+        logger.info("P3-003-FU v31: sessions composite PK (project_id, id) promoted.")
+    else:
+        logger.info("P3-003-FU v31: sessions composite PK already in place; skipping PK rebuild.")
 
     # ── Step 2: session_logs ───────────────────────────────────────────────────
     await _ensure_pg_project_id("session_logs")
