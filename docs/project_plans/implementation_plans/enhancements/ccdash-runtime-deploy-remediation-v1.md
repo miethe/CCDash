@@ -2,9 +2,9 @@
 schema_version: 2
 doc_type: implementation_plan
 title: "CCDash Runtime & Deploy Remediation v1 — Implementation Plan"
-status: draft
+status: completed
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-14
 feature_slug: ccdash-runtime-deploy-remediation
 feature_version: "v1"
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-runtime-deploy-remediation-v1.md
@@ -33,7 +33,10 @@ adr_refs:
 priority: high
 risk_level: high
 changelog_required: true
-deferred_items_spec_refs: []
+changelog_ref: CHANGELOG.md
+deferred_items_spec_refs:
+  - docs/project_plans/design-specs/f-w6-001-correlation-overcounting.md
+  - docs/project_plans/design-specs/w2-dynamic-watcher-rebind.md
 findings_doc_ref: .claude/findings/ccdash-core-remediation-findings.md
 plan_structure: unified
 progress_init: auto
