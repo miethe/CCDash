@@ -236,10 +236,10 @@ Cross-project watchers already register for all projects and survive active-swit
 #### AC 8.2: Non-active project freshness within reconcile interval
 - resilience: >
     A plan/doc added to a non-active project becomes visible within one reconcile interval with NO server
-    restart and NO active-project switch. If the reconcile pass coincides with a watcher event for the same
-    project, the Phase 7 guard coalesces them (no double-scan).
+    restart and NO active-project switch. Multiple sync dispatches for the same project coalesce via the
+    Phase 7 guard if they are triggered by the same dispatch type (e.g., same-trigger duplicates).
 - propagation_contract: >
-    Reconcile sweep (sync_engine.py) → per-project freshness pass (coalesced via Phase 7 guard) →
+    Reconcile sweep (sync_engine.py) → per-project freshness pass (guarded via Phase 7 coalescing key) →
     repositories upsert (retry_on_locked) → queryable via existing read paths (Phase 0 project_id-scoped).
 - visual_evidence_required: false
 - verified_by:
