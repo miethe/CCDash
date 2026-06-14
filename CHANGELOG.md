@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- **W1: Dashboard now lands on the DB-active project on first load** — Registry-authoritative `ORDER BY is_active DESC` + FE app-shell scope guard ensures the correct active project is selected automatically. Seed/example projects are flagged via `is_seed` and excluded from default selection.
+- **W3: Postgres in-place upgrade from schema v29→v35 no longer crashes** — Fixed both the project_id-dependent CREATE INDEX ordering AND a deeper composite child-table FK issue. Inline `REFERENCES sessions(project_id, id)` FKs moved out of the table-creation blob into the versioned composite-PK migration. Validated by a real seeded-PG container smoke (`npm run docker:hosted:smoke:seeded-pg`).
 - **Session data now reflects the active project after a project switch**: `POST /api/projects/active/{id}` atomically rebinds the file watcher to the new project's `sessions_dir`, `docs_dir`, and `progress_dir`, triggers a one-shot sync, and returns `watcherRebound: true` in the response. Session counts, analytics, and live metrics now immediately reflect the correct project. `GET /api/health/detail` watcher `watchPaths` field updates on switch. If the new project's paths do not exist, the API returns HTTP 4xx and the watcher remains on the previous project's paths (no half-rebound state).
 - **Cross-project session read isolation** — `get_by_id`, `get_many_by_ids`, and session-family reads now enforce a strict `project_id` predicate in both SQLite and Postgres repositories; session rows from one project can no longer appear in another project's detail, family, or drilldown views. Previously, missing or empty `project_id` inputs silently fell back to the active project, enabling stale-project reads across all ID-based lookups.
 - **Novel model IDs no longer silently billed at Sonnet rates** — Unrecognized model slugs now return `cost_pricing_status: "unpriced"` with `display_cost_usd: null` instead of inheriting Sonnet pricing ($3.00/$15.00 per million); the analytics API exposes `costPricingStatus` for UI-layer handling.
@@ -35,6 +37,7 @@
 
 ### Changed
 
+- **W2: `CCDASH_WORKER_WATCH_PROJECT_ID` is now OPTIONAL** — An empty or unset scope filter makes the watcher derive its targets from the DB registry (all registered projects) instead of requiring a hand-pinned id. Adds per-project watcher health rollup in `/api/health/detail`, a 60s registry reconcile loop, bounded sync concurrency (`CCDASH_WATCHER_SYNC_CONCURRENCY`), and `CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS`.
 - **Planning / Forensics Boundary Extraction**: Separated planning and execution workflows from session forensics and metrics through bounded shared evidence contracts. Key changes:
   - Added `FeatureEvidenceSummary` as a transport-neutral backend service/DTO providing bounded session counts, token totals, workflow mix, and freshness metadata without transcript-log enrichment.
   - Planning queries now consume the bounded evidence summary instead of full `FeatureForensicsQueryService` forensic detail, eliminating import-time singleton coupling in `planning.py`.
@@ -45,6 +48,10 @@
 - **`CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` default changed to `true`** — The family-scoped incremental rebuild path is now active by default on the watcher hot path; set `false` to revert to the global filesystem-scan fallback.
 - **`CCDASH_SYNC_ALL_PROJECTS` default changed to `false`** — Boot-time all-projects sweeps are now opt-in; cross-project freshness is provided by the periodic reconcile job. Set `true` to restore the prior on-boot sweep.
 - **Compose service ports bound to loopback by default** — PostgreSQL (5432), API (8000), and worker (9465) container host ports now bind to `127.0.0.1` instead of `0.0.0.0`; operators exposing services to the LAN must explicitly override and set strong `CCDASH_POSTGRES_PASSWORD` and `CCDASH_API_TOKEN` values. CORS rejects wildcard origins with `allow_credentials=True`; bearer token comparison uses constant-time `hmac.compare_digest`.
+
+### Maintenance
+
+- **W4: Accumulated findings triage** — Triaged 6 accumulated findings: F-001, F-002, F-003, F-W3-001, F-W3-002 resolved; F-W6-001 deferred.
 
 ### Added
 
