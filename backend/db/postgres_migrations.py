@@ -2398,6 +2398,14 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "sessions", "fork_point_parent_entry_uuid", "TEXT")
     await _ensure_column(db, "sessions", "fork_depth", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "fork_count", "INTEGER DEFAULT 0")
+    # P1 follow-up: ensure sessions.project_id exists before ANY unconditional
+    # CREATE INDEX that references it (idx_sessions_root / _family / _thread_kind
+    # immediately below).  On a pre-v30 DB the column is absent at this point;
+    # _TABLES CREATE TABLE IF NOT EXISTS is a no-op on existing tables.
+    # The _ensure_column inside `if current_version < 30:` (~line 3085) is
+    # idempotent after this call.  On fresh DBs (version=0) project_id is already
+    # present from _TABLES DDL, so this is also a no-op.
+    await _ensure_column(db, "sessions", "project_id", "TEXT NOT NULL DEFAULT ''")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_family ON sessions(project_id, conversation_family_id, started_at DESC)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_thread_kind ON sessions(project_id, thread_kind, started_at DESC)")
