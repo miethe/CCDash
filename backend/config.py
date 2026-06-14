@@ -1003,13 +1003,25 @@ INFERRED_STATUS_WRITEBACK_ENABLED = _env_bool(
 # Worker env vars for k8s / bare-container deploys (compose sets these in the worker service).
 # These are deploy-convenience aliases; they do NOT override the real sync gate which is
 # CCDASH_STARTUP_SYNC_ENABLED + worker RuntimeProfile.capabilities.sync=True.
-# CCDASH_WORKER_WATCH_PROJECT_ID — constrain worker-watch to a single project ID (string).
+# CCDASH_WORKER_WATCH_PROJECT_ID — optional scope filter for the worker-watch profile.
+# Non-empty: watcher targets exactly that project id (backward-compatible override).
+# Empty or unset: watcher derives targets from the DB registry (all registered projects).
 WORKER_WATCH_PROJECT_ID: str = str(os.environ.get("CCDASH_WORKER_WATCH_PROJECT_ID", "")).strip()
 # CCDASH_WORKER_STARTUP_SYNC_ENABLED — compose-level alias surfaced here for k8s/bare-container.
 # Feeds awareness of the compose intent but does NOT replace CCDASH_STARTUP_SYNC_ENABLED as the gate.
 WORKER_STARTUP_SYNC_ENABLED: bool = _env_bool("CCDASH_WORKER_STARTUP_SYNC_ENABLED", True)
 # CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED — as above, scoped to the worker-watch profile.
 WORKER_WATCH_STARTUP_SYNC_ENABLED: bool = _env_bool("CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED", True)
+# CCDASH_WATCHER_SYNC_CONCURRENCY — shared asyncio.Semaphore ceiling bounding simultaneous
+# per-project sync executions triggered by filesystem change events. Shared across all project
+# watcher tasks so burst events from N projects do not spawn unbounded sync workers.
+# Default 20; min 1, max 200.
+WATCHER_SYNC_CONCURRENCY: int = max(1, min(200, _env_int("CCDASH_WATCHER_SYNC_CONCURRENCY", 20)))
+# CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS — interval (seconds) between periodic registry
+# re-reads in the watcher fan-out supervisor. On each tick the supervisor diffs the currently-
+# watched project set against the DB registry and idempotently adds/removes watchers. Allows
+# newly-registered projects to be picked up without a service restart. Default 60; min 10, max 3600.
+WATCHER_RECONCILE_INTERVAL_SECONDS: int = max(10, min(3600, _env_int("CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS", 60)))
 
 # Startup sync tuning
 STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)

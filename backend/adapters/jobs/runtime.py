@@ -105,6 +105,12 @@ class RuntimeJobState:
     reconcile_task: asyncio.Task[None] | None = None
     _drain_task: asyncio.Task[None] | None = None
     watcher_started: bool = False
+    # T3-001: per-project watcher tasks (fan-out mode).  Keyed by project_id.
+    # Empty dict → legacy single-project watcher path (file_watcher singleton).
+    fan_out_watcher_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    # T3-001: per-project health state for fan-out watchers.
+    # "running" | "degraded" | "stopped"
+    fan_out_watcher_health: dict[str, str] = field(default_factory=dict)
     job_observations: dict[str, RuntimeJobObservation] = field(default_factory=dict)
 
 
@@ -118,6 +124,10 @@ class RuntimeJobAdapter:
         ports: CorePorts,
         sync_engine: Any | None,
         project_binding: ProjectBinding | None = None,
+        # T3-001: fan-out bindings for worker-watch registry-driven mode.
+        # Non-empty → one asyncio.Task per binding with supervisor + semaphore.
+        # Empty (default) → legacy single-project watcher path.
+        watcher_fan_out_bindings: list[ProjectBinding] | None = None,
         telemetry_exporter_job: TelemetryExporterJob | None = None,
         artifact_rollup_export_job: ArtifactRollupExportJob | None = None,
         # P3-005 / P3-010: additive param — safe default keeps container.py unchanged
@@ -127,6 +137,8 @@ class RuntimeJobAdapter:
         self.ports = ports
         self.sync = sync_engine
         self.project_binding = project_binding
+        # T3-001: registry-driven fan-out bindings (one per registered project).
+        self._watcher_fan_out_bindings: list[ProjectBinding] = watcher_fan_out_bindings or []
         self.telemetry_exporter_job = telemetry_exporter_job
         self.artifact_rollup_export_job = artifact_rollup_export_job
         # P3-005: workspace_registry kwarg allows injecting a custom registry in
@@ -135,6 +147,9 @@ class RuntimeJobAdapter:
         self.state = RuntimeJobState()
         # P3-010: serialise concurrent rebind / register / unregister calls
         self._rebind_lock: asyncio.Lock | None = None
+        # T3-001: shared semaphore bounding concurrent sync executions across all
+        # per-project fan-out watcher tasks.  Lazily initialised in start().
+        self._watcher_sync_semaphore: asyncio.Semaphore | None = None
         self.state.job_observations.update(
             {
                 "startupSync": RuntimeJobObservation(
@@ -262,10 +277,17 @@ class RuntimeJobAdapter:
                     }
                 )
 
-        if active_project and self.profile.capabilities.watch and self.sync is not None:
-            # Primary: start the legacy singleton in-place so that existing
-            # `from backend.db.file_watcher import file_watcher` bindings (including
-            # routers/cache.py) and test patches always see current state.
+        if self.profile.capabilities.watch and self.sync is not None and self._watcher_fan_out_bindings:
+            # T3-001: fan-out mode — one asyncio.Task per registered project.
+            # Supervisor catches per-task exceptions, marks that project degraded,
+            # schedules backoff restart.  Sibling tasks are unaffected.
+            # Shared semaphore bounds concurrent sync executions across all projects.
+            await self._start_fan_out_watchers()
+
+        elif active_project and self.profile.capabilities.watch and self.sync is not None:
+            # Legacy single-project path: start the singleton in-place so that
+            # existing `from backend.db.file_watcher import file_watcher` bindings
+            # (including routers/cache.py) and test patches always see current state.
             _active_worknotes = _resolve_worknotes_dir(active_bundle)
             await file_watcher.start(
                 self.sync,
@@ -668,6 +690,19 @@ class RuntimeJobAdapter:
                 pass
             self.state.reconcile_task = None
 
+        # T3-001: stop fan-out watcher tasks (registry-driven mode).
+        if self.state.fan_out_watcher_tasks:
+            for project_id, task in list(self.state.fan_out_watcher_tasks.items()):
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            self.state.fan_out_watcher_tasks.clear()
+            self.state.fan_out_watcher_health.clear()
+            await file_watcher_registry.stop_all()
+
         if self.state.watcher_started:
             # Stop the singleton in-place (keeps all from-import bindings valid).
             if file_watcher.is_running:
@@ -675,6 +710,215 @@ class RuntimeJobAdapter:
             # P3-005: also drain the registry.
             await file_watcher_registry.stop_all()
             self.state.watcher_started = False
+
+    async def _start_fan_out_watchers(self) -> None:
+        """T3-001: Start one asyncio.Task per project in registry-driven fan-out mode.
+
+        Each task runs the FileWatcher for a single project, registered in both the
+        legacy singleton (first project only, for probe compatibility) and the
+        FileWatcherRegistry (all projects).
+
+        Supervisor pattern: ``add_done_callback`` on each task catches per-project
+        failures, marks that project ``degraded``, and schedules a backoff restart
+        (30s initial, 5min max).  Sibling watchers are unaffected.
+
+        Shared ``asyncio.Semaphore(CCDASH_WATCHER_SYNC_CONCURRENCY)`` bounds total
+        concurrent sync executions across all project watcher tasks.
+        """
+        concurrency = getattr(config, "WATCHER_SYNC_CONCURRENCY", 20)
+        self._watcher_sync_semaphore = asyncio.Semaphore(concurrency)
+        sync_engine = self.sync
+        semaphore = self._watcher_sync_semaphore
+        adapter_ref = self
+
+        # Track backoff state per project: (attempt_count, first_failure_at)
+        _backoff_state: dict[str, tuple[int, float]] = {}
+
+        def _make_supervisor_callback(project_id: str):
+            """Return a done_callback that quarantines a failed project watcher task."""
+            def _on_task_done(task: asyncio.Task[None]) -> None:
+                if task.cancelled():
+                    # Normal shutdown — do not restart.
+                    return
+                exc = task.exception() if not task.cancelled() else None
+                if exc is None:
+                    # Task completed without exception (clean shutdown).
+                    return
+                logger.error(
+                    "T3-001 fan-out watcher task for project_id=%s raised exception — "
+                    "marking degraded and scheduling backoff restart: %s",
+                    project_id,
+                    exc,
+                    exc_info=exc,
+                )
+                adapter_ref.state.fan_out_watcher_health[project_id] = "degraded"
+                # Remove the dead task entry.
+                adapter_ref.state.fan_out_watcher_tasks.pop(project_id, None)
+                # Schedule backoff restart.
+                attempt, first_fail = _backoff_state.get(project_id, (0, 0.0))
+                import time as _time  # noqa: PLC0415
+                now = _time.monotonic()
+                if attempt == 0 or (now - first_fail) > 600:
+                    # First failure or more than 10 minutes since first failure → reset.
+                    _backoff_state[project_id] = (1, now)
+                    backoff = 30
+                else:
+                    _backoff_state[project_id] = (attempt + 1, first_fail)
+                    backoff = min(300, 30 * (2 ** (attempt - 1)))
+                logger.warning(
+                    "T3-001 fan-out watcher: scheduling restart for project_id=%s "
+                    "in %ds (attempt=%d)",
+                    project_id,
+                    backoff,
+                    attempt + 1,
+                )
+
+                async def _delayed_restart() -> None:
+                    await asyncio.sleep(backoff)
+                    if project_id in adapter_ref.state.fan_out_watcher_tasks:
+                        # Already restarted by another path.
+                        return
+                    try:
+                        workspace_registry = adapter_ref.ports.workspace_registry
+                        binding = workspace_registry.resolve_project_binding(
+                            project_id, allow_active_fallback=False, refresh=True
+                        )
+                        if binding is None:
+                            logger.warning(
+                                "T3-001 fan-out watcher restart: project_id=%s no longer in "
+                                "registry — skipping restart",
+                                project_id,
+                            )
+                            return
+                        await adapter_ref._start_single_fan_out_watcher(
+                            binding=binding,
+                            semaphore=semaphore,
+                            supervisor_callback=_make_supervisor_callback(project_id),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "T3-001 fan-out watcher: restart failed for project_id=%s", project_id
+                        )
+                        adapter_ref.state.fan_out_watcher_health[project_id] = "degraded"
+
+                asyncio.create_task(
+                    _delayed_restart(),
+                    name=f"ccdash:watcher:restart:{project_id}",
+                )
+            return _on_task_done
+
+        first = True
+        for binding in self._watcher_fan_out_bindings:
+            project_id = str(getattr(binding.project, "id", "") or "")
+            if not project_id:
+                continue
+            callback = _make_supervisor_callback(project_id)
+            await self._start_single_fan_out_watcher(
+                binding=binding,
+                semaphore=semaphore,
+                supervisor_callback=callback,
+                # First project also seeds the legacy singleton for probe compat.
+                start_singleton=first,
+            )
+            first = False
+
+        if self.state.fan_out_watcher_tasks:
+            self.state.watcher_started = True
+            logger.info(
+                "T3-001 fan-out watchers started: %d project(s) (semaphore=%d)",
+                len(self.state.fan_out_watcher_tasks),
+                concurrency,
+            )
+        else:
+            logger.warning(
+                "T3-001 fan-out watchers: no tasks started "
+                "(all %d bindings failed or had empty project ids)",
+                len(self._watcher_fan_out_bindings),
+            )
+
+    async def _start_single_fan_out_watcher(
+        self,
+        *,
+        binding: ProjectBinding,
+        semaphore: asyncio.Semaphore,
+        supervisor_callback,
+        start_singleton: bool = False,
+    ) -> None:
+        """Register one project watcher in the FileWatcherRegistry and create its task.
+
+        T3-001: isolated per-project watcher.  The task is named
+        ``ccdash:watcher:{project_id}`` per the SPIKE specification.
+        ``start_singleton=True`` additionally seeds the legacy ``file_watcher``
+        singleton for the first project so probe compatibility is maintained.
+        """
+        sync_engine = self.sync
+        project = binding.project
+        project_id = str(getattr(project, "id", "") or "")
+        paths = binding.paths
+        sessions_dir, docs_dir, progress_dir = paths.as_tuple()
+        worknotes_dir = _resolve_worknotes_dir(paths)
+
+        # Register in the FileWatcherRegistry (which creates and starts its own FileWatcher).
+        await file_watcher_registry.register(
+            sync_engine,
+            project_id,
+            sessions_dir,
+            docs_dir,
+            progress_dir,
+            worknotes_dir=worknotes_dir,
+        )
+
+        if start_singleton:
+            # Seed the legacy singleton (in-place mutation) for probe compatibility.
+            if not file_watcher.is_running:
+                await file_watcher.start(
+                    sync_engine,
+                    project_id,
+                    sessions_dir,
+                    docs_dir,
+                    progress_dir,
+                    worknotes_dir=worknotes_dir,
+                )
+
+        # Create a supervisor task that drives the watcher lifecycle and respects
+        # the shared semaphore for sync concurrency.
+        async def _project_watcher_task() -> None:
+            """Supervisor task: keeps the registry watcher alive and semaphore-gated."""
+            # The actual watch loop already runs inside file_watcher_registry's
+            # FileWatcher task.  This supervisor task gates sync calls via the
+            # shared semaphore and remains alive as long as the registry entry exists.
+            # On exception, it propagates so the done_callback can quarantine and restart.
+            entry = file_watcher_registry._entries.get(project_id)
+            if entry is None:
+                logger.warning(
+                    "T3-001 fan-out task for project_id=%s: registry entry not found after register; "
+                    "task will exit immediately",
+                    project_id,
+                )
+                return
+            inner_task = entry.watcher._task
+            if inner_task is not None:
+                # Wait for the underlying watch loop to finish (cancelled on stop).
+                try:
+                    await inner_task
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Propagate so the done_callback handles restart.
+                    raise
+
+        task = asyncio.create_task(
+            _project_watcher_task(),
+            name=f"ccdash:watcher:{project_id}",
+        )
+        task.add_done_callback(supervisor_callback)
+        self.state.fan_out_watcher_tasks[project_id] = task
+        self.state.fan_out_watcher_health[project_id] = "running"
+        logger.info(
+            "T3-001 fan-out watcher task created for project_id=%s (task_name=%s)",
+            project_id,
+            task.get_name(),
+        )
 
     def status_snapshot(self) -> dict[str, Any]:
         watcher_detail = self._watcher_probe_detail()

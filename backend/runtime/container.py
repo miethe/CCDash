@@ -69,6 +69,10 @@ class RuntimeContainer:
         self.telemetry_exporter: TelemetryExportCoordinator | None = None
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
         self.project_binding: ProjectBinding | None = None
+        # T3-001: fan-out bindings for worker-watch profile (one per registered project).
+        # Non-empty only when WORKER_WATCH_PROJECT_ID is empty/unset and profile == worker-watch.
+        # Empty list → fall back to legacy single-binding path via self.project_binding.
+        self.watcher_fan_out_bindings: list[ProjectBinding] = []
         self.migration_status = "not_started"
 
     async def startup(self, app: FastAPI) -> None:
@@ -76,7 +80,7 @@ class RuntimeContainer:
         validate_migration_governance_contract()
         self.auth_config = config.resolve_auth_provider_config(self.profile.name)
         config.validate_runtime_environment_contract(self.profile.name, self.storage_profile)
-        self.project_binding = self._resolve_startup_project_binding()
+        self.project_binding, self.watcher_fan_out_bindings = self._resolve_startup_project_binding()
         startup_metadata = self._runtime_metadata()
         logger.info(
             "CCDash backend starting up "
@@ -155,6 +159,7 @@ class RuntimeContainer:
             ports=self.require_ports(),
             sync_engine=self.sync,
             project_binding=self.project_binding,
+            watcher_fan_out_bindings=self.watcher_fan_out_bindings,
             telemetry_exporter_job=(
                 TelemetryExporterJob(self.telemetry_exporter)
                 if self.profile.name in _export_profiles and self.telemetry_exporter is not None
@@ -1217,28 +1222,53 @@ class RuntimeContainer:
             "warningCodes": [],
         }
 
-    def _resolve_startup_project_binding(self) -> ProjectBinding | None:
+    def _resolve_startup_project_binding(
+        self,
+    ) -> tuple[ProjectBinding | None, list[ProjectBinding]]:
+        """Resolve project binding(s) at startup.
+
+        Returns ``(primary_binding, fan_out_bindings)`` where:
+        - ``primary_binding`` is the single ``ProjectBinding`` used by all non-watch
+          background jobs (sync, telemetry, analytics).  None for profiles that do
+          not require a binding (api, local).
+        - ``fan_out_bindings`` is a list of ``ProjectBinding`` objects representing
+          every project the watcher should watch in fan-out mode.  Non-empty only
+          when the profile is ``worker-watch`` AND ``WORKER_WATCH_PROJECT_ID`` is
+          empty/unset (registry-driven).  When ``WORKER_WATCH_PROJECT_ID`` is
+          non-empty (env-pin), ``fan_out_bindings`` is empty and the single-project
+          scope is expressed via ``primary_binding`` (backward-compatible).
+
+        T3-001 / ADR-006: registry is the authoritative source for project
+        selection.  An empty registry is a valid transient state — log a warning
+        and return (None, []) rather than raising RuntimeError.
+        """
+        # Non-worker profiles do not need a binding.
         if self.profile.name not in {"worker", "worker-watch"}:
-            return None
+            return None, []
 
         binding_config = config.resolve_worker_binding_config()
 
-        # Wire dead config vars:
-        # P3: WORKER_WATCH_PROJECT_ID takes precedence for the worker-watch profile —
-        # lets operators point the watcher at a different project than the scheduler
-        # without changing CCDASH_WORKER_PROJECT_ID (which the api/worker also reads).
+        # T3-001: for worker-watch, check env-pin override first.
+        # Non-empty WORKER_WATCH_PROJECT_ID → single-project scope (backward-compat).
+        # Empty / unset → registry-driven fan-out across all registered projects.
         effective_project_id = binding_config.project_id
         if self.profile.name == "worker-watch":
             watch_project_id = getattr(config, "WORKER_WATCH_PROJECT_ID", "")
             if watch_project_id:
+                # Env-pin present: override effective_project_id, use single-project path.
                 effective_project_id = watch_project_id
                 logger.debug(
                     "worker-watch profile: using CCDASH_WORKER_WATCH_PROJECT_ID=%s "
-                    "(overrides CCDASH_WORKER_PROJECT_ID=%s)",
+                    "(overrides CCDASH_WORKER_PROJECT_ID=%s); single-project watcher scope",
                     effective_project_id,
                     binding_config.project_id,
                 )
+            else:
+                # Empty/unset → fan-out: delegate to registry, do NOT raise RuntimeError
+                # even if effective_project_id is also empty.
+                return self._resolve_watcher_fan_out_bindings()
 
+        # Single-project path (worker profile, or worker-watch with env-pin).
         if not effective_project_id:
             raise RuntimeError(
                 f"Runtime profile '{self.profile.name}' requires a non-empty "
@@ -1250,11 +1280,10 @@ class RuntimeContainer:
             storage_profile=self.storage_profile,
         )
 
-        # P3-016: when the registry has multiple projects but no explicit binding
-        # is configured, emit a clear operator warning so the operator knows which
-        # project owns background jobs.
+        # P3-016: emit a warning when multiple projects exist but only one is bound,
+        # so operators know background jobs are scoped to the active project.
         all_projects = workspace_registry.list_projects()
-        if len(all_projects) > 1 and not effective_project_id:
+        if len(all_projects) > 1 and not binding_config.project_id:
             logger.warning(
                 "CCDash worker (profile=%s) found %d projects in the registry but no "
                 "explicit CCDASH_WORKER_PROJECT_ID is set. "
@@ -1282,4 +1311,80 @@ class RuntimeContainer:
             binding.source,
             binding.paths.root.path,
         )
-        return binding
+        return binding, []
+
+    def _resolve_watcher_fan_out_bindings(
+        self,
+    ) -> tuple[ProjectBinding | None, list[ProjectBinding]]:
+        """Resolve all registered projects as watcher targets (fan-out mode).
+
+        Called when ``worker-watch`` profile has no ``WORKER_WATCH_PROJECT_ID`` env-pin.
+        Returns ``(None, [binding, ...])`` — the primary binding slot is left None
+        because background scheduler jobs (sync, analytics) are not launched in
+        the ``worker-watch`` profile; only the watcher tasks use these bindings.
+
+        ADR-006: ``workspace_registry.list_projects()`` is the authoritative source;
+        no ``is_active`` filter is applied (is_active is a UI signal, not an ingest gate).
+
+        Empty registry is a valid transient state (operator just installed CCDash but
+        has not yet run ``ccdash project add``).  Returns ``(None, [])`` with a WARNING
+        log — does NOT raise RuntimeError.
+        """
+        workspace_registry = build_workspace_registry(
+            runtime_profile=self.profile,
+            storage_profile=self.storage_profile,
+        )
+        all_projects = workspace_registry.list_projects()
+        if not all_projects:
+            logger.warning(
+                "worker-watch fan-out: DB registry returned 0 projects — watcher will "
+                "wait for projects to be registered (profile=%s). "
+                "Add a project with `ccdash project add` or set "
+                "CCDASH_WORKER_WATCH_PROJECT_ID to target a specific project.",
+                self.profile.name,
+            )
+            return None, []
+
+        bindings: list[ProjectBinding] = []
+        for project in all_projects:
+            project_id = str(getattr(project, "id", "") or "")
+            if not project_id:
+                continue
+            binding = workspace_registry.resolve_project_binding(
+                project_id,
+                allow_active_fallback=False,
+            )
+            if binding is None:
+                logger.warning(
+                    "worker-watch fan-out: could not resolve binding for project_id=%s — skipping",
+                    project_id,
+                )
+                continue
+            bindings.append(binding)
+            logger.info(
+                "worker-watch fan-out: resolved project binding "
+                "(project_id=%s, source=%s, project_root=%s)",
+                binding.project.id,
+                binding.source,
+                binding.paths.root.path,
+            )
+
+        if not bindings:
+            logger.warning(
+                "worker-watch fan-out: registry has %d projects but none could be resolved "
+                "to a valid binding — watcher will not start for any project (profile=%s).",
+                len(all_projects),
+                self.profile.name,
+            )
+            return None, []
+
+        logger.info(
+            "worker-watch fan-out: resolved %d project binding(s) from DB registry "
+            "(profile=%s, CCDASH_WATCHER_SYNC_CONCURRENCY=%d, "
+            "CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS=%d)",
+            len(bindings),
+            self.profile.name,
+            getattr(config, "WATCHER_SYNC_CONCURRENCY", 20),
+            getattr(config, "WATCHER_RECONCILE_INTERVAL_SECONDS", 60),
+        )
+        return None, bindings
