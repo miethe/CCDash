@@ -54,7 +54,7 @@ tasks:
   - id: T5-002
     name: "Deployment guide update"
     status: completed
-    commit_ref: 3eb2da8
+    commit_ref: b17a9b5  # deployment-guide edits (watcher section, optional env, seeded-pg smoke, rollback); earlier passes 9fe62d8/79e74e5
     assigned_to: documentation-writer
     assigned_model: haiku
     model_effort: adaptive
