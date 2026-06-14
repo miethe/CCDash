@@ -134,7 +134,7 @@ python3 backend/scripts/container_project_onboarding.py \
   --watcher-probe-port 9467
 ```
 
-Note: `worker-watch` binds one project id per worker process in v1. To ingest a second project live, run a second `worker-watch` container with a unique `CCDASH_WORKER_WATCH_PROJECT_ID` and probe port.
+For multi-project live ingest, use **registry-driven fan-out mode**: leave `CCDASH_WORKER_WATCH_PROJECT_ID` empty and a single `worker-watch` container will automatically spawn one WatcherBinding per project registered in the DB, reconciling the registry every 60s (see the [Registry-Driven Fan-Out Mode](#registry-driven-fan-out-mode-recommended-for-multi-project) section below). The one-project-per-container constraint only applies when `CCDASH_WORKER_WATCH_PROJECT_ID` is set to a specific id (single-project pin mode).
 
 If you prepare `projects.json` manually, the minimum project entry is:
 
@@ -157,7 +157,7 @@ If you prepare `projects.json` manually, the minimum project entry is:
 }
 ```
 
-For container deployments, prefer a stable project id. The standard worker uses `CCDASH_WORKER_PROJECT_ID`; `worker-watch` uses `CCDASH_WORKER_WATCH_PROJECT_ID`. In v1, a watcher worker binds one project id for the life of that container, so UI project switching does not rebind live ingest.
+For container deployments, prefer a stable project id. The standard worker uses `CCDASH_WORKER_PROJECT_ID`; `worker-watch` uses `CCDASH_WORKER_WATCH_PROJECT_ID`. When `CCDASH_WORKER_WATCH_PROJECT_ID` is empty (the default), `worker-watch` operates in registry-driven fan-out mode and automatically covers all registered projects without restarting. When set to a specific id, it pins to that one project only. Note: UI project switching does not trigger an immediate watcher rebind in either mode; the registry-driven reconciler picks up registry changes within the next reconcile interval (default 60s). For the known live-switch rebind limitation, see the D-002 deferred spec.
 
 Path setup rules:
 
