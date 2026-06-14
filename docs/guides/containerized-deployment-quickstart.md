@@ -246,7 +246,7 @@ The watcher supports two operating modes controlled by `CCDASH_WORKER_WATCH_PROJ
 
 ### Registry-Driven Fan-Out Mode (Recommended for Multi-Project)
 
-When `CCDASH_WORKER_WATCH_PROJECT_ID` is empty, `worker-watch` performs registry-driven fan-out: it queries the DB registry at startup and during periodic reconciliation (default every 60s) to discover all `is_active=true` projects and spawns one WatcherBinding per project. This mode is ideal for deployments with multiple active projects.
+When `CCDASH_WORKER_WATCH_PROJECT_ID` is empty, `worker-watch` performs registry-driven fan-out: it queries the DB registry at startup and during periodic reconciliation (default every 60s) to discover all registered projects (`is_active` is a UI signal, not an ingest gate) and spawns one WatcherBinding per project. This mode is ideal for deployments with multiple projects.
 
 ```bash
 # Leave CCDASH_WORKER_WATCH_PROJECT_ID empty for registry-driven mode
@@ -391,7 +391,7 @@ Common variables for container profiles:
 | `CCDASH_FRONTEND_PORT` | All | Frontend port (default 3000) |
 | `CCDASH_API_UPSTREAM` | frontend | Backend upstream for nginx reverse-proxy (default `http://api:8000`) |
 | `CCDASH_WORKER_PROJECT_ID` | enterprise (worker) | Project ID the worker binds to on startup; required for worker container readiness. Default in compose.yaml is `smoke-stack`. |
-| `CCDASH_WORKER_WATCH_PROJECT_ID` | live-watch | **Optional** scope filter for the watcher worker. Empty → registry-driven fan-out (derive targets from DB, one WatcherBinding per is_active project). Non-empty → scope to that specific project id (v1 single-project mode). When unset, defaults to empty for registry-driven behavior. |
+| `CCDASH_WORKER_WATCH_PROJECT_ID` | live-watch | **Optional** scope filter for the watcher worker. Empty → registry-driven fan-out (derive targets from DB, one WatcherBinding per registered project; `is_active` is a UI signal, not an ingest gate). Non-empty → scope to that specific project id (v1 single-project mode). When unset, defaults to empty for registry-driven behavior. |
 | `CCDASH_WORKER_WATCH_PROBE_PORT` | live-watch | Watcher worker probe port. Default is `9466` so it can co-run with the default worker. |
 | `CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED` | live-watch | Enables filesystem ingest for `worker-watch`; default is `true`. |
 | `CCDASH_WATCHER_SYNC_CONCURRENCY` | live-watch | Max parallel file sync operations per project. Default is `20`. Increase on high-throughput deployments; decrease for memory-constrained environments. |

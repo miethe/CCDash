@@ -173,7 +173,8 @@ services:
   # Start watcher ingest with:
   #   docker compose --profile enterprise --profile postgres --profile live-watch up
   # Registry-driven fan-out: when CCDASH_WORKER_WATCH_PROJECT_ID is empty,
-  # worker-watch derives watch targets from DB registry (all is_active=true projects).
+  # worker-watch derives watch targets from DB registry (all registered projects;
+  # is_active is a UI signal, not an ingest gate).
   # Non-empty: scopes to that specific project id (v1 behavior, one project per process).
   worker-watch:
     <<: *backend-service
