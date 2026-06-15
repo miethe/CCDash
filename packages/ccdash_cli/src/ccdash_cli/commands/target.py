@@ -30,7 +30,7 @@ def target_list() -> None:
     if not targets:
         typer.echo("No targets configured.")
         typer.echo(
-            "Add one with: ccdash target add <name> <url>"
+            "Add one with: ccdash-cli target add <name> <url>"
         )
         return
 
@@ -89,7 +89,7 @@ def target_add(
     if token_ref:
         typer.echo(
             f"  Token ref: {token_ref!r}. "
-            "Store the token with: ccdash target set-token {name}"
+            "Store the token with: ccdash-cli target set-token {name}"
         )
 
 
@@ -146,7 +146,7 @@ def target_use(
     if record is None:
         typer.echo(
             f"Error: target '{name}' not found. "
-            f"Add it with: ccdash target add {name} <url>",
+            f"Add it with: ccdash-cli target add {name} <url>",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -196,7 +196,7 @@ def target_set_token(
     if not token_ref:
         typer.echo(
             f"Error: target '{name}' has no token_ref. "
-            f"Add one with: ccdash target add {name} <url> --token-ref <ref>",
+            f"Add one with: ccdash-cli target add {name} <url> --token-ref <ref>",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -240,7 +240,7 @@ def target_login(
     if record is None:
         typer.echo(
             f"Error: target '{name}' not found. "
-            f"Add it with: ccdash target add {name} <url>",
+            f"Add it with: ccdash-cli target add {name} <url>",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -355,7 +355,7 @@ def target_check(
     if record is None:
         typer.echo(
             f"Error: target '{name}' not found. "
-            f"Add it with: ccdash target add {name} <url>",
+            f"Add it with: ccdash-cli target add {name} <url>",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -395,7 +395,7 @@ def target_check(
         except AuthenticationError:
             typer.echo(
                 "  Auth:       FAILED (HTTP 401 — invalid or missing bearer token)\n"
-                f"  Tip: run 'ccdash target login {name}' to store credentials.",
+                f"  Tip: run 'ccdash-cli target login {name}' to store credentials.",
                 err=True,
             )
             raise typer.Exit(code=2)

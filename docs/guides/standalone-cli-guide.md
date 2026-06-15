@@ -23,9 +23,9 @@ This command installs from PyPI. It only works after `ccdash-cli` and its depend
 Verify installation:
 
 ```bash
-ccdash --version
-ccdash target show
-ccdash doctor
+ccdash-cli --version
+ccdash-cli target show
+ccdash-cli doctor
 ```
 
 ### Install via pip
@@ -39,9 +39,9 @@ pip install ccdash-cli
 Then run commands as:
 
 ```bash
-ccdash --version
-ccdash target show
-ccdash doctor
+ccdash-cli --version
+ccdash-cli target show
+ccdash-cli doctor
 ```
 
 ### Upgrade
@@ -69,9 +69,9 @@ python -m pip install ./packages/ccdash_contracts ./packages/ccdash_cli
 Then run the same smoke checks:
 
 ```bash
-ccdash --version
-ccdash target show
-ccdash doctor
+ccdash-cli --version
+ccdash-cli target show
+ccdash-cli doctor
 ```
 
 If you want editable installs while iterating on the package:
@@ -114,10 +114,10 @@ All commands accept these global flags:
 Print the CLI version and exit from the root command:
 
 ```bash
-ccdash --version
+ccdash-cli --version
 ```
 
-The `ccdash version` subcommand is still available, but the root flag is the preferred quick check for installs and automation.
+The `ccdash-cli version` subcommand is still available, but the root flag is the preferred quick check for installs and automation.
 
 ### --target NAME
 
@@ -131,29 +131,29 @@ Use a named target from your configuration instead of the default. Resolves targ
 Example:
 
 ```bash
-ccdash --target staging status project
-ccdash --target production feature list
+ccdash-cli --target staging status project
+ccdash-cli --target production feature list
 ```
 
 ### --output FORMAT
 
 Set the output format for all commands. Defaults depend on command type:
 
-- Report commands (`ccdash report aar`, `ccdash report feature`) default to `markdown`
+- Report commands (`ccdash-cli report aar`, `ccdash-cli report feature`) default to `markdown`
 - All other commands default to `human`
 
 Supported formats: `human`, `json`, `markdown`
 
 ```bash
-ccdash status project --output json
-ccdash feature list --output markdown
+ccdash-cli status project --output json
+ccdash-cli feature list --output markdown
 ```
 
 Shortcuts:
 
 ```bash
-ccdash status project --json       # Equivalent to --output json
-ccdash report aar --md             # Equivalent to --output markdown
+ccdash-cli status project --json       # Equivalent to --output json
+ccdash-cli report aar --md             # Equivalent to --output markdown
 ```
 
 ### Project Override
@@ -164,20 +164,20 @@ Per-target and per-invocation project selection:
 - `CCDASH_PROJECT` environment variable — override for all commands in this shell session
 
 ```bash
-ccdash --project my-project status project
-CCDASH_PROJECT=my-project ccdash feature list
+ccdash-cli --project my-project status project
+CCDASH_PROJECT=my-project ccdash-cli feature list
 ```
 
 ## Target Management Commands
 
 Target management commands control which servers the CLI targets and how authentication is configured.
 
-### ccdash target list
+### ccdash-cli target list
 
 List all configured targets with their URLs, stored token refs, and active status.
 
 ```bash
-ccdash target list
+ccdash-cli target list
 ```
 
 Output:
@@ -190,43 +190,43 @@ Output:
   prod     https://ccdash-prod.com                      production
 ```
 
-### ccdash target add NAME URL
+### ccdash-cli target add NAME URL
 
 Add a new named target with optional project default.
 
 ```bash
-ccdash target add local http://localhost:8000
-ccdash target add staging https://ccdash-staging.example.com --project my-project
-ccdash target add prod https://ccdash-prod.example.com
+ccdash-cli target add local http://localhost:8000
+ccdash-cli target add staging https://ccdash-staging.example.com --project my-project
+ccdash-cli target add prod https://ccdash-prod.example.com
 ```
 
 The CLI warns when a non-localhost target uses plain `http://`. Prefer `https://` for remote targets.
 
-### ccdash target remove NAME
+### ccdash-cli target remove NAME
 
 Remove a named target and its stored credentials.
 
 ```bash
-ccdash target remove staging
+ccdash-cli target remove staging
 ```
 
-### ccdash target use NAME
+### ccdash-cli target use NAME
 
 Set the active target for all future commands (unless overridden with `--target`).
 
 ```bash
-ccdash target use staging
+ccdash-cli target use staging
 ```
 
 Updates `active_target` in `~/.config/ccdash/config.toml`.
 
-### ccdash target show [NAME]
+### ccdash-cli target show [NAME]
 
 Show the resolved target state the CLI will use, including auth source and whether it came from config or the implicit local fallback.
 
 ```bash
-ccdash target show
-ccdash target show staging
+ccdash-cli target show
+ccdash-cli target show staging
 ```
 
 Example output:
@@ -239,41 +239,41 @@ Authentication: token ref 'target:staging' (token loaded)
 Source: configured target
 ```
 
-### ccdash target login NAME [--token TOKEN]
+### ccdash-cli target login NAME [--token TOKEN]
 
 Store bearer token authentication for a target. Tokens are stored securely in the OS keyring (macOS Keychain, Linux Secret Service, Windows Credential Manager). If no keyring backend is available, use `CCDASH_TOKEN` instead.
 
 Interactive prompt:
 
 ```bash
-ccdash target login staging
+ccdash-cli target login staging
 # Prompts: "Enter bearer token for 'staging':"
 ```
 
 Non-interactive (pass token as flag):
 
 ```bash
-ccdash target login staging --token "sk-xyz123..."
+ccdash-cli target login staging --token "sk-xyz123..."
 ```
 
 The token is used for all subsequent requests to that target via the `Authorization: Bearer <token>` header.
 
-### ccdash target logout NAME
+### ccdash-cli target logout NAME
 
 Remove stored credentials for a target.
 
 ```bash
-ccdash target logout staging
+ccdash-cli target logout staging
 ```
 
 Future requests to this target will not include an `Authorization` header.
 
-### ccdash target check NAME
+### ccdash-cli target check NAME
 
 Verify connectivity and authentication for a target. Use `target show` to inspect the resolved config locally; use `target check` to confirm live server reachability and whether the server accepts the current credentials.
 
 ```bash
-ccdash target check staging
+ccdash-cli target check staging
 ```
 
 Output on success:
@@ -291,18 +291,18 @@ Output on failure:
 Checking target 'staging' at https://ccdash-staging.example.com ...
   Connection: OK
   Auth:       FAILED (HTTP 401 — invalid or missing bearer token)
-  Tip: run 'ccdash target login staging' to store credentials.
+  Tip: run 'ccdash-cli target login staging' to store credentials.
 ```
 
 ## Status Commands
 
-### ccdash status project [--project ID]
+### ccdash-cli status project [--project ID]
 
 Show a summary of the active project, including counts, recent activity, and health status.
 
 ```bash
-ccdash status project
-ccdash status project --project my-other-project
+ccdash-cli status project
+ccdash-cli status project --project my-other-project
 ```
 
 Output (human format):
@@ -329,7 +329,7 @@ Recent Activity:
 Output (JSON format):
 
 ```bash
-ccdash status project --json
+ccdash-cli status project --json
 ```
 
 ```json
@@ -353,15 +353,15 @@ ccdash status project --json
 
 ## Feature Commands
 
-### ccdash feature list [OPTIONS]
+### ccdash-cli feature list [OPTIONS]
 
 List features with optional filtering, sorting, and pagination.
 
 ```bash
-ccdash feature list
-ccdash feature list --status in-progress
-ccdash feature list --category refactor --limit 10 --offset 0
-ccdash feature list --json
+ccdash-cli feature list
+ccdash-cli feature list --status in-progress
+ccdash-cli feature list --category refactor --limit 10 --offset 0
+ccdash-cli feature list --json
 ```
 
 Options:
@@ -382,13 +382,13 @@ FEAT-122  Dashboard redesign   completed      feature     12
 FEAT-121  API caching          at-risk        backend     8
 ```
 
-### ccdash feature show FEATURE_ID
+### ccdash-cli feature show FEATURE_ID
 
 Display comprehensive forensic details for a single feature, including sessions, documents, execution timeline, and rework signals.
 
 ```bash
-ccdash feature show FEAT-123
-ccdash feature show FEAT-123 --json
+ccdash-cli feature show FEAT-123
+ccdash-cli feature show FEAT-123 --json
 ```
 
 Output (human format):
@@ -423,13 +423,13 @@ Representative Failure: sess-005
   Timestamp: 2026-04-13T11:30:00Z
 ```
 
-### ccdash feature sessions FEATURE_ID [--limit N] [--offset N]
+### ccdash-cli feature sessions FEATURE_ID [--limit N] [--offset N]
 
 List all sessions linked to a feature with optional pagination.
 
 ```bash
-ccdash feature sessions FEAT-123
-ccdash feature sessions FEAT-123 --limit 5 --json
+ccdash-cli feature sessions FEAT-123
+ccdash-cli feature sessions FEAT-123 --limit 5 --json
 ```
 
 Options:
@@ -451,13 +451,13 @@ sess-004  4h 22m     in-progress 2026-04-13 08:00    claude, search, git
 sess-005  1h 48m     failed      2026-04-13 11:00    claude, search
 ```
 
-### ccdash feature documents FEATURE_ID
+### ccdash-cli feature documents FEATURE_ID
 
 List all documents linked to a feature.
 
 ```bash
-ccdash feature documents FEAT-123
-ccdash feature documents FEAT-123 --json
+ccdash-cli feature documents FEAT-123
+ccdash-cli feature documents FEAT-123 --json
 ```
 
 Output (human format):
@@ -474,15 +474,15 @@ meeting-notes.md      markdown    archived    3d ago
 
 ## Session Commands
 
-### ccdash session list [OPTIONS]
+### ccdash-cli session list [OPTIONS]
 
 List sessions with optional filtering by feature, root-session, and pagination.
 
 ```bash
-ccdash session list
-ccdash session list --feature FEAT-123
-ccdash session list --root-session sess-001 --limit 10
-ccdash session list --json
+ccdash-cli session list
+ccdash-cli session list --feature FEAT-123
+ccdash-cli session list --root-session sess-001 --limit 10
+ccdash-cli session list --json
 ```
 
 Options:
@@ -505,13 +505,13 @@ sess-004  FEAT-123  4h 22m     in-progress 2026-04-13 08:00    67,200
 sess-005  (none)    1h 48m     failed      2026-04-13 11:00    31,450
 ```
 
-### ccdash session show SESSION_ID
+### ccdash-cli session show SESSION_ID
 
 Display comprehensive session intelligence, including transcript, tool usage, token metrics, and anomalies.
 
 ```bash
-ccdash session show sess-001
-ccdash session show sess-001 --json
+ccdash-cli session show sess-001
+ccdash-cli session show sess-001 --json
 ```
 
 Output (human format):
@@ -546,14 +546,14 @@ Sentiment: POSITIVE
 Anomalies: None detected
 ```
 
-### ccdash session search QUERY [--feature ID] [--limit N]
+### ccdash-cli session search QUERY [--feature ID] [--limit N]
 
 Search session transcripts by query string.
 
 ```bash
-ccdash session search "authentication"
-ccdash session search "timeout error" --feature FEAT-123 --limit 5
-ccdash session search "FEAT-123" --json
+ccdash-cli session search "authentication"
+ccdash-cli session search "timeout error" --feature FEAT-123 --limit 5
+ccdash-cli session search "FEAT-123" --json
 ```
 
 Options:
@@ -583,14 +583,14 @@ sess-003 (FEAT-122):
   Timestamp: 2026-04-11 10:45:00Z
 ```
 
-### ccdash session drilldown SESSION_ID --concern CONCERN
+### ccdash-cli session drilldown SESSION_ID --concern CONCERN
 
 Drill into a specific concern (sentiment, churn, scope_drift) with detailed analysis and recommendations.
 
 ```bash
-ccdash session drilldown sess-004 --concern sentiment
-ccdash session drilldown sess-005 --concern churn
-ccdash session drilldown sess-001 --concern scope_drift --json
+ccdash-cli session drilldown sess-004 --concern sentiment
+ccdash-cli session drilldown sess-005 --concern churn
+ccdash-cli session drilldown sess-001 --concern scope_drift --json
 ```
 
 Supported concerns:
@@ -627,13 +627,13 @@ Recommendations:
   - Schedule sync with domain expert for scope clarification
 ```
 
-### ccdash session family SESSION_ID
+### ccdash-cli session family SESSION_ID
 
 List all sessions in the same root-session family tree (for hierarchical session workflows).
 
 ```bash
-ccdash session family sess-004
-ccdash session family sess-004 --json
+ccdash-cli session family sess-004
+ccdash-cli session family sess-004 --json
 ```
 
 Output (human format):
@@ -658,14 +658,14 @@ Family Tree (4 sessions):
 
 ## Workflow Commands
 
-### ccdash workflow failures [--feature ID]
+### ccdash-cli workflow failures [--feature ID]
 
 Show the highest-impact workflow failure patterns, ranked by frequency and scope impact.
 
 ```bash
-ccdash workflow failures
-ccdash workflow failures --feature FEAT-123
-ccdash workflow failures --json
+ccdash-cli workflow failures
+ccdash-cli workflow failures --feature FEAT-123
+ccdash-cli workflow failures --json
 ```
 
 Options:
@@ -713,14 +713,14 @@ Workflow Failure Patterns (ranked by impact):
 
 ## Report Commands
 
-### ccdash report aar --feature FEATURE_ID [OPTIONS]
+### ccdash-cli report aar --feature FEATURE_ID [OPTIONS]
 
 Generate an after-action report (AAR) for a feature. Outputs markdown by default.
 
 ```bash
-ccdash report aar --feature FEAT-123
-ccdash report aar --feature FEAT-123 --json
-ccdash report aar --feature FEAT-123 --output markdown > report.md
+ccdash-cli report aar --feature FEAT-123
+ccdash-cli report aar --feature FEAT-123 --json
+ccdash-cli report aar --feature FEAT-123 --output markdown > report.md
 ```
 
 Options:
@@ -786,14 +786,14 @@ Output (markdown format):
 3. Schedule architecture review for scope alignment
 ```
 
-### ccdash report feature FEATURE_ID [OPTIONS]
+### ccdash-cli report feature FEATURE_ID [OPTIONS]
 
 Generate a comprehensive narrative feature report including background, execution, outcomes, and next steps.
 
 ```bash
-ccdash report feature FEAT-123
-ccdash report feature FEAT-123 --json
-ccdash report feature FEAT-123 --output json | jq .
+ccdash-cli report feature FEAT-123
+ccdash-cli report feature FEAT-123 --json
+ccdash-cli report feature FEAT-123 --output json | jq .
 ```
 
 Options:
@@ -831,12 +831,12 @@ Output structure (markdown):
 
 ## Diagnostics Commands
 
-### ccdash doctor
+### ccdash-cli doctor
 
 Run comprehensive diagnostics on the current target configuration. Checks target resolution, connectivity, authentication, and API version compatibility.
 
 ```bash
-ccdash doctor
+ccdash-cli doctor
 ```
 
 Output:
@@ -881,12 +881,12 @@ Server
     https://ccdash-prod.example.com
 ```
 
-### ccdash --version
+### ccdash-cli --version
 
 Display the standalone CLI package version.
 
 ```bash
-ccdash --version
+ccdash-cli --version
 ```
 
 Output:
@@ -895,7 +895,7 @@ Output:
 ccdash-cli 0.1.0
 ```
 
-Use `ccdash doctor` when you also need live server version and instance metadata.
+Use `ccdash-cli doctor` when you also need live server version and instance metadata.
 
 If CLI and server versions differ significantly:
 
@@ -946,7 +946,7 @@ project = "production"
 - `url` — HTTP/HTTPS URL of the CCDash server (required)
 - `project` — default project ID for this target (optional; can be overridden with `--project`)
 
-Tokens are NOT stored in the config file; they are stored securely in the OS keyring via `ccdash target login`, or supplied per-process with `CCDASH_TOKEN`.
+Tokens are NOT stored in the config file; they are stored securely in the OS keyring via `ccdash-cli target login`, or supplied per-process with `CCDASH_TOKEN`.
 
 ### Target Resolution Order
 
@@ -969,29 +969,29 @@ After target is resolved, per-field environment variables are applied:
 
 ```bash
 # No config needed; implicit 'local' target is http://localhost:8000
-ccdash status project
-ccdash feature list
+ccdash-cli status project
+ccdash-cli feature list
 ```
 
 **Multiple Servers**
 
 ```bash
 # Add targets
-ccdash target add local http://localhost:8000
-ccdash target add staging https://ccdash-staging.example.com --project my-project
-ccdash target add prod https://ccdash-prod.example.com --project production
+ccdash-cli target add local http://localhost:8000
+ccdash-cli target add staging https://ccdash-staging.example.com --project my-project
+ccdash-cli target add prod https://ccdash-prod.example.com --project production
 
 # Set default to staging
-ccdash target use staging
+ccdash-cli target use staging
 
 # All commands now use staging unless overridden
-ccdash status project  # Uses staging
+ccdash-cli status project  # Uses staging
 
 # Switch to prod for one command
-ccdash --target prod feature list
+ccdash-cli --target prod feature list
 
 # View all targets
-ccdash target list
+ccdash-cli target list
 ```
 
 **CI/CD Environment (No Keyring)**
@@ -1004,9 +1004,9 @@ export CCDASH_TOKEN=sk-...
 export CCDASH_PROJECT=my-project
 
 # All commands use provided environment values
-ccdash status project
-ccdash feature list
-ccdash report aar --feature FEAT-123 > report.md
+ccdash-cli status project
+ccdash-cli feature list
+ccdash-cli report aar --feature FEAT-123 > report.md
 ```
 
 ## Authentication
@@ -1016,8 +1016,8 @@ ccdash report aar --feature FEAT-123 > report.md
 For local development with the implicit `local` target at `http://localhost:8000`:
 
 ```bash
-ccdash target show
-ccdash status project
+ccdash-cli target show
+ccdash-cli status project
 # Authentication: not configured
 ```
 
@@ -1030,7 +1030,7 @@ For remote servers that require authentication:
 **Step 1: Add the target**
 
 ```bash
-ccdash target add staging https://ccdash-staging.example.com --project my-project
+ccdash-cli target add staging https://ccdash-staging.example.com --project my-project
 ```
 
 **Step 2: Store the token**
@@ -1038,7 +1038,7 @@ ccdash target add staging https://ccdash-staging.example.com --project my-projec
 Interactive (secure prompt):
 
 ```bash
-ccdash target login staging
+ccdash-cli target login staging
 # Prompts: "Enter bearer token for 'staging':"
 # Stores token in OS keyring, never echoed to terminal
 ```
@@ -1046,14 +1046,14 @@ ccdash target login staging
 Non-interactive (for CI/CD):
 
 ```bash
-ccdash target login staging --token "sk-xyz123..."
+ccdash-cli target login staging --token "sk-xyz123..."
 ```
 
 **Step 3: Inspect and verify**
 
 ```bash
-ccdash target show staging
-ccdash target check staging
+ccdash-cli target show staging
+ccdash-cli target check staging
 # target show: resolved URL, project, auth source
 # target check: live connectivity and auth validation
 ```
@@ -1061,8 +1061,8 @@ ccdash target check staging
 **Step 4: Use the target**
 
 ```bash
-ccdash --target staging status project
-ccdash --target staging feature list
+ccdash-cli --target staging status project
+ccdash-cli --target staging feature list
 ```
 
 ### Token Expiry and Refresh
@@ -1076,7 +1076,7 @@ If a token expires:
 
 2. Re-login with a fresh token:
    ```bash
-   ccdash target login staging
+   ccdash-cli target login staging
    # Re-enter the new token when prompted
    ```
 
@@ -1091,8 +1091,8 @@ export CCDASH_TOKEN=$DEPLOY_TOKEN
 export CCDASH_PROJECT=my-project
 
 # All commands use the provided token without keyring access
-ccdash status project
-ccdash report aar --feature FEAT-123 > aar.md
+ccdash-cli status project
+ccdash-cli report aar --feature FEAT-123 > aar.md
 ```
 
 This approach is essential for:
@@ -1119,7 +1119,7 @@ The CLI returns standardized exit codes to support scripting and CI/CD error han
 ```bash
 #!/bin/bash
 
-ccdash --target staging status project --json > status.json
+ccdash-cli --target staging status project --json > status.json
 EXIT_CODE=$?
 
 case $EXIT_CODE in
@@ -1129,12 +1129,12 @@ case $EXIT_CODE in
     ;;
   2)
     echo "Authentication failed; re-login required"
-    ccdash target login staging
+    ccdash-cli target login staging
     exit 1
     ;;
   4)
     echo "Cannot reach staging server; trying local fallback"
-    ccdash --target local status project
+    ccdash-cli --target local status project
     ;;
   *)
     echo "Unexpected error (code: $EXIT_CODE)"
@@ -1149,61 +1149,61 @@ esac
 
 ```bash
 # View project health
-ccdash status project
+ccdash-cli status project
 
 # List all in-progress features
-ccdash feature list --status in-progress
+ccdash-cli feature list --status in-progress
 
 # Count completed features
-ccdash feature list --status completed --json | jq '.features | length'
+ccdash-cli feature list --status completed --json | jq '.features | length'
 ```
 
 ### Investigate a Feature
 
 ```bash
 # Show feature details
-ccdash feature show FEAT-123
+ccdash-cli feature show FEAT-123
 
 # List all sessions for the feature
-ccdash feature sessions FEAT-123
+ccdash-cli feature sessions FEAT-123
 
 # View linked documents
-ccdash feature documents FEAT-123
+ccdash-cli feature documents FEAT-123
 
 # Generate after-action report
-ccdash report aar --feature FEAT-123 > aar.md
+ccdash-cli report aar --feature FEAT-123 > aar.md
 ```
 
 ### Debug a Failed Session
 
 ```bash
 # List failed sessions
-ccdash session list --json | jq '.[] | select(.status == "failed")'
+ccdash-cli session list --json | jq '.[] | select(.status == "failed")'
 
 # Show detailed information about a session
-ccdash session show sess-005
+ccdash-cli session show sess-005
 
 # Drill into the sentiment concern
-ccdash session drilldown sess-005 --concern sentiment
+ccdash-cli session drilldown sess-005 --concern sentiment
 
 # Search for error messages in that session
-ccdash session search "error" --limit 5 --json
+ccdash-cli session search "error" --limit 5 --json
 ```
 
 ### Monitor Feature Progress
 
 ```bash
 # Set active target to staging
-ccdash target use staging
+ccdash-cli target use staging
 
 # Check project status
-ccdash status project
+ccdash-cli status project
 
 # List at-risk features
-ccdash feature list --status at-risk
+ccdash-cli feature list --status at-risk
 
 # Show failure patterns
-ccdash workflow failures
+ccdash-cli workflow failures
 ```
 
 ### Generate Multiple Reports
@@ -1217,8 +1217,8 @@ export CCDASH_PROJECT=my-project
 # Generate reports for multiple features
 for feature in FEAT-120 FEAT-121 FEAT-122; do
   echo "Generating report for $feature..."
-  ccdash report aar --feature $feature --md > "reports/${feature}-aar.md"
-  ccdash report feature $feature --md > "reports/${feature}-report.md"
+  ccdash-cli report aar --feature $feature --md > "reports/${feature}-aar.md"
+  ccdash-cli report feature $feature --md > "reports/${feature}-report.md"
 done
 ```
 
@@ -1239,7 +1239,7 @@ jobs:
         run: pip install ccdash-cli
 
       - name: Check connectivity
-        run: ccdash doctor
+        run: ccdash-cli doctor
         env:
           CCDASH_TARGET: prod
           CCDASH_URL: ${{ secrets.CCDASH_PROD_URL }}
@@ -1247,7 +1247,7 @@ jobs:
           CCDASH_PROJECT: my-project
 
       - name: Generate AAR for FEAT-123
-        run: ccdash report aar --feature FEAT-123 > aar.md
+        run: ccdash-cli report aar --feature FEAT-123 > aar.md
         env:
           CCDASH_TARGET: prod
           CCDASH_URL: ${{ secrets.CCDASH_PROD_URL }}
@@ -1284,13 +1284,13 @@ jobs:
 
 2. If server is on a different URL, update target:
    ```bash
-   ccdash target add local http://localhost:8001  # If on port 8001
-   ccdash target use local
+   ccdash-cli target add local http://localhost:8001  # If on port 8001
+   ccdash-cli target use local
    ```
 
 3. For remote servers, verify network connectivity:
    ```bash
-   ccdash target check staging
+   ccdash-cli target check staging
    # Shows detailed connectivity diagnostics
    ```
 
@@ -1307,21 +1307,21 @@ jobs:
 
 1. Check auth status:
    ```bash
-   ccdash target show staging
-   ccdash target check staging
+   ccdash-cli target show staging
+   ccdash-cli target check staging
    # target show: token source and resolved target
    # target check: live credential validation
    ```
 
 2. Re-authenticate:
    ```bash
-   ccdash target login staging
+   ccdash-cli target login staging
    # Enter new token when prompted
    ```
 
 3. Verify token is stored:
    ```bash
-   ccdash target login staging --token "your-token"
+   ccdash-cli target login staging --token "your-token"
    # Non-interactive token update
    ```
 
@@ -1349,15 +1349,15 @@ jobs:
 
 2. Check versions:
    ```bash
-   ccdash --version
-   ccdash doctor
+   ccdash-cli --version
+   ccdash-cli doctor
    # --version shows the CLI package version; doctor shows live server metadata
    ```
 
 3. If multiple targets have different versions, use explicit `--target`:
    ```bash
-   ccdash --target prod status project  # Uses prod server
-   ccdash --target staging status project  # Uses staging server
+   ccdash-cli --target prod status project  # Uses prod server
+   ccdash-cli --target staging status project  # Uses staging server
    ```
 
 ### Wrong Project Selected
@@ -1372,25 +1372,25 @@ jobs:
 
 1. Check active project:
    ```bash
-   ccdash target list
+   ccdash-cli target list
    # Shows which target is active and its default project
    ```
 
 2. Explicitly specify project:
    ```bash
-   ccdash --project my-other-project feature show FEAT-123
+   ccdash-cli --project my-other-project feature show FEAT-123
    ```
 
 3. Change active target:
    ```bash
-   ccdash target use staging
+   ccdash-cli target use staging
    # If staging has correct project as default
    ```
 
 4. Use environment variable:
    ```bash
    export CCDASH_PROJECT=my-other-project
-   ccdash feature show FEAT-123
+   ccdash-cli feature show FEAT-123
    ```
 
 ### No Output or Truncated Output
@@ -1406,24 +1406,24 @@ jobs:
 
 1. Check output format:
    ```bash
-   ccdash feature list --output human  # Explicit format
+   ccdash-cli feature list --output human  # Explicit format
    ```
 
 2. Increase verbosity for debugging:
    ```bash
-   ccdash feature list --json | jq .
+   ccdash-cli feature list --json | jq .
    # JSON output allows inspection of full data
    ```
 
 3. For large result sets, paginate:
    ```bash
-   ccdash session list --limit 10 --offset 0
-   ccdash session list --limit 10 --offset 10  # Next page
+   ccdash-cli session list --limit 10 --offset 0
+   ccdash-cli session list --limit 10 --offset 10  # Next page
    ```
 
 4. Check server health:
    ```bash
-   ccdash doctor
+   ccdash-cli doctor
    # Comprehensive diagnostics
    ```
 
@@ -1448,8 +1448,8 @@ jobs:
 3. Reset configuration:
    ```bash
    rm ~/.config/ccdash/config.toml
-   ccdash target add local http://localhost:8000
-   ccdash target use local
+   ccdash-cli target add local http://localhost:8000
+   ccdash-cli target use local
    # Config is recreated automatically
    ```
 
@@ -1467,7 +1467,7 @@ jobs:
 1. For CI/CD, use environment variables instead of keyring:
    ```bash
    export CCDASH_TOKEN=$MY_TOKEN
-   ccdash status project
+   ccdash-cli status project
    # Bypasses keyring entirely
    ```
 
@@ -1489,18 +1489,18 @@ jobs:
 **View CLI help:**
 
 ```bash
-ccdash --help
-ccdash target --help
-ccdash feature --help
-ccdash report --help
+ccdash-cli --help
+ccdash-cli target --help
+ccdash-cli feature --help
+ccdash-cli report --help
 ```
 
 **Report issues:**
 
 If you encounter bugs or unexpected behavior, open an issue on the CCDash repository with:
 
-- CLI version: `ccdash --version`
-- Server version: `ccdash doctor`
+- CLI version: `ccdash-cli --version`
+- Server version: `ccdash-cli doctor`
 - Full error message with `--json` output
 - Reproduction steps
 
@@ -1510,7 +1510,7 @@ For detailed error information:
 
 ```bash
 # Enable debug output (if available in your CLI version)
-CCDASH_DEBUG=1 ccdash status project
+CCDASH_DEBUG=1 ccdash-cli status project
 
 # Or check server logs at the CCDash repository
 cd /path/to/CCDash

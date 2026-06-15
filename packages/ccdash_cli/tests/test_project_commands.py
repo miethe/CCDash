@@ -453,7 +453,7 @@ class TestProjectList:
         )
         result = _invoke("project", "list", client=client)
         assert result.exit_code == 0, result.output
-        assert "No projects" in result.output or "ccdash project add" in result.output
+        assert "No projects" in result.output or "ccdash-cli project add" in result.output
 
 
 # ---------------------------------------------------------------------------

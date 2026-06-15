@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ccdash = "ccdash_cli.main:app"
+ccdash-cli = "ccdash_cli.main:app"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-httpx>=0.30", "respx>=0.21"]

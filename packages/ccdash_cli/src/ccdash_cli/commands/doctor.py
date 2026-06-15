@@ -1,6 +1,6 @@
 """Doctor command — diagnose CLI configuration and server connectivity.
 
-Running ``ccdash doctor`` (or ``ccdash doctor check``) prints a structured
+Running ``ccdash-cli doctor`` (or ``ccdash-cli doctor check``) prints a structured
 summary of the resolved target, token status, and live server health.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ def doctor_check(
 ) -> None:
     """Check CLI configuration and server connectivity.
 
-    When invoked as ``ccdash doctor`` with no sub-command this runs the full
+    When invoked as ``ccdash-cli doctor`` with no sub-command this runs the full
     diagnostic sequence automatically.
     """
     # Only run when invoked directly (not when a sub-command is dispatched).
@@ -112,7 +112,7 @@ def doctor_check(
         if exc.exit_code == 2:  # AuthenticationError
             typer.echo(
                 "  Hint: store a token with: "
-                f"ccdash target set-token {target.name}"
+                f"ccdash-cli target set-token {target.name}"
             )
     finally:
         client.close()

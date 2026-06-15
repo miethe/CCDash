@@ -66,7 +66,7 @@ If none of these exist the CLI exits with a clear message asking you to export a
 **From a running standalone CLI:**
 
 ```bash
-ccdash project list --output json > ~/.ccdash/projects.json
+ccdash-cli project list --output json > ~/.ccdash/projects.json
 ```
 
 **From the repo's existing file:**
@@ -214,14 +214,14 @@ python -m backend.cli --offline --project my-project session search "timeout"
 No `projects.json` was found in any of the resolution candidates.  Export one:
 
 ```bash
-ccdash project list --output json > ~/.ccdash/projects.json
+ccdash-cli project list --output json > ~/.ccdash/projects.json
 ```
 
 Or pass `--config <path>` pointing to a valid registry file.
 
 **"Project not found in the offline registry"**
 The `--project` value doesn't match any `id` field in the registry.  Check
-`ccdash project list` (if a server is available) or inspect the JSON directly.
+`ccdash-cli project list` (if a server is available) or inspect the JSON directly.
 
 **"Sessions directory not found"**
 The `filesystemPath` in the registry doesn't exist on this machine.  Update the registry

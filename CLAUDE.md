@@ -101,19 +101,19 @@ backend/.venv/bin/ccdash report aar --feature FEAT-123
 backend/.venv/bin/python -m backend.cli --help
 
 # Standalone CLI (install globally: pipx install ccdash-cli)
-ccdash version
-ccdash feature list --status active --json
-ccdash session search "authentication" --limit 10
-ccdash report aar --feature FEAT-123
-ccdash target check local
-# Project management (ccdash project group)
-ccdash project add --name "My Repo" --path /home/user/myrepo
-ccdash project add --name "My Repo" --path /home/user/myrepo --active
-ccdash project list
-ccdash project list --output json
-ccdash project use <project-id>
+ccdash-cli version
+ccdash-cli feature list --status active --json
+ccdash-cli session search "authentication" --limit 10
+ccdash-cli report aar --feature FEAT-123
+ccdash-cli target check local
+# Project management (ccdash-cli project group)
+ccdash-cli project add --name "My Repo" --path /home/user/myrepo
+ccdash-cli project add --name "My Repo" --path /home/user/myrepo --active
+ccdash-cli project list
+ccdash-cli project list --output json
+ccdash-cli project use <project-id>
 # CLI flags: --timeout SECONDS (default 30), --no-cache (bypass cache), --q TEXT (keyword filter on feature list)
-ccdash feature list --q "auth" --timeout 45
+ccdash-cli feature list --q "auth" --timeout 45
 
 # Standalone CLI tests
 python -m pytest packages/ccdash_cli/tests/ -v

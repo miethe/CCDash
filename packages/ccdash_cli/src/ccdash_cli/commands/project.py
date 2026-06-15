@@ -102,7 +102,7 @@ def _handle_client_error(exc: CCDashClientError, target_url: str) -> NoReturn:
     if isinstance(exc, AuthenticationError):
         typer.echo(
             "Error: authentication failed (HTTP 401). Check your bearer token.\n"
-            "Tip: run 'ccdash target login <name>' to store credentials.",
+            "Tip: run 'ccdash-cli target login <name>' to store credentials.",
             err=True,
         )
         raise typer.Exit(code=2)
@@ -139,7 +139,7 @@ def project_add(
 ) -> None:
     """Register a new project on the resolved CCDash target.
 
-    Alias: ``ccdash project init`` (same behaviour).
+    Alias: ``ccdash-cli project init`` (same behaviour).
     """
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
@@ -211,7 +211,7 @@ def project_add(
         _handle_client_error(exc, target.url)
 
 
-# Typer alias: ccdash project init -> project_add
+# Typer alias: ccdash-cli project init -> project_add
 project_app.command("init")(project_add)
 
 
@@ -276,7 +276,7 @@ def project_list(
     if not projects:
         typer.echo("No projects registered on this target.")
         typer.echo(
-            "Register one with: ccdash project add --name <name> --path <path>"
+            "Register one with: ccdash-cli project add --name <name> --path <path>"
         )
         return
 
@@ -328,7 +328,7 @@ def project_use(
             except NotFoundError:
                 typer.echo(
                     f"Error: project '{project_id}' not found. "
-                    f"Check the ID with: ccdash project list",
+                    f"Check the ID with: ccdash-cli project list",
                     err=True,
                 )
                 raise typer.Exit(code=1)
