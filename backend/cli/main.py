@@ -33,9 +33,34 @@ def main(
         "--project",
         help="Override the active project ID.",
     ),
+    offline: bool = typer.Option(
+        False,
+        "--offline",
+        envvar="CCDASH_OFFLINE",
+        help="Run against local session logs with no server/worker.",
+    ),
+    ephemeral: bool = typer.Option(
+        False,
+        "--ephemeral",
+        help="Use a throwaway temp cache DB (offline only).",
+    ),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Force a full re-parse of session logs (offline only).",
+    ),
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        help="Path to an offline projects.json registry (offline only).",
+    ),
 ) -> None:
     runtime.OUTPUT_MODE = output
     runtime.PROJECT_OVERRIDE = project.strip() if project and project.strip() else None
+    runtime.OFFLINE = bool(offline)
+    runtime.EPHEMERAL = bool(ephemeral)
+    runtime.REFRESH = bool(refresh)
+    runtime.OFFLINE_CONFIG = config.strip() if config and config.strip() else None
 
 
 app.add_typer(status_app, name="status", help="Show status snapshots.")

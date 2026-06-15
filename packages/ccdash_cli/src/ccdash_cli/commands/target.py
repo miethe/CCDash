@@ -372,6 +372,12 @@ def target_check(
         reachable = client.check_health()
         if not reachable:
             typer.echo("  Connection: FAILED (server unreachable)")
+            typer.echo(
+                "Hint: for offline read-only access without a server, use the repo-local CLI: "
+                "`backend/.venv/bin/ccdash --offline <command>` "
+                "(see docs/guides/offline-cli.md).",
+                err=True,
+            )
             raise typer.Exit(code=4)
 
         typer.echo("  Connection: OK")
