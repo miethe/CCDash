@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`ccdash persona extract` CLI** — Post-session, deterministic (no-model, no-DB-write) extraction of high-signal persona-candidate lines from a single Claude Code session JSONL into the universal persona memory bank's `_inbox/capture.jsonl` queue (P4 of the universal persona memory system; additive third capture source alongside `op remember` and the live-session hooks). Eight deterministic regex rules (R1–R8) over user-message text only, dedup by `(category, normalized_text_hash)`, `flock`-guarded inbox append, and an atomic `_meta/ccdash-extract-state.json` watermark for per-session idempotency. Strictly per-session: `--session <id>` xor `--latest` xor `--since <iso>` (the last hard-capped at N≤25); no `--all`, no cache-DB access. Honors `OP_PERSONA_HOME`; `--dry-run` and `--json` supported; `ccdash persona extract status` shows the state file. Emitted lines match the frozen agentic_meta_dev candidate-line contract byte-for-byte.
 - **Branch-aware planning intelligence**: Surface git branch, commit, and PR provenance across planning surfaces with live session awareness and automatic polling.
   - Active-session chips on CommandCenterFeatureCard showing running sessions with agent name and transcript links; displays empty state when no sessions are running.
   - git_branch chip on PlanningAgentSessionBoard session cards with three distinct states: populated branch name, Codex-specific "no branch" indicator, and generic "branch unknown" fallback for non-Codex sessions with null branch.

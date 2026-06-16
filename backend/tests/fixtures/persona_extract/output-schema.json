@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CandidateLine",
+  "description": "Persona extract candidate line — PRD §5 contract (source frozen as 'ccdash_persona_extract')",
+  "type": "object",
+  "required": [
+    "ts",
+    "source",
+    "text",
+    "session_id",
+    "cwd",
+    "category",
+    "confidence",
+    "transcript_path",
+    "origin_msg_index"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "description": "ISO-8601 Z timestamp or empty string if unparseable"
+    },
+    "source": {
+      "type": "string",
+      "const": "ccdash_persona_extract",
+      "description": "Discriminator field — always 'ccdash_persona_extract' for CCDash-emitted lines"
+    },
+    "text": {
+      "type": "string",
+      "description": "Candidate fact, collapsed whitespace, max 500 chars",
+      "maxLength": 500
+    },
+    "session_id": {
+      "type": "string",
+      "description": "AgentSession.id — the parsed session identifier"
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Absolute working directory path (populated by CLI from JSONL parent directory name)"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "preference",
+        "goal",
+        "constraint",
+        "decision",
+        "TIL",
+        "reminder",
+        "from-args"
+      ],
+      "description": "Coarse human-readable label — the bank maps this to DB type vocabulary"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Heuristic match strength (NOT a model probability)"
+    },
+    "transcript_path": {
+      "type": "string",
+      "description": "Absolute path to the source JSONL file (populated by CLI)"
+    },
+    "origin_msg_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "0-based position of the log entry in session.logs from which the candidate was extracted"
+    }
+  }
+}

@@ -7,6 +7,7 @@ from backend.cli import runtime
 from backend.cli.commands.artifact import artifact_app
 from backend.cli.commands.feature import feature_app
 from backend.cli.commands.live import live_app
+from backend.cli.commands.persona import persona_app
 from backend.cli.commands.report import report_app
 from backend.cli.commands.session import session_app
 from backend.cli.commands.status import status_app
@@ -71,3 +72,4 @@ app.add_typer(artifact_app, name="artifact", help="Artifact intelligence command
 app.add_typer(live_app, name="live", help="Live agent metrics.")
 app.add_typer(system_app, name="system", help="System-wide metrics across all projects.")
 app.add_typer(session_app, name="session", help="Session intelligence commands.")
+app.add_typer(persona_app, name="persona", help="Persona extraction from session logs.")

@@ -1,37 +1,47 @@
 ---
-schema_version: "1.0"
+schema_version: '1.0'
 doc_type: implementation_plan
-title: "CCDash Persona Extract — Implementation Plan"
-description: "Phased plan for `ccdash persona extract` (P4 of the universal persona memory system). Stateless, deterministic, per-session JSONL → candidate lines into the universal bank inbox. Strictly additive."
-status: pending
-created: "2026-06-16"
-updated: "2026-06-16"
-feature_slug: "ccdash-persona-extract"
-feature_version: "v1"
+title: "CCDash Persona Extract \u2014 Implementation Plan"
+description: "Phased plan for `ccdash persona extract` (P4 of the universal persona\
+  \ memory system). Stateless, deterministic, per-session JSONL \u2192 candidate lines\
+  \ into the universal bank inbox. Strictly additive."
+status: completed
+created: '2026-06-16'
+updated: '2026-06-16'
+feature_slug: ccdash-persona-extract
+feature_version: v1
 prd_ref: docs/project_plans/PRDs/features/ccdash-persona-extract-v1.md
 plan_ref: null
-scope: "One Typer sub-app, one query service, one rule table, three test files. No DB writes. No model calls."
-effort_estimate: "5-7 story points"
-effort_estimate_breakdown: "Phase 1 (rules+service): 2-3 pts | Phase 2 (CLI+state): 2 pts | Phase 3 (tests+contract): 1-2 pts"
+scope: One Typer sub-app, one query service, one rule table, three test files. No
+  DB writes. No model calls.
+effort_estimate: 5-7 story points
+effort_estimate_breakdown: 'Phase 1 (rules+service): 2-3 pts | Phase 2 (CLI+state):
+  2 pts | Phase 3 (tests+contract): 1-2 pts'
 priority: low
 risk_level: low
-owner: "Backend Engineering"
+owner: Backend Engineering
 contributors: []
 milestone: null
 commit_refs: []
 pr_refs: []
 files_affected:
-  - backend/cli/commands/persona.py
-  - backend/cli/main.py
-  - backend/application/services/agent_queries/persona_extract.py
-  - backend/application/services/agent_queries/persona_extract_rules.py
-  - tests/unit/cli/test_persona_extract.py
-  - tests/unit/services/test_persona_extract_rules.py
-  - tests/contracts/test_persona_extract_log_shape.py
-category: "product-planning"
-tags: ["cli", "persona-memory", "agentic-os", "additive", "no-model", "no-db-writes"]
+- backend/cli/commands/persona.py
+- backend/cli/main.py
+- backend/application/services/agent_queries/persona_extract.py
+- backend/application/services/agent_queries/persona_extract_rules.py
+- tests/unit/cli/test_persona_extract.py
+- tests/unit/services/test_persona_extract_rules.py
+- tests/contracts/test_persona_extract_log_shape.py
+category: product-planning
+tags:
+- cli
+- persona-memory
+- agentic-os
+- additive
+- no-model
+- no-db-writes
 related_documents:
-  - docs/project_plans/PRDs/features/ccdash-persona-extract-v1.md
+- docs/project_plans/PRDs/features/ccdash-persona-extract-v1.md
 ---
 
 # Implementation Plan: CCDash Persona Extract v1
