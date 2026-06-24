@@ -123,6 +123,24 @@ wave_plan:
   waves:
   - - P0
   - - P1
+success_metrics:
+- docker compose --profile enterprise --profile postgres up ingests >=1 session from a dropped fixture .jsonl with no extra flags
+- Worker readyz returns 200 iff resolved watch-paths > 0; zero paths return 503 with configured_no_paths reason
+- CI workflow is green on every PR touching deploy/runtime/** or backend/runtime/**
+- DB shrinks >= 3 GB measured via dbstat byte totals
+- SELECT COUNT(*) FROM analytics_entries drops ~50x (1.8M -> ~30-90K rows)
+- _capture_analytics issues single-digit batched queries per snapshot (measured via query counter at sync_engine.py:5787)
+- entity_graph rebuild executes as 1 commit (counter at entity_graph.py:40)
+- GET /api/sessions session-list serves materialized badge columns (no per-session log fetch)
+- SQLite and Postgres report identical SCHEMA_VERSION
+acceptance_criteria:
+- 'Phase 0 exit gate: P0-013 CI e2e smoke passing'
+- 'Phase 1 exit gate: >=3 GB reclaimed'
+- 'Phase 1 exit gate: analytics_entries ~50x reduction'
+- 'Phase 1 exit gate: _capture_analytics single-digit queries/snapshot'
+- 'Phase 1 exit gate: entity_graph 1 commit/rebuild'
+definition_of_done: 'Both phase quality gates pass: Feature exit gate is P0-013 CI e2e smoke passing; Phase 1 exit requires measurable DB-size/row-count/query-count assertions (>=3 GB reclaimed; analytics_entries ~50x reduction; _capture_analytics single-digit queries/snapshot; entity_graph 1 commit/rebuild). task-completion-validator per phase; karen at feature end.'
+planning_maturity: shipped
 ---
 
 # Implementation Plan: CCDash Enterprise Liveness Hotfix & Storage Hygiene

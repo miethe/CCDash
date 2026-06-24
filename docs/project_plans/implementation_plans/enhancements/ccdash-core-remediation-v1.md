@@ -339,6 +339,35 @@ wave_plan:
     - P10
   - - P11
   - - P12
+open_questions:
+- 'Redaction strategy: pattern-based secret scan vs allowlist field redaction vs layered? (OQ-1, owning Phase 1)'
+- MCP transcript chunk size / max envelope bytes? (OQ-2, owning Phase 3)
+- 'Recent-first window: N most-recent vs last-K-days vs mtime budget? (OQ-3, owning Phase 7)'
+- Periodic reconcile cadence; registry-change-event-driven feasibility? (OQ-4, owning Phase 8)
+- 'Launch-time capture transport: wrapper script vs SessionStart hook vs sidecar convention? (OQ-5, owning Phase 11)'
+- 'Auth for LAN /api/v1: bearer token vs none-on-LAN under local-trust? (OQ-6, owning Phase 10)'
+success_metrics:
+- 'MCP session_detail returns transcript for non-active project: 100% of calls with valid project_id (baseline: not supported)'
+- 'Cross-project row leak in session reads: zero across 2 projects sharing IDs (baseline: present, unguarded; ADR-007 collision test)'
+- 'Link freshness: new subagent JSONL linked within ≤ 1 watcher cycle (~30 s) (baseline: requires restart)'
+- 'Novel model ID pricing flagged unpriced (baseline: silent Sonnet default; regression fixture)'
+- 'Duplicate full-sync under Postgres: zero per project/trigger (baseline: unguarded; coalescing unit test)'
+- 'compose e2e smoke green on api + worker + postgres (baseline: no container support)'
+- 'OpenAPI spec committed and contract-pinned (baseline: none; PR gate)'
+- Code coverage on new modules > 80% (backend test suite)
+decisions:
+- decision: 'Redaction strategy resolves to layered: known secret patterns + tool-name-aware payload field redaction, configurable via env (OQ-1)'
+  rationale: Recommended layered approach in the Open Questions resolution path; redaction is a non-optional Phase 1 deliverable
+  status: pending
+- decision: remote-ccdash-streaming branch renumbers its ADR set 006–010 to the next free block 011–015 on resume/merge
+  rationale: Number collision with main's accepted, operator-ratified ADR-006 (registry) / ADR-007 (write-failure) which this epic depends on
+  status: pending
+- decision: Do not add a source_ref/source_type column or change the sessions upsert key in this epic
+  rationale: That identity model is owned by the unmerged remote-ccdash-streaming branch (ADR-009); keeps both efforts mergeable
+  status: accepted
+acceptance_criteria:
+- Any agent can pull full session detail (transcript, subagents, workflow content, tokens, artifacts, links) for any session in any project via REST, MCP, and CLI, with secret/PII redaction
+definition_of_done: 'All 13 phases (0–12) complete across six waves: Phase 0 cross-project session correctness green, Phases 1–3 expose transport-neutral session_detail over REST/MCP/CLI, Phases 4–8 harden freshness/detection/pricing/sync, Phase 9 Postgres/container convergence gate passes, Phases 10–11 add external API + launch-time capture, Phase 12 closes docs + CHANGELOG + a karen end-of-feature acceptance pass.'
 ---
 
 # Implementation Plan: CCDash Core Remediation v1

@@ -171,6 +171,34 @@ wave_plan:
     - [P2, P3, P4]
     - [P5]
     - [P6]
+planning_maturity: planned
+open_questions:
+- 'OQ-6: exact-match `feat/<slug>` branch -> confidence=high promotion deferred to post-v2 tuning pending FP telemetry; Phase 2 ships uniform medium confidence.'
+- 'OQ-7: uvicorn `--reload` drops watcher registrations; `--reload-exclude` operator guidance to be documented (T6-002).'
+- 'OQ-5: write-amplification at N>=10 watchers — N=3-5 profiling is the Phase 3 gate input for any N=10+ scale-out (resolved or flagged in T5-002).'
+decisions:
+- decision: Accept ADR-008 formalizing the BranchWatcherRegistry<->planning-service seam (direct-call model, no event bus; register/unregister called directly from the planning write path).
+  rationale: 'OQ-1 resolution: planning write path calls register/unregister directly per decisions block §7; required before registry implementation (P0 exit gate).'
+  status: accepted
+- decision: Place BranchWatcherRegistry in new file backend/db/branch_watcher.py (not in file_watcher.py).
+  rationale: OQ-2 resolution recorded in ADR-008.
+  status: accepted
+- decision: Startup hydration coroutine runs after _run_all_projects_sync_job completes (serialized, no race with per-project sync).
+  rationale: OQ-3 resolution; mitigates startup-sync <-> watcher-registration race.
+  status: accepted
+- decision: Missing worktree_path on register() logs a WARNING and skips; no unilateral terminal-status mutation.
+  rationale: OQ-4 resolution per ADR-006 spirit.
+  status: accepted
+success_metrics:
+- 'N<=5 simultaneous branch watchers per project: p50/p95/p99 write-amplification envelope confirmed (or flagged if p95 degradation > 50ms vs baseline).'
+- branch_filter=None cache key byte-identical to Phase 1 key on all 4 @memoized_query planning endpoints (zero regression).
+- Doc edit on a registered worktree branch syncs within <=5s.
+acceptance_criteria:
+- 'AC BRANCH-EMPTY-FALLBACK: Frontend gracefully handles absent/empty documents.branch — PlanningTopBar chip hidden, no error, no error boundary; branch_filter=None identical to Phase 1.'
+- 'AC BWR-SEAM: BranchWatcherRegistry.register() invoked only from the planning control-plane write path on planning_worktree_contexts INSERT status=''running''; unregister() only on terminal-status UPDATE; no other service layer may call them.'
+- 'AC DEF003-CHIP-SMOKE: PlanningTopBar branch chip renders when worktree.branch is non-null/non-empty and is absent (no error) otherwise.'
+points: 26
+execution_mode: agent
 ---
 
 # Implementation Plan: Branch-Aware Planning Intelligence v2
