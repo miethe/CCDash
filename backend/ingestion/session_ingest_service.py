@@ -223,6 +223,7 @@ class SessionIngestService:
                 project_id,
                 source_file,
                 list(deduped_relationships.values()),
+                **_pg_conn_kw,
             )
         result.relationship_count = len(deduped_relationships)
         return result

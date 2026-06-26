@@ -914,7 +914,7 @@ class PostgresSessionRepository:
             source_file,
         )
 
-    async def upsert_relationships(self, project_id: str, source_file: str, relationships: list[dict]) -> None:
+    async def upsert_relationships(self, project_id: str, source_file: str, relationships: list[dict], _pg_conn: Any = None) -> None:
         if not relationships:
             return
         records = []
@@ -935,7 +935,8 @@ class PostgresSessionRepository:
                     source_file,
                 )
             )
-        await self.db.executemany(
+        _conn = _pg_conn if _pg_conn is not None else self.db
+        await _conn.executemany(
             """
             INSERT INTO session_relationships (
                 id, project_id, parent_session_id, child_session_id,
