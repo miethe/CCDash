@@ -1475,15 +1475,16 @@ class SyncEngine:
                         logs,
                     )
                 ),
-                replace_session_usage_attribution=lambda project_id, session_payload, logs, artifacts: (
+                replace_session_usage_attribution=lambda project_id, session_payload, logs, artifacts, _pg_conn=None: (
                     self._replace_session_usage_attribution(
                         project_id,
                         session_payload,
                         logs,
                         artifacts,
+                        _pg_conn=_pg_conn,
                     )
                 ),
-                replace_session_telemetry_events=lambda project_id, session_payload, logs, tools, files, artifacts: (
+                replace_session_telemetry_events=lambda project_id, session_payload, logs, tools, files, artifacts, _pg_conn=None: (
                     self._replace_session_telemetry_events(
                         project_id,
                         session_payload,
@@ -1492,23 +1493,26 @@ class SyncEngine:
                         files,
                         artifacts,
                         source="sync",
+                        _pg_conn=_pg_conn,
                     )
                 ),
-                replace_session_commit_correlations=lambda project_id, session_payload, logs, files: (
+                replace_session_commit_correlations=lambda project_id, session_payload, logs, files, _pg_conn=None: (
                     self._replace_session_commit_correlations(
                         project_id,
                         session_payload,
                         logs,
                         files,
                         source="sync",
+                        _pg_conn=_pg_conn,
                     )
                 ),
-                replace_session_intelligence_facts=lambda project_id, session_payload, canonical_rows, files: (
+                replace_session_intelligence_facts=lambda project_id, session_payload, canonical_rows, files, _pg_conn=None: (
                     self._replace_session_intelligence_facts(
                         project_id,
                         session_payload,
                         canonical_rows,
                         files,
+                        _pg_conn=_pg_conn,
                     )
                 ),
                 maybe_enqueue_telemetry_export=lambda project_id, session_payload: (
@@ -1542,6 +1546,7 @@ class SyncEngine:
         artifacts: list[dict[str, Any]],
         *,
         source: str,
+        _pg_conn: Any = None,
     ) -> int:
         session_id = _first_non_empty(session_payload, "id")
         if not session_id:
@@ -1626,7 +1631,8 @@ class SyncEngine:
             await self.db.commit()
             return len(events)
 
-        await self.db.execute(
+        _conn = _pg_conn if _pg_conn is not None else self.db
+        await _conn.execute(
             "DELETE FROM telemetry_events WHERE project_id = $1 AND session_id = $2",
             project_id,
             session_id,
@@ -1667,7 +1673,7 @@ class SyncEngine:
                 payload_json = EXCLUDED.payload_json
         """
         for event in events:
-            await self.db.execute(
+            await _conn.execute(
                 insert_query,
                 event["project_id"],
                 event["session_id"],
@@ -1741,6 +1747,7 @@ class SyncEngine:
         session_payload: dict[str, Any],
         logs: list[dict[str, Any]],
         artifacts: list[dict[str, Any]],
+        _pg_conn: Any = None,
     ) -> dict[str, int]:
         session_id = _first_non_empty(session_payload, "id")
         if not session_id:
@@ -1748,7 +1755,14 @@ class SyncEngine:
 
         events = build_session_usage_events(project_id, session_payload, logs)
         attributions = build_session_usage_attributions(session_payload, logs, artifacts, events)
-        await self.session_usage_repo.replace_session_usage(project_id, session_id, events, attributions)
+        if _pg_conn is not None:
+            await self.session_usage_repo.replace_session_usage(
+                project_id, session_id, events, attributions, conn=_pg_conn
+            )
+        else:
+            await self.session_usage_repo.replace_session_usage(
+                project_id, session_id, events, attributions
+            )
         return {"events": len(events), "attributions": len(attributions)}
 
     async def _replace_session_intelligence_facts(
@@ -1757,6 +1771,7 @@ class SyncEngine:
         session_payload: dict[str, Any],
         canonical_rows: list[dict[str, Any]],
         file_updates: list[dict[str, Any]],
+        _pg_conn: Any = None,
     ) -> dict[str, int]:
         session_id = _first_non_empty(session_payload, "id")
         if not session_id:
@@ -1776,9 +1791,12 @@ class SyncEngine:
             )
         scope_drift_facts = build_session_scope_drift_facts(session_payload, linked_docs, file_updates)
 
-        await self.session_intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts, project_id)
-        await self.session_intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts, project_id)
-        await self.session_intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts, project_id)
+        # Only forward _pg_conn on the Postgres path; the SQLite intelligence repo
+        # does not accept the kwarg (mirrors the _pg_conn_kw pattern in persist_envelope).
+        _ic_kw: dict[str, Any] = {} if _pg_conn is None else {"_pg_conn": _pg_conn}
+        await self.session_intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts, project_id, **_ic_kw)
+        await self.session_intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts, project_id, **_ic_kw)
+        await self.session_intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts, project_id, **_ic_kw)
         return {
             "sentiment": len(sentiment_facts),
             "churn": len(churn_facts),
@@ -1970,6 +1988,7 @@ class SyncEngine:
         files: list[dict[str, Any]],
         *,
         source: str,
+        _pg_conn: Any = None,
     ) -> int:
         session_id = _first_non_empty(session_payload, "id")
         if not session_id:
@@ -2031,7 +2050,8 @@ class SyncEngine:
                 )
             await self.db.commit()
         else:
-            await self.db.execute(
+            _conn = _pg_conn if _pg_conn is not None else self.db
+            await _conn.execute(
                 "DELETE FROM commit_correlations WHERE project_id = $1 AND session_id = $2",
                 project_id,
                 session_id,
@@ -2054,9 +2074,10 @@ class SyncEngine:
                     $16, $17, $18,
                     $19, $20, $21, $22
                 )
+                ON CONFLICT (project_id, source_key) DO NOTHING
             """
             for correlation in correlations:
-                await self.db.execute(
+                await _conn.execute(
                     insert_query,
                     correlation["project_id"],
                     correlation["session_id"],
@@ -4623,12 +4644,35 @@ class SyncEngine:
                     source_identity=sync_file_path,
                     source_uri=file_path,
                 )
-                await self._get_session_ingest_service().persist_envelope(
-                    project_id,
-                    envelope,
-                    observed_source_file=file_path,
-                    telemetry_source="sync",
-                )
+                if not isinstance(self.db, aiosqlite.Connection):
+                    # Postgres path: acquire one pool connection and wrap all
+                    # per-session INSERTs in a single transaction.  This ensures
+                    # the parent `sessions` row and every FK-constrained child
+                    # table (session_logs, session_tool_usage, session_file_updates,
+                    # session_artifacts, session_usage_events,
+                    # session_usage_attributions) are visible to each other on the
+                    # same connection — preventing ForeignKeyViolationError when
+                    # child rows are inserted before the parent commits on a
+                    # different pool connection.
+                    from backend.db.repositories.postgres._transactions import (  # noqa: PLC0415
+                        postgres_transaction as _pg_txn,
+                    )
+                    async with _pg_txn(self.db) as _pg_conn:
+                        await self._get_session_ingest_service().persist_envelope(
+                            project_id,
+                            envelope,
+                            observed_source_file=file_path,
+                            telemetry_source="sync",
+                            _pg_conn=_pg_conn,
+                        )
+                else:
+                    # SQLite path: behavior unchanged.
+                    await self._get_session_ingest_service().persist_envelope(
+                        project_id,
+                        envelope,
+                        observed_source_file=file_path,
+                        telemetry_source="sync",
+                    )
 
         # Update sync state
         await self.sync_repo.upsert_sync_state({

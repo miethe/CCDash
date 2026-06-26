@@ -30,8 +30,9 @@ class PostgresSessionMessageRepository:
         session_id: str,
         messages: list[dict[str, object]],
         project_id: str = "",
+        _pg_conn: Any = None,
     ) -> None:
-        async with postgres_transaction(self.db) as conn:
+        async def _execute(conn: Any) -> None:
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", session_id)
             await conn.execute("DELETE FROM session_messages WHERE session_id = $1", session_id)
             if not messages:
@@ -134,6 +135,12 @@ class PostgresSessionMessageRepository:
                 """,
                 records,
             )
+
+        if _pg_conn is not None:
+            await _execute(_pg_conn)
+        else:
+            async with postgres_transaction(self.db) as conn:
+                await _execute(conn)
 
     async def list_by_session(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict[str, object]]:
         safe_limit = max(1, min(int(limit or 5000), 5001))

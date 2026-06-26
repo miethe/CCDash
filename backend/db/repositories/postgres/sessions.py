@@ -18,7 +18,7 @@ class PostgresSessionRepository:
     def __init__(self, db: asyncpg.Connection):
         self.db = db
 
-    async def upsert(self, session_data: dict, project_id: str) -> None:
+    async def upsert(self, session_data: dict, project_id: str, _pg_conn: Any = None) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = session_data.get("createdAt", "") or now
         updated_at = session_data.get("updatedAt", "") or now
@@ -102,7 +102,8 @@ class PostgresSessionRepository:
                 effort_tier=COALESCE(EXCLUDED.effort_tier, sessions.effort_tier),
                 model_variant=COALESCE(EXCLUDED.model_variant, sessions.model_variant)
         """
-        await self.db.execute(
+        _conn = _pg_conn if _pg_conn is not None else self.db
+        await _conn.execute(
             query,
             session_data["id"], project_id,
             session_data.get("taskId", ""),
@@ -674,8 +675,10 @@ class PostgresSessionRepository:
         session_id: str,
         observability_fields: dict[str, Any],
         project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+        _pg_conn: Any = None,
     ) -> None:
-        await self.db.execute(
+        _conn = _pg_conn if _pg_conn is not None else self.db
+        await _conn.execute(
             """
             UPDATE sessions
             SET current_context_tokens = $1,
@@ -712,7 +715,7 @@ class PostgresSessionRepository:
 
     # ── Detail tables ───────────────────────────────────────────────
 
-    async def upsert_logs(self, session_id: str, logs: list[dict], project_id: str = "") -> None:
+    async def upsert_logs(self, session_id: str, logs: list[dict], project_id: str = "", _pg_conn: Any = None) -> None:
         # Deduplicate by source_log_id (non-empty) before building the record list.
         # Duplicates produced by the parser are a known upstream issue (Fix C) — this
         # guard prevents the partial-unique index constraint from firing.
@@ -734,7 +737,7 @@ class PostgresSessionRepository:
                 session_id,
             )
 
-        async with postgres_transaction(self.db) as conn:
+        async def _execute(conn: Any) -> None:
             # Scope DELETE to (project_id, session_id) so project-A's writer never clears
             # project-B's rows sharing the same session_id.  NULL/'' tolerance covers
             # legacy rows written before project_id threading was added.
@@ -785,8 +788,14 @@ class PostgresSessionRepository:
                 records
             )
 
-    async def upsert_tool_usage(self, session_id: str, tools: list[dict], project_id: str = "") -> None:
-        async with postgres_transaction(self.db) as conn:
+        if _pg_conn is not None:
+            await _execute(_pg_conn)
+        else:
+            async with postgres_transaction(self.db) as conn:
+                await _execute(conn)
+
+    async def upsert_tool_usage(self, session_id: str, tools: list[dict], project_id: str = "", _pg_conn: Any = None) -> None:
+        async def _execute(conn: Any) -> None:
             await conn.execute("DELETE FROM session_tool_usage WHERE session_id = $1", session_id)
             if not tools:
                 return
@@ -802,12 +811,19 @@ class PostgresSessionRepository:
 
             await conn.executemany(
                 """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms, project_id)
-                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   ON CONFLICT (session_id, tool_name) DO NOTHING""",
                 records
             )
 
-    async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
-        async with postgres_transaction(self.db) as conn:
+        if _pg_conn is not None:
+            await _execute(_pg_conn)
+        else:
+            async with postgres_transaction(self.db) as conn:
+                await _execute(conn)
+
+    async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "", _pg_conn: Any = None) -> None:
+        async def _execute(conn: Any) -> None:
             # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
             await conn.execute(
                 "DELETE FROM session_file_updates "
@@ -845,13 +861,20 @@ class PostgresSessionRepository:
                 records
             )
 
+        if _pg_conn is not None:
+            await _execute(_pg_conn)
+        else:
+            async with postgres_transaction(self.db) as conn:
+                await _execute(conn)
+
     async def upsert_artifacts(
         self,
         session_id: str,
         artifacts: list[dict],
         project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+        _pg_conn: Any = None,
     ) -> None:
-        async with postgres_transaction(self.db) as conn:
+        async def _execute(conn: Any) -> None:
             # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
             await conn.execute(
                 "DELETE FROM session_artifacts "
@@ -873,9 +896,16 @@ class PostgresSessionRepository:
             await conn.executemany(
                 """INSERT INTO session_artifacts (
                     project_id, id, session_id, title, type, description, source, url, source_log_id, source_tool_name
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (id) DO NOTHING""",
                 records
             )
+
+        if _pg_conn is not None:
+            await _execute(_pg_conn)
+        else:
+            async with postgres_transaction(self.db) as conn:
+                await _execute(conn)
 
     async def delete_relationships_for_source(self, project_id: str, source_file: str) -> None:
         await self.db.execute(

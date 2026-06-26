@@ -9,10 +9,13 @@ Coverage:
 from __future__ import annotations
 
 import unittest
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
+from backend.application.ports import CorePorts
 from backend.application.services.agent_queries.cache import (
     _query_cache,
+    _query_feature_phases_marker,
     clear_cache,
     compute_cache_key,
     get_cache,
@@ -103,13 +106,13 @@ class ComputeCacheKeyDeterminismTests(unittest.TestCase):
 class GetDataVersionFingerprintTests(unittest.IsolatedAsyncioTestCase):
     """get_data_version_fingerprint must degrade gracefully on failures."""
 
-    def _make_ports(self, db: object) -> object:
+    def _make_ports(self, db: object) -> CorePorts:
         """Build a minimal CorePorts-like mock with a controllable db object."""
         storage = MagicMock()
         storage.db = db
         ports = MagicMock()
         ports.storage = storage
-        return ports
+        return cast(CorePorts, ports)
 
     # ── happy path ────────────────────────────────────────────────────────
 
@@ -285,6 +288,102 @@ class GetDataVersionFingerprintTests(unittest.IsolatedAsyncioTestCase):
         result = await get_data_version_fingerprint(context, ports, project_id="proj-y")
 
         self.assertIsNone(result)
+
+
+# ── _query_feature_phases_marker Postgres path ─────────────────────────────
+
+class QueryFeaturePhasesMarkerPostgresTests(unittest.IsolatedAsyncioTestCase):
+    """Postgres branch of _query_feature_phases_marker must reference f.updated_at.
+
+    These tests use a plain MagicMock (not spec=aiosqlite.Connection) so that
+    isinstance(db, aiosqlite.Connection) is False and the asyncpg code path
+    executes.  Prevents the alias regression where fp.updated_at was used
+    against feature_phases, which has no such column.
+    """
+
+    async def test_project_id_branch_returns_valid_string(self) -> None:
+        """With project_id, Postgres branch returns a count:timestamp string."""
+        row = {"c": 3, "m": "2026-06-01T12:00:00+00:00"}
+        db = MagicMock()  # NOT aiosqlite.Connection — triggers Postgres branch
+        db.fetchrow = AsyncMock(return_value=row)
+
+        result = await _query_feature_phases_marker(db, project_id="proj-pg-1")
+
+        self.assertIsInstance(result, str)
+        self.assertIn(":", result)
+        self.assertIn("3", result)
+
+    async def test_project_id_branch_sql_uses_f_updated_at(self) -> None:
+        """pg_sql in the project_id branch must reference f.updated_at not fp.updated_at."""
+        row = {"c": 1, "m": "2026-06-01T12:00:00+00:00"}
+        db = MagicMock()
+        db.fetchrow = AsyncMock(return_value=row)
+
+        await _query_feature_phases_marker(db, project_id="proj-pg-alias-check")
+
+        call_args = db.fetchrow.call_args
+        sql_used: str = call_args.args[0]
+        self.assertIn("f.updated_at", sql_used)
+        self.assertNotIn("fp.updated_at", sql_used)
+
+    async def test_no_project_id_branch_sql_uses_f_updated_at(self) -> None:
+        """pg_sql in the else branch must also reference f.updated_at (not fp or bare updated_at on feature_phases)."""
+        row = {"c": 7, "m": "2026-06-01T08:00:00+00:00"}
+        db = MagicMock()
+        db.fetchrow = AsyncMock(return_value=row)
+
+        result = await _query_feature_phases_marker(db, project_id=None)
+
+        self.assertIsInstance(result, str)
+        self.assertIn(":", result)
+
+        call_args = db.fetchrow.call_args
+        sql_used: str = call_args.args[0]
+        self.assertIn("f.updated_at", sql_used)
+        self.assertNotIn("fp.updated_at", sql_used)
+
+    async def test_project_id_branch_none_row_returns_zero_prefix(self) -> None:
+        """When fetchrow returns None the function returns '0:' without raising."""
+        db = MagicMock()
+        db.fetchrow = AsyncMock(return_value=None)
+
+        result = await _query_feature_phases_marker(db, project_id="proj-pg-2")
+
+        self.assertIsInstance(result, str)
+        self.assertEqual(result, "0:")
+
+
+class GetDataVersionFingerprintPostgresWithProjectIdTests(unittest.IsolatedAsyncioTestCase):
+    """get_data_version_fingerprint must return a non-None string on the Postgres path
+    when project_id is set — exercising the fixed if-branch of _query_feature_phases_marker."""
+
+    def _make_ports(self, db: object) -> CorePorts:
+        storage = MagicMock()
+        storage.db = db
+        ports = MagicMock()
+        ports.storage = storage
+        return cast(CorePorts, ports)
+
+    async def test_returns_non_none_pipe_separated_string_postgres_with_project_id(self) -> None:
+        """Full fingerprint with a Postgres-style mock and a project_id must not degrade to None.
+
+        Uses a MagicMock (not spec=aiosqlite.Connection) so all sub-queries
+        execute the asyncpg code path.  A row with both 'c' and 'm' keys satisfies
+        _query_feature_phases_marker, _query_entity_links_marker, and _query_max_updated_at.
+        """
+        row = {"c": 2, "m": "2026-06-01T12:00:00+00:00"}
+        db = MagicMock()  # no spec — not aiosqlite.Connection
+        db.fetchrow = AsyncMock(return_value=row)
+
+        context = MagicMock()
+        ports = self._make_ports(db)
+
+        result = await get_data_version_fingerprint(context, ports, project_id="proj-pg-fp")
+
+        self.assertIsNotNone(result)
+        self.assertIn("|", result)  # type: ignore[arg-type]
+        # 6 tables → 5 pipe separators
+        self.assertEqual(result.count("|"), 5)  # type: ignore[union-attr]
 
 
 # ── Cache singleton helpers ─────────────────────────────────────────────────

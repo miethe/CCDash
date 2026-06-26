@@ -762,7 +762,7 @@ async def _query_feature_phases_marker(db: Any, project_id: str | None) -> str:
             WHERE f.project_id = ?
         """
         pg_sql = """
-            SELECT COUNT(*) AS c, MAX(fp.updated_at) AS m
+            SELECT COUNT(*) AS c, MAX(f.updated_at) AS m
             FROM feature_phases fp
             JOIN features f ON f.id = fp.feature_id
             WHERE f.project_id = $1
@@ -775,7 +775,12 @@ async def _query_feature_phases_marker(db: Any, project_id: str | None) -> str:
             "COALESCE(MAX(status), '') || ':' || COALESCE(CAST(SUM(completed_tasks) AS TEXT), '0') AS m "
             "FROM feature_phases"
         )
-        pg_sql = sqlite_sql
+        # Postgres: feature_phases has no updated_at column; read from the joined features table
+        pg_sql = """
+            SELECT COUNT(*) AS c, MAX(f.updated_at) AS m
+            FROM feature_phases fp
+            JOIN features f ON f.id = fp.feature_id
+        """
         params = ()
 
     if isinstance(db, aiosqlite.Connection):

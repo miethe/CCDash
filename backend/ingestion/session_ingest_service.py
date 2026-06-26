@@ -19,28 +19,12 @@ DeriveObservabilityFields = Callable[
     Awaitable[dict[str, Any]],
 ]
 ReplaceUsageAttribution = Callable[
-    [str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]],
+    ...,
     Awaitable[Any],
 ]
-ReplaceTelemetryEvents = Callable[
-    [
-        str,
-        dict[str, Any],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-    ],
-    Awaitable[Any],
-]
-ReplaceCommitCorrelations = Callable[
-    [str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]],
-    Awaitable[Any],
-]
-ReplaceIntelligenceFacts = Callable[
-    [str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]],
-    Awaitable[Any],
-]
+ReplaceTelemetryEvents = Callable[..., Awaitable[Any]]
+ReplaceCommitCorrelations = Callable[..., Awaitable[Any]]
+ReplaceIntelligenceFacts = Callable[..., Awaitable[Any]]
 MaybeEnqueueTelemetryExport = Callable[[str, dict[str, Any]], Awaitable[None]]
 PublishTranscriptAppends = Callable[
     [dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]],
@@ -115,6 +99,7 @@ class SessionIngestService:
         *,
         observed_source_file: str = "",
         telemetry_source: str = "sync",
+        _pg_conn: Any = None,
     ) -> SessionIngestResult:
         """Persist a complete session envelope and return write counts."""
         if envelope.merge_policy != MergePolicy.UPSERT_COMPLETE:
@@ -162,12 +147,17 @@ class SessionIngestService:
             merge_policy=envelope.merge_policy,
         )
 
+        # Build a kwargs dict that is non-empty only on the Postgres path where
+        # _pg_conn is an actual asyncpg connection.  SQLite repo implementations
+        # do not accept _pg_conn, so we must not pass it when it is None.
+        _pg_conn_kw: dict[str, Any] = {} if _pg_conn is None else {"_pg_conn": _pg_conn}
+
         for session_dict in pending_sessions:
             session_id = str(session_dict.get("id") or "").strip()
             if not session_id:
                 continue
 
-            await self.session_repo.upsert(session_dict, project_id)
+            await self.session_repo.upsert(session_dict, project_id, **_pg_conn_kw)
             result.session_ids.append(session_id)
             result.updated_session_ids.append(session_id)
 
@@ -181,36 +171,37 @@ class SessionIngestService:
             write_legacy_logs = self.should_write_legacy_session_logs(canonical_rows)
             if write_legacy_logs:
                 previous_logs = await self.session_repo.get_logs(session_id)
-                await self.session_repo.upsert_logs(session_id, logs, project_id)
+                await self.session_repo.upsert_logs(session_id, logs, project_id, **_pg_conn_kw)
             else:
                 previous_logs = await self.session_message_repo.list_by_session(session_id)
-                await self.session_repo.upsert_logs(session_id, [], project_id)
-            await self.session_message_repo.replace_session_messages(session_id, canonical_rows, project_id)
+                await self.session_repo.upsert_logs(session_id, [], project_id, **_pg_conn_kw)
+            await self.session_message_repo.replace_session_messages(session_id, canonical_rows, project_id, **_pg_conn_kw)
 
             tools = session_dict.get("toolsUsed", [])
             if not isinstance(tools, list):
                 tools = []
-            await self.session_repo.upsert_tool_usage(session_id, tools, project_id)
+            await self.session_repo.upsert_tool_usage(session_id, tools, project_id, **_pg_conn_kw)
 
             files = session_dict.get("updatedFiles", [])
             if not isinstance(files, list):
                 files = []
-            await self.session_repo.upsert_file_updates(session_id, files, project_id)
+            await self.session_repo.upsert_file_updates(session_id, files, project_id, **_pg_conn_kw)
 
             artifacts = session_dict.get("linkedArtifacts", [])
             if not isinstance(artifacts, list):
                 artifacts = []
-            await self.session_repo.upsert_artifacts(session_id, artifacts, project_id)
+            await self.session_repo.upsert_artifacts(session_id, artifacts, project_id, **_pg_conn_kw)
             await self.session_repo.update_observability_fields(
                 session_id,
                 await self.derive_session_observability_fields(project_id, session_dict, logs),
                 project_id,
+                **_pg_conn_kw,
             )
 
-            await self.replace_session_usage_attribution(project_id, session_dict, logs, artifacts)
-            await self.replace_session_telemetry_events(project_id, session_dict, logs, tools, files, artifacts)
-            await self.replace_session_commit_correlations(project_id, session_dict, logs, files)
-            await self.replace_session_intelligence_facts(project_id, session_dict, canonical_rows, files)
+            await self.replace_session_usage_attribution(project_id, session_dict, logs, artifacts, **_pg_conn_kw)
+            await self.replace_session_telemetry_events(project_id, session_dict, logs, tools, files, artifacts, **_pg_conn_kw)
+            await self.replace_session_commit_correlations(project_id, session_dict, logs, files, **_pg_conn_kw)
+            await self.replace_session_intelligence_facts(project_id, session_dict, canonical_rows, files, **_pg_conn_kw)
             await self.maybe_enqueue_telemetry_export(project_id, session_dict)
             append_published = await self.publish_transcript_appends(session_dict, previous_logs, logs)
             await self.publish_session_snapshot(session_dict, len(logs), telemetry_source)

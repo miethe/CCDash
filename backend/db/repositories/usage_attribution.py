@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import aiosqlite
 
@@ -18,6 +19,8 @@ class SqliteSessionUsageRepository(SessionUsageRepository):
         session_id: str,
         events: list[dict[str, object]],
         attributions: list[dict[str, object]],
+        *,
+        conn: Any = None,  # accepted for Protocol parity; SQLite is single-connection/atomic
     ) -> None:
         # All three operations (delete + two inserts) share one transaction / one commit.
         await self.db.execute(
