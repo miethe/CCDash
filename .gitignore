@@ -50,6 +50,10 @@ artifacts/
 # Local machine state (untracked; see .env.example for template)
 projects.json
 
+# Local streaming worker: real env lives at ~/.ccdash/stream.env (outside repo).
+# Guard against an accidental real secret file inside the repo; the *.example is tracked.
+deploy/local-streaming/stream.env
+
 # Claude Code worktrees (live git worktrees, never commit as files)
 .claude/worktrees/
 .claude/scheduled_tasks.lock
