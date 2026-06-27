@@ -364,5 +364,131 @@ class LiveMetricsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(dto["window_seconds"], int)
 
 
+# ── PostgresSessionRepository.list_active parity tests ───────────────────────
+
+
+class PostgresListActiveTests(unittest.IsolatedAsyncioTestCase):
+    """Parity tests for PostgresSessionRepository.list_active (no real DB needed).
+
+    Uses MagicMock to simulate asyncpg.Connection and verifies that the correct
+    SQL and parameters are dispatched.  These tests fail before the fix (because
+    the attribute does not exist) and pass after.
+
+    TC-PG1  Attribute guard: PostgresSessionRepository exposes list_active.
+    TC-PG2  Active predicate: correct WHERE / ORDER BY SQL emitted.
+    TC-PG3  include_subagents=False appends session_type exclusion to WHERE.
+    TC-PG4  limit kwarg appends LIMIT $4 with the correct value.
+    TC-PG5  Return shape: asyncpg Record rows are converted to plain dicts.
+    TC-PG6  Empty result: returns [] when fetch returns no rows.
+    """
+
+    def _make_repo(self):
+        from backend.db.repositories.postgres.sessions import PostgresSessionRepository
+        conn = MagicMock()
+        conn.fetch = AsyncMock()
+        return PostgresSessionRepository(conn), conn
+
+    # TC-PG1 ──────────────────────────────────────────────────────────────────
+
+    def test_attribute_guard(self) -> None:
+        """list_active must be present on PostgresSessionRepository (fails before fix)."""
+        import inspect
+        from backend.db.repositories.postgres.sessions import PostgresSessionRepository
+
+        self.assertTrue(
+            hasattr(PostgresSessionRepository, "list_active"),
+            "PostgresSessionRepository is missing list_active — backend parity gap",
+        )
+        sig = inspect.signature(PostgresSessionRepository.list_active)
+        params = sig.parameters
+        self.assertIn("project_id", params)
+        self.assertIn("window_seconds", params)
+        self.assertIn("limit", params)
+        self.assertIn("include_subagents", params)
+
+    # TC-PG2 ──────────────────────────────────────────────────────────────────
+
+    async def test_fetch_called_with_active_predicate(self) -> None:
+        """list_active issues the correct active-predicate SQL and positional params."""
+        repo, conn = self._make_repo()
+        conn.fetch.return_value = []
+
+        result = await repo.list_active("proj-1", window_seconds=300)
+
+        self.assertEqual(result, [])
+        self.assertTrue(conn.fetch.called, "db.fetch must be called")
+        call_args = conn.fetch.call_args
+        sql: str = call_args[0][0]
+        positional_params = call_args[0][1:]
+
+        self.assertIn("SELECT * FROM sessions", sql)
+        self.assertIn("project_id = $1", sql)
+        self.assertIn("status = $2", sql)
+        self.assertIn("updated_at >= $3", sql)
+        self.assertIn("ORDER BY updated_at DESC", sql)
+        self.assertNotIn("LIMIT", sql, "No LIMIT clause expected when limit=None")
+
+        self.assertEqual(positional_params[0], "proj-1")
+        self.assertEqual(positional_params[1], "active")
+        self.assertIsInstance(positional_params[2], str)
+        self.assertIn("T", positional_params[2], "threshold must be an ISO datetime string")
+
+    # TC-PG3 ──────────────────────────────────────────────────────────────────
+
+    async def test_include_subagents_false_appends_session_type_guard(self) -> None:
+        """include_subagents=False adds the session_type exclusion clause."""
+        repo, conn = self._make_repo()
+        conn.fetch.return_value = []
+        await repo.list_active("proj-1", include_subagents=False)
+        sql: str = conn.fetch.call_args[0][0]
+        self.assertIn("session_type", sql)
+        self.assertIn("subagent", sql)
+
+    async def test_include_subagents_true_omits_session_type_guard(self) -> None:
+        """include_subagents=True (default) must NOT add the session_type clause."""
+        repo, conn = self._make_repo()
+        conn.fetch.return_value = []
+        await repo.list_active("proj-1", include_subagents=True)
+        sql: str = conn.fetch.call_args[0][0]
+        self.assertNotIn("session_type", sql)
+
+    # TC-PG4 ──────────────────────────────────────────────────────────────────
+
+    async def test_limit_appends_limit_clause_and_param(self) -> None:
+        """When limit is not None, LIMIT $4 is appended and its value is the 4th param."""
+        repo, conn = self._make_repo()
+        conn.fetch.return_value = []
+        await repo.list_active("proj-1", limit=10)
+        call_args = conn.fetch.call_args
+        sql: str = call_args[0][0]
+        positional_params = call_args[0][1:]
+        self.assertIn("LIMIT $4", sql, "LIMIT clause must reference $4 (4th positional param)")
+        self.assertEqual(positional_params[3], 10, "4th param must be the limit value")
+
+    # TC-PG5 ──────────────────────────────────────────────────────────────────
+
+    async def test_rows_converted_to_dicts(self) -> None:
+        """Each row returned by db.fetch is converted to a plain dict."""
+        repo, conn = self._make_repo()
+        row1 = {"id": "sess-1", "status": "active", "project_id": "proj-1"}
+        row2 = {"id": "sess-2", "status": "active", "project_id": "proj-1"}
+        conn.fetch.return_value = [row1, row2]
+        result = await repo.list_active("proj-1")
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 2)
+        self.assertIsInstance(result[0], dict)
+        self.assertEqual(result[0]["id"], "sess-1")
+        self.assertEqual(result[1]["id"], "sess-2")
+
+    # TC-PG6 ──────────────────────────────────────────────────────────────────
+
+    async def test_empty_result_returns_empty_list(self) -> None:
+        """When fetch returns no rows, list_active returns []."""
+        repo, conn = self._make_repo()
+        conn.fetch.return_value = []
+        result = await repo.list_active("proj-empty")
+        self.assertEqual(result, [])
+
+
 if __name__ == "__main__":
     unittest.main()

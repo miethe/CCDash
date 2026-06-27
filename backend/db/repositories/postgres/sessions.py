@@ -512,6 +512,75 @@ class PostgresSessionRepository:
         )
         return int(val or 0)
 
+    async def list_active(
+        self,
+        project_id: str,
+        *,
+        window_seconds: int = 600,
+        limit: int | None = None,
+        include_subagents: bool = True,
+    ) -> list[dict]:
+        """List sessions that are currently active for a project.
+
+        Mirrors ``SqliteSessionRepository.list_active`` exactly — same predicate
+        semantics (``status = 'active'`` + ``updated_at >= threshold``), same
+        ordering (``updated_at DESC``), same ``include_subagents`` behaviour.
+
+        The active predicate and freshness clamp are identical to
+        :meth:`count_active`:
+
+        1. ``status = 'active'``
+        2. ``updated_at >= now() - window_seconds``
+
+        Args:
+            project_id: The project to scope the query to.
+            window_seconds: Freshness window in seconds (default 600 = 10 min).
+                Sessions with ``updated_at`` older than this are excluded even
+                if their stored ``status`` is ``'active'``.
+            limit: Optional cap on returned rows.  ``None`` means no cap.
+                Callers doing cross-project sweeps should always pass a
+                reasonable limit to avoid unbounded result sets.
+            include_subagents: If ``True`` (default), rows where
+                ``session_type = 'subagent'`` are included.  Pass ``False``
+                to exclude subagent sessions.
+
+        Returns:
+            List of session row dicts ordered by ``updated_at DESC``.
+            Returns an empty list when the project has no active sessions
+            within the window.  Each dict has the same shape as rows
+            returned by :meth:`get_by_id` (all ``sessions`` columns via
+            ``dict(row)``).
+        """
+        from datetime import datetime, timedelta, timezone
+
+        threshold = (
+            datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        ).isoformat()
+
+        where_parts = [
+            "project_id = $1",
+            "status = $2",
+            "updated_at >= $3",
+        ]
+        params: list[Any] = [project_id, "active", threshold]
+
+        if not include_subagents:
+            where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        where = " WHERE " + " AND ".join(where_parts)
+        order_clause = " ORDER BY updated_at DESC"
+
+        limit_clause = ""
+        if limit is not None:
+            params.append(limit)
+            limit_clause = f" LIMIT ${len(params)}"
+
+        rows = await self.db.fetch(
+            f"SELECT * FROM sessions{where}{order_clause}{limit_clause}",  # noqa: S608
+            *params,
+        )
+        return [dict(row) for row in rows]
+
     async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
         where_parts: list[str] = ["TRIM(COALESCE(model, '')) != ''"]
         params: list[Any] = []
