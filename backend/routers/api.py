@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -620,39 +621,122 @@ async def list_sessions(
     total_count = await repo.count(project.id, filters, workspace_id="default-local")  # TODO(workspace-routing)
     
     parent_logs_cache: dict[str, list[dict[str, Any]]] = {}
-    # Hydrate items (minimal for list view)
+    # Hydrate items (minimal for list view).
+    # R-P2 resilience: read materialized badge columns first (fast path).
+    # If any badge column is empty/null (not yet backfilled), fall back to the
+    # heavy log-fetch path for THAT SESSION ONLY, then persist the result so
+    # the next request is served from the materialized columns (lazy backfill).
     results = []
     for s in sessions_data:
         platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
         session_type_value = str(s.get("session_type") or "").strip().lower()
         session_id = str(s.get("id") or "").strip()
-        session_logs = await session_transcript_service.list_session_logs(s, core_ports)
-        badge_data = derive_session_badges(
-            session_logs,
-            primary_model=str(s.get("model") or ""),
-            session_agent_id=s.get("agent_id"),
-        )
+
+        # ── Fast path: read materialized badge columns ──────────────────
+        mat_models_used: list[dict] = []
+        mat_agents_used: list[str] = []
+        mat_skills_used: list[str] = []
+        mat_command_slug = str(s.get("command_slug") or "").strip()
+        mat_latest_summary = str(s.get("latest_summary") or "").strip()
+        mat_subagent_type = str(s.get("subagent_type") or "").strip()
+
+        try:
+            raw_mu = s.get("models_used_json")
+            parsed_mu = json.loads(raw_mu) if isinstance(raw_mu, str) and raw_mu else (raw_mu if isinstance(raw_mu, list) else [])
+            mat_models_used = [e for e in parsed_mu if isinstance(e, dict)] if isinstance(parsed_mu, list) else []
+        except Exception:
+            mat_models_used = []
+
+        try:
+            raw_au = s.get("agents_used_json")
+            parsed_au = json.loads(raw_au) if isinstance(raw_au, str) and raw_au else (raw_au if isinstance(raw_au, list) else [])
+            mat_agents_used = [str(e) for e in parsed_au] if isinstance(parsed_au, list) else []
+        except Exception:
+            mat_agents_used = []
+
+        try:
+            raw_su = s.get("skills_used_json")
+            parsed_su = json.loads(raw_su) if isinstance(raw_su, str) and raw_su else (raw_su if isinstance(raw_su, list) else [])
+            mat_skills_used = [str(e) for e in parsed_su] if isinstance(parsed_su, list) else []
+        except Exception:
+            mat_skills_used = []
+
+        # Badges are considered materialized when models_used_json is non-empty
+        # OR when all three TEXT badge columns are empty strings (legitimate
+        # sessions with no commands/agents/skills yield empty arrays — that is
+        # a valid materialized state distinct from "never computed").
+        # We detect "not yet backfilled" by checking whether the JSON list columns
+        # are still at the DDL default '[]' *and* the text columns are '' *and*
+        # the models column yields no entries (primary model not even seeded).
+        badges_materialized = bool(mat_models_used)
+
+        # ── Slow / fallback path: fetch logs and derive badges ───────────
+        session_logs: list[dict[str, Any]] | None = None
         command_events: list[dict] = []
-        latest_summary = ""
-        for log in session_logs:
-            metadata = _safe_json(log.get("metadata_json") or log.get("metadata"))
-            if log.get("type") == "command":
-                command_events.append({
-                    "name": str(log.get("content") or "").strip(),
-                    "args": str(metadata.get("args") or ""),
-                    "parsedCommand": metadata.get("parsedCommand") if isinstance(metadata.get("parsedCommand"), dict) else {},
-                })
-            if log.get("type") == "system" and str(metadata.get("eventType") or "").strip().lower() == "summary":
-                text = str(log.get("content") or "").strip()
-                if text:
-                    latest_summary = text
-        session_metadata = classify_session_key_metadata(
-            command_events,
-            mappings,
-            platform_type=platform_type_value,
-        )
-        model_identity = derive_model_identity(s.get("model"))
-        subagent_type = _subagent_type_from_logs(session_logs)
+        latest_summary = mat_latest_summary
+        subagent_type = mat_subagent_type
+        badge_data: dict[str, Any]
+
+        if badges_materialized:
+            # Fast path: reconstruct minimal command_events from stored slug so
+            # classify_session_key_metadata can derive session_title without logs.
+            badge_data = {
+                "modelsUsed": mat_models_used,
+                "agentsUsed": mat_agents_used,
+                "skillsUsed": mat_skills_used,
+                "toolSummary": [],  # toolSummary is not materialized; list view does not display it
+            }
+            if mat_command_slug:
+                command_events = [{"name": mat_command_slug, "args": "", "parsedCommand": {}}]
+            from backend.observability import otel as _otel  # noqa: PLC0415
+            _otel.record_badge_derivation(0.0, "fast")
+        else:
+            # Slow path: fetch logs, derive badges, lazy-persist for next time.
+            session_logs = await session_transcript_service.list_session_logs(s, core_ports)
+            _badge_t0 = time.monotonic()
+            badge_data = derive_session_badges(
+                session_logs,
+                primary_model=str(s.get("model") or ""),
+                session_agent_id=s.get("agent_id"),
+            )
+            from backend.observability import otel as _otel  # noqa: PLC0415
+            _otel.record_badge_derivation((time.monotonic() - _badge_t0) * 1000, "slow")
+            for log in session_logs:
+                metadata = _safe_json(log.get("metadata_json") or log.get("metadata"))
+                if log.get("type") == "command":
+                    command_events.append({
+                        "name": str(log.get("content") or "").strip(),
+                        "args": str(metadata.get("args") or ""),
+                        "parsedCommand": metadata.get("parsedCommand") if isinstance(metadata.get("parsedCommand"), dict) else {},
+                    })
+                if log.get("type") == "system" and str(metadata.get("eventType") or "").strip().lower() == "summary":
+                    text = str(log.get("content") or "").strip()
+                    if text:
+                        latest_summary = text
+            subagent_type = _subagent_type_from_logs(session_logs)
+            # Lazy backfill: derive command_slug from the first command event.
+            lazy_command_slug = command_events[0]["name"] if command_events else ""
+            # Persist badges so subsequent requests hit the fast path.
+            try:
+                _badge_project_id = str(s.get("project_id") or project.id or "")
+                await repo.update_session_badges(
+                    session_id,
+                    command_slug=lazy_command_slug,
+                    latest_summary=latest_summary,
+                    subagent_type=subagent_type,
+                    models_used=badge_data["modelsUsed"],
+                    agents_used=badge_data["agentsUsed"],
+                    skills_used=badge_data["skillsUsed"],
+                    project_id=_badge_project_id,
+                )
+            except Exception:
+                logger.warning(
+                    "list_sessions: lazy badge persist failed for session_id=%r",
+                    session_id,
+                    exc_info=True,
+                )
+
+        # ── subagent_type: parent-log lookup when needed ─────────────────
         if not subagent_type and session_type_value == "subagent":
             parent_session_id = str(s.get("parent_session_id") or "").strip()
             if parent_session_id:
@@ -664,6 +748,7 @@ async def list_sessions(
                     )
                     parent_logs_cache[parent_session_id] = parent_logs
                 subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=session_id)
+
         is_root_session = session_type_value != "subagent"
         display_agent_type = _derive_display_agent_type(subagent_type, is_root_session)
         thread_kind_value = _normalize_thread_kind(s)
@@ -673,6 +758,11 @@ async def list_sessions(
             or session_id
         )
         context_inheritance_value = _default_context_inheritance(thread_kind_value, s)
+        session_metadata = classify_session_key_metadata(
+            command_events,
+            mappings,
+            platform_type=platform_type_value,
+        )
         session_title = _derive_session_title(
             session_metadata,
             latest_summary,
@@ -680,6 +770,7 @@ async def list_sessions(
             session_type=s.get("session_type") or "",
             subagent_type=subagent_type,
         )
+        model_identity = derive_model_identity(s.get("model"))
         platform_version_value = str(s.get("platform_version") or "").strip()
         raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
         platform_versions: list[str] = []
@@ -700,6 +791,19 @@ async def list_sessions(
             taskId=s["task_id"] or "",
             status=s["status"] or "completed",
             model=s["model"] or "",
+            # Phase 5 detection fields (nullable; missing == contract state).
+            modelSlug=s.get("model_slug") or "",
+            workflowId=s.get("workflow_id"),
+            subagentParentId=s.get("subagent_parent_id"),
+            skillName=s.get("skill_name"),
+            contextWindow=s.get("context_window"),
+            # Phase 11 launch-time capture (T11-005). DB columns are snake_case
+            # (effort_tier/model_variant); the contract is camelCase. None ==
+            # not captured (contract state; FE renders an explicit fallback).
+            launcher=s.get("launcher"),
+            profile=s.get("profile"),
+            effortTier=s.get("effort_tier"),
+            modelVariant=s.get("model_variant"),
             modelDisplayName=model_identity["modelDisplayName"],
             modelProvider=model_identity["modelProvider"],
             modelFamily=model_identity["modelFamily"],
@@ -836,8 +940,8 @@ async def get_session(
     repo = core_ports.storage.sessions()
     project = resolve_project(request_context, core_ports)
     mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
-    
-    s = await repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
+
+    s = await repo.get_by_id(session_id, project_id=project.id if project else None)
     if not s:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         
@@ -1078,6 +1182,19 @@ async def get_session(
         taskId=s["task_id"] or "",
         status=s["status"] or "completed",
         model=s["model"] or "",
+        # Phase 5 detection fields (nullable; missing == contract state).
+        modelSlug=s.get("model_slug") or "",
+        workflowId=s.get("workflow_id"),
+        subagentParentId=s.get("subagent_parent_id"),
+        skillName=s.get("skill_name"),
+        contextWindow=s.get("context_window"),
+        # Phase 11 launch-time capture (T11-005). DB columns are snake_case
+        # (effort_tier/model_variant); the contract is camelCase. None ==
+        # not captured (contract state; FE renders an explicit fallback).
+        launcher=s.get("launcher"),
+        profile=s.get("profile"),
+        effortTier=s.get("effort_tier"),
+        modelVariant=s.get("model_variant"),
         modelDisplayName=model_identity["modelDisplayName"],
         modelProvider=model_identity["modelProvider"],
         modelFamily=model_identity["modelFamily"],
@@ -1182,7 +1299,7 @@ async def get_session_linked_features(
     mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
     workflow_markers = workflow_command_markers(mappings) if mappings else workflow_command_markers()
     session_repo = core_ports.storage.sessions()
-    session_row = await session_repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
+    session_row = await session_repo.get_by_id(session_id, project_id=project.id if project else None)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 

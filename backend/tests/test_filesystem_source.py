@@ -97,6 +97,7 @@ class _BaseFilesystemSourceTest(unittest.IsolatedAsyncioTestCase):
             sessions_dir=self.sessions_dir,
             project_id=project_id,
             cursor_repo=self.repo,
+            workspace_id="default-local",
         )
 
     async def _fresh_cursor(self, source: FilesystemSource, project_id: str = "proj-fs-test") -> IngestCursor:
@@ -155,7 +156,7 @@ class TestFilesystemSourceStreamBasic(_BaseFilesystemSourceTest):
         cursor = IngestCursor(
             source_id="filesystem",
             project_id="proj-fs-test",
-            workspace_id="default",
+            workspace_id="default-local",
             last_cursor=mid_iso,
             last_ingest_at=None,
             error_count=0,

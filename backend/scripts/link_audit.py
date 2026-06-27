@@ -104,6 +104,7 @@ def main() -> int:
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 30000")
     try:
         rows = _load_links(conn, args.feature or None, args.project or None)
         fanout = _fanout_map(conn, args.project or None)

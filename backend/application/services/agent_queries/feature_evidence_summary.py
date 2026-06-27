@@ -214,7 +214,7 @@ class FeatureEvidenceSummaryService:
         # --- Resolve feature row ---
         feature_row: dict[str, Any] | None = None
         try:
-            feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
+            feature_row = await ports.storage.features().get_by_id(feature_id)
         except Exception:
             pass
 
@@ -251,7 +251,7 @@ class FeatureEvidenceSummaryService:
         session_rows: list[dict[str, Any]] = []
         if session_ids:
             try:
-                fetched = await ports.storage.sessions().get_many_by_ids(session_ids, workspace_id="default-local")  # TODO(workspace-routing)
+                fetched = await ports.storage.sessions().get_many_by_ids(session_ids, project_id=scope.project.id)
                 session_rows = [fetched[sid] for sid in session_ids if sid in fetched]
             except Exception:
                 partial = True

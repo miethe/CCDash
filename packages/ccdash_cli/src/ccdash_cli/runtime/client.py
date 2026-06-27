@@ -351,14 +351,14 @@ class CCDashClient:
         except httpx.ConnectError as exc:
             raise ConnectionError(
                 f"Cannot connect to CCDash server at {self._base_url}."
-                " Is the server running? Check with: ccdash doctor"
+                " Is the server running? Check with: ccdash-cli doctor"
             ) from exc
         except httpx.TimeoutException as exc:
             raise ConnectionError(
                 f"Request to {self._base_url}{url} timed out after"
                 f" {self._timeout}s. The server may be overloaded or the"
                 " network path may be slow. Verify the active target with:"
-                " ccdash target show"
+                " ccdash-cli target show"
             ) from exc
         except httpx.HTTPError as exc:
             raise ConnectionError(
@@ -388,7 +388,7 @@ class CCDashClient:
         if status == 401:
             raise AuthenticationError(
                 "Authentication failed. Check your bearer token with:"
-                " ccdash target check <name>"
+                " ccdash-cli target check <name>"
             )
         if status == 403:
             raise PermissionError(

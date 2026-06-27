@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 
 import aiosqlite
 from backend.model_identity import model_filter_tokens
+from backend.db.repositories.base import retry_on_locked, DEFAULT_WORKSPACE_ID
+
+logger = logging.getLogger("ccdash.db.sessions")
 
 logger = logging.getLogger("ccdash.db.sessions")
 
@@ -57,12 +60,16 @@ class SqliteSessionRepository:
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
+    async def _commit(self) -> None:
+        """Commit with locked-retry, re-raising on exhaustion (fail-loud)."""
+        await retry_on_locked(self.db.commit, repo="sessions")
+
     async def upsert(
         self,
         session_data: dict,
         project_id: str,
         *,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
         source_ref: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -84,9 +91,13 @@ class SqliteSessionRepository:
                 started_at, ended_at, created_at, updated_at, source_file,
                 dates_json, timeline_json, impact_history_json,
                 thinking_level, session_forensics_json,
+                command_slug, latest_summary, subagent_type,
+                models_used_json, agents_used_json, skills_used_json,
+                model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
+                launcher, profile, effort_tier, model_variant,
                 source_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
                 platform_version=excluded.platform_version,
@@ -130,6 +141,27 @@ class SqliteSessionRepository:
                 impact_history_json=excluded.impact_history_json,
                 thinking_level=excluded.thinking_level,
                 session_forensics_json=excluded.session_forensics_json,
+                command_slug=CASE WHEN excluded.command_slug != '' THEN excluded.command_slug ELSE sessions.command_slug END,
+                latest_summary=CASE WHEN excluded.latest_summary != '' THEN excluded.latest_summary ELSE sessions.latest_summary END,
+                subagent_type=CASE WHEN excluded.subagent_type != '' THEN excluded.subagent_type ELSE sessions.subagent_type END,
+                models_used_json=CASE WHEN excluded.models_used_json != '[]' THEN excluded.models_used_json ELSE sessions.models_used_json END,
+                agents_used_json=CASE WHEN excluded.agents_used_json != '[]' THEN excluded.agents_used_json ELSE sessions.agents_used_json END,
+                skills_used_json=CASE WHEN excluded.skills_used_json != '[]' THEN excluded.skills_used_json ELSE sessions.skills_used_json END,
+                -- Phase 5 detection columns (T5-006).
+                model_slug=CASE WHEN excluded.model_slug != '' THEN excluded.model_slug ELSE sessions.model_slug END,
+                workflow_id=excluded.workflow_id,
+                subagent_parent_id=excluded.subagent_parent_id,
+                skill_name=excluded.skill_name,
+                -- context_window comes from the sidecar join (T5-003), which may be
+                -- transiently absent on re-ingest; never wipe a prior attribution.
+                context_window=COALESCE(excluded.context_window, sessions.context_window),
+                -- Phase 11 launch-time capture columns (T11-003). All four are
+                -- capture-once: a re-ingest with a null value must never clobber a
+                -- previously-captured value (idempotency, AC-11.C).
+                launcher=COALESCE(excluded.launcher, sessions.launcher),
+                profile=COALESCE(excluded.profile, sessions.profile),
+                effort_tier=COALESCE(excluded.effort_tier, sessions.effort_tier),
+                model_variant=COALESCE(excluded.model_variant, sessions.model_variant),
                 source_ref=COALESCE(excluded.source_ref, sessions.source_ref)
             WHERE sessions.workspace_id = excluded.workspace_id
             """,
@@ -184,44 +216,121 @@ class SqliteSessionRepository:
                 json.dumps(session_data.get("impactHistory", []) or []),
                 str(session_data.get("thinkingLevel", "") or ""),
                 json.dumps(session_data.get("sessionForensics", {}) or {}),
+                # Badge columns — written on initial upsert; also updated via update_session_badges.
+                # These default to '' / '[]' so existing rows without badges are not overwritten
+                # with empty values on re-ingest (see ON CONFLICT CASE expressions above).
+                str(session_data.get("badgeCommandSlug", "") or ""),
+                str(session_data.get("badgeLatestSummary", "") or ""),
+                str(session_data.get("badgeSubagentType", "") or ""),
+                json.dumps(session_data.get("badgeModelsUsed", []) or []),
+                json.dumps(session_data.get("badgeAgentsUsed", []) or []),
+                json.dumps(session_data.get("badgeSkillsUsed", []) or []),
+                # Phase 5 detection columns (T5-006). model_slug defaults to ''
+                # (string contract); workflow/skill/context are nullable.
+                str(session_data.get("modelSlug", "") or ""),
+                session_data.get("workflowId"),
+                session_data.get("subagentParentId"),
+                session_data.get("skillName"),
+                session_data.get("contextWindow"),
+                # Phase 11 launch-time capture columns (T11-003). All nullable;
+                # null == "not captured" (contract state, no default, no backfill).
+                session_data.get("launcher"),
+                session_data.get("profile"),
+                session_data.get("effortTier"),
+                session_data.get("modelVariant"),
                 source_ref,
             ),
         )
-        await self.db.commit()
+        await self._commit()
 
-    async def get_by_id(self, session_id: str, *, workspace_id: str) -> dict | None:
-        """Fetch a single session by PK, scoped to workspace_id.
+    async def update_session_badges(
+        self,
+        session_id: str,
+        *,
+        command_slug: str,
+        latest_summary: str,
+        subagent_type: str,
+        models_used: list,
+        agents_used: list,
+        skills_used: list,
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
+        """Persist the 6 materialized badge columns for a single session.
 
-        Returns None when the session does not exist OR belongs to a different
-        workspace.  Callers should surface None as 404 per ADR-008 §Data
-        Isolation (do not disclose existence across workspace boundaries).
+        Called by the badge backfill path and from SessionTranscriptService after
+        computing badges from logs.  Designed to be idempotent (safe to call
+        multiple times).  Does NOT commit — caller may batch commits.
+
+        The WHERE clause includes a NULL/'' project_id tolerance so sessions written
+        before project_id threading was added still get updated.
         """
-        async with self.db.execute(
-            "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?",
-            (session_id, workspace_id),
-        ) as cur:
+        await self.db.execute(
+            """UPDATE sessions SET
+                command_slug = ?,
+                latest_summary = ?,
+                subagent_type = ?,
+                models_used_json = ?,
+                agents_used_json = ?,
+                skills_used_json = ?
+               WHERE (project_id = ? OR project_id IS NULL OR project_id = '') AND id = ?""",
+            (
+                str(command_slug or ""),
+                str(latest_summary or ""),
+                str(subagent_type or ""),
+                json.dumps(models_used if isinstance(models_used, list) else []),
+                json.dumps(agents_used if isinstance(agents_used, list) else []),
+                json.dumps(skills_used if isinstance(skills_used, list) else []),
+                project_id,
+                session_id,
+            ),
+        )
+        await self._commit()
+
+    async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
+        """Fetch a single session by id, optionally scoped to project_id and workspace_id.
+
+        When ``project_id`` is a non-empty string it is added to the WHERE clause
+        as a strict-equality predicate alongside ``id`` (the table's composite PK
+        is ``(project_id, id)``).  ``workspace_id`` scopes the read to a specific
+        workspace (default DEFAULT_WORKSPACE_ID).
+        """
+        if project_id:
+            query = "SELECT * FROM sessions WHERE project_id = ? AND id = ? AND workspace_id = ?"
+            params: tuple = (project_id, session_id, workspace_id)
+        else:
+            query = "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?"
+            params = (session_id, workspace_id)
+        async with self.db.execute(query, params) as cur:
             row = await cur.fetchone()
             if not row:
                 return None
             return self._row_to_dict(row)
 
-    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str) -> dict[str, dict]:
-        """Fetch multiple sessions in a single query, scoped to workspace_id.
+    async def get_many_by_ids(
+        self, ids: list[str], project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID
+    ) -> dict[str, dict]:
+        """Fetch multiple sessions in a single query. Returns a dict keyed by session id.
 
-        Returns a dict keyed by session id.  Sessions belonging to a different
-        workspace are silently excluded (they are not visible to the caller).
+        ``project_id`` follows the same semantics as :meth:`get_by_id`: a non-empty
+        value scopes the query to that project (strict equality), while ``None``/``''``
+        leaves the read unscoped.  ``workspace_id`` scopes to a specific workspace.
         """
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
-        async with self.db.execute(
-            f"SELECT * FROM sessions WHERE id IN ({placeholders}) AND workspace_id = ?",
-            tuple(ids) + (workspace_id,),
-        ) as cur:
+        if project_id:
+            query = (
+                f"SELECT * FROM sessions WHERE project_id = ? AND id IN ({placeholders}) AND workspace_id = ?"
+            )
+            params: tuple = (project_id, *ids, workspace_id)
+        else:
+            query = f"SELECT * FROM sessions WHERE id IN ({placeholders}) AND workspace_id = ?"
+            params = tuple(ids) + (workspace_id,)
+        async with self.db.execute(query, params) as cur:
             rows = await cur.fetchall()
         return {row["id"]: self._row_to_dict(row) for row in rows}
 
-    async def list_by_source(self, source_file: str, *, workspace_id: str) -> list[dict]:
+    async def list_by_source(self, source_file: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         """List sessions by source_file, scoped to workspace_id."""
         async with self.db.execute(
             "SELECT * FROM sessions WHERE source_file = ? AND workspace_id = ?",
@@ -239,7 +348,7 @@ class SqliteSessionRepository:
         sort_order: str = "desc",
         filters: dict | None = None,
         *,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         # Whitelist sortable columns
 
@@ -354,7 +463,7 @@ class SqliteSessionRepository:
             rows = await cur.fetchall()
             return [self._row_to_dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str) -> int:
+    async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
         query_parts = ["SELECT COUNT(*) FROM sessions"]
         params: list = []
         where_clauses: list[str] = ["workspace_id = ?"]
@@ -452,7 +561,164 @@ class SqliteSessionRepository:
             row = await cur.fetchone()
         return row[0] if row else 0
 
-    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str) -> list[dict]:
+    async def count_active(
+        self,
+        project_id: str,
+        *,
+        window_seconds: int = 600,
+        include_subagents: bool = False,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> int:
+        """Count sessions that are currently active for a project.
+
+        A session is counted as "active" when BOTH conditions hold:
+        1. ``status = 'active'``
+        2. ``updated_at >= now() - window_seconds``
+
+        Dual role of the freshness clamp (important — do NOT remove):
+        - **Liveness gate**: ensures only recently-seen sessions are reported
+          as running.  Without this predicate, sessions that are truly finished
+          but whose ``status`` column was never updated (e.g. because the parser
+          ran before the JSONL file was fully flushed) would be counted forever.
+        - **Stale-active defence**: the spike verification (OQ-3) found sessions
+          with ``status='active'`` and ``updated_at`` values 57–93 days in the
+          past.  These are phantom rows that appear when a project is switched
+          away from before the file watcher can re-parse them.  The
+          ``updated_at >= now() - window_seconds`` predicate silently excludes
+          those rows and prevents phantom live-agent counts.
+
+        The default ``window_seconds=600`` intentionally matches
+        ``_ACTIVE_SESSION_WINDOW_SECONDS`` in:
+        - ``backend/parsers/platforms/claude_code/parser.py`` (line ~100)
+        - ``backend/parsers/platforms/codex/parser.py`` (line ~22)
+        Those constants control *parser classification*; this parameter controls
+        *query filtering*.  They are equal by convention, not by coupling.
+        Override via ``CCDASH_LIVE_AGENTS_WINDOW_SECONDS`` at query call sites.
+
+        Args:
+            project_id: The project to scope the count to.
+            window_seconds: Freshness window in seconds (default 600 = 10 min).
+                Sessions with ``updated_at`` older than this are excluded even
+                if their ``status`` is ``'active'``.
+            include_subagents: If ``False`` (default), rows where
+                ``session_type = 'subagent'`` are excluded, matching the
+                existing ``include_subagents=False`` convention on
+                ``list_paginated`` and ``count``.
+            workspace_id: Scope the count to a specific workspace.
+
+        Returns:
+            Integer count of currently-active sessions.  Returns 0 when the
+            project has no sessions or no active sessions within the window.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        threshold = (
+            datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        ).isoformat()
+
+        where_clauses = [
+            "project_id = ?",
+            "status = ?",
+            "updated_at >= ?",
+            "workspace_id = ?",
+        ]
+        params: list = [project_id, "active", threshold, workspace_id]
+
+        if not include_subagents:
+            where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        query = (
+            "SELECT COUNT(*) FROM sessions WHERE "
+            + " AND ".join(where_clauses)
+        )
+
+        async with self.db.execute(query, tuple(params)) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else 0
+
+    async def list_active(
+        self,
+        project_id: str,
+        *,
+        window_seconds: int = 600,
+        limit: int | None = None,
+        include_subagents: bool = True,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> list[dict]:
+        """List sessions that are currently active for a project.
+
+        Returns session rows ordered by ``updated_at DESC`` (most-recently
+        active first).  The active predicate and staleness clamp are
+        **identical** to :meth:`count_active`:
+
+        1. ``status = 'active'``
+        2. ``updated_at >= now() - window_seconds``
+
+        The WHERE clause is intentionally shaped to match the composite index
+        declared in ``sqlite_migrations.py``::
+
+            CREATE INDEX idx_sessions_project_status_updated
+                ON sessions(project_id, status, updated_at);
+
+        That index covers all three leading predicate columns, so this query
+        never does a full table scan.
+
+        Args:
+            project_id: The project to scope the query to.
+            window_seconds: Freshness window in seconds (default 600 = 10 min).
+                Sessions with ``updated_at`` older than this are excluded even
+                if their stored ``status`` is ``'active'``.  Same default and
+                same semantics as :meth:`count_active`.
+            limit: Optional cap on returned rows.  ``None`` means no cap.
+                Callers doing cross-project sweeps should always pass a
+                reasonable limit to avoid unbounded result sets.
+            include_subagents: If ``True`` (default), rows where
+                ``session_type = 'subagent'`` are included.  Pass ``False``
+                to exclude worker/subagent sessions, mirroring the
+                ``include_subagents=False`` convention on
+                :meth:`list_paginated`, :meth:`count`, and
+                :meth:`count_active`.
+            workspace_id: Scope the list to a specific workspace.
+
+        Returns:
+            List of session row dicts ordered by ``updated_at DESC``.
+            Returns an empty list when the project has no active sessions
+            within the window.  Each dict has the same shape as rows
+            returned by :meth:`list_paginated` (all ``sessions`` columns
+            via :meth:`_row_to_dict`).
+        """
+        from datetime import datetime, timedelta, timezone
+
+        threshold = (
+            datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        ).isoformat()
+
+        where_clauses = [
+            "project_id = ?",
+            "status = ?",
+            "updated_at >= ?",
+            "workspace_id = ?",
+        ]
+        params: list = [project_id, "active", threshold, workspace_id]
+
+        if not include_subagents:
+            where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        query = (
+            "SELECT * FROM sessions WHERE "
+            + " AND ".join(where_clauses)
+            + " ORDER BY updated_at DESC"
+        )
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        async with self.db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         query_parts = [
             "SELECT model, COUNT(*) AS count",
             "FROM sessions",
@@ -477,7 +743,7 @@ class SqliteSessionRepository:
             rows = await cur.fetchall()
             return [{"model": row[0], "count": int(row[1] or 0)} for row in rows]
 
-    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str) -> list[dict]:
+    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         query_parts = [
             "SELECT platform_type, platform_version, platform_versions_json",
             "FROM sessions",
@@ -529,9 +795,14 @@ class SqliteSessionRepository:
 
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM sessions WHERE source_file = ?", (source_file,))
-        await self.db.commit()
+        await self._commit()
 
-    async def update_usage_fields(self, session_id: str, usage_fields: dict[str, int]) -> None:
+    async def update_usage_fields(
+        self,
+        session_id: str,
+        usage_fields: dict[str, int],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
         await self.db.execute(
             """
             UPDATE sessions
@@ -545,7 +816,7 @@ class SqliteSessionRepository:
                 tool_result_output_tokens = ?,
                 tool_result_cache_creation_input_tokens = ?,
                 tool_result_cache_read_input_tokens = ?
-            WHERE id = ?
+            WHERE (project_id = ? OR project_id IS NULL OR project_id = '') AND id = ?
             """,
             (
                 int(usage_fields.get("model_io_tokens", 0) or 0),
@@ -558,12 +829,18 @@ class SqliteSessionRepository:
                 int(usage_fields.get("tool_result_output_tokens", 0) or 0),
                 int(usage_fields.get("tool_result_cache_creation_input_tokens", 0) or 0),
                 int(usage_fields.get("tool_result_cache_read_input_tokens", 0) or 0),
+                project_id,
                 session_id,
             ),
         )
-        await self.db.commit()
+        await self._commit()
 
-    async def update_observability_fields(self, session_id: str, observability_fields: dict[str, object]) -> None:
+    async def update_observability_fields(
+        self,
+        session_id: str,
+        observability_fields: dict[str, object],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
         await self.db.execute(
             """
             UPDATE sessions
@@ -580,7 +857,7 @@ class SqliteSessionRepository:
                 cost_mismatch_pct = ?,
                 pricing_model_source = ?,
                 total_cost = ?
-            WHERE id = ?
+            WHERE (project_id = ? OR project_id IS NULL OR project_id = '') AND id = ?
             """,
             (
                 int(observability_fields.get("current_context_tokens", 0) or 0),
@@ -596,20 +873,48 @@ class SqliteSessionRepository:
                 observability_fields.get("cost_mismatch_pct"),
                 str(observability_fields.get("pricing_model_source", "") or ""),
                 float(observability_fields.get("total_cost", 0.0) or 0.0),
+                project_id,
                 session_id,
             ),
         )
-        await self.db.commit()
+        await self._commit()
 
     # ── Detail tables ───────────────────────────────────────────────
 
-    async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:
-        await self.db.execute("DELETE FROM session_logs WHERE session_id = ?", (session_id,))
-        for i, log in enumerate(logs):
+    async def upsert_logs(self, session_id: str, logs: list[dict], project_id: str = "") -> None:
+        # Deduplicate by (session_id, source_log_id) for non-empty source_log_id values,
+        # keeping the first occurrence.  Duplicates produced by the parser are a known
+        # upstream issue (Fix C) — this guard prevents the DB constraint from firing.
+        seen_source_ids: set[str] = set()
+        deduped: list[dict] = []
+        dropped = 0
+        for log in logs:
+            src_id = log.get("id", "")
+            if src_id:
+                if src_id in seen_source_ids:
+                    dropped += 1
+                    continue
+                seen_source_ids.add(src_id)
+            deduped.append(log)
+        if dropped:
+            logger.warning(
+                "upsert_logs: dropped %d duplicate source_log_id entries for session_id=%r",
+                dropped,
+                session_id,
+            )
+
+        # Scope DELETE to (project_id, session_id) so project-A's writer never clears
+        # project-B's rows sharing the same session_id.  NULL/'' tolerance covers
+        # legacy rows written before project_id threading was added.
+        await self.db.execute(
+            "DELETE FROM session_logs "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
+        records = []
+        for i, log in enumerate(deduped):
             tool_name = None
             tool_call_id = None
-            related_tool_call_id = None
-            linked_session_id = None
             tool_args = None
             tool_output = None
             tool_status = "success"
@@ -624,54 +929,63 @@ class SqliteSessionRepository:
             metadata = log.get("metadata")
             if isinstance(metadata, dict) and metadata:
                 metadata_json = json.dumps(metadata)
-
-            await self.db.execute(
-                """INSERT INTO session_logs
+            records.append((
+                session_id, i,
+                log.get("id", f"log-{i}"),
+                log.get("timestamp", ""),
+                log.get("speaker", ""),
+                log.get("type", ""),
+                log.get("content", ""),
+                log.get("agentName"),
+                tool_name,
+                tool_call_id,
+                log.get("relatedToolCallId"),
+                log.get("linkedSessionId"),
+                tool_args,
+                tool_output,
+                tool_status,
+                metadata_json,
+                project_id,
+            ))
+        if records:
+            await self.db.executemany(
+                """INSERT OR IGNORE INTO session_logs
                     (session_id, log_index, source_log_id, timestamp, speaker, type, content,
                      agent_name, tool_name, tool_call_id, related_tool_call_id,
-                     linked_session_id, tool_args, tool_output, tool_status, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    session_id, i,
-                    log.get("id", f"log-{i}"),
-                    log.get("timestamp", ""),
-                    log.get("speaker", ""),
-                    log.get("type", ""),
-                    log.get("content", ""),
-                    log.get("agentName"),
-                    tool_name,
-                    tool_call_id,
-                    log.get("relatedToolCallId"),
-                    log.get("linkedSessionId"),
-                    tool_args,
-                    tool_output,
-                    tool_status,
-                    metadata_json,
-                ),
+                     linked_session_id, tool_args, tool_output, tool_status, metadata_json,
+                     project_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                records,
             )
-        await self.db.commit()
+        await self._commit()
 
-    async def upsert_tool_usage(self, session_id: str, tools: list[dict]) -> None:
+    async def upsert_tool_usage(self, session_id: str, tools: list[dict], project_id: str = "") -> None:
         await self.db.execute("DELETE FROM session_tool_usage WHERE session_id = ?", (session_id,))
         for t in tools:
             await self.db.execute(
-                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms)
-                   VALUES (?, ?, ?, ?, ?)""",
+                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms, project_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 (session_id, t.get("name", ""), t.get("count", 0),
                  int(t.get("count", 0) * t.get("successRate", 1.0)),
-                 max(0, int(t.get("totalMs", 0) or 0))),
+                 max(0, int(t.get("totalMs", 0) or 0)),
+                 project_id),
             )
-        await self.db.commit()
+        await self._commit()
 
-    async def upsert_file_updates(self, session_id: str, updates: list[dict]) -> None:
-        await self.db.execute("DELETE FROM session_file_updates WHERE session_id = ?", (session_id,))
+    async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None:
+        # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
+        await self.db.execute(
+            "DELETE FROM session_file_updates "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
         for u in updates:
             await self.db.execute(
                 """INSERT INTO session_file_updates (
                     session_id, file_path, action, file_type, action_timestamp,
                     additions, deletions, agent_name, thread_session_id, root_session_id,
-                    source_log_id, source_tool_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source_log_id, source_tool_name, project_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session_id,
                     u.get("filePath", ""),
@@ -685,29 +999,40 @@ class SqliteSessionRepository:
                     u.get("rootSessionId", ""),
                     u.get("sourceLogId"),
                     u.get("sourceToolName"),
+                    project_id,
                 ),
             )
-        await self.db.commit()
+        await self._commit()
 
-    async def upsert_artifacts(self, session_id: str, artifacts: list[dict]) -> None:
-        await self.db.execute("DELETE FROM session_artifacts WHERE session_id = ?", (session_id,))
+    async def upsert_artifacts(
+        self,
+        session_id: str,
+        artifacts: list[dict],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
+        # Scope DELETE to (project_id, session_id) — see upsert_logs for rationale.
+        await self.db.execute(
+            "DELETE FROM session_artifacts "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
         for a in artifacts:
             await self.db.execute(
                 """INSERT INTO session_artifacts (
-                    id, session_id, title, type, description, source, url, source_log_id, source_tool_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (a.get("id", ""), session_id, a.get("title", ""),
+                    project_id, id, session_id, title, type, description, source, url, source_log_id, source_tool_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (project_id, a.get("id", ""), session_id, a.get("title", ""),
                  a.get("type", "document"), a.get("description", ""), a.get("source", ""),
                  a.get("url"), a.get("sourceLogId"), a.get("sourceToolName")),
             )
-        await self.db.commit()
+        await self._commit()
 
     async def delete_relationships_for_source(self, project_id: str, source_file: str) -> None:
         await self.db.execute(
             "DELETE FROM session_relationships WHERE project_id = ? AND source_file = ?",
             (project_id, source_file),
         )
-        await self.db.commit()
+        await self._commit()
 
     async def upsert_relationships(self, project_id: str, source_file: str, relationships: list[dict]) -> None:
         import sqlite3
@@ -755,7 +1080,7 @@ class SqliteSessionRepository:
                     f" child={relationship.get('childSessionId')!r}"
                     f" type={relationship.get('relationshipType')!r}"
                 ) from exc
-        await self.db.commit()
+        await self._commit()
 
     async def list_relationships(self, project_id: str, session_id: str) -> list[dict]:
         async with self.db.execute(
@@ -806,7 +1131,7 @@ class SqliteSessionRepository:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         """Get aggregated session statistics for a project."""
         query = """
             SELECT
@@ -833,7 +1158,7 @@ class SqliteSessionRepository:
                 }
             return {"count": 0, "cost": 0.0, "tokens": 0, "duration": 0.0}
 
-    async def get_tool_stats(self, project_id: str, *, workspace_id: str) -> dict:
+    async def get_tool_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         """Get aggregated tool usage statistics for a project."""
         query = """
             SELECT

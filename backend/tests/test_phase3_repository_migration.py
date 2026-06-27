@@ -253,5 +253,98 @@ class Phase3RepositoryMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary["by_metric_type"], {"coverage": 2, "duration": 1})
 
 
+    async def test_sessions_pk_is_composite_after_v31(self) -> None:
+        """P3-003-FU: sessions PK must be composite (project_id, id) after v31 migration.
+
+        Asserts schema_version == 31, sessions PK is composite (project_id, id),
+        and all child tables carry a project_id column.
+        """
+        from backend.db.sqlite_migrations import SCHEMA_VERSION
+        # schema_version must be 31
+        async with self.db.execute("SELECT MAX(version) FROM schema_version") as cur:
+            row = await cur.fetchone()
+        self.assertEqual(row[0], SCHEMA_VERSION, f"Expected schema_version {SCHEMA_VERSION}, got {row[0]}")
+
+        # sessions PK must be composite (project_id, id)
+        async with self.db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'"
+        ) as cur:
+            row = await cur.fetchone()
+        self.assertIsNotNone(row)
+        sessions_ddl = row[0] or ""
+        self.assertIn(
+            "PRIMARY KEY (project_id, id)",
+            sessions_ddl,
+            f"P3-003-FU: sessions composite PK must be applied: {sessions_ddl!r}",
+        )
+
+        # All child tables must have project_id column (P3-004 + P3-003-FU backfill)
+        child_tables_with_project_id = (
+            "session_logs", "session_tool_usage", "session_file_updates",
+            "session_messages", "session_artifacts",
+            "session_sentiment_facts", "session_code_churn_facts",
+            "session_scope_drift_facts",
+        )
+        for table in child_tables_with_project_id:
+            async with self.db.execute(f"PRAGMA table_info({table})") as cur:
+                cols = [r[1] for r in await cur.fetchall()]
+            self.assertIn(
+                "project_id",
+                cols,
+                f"P3-003-FU: {table} must have project_id column",
+            )
+
+        # PRAGMA foreign_key_check must be empty
+        await self.db.execute("PRAGMA foreign_keys=ON")
+        async with self.db.execute("PRAGMA foreign_key_check") as cur:
+            violations = await cur.fetchall()
+        self.assertEqual(
+            violations, [],
+            f"P3-003-FU: PRAGMA foreign_key_check must be empty after v31; got: {violations}",
+        )
+
+    async def test_sessions_composite_pk_child_fk_integrity(self) -> None:
+        """P3-003-FU: child tables must reference 'sessions', not a temp name.
+
+        After the composite PK swap and child-table rebuild:
+        - child tables must reference 'sessions' in their DDL (not sessions_new or _backup)
+        - PRAGMA foreign_key_check must be empty (no data violations)
+        """
+        child_tables = [
+            "session_logs", "session_messages", "session_tool_usage",
+            "session_file_updates", "session_artifacts", "session_usage_events",
+            "session_relationships", "session_sentiment_facts",
+            "session_code_churn_facts", "session_scope_drift_facts",
+            "session_stack_observations", "session_memory_drafts",
+        ]
+        for table in child_tables:
+            async with self.db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                continue  # table may not exist in this test env
+            ddl = row[0] or ""
+            self.assertNotIn(
+                "_sessions_backup",
+                ddl,
+                f"{table} DDL must not reference temp table _sessions_backup: {ddl!r}",
+            )
+            self.assertNotIn(
+                "sessions_new",
+                ddl,
+                f"{table} DDL must not reference temp table sessions_new: {ddl!r}",
+            )
+
+        # Verify PRAGMA foreign_key_check is clean
+        await self.db.execute("PRAGMA foreign_keys=ON")
+        async with self.db.execute("PRAGMA foreign_key_check") as cur:
+            violations = await cur.fetchall()
+        self.assertEqual(
+            violations, [],
+            f"PRAGMA foreign_key_check must be empty; got: {violations}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

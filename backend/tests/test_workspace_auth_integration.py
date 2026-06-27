@@ -216,16 +216,15 @@ def _start_common_patches() -> list:
     patches += [
         patch(
             "backend.adapters.jobs.runtime.file_watcher.start",
-            new_callable=lambda: lambda: AsyncMock(),
+            new_callable=AsyncMock,
         ),
         patch(
             "backend.adapters.jobs.runtime.file_watcher.stop",
-            new_callable=lambda: lambda: AsyncMock(),
+            new_callable=AsyncMock,
         ),
-        patch(
-            "backend.runtime_ports.project_manager.get_active_project",
-            return_value=None,
-        ),
+        # ADR-006/010: project routing is driven by the workspace AuthContext, not
+        # a module-level active-project singleton (runtime_ports.project_manager
+        # was removed when the registry became DB-authoritative).
     ]
     for p in patches:
         p.start()

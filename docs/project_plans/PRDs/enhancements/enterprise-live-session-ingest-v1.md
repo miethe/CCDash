@@ -3,14 +3,19 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: product_prd
-status: draft
+status: completed
 category: enhancements
-title: "PRD: Enterprise Live Session Ingest V1"
-description: Enable near-live session ingestion and browser refresh in the enterprise Postgres stack by adding a watcher-capable worker mode and cross-process live event fanout.
-summary: The containerized enterprise stack currently loads sessions through startup sync, but does not watch local session files or propagate worker-published live events to the API SSE stream. This enhancement adds an explicit watcher worker and shared live-event bridge.
+title: 'PRD: Enterprise Live Session Ingest V1'
+description: Enable near-live session ingestion and browser refresh in the enterprise
+  Postgres stack by adding a watcher-capable worker mode and cross-process live event
+  fanout.
+summary: The containerized enterprise stack currently loads sessions through startup
+  sync, but does not watch local session files or propagate worker-published live
+  events to the API SSE stream. This enhancement adds an explicit watcher worker and
+  shared live-event bridge.
 author: codex
 created: 2026-05-01
-updated: 2026-05-01
+updated: '2026-06-01'
 priority: high
 risk_level: medium
 complexity: medium
@@ -25,43 +30,45 @@ lineage_parent:
   kind: follow_up
 lineage_children: []
 lineage_type: enhancement
-problem_statement: In enterprise mode, CCDash can load historical session data but does not ingest active JSONL changes live or deliver worker-originated session events to browser SSE subscribers.
+problem_statement: In enterprise mode, CCDash can load historical session data but
+  does not ingest active JSONL changes live or deliver worker-originated session events
+  to browser SSE subscribers.
 owner: platform-engineering
 owners:
-  - platform-engineering
-  - backend-platform
-  - devops
+- platform-engineering
+- backend-platform
+- devops
 contributors:
-  - ai-agents
+- ai-agents
 audience:
-  - ai-agents
-  - developers
-  - backend-platform
-  - devops
+- ai-agents
+- developers
+- backend-platform
+- devops
 tags:
-  - prd
-  - enterprise
-  - live-updates
-  - sessions
-  - worker
-  - watcher
-  - postgres
+- prd
+- enterprise
+- live-updates
+- sessions
+- worker
+- watcher
+- postgres
 related_documents:
-  - docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
-  - docs/project_plans/PRDs/enhancements/session-transcript-append-deltas-v1.md
-  - docs/project_plans/PRDs/refactors/deployment-runtime-modularization-v1.md
-  - docs/project_plans/PRDs/features/remote-ccdash-streaming-v1.md
-  - docs/developer/live-update-platform.md
+- docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
+- docs/project_plans/PRDs/enhancements/session-transcript-append-deltas-v1.md
+- docs/project_plans/PRDs/refactors/deployment-runtime-modularization-v1.md
+- docs/project_plans/PRDs/features/remote-ccdash-streaming-v1.md
+- docs/developer/live-update-platform.md
 context_files:
-  - backend/runtime/profiles.py
-  - backend/runtime/storage_contract.py
-  - backend/adapters/jobs/runtime.py
-  - backend/db/file_watcher.py
-  - backend/db/sync_engine.py
-  - backend/application/live_updates/runtime_state.py
-  - backend/adapters/live_updates/in_memory_broker.py
-  - backend/routers/live.py
-  - deploy/runtime/compose.yaml
+- backend/runtime/profiles.py
+- backend/runtime/storage_contract.py
+- backend/adapters/jobs/runtime.py
+- backend/db/file_watcher.py
+- backend/db/sync_engine.py
+- backend/application/live_updates/runtime_state.py
+- backend/adapters/live_updates/in_memory_broker.py
+- backend/routers/live.py
+- deploy/runtime/compose.yaml
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/enterprise-live-session-ingest-v1.md
 ---
 

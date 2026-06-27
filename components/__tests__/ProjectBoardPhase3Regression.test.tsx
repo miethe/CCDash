@@ -10,15 +10,15 @@
  *     and `getFeatureRollups` call counts and params can be asserted directly.
  *   - `services/useFeatureSurface` is spied on per-test to control hook output
  *     without re-rendering the full board.
- *   - `services/featureSurfaceCache` is imported LIVE so the real LRU cache can
- *     be exercised for the bounded-cache test (case 10).
+ *   - T3-005: `services/featureSurfaceCache` deleted; TQ invalidation tested via
+ *     useQueryClient mock.  Case 10 (bounded LRU) is removed (LRU is gone).
  *   - All other ProjectBoard dependencies are stubbed (same pattern as the
  *     existing ProjectBoard{Filters,EagerLoop,CardMetrics} suites).
  *
  * What is NOT duplicated here (covered by existing suites):
  *   - API client serialization / camelCase adaptation → featureSurface.test.ts
  *   - Hook sequencing, stale guard, retry, cache-hit → useFeatureSurface.test.ts
- *   - LRU eviction / TTL / scoped invalidation → featureSurfaceCache.test.ts
+ *   - TQ cache invalidation → queryClient.invalidateQueries (T3-005)
  *   - Sort mapping / applySidebarFilters shape → ProjectBoardFilters.test.tsx
  *   - Zero fetch calls during static render → ProjectBoardEagerLoop.test.tsx
  *   - Card metric rendering from rollup DTO → ProjectBoardCardMetrics.test.tsx
@@ -28,6 +28,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Feature, PlanDocument } from '../../types';
 import type { FeatureCardDTO, FeatureRollupDTO } from '../../services/featureSurface';
 import type { UseFeatureSurfaceResult } from '../../services/useFeatureSurface';
@@ -58,29 +59,7 @@ import {
 const mockListFeatureCards = vi.mocked(listFeatureCards);
 const mockGetFeatureRollups = vi.mocked(getFeatureRollups);
 
-// ── featureSurfaceCache: partially mocked, real FeatureSurfaceCache kept for
-//    the bounded-cache test (case 10).  invalidateFeatureSurface is a spy. ─────
-
-vi.mock('../../services/featureSurfaceCache', async () => {
-  // Bring in the real module so defaultFeatureSurfaceCache / FeatureSurfaceCache
-  // stay operational.  Wrap invalidateFeatureSurface in a spy.
-  const real = await vi.importActual<typeof import('../../services/featureSurfaceCache')>(
-    '../../services/featureSurfaceCache',
-  );
-  return {
-    ...real,
-    invalidateFeatureSurface: vi.fn(real.invalidateFeatureSurface),
-  };
-});
-
-import {
-  invalidateFeatureSurface,
-  defaultFeatureSurfaceCache,
-  FeatureSurfaceCache,
-  FEATURE_SURFACE_CACHE_LIMITS,
-} from '../../services/featureSurfaceCache';
-
-const mockInvalidate = vi.mocked(invalidateFeatureSurface);
+// T3-005: featureSurfaceCache replaced with TQ. renderBoard wraps with QueryClientProvider.
 
 // ── useFeatureSurface: real module import; spied per test ─────────────────────
 
@@ -236,6 +215,12 @@ vi.mock('../../services/featureSurfaceFlag', () => ({
   isFeatureSurfaceV2Enabled: vi.fn(() => false),
 }));
 
+// T2-004: stub paginated features query so ProjectBoard renders without a QueryClientProvider
+vi.mock('../../services/queries/features', () => ({
+  useFeaturesQuery: () => ({ data: { items: [], total: 0, page: 0, pageSize: 100 }, isLoading: false, error: null }),
+  FEATURES_PAGE_SIZE: 100,
+}));
+
 // ── Component under test ──────────────────────────────────────────────────────
 
 import { ProjectBoard } from '../ProjectBoard';
@@ -380,10 +365,13 @@ function makeSurfaceMock(
 }
 
 function renderBoard() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(
-    <MemoryRouter initialEntries={['/board']}>
-      <ProjectBoard />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/board']}>
+        <ProjectBoard />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -677,40 +665,30 @@ describe('REGRESSION: filter totals header reflects backend totals.filteredTotal
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CASE 8 — REGRESSION: status-change handler calls
-// invalidateFeatureSurface({ projectId, featureIds: [id] })
+// queryClient.invalidateQueries with featureSurfaceKeys.all(projectId)
+// (T3-005: replaced invalidateFeatureSurface with TQ invalidation)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('REGRESSION: status-change handler calls invalidateFeatureSurface with correct project and feature scope', () => {
-  it('invalidateFeatureSurface is called with projectId and featureIds=[id] on status change', () => {
-    // The invalidateFeatureSurface call lives inside handleStatusChange in
-    // ProjectBoard.tsx (line ~4481).  We verify the spy was called correctly
-    // by invoking the same pattern directly, mirroring the source-level proof
-    // in ProjectBoardEagerLoop test (test: "invalidateFeatureSurface is imported
-    // and wired to handleStatusChange").
-
-    const projectId = 'proj-test';
-    const featureId = 'FEAT-XYZ';
-
-    // Simulate what handleStatusChange does after the API call succeeds.
-    invalidateFeatureSurface({ projectId, featureIds: [featureId] });
-
-    expect(mockInvalidate).toHaveBeenCalledWith({
-      projectId,
-      featureIds: [featureId],
-    });
-  });
-
-  it('source: invalidateFeatureSurface is imported and called inside handleStatusChange', () => {
+describe('REGRESSION: T3-005 status-change handler invalidates TQ cache via queryClient.invalidateQueries', () => {
+  it('source: featureSurfaceKeys is imported and queryClient.invalidateQueries wired to handleStatusChange', () => {
     const fs = require('node:fs') as typeof import('node:fs');
     const path = require('node:path') as typeof import('node:path');
     const source = fs.readFileSync(path.resolve(__dirname, '../ProjectBoard.tsx'), 'utf8');
 
-    expect(source).toContain(
-      "import { invalidateFeatureSurface } from '../services/featureSurfaceCache'",
-    );
-    expect(source).toContain(
-      'invalidateFeatureSurface({ projectId: activeProjectId, featureIds: [featureId] })',
-    );
+    expect(source).toContain("import { featureSurfaceKeys } from '../services/queryKeys'");
+    expect(source).toContain("featureSurfaceKeys.all(activeProjectId ?? '')");
+    expect(source).toContain('queryClient.invalidateQueries');
+  });
+
+  it('source: publishFeatureWriteEvent and invalidateFeatureSurface are NOT present (bus deleted)', () => {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const path = require('node:path') as typeof import('node:path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../ProjectBoard.tsx'), 'utf8');
+
+    expect(source).not.toContain('publishFeatureWriteEvent');
+    expect(source).not.toContain('invalidateFeatureSurface');
+    expect(source).not.toContain("from '../services/featureCacheBus'");
+    expect(source).not.toContain("from '../services/featureSurfaceCache'");
   });
 });
 
@@ -761,113 +739,76 @@ describe('REGRESSION: search applies explicitly via Apply button, not per keystr
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CASE 10 — REGRESSION: bounded cache — after >N distinct filter queries,
-// cache listSize stays <= listMax.
-// Uses defaultFeatureSurfaceCache (real module singleton) and a small custom
-// FeatureSurfaceCache instance so we can control listMax.
+// CASE 10 — REGRESSION: TQ is the sole caching layer (T3-005)
+// The hand-rolled LRU featureSurfaceCache was deleted in T3-005.
+// TQ's own gcTime/staleTime are the cache bounds — this is validated by the
+// noHandRolledCache.test.ts guardrail.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('REGRESSION: bounded cache — listSize stays <= listMax after N > listMax distinct filter queries', () => {
-  it('FeatureSurfaceCache with listMax=5 holds at most 5 list entries after 8 distinct queries', () => {
-    // Use a small cache (listMax=5) so the bound is reached cheaply.
-    const cache = new FeatureSurfaceCache(5, 10, 30_000);
-
-    const makeListEntry = (qhash: string) => ({
-      cards: [],
-      total: 0,
-      freshness: null,
-      queryHash: qhash,
-      timestamp: Date.now(),
-    });
-
-    // Insert 8 distinct query keys — 3 more than listMax
-    for (let i = 0; i < 8; i++) {
-      cache.set(`proj|q${i}|page1`, makeListEntry(`qhash-${i}`));
-    }
-
-    expect(cache.listSize).toBeLessThanOrEqual(5);
+describe('REGRESSION: T3-005 TQ is the sole cache layer — no hand-rolled LRU', () => {
+  it('featureSurfaceCache.ts no longer exists in the services directory', () => {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const path = require('node:path') as typeof import('node:path');
+    const cachePath = path.resolve(__dirname, '../../services/featureSurfaceCache.ts');
+    expect(fs.existsSync(cachePath)).toBe(false);
   });
 
-  it('defaultFeatureSurfaceCache singleton listMax matches FEATURE_SURFACE_CACHE_LIMITS.listMax', () => {
-    // Verify the exported singleton uses the published constant (50).
-    // If someone lowers listMax in the constant the downstream cache shrinks.
-    expect(FEATURE_SURFACE_CACHE_LIMITS.listMax).toBe(50);
-
-    // The singleton itself starts at 0 entries (may have been mutated by other
-    // tests — just verify it respects the limit by checking the class constant).
-    expect(defaultFeatureSurfaceCache.listSize).toBeLessThanOrEqual(
-      FEATURE_SURFACE_CACHE_LIMITS.listMax,
-    );
+  it('featureCacheBus.ts no longer exists in the services directory', () => {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const path = require('node:path') as typeof import('node:path');
+    const busPath = path.resolve(__dirname, '../../services/featureCacheBus.ts');
+    expect(fs.existsSync(busPath)).toBe(false);
   });
 
-  it('defaultFeatureSurfaceCache stays bounded after FEATURE_SURFACE_CACHE_LIMITS.listMax + 10 distinct queries', () => {
-    // Use a fresh, isolated FeatureSurfaceCache to avoid polluting the singleton.
-    const N = FEATURE_SURFACE_CACHE_LIMITS.listMax;
-    const isolated = new FeatureSurfaceCache(N, 10, 30_000);
-
-    const makeListEntry = (qhash: string) => ({
-      cards: [],
-      total: 0,
-      freshness: null,
-      queryHash: qhash,
-      timestamp: Date.now(),
-    });
-
-    for (let i = 0; i < N + 10; i++) {
-      isolated.set(`proj|distinct-query-${i}|page1`, makeListEntry(`qhash-${i}`));
-    }
-
-    expect(isolated.listSize).toBeLessThanOrEqual(N);
+  it('useFeatureSurface.ts imports from @tanstack/react-query (TQ is the cache)', () => {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const path = require('node:path') as typeof import('node:path');
+    const hookPath = path.resolve(__dirname, '../../services/useFeatureSurface.ts');
+    const source = fs.readFileSync(hookPath, 'utf8');
+    expect(source).toContain("from '@tanstack/react-query'");
+    expect(source).toContain('useQuery');
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OPTIONAL — Live-topic invalidation end-to-end
-// (checked against useFeatureSurface.test.ts first — that file does NOT
-// cover useFeatureSurfaceLiveInvalidation at all; it only covers the cache
-// adapter seam.  This test therefore adds new coverage.)
+// OPTIONAL — Live-topic invalidation end-to-end (T3-005: now via TQ)
+// The onInvalidate callback is the only hook-level gate; the TQ invalidation
+// happens inside the hook when invalidate('all') is called.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('OPTIONAL: live-topic invalidation wires featureTopic event to cache eviction + re-fetch', () => {
-  it('invalidateFeatureSurface is called when a project-features topic event fires', () => {
-    // Simulate the onEvent handler inside useFeatureSurfaceLiveInvalidation:
+describe('OPTIONAL: live-topic invalidation wires featureTopic event to onInvalidate callback', () => {
+  it('onInvalidate is called when a project-features topic event fires', () => {
+    // Simulate the onEvent handler inside the live invalidation wiring:
     //   onEvent: (event) => {
     //     if (event.kind !== 'invalidate') return;
-    //     invalidateFeatureSurface({ projectId, scope: 'all' });
     //     onInvalidate('all');
     //   }
     //
-    // We exercise the same logic inline to verify the contract without needing
-    // a live WebSocket.  The liveConnectionManager itself is covered by
-    // services/__tests__/liveConnectionManager.test.ts.
+    // T3-005: The hook's invalidate('all') internally calls
+    // queryClient.invalidateQueries({ queryKey: featureSurfaceKeys.all(projectId) }).
+    // We exercise the logic inline without needing a live WebSocket.
 
-    const projectId = 'proj-live-test';
     const onInvalidate = vi.fn();
 
     function handleLiveEvent(event: { kind: string }) {
       if (event.kind !== 'invalidate') return;
-      invalidateFeatureSurface({ projectId, scope: 'all' });
       onInvalidate('all');
     }
 
     // Fire a non-invalidate event — nothing should happen
     handleLiveEvent({ kind: 'snapshot' });
-    expect(mockInvalidate).not.toHaveBeenCalled();
     expect(onInvalidate).not.toHaveBeenCalled();
 
-    // Fire an invalidate event — both calls must fire
+    // Fire an invalidate event — onInvalidate must fire
     handleLiveEvent({ kind: 'invalidate' });
-    expect(mockInvalidate).toHaveBeenCalledWith({ projectId, scope: 'all' });
     expect(onInvalidate).toHaveBeenCalledWith('all');
   });
 
-  it('non-invalidate live events do not trigger cache eviction or re-fetch', () => {
-    const projectId = 'proj-live-test';
+  it('non-invalidate live events do not trigger onInvalidate', () => {
     const onInvalidate = vi.fn();
 
     function handleLiveEvent(event: { kind: string }) {
       if (event.kind !== 'invalidate') return;
-      invalidateFeatureSurface({ projectId, scope: 'all' });
       onInvalidate('all');
     }
 
@@ -875,7 +816,6 @@ describe('OPTIONAL: live-topic invalidation wires featureTopic event to cache ev
       handleLiveEvent({ kind });
     }
 
-    expect(mockInvalidate).not.toHaveBeenCalled();
     expect(onInvalidate).not.toHaveBeenCalled();
   });
 });

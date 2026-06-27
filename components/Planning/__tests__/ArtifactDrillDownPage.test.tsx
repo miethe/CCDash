@@ -29,7 +29,14 @@ import type { PlanDocument } from '../../../types';
 const mockDocuments: PlanDocument[] = [];
 
 vi.mock('../../../contexts/DataContext', () => ({
-  useData: () => ({ documents: mockDocuments }),
+  useData: () => ({ activeProject: { id: 'proj-1', name: 'Test Project' } }),
+}));
+
+// T2-002: stub useDocumentsQuery so the component renders without a QueryClientProvider.
+// Tests control documents via mockDocuments (same array reference as before).
+vi.mock('../../../services/queries/documents', () => ({
+  useDocumentsQuery: () => ({ data: mockDocuments, isLoading: false, error: null }),
+  DOCUMENTS_PAGE_SIZE: 500,
 }));
 
 // DocumentModal is a heavy component — stub it for static rendering tests.

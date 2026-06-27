@@ -7,13 +7,15 @@ from datetime import datetime, timezone
 import aiosqlite
 
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
+
 class SqliteTaskRepository:
     """SQLite-backed task storage."""
 
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
-    async def upsert(self, task_data: dict, project_id: str, *, workspace_id: str) -> None:
+    async def upsert(self, task_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None:
         now = datetime.now(timezone.utc).isoformat()
         data_json = json.dumps(task_data)
 
@@ -67,7 +69,7 @@ class SqliteTaskRepository:
         )
         await self.db.commit()
 
-    async def get_by_id(self, task_id: str, *, workspace_id: str) -> dict | None:
+    async def get_by_id(self, task_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
         """Fetch a single task by PK, scoped to workspace_id.
 
         Returns None when the task does not exist OR belongs to a different
@@ -80,7 +82,7 @@ class SqliteTaskRepository:
             row = await cur.fetchone()
             return dict(row) if row else None
 
-    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         if project_id:
             async with self.db.execute(
                 "SELECT * FROM tasks WHERE workspace_id = ? AND project_id = ? ORDER BY updated_at DESC",
@@ -95,7 +97,7 @@ class SqliteTaskRepository:
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
 
-    async def list_paginated(self, project_id: str | None, offset: int, limit: int, *, workspace_id: str) -> list[dict]:
+    async def list_paginated(self, project_id: str | None, offset: int, limit: int, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         if project_id:
             async with self.db.execute(
                 "SELECT * FROM tasks WHERE workspace_id = ? AND project_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
@@ -108,7 +110,7 @@ class SqliteTaskRepository:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def count(self, project_id: str | None = None, *, workspace_id: str) -> int:
+    async def count(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
         if project_id:
             async with self.db.execute(
                 "SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND project_id = ?",
@@ -128,7 +130,7 @@ class SqliteTaskRepository:
         feature_id: str,
         phase_id: str | None = None,
         *,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         """Return tasks for a feature, scoped to workspace_id (ADR-008 §Data Isolation)."""
         if phase_id:
@@ -148,7 +150,7 @@ class SqliteTaskRepository:
         await self.db.execute("DELETE FROM tasks WHERE source_file = ?", (source_file,))
         await self.db.commit()
 
-    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         """Get aggregated task statistics."""
         # Completed count
         async with self.db.execute(

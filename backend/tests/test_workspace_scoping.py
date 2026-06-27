@@ -14,6 +14,12 @@ classes MUST:
 
 Write-path methods (upsert, delete, etc.) are excluded by name pattern.
 
+NOTE on defaults: workspace_id is a KEYWORD-ONLY parameter with a default of
+``DEFAULT_WORKSPACE_ID`` ("default-local") on all repo methods.  Callers may
+omit it and the default is applied automatically.  This test still verifies
+the parameter exists in the signature and is referenced in the source, which
+confirms the scoping logic is present regardless of whether the default is used.
+
 EXEMPTION PROCESS
 -----------------
 If a public method on an in-scope class legitimately does NOT need
@@ -93,6 +99,8 @@ EXEMPT_METHODS: dict[str, str] = {
     "sessions.SqliteSessionRepository.get_file_updates": "detail sub-table keyed by session_id; cross-workspace access already blocked upstream",
     "sessions.SqliteSessionRepository.get_artifacts": "detail sub-table keyed by session_id; cross-workspace access already blocked upstream",
     "sessions.SqliteSessionRepository.list_relationships": "detail sub-table keyed by project + session; cross-workspace access already blocked upstream",
+    "sessions.SqliteSessionRepository.update_session_badges": "write path (UPDATE by PK), no workspace filter needed",
+    "sessions.PostgresSessionRepository.update_session_badges": "write path (UPDATE by PK), no workspace filter needed",
 
     # ── Tasks: write paths / non-workspace-partitioned detail reads ──────────
     "tasks.SqliteTaskRepository.upsert": "write path, workspace_id passed as parameter to INSERT",
@@ -104,12 +112,16 @@ EXEMPT_METHODS: dict[str, str] = {
     "features.SqliteFeatureRepository.upsert_phases": "write path for feature_phases detail table",
     "features.SqliteFeatureRepository.get_phases": "detail sub-table keyed by feature_id; cross-workspace access already blocked upstream by get_by_id",
     "features.SqliteFeatureRepository.list_all": "cross-project workspace-scoped list, see WORKSPACE-AUDIT-EXEMPT comment",
+    "features.SqliteFeatureRepository.list_summary": "scoped by project_id; lightweight projection for planning consumers",
+    "features.PostgresFeatureRepository.list_summary": "scoped by project_id; lightweight projection for planning consumers",
 
     # ── Documents: write paths ───────────────────────────────────────────────
     "documents.SqliteDocumentRepository.upsert": "write path, workspace_id passed as parameter to INSERT",
     "documents.SqliteDocumentRepository.delete_by_source": "write path (delete), no workspace filter needed",
     "documents.SqliteDocumentRepository.upsert_refs": "write path for document_refs detail table",
     "documents.SqliteDocumentRepository.list_all": "delegates to list_paginated which enforces workspace_id",
+    "documents.SqliteDocumentRepository.list_summary": "scoped by project_id; lightweight projection for planning consumers",
+    "documents.PostgresDocumentRepository.list_summary": "scoped by project_id; lightweight projection for planning consumers",
 
     # ── Postgres Sessions ────────────────────────────────────────────────────
     "sessions.PostgresSessionRepository.upsert": "write path",
@@ -183,7 +195,14 @@ def _source_has_workspace_predicate(method: Any) -> bool:
 
 class TestWorkspaceScopingContract(unittest.TestCase):
     """All non-exempt public methods on in-scope repository classes must enforce
-    workspace_id scoping."""
+    workspace_id scoping.
+
+    workspace_id is a keyword-only parameter with a default of
+    DEFAULT_WORKSPACE_ID ("default-local").  Callers may omit it; the default
+    scopes them to the local workspace automatically.  This test verifies the
+    parameter is present in each method's signature and referenced in its
+    source — confirming the scoping logic is wired in, regardless of defaulting.
+    """
 
     def test_all_scoped_methods_enforce_workspace_id(self) -> None:
         """Walk every public non-exempt method on in-scope repository classes and
@@ -210,7 +229,7 @@ class TestWorkspaceScopingContract(unittest.TestCase):
                 if _is_exempt(short, class_name, method_name):
                     continue
 
-                # (a) Must accept workspace_id
+                # (a) Must accept workspace_id (may have a default value)
                 if not _accepts_workspace_id(method):
                     failures.append(
                         f"MISSING PARAM: {short}.{class_name}.{method_name}() "

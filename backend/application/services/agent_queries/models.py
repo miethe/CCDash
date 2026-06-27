@@ -4,10 +4,22 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 
 QueryStatus = Literal["ok", "partial", "error"]
+PlanningCommandRuleId = Literal[
+    "PCC-CMD-001",
+    "PCC-CMD-002",
+    "PCC-CMD-003",
+    "PCC-CMD-004",
+    "PCC-CMD-005",
+    "PCC-CMD-006",
+    "PCC-CMD-007",
+    "PCC-CMD-008",
+    "PCC-CMD-009",
+]
 
 
 def _utc_now() -> datetime:
@@ -336,7 +348,7 @@ class PlanningTokenTelemetry(BaseModel):
 
     total_tokens: int | None = None
     by_model_family: list[PlanningTokenTelemetryEntry] = Field(default_factory=list)
-    source: Literal["session_attribution", "unavailable"] = "unavailable"
+    source: Literal["backend", "session_attribution", "unavailable"] = "unavailable"
 
 
 class FeatureSummaryItem(BaseModel):
@@ -353,6 +365,8 @@ class FeatureSummaryItem(BaseModel):
     blocked_phase_count: int = 0
     node_count: int = 0
     source_artifact_kind: Literal["feature", "design_spec", "prd"] = "feature"
+    commit_refs: list[str] = Field(default_factory=list)
+    pr_refs: list[str] = Field(default_factory=list)
 
 
 class PlanningNodeCountsByType(BaseModel):
@@ -426,6 +440,20 @@ class ProjectPlanningGraphDTO(AgentQueryEnvelope):
     edge_count: int = 0
 
 
+class SessionLink(BaseModel):
+    """Compact session reference surfaced inside a phase context item.
+
+    Used by ``PhaseContextItem.linked_sessions_by_phase`` to expose the
+    inverse phase→sessions mapping.  All fields have safe defaults so the DTO
+    remains resilience-safe when individual DB columns are absent.
+    """
+
+    session_id: str
+    agent_name: str | None = None
+    start_time: str | None = None
+    transcript_href: str | None = None
+
+
 class PhaseContextItem(BaseModel):
     """One phase's planning context inside ``FeaturePlanningContextDTO``."""
 
@@ -442,6 +470,8 @@ class PhaseContextItem(BaseModel):
     total_tasks: int = 0
     completed_tasks: int = 0
     deferred_tasks: int = 0
+    linked_sessions_by_phase: dict[int, list[SessionLink]] | None = None
+    """Inverse phase→sessions mapping.  None when the query returned no results."""
 
 
 class FeaturePlanningContextDTO(AgentQueryEnvelope):
@@ -517,6 +547,253 @@ class PhaseOperationsDTO(AgentQueryEnvelope):
     tasks: list[PhaseTaskItem] = Field(default_factory=list)
     dependency_resolution: dict[str, Any] = Field(default_factory=dict)
     progress_evidence: list[str] = Field(default_factory=list)
+
+
+# ── Planning Command Center DTOs (PCC-101) ───────────────────────────────────
+
+
+class PlanningCommandTargetArtifactDTO(BaseModel):
+    """Artifact targeted by a planning command recommendation."""
+
+    path: str = ""
+    doc_type: str = ""
+    title: str = ""
+    exists: bool | None = None
+    source_ref: str = ""
+
+
+class PlanningCommandCapabilityDTO(BaseModel):
+    """Capability required to execute a recommended planning command."""
+
+    name: str
+    supported: bool = True
+    required: bool = True
+    warning: str = ""
+    fallback_command: str = ""
+
+
+class PlanningCommandAlternativeDTO(BaseModel):
+    """Non-primary command candidate shown as an explainable alternative."""
+
+    rule_id: PlanningCommandRuleId
+    command: str = ""
+    confidence: float = 0.0
+    rationale: str = ""
+    target_artifact_path: str = ""
+    target_artifact_doc_type: str = ""
+    phase: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+    required_capabilities: list[PlanningCommandCapabilityDTO] = Field(default_factory=list)
+
+
+class PlanningCommandResolutionDTO(BaseModel):
+    """Deterministic command recommendation for a planning work item."""
+
+    command: str = ""
+    rule_id: PlanningCommandRuleId
+    confidence: float = 0.0
+    rationale: str = ""
+    target_artifact_path: str = ""
+    target_artifact_doc_type: str = ""
+    target_artifact: PlanningCommandTargetArtifactDTO | None = None
+    phase: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+    alternatives: list[PlanningCommandAlternativeDTO] = Field(default_factory=list)
+    required_capabilities: list[PlanningCommandCapabilityDTO] = Field(default_factory=list)
+
+
+class PlanningCommandCenterFeatureDTO(BaseModel):
+    """Feature identity shown in the command-center work-item list."""
+
+    feature_id: str
+    feature_slug: str = ""
+    name: str = ""
+    category: str = ""
+    tags: list[str] = Field(default_factory=list)
+    priority: str = ""
+    summary: str = ""
+
+
+class PlanningCommandCenterStatusDTO(BaseModel):
+    """Raw and derived planning status for a command-center item."""
+
+    raw_status: str = ""
+    effective_status: str = ""
+    planning_signal: str = ""
+    mismatch_state: str = "unknown"
+    is_mismatch: bool = False
+
+
+class PlanningCommandCenterTierDTO(BaseModel):
+    tier_number: int | None = None
+    tier_name: str = ""
+    estimated_points: float | None = None
+
+
+class PlanningCommandCenterStoryPointsDTO(BaseModel):
+    total: float = 0.0
+    remaining: float = 0.0
+    completed: float = 0.0
+
+
+class PlanningCommandCenterPhaseDTO(BaseModel):
+    current_phase: int | None = None
+    next_phase: int | None = None
+    total_phases: int = 0
+    completed_phases: int = 0
+
+
+class PlanningCommandCenterArtifactDTO(BaseModel):
+    artifact_id: str = ""
+    path: str = ""
+    doc_type: str = ""
+    title: str = ""
+    status: str = ""
+    exists: bool | None = None
+
+
+class PlanningCommandCenterRelatedFileDTO(BaseModel):
+    path: str = ""
+    doc_type: str = ""
+    size_bytes: int | None = None
+    last_modified: str = ""
+    addable: bool = True
+
+
+class PlanningCommandCenterPhaseRowDTO(BaseModel):
+    phase_number: int | None = None
+    name: str = ""
+    story_points: float | None = None
+    phase_files: list[str] = Field(default_factory=list)
+    domain: str = ""
+    model: str = ""
+    agents: list[str] = Field(default_factory=list)
+    status: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
+    linked_sessions: list[SessionLink] = Field(default_factory=list)
+    """Compact session references linked to this phase via the inverse phase→sessions query."""
+
+
+class PlanningCommandCenterLaunchAgentDTO(BaseModel):
+    agent_id: str = ""
+    label: str = ""
+    skills: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    state: str = "unknown"
+
+
+class PlanningCommandCenterLaunchBatchDTO(BaseModel):
+    batch_id: str = ""
+    label: str = ""
+    readiness: str = "unknown"
+    agents: list[PlanningCommandCenterLaunchAgentDTO] = Field(default_factory=list)
+    queued_count: int = 0
+    running_count: int = 0
+
+
+class PlanningCommandCenterWorktreeDTO(BaseModel):
+    context_id: str = ""
+    path: str = ""
+    branch: str = ""
+    status: str = ""
+    phase_number: int | None = None
+    batch_id: str = ""
+
+
+class PlanningCommandCenterGitStateDTO(BaseModel):
+    path_exists: bool | None = None
+    head: str = ""
+    dirty_count: int | None = None
+    stash_count: int | None = None
+    upstream: str = ""
+    ahead: int | None = None
+    behind: int | None = None
+    probed_at: str = ""
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PlanningCommandCenterPullRequestDTO(BaseModel):
+    provider: str = ""
+    number: int | None = None
+    url: str = ""
+    state: str = ""
+    review_status: str = ""
+
+
+class PlanningCommandCenterBlockerDTO(BaseModel):
+    label: str = ""
+    reason: str = ""
+    severity: str = ""
+
+
+class PlanningCommandCenterCapabilitiesDTO(BaseModel):
+    copy_command: bool = True
+    launch: bool = False
+    review: bool = False
+    merge: bool = False
+    cleanup: bool = False
+    open_pr: bool = False
+    edit_command: bool = True
+
+
+class AggregateWorkItemSession(BaseModel):
+    """Compact running-session reference for the command-center work-item list.
+
+    Populated only for sessions whose board state maps to ``"running"``
+    (raw DB statuses: ``running``, ``in_progress``, ``active``).  Uses the
+    same state classification as ``planning_sessions._STATUS_STATE_MAP``.
+
+    All fields are optional or have safe defaults so the DTO is resilience-safe:
+    missing fields from the DB row are represented as ``None`` / empty string
+    rather than raising.
+    """
+
+    session_id: str
+    state: str = "running"
+    model: str | None = None
+    started_at: str | None = None
+    agent_name: str | None = None
+
+
+class PlanningCommandCenterItemDTO(BaseModel):
+    """Single command-center work item consumed by aggregate endpoints."""
+
+    feature: PlanningCommandCenterFeatureDTO
+    status: PlanningCommandCenterStatusDTO = Field(default_factory=PlanningCommandCenterStatusDTO)
+    tier: PlanningCommandCenterTierDTO = Field(default_factory=PlanningCommandCenterTierDTO)
+    story_points: PlanningCommandCenterStoryPointsDTO = Field(default_factory=PlanningCommandCenterStoryPointsDTO)
+    phase: PlanningCommandCenterPhaseDTO = Field(default_factory=PlanningCommandCenterPhaseDTO)
+    artifacts: list[PlanningCommandCenterArtifactDTO] = Field(default_factory=list)
+    target_artifact: PlanningCommandTargetArtifactDTO | None = None
+    command: PlanningCommandResolutionDTO | None = None
+    related_files: list[PlanningCommandCenterRelatedFileDTO] = Field(default_factory=list)
+    phase_rows: list[PlanningCommandCenterPhaseRowDTO] = Field(default_factory=list)
+    launch_batch: PlanningCommandCenterLaunchBatchDTO | None = None
+    worktree: PlanningCommandCenterWorktreeDTO | None = None
+    git_state: PlanningCommandCenterGitStateDTO | None = None
+    pull_request: PlanningCommandCenterPullRequestDTO | None = None
+    blockers: list[PlanningCommandCenterBlockerDTO] = Field(default_factory=list)
+    last_activity: dict[str, Any] = Field(default_factory=dict)
+    capabilities: PlanningCommandCenterCapabilitiesDTO = Field(default_factory=PlanningCommandCenterCapabilitiesDTO)
+    active_sessions: list[AggregateWorkItemSession] = Field(default_factory=list)
+    """Running sessions correlated to this feature.  Empty list when none are running."""
+    commit_refs: list[str] = Field(default_factory=list)
+    """Commit SHAs linked to this feature from planning doc frontmatter / document_refs."""
+    pr_refs: list[str] = Field(default_factory=list)
+    """PR references (URLs or '#NNN') linked to this feature."""
+
+
+class PlanningCommandCenterPageDTO(AgentQueryEnvelope):
+    """Paginated command-center response contract."""
+
+    project_id: str
+    items: list[PlanningCommandCenterItemDTO] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 50
+    sort_by: str = ""
+    sort_direction: Literal["asc", "desc"] = "asc"
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ── Planning Agent Session Board DTOs ────────────────────────────────────────
@@ -597,6 +874,8 @@ class PlanningAgentSessionCardDTO(BaseModel):
     token_summary: SessionTokenSummary | None = None
     relationships: list[SessionRelationship] = Field(default_factory=list)
     activity_markers: list[SessionActivityMarker] = Field(default_factory=list)
+    git_branch: str | None = None
+    git_commit_hash: str | None = None
 
 
 class PlanningBoardGroupDTO(BaseModel):
@@ -619,6 +898,15 @@ class PlanningAgentSessionBoardDTO(AgentQueryEnvelope):
     feature.  ``grouping`` reflects the applied ``PlanningBoardGroupingMode``.
     ``active_count`` and ``completed_count`` are convenience tallies derived
     from the card states across all groups.
+
+    Pagination fields (T4-001):
+    - ``page``: 1-based page number of the returned window (absent when
+      cursor-based pagination is used).
+    - ``page_size``: number of cards requested per page.  Equals the applied
+      ``limit`` query param (default 500 for backward compatibility).
+    - ``next_cursor``: opaque cursor for the next page.  ``None`` when there
+      are no more cards (i.e. this is the last or only page).  FE must tolerate
+      this field being absent — it is ``None`` by default.
     """
 
     project_id: str
@@ -628,6 +916,10 @@ class PlanningAgentSessionBoardDTO(AgentQueryEnvelope):
     total_card_count: int = 0
     active_count: int = 0
     completed_count: int = 0
+    # ── Pagination (T4-001) ──────────────────────────────────────────────────
+    page: int | None = None
+    page_size: int | None = None
+    next_cursor: str | None = None
 
 
 class NextRunContextRef(BaseModel):
@@ -671,3 +963,107 @@ class PlanningNextRunPreviewDTO(AgentQueryEnvelope):
     prompt_skeleton: str = ""
     context_refs: list[NextRunContextRef] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+# ── P5a Fat-Read Bundle DTOs ──────────────────────────────────────────────────
+# These DTOs compose existing cached reads into single above-fold bundles.
+# They reduce the FE waterfall from N parallel above-fold requests to ≤1 per view.
+
+
+class SessionCardDTO(BaseModel):
+    """Lightweight session card for the Dashboard bundle sessions list."""
+
+    session_id: str
+    title: str = ""
+    status: str = ""
+    started_at: str = ""
+    ended_at: str = ""
+    model: str = ""
+    total_cost: float = 0.0
+    total_tokens: int = 0
+    feature_id: str = ""
+    root_session_id: str = ""
+
+
+class DashboardBundleDTO(AgentQueryEnvelope):
+    """Fat-read bundle for the Dashboard view (T5-001).
+
+    Composes the most-recent sessions page (limit 20, desc ``started_at``) and
+    task counts by status into a single above-fold response.  Both fields are
+    resilience-safe: missing values default to empty list / empty dict.
+
+    Field notes:
+    - ``sessions``: up to 20 most-recent session cards sorted by ``started_at`` desc.
+    - ``task_counts``: dict mapping status string to integer count for the project.
+    """
+
+    project_id: str
+    sessions: list[SessionCardDTO] = Field(default_factory=list)
+    task_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class PlanningViewBundleDTO(AgentQueryEnvelope):
+    """Fat-read bundle for the Planning view (T5-003).
+
+    Always includes the planning summary.  Graph and session board are optional
+    and included only when requested via the ``include=`` query parameter.
+
+    Field notes:
+    - ``summary``: project-level planning health counts (always present).
+    - ``graph``: planning graph nodes/edges (present when ``include=graph``).
+    - ``session_board``: planning agent session board (present when
+      ``include=session_board``).
+    """
+
+    project_id: str
+    summary: ProjectPlanningSummaryDTO | None = None
+    graph: ProjectPlanningGraphDTO | None = None
+    session_board: "PlanningAgentSessionBoardDTO | None" = None
+
+
+class AnalyticsKPIsDTO(BaseModel):
+    """Above-fold analytics KPI snapshot (T5-004)."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    session_count: int = 0
+    session_cost: float = 0.0
+    session_tokens: int = 0
+    session_duration_avg: float = 0.0
+    task_velocity: int = 0
+    task_completion_pct: float = 0.0
+    feature_progress: float = 0.0
+    tool_call_count: int = 0
+    tool_success_rate: float = 0.0
+    model_io_tokens: int = Field(default=0, serialization_alias="modelIOTokens")
+    cache_input_tokens: int = 0
+    observed_tokens: int = 0
+    context_session_count: int = 0
+    avg_context_utilization_pct: float = 0.0
+    tool_reported_tokens: int = 0
+
+
+class AnalyticsTopModelDTO(BaseModel):
+    """Single model entry in the top-models list."""
+
+    name: str
+    usage: int = 0
+
+
+class AnalyticsOverviewBundleDTO(AgentQueryEnvelope):
+    """Fat-read bundle for the Analytics above-fold view (T5-004).
+
+    Contains only above-fold KPIs and top models.  Detailed tab breakdowns
+    (workflow effectiveness, session intelligence, etc.) remain as separate lazy
+    endpoints so they are not penalised by bundle latency.
+
+    Field notes:
+    - ``kpis``: key performance indicators for the project.
+    - ``top_models``: model usage breakdown (up to 8 entries).
+    - ``range``: effective date range used for KPI computation.
+    """
+
+    project_id: str
+    kpis: AnalyticsKPIsDTO = Field(default_factory=AnalyticsKPIsDTO)
+    top_models: list[AnalyticsTopModelDTO] = Field(default_factory=list)
+    range: dict[str, str] = Field(default_factory=dict)

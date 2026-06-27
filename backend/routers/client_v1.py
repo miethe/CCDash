@@ -3,6 +3,13 @@
 All endpoints live under ``/api/v1/`` and return responses wrapped in the
 standard ``ClientV1Envelope`` or ``ClientV1PaginatedEnvelope``.  Handlers
 are defined in domain-specific modules and wired onto the router here.
+
+Auth (T10-004 / OQ-6):
+  All routes are gated by ``require_v1_auth`` — a single injectable Depends
+  that is a no-op when ``CCDASH_API_TOKEN`` is unset (local-trust default)
+  and validates a bearer token when set.  See
+  ``backend/routers/_client_v1_auth.py`` for the ADR-008 forward-compat
+  contract.
 """
 from __future__ import annotations
 
@@ -15,10 +22,13 @@ from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services.agent_queries import (
     AARReportDTO,
+    DashboardBundleDTO,
+    DashboardQueryService,
     FeatureForensicsDTO,
     ProjectStatusDTO,
     WorkflowDiagnosticsDTO,
 )
+from backend.observability import otel
 from backend.application.services.feature_surface import (
     FeatureModalOverviewDTO,
     FeatureModalSectionDTO,
@@ -31,7 +41,9 @@ from backend.models import (
     SessionIntelligenceSessionRollup,
     SessionSemanticSearchResponse,
 )
+from ccdash_contracts import CapabilityV1, SessionDetailV1, SessionTranscriptPageV1
 from backend.request_scope import get_core_ports, get_request_context
+from backend.routers._client_v1_auth import require_v1_auth
 from backend.routers.client_v1_models import (
     ClientV1Envelope,
     ClientV1PaginatedEnvelope,
@@ -62,12 +74,26 @@ from backend.routers._client_v1_sessions import (
     get_session_detail_v1,
     get_session_drilldown_v1,
     get_session_family_v1,
+    get_session_full_detail_v1,
+    get_session_transcript_page_v1,
     list_sessions_v1,
     search_sessions_v1,
 )
 
+# ---------------------------------------------------------------------------
+# Router — single auth dependency applied to ALL /api/v1 routes (T10-004).
+# When CCDASH_API_TOKEN is unset the dependency is a no-op (local-trust).
+# ADR-008: replace require_v1_auth to upgrade auth model; no handler changes.
+# ---------------------------------------------------------------------------
 
-client_v1_router = APIRouter(prefix="/api/v1", tags=["client-v1"])
+client_v1_router = APIRouter(
+    prefix="/api/v1",
+    tags=["client-v1"],
+    dependencies=[Depends(require_v1_auth)],
+)
+
+# P5a: dashboard bundle service singleton (T5-001/T5-002)
+_dashboard_query_service = DashboardQueryService()
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +136,48 @@ async def get_instance_metadata() -> ClientV1Envelope[InstanceMetaDTO]:
 
 
 # ---------------------------------------------------------------------------
+# Capability discovery (T10-001)
+# ---------------------------------------------------------------------------
+
+#: Server-declared capability identifiers for IntentTree / LAN agent feature-detection.
+#: Consumers MUST NOT hard-fail on an unknown capability string — future minor
+#: versions may extend this list.
+_V1_CAPABILITIES: list[str] = [
+    "sessions:cross-project",  # detail+transcript accept explicit project_id (required, 400 if missing)
+    "sessions:detail",         # full transcript-bearing bundle at /sessions/{id}/detail
+]
+
+
+@client_v1_router.get(
+    "/capabilities",
+    summary="Capability discovery for IntentTree and LAN agents",
+    response_description="Advertised API capabilities and version string.",
+)
+async def get_capabilities() -> ClientV1Envelope[CapabilityV1]:
+    """Return the server-declared capability set for feature-detection by agents.
+
+    Callers SHOULD check ``capabilities`` before using a capability-dependent
+    endpoint.  An absent capability means the server predates that feature; a
+    present one means the server honours the documented contract for that
+    capability string.  Unknown strings must be treated as future additions
+    and MUST NOT cause the client to error.
+
+    Served without active-project state — safe to call before establishing a
+    project context.
+    """
+    data = CapabilityV1(
+        api_version="1",
+        capabilities=_V1_CAPABILITIES,
+        instance_id=_instance_id(),
+        server_time=datetime.now(timezone.utc),
+    )
+    return ClientV1Envelope(
+        data=data,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Project
 # ---------------------------------------------------------------------------
 
@@ -123,6 +191,40 @@ async def project_status(
 ) -> ClientV1Envelope[ProjectStatusDTO]:
     """Return the project status snapshot."""
     return await get_project_status_v1(project_id, request_context, core_ports, bypass_cache=bypass_cache)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard bundle (T5-002)
+# ---------------------------------------------------------------------------
+
+
+@client_v1_router.get("/dashboard")
+async def dashboard_bundle(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[DashboardBundleDTO]:
+    """Return the Dashboard fat-read bundle.
+
+    Composes the most-recent sessions page (limit 20, ``started_at`` desc) and
+    task counts by status into a single above-fold response, collapsing ≤N
+    parallel Dashboard requests to exactly 1.
+    """
+    with otel.start_span(
+        "ccdash.dashboard.bundle",
+        {"project_id": project_id or ""},
+    ):
+        data = await _dashboard_query_service.get_dashboard_bundle(
+            request_context,
+            core_ports,
+            project_id_override=project_id,
+            bypass_cache=bypass_cache,
+        )
+    return ClientV1Envelope(
+        data=data,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +458,95 @@ async def session_family(
 ) -> ClientV1Envelope[SessionFamilyDTO]:
     """Return all sessions sharing the same root session."""
     return await get_session_family_v1(session_id, request_context, core_ports)
+
+
+# Phase 2: transcript-bearing detail endpoint (/sessions/{id}/detail)
+@client_v1_router.get("/sessions/{session_id}/detail")
+async def session_full_detail(
+    session_id: str = Path(..., description="Session ID to inspect."),
+    project_id: str | None = Query(
+        default=None,
+        description=(
+            "Required. The project that owns the session. "
+            "Missing project_id returns HTTP 400 — there is no active-project fallback."
+        ),
+    ),
+    include: list[str] | None = Query(
+        default=None,
+        description=(
+            "Repeatable include flags: transcript, subagents, tokens, artifacts, links. "
+            "Omit to include all segments."
+        ),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque transcript pagination cursor (base64-encoded offset). Omit to start from the beginning.",
+    ),
+    limit: int = Query(
+        default=200,
+        ge=1,
+        le=1000,
+        description="Max transcript items per page (1-1000; default 200).",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[SessionDetailV1]:
+    """Return full session detail bundle (transcript-bearing) for any project.
+
+    ``project_id`` is **required** (HTTP 400 if absent).  Unknown session yields
+    HTTP 404.  Optional segments (transcript/subagents/tokens/artifacts/links)
+    are selected via the repeatable ``include`` param; omit to include all.
+    Redaction is applied by the Phase 1 service before serialisation.
+    """
+    return await get_session_full_detail_v1(
+        session_id,
+        project_id,
+        include,
+        cursor,
+        limit,
+        request_context,
+        core_ports,
+    )
+
+
+# Phase 2: transcript-only paginated endpoint (/sessions/{id}/transcript)
+@client_v1_router.get("/sessions/{session_id}/transcript")
+async def session_transcript(
+    session_id: str = Path(..., description="Session ID."),
+    project_id: str | None = Query(
+        default=None,
+        description=(
+            "Required. The project that owns the session. "
+            "Missing project_id returns HTTP 400 — there is no active-project fallback."
+        ),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque pagination cursor (base64-encoded offset). Omit to start from the beginning.",
+    ),
+    limit: int = Query(
+        default=200,
+        ge=1,
+        le=1000,
+        description="Max transcript items per page (1-1000; default 200).",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[SessionTranscriptPageV1]:
+    """Return a cursor-paginated transcript page for any project.
+
+    ``project_id`` is **required** (HTTP 400 if absent).  Unknown session yields
+    HTTP 404.  Redaction is applied by the Phase 1 service before serialisation.
+    Uses ``{items, cursor, limit, nextCursor}`` envelope.
+    """
+    return await get_session_transcript_page_v1(
+        session_id,
+        project_id,
+        cursor,
+        limit,
+        request_context,
+        core_ports,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -112,7 +112,68 @@ class LiveEventBus(LiveEventBusPublisher, LiveEventBusSubscriber, Protocol):
 
 
 def compact_live_event_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Return a deterministic, bounded, invalidation-safe payload subset."""
+    """Return a deterministic, bounded, invalidation-safe payload subset.
+
+    Extension contract — _COMPACT_PAYLOAD_KEYS allowlist
+    =====================================================
+
+    What the allowlist is
+    ---------------------
+    ``_COMPACT_PAYLOAD_KEYS`` is the exhaustive set of field names that survive
+    serialisation across process boundaries (Postgres NOTIFY fanout, SSE
+    delivery, and any future inter-process transport).  Every key absent from
+    the tuple is **silently stripped** before the envelope is serialised; there
+    is no warning and no error.
+
+    Why cross-process payloads are field-limited
+    --------------------------------------------
+    Postgres NOTIFY payloads are capped at 8 000 bytes.  SSE clients reconnect
+    frequently and must reconstruct state from REST snapshots, not from live
+    payloads.  The allowlist enforces both constraints: it keeps the serialised
+    envelope small enough to fit in a NOTIFY payload, and it signals to
+    consumers that they must not rely on arbitrary fields surviving the fanout
+    boundary.  Any field not in the tuple is treated as in-process-only data.
+
+    Steps to add a new key safely — this is a contract change
+    ----------------------------------------------------------
+    Adding a key to ``_COMPACT_PAYLOAD_KEYS`` is a **contract change** and
+    requires sign-off from reviewers familiar with the SSE consumer chain.
+    Follow these steps exactly:
+
+    1. **Add to the tuple** — append the new key name to ``_COMPACT_PAYLOAD_KEYS``
+       (in ``bus.py``, near line 31).  Keep the tuple alphabetically grouped by
+       semantic category (identity keys, timestamp keys, state keys, etc.) to
+       ease review.
+
+    2. **Verify ALL SSE consumers handle the new field** — search for every
+       caller of ``decode_live_event_bus_envelope`` and every site that reads
+       ``envelope.payload`` or passes it to ``live_event_message_from_bus_envelope``.
+       Confirm each consumer either ignores unknown keys (safe) or explicitly
+       handles the new key.  New keys must **not** cause KeyError, TypeError, or
+       silent mis-routing in any existing consumer.
+
+    3. **Confirm frontend tolerates the new field** — inspect
+       ``useLiveInvalidation`` (frontend SSE hook) and ``connectionManager``
+       (SSE connection state machine).  Both must either ignore or correctly
+       process the new key.  If a consumer pattern-matches on payload keys, add
+       the new key to its expected set and update tests.
+
+    4. **Update documentation** — add the new key to the table in
+       ``docs/guides/containerized-deployment-quickstart.md`` (Live Updates
+       section) and to any contract spec that references the compact payload
+       shape.
+
+    5. **Write or update tests** — ``backend/tests/test_live_event_bus.py`` (or
+       equivalent) should round-trip the new key through
+       ``compact_live_event_payload`` → ``encode_live_event_bus_envelope`` →
+       ``decode_live_event_bus_envelope`` and assert the value is preserved.
+
+    Candidates deferred to future releases (do not add yet):
+        ``runtimeProfile``, ``agentId``
+
+    String values are truncated to ``_MAX_COMPACT_STRING_CHARS`` characters;
+    non-scalar values (dicts, lists) are silently dropped.
+    """
 
     source = dict(payload or {})
     compact: dict[str, Any] = {}

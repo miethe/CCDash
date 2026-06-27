@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import time
 from contextlib import contextmanager
 from typing import Any, Mapping
 from uuid import uuid4
@@ -43,6 +44,10 @@ _auth_session_errors_counter: Any | None = None
 _auth_authorization_decisions_counter: Any | None = None
 _auth_issuer_health_counter: Any | None = None
 
+# ── DB write failure metrics (T2-001) ────────────────────────────────────────
+_db_write_failures_counter: Any | None = None
+_prom_db_write_failures_counter: Any | None = None
+
 # ── Feature-surface hot-path metrics ─────────────────────────────────────────
 _feature_surface_requests_counter: Any | None = None
 _feature_surface_latency_hist: Any | None = None
@@ -69,6 +74,43 @@ _prom_live_fanout_delivered_counter: Any | None = None
 _prom_live_fanout_listener_received_counter: Any | None = None
 _prom_watcher_sync_latency_hist: Any | None = None
 
+# ── Phase-6 Wave-A: new instrument definitions ────────────────────────────────
+# 1. analytics-snapshot
+_analytics_snapshot_latency_hist: Any | None = None
+_analytics_snapshot_rows_counter: Any | None = None
+_prom_analytics_snapshot_latency_hist: Any | None = None
+_prom_analytics_snapshot_rows_counter: Any | None = None
+
+# 2. badge derivation latency
+_badge_derivation_latency_hist: Any | None = None
+_prom_badge_derivation_latency_hist: Any | None = None
+
+# 3. sync insert batch size
+_sync_insert_batch_hist: Any | None = None
+_prom_sync_insert_batch_hist: Any | None = None
+
+# 4. cache fingerprint cost
+_fingerprint_cost_hist: Any | None = None
+_prom_fingerprint_cost_hist: Any | None = None
+
+# 5. SQLite cache-miss depth gauge (live gauge, distinct from the existing miss counter)
+_sqlite_cache_miss_depth: int = 0
+_sqlite_cache_miss_gauge: Any | None = None
+_prom_sqlite_cache_miss_gauge: Any | None = None
+
+# 6. startup-sync duration
+_startup_sync_latency_hist: Any | None = None
+_prom_startup_sync_latency_hist: Any | None = None
+
+# 7. feature-poll-interval observable gauge
+_feature_poll_interval_seconds: float = 0.0
+_feature_poll_interval_gauge: Any | None = None
+_prom_feature_poll_interval_gauge: Any | None = None
+
+# 8. link-rebuild commit counter (distinct from scope counter)
+_link_rebuild_commit_counter: Any | None = None
+_prom_link_rebuild_commit_counter: Any | None = None
+
 _prom_enabled = False
 _prom_ingestion_counter: Any | None = None
 _prom_ingestion_latency_hist: Any | None = None
@@ -93,6 +135,18 @@ _telemetry_queue_depth_state: dict[tuple[str, str, str, str, str], int] = {}
 _telemetry_export_disabled_state = 1
 _worker_job_freshness_state: dict[tuple[str, str, str, str, str], float] = {}
 _worker_job_backpressure_state: dict[tuple[str, str, str, str, str], float] = {}
+
+# ── Watcher liveness freshness probes (T12-005) ──────────────────────────────
+#: Sentinel emitted by the age gauge when a project has no watcher events yet.
+#: Negative age is unambiguous to operators/alerts ("never fired" vs "just fired").
+WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL: float = -1.0
+
+# project_id → epoch-seconds of last processed watcher event; None = registered
+# but no events yet (AC R12.5 sentinel state).
+_watcher_event_last_ts: dict[str, float | None] = {}
+_watcher_event_age_gauge: Any | None = None
+_reconcile_heartbeat_counter: Any | None = None
+_prom_reconcile_heartbeat_counter: Any | None = None
 
 _RUNTIME_PROM_LABEL_NAMES = ("runtime_profile", "deployment_mode", "storage_profile")
 _RESOURCE_INSTANCE_ID = os.getenv("OTEL_SERVICE_INSTANCE_ID", "").strip() or str(uuid4())
@@ -205,6 +259,7 @@ def initialize(app: FastAPI | None = None) -> None:
     global _feature_surface_requests_counter, _feature_surface_latency_hist
     global _frontend_poll_teardown_counter, _link_rebuild_scope_counter
     global _filesystem_scan_cached_counter, _workflow_detail_batch_rows_hist
+    global _db_write_failures_counter, _prom_db_write_failures_counter
     global _prom_enabled
     global _prom_ingestion_counter, _prom_ingestion_latency_hist, _prom_parser_failure_counter
     global _prom_tool_calls_counter, _prom_tool_duration_hist, _prom_tokens_counter, _prom_cost_counter
@@ -221,6 +276,16 @@ def initialize(app: FastAPI | None = None) -> None:
     global _live_fanout_listener_received_counter, _watcher_sync_latency_hist
     global _prom_live_fanout_publish_latency_hist, _prom_live_fanout_delivered_counter
     global _prom_live_fanout_listener_received_counter, _prom_watcher_sync_latency_hist
+    global _analytics_snapshot_latency_hist, _analytics_snapshot_rows_counter
+    global _prom_analytics_snapshot_latency_hist, _prom_analytics_snapshot_rows_counter
+    global _badge_derivation_latency_hist, _prom_badge_derivation_latency_hist
+    global _sync_insert_batch_hist, _prom_sync_insert_batch_hist
+    global _fingerprint_cost_hist, _prom_fingerprint_cost_hist
+    global _sqlite_cache_miss_gauge, _prom_sqlite_cache_miss_gauge
+    global _startup_sync_latency_hist, _prom_startup_sync_latency_hist
+    global _feature_poll_interval_gauge, _prom_feature_poll_interval_gauge
+    global _link_rebuild_commit_counter, _prom_link_rebuild_commit_counter
+    global _watcher_event_age_gauge, _reconcile_heartbeat_counter, _prom_reconcile_heartbeat_counter
 
     if _initialized:
         if _enabled and app and _fastapi_instrumentor:
@@ -354,6 +419,11 @@ def initialize(app: FastAPI | None = None) -> None:
         unit="1",
         description="OIDC/hosted issuer health observations from auth flow seams",
     )
+    _db_write_failures_counter = meter.create_counter(
+        "ccdash_db_write_failures_total",
+        unit="1",
+        description="DB write failures (e.g. locked retries exhausted) by repo and reason",
+    )
     _feature_surface_requests_counter = meter.create_counter(
         "ccdash_feature_surface_requests_total",
         unit="1",
@@ -431,6 +501,93 @@ def initialize(app: FastAPI | None = None) -> None:
         "ccdash_watcher_sync_latency_ms",
         unit="ms",
         description="Latency of file-watcher-triggered sync_changed_files calls.",
+    )
+
+    # ── Phase-6 Wave-A: new OTel instruments ─────────────────────────────────
+    # 1. analytics-snapshot
+    _analytics_snapshot_latency_hist = meter.create_histogram(
+        "ccdash_analytics_snapshot_latency_ms",
+        unit="ms",
+        description="Duration of analytics snapshot computation by project.",
+    )
+    _analytics_snapshot_rows_counter = meter.create_counter(
+        "ccdash_analytics_snapshot_rows_total",
+        unit="1",
+        description="Rows processed during analytics snapshot by project.",
+    )
+
+    # 2. badge derivation latency
+    _badge_derivation_latency_hist = meter.create_histogram(
+        "ccdash_badge_derivation_latency_ms",
+        unit="ms",
+        description="Latency of session-list badge derivation with fast/slow path label.",
+    )
+
+    # 3. sync insert batch size
+    _sync_insert_batch_hist = meter.create_histogram(
+        "ccdash_sync_insert_batch_size",
+        unit="1",
+        description="Sizes of INSERT batches issued by the sync engine by table.",
+    )
+
+    # 4. cache fingerprint cost
+    _fingerprint_cost_hist = meter.create_histogram(
+        "ccdash_fingerprint_cost_ms",
+        unit="ms",
+        description="Duration of cache fingerprint computation.",
+    )
+
+    # 5. SQLite cache-miss depth gauge (observable)
+    _sqlite_cache_miss_gauge = meter.create_observable_gauge(
+        "ccdash_sqlite_cache_miss_depth",
+        callbacks=[_observe_sqlite_cache_miss_depth(Observation)],
+        unit="1",
+        description="Live running count of SQLite cache misses since last reset.",
+    )
+
+    # 6. startup-sync duration
+    _startup_sync_latency_hist = meter.create_histogram(
+        "ccdash_startup_sync_latency_ms",
+        unit="ms",
+        description="Duration of startup sync operations by project.",
+    )
+
+    # 7. feature-poll-interval observable gauge
+    _feature_poll_interval_gauge = meter.create_observable_gauge(
+        "ccdash_feature_poll_interval_seconds",
+        callbacks=[_observe_feature_poll_interval(Observation)],
+        unit="s",
+        description="Current feature-poll interval in seconds.",
+    )
+
+    # 8. link-rebuild commit counter
+    _link_rebuild_commit_counter = meter.create_counter(
+        "ccdash_link_rebuild_commits_total",
+        unit="1",
+        description="Link-rebuild commit completions with links_created count.",
+    )
+
+    # ── Watcher liveness freshness probes (T12-005) ───────────────────────────
+    # 1. Per-project watcher-event age (seconds since last event; -1 = no events yet)
+    _watcher_event_age_gauge = meter.create_observable_gauge(
+        "ccdash_watcher_event_age_seconds",
+        callbacks=[_observe_watcher_event_age(Observation)],
+        unit="s",
+        description=(
+            "Seconds since the last file-watcher change event per project. "
+            f"Value {WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL} (sentinel) means no events "
+            "observed yet for that project (AC R12.5)."
+        ),
+    )
+
+    # 2. Reconcile heartbeat counter — one increment per reconcile tick completion
+    _reconcile_heartbeat_counter = meter.create_counter(
+        "ccdash_reconcile_heartbeat_total",
+        unit="1",
+        description=(
+            "Reconcile-tick completions by result. "
+            "Fires on cadence regardless of individual project watcher activity."
+        ),
     )
 
     _trace_provider = trace_provider
@@ -537,6 +694,11 @@ def initialize(app: FastAPI | None = None) -> None:
                 "OIDC/hosted issuer health observations from auth flow seams",
                 ["provider", "issuer", "status", "runtime_profile"],
             )
+            _prom_db_write_failures_counter = Counter(
+                "ccdash_db_write_failures_total",
+                "DB write failures (e.g. locked retries exhausted) by repo and reason",
+                ["repo", "reason"],
+            )
             _prom_feature_surface_requests_counter = Counter(
                 "ccdash_feature_surface_requests_total",
                 "Feature-surface endpoint request count",
@@ -586,6 +748,67 @@ def initialize(app: FastAPI | None = None) -> None:
             _prom_watcher_sync_latency_hist = Histogram(
                 "ccdash_watcher_sync_latency_ms",
                 "Latency of file-watcher-triggered sync_changed_files calls.",
+            )
+            # ── Phase-6 Wave-A: new Prometheus mirrors ────────────────────────
+            # 1. analytics-snapshot
+            _prom_analytics_snapshot_latency_hist = Histogram(
+                "ccdash_analytics_snapshot_latency_ms",
+                "Duration of analytics snapshot computation by project.",
+                ["project"],
+            )
+            _prom_analytics_snapshot_rows_counter = Counter(
+                "ccdash_analytics_snapshot_rows_total",
+                "Rows processed during analytics snapshot by project.",
+                ["project"],
+            )
+            # 2. badge derivation latency
+            _prom_badge_derivation_latency_hist = Histogram(
+                "ccdash_badge_derivation_latency_ms",
+                "Latency of session-list badge derivation with fast/slow path label.",
+                ["path"],
+            )
+            # 3. sync insert batch size
+            _prom_sync_insert_batch_hist = Histogram(
+                "ccdash_sync_insert_batch_size",
+                "Sizes of INSERT batches issued by the sync engine by table.",
+                ["table"],
+                buckets=[1, 5, 10, 25, 50, 100, 250, 500, 1000],
+            )
+            # 4. cache fingerprint cost
+            _prom_fingerprint_cost_hist = Histogram(
+                "ccdash_fingerprint_cost_ms",
+                "Duration of cache fingerprint computation.",
+            )
+            # 5. SQLite cache-miss depth gauge
+            _prom_sqlite_cache_miss_gauge = Gauge(
+                "ccdash_sqlite_cache_miss_depth",
+                "Live running count of SQLite cache misses since last reset.",
+            )
+            # 6. startup-sync duration
+            _prom_startup_sync_latency_hist = Histogram(
+                "ccdash_startup_sync_latency_ms",
+                "Duration of startup sync operations by project.",
+                ["project"],
+            )
+            # 7. feature-poll-interval gauge
+            _prom_feature_poll_interval_gauge = Gauge(
+                "ccdash_feature_poll_interval_seconds",
+                "Current feature-poll interval in seconds.",
+            )
+            # 8. link-rebuild commit counter
+            _prom_link_rebuild_commit_counter = Counter(
+                "ccdash_link_rebuild_commits_total",
+                "Link-rebuild commit completions with links_created count.",
+                ["links_created_bucket"],
+            )
+            # ── Watcher liveness freshness probes (T12-005) ──────────────────
+            # Reconcile heartbeat counter (Prom mirror; no Prom gauge for age —
+            # the OTel observable gauge computes age at scrape time; a Prom gauge
+            # would require a background updater and is deferred).
+            _prom_reconcile_heartbeat_counter = Counter(
+                "ccdash_reconcile_heartbeat_total",
+                "Reconcile-tick completions by result.",
+                ["result"],
             )
             logger.info("Prometheus fallback metrics server listening on port %s", config.PROM_PORT)
         except Exception as exc:  # noqa: BLE001
@@ -1175,6 +1398,45 @@ def record_watcher_sync_latency(latency_ms: float) -> None:
         logger.debug("record_watcher_sync_latency: metric unavailable", exc_info=True)
 
 
+def _observe_sqlite_cache_miss_depth(observation_type: Any):
+    def _callback(_options: Any) -> list[Any]:
+        return [observation_type(_sqlite_cache_miss_depth)]
+
+    return _callback
+
+
+def _observe_watcher_event_age(observation_type: Any):
+    """Observable callback for ``ccdash_watcher_event_age_seconds``.
+
+    Emits one Observation per registered project.  Projects with no watcher
+    events yet emit ``WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL`` (-1.0) so
+    dashboards and alert rules can distinguish "never fired" from a freshly
+    active watcher (AC R12.5).
+    """
+
+    def _callback(_options: Any) -> list[Any]:
+        now = time.time()
+        results: list[Any] = []
+        for project_id, last_ts in sorted(_watcher_event_last_ts.items()):
+            if last_ts is None:
+                age = WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL
+            else:
+                age = max(0.0, now - last_ts)
+            results.append(
+                observation_type(age, {"project_id": project_id or "unknown"})
+            )
+        return results
+
+    return _callback
+
+
+def _observe_feature_poll_interval(observation_type: Any):
+    def _callback(_options: Any) -> list[Any]:
+        return [observation_type(_feature_poll_interval_seconds)]
+
+    return _callback
+
+
 def _observe_telemetry_queue_depth(observation_type: Any):
     def _callback(_options: Any) -> list[Any]:
         return [
@@ -1255,3 +1517,268 @@ def _observe_telemetry_disabled(observation_type: Any):
         return [observation_type(_telemetry_export_disabled_state)]
 
     return _callback
+
+
+# ── Phase-6 Wave-A: public helpers ───────────────────────────────────────────
+
+
+def record_analytics_snapshot(duration_ms: float, rows: int, project_id: str) -> None:
+    """Record one analytics snapshot: duration histogram + rows counter, keyed by project."""
+    if not _initialized:
+        return
+    value = max(0.0, float(duration_ms))
+    safe_rows = max(0, int(rows))
+    labels = {"project_id": (project_id or "unknown").strip() or "unknown"}
+    try:
+        if _enabled and _analytics_snapshot_latency_hist is not None:
+            _analytics_snapshot_latency_hist.record(value, labels)
+        if _enabled and _analytics_snapshot_rows_counter is not None:
+            _analytics_snapshot_rows_counter.add(safe_rows, labels)
+        if _prom_enabled and _prom_analytics_snapshot_latency_hist is not None:
+            _prom_analytics_snapshot_latency_hist.labels(project=project_id or "unknown").observe(value)
+        if _prom_enabled and _prom_analytics_snapshot_rows_counter is not None:
+            _prom_analytics_snapshot_rows_counter.labels(project=project_id or "unknown").inc(safe_rows)
+    except Exception:
+        logger.debug("record_analytics_snapshot: metric unavailable", exc_info=True)
+
+
+def record_badge_derivation(duration_ms: float, path: str) -> None:
+    """Record session-list badge derivation latency with a fast|slow path label."""
+    if not _initialized:
+        return
+    value = max(0.0, float(duration_ms))
+    safe_path = (path or "unknown").strip() or "unknown"
+    labels = {"path": safe_path}
+    try:
+        if _enabled and _badge_derivation_latency_hist is not None:
+            _badge_derivation_latency_hist.record(value, labels)
+        if _prom_enabled and _prom_badge_derivation_latency_hist is not None:
+            _prom_badge_derivation_latency_hist.labels(path=safe_path).observe(value)
+    except Exception:
+        logger.debug("record_badge_derivation: metric unavailable", exc_info=True)
+
+
+def record_sync_insert_batch(table: str, size: int) -> None:
+    """Record the size of a sync-engine INSERT batch for the given table."""
+    if not _initialized:
+        return
+    safe_size = max(0, int(size))
+    safe_table = (table or "unknown").strip() or "unknown"
+    labels = {"table": safe_table}
+    try:
+        if _enabled and _sync_insert_batch_hist is not None:
+            _sync_insert_batch_hist.record(safe_size, labels)
+        if _prom_enabled and _prom_sync_insert_batch_hist is not None:
+            _prom_sync_insert_batch_hist.labels(table=safe_table).observe(safe_size)
+    except Exception:
+        logger.debug("record_sync_insert_batch: metric unavailable", exc_info=True)
+
+
+def record_fingerprint_cost(duration_ms: float) -> None:
+    """Record the duration of one cache fingerprint computation."""
+    if not _initialized:
+        return
+    value = max(0.0, float(duration_ms))
+    try:
+        if _enabled and _fingerprint_cost_hist is not None:
+            _fingerprint_cost_hist.record(value)
+        if _prom_enabled and _prom_fingerprint_cost_hist is not None:
+            _prom_fingerprint_cost_hist.observe(value)
+    except Exception:
+        logger.debug("record_fingerprint_cost: metric unavailable", exc_info=True)
+
+
+def incr_sqlite_cache_miss() -> None:
+    """Increment the live SQLite cache-miss depth gauge by one."""
+    global _sqlite_cache_miss_depth
+    if not _initialized:
+        return
+    try:
+        _sqlite_cache_miss_depth += 1
+        if _prom_enabled and _prom_sqlite_cache_miss_gauge is not None:
+            _prom_sqlite_cache_miss_gauge.set(_sqlite_cache_miss_depth)
+    except Exception:
+        logger.debug("incr_sqlite_cache_miss: metric unavailable", exc_info=True)
+
+
+def set_sqlite_cache_miss_depth(n: int) -> None:
+    """Explicitly set the live SQLite cache-miss depth gauge to n."""
+    global _sqlite_cache_miss_depth
+    if not _initialized:
+        return
+    try:
+        _sqlite_cache_miss_depth = max(0, int(n))
+        if _prom_enabled and _prom_sqlite_cache_miss_gauge is not None:
+            _prom_sqlite_cache_miss_gauge.set(_sqlite_cache_miss_depth)
+    except Exception:
+        logger.debug("set_sqlite_cache_miss_depth: metric unavailable", exc_info=True)
+
+
+def record_startup_sync(duration_ms: float, project_id: str) -> None:
+    """Record startup-sync duration (ms) keyed by project."""
+    if not _initialized:
+        return
+    value = max(0.0, float(duration_ms))
+    labels = {"project_id": (project_id or "unknown").strip() or "unknown"}
+    try:
+        if _enabled and _startup_sync_latency_hist is not None:
+            _startup_sync_latency_hist.record(value, labels)
+        if _prom_enabled and _prom_startup_sync_latency_hist is not None:
+            _prom_startup_sync_latency_hist.labels(project=project_id or "unknown").observe(value)
+    except Exception:
+        logger.debug("record_startup_sync: metric unavailable", exc_info=True)
+
+
+def set_feature_poll_interval(seconds: float) -> None:
+    """Set the current feature-poll interval (seconds) read by the observable gauge."""
+    global _feature_poll_interval_seconds
+    if not _initialized:
+        return
+    try:
+        _feature_poll_interval_seconds = max(0.0, float(seconds))
+        if _prom_enabled and _prom_feature_poll_interval_gauge is not None:
+            _prom_feature_poll_interval_gauge.set(_feature_poll_interval_seconds)
+    except Exception:
+        logger.debug("set_feature_poll_interval: metric unavailable", exc_info=True)
+
+
+def record_link_rebuild_commit(links_created: int) -> None:
+    """Record one link-rebuild commit completion with links_created count."""
+    if not _initialized:
+        return
+    safe_count = max(0, int(links_created))
+    labels = {"links_created": safe_count}
+    # Bucket the count for Prometheus cardinality safety
+    if safe_count == 0:
+        bucket = "zero"
+    elif safe_count <= 10:
+        bucket = "small"
+    elif safe_count <= 100:
+        bucket = "medium"
+    else:
+        bucket = "large"
+    try:
+        if _enabled and _link_rebuild_commit_counter is not None:
+            _link_rebuild_commit_counter.add(1, labels)
+        if _prom_enabled and _prom_link_rebuild_commit_counter is not None:
+            _prom_link_rebuild_commit_counter.labels(links_created_bucket=bucket).inc()
+    except Exception:
+        logger.debug("record_link_rebuild_commit: metric unavailable", exc_info=True)
+
+
+# ── DB write failure counter (T2-001) ────────────────────────────────────────
+
+
+def record_db_write_failure(*, repo: str, reason: str) -> None:
+    """Increment the DB write failure counter.
+
+    Labels:
+        repo   — repository name, e.g. ``"sessions"``, ``"execution"``
+        reason — failure reason, e.g. ``"locked"``, ``"other"``
+
+    This function is intentionally never-raise: observability must not
+    break write paths.
+    """
+    try:
+        labels = {
+            "repo": _safe_metric_label(repo, default="unknown"),
+            "reason": _safe_metric_label(reason, default="unknown"),
+        }
+        if _enabled and _db_write_failures_counter is not None:
+            _db_write_failures_counter.add(1, labels)
+        if _prom_enabled and _prom_db_write_failures_counter is not None:
+            _prom_db_write_failures_counter.labels(
+                repo=labels["repo"],
+                reason=labels["reason"],
+            ).inc()
+    except Exception:
+        logger.debug("record_db_write_failure: metric unavailable", exc_info=True)
+
+
+# ── Watcher liveness freshness probe helpers (T12-005) ───────────────────────
+
+
+def set_watcher_project_registered(project_id: str) -> None:
+    """Register *project_id* as an expected watcher target (sentinel state).
+
+    Must be called when a file-watcher starts so the age gauge emits
+    ``WATCHER_EVENT_AGE_NO_EVENTS_SENTINEL`` (-1.0) for this project until
+    its first change event arrives, rather than omitting it entirely
+    (AC R12.5 — "no events observed" must be a defined state, not an omission).
+
+    Safe to call multiple times: subsequent calls do NOT reset the timestamp
+    if the project already has a recorded event.
+    """
+    if not _initialized:
+        return
+    project_key = (project_id or "unknown").strip() or "unknown"
+    if project_key not in _watcher_event_last_ts:
+        _watcher_event_last_ts[project_key] = None
+
+
+def record_watcher_event(project_id: str) -> None:
+    """Record that the file-watcher processed a change-event batch for *project_id*.
+
+    Updates the per-project last-event timestamp consumed by the observable
+    age gauge ``ccdash_watcher_event_age_seconds``.  Emits a structured DEBUG
+    log (field counts only — no path/payload contents per the redaction contract).
+
+    Safe to call from hot-path watcher code — never raises.
+    """
+    if not _initialized:
+        return
+    project_key = (project_id or "unknown").strip() or "unknown"
+    try:
+        _watcher_event_last_ts[project_key] = time.time()
+        logger.debug(
+            "watcher.event_recorded project=%s event_count=1",
+            project_key,
+            extra={"project_id": project_key, "event_count": 1},
+        )
+    except Exception:
+        logger.debug("record_watcher_event: probe unavailable", exc_info=True)
+
+
+def record_reconcile_heartbeat(
+    *,
+    result: str = "success",
+    reconciled: int = 0,
+    healed: int = 0,
+    failed: int = 0,
+) -> None:
+    """Record one reconcile-tick heartbeat signal.
+
+    Fires on every reconcile sweep completion regardless of individual project
+    watcher activity (AC R12.5 — heartbeat cadence is independent of events).
+
+    Labels:
+        result — ``"success"`` when no projects failed the sweep;
+                 ``"partial_failure"`` when one or more project syncs failed.
+
+    Emits a structured INFO log alongside the counter so operators can observe
+    reconcile cadence in log aggregators without OTel/Prom configured.
+    """
+    if not _initialized:
+        return
+    safe_result = "success" if (result or "").strip() == "success" else "partial_failure"
+    try:
+        labels = {"result": safe_result}
+        if _enabled and _reconcile_heartbeat_counter is not None:
+            _reconcile_heartbeat_counter.add(1, labels)
+        if _prom_enabled and _prom_reconcile_heartbeat_counter is not None:
+            _prom_reconcile_heartbeat_counter.labels(result=safe_result).inc()
+        logger.info(
+            "reconcile.heartbeat result=%s reconciled=%d healed=%d failed=%d",
+            safe_result,
+            max(0, int(reconciled)),
+            max(0, int(healed)),
+            max(0, int(failed)),
+            extra={
+                "result": safe_result,
+                "projects_reconciled": max(0, int(reconciled)),
+                "watchers_healed": max(0, int(healed)),
+                "failed_count": max(0, int(failed)),
+            },
+        )
+    except Exception:
+        logger.debug("record_reconcile_heartbeat: probe unavailable", exc_info=True)

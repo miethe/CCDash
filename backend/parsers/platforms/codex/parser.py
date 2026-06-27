@@ -182,6 +182,22 @@ def _extract_task_id(*values: Any) -> str:
     return ""
 
 
+_MODEL_VARIANT_SUFFIX_PATTERN = re.compile(r"\s*\[[^\]]*\]\s*$")
+
+
+def _canonical_model_slug(raw_model: str) -> str:
+    """Normalize a raw model id into a stable canonical *bare* slug (T5-001).
+
+    Lowercases, trims, and strips a trailing bracketed variant suffix such as
+    ``[1m]`` so variant decorations collapse to the same canonical value.
+    """
+    slug = (raw_model or "").strip()
+    if not slug:
+        return ""
+    slug = _MODEL_VARIANT_SUFFIX_PATTERN.sub("", slug).strip()
+    return slug.lower()
+
+
 def _is_subagent_tool_name(name: str) -> bool:
     return str(name or "").strip().lower() in _SUBAGENT_TOOL_NAMES
 
@@ -1226,12 +1242,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
         taskId="",
         status=session_status,
         model=model,
+        modelSlug=_canonical_model_slug(model),
         platformType="Codex",
         platformVersion=platform_version,
         platformVersions=platform_versions,
         sessionType="session",
         parentSessionId=None,
         rootSessionId=session_id,
+        # T5-004: log-derived workflow grouping (codex sessions are single roots).
+        workflowId=session_id or None,
+        subagentParentId=None,
         agentId=None,
         durationSeconds=duration,
         tokensIn=tokens_in,

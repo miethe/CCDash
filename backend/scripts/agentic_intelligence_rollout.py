@@ -25,7 +25,8 @@ from backend.application.services.session_intelligence import (
 )
 from backend.db import connection, migrations
 from backend.db.factory import get_agentic_intelligence_repository
-from backend.project_manager import project_manager
+# T1-007 / ADR-006: use the DB-backed authoritative registry.
+from backend.project_manager import db_project_manager as project_manager
 from backend.services.agentic_intelligence_flags import (
     require_skillmeat_integration_enabled,
     workflow_analytics_enabled,

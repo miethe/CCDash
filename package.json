@@ -31,6 +31,10 @@
     "docker:postgres:up": "docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres up --build",
     "docker:postgres:down": "docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres down --remove-orphans",
     "docker:postgres:ps": "docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres ps",
+    "docker:livewatch:up": "docker compose --env-file deploy/runtime/.env --env-file deploy/runtime/watchers/ccdash.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch up --build -d",
+    "docker:livewatch:down": "docker compose --env-file deploy/runtime/.env --env-file deploy/runtime/watchers/ccdash.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch down --remove-orphans",
+    "docker:livewatch:ps": "docker compose --env-file deploy/runtime/.env --env-file deploy/runtime/watchers/ccdash.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch ps",
+    "docker:livewatch:logs": "docker compose --env-file deploy/runtime/.env --env-file deploy/runtime/watchers/ccdash.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch logs -f",
     "docker:hosted:smoke:config": "docker compose --env-file deploy/runtime/compose.hosted.env.example -f deploy/runtime/compose.yaml --profile enterprise --profile postgres config",
     "docker:hosted:smoke:up": "docker compose --env-file deploy/runtime/compose.hosted.env.example -f deploy/runtime/compose.yaml --profile enterprise --profile postgres up --build -d",
     "docker:hosted:smoke:down": "docker compose --env-file deploy/runtime/compose.hosted.env.example -f deploy/runtime/compose.yaml --profile enterprise --profile postgres down --remove-orphans",
@@ -40,6 +44,7 @@
     "docker:hosted:smoke:cli-contract": "docker compose --env-file deploy/runtime/compose.hosted.env.example -f deploy/runtime/compose.yaml --profile enterprise --profile postgres exec -T api python -m pytest backend/tests/test_cli_commands.py -q",
     "docker:hosted:smoke:mcp-contract": "docker compose --env-file deploy/runtime/compose.hosted.env.example -f deploy/runtime/compose.yaml --profile enterprise --profile postgres exec -T api python -m pytest backend/tests/test_mcp_server.py -q",
     "docker:hosted:smoke:validate": "npm run docker:hosted:smoke:config && npm run docker:hosted:smoke:up && npm run docker:hosted:smoke:ps && npm run docker:hosted:smoke:probes && npm run docker:hosted:smoke:job && npm run docker:hosted:smoke:cli-contract && npm run docker:hosted:smoke:mcp-contract",
+    "docker:hosted:smoke:seeded-pg": "bash deploy/runtime/scripts/smoke-seeded-pg.sh",
     "docker:validate": "npm run docker:local:up && npm run docker:local:ps && npm run docker:local:down",
     "profile:memory": "node ./scripts/memory-profile.mjs"
   },
@@ -49,6 +54,7 @@
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@tanstack/react-query": "^5.100.14",
     "@tanstack/react-virtual": "^3.13.19",
     "@types/react-color": "^3.0.13",
     "class-variance-authority": "^0.7.1",
@@ -69,6 +75,7 @@
     "usehooks-ts": "^3.1.1"
   },
   "devDependencies": {
+    "@tanstack/react-query-devtools": "^5.100.14",
     "@types/node": "^22.14.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

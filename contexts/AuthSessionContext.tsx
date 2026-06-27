@@ -36,6 +36,8 @@ interface AuthSessionContextValue {
   authenticated: boolean;
   unauthenticated: boolean;
   unauthorized: boolean;
+  /** True when the backend is unreachable or returned a non-auth error (5xx, network). */
+  unavailable: boolean;
   metadata: AuthProviderMetadataResponse | null;
   session: AuthSessionResponse | null;
   principal: AuthSessionResponse | null;
@@ -57,6 +59,12 @@ export function deriveAuthSessionStatus(session: AuthSessionResponse | null, err
   if (isApiError(error)) {
     if (error.authClassification === 'unauthenticated') return 'unauthenticated';
     if (error.authClassification === 'unauthorized') return 'unauthorized';
+    // Any other ApiError (5xx, network-level error via proxy, etc.) is backend unavailable.
+    return 'unavailable';
+  }
+  if (error != null) {
+    // Non-ApiError (TypeError from fetch, parse error, etc.) is backend unavailable.
+    return 'unavailable';
   }
   if (session?.authenticated) return 'authenticated';
   return 'unauthenticated';
@@ -165,18 +173,25 @@ export const AuthSessionProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const refreshSession = useCallback(async () => {
     setStatus('loading');
     setError(null);
-    try {
-      const [nextMetadata, nextSession] = await Promise.all([
-        client.getAuthMetadata(),
-        client.getAuthSession(),
-      ]);
-      setMetadata(nextMetadata);
-      setSession(nextSession);
-      setStatus(deriveAuthSessionStatus(nextSession));
-    } catch (cause) {
+    const [metaRes, sessionRes] = await Promise.allSettled([
+      client.getAuthMetadata(),
+      client.getAuthSession(),
+    ]);
+    // Metadata is supplemental: retain last-known value on failure so that once
+    // localMode/authMode is learned, a later transient backend outage does not
+    // erase it and accidentally trip the sign-in wall.
+    if (metaRes.status === 'fulfilled') {
+      setMetadata(metaRes.value);
+    }
+    // Session result is authoritative for status.
+    if (sessionRes.status === 'fulfilled') {
+      setSession(sessionRes.value);
+      setError(null);
+      setStatus(deriveAuthSessionStatus(sessionRes.value));
+    } else {
       setSession(null);
-      setError(cause);
-      setStatus(deriveAuthSessionStatus(null, cause));
+      setError(sessionRes.reason);
+      setStatus(deriveAuthSessionStatus(null, sessionRes.reason));
     }
   }, [client]);
 
@@ -210,6 +225,7 @@ export const AuthSessionProvider: React.FC<{ children: React.ReactNode }> = ({ c
     authenticated: status === 'authenticated',
     unauthenticated: status === 'unauthenticated',
     unauthorized: status === 'unauthorized',
+    unavailable: status === 'unavailable',
     metadata,
     session,
     principal: session?.authenticated ? session : null,

@@ -24,7 +24,7 @@ x-backend-service: &backend-service
     CCDASH_STORAGE_SHARED_POSTGRES: "${CCDASH_STORAGE_SHARED_POSTGRES:-false}"
     CCDASH_STORAGE_ISOLATION_MODE: "${CCDASH_STORAGE_ISOLATION_MODE:-dedicated}"
     CCDASH_STORAGE_SCHEMA: "${CCDASH_STORAGE_SCHEMA:-ccdash}"
-    CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED: "${CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED:-false}"
+    CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED: "${CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED:-true}"
     CCDASH_STARTUP_SYNC_ENABLED: "${CCDASH_STARTUP_SYNC_ENABLED:-true}"
     CCDASH_STARTUP_SYNC_LIGHT_MODE: "${CCDASH_STARTUP_SYNC_LIGHT_MODE:-false}"
     CCDASH_STARTUP_DEFERRED_REBUILD_LINKS: "${CCDASH_STARTUP_DEFERRED_REBUILD_LINKS:-false}"
@@ -45,7 +45,7 @@ x-backend-service: &backend-service
     - type: bind
       source: "${CCDASH_PROJECTS_FILE:-../../projects.json}"
       target: /app/projects.json
-      read_only: true
+      read_only: false
     - type: bind
       source: "${CCDASH_WORKSPACE_HOST_ROOT:-../../..}"
       target: "${CCDASH_WORKSPACE_CONTAINER_ROOT:-/workspace}"
@@ -91,6 +91,9 @@ x-postgres-connection: &postgres-connection
 services:
   backend:
     <<: *backend-service
+    build:
+      <<: *backend-build
+      target: runtime
     profiles: ["local"]
     environment:
       <<: *backend-shared-env
@@ -109,11 +112,17 @@ services:
 
   api:
     <<: *backend-service
+    build:
+      <<: *backend-build
+      target: api
     profiles: ["enterprise"]
     environment:
       <<: [*backend-shared-env, *postgres-connection]
       CCDASH_RUNTIME_PROFILE: "api"
       CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
+      CCDASH_QUERY_CACHE_BACKEND: "${CCDASH_QUERY_CACHE_BACKEND:-postgres}"
+      # P3-006-FU: durable job queue now live — enterprise services default to postgres.
+      CCDASH_JOB_QUEUE_BACKEND: "${CCDASH_JOB_QUEUE_BACKEND:-postgres}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,14 +132,21 @@ services:
 
   worker:
     <<: *backend-service
+    build:
+      <<: *backend-build
+      target: worker
     profiles: ["enterprise"]
     environment:
       <<: [*backend-shared-env, *postgres-connection]
       CCDASH_RUNTIME_PROFILE: "worker"
+      CCDASH_QUERY_CACHE_BACKEND: "${CCDASH_QUERY_CACHE_BACKEND:-postgres}"
+      # P3-006-FU: durable job queue now live — enterprise services default to postgres.
+      CCDASH_JOB_QUEUE_BACKEND: "${CCDASH_JOB_QUEUE_BACKEND:-postgres}"
       CCDASH_WORKER_PROJECT_ID: "${CCDASH_WORKER_PROJECT_ID:-smoke-stack}"
       CCDASH_WORKER_PROBE_HOST: "${CCDASH_WORKER_PROBE_HOST:-0.0.0.0}"
       CCDASH_WORKER_PROBE_PORT: "${CCDASH_WORKER_PROBE_PORT:-9465}"
       CCDASH_STARTUP_SYNC_ENABLED: "${CCDASH_WORKER_STARTUP_SYNC_ENABLED:-false}"
+      CCDASH_STARTUP_SYNC_LIGHT_MODE: "${CCDASH_STARTUP_SYNC_LIGHT_MODE:-true}"
       CCDASH_TELEMETRY_EXPORT_ENABLED: "${CCDASH_TELEMETRY_EXPORT_ENABLED:-false}"
       CCDASH_SAM_ENDPOINT: "${CCDASH_SAM_ENDPOINT:-}"
       CCDASH_SAM_API_KEY: "${CCDASH_SAM_API_KEY:-}"
@@ -156,23 +172,42 @@ services:
 
   # Start watcher ingest with:
   #   docker compose --profile enterprise --profile postgres --profile live-watch up
+  # Registry-driven fan-out: when CCDASH_WORKER_WATCH_PROJECT_ID is empty,
+  # worker-watch derives watch targets from DB registry (all registered projects;
+  # is_active is a UI signal, not an ingest gate).
+  # Non-empty: scopes to that specific project id (v1 behavior, one project per process).
   worker-watch:
     <<: *backend-service
-    profiles: ["live-watch"]
+    build:
+      <<: *backend-build
+      target: worker
+    profiles: ["enterprise", "live-watch"]
     command: ["python", "-m", "backend.worker"]
     environment:
       <<: [*backend-shared-env, *postgres-connection]
       CCDASH_RUNTIME_PROFILE: "worker-watch"
+      CCDASH_QUERY_CACHE_BACKEND: "${CCDASH_QUERY_CACHE_BACKEND:-postgres}"
+      # P3-006-FU: durable job queue now live — enterprise services default to postgres.
+      CCDASH_JOB_QUEUE_BACKEND: "${CCDASH_JOB_QUEUE_BACKEND:-postgres}"
+      # P3-T3-006: Optional project id scope. Empty → registry-driven fan-out.
       CCDASH_WORKER_PROJECT_ID: "${CCDASH_WORKER_WATCH_PROJECT_ID:-${CCDASH_WORKER_PROJECT_ID:-smoke-stack}}"
+      # P3-fix: forward CCDASH_WORKER_WATCH_PROJECT_ID into the container namespace so that
+      # backend/config.py os.environ.get("CCDASH_WORKER_WATCH_PROJECT_ID", "") reads the
+      # operator-supplied value and the env-pin single-project path is exercisable via compose.
+      # Empty default → registry-driven fan-out remains the default when not set.
+      CCDASH_WORKER_WATCH_PROJECT_ID: "${CCDASH_WORKER_WATCH_PROJECT_ID:-}"
       CCDASH_WORKER_PROBE_HOST: "${CCDASH_WORKER_WATCH_PROBE_HOST:-0.0.0.0}"
       CCDASH_WORKER_PROBE_PORT: "${CCDASH_WORKER_WATCH_PROBE_PORT:-9466}"
       CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED: "${CCDASH_WORKER_WATCH_FILESYSTEM_INGESTION_ENABLED:-true}"
       CCDASH_STARTUP_SYNC_ENABLED: "${CCDASH_WORKER_WATCH_STARTUP_SYNC_ENABLED:-true}"
+      CCDASH_STARTUP_SYNC_LIGHT_MODE: "${CCDASH_STARTUP_SYNC_LIGHT_MODE:-true}"
+      CCDASH_WATCHER_SYNC_CONCURRENCY: "${CCDASH_WATCHER_SYNC_CONCURRENCY:-20}"
+      CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS: "${CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS:-60}"
       CCDASH_TELEMETRY_EXPORT_ENABLED: "${CCDASH_TELEMETRY_EXPORT_ENABLED:-false}"
       CCDASH_SAM_ENDPOINT: "${CCDASH_SAM_ENDPOINT:-}"
       CCDASH_SAM_API_KEY: "${CCDASH_SAM_API_KEY:-}"
       CCDASH_TELEMETRY_ALLOW_INSECURE: "${CCDASH_TELEMETRY_ALLOW_INSECURE:-false}"
-      WATCHFILES_FORCE_POLLING: "${WATCHFILES_FORCE_POLLING:-false}"
+      WATCHFILES_FORCE_POLLING: "${WATCHFILES_FORCE_POLLING:-true}"
     depends_on:
       api:
         condition: service_healthy
@@ -205,6 +240,9 @@ services:
       CCDASH_FRONTEND_PORT: "${CCDASH_FRONTEND_PORT:-3000}"
       CCDASH_API_UPSTREAM: "${CCDASH_API_UPSTREAM:-http://api:8000}"
       CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
+    depends_on:
+      api:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD-SHELL

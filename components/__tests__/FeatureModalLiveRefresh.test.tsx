@@ -125,38 +125,43 @@ describe('P4-006 — Source-level: onInvalidate uses applyLiveRefreshPolicy', ()
 });
 
 describe('P4-006 — Source-level: polling loop uses applyLiveRefreshPolicy', () => {
-  it('setInterval body calls applyLiveRefreshPolicy for sessions', () => {
-    const idx = SOURCE.indexOf('const interval = setInterval(() => {');
+  it('useQuery queryFn calls applyLiveRefreshPolicy for sessions', () => {
+    // The old setInterval was replaced by a useQuery; anchor on the queryKey.
+    const idx = SOURCE.indexOf("queryKey: ['feature-modal-poll'");
     expect(idx).toBeGreaterThan(-1);
     const snippet = SOURCE.slice(idx, idx + 1000);
     expect(snippet).toContain("applyLiveRefreshPolicy(");
     expect(snippet).toContain("'sessions'");
   });
 
-  it('setInterval body always calls refreshFeatureDetail', () => {
-    const idx = SOURCE.indexOf('const interval = setInterval(() => {');
+  it('useQuery queryFn always calls refreshFeatureDetail', () => {
+    const idx = SOURCE.indexOf("queryKey: ['feature-modal-poll'");
     const snippet = SOURCE.slice(idx, idx + 1000);
     expect(snippet).toContain('refreshFeatureDetail()');
   });
 
   it('old unconditional sessionsFetchedRef.current guard inside polling is replaced', () => {
-    const idx = SOURCE.indexOf('const interval = setInterval(() => {');
-    const endIdx = SOURCE.indexOf('}, FEATURE_MODAL_POLL_INTERVAL_MS)', idx);
-    const snippet = SOURCE.slice(idx, endIdx + 30);
+    const idx = SOURCE.indexOf("queryKey: ['feature-modal-poll'");
+    const endIdx = SOURCE.indexOf('});', idx);
+    const snippet = SOURCE.slice(idx, endIdx + 3);
     // Old direct guard pattern should be gone from polling body
     expect(snippet).not.toContain('// P4-003: only poll sessions if they have been loaded at least once.');
   });
 
-  it('applyLiveRefreshPolicy is listed in the polling useEffect dep array', () => {
-    const idx = SOURCE.indexOf('const interval = setInterval(() => {');
-    // Dep array follows the return () => clearInterval(...) line
+  it('poll is gated and visibility-aware via featureModalPollEnabled + refetchInterval (not a setInterval useEffect)', () => {
+    // The new mechanism uses useQuery with enabled + refetchInterval instead of
+    // a setInterval wrapped in a useEffect with an explicit dep array.
+    const idx = SOURCE.indexOf("queryKey: ['feature-modal-poll'");
+    expect(idx).toBeGreaterThan(-1);
     const snippet = SOURCE.slice(idx, idx + 1200);
+    // Must be gated by featureModalPollEnabled on the enabled field
+    expect(snippet).toContain('enabled: featureModalPollEnabled');
+    // refetchInterval must reference featureModalPollEnabled (visibility-aware gate)
+    expect(snippet).toContain('refetchInterval: featureModalPollEnabled');
+    // applyLiveRefreshPolicy must appear inside the queryFn body
     expect(snippet).toContain('applyLiveRefreshPolicy');
-    // Ensure it appears in the dep array bracket
-    const depIdx = snippet.lastIndexOf('[activeTab');
-    expect(depIdx).toBeGreaterThan(-1);
-    const depSnippet = snippet.slice(depIdx, depIdx + 200);
-    expect(depSnippet).toContain('applyLiveRefreshPolicy');
+    // The old setInterval pattern must not exist
+    expect(SOURCE).not.toContain('const interval = setInterval(() => {');
   });
 });
 

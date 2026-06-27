@@ -301,6 +301,7 @@ class TestPushBatchPolymorphicDispatch(unittest.IsolatedAsyncioTestCase):
                 run_id="r1",
                 started=0.0,
                 runtime_metadata={},
+                _fake_client=None,  # ignored; we set _client directly
             )
 
         return coordinator, fake_client

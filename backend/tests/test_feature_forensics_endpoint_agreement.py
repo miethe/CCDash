@@ -99,13 +99,15 @@ class _FakeFeatureSessionRepo:
 
 
 class _Storage:
-    def __init__(self, *, features_repo, sessions_repo, documents_repo, tasks_repo, links_repo):
+    def __init__(self, *, features_repo, sessions_repo, documents_repo, tasks_repo, links_repo,
+                 feature_sessions_repo=None):
         self.db = object()
         self._features_repo = features_repo
         self._sessions_repo = sessions_repo
         self._documents_repo = documents_repo
         self._tasks_repo = tasks_repo
         self._links_repo = links_repo
+        self._feature_sessions_repo = feature_sessions_repo
         self._session_messages_repo = types.SimpleNamespace(list_by_session=AsyncMock(return_value=[]))
         self._feature_sessions_repo = _FakeFeatureSessionRepo(_LINK_ROWS, _SESSION_ROWS)
 
@@ -123,6 +125,9 @@ class _Storage:
 
     def entity_links(self):
         return self._links_repo
+
+    def feature_sessions(self):
+        return self._feature_sessions_repo
 
     def session_messages(self):
         return self._session_messages_repo
@@ -148,7 +153,8 @@ def _context(project_id: str = "project-1") -> RequestContext:
     )
 
 
-def _ports(*, features=None, sessions=None, documents=None, tasks=None, links=None) -> CorePorts:
+def _ports(*, features=None, sessions=None, documents=None, tasks=None, links=None,
+           feature_sessions=None) -> CorePorts:
     project = types.SimpleNamespace(id="project-1", name="Project 1")
     return CorePorts(
         identity_provider=_IdentityProvider(),
@@ -160,6 +166,7 @@ def _ports(*, features=None, sessions=None, documents=None, tasks=None, links=No
             documents_repo=documents or types.SimpleNamespace(list_paginated=AsyncMock(return_value=[])),
             tasks_repo=tasks or types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[])),
             links_repo=links or types.SimpleNamespace(get_links_for=AsyncMock(return_value=[])),
+            feature_sessions_repo=feature_sessions,
         ),
         job_scheduler=types.SimpleNamespace(schedule=lambda job, **_: job),
         integration_client=types.SimpleNamespace(invoke=AsyncMock(return_value={})),
@@ -277,6 +284,54 @@ def _make_features_repo():
     return types.SimpleNamespace(get_by_id=get_by_id)
 
 
+def _make_feature_sessions_repo():
+    """Return a mock feature-session repo backed by _LINK_ROWS / _SESSION_ROWS.
+
+    ``list_feature_session_refs`` builds rows that satisfy
+    ``_session_row_to_session_ref`` (needs session_id, status, started_at, etc.).
+    """
+    from backend.db.repositories.feature_queries import LinkedSessionPage
+
+    def _all_rows(feature_id: str) -> list[dict]:
+        linked_ids = [
+            row["target_id"]
+            for row in _LINK_ROWS
+            if row["source_type"] == "feature"
+            and row["source_id"] == feature_id
+            and row["target_type"] == "session"
+        ]
+        rows = []
+        for sid in linked_ids:
+            srow = _SESSION_ROWS.get(sid, {})
+            rows.append({
+                "session_id": sid,
+                "status": srow.get("status", ""),
+                "started_at": srow.get("started_at", ""),
+                "ended_at": srow.get("ended_at", ""),
+                "model": srow.get("model", ""),
+                "total_cost": srow.get("total_cost", 0.0),
+                "observed_tokens": srow.get("observed_tokens", 0),
+                "root_session_id": sid,
+                "title": "",
+                "feature_id": feature_id,
+            })
+        return rows
+
+    async def list_feature_session_refs(project_id: str, query) -> LinkedSessionPage:
+        all_rows = _all_rows(query.feature_id)
+        total = len(all_rows)
+        page = all_rows[query.offset: query.offset + query.limit]
+        return LinkedSessionPage(
+            rows=page,
+            total=total,
+            offset=query.offset,
+            limit=query.limit,
+            has_more=(query.offset + len(page)) < total,
+        )
+
+    return types.SimpleNamespace(list_feature_session_refs=list_feature_session_refs)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -301,6 +356,7 @@ class FeatureForensicsEndpointAgreementTests(unittest.IsolatedAsyncioTestCase):
             documents=types.SimpleNamespace(list_paginated=AsyncMock(return_value=[])),
             tasks=types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[])),
             links=_make_links_repo(),
+            feature_sessions=_make_feature_sessions_repo(),
         )
 
     async def _call_detail(self):

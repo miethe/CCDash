@@ -19,9 +19,12 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import aiosqlite
+
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.document_linking import classify_doc_subtype, classify_doc_type
+from backend.model_identity import derive_model_identity
 from backend.models import (
     Feature,
     FeatureDependencyState,
@@ -40,7 +43,13 @@ from backend.services.feature_execution import (
 )
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
-from .cache import clear_cache, memoized_query
+from .cache import (
+    aclear_project_cache,
+    clear_cache,
+    memoized_query,
+    oq_overlay_evict_project,
+    register_oq_overlay_evict_callback,
+)
 from .feature_evidence_summary import FeatureEvidenceSummaryService
 from .models import (
     FeaturePlanningContextDTO,
@@ -59,9 +68,11 @@ from .models import (
     PlanningStatusCounts,
     PlanningTokenTelemetry,
     PlanningTokenTelemetryEntry,
+    PlanningViewBundleDTO,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
     PromptContextSelection,
+    SessionLink,
     TokenUsageByModel,
 )
 
@@ -76,6 +87,112 @@ def _get_evidence_summary_service() -> FeatureEvidenceSummaryService:
     call this function after patching ``FeatureEvidenceSummaryService``.
     """
     return FeatureEvidenceSummaryService()
+
+
+# ── Bulk token-usage fetch (P5-002) ─────────────────────────────────────────
+
+_TOKEN_BUCKETS = ("opus", "sonnet", "haiku", "other")
+
+
+async def _bulk_fetch_feature_token_usage(
+    db: Any,
+    project_id: str,
+    feature_ids: list[str],
+) -> dict[str, TokenUsageByModel]:
+    """Return per-feature token usage aggregated from linked sessions.
+
+    Issues a *single* SQL query (entity_links JOIN sessions) that groups by
+    ``el.source_id`` (feature_id) and ``s.model``.  Falls back to an empty
+    ``TokenUsageByModel`` for features without linked sessions.
+
+    Dual-path for SQLite (aiosqlite) and PostgreSQL (asyncpg), following the
+    pattern established in ``system_metrics._query_max_updated_at``.
+    """
+    if not feature_ids:
+        return {}
+
+    # Build placeholders for the IN clause (one per feature ID).
+    sqlite_placeholders = ",".join("?" * len(feature_ids))
+    pg_placeholders = ",".join(f"${i + 1}" for i in range(len(feature_ids)))
+    # project_id is the last positional parameter in both dialects.
+    sqlite_params: list[Any] = list(feature_ids) + [project_id]
+    pg_params: list[Any] = list(feature_ids) + [project_id]
+
+    # Project-id placeholder index for PG is len(feature_ids) + 1.
+    pg_project_ph = f"${len(feature_ids) + 1}"
+
+    sqlite_sql = f"""
+        SELECT el.source_id AS feature_id,
+               s.model,
+               COALESCE(SUM(
+                   CASE WHEN s.observed_tokens > 0 THEN s.observed_tokens
+                        ELSE s.tokens_in + s.tokens_out END
+               ), 0) AS tokens
+        FROM entity_links el
+        JOIN sessions s ON s.id = el.target_id
+        WHERE el.source_type = 'feature'
+          AND el.target_type = 'session'
+          AND el.link_type = 'related'
+          AND el.source_id IN ({sqlite_placeholders})
+          AND s.project_id = ?
+        GROUP BY el.source_id, s.model
+    """  # noqa: S608
+
+    pg_sql = f"""
+        SELECT el.source_id AS feature_id,
+               s.model,
+               COALESCE(SUM(
+                   CASE WHEN s.observed_tokens > 0 THEN s.observed_tokens
+                        ELSE s.tokens_in + s.tokens_out END
+               ), 0) AS tokens
+        FROM entity_links el
+        JOIN sessions s ON s.id = el.target_id
+        WHERE el.source_type = 'feature'
+          AND el.target_type = 'session'
+          AND el.link_type = 'related'
+          AND el.source_id = ANY(ARRAY[{pg_placeholders}]::text[])
+          AND s.project_id = {pg_project_ph}
+        GROUP BY el.source_id, s.model
+    """  # noqa: S608
+
+    rows: list[Any] = []
+    try:
+        if isinstance(db, aiosqlite.Connection):
+            async with db.execute(sqlite_sql, sqlite_params) as cur:
+                rows = await cur.fetchall()
+        else:
+            rows = await db.fetch(pg_sql, *pg_params)
+    except Exception:  # noqa: BLE001
+        logger.warning("_bulk_fetch_feature_token_usage: query failed; returning empty")
+        return {}
+
+    # Aggregate rows into per-feature bucket dicts.
+    accum: dict[str, dict[str, int]] = {}
+    for row in rows:
+        if isinstance(row, (list, tuple)):
+            fid, model, tok = str(row[0] or ""), str(row[1] or ""), int(row[2] or 0)
+        else:
+            fid = str(row["feature_id"] or "")
+            model = str(row["model"] or "")
+            tok = int(row["tokens"] or 0)
+        if not fid:
+            continue
+        buckets = accum.setdefault(fid, {b: 0 for b in _TOKEN_BUCKETS})
+        family = str(derive_model_identity(model).get("modelFamily") or "").strip().lower()
+        bucket = family if family in _TOKEN_BUCKETS else "other"
+        buckets[bucket] = buckets.get(bucket, 0) + tok
+
+    result: dict[str, TokenUsageByModel] = {}
+    for fid, buckets in accum.items():
+        total = sum(buckets.values())
+        result[fid] = TokenUsageByModel(
+            opus=buckets.get("opus", 0),
+            sonnet=buckets.get("sonnet", 0),
+            haiku=buckets.get("haiku", 0),
+            other=buckets.get("other", 0),
+            total=total,
+        )
+    return result
 
 
 _PROMOTION_READY_STATUSES = {
@@ -107,6 +224,34 @@ _ACTIVE_FIRST_STATUS_RANK = {
 _OQ_ID_PREFIX = re.compile(r"^(oq[-_\s]*\d+)\s*[:\-]\s*(.+)$", re.IGNORECASE)
 _OQ_OVERLAY_LOCK = asyncio.Lock()
 _OQ_OVERLAY: dict[str, dict[str, PlanningOpenQuestionItem]] = {}
+
+# ── OQ overlay eviction — registered into cache.py so clear_project_cache()
+#    and aclear_project_cache() automatically bust the in-memory OQ overlay. ──
+
+
+def _oq_overlay_evict(project_id: str, feature_id: str | None) -> None:
+    """Synchronously evict OQ overlay entries for *project_id*.
+
+    Called by the cache module when project-scoped eviction is triggered.
+    Does NOT acquire _OQ_OVERLAY_LOCK to avoid deadlock in async contexts;
+    dict iteration is GIL-safe in CPython for our use-case (drop, don't mutate
+    per-key).  A feature_id of None means "evict all features for project_id".
+
+    The mapping is keyed by feature_key (canonical slug), not project_id, so we
+    cannot do a direct lookup — we clear everything when feature_id is None, or
+    we attempt to clear the specific feature_key when feature_id is provided.
+    """
+    if feature_id is None:
+        # Conservative: clear all keys.  This is acceptable because the lock is
+        # not held by the caller and we cannot correlate feature_key → project.
+        _OQ_OVERLAY.clear()
+    else:
+        key = _feature_key(feature_id)
+        _OQ_OVERLAY.pop(key, None)
+
+
+# Register the callback so cache.py eviction also busts the OQ overlay.
+register_oq_overlay_evict_callback(_oq_overlay_evict)
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -379,8 +524,59 @@ def _doc_row_open_questions(doc_rows: list[dict[str, Any]]) -> list[PlanningOpen
     return items
 
 
-async def _open_question_overlays_for_feature(feature_id: str) -> list[PlanningOpenQuestionItem]:
+async def _open_question_overlays_for_feature(
+    feature_id: str,
+    db: Any | None = None,
+    project_id: str | None = None,
+) -> list[PlanningOpenQuestionItem]:
+    """Return DB-persisted OQ resolutions for (project_id, feature_id).
+
+    DB is authoritative.  The in-memory ``_OQ_OVERLAY`` acts as a read-through
+    cache: on a DB hit the results are stored in memory so subsequent calls
+    within the same process avoid a round-trip.  On any DB failure, the in-memory
+    overlay is returned as a fallback (legacy transition path).
+
+    When ``db`` or ``project_id`` is ``None`` (e.g. callers that have not yet
+    been updated, or tests that don't pass a DB), the function falls back to the
+    pure in-memory overlay.
+    """
+    from backend.db.repositories.oq_resolutions import OQResolutionsRepository  # noqa: PLC0415
+
     feature_key = _feature_key(feature_id)
+
+    if db is not None and project_id:
+        try:
+            repo = OQResolutionsRepository(db)
+            rows = await repo.list_for_feature(project_id, feature_id)
+            items: list[PlanningOpenQuestionItem] = []
+            for row in rows:
+                items.append(
+                    PlanningOpenQuestionItem(
+                        oq_id=str(row.get("oq_id") or ""),
+                        question=str(row.get("question") or ""),
+                        severity=str(row.get("severity") or "medium"),
+                        answer_text=str(row.get("answer_text") or ""),
+                        resolved=bool(row.get("resolved")),
+                        pending_sync=bool(row.get("pending_sync")),
+                        source_document_id=str(row.get("source_document_id") or ""),
+                        source_document_path=str(row.get("source_document_path") or ""),
+                        updated_at=str(row.get("updated_at") or ""),
+                    )
+                )
+            # Populate in-memory cache from DB result so cache is warm.
+            async with _OQ_OVERLAY_LOCK:
+                slot = _OQ_OVERLAY.setdefault(feature_key, {})
+                for item in items:
+                    slot[_normalize_oq_id(item.oq_id)] = item.model_copy(deep=True)
+            return items
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "_open_question_overlays_for_feature: DB read failed "
+                "(project_id=%r, feature_id=%r); using in-memory fallback: %s",
+                project_id, feature_id, exc,
+            )
+            # Fall through to in-memory fallback below.
+
     async with _OQ_OVERLAY_LOCK:
         overlays = _OQ_OVERLAY.get(feature_key, {})
         return [item.model_copy(deep=True) for item in overlays.values()]
@@ -389,11 +585,42 @@ async def _open_question_overlays_for_feature(feature_id: str) -> list[PlanningO
 async def _set_open_question_overlay(
     feature_id: str,
     oq_item: PlanningOpenQuestionItem,
+    db: Any | None = None,
+    project_id: str | None = None,
 ) -> None:
+    """Persist an OQ resolution to DB (authoritative) and update the in-memory cache.
+
+    DB write is attempted first.  The in-memory overlay is updated regardless of
+    DB success so the current request sees the new state immediately.  DB errors
+    are logged and re-raised so the caller can decide whether to surface them.
+    """
+    from backend.db.repositories.oq_resolutions import OQResolutionsRepository  # noqa: PLC0415
+
     feature_key = _feature_key(feature_id)
+    # Always update in-memory cache.
     async with _OQ_OVERLAY_LOCK:
         overlays = _OQ_OVERLAY.setdefault(feature_key, {})
         overlays[_normalize_oq_id(oq_item.oq_id)] = oq_item.model_copy(deep=True)
+
+    if db is not None and project_id:
+        repo = OQResolutionsRepository(db)
+        await repo.upsert(
+            {
+                "project_id": project_id,
+                "feature_id": feature_id,
+                "oq_id": oq_item.oq_id,
+                "question": oq_item.question,
+                "answer_text": oq_item.answer_text,
+                "severity": oq_item.severity,
+                "resolved": oq_item.resolved,
+                "pending_sync": oq_item.pending_sync,
+                "source_document_id": oq_item.source_document_id,
+                "source_document_path": oq_item.source_document_path,
+                "resolved_by": "",
+                "created_at": oq_item.updated_at,
+                "updated_at": oq_item.updated_at,
+            }
+        )
 
 
 def _is_feature_stale(feature: Feature) -> bool:
@@ -409,6 +636,76 @@ def _is_ready_to_promote(graph: PlanningGraph) -> bool:
         if node_status in _PROMOTION_READY_STATUSES:
             return True
     return False
+
+
+_TRANSCRIPT_ROUTE = "#/sessions/{session_id}"
+_PHASE_SESSION_LINK_CAP = 20  # matches SqliteFeatureSessionRepository._PHASE_SESSION_CAP
+
+
+async def _load_phase_session_links(
+    db: Any,
+    project_id: str,
+    feature_id: str,
+    phases: list[Any],
+) -> dict[int, list[SessionLink]]:
+    """Return an inverse mapping of {phase_number: [SessionLink, ...]} for all
+    phases that have at least one linked session.
+
+    Each phase is identified by extracting its ordinal from the ``phase_token``
+    (e.g. ``"phase-2"`` → 2).  Sessions are fetched via
+    ``SqliteFeatureSessionRepository.list_sessions_by_phase`` and capped at 20
+    per phase.
+
+    Returns an empty dict (not ``None``) when no sessions are found so the
+    caller can decide whether to assign ``None`` or ``{}``.
+    """
+    from backend.db.repositories.feature_sessions import SqliteFeatureSessionRepository  # noqa: PLC0415
+
+    repo = SqliteFeatureSessionRepository(db)
+    result: dict[int, list[SessionLink]] = {}
+
+    for phase in phases:
+        phase_token = str(getattr(phase, "phase", "") or getattr(phase, "phase_token", "") or "")
+        # Extract phase ordinal from tokens like "phase-1", "phase-2", or "P3".
+        import re as _re  # noqa: PLC0415
+        match = _re.search(r"\d+", phase_token)
+        if not match:
+            continue
+        phase_number = int(match.group())
+
+        try:
+            rows = await repo.list_sessions_by_phase(
+                project_id, feature_id, phase_number
+            )
+        except Exception:
+            logger.debug(
+                "phase_session_links: query failed for phase %s feature %s",
+                phase_number,
+                feature_id,
+                exc_info=True,
+            )
+            continue
+
+        if not rows:
+            continue
+
+        links: list[SessionLink] = []
+        for row in rows:
+            sid = str(row.get("session_id") or row.get("id") or "")
+            if not sid:
+                continue
+            links.append(
+                SessionLink(
+                    session_id=sid,
+                    agent_name=row.get("agent_id") or None,
+                    start_time=row.get("started_at") or None,
+                    transcript_href=_TRANSCRIPT_ROUTE.format(session_id=sid),
+                )
+            )
+        if links:
+            result[phase_number] = links
+
+    return result
 
 
 def _feature_key(value: str) -> str:
@@ -656,7 +953,7 @@ async def _load_all_features(
     ports: CorePorts, project_id: str
 ) -> tuple[list[dict[str, Any]], list[Feature], dict[str, Feature]]:
     """Return raw rows, Feature objects, and a key-indexed lookup dict."""
-    rows: list[dict[str, Any]] = await ports.storage.features().list_all(project_id, workspace_id="default-local")  # TODO(workspace-routing)
+    rows: list[dict[str, Any]] = await ports.storage.features().list_all(project_id)
     features = [feature_from_row(row) for row in rows]
     index: dict[str, Feature] = {_feature_key(f.id): f for f in features}
     return rows, features, index
@@ -666,12 +963,56 @@ async def _load_all_doc_rows(
     ports: CorePorts, project_id: str
 ) -> list[dict[str, Any]]:
     try:
-        return await ports.storage.documents().list_all(project_id, workspace_id="default-local")  # TODO(workspace-routing)
+        return await ports.storage.documents().list_all(project_id)
     except AttributeError:
         # Fallback: list_paginated when list_all is unavailable.
         return await ports.storage.documents().list_paginated(
-            project_id, 0, 500, {"include_progress": True}, workspace_id="default-local"  # TODO(workspace-routing)
+            project_id, 0, 500, {"include_progress": True}
         )
+
+
+async def _load_feature_doc_rows(
+    ports: CorePorts, project_id: str, feature_id: str
+) -> list[dict[str, Any]]:
+    """Load doc rows scoped to a single feature — bounded query for context endpoints.
+
+    Uses ``list_paginated`` with a ``feature`` filter so only docs whose
+    ``feature_slug_canonical`` / ``feature_slug_hint`` / document-refs match
+    *feature_id* are returned.  Falls back to an empty list on error.
+    """
+    try:
+        return await ports.storage.documents().list_paginated(
+            project_id, 0, 500, {"feature": feature_id}
+        )
+    except Exception:
+        return []
+
+
+def _extract_blocked_by_dep_ids(feature_row: dict[str, Any]) -> list[str]:
+    """Return the feature IDs this feature is ``blocked_by`` (from data_json).
+
+    Reads ``data_json.linkedFeatures`` and filters for entries with
+    ``type == "blocked_by"`` or ``source == "blocked_by"``.  Returns
+    a deduplicated list so callers can do a single ``get_many_by_ids`` call.
+    """
+    payload = _safe_json_dict(feature_row.get("data_json"))
+    linked = payload.get("linkedFeatures") or []
+    if not isinstance(linked, list):
+        return []
+    seen: set[str] = set()
+    dep_ids: list[str] = []
+    for ref in linked:
+        if not isinstance(ref, dict):
+            continue
+        relation = str(ref.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        source = str(ref.get("source") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if relation != "blocked_by" and source != "blocked_by":
+            continue
+        dep_id = _feature_key(str(ref.get("feature") or ""))
+        if dep_id and dep_id not in seen:
+            seen.add(dep_id)
+            dep_ids.append(dep_id)
+    return dep_ids
 
 
 def _project_with_planning(
@@ -823,12 +1164,17 @@ def _build_ctx_per_phase(
 
 
 def _build_token_telemetry(features: list[Feature]) -> PlanningTokenTelemetry:
-    """Aggregate token telemetry from feature records; unavailable if no data found."""
+    """Aggregate token telemetry from feature records; unavailable if no data found.
+
+    P5-002: reads ``feature.tokenUsageByModel`` which must be pre-populated by
+    callers (e.g. ``_build_summary_from_data`` bulk-fetches usage via
+    ``_bulk_fetch_feature_token_usage`` and sets the field before calling here).
+    Source is ``"backend"`` when any feature carries non-zero token counts,
+    ``"unavailable"`` only when the grand total is zero across all features.
+    """
     family_totals: dict[str, int] = {}
     grand_total = 0
     for feature in features:
-        ps = feature.planningStatus
-        # token_usage_by_model may not be available on Feature — guard defensively
         usage = getattr(feature, "tokenUsageByModel", None)
         if usage is None:
             continue
@@ -857,7 +1203,7 @@ def _build_token_telemetry(features: list[Feature]) -> PlanningTokenTelemetry:
     return PlanningTokenTelemetry(
         total_tokens=grand_total,
         by_model_family=entries,
-        source="session_attribution",
+        source="backend",
     )
 
 
@@ -879,7 +1225,7 @@ class PlanningQueryService:
 
     # ── Query 1: Project planning summary ────────────────────────────────────
 
-    @memoized_query("planning_project_summary", param_extractor=_summary_params)
+    @memoized_query("planning_project_summary", param_extractor=_summary_params, ttl=30)
     async def get_project_planning_summary(
         self,
         context: RequestContext,
@@ -922,6 +1268,39 @@ class PlanningQueryService:
             doc_rows = await _load_all_doc_rows(ports, project.id)
         except Exception:
             partial = True
+
+        return await self._build_summary_from_data(
+            project=project,
+            feature_rows=feature_rows,
+            features=features,
+            feature_index=feature_index,
+            doc_rows=doc_rows,
+            partial=partial,
+            active_first=active_first,
+            include_terminal=include_terminal,
+            limit=limit,
+            ports=ports,
+        )
+
+    async def _build_summary_from_data(
+        self,
+        *,
+        project: Any,
+        feature_rows: list[dict[str, Any]],
+        features: list[Any],
+        feature_index: dict[str, Any],
+        doc_rows: list[dict[str, Any]],
+        partial: bool,
+        active_first: bool = True,
+        include_terminal: bool = False,
+        limit: int | None = 100,
+        ports: "CorePorts | None" = None,
+    ) -> "ProjectPlanningSummaryDTO":
+        """Build a summary DTO from pre-loaded feature and doc data.
+
+        Used both by :meth:`get_project_planning_summary` and the bundle
+        fast-path so the shared data load is not repeated.
+        """
 
         # Apply planning projection to every feature.
         projected: list[Feature] = []
@@ -988,6 +1367,8 @@ class PlanningQueryService:
                     phase_count=len(feature.phases),
                     blocked_phase_count=len(blocked_phases),
                     node_count=node_count,
+                    commit_refs=[str(v) for v in (getattr(feature, "commitRefs", None) or []) if str(v).strip()],
+                    pr_refs=[str(v) for v in (getattr(feature, "prRefs", None) or []) if str(v).strip()],
                 )
             )
 
@@ -1111,6 +1492,28 @@ class PlanningQueryService:
             *[row.get("updated_at") or row.get("updatedAt") for row in feature_rows]
         )
 
+        # ── P5-002: bulk-populate tokenUsageByModel on projected features ──────
+        # _build_token_telemetry reads feature.tokenUsageByModel; without this
+        # prefetch the field is always the default empty TokenUsageByModel and
+        # source stays "unavailable".  A single SQL query aggregates usage for
+        # all feature IDs to avoid N+1 evidence fetches.
+        if ports is not None and projected:
+            feature_ids_for_token = [f.id for f in projected if f.id]
+            try:
+                token_by_feature = await _bulk_fetch_feature_token_usage(
+                    ports.storage.db,
+                    project.id,
+                    feature_ids_for_token,
+                )
+                for feat in projected:
+                    if feat.id in token_by_feature:
+                        feat.tokenUsageByModel = token_by_feature[feat.id]
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "planning.summary: bulk token fetch failed for project=%s",
+                    project.id,
+                )
+
         # ── New aggregate fields (P13-001: status buckets + ctx ratio + token telemetry) ──
         with otel.start_span(
             "planning.service.summary.aggregates",
@@ -1119,7 +1522,9 @@ class PlanningQueryService:
                 "feature_count": len(projected),
                 "phase_count": sum(len(f.phases) for f in projected),
                 "token_telemetry_available": any(
-                    getattr(f, "tokenUsageByModel", None) is not None for f in projected
+                    getattr(f, "tokenUsageByModel", None) is not None and
+                    (getattr(f, "tokenUsageByModel").total > 0 if hasattr(getattr(f, "tokenUsageByModel", None), "total") else False)
+                    for f in projected
                 ),
             },
         ):
@@ -1221,6 +1626,35 @@ class PlanningQueryService:
         except Exception:
             doc_rows = []
             partial = True
+
+        return await self._build_graph_from_data(
+            project=project,
+            feature_rows=feature_rows,
+            features=features,
+            feature_index=feature_index,
+            doc_rows=doc_rows,
+            partial=partial,
+            feature_id=feature_id,
+            depth=depth,
+        )
+
+    async def _build_graph_from_data(
+        self,
+        *,
+        project: Any,
+        feature_rows: list[dict[str, Any]],
+        features: list[Any],
+        feature_index: dict[str, Any],
+        doc_rows: list[dict[str, Any]],
+        partial: bool,
+        feature_id: str | None = None,
+        depth: int | None = None,
+    ) -> "ProjectPlanningGraphDTO":
+        """Build a graph DTO from pre-loaded feature and doc data.
+
+        Used both by :meth:`get_project_planning_graph` and the bundle
+        fast-path so the shared data load is not repeated.
+        """
 
         # Scope to a single feature when requested.
         target_features = features
@@ -1329,28 +1763,46 @@ class PlanningQueryService:
         project = scope.project
         partial = False
 
-        try:
-            _rows, _features, feature_index = await _load_all_features(
-                ports, project.id
-            )
-        except Exception:
-            feature_index = {}
-            partial = True
+        # ── P2-012: Bounded queries — load only the target feature and its
+        # direct dependency features; do NOT scan all features+docs. ──────
+        feature_row = await ports.storage.features().get_by_id(feature_id)
 
-        doc_rows: list[dict[str, Any]] = []
-        try:
-            doc_rows = await _load_all_doc_rows(ports, project.id)
-        except Exception:
-            partial = True
+        # Load docs scoped to this feature only (bounded query).
+        current_doc_rows: list[dict[str, Any]] = await _load_feature_doc_rows(
+            ports, project.id, feature_id
+        )
 
-        feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
-        current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature_id)
+
         if feature_row is None and not current_doc_rows:
             return FeaturePlanningContextDTO(
                 status="error",
                 feature_id=feature_id,
                 source_refs=[feature_id],
             )
+
+        # Build a bounded feature_index: only the features this feature depends
+        # on (blocked_by refs) — not the entire project feature list.
+        feature_index: dict[str, Any] = {}
+        dep_doc_rows: list[dict[str, Any]] = []  # doc rows for dependency features
+        if feature_row is not None:
+            dep_ids = _extract_blocked_by_dep_ids(feature_row)
+            if dep_ids:
+                try:
+                    dep_rows_map = await ports.storage.features().get_many_by_ids(dep_ids)
+                    for dep_id, dep_row in dep_rows_map.items():
+                        dep_feat = feature_from_row(dep_row)
+                        feature_index[_feature_key(dep_feat.id)] = dep_feat
+                    # Load doc rows for each dependency feature (bounded per dep).
+                    for dep_id in dep_ids:
+                        dep_doc_rows.extend(
+                            await _load_feature_doc_rows(ports, project.id, dep_id)
+                        )
+                except Exception:
+                    feature_index = {}
+                    partial = True
+
+        # doc_rows for dependency resolution = current feature's docs + deps' docs.
+        doc_rows = current_doc_rows + dep_doc_rows
 
         if feature_row is None:
             feature = _synthetic_feature_from_doc_rows(feature_id, current_doc_rows)
@@ -1409,7 +1861,9 @@ class PlanningQueryService:
         spikes = payload_spikes or derived_spikes
         open_questions = _merge_open_question_lists(
             _payload_open_questions(feature_payload) + _doc_row_open_questions(current_doc_rows),
-            await _open_question_overlays_for_feature(feature_id),
+            await _open_question_overlays_for_feature(
+                feature_id, db=ports.storage.db, project_id=project.id
+            ),
         )
 
         try:
@@ -1427,6 +1881,19 @@ class PlanningQueryService:
             total_tokens = 0
             partial = True
 
+        # Build inverse phase→sessions mapping (T1-004).
+        phase_session_map: dict[int, list[SessionLink]] = {}
+        try:
+            phase_session_map = await _load_phase_session_links(
+                ports.storage.db, project.id, feature_id, feature.phases or []
+            )
+        except Exception:
+            logger.debug(
+                "phase_session_links load failed for feature %s — continuing without",
+                feature_id,
+                exc_info=True,
+            )
+
         # Build per-phase context items.
         phase_items: list[PhaseContextItem] = []
         all_blocked_batch_ids: list[str] = []
@@ -1440,6 +1907,18 @@ class PlanningQueryService:
                 str(getattr(b, "batchId", "") or "") for b in blocked_batches
             ]
             all_blocked_batch_ids.extend(blocked_batch_ids)
+
+            # Resolve phase ordinal for the link lookup.
+            import re as _re  # noqa: PLC0415
+            _phase_token = str(getattr(phase, "phase", "") or "")
+            _phase_match = _re.search(r"\d+", _phase_token)
+            _phase_num = int(_phase_match.group()) if _phase_match else None
+            _phase_links = phase_session_map.get(_phase_num) if _phase_num is not None else None
+            # linked_sessions_by_phase carries this phase's sessions as a
+            # single-key dict so callers have the phase number as the key.
+            _linked_sessions_by_phase: dict[int, list[SessionLink]] | None = (
+                {_phase_num: _phase_links} if (_phase_num is not None and _phase_links) else None
+            )
 
             phase_items.append(
                 PhaseContextItem(
@@ -1456,6 +1935,7 @@ class PlanningQueryService:
                     total_tasks=_safe_int(phase.totalTasks),
                     completed_tasks=_safe_int(phase.completedTasks),
                     deferred_tasks=_safe_int(phase.deferredTasks),
+                    linked_sessions_by_phase=_linked_sessions_by_phase,
                 )
             )
 
@@ -1525,7 +2005,7 @@ class PlanningQueryService:
             if scope is None:
                 raise LookupError(f"Feature '{feature_id}' not found.")
 
-            feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
+            feature_row = await ports.storage.features().get_by_id(feature_id)
             if feature_row is None:
                 raise LookupError(f"Feature '{feature_id}' not found.")
 
@@ -1536,9 +2016,12 @@ class PlanningQueryService:
 
             current_doc_rows = _load_doc_rows_for_feature(doc_rows, feature_id)
             feature_payload = _safe_json_dict(feature_row.get("data_json"))
+            _project_id = scope.project.id
             open_questions = _merge_open_question_lists(
                 _payload_open_questions(feature_payload) + _doc_row_open_questions(current_doc_rows),
-                await _open_question_overlays_for_feature(feature_id),
+                await _open_question_overlays_for_feature(
+                    feature_id, db=ports.storage.db, project_id=_project_id
+                ),
             )
 
             target = next(
@@ -1562,8 +2045,14 @@ class PlanningQueryService:
                     "updated_at": _utc_now_iso(),
                 }
             )
-            await _set_open_question_overlay(feature_id, resolved_item)
-            clear_cache()
+            # Write to DB (authoritative) and update in-memory cache.
+            await _set_open_question_overlay(
+                feature_id, resolved_item, db=ports.storage.db, project_id=_project_id
+            )
+            # Evict only the affected project (P2-006 constraint): both the
+            # @memoized_query cache and the OQ in-memory overlay for this project.
+            await aclear_project_cache(_project_id)
+            oq_overlay_evict_project(_project_id, feature_id)
             if span is not None:
                 span.set_attribute("success", True)
             return OpenQuestionResolutionDTO(feature_id=feature_id, oq=resolved_item)
@@ -1599,7 +2088,7 @@ class PlanningQueryService:
         project = scope.project
         partial = False
 
-        feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
+        feature_row = await ports.storage.features().get_by_id(feature_id)
         if feature_row is None:
             return PhaseOperationsDTO(
                 status="error",
@@ -1812,7 +2301,7 @@ class PlanningQueryService:
         partial = False
 
         # ── 1. Load feature row and planning projection ───────────────────────
-        feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
+        feature_row = await ports.storage.features().get_by_id(feature_id)
         if feature_row is None:
             return PlanningNextRunPreviewDTO(
                 status="error",
@@ -1924,7 +2413,7 @@ class PlanningQueryService:
         unique_session_ids = sorted(set(selection.session_ids))
         if unique_session_ids:
             try:
-                session_map = await ports.storage.sessions().get_many_by_ids(unique_session_ids, workspace_id="default-local")  # TODO(workspace-routing)
+                session_map = await ports.storage.sessions().get_many_by_ids(unique_session_ids, project_id=project.id)
             except Exception:
                 session_map = {}
         else:
@@ -2150,4 +2639,172 @@ class PlanningQueryService:
                 feature_id,
                 [str(phase_number)] if phase_number is not None else [],
             ),
+        )
+
+    # ── Bundle: Planning view fat-read (T5-003) ───────────────────────────────
+
+    async def get_planning_view_bundle(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        project_id_override: str | None = None,
+        include: list[str] | None = None,
+    ) -> PlanningViewBundleDTO:
+        """Return the Planning view fat-read bundle.
+
+        Always includes the project planning summary.  Optional sub-payloads are
+        composed when their key appears in the ``include`` list:
+
+        - ``"graph"`` → ``ProjectPlanningGraphDTO`` (planning node/edge graph)
+        - ``"session_board"`` → ``PlanningAgentSessionBoardDTO`` (Kanban board)
+
+        A single shared ``_load_all_features`` + ``_load_all_doc_rows`` pass is
+        performed once, and the result is forwarded to the summary and graph
+        sub-builders which then run concurrently via ``asyncio.gather``.
+        Failures in optional sub-reads degrade the bundle to
+        ``status="partial"`` rather than raising.
+        """
+        from .planning_sessions import PlanningSessionQueryService  # noqa: PLC0415 — lazy import avoids circular dep
+
+        include_set: set[str] = set(include or [])
+        scope = resolve_project_scope(context, ports, project_id_override)
+        if scope is None:
+            return PlanningViewBundleDTO(
+                status="error",
+                project_id=str(project_id_override or ""),
+                source_refs=[],
+            )
+
+        project = scope.project
+        partial = False
+
+        # ── ONE shared data load pass ─────────────────────────────────────
+        feature_rows: list[dict[str, Any]] = []
+        features: list[Any] = []
+        feature_index: dict[str, Any] = {}
+        doc_rows: list[dict[str, Any]] = []
+        with otel.start_span(
+            "ccdash.planning.view.bundle.load",
+            {"project_id": project.id},
+        ):
+            try:
+                feature_rows, features, feature_index = await _load_all_features(
+                    ports, project.id
+                )
+            except Exception:
+                partial = True
+
+            try:
+                doc_rows = await _load_all_doc_rows(ports, project.id)
+            except Exception:
+                partial = True
+
+        # ── Concurrent sub-build coroutines ───────────────────────────────
+        async def _safe_summary() -> Any:
+            with otel.start_span(
+                "ccdash.planning.view.bundle.summary",
+                {"project_id": project.id},
+            ):
+                return await self._build_summary_from_data(
+                    project=project,
+                    feature_rows=feature_rows,
+                    features=features,
+                    feature_index=feature_index,
+                    doc_rows=doc_rows,
+                    partial=partial,
+                    ports=ports,
+                )
+
+        async def _safe_graph() -> Any:
+            with otel.start_span(
+                "ccdash.planning.view.bundle.graph",
+                {"project_id": project.id},
+            ):
+                return await self._build_graph_from_data(
+                    project=project,
+                    feature_rows=feature_rows,
+                    features=features,
+                    feature_index=feature_index,
+                    doc_rows=doc_rows,
+                    partial=partial,
+                )
+
+        async def _safe_session_board() -> Any:
+            with otel.start_span(
+                "ccdash.planning.view.bundle.session_board",
+                {"project_id": project.id},
+            ):
+                board_service = PlanningSessionQueryService()
+                return await board_service.get_session_board(
+                    context,
+                    ports,
+                    project_id=project.id,
+                )
+
+        # Build the gather task list: summary is always included; graph and
+        # session_board are conditional.  We keep the results aligned with
+        # the task list by using named sentinels.
+        _SKIP = object()
+
+        coros: list[Any] = [_safe_summary()]
+        want_graph = "graph" in include_set
+        want_board = "session_board" in include_set
+        if want_graph:
+            coros.append(_safe_graph())
+        if want_board:
+            coros.append(_safe_session_board())
+
+        results = await asyncio.gather(*coros, return_exceptions=True)
+
+        summary_result = results[0]
+        graph_result = results[1] if want_graph else _SKIP
+        board_result = results[2 if want_graph else 1] if want_board else _SKIP
+
+        # Unwrap results; treat exceptions as partial failures.
+        summary = None
+        if isinstance(summary_result, BaseException):
+            logger.warning(
+                "PlanningQueryService.get_planning_view_bundle: failed to build summary "
+                "for project %s: %s",
+                project.id,
+                summary_result,
+            )
+            partial = True
+        else:
+            summary = summary_result
+
+        graph = None
+        if want_graph:
+            if isinstance(graph_result, BaseException):
+                logger.warning(
+                    "PlanningQueryService.get_planning_view_bundle: failed to build graph "
+                    "for project %s: %s",
+                    project.id,
+                    graph_result,
+                )
+                partial = True
+            else:
+                graph = graph_result
+
+        session_board = None
+        if want_board:
+            if isinstance(board_result, BaseException):
+                logger.warning(
+                    "PlanningQueryService.get_planning_view_bundle: failed to load session_board "
+                    "for project %s: %s",
+                    project.id,
+                    board_result,
+                )
+                partial = True
+            else:
+                session_board = board_result
+
+        return PlanningViewBundleDTO(
+            status="partial" if partial else "ok",
+            project_id=project.id,
+            summary=summary,
+            graph=graph,
+            session_board=session_board,
+            source_refs=collect_source_refs(project.id),
         )

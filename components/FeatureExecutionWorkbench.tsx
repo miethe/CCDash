@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 
 import { useData } from '../contexts/DataContext';
+import { useDocumentsQuery } from '../services/queries/documents';
 import { useAuthSession } from '../contexts/AuthSessionContext';
 import {
   AgentSession,
@@ -58,7 +59,10 @@ import {
   retryExecutionRun,
   trackExecutionEvent,
 } from '../services/execution';
-import { getFeaturePlanningContext, PlanningApiError } from '../services/planning';
+import { PlanningApiError } from '../services/planning';
+import { usePlanningFeatureContextQuery } from '../services/queries/planning';
+import { executionRunsKeys, planningKeys } from '../services/queryKeys';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getLegacyFeatureDetail } from '../services/featureSurface';
 import {
   useFeatureSurface,
@@ -598,7 +602,9 @@ const copyText = async (value: string): Promise<void> => {
 export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { activeProject, documents, getSessionById, runtimeStatus } = useData();
+  const { activeProject, getSessionById, runtimeStatus } = useData();
+  // T2-002: documents from TanStack Query hook
+  const { data: documents = [] } = useDocumentsQuery({ projectId: activeProject?.id });
   const auth = useAuthSession();
 
   // ── Feature surface: bounded list + rollup, replaces DataContext features fan-out ──
@@ -639,10 +645,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [artifactSourceSessions, setArtifactSourceSessions] = useState<AgentSession[]>([]);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
   const [hasFeatureTestRuns, setHasFeatureTestRuns] = useState(false);
-  const [planningContext, setPlanningContext] = useState<FeaturePlanningContext | null>(null);
-  const [planningLoading, setPlanningLoading] = useState(false);
-  const [planningError, setPlanningError] = useState<string>('');
-  const planningReloadTickRef = useRef(0);
+  const queryClient = useQueryClient();
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState('');
@@ -821,43 +824,50 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     };
   }, [selectedRunId]);
 
+  // T4-006-4: visibility-aware refetchInterval replaces manual setInterval polling.
+  // The query is only enabled when a run is live (queued/running) and the live-
+  // update channel is not available (disabled or in backoff/closed state).
+  // refetchIntervalInBackground defaults to false — polling pauses when the tab
+  // is hidden, which is the desired visibility-aware behaviour.
+  const isLivePollActive = Boolean(
+    selectedRun
+    && (selectedRun.status === 'queued' || selectedRun.status === 'running')
+    && (!executionLiveEnabled || ['backoff', 'closed'].includes(selectedRunLiveStatus)),
+  );
+  const livePollQuery = useQuery({
+    queryKey: executionRunsKeys.livePoll(
+      selectedRun?.id ?? '',
+      selectedRunNextSequence,
+    ),
+    queryFn: async () => {
+      const runId = selectedRun!.id;
+      const [latestRun, page] = await Promise.all([
+        getExecutionRun(runId),
+        listExecutionRunEvents(runId, {
+          afterSequence: selectedRunNextSequenceRef.current,
+          limit: 120,
+        }),
+      ]);
+      return { latestRun, page };
+    },
+    enabled: isLivePollActive,
+    refetchInterval: 900,
+    // refetchIntervalInBackground: false (default) — pauses when tab is hidden
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+  // Apply live-poll results to local state whenever a fresh fetch completes.
   useEffect(() => {
-    if (!selectedRun || (selectedRun.status !== 'queued' && selectedRun.status !== 'running')) return;
-    if (executionLiveEnabled && !['backoff', 'closed'].includes(selectedRunLiveStatus)) return;
-
-    let cancelled = false;
-    const runId = selectedRun.id;
-    const poll = async () => {
-      try {
-        const [latestRun, page] = await Promise.all([
-          getExecutionRun(runId),
-          listExecutionRunEvents(runId, {
-            afterSequence: selectedRunNextSequenceRef.current,
-            limit: 120,
-          }),
-        ]);
-        if (cancelled) return;
-        upsertExecutionRun(latestRun);
-        if (page.items.length > 0) {
-          setSelectedRunEvents(prev => mergeExecutionRunEvents(prev, page.items));
-          setSelectedRunNextSequence(page.nextSequence);
-          selectedRunNextSequenceRef.current = page.nextSequence;
-        }
-      } catch {
-        // Polling failures should not break the page.
-      }
-    };
-
-    const timer = window.setInterval(() => {
-      void poll();
-    }, 900);
-    void poll();
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [executionLiveEnabled, selectedRun, selectedRunLiveStatus, upsertExecutionRun]);
+    if (!livePollQuery.data) return;
+    const { latestRun, page } = livePollQuery.data;
+    upsertExecutionRun(latestRun);
+    if (page.items.length > 0) {
+      setSelectedRunEvents(prev => mergeExecutionRunEvents(prev, page.items));
+      setSelectedRunNextSequence(page.nextSequence);
+      selectedRunNextSequenceRef.current = page.nextSequence;
+    }
+  }, [livePollQuery.data, upsertExecutionRun]);
 
   const recoverSelectedRunLiveState = useCallback(async (runId: string) => {
     const [latestRun, page] = await Promise.all([
@@ -1148,53 +1158,31 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     };
   }, [activeProject?.id, selectedFeatureId]);
 
-  // Planning context reload callback (used by live invalidation and error retry)
-  const reloadPlanningContext = useCallback(() => {
-    planningReloadTickRef.current += 1;
-  }, []);
+  // TQ-backed planning context query (T3-002).
+  const planningContextQuery = usePlanningFeatureContextQuery({
+    projectId: activeProject?.id,
+    featureId: selectedFeatureId || null,
+    enabled: !!activeProject?.id && !!selectedFeatureId,
+  });
+  // 404 → treat as "no planning context yet" (no error shown), other errors → show error.
+  const planningContext = planningContextQuery.data
+    ?? (planningContextQuery.error instanceof PlanningApiError && planningContextQuery.error.status === 404 ? null : planningContextQuery.data ?? null);
+  const planningLoading = planningContextQuery.isPending && !!selectedFeatureId;
+  const planningError = planningContextQuery.isError && !(planningContextQuery.error instanceof PlanningApiError && planningContextQuery.error.status === 404)
+    ? (planningContextQuery.error instanceof Error ? planningContextQuery.error.message : 'Failed to load planning context')
+    : '';
 
-  useEffect(() => {
-    if (!selectedFeatureId) {
-      setPlanningContext(null);
-      setPlanningError('');
-      return;
-    }
-
-    let cancelled = false;
-    setPlanningLoading(true);
-    setPlanningError('');
-
-    void getFeaturePlanningContext(selectedFeatureId, { projectId: activeProject?.id })
-      .then(payload => {
-        if (cancelled) return;
-        setPlanningContext(payload);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        if (err instanceof PlanningApiError && err.status === 404) {
-          // Feature has no planning context yet — treat as empty, not an error
-          setPlanningContext(null);
-        } else {
-          setPlanningContext(null);
-          setPlanningError(err instanceof Error ? err.message : 'Failed to load planning context');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setPlanningLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // planningReloadTickRef.current intentionally triggers re-fetch on manual reload
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFeatureId, activeProject?.id, planningReloadTickRef.current]);
-
-  // Live invalidation: re-fetch planning context whenever derived state changes on the backend
+  // Live invalidation: re-fetch planning context whenever derived state changes on the backend.
   useLiveInvalidation({
     topics: selectedFeatureId ? [featurePlanningTopic(selectedFeatureId)] : [],
     enabled: Boolean(selectedFeatureId),
-    onInvalidate: reloadPlanningContext,
+    onInvalidate: () => {
+      if (activeProject?.id && selectedFeatureId) {
+        void queryClient.invalidateQueries({
+          queryKey: planningKeys.featureContext(activeProject.id, selectedFeatureId),
+        });
+      }
+    },
   });
 
   useEffect(() => {
@@ -2434,7 +2422,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       <ShieldAlert size={14} className="shrink-0 text-amber-400" />
                       <span className="flex-1 min-w-0 truncate">{planningError}</span>
                       <button
-                        onClick={reloadPlanningContext}
+                        onClick={() => void planningContextQuery.refetch()}
                         className="shrink-0 flex items-center gap-1 text-xs text-amber-300 hover:text-amber-100"
                       >
                         <RefreshCw size={11} />

@@ -32,6 +32,7 @@ from backend.application.live_updates.runtime_state import set_live_event_publis
 from backend.application.ports import CorePorts
 from backend.application.ports.core import ProjectBinding
 from backend import config
+from backend.application.services.agent_queries.cache import init_postgres_cache_backend
 from backend.db import connection, migrations, sync_engine
 from backend.db.migration_governance import validate_migration_governance_contract
 from backend.db.factory import get_telemetry_queue_repository
@@ -45,6 +46,7 @@ from backend.runtime.storage_contract import (
     get_storage_capability_contract,
     validate_runtime_storage_pairing,
 )
+from backend.project_manager import db_project_manager
 from backend.runtime_ports import build_core_ports, build_runtime_metadata, build_workspace_registry
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
 
@@ -68,6 +70,10 @@ class RuntimeContainer:
         self.telemetry_exporter: TelemetryExportCoordinator | None = None
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
         self.project_binding: ProjectBinding | None = None
+        # T3-001: fan-out bindings for worker-watch profile (one per registered project).
+        # Non-empty only when WORKER_WATCH_PROJECT_ID is empty/unset and profile == worker-watch.
+        # Empty list → fall back to legacy single-binding path via self.project_binding.
+        self.watcher_fan_out_bindings: list[ProjectBinding] = []
         self.migration_status = "not_started"
         self._remote_ingest_service: Any | None = None
         # Per-request project binding LRU cache (ADR-010).
@@ -86,7 +92,7 @@ class RuntimeContainer:
         validate_migration_governance_contract()
         self.auth_config = config.resolve_auth_provider_config(self.profile.name)
         config.validate_runtime_environment_contract(self.profile.name, self.storage_profile)
-        self.project_binding = self._resolve_startup_project_binding()
+        self.project_binding, self.watcher_fan_out_bindings = self._resolve_startup_project_binding()
         startup_metadata = self._runtime_metadata()
         logger.info(
             "CCDash backend starting up "
@@ -118,6 +124,15 @@ class RuntimeContainer:
         self.db = await connection.get_connection()
         await migrations.run_migrations(self.db)
         self.migration_status = "applied"
+        init_postgres_cache_backend(self.db)
+        await self._warn_enterprise_ingestion_misconfiguration()
+        # T1-003: bootstrap the project registry before the SyncEngine is
+        # created and before job_adapter.start() schedules the startup-sync
+        # task.  This guarantees the registry flush completes (or is recorded
+        # as failed) while the DB is quiescent — eliminating the race where
+        # _flush_snapshot_to_db() fires concurrently with sync's heavy
+        # _replace_* backfill commits (finding F-01).
+        self._bootstrap_registry()
         self.ports = self._build_core_ports()
         app.state.core_ports = self.ports
         self.live_event_broker = InMemoryLiveEventBroker(replay_buffer_size=config.CCDASH_LIVE_REPLAY_BUFFER_SIZE)
@@ -147,14 +162,19 @@ class RuntimeContainer:
         app.state.telemetry_exporter = self.telemetry_exporter
         self._record_telemetry_export_disabled_state()
 
+        # P3-009: TelemetryExporterJob and ArtifactRollupExportJob run under
+        # both 'worker' and 'worker-watch' profiles so that telemetry export
+        # works regardless of which worker variant is deployed in a cluster.
+        _export_profiles = {"worker", "worker-watch"}
         self.job_adapter = RuntimeJobAdapter(
             profile=self.profile,
             ports=self.require_ports(),
             sync_engine=self.sync,
             project_binding=self.project_binding,
+            watcher_fan_out_bindings=self.watcher_fan_out_bindings,
             telemetry_exporter_job=(
                 TelemetryExporterJob(self.telemetry_exporter)
-                if self.profile.name == "worker" and self.telemetry_exporter is not None
+                if self.profile.name in _export_profiles and self.telemetry_exporter is not None
                 else None
             ),
             artifact_rollup_export_job=(
@@ -162,7 +182,7 @@ class RuntimeContainer:
                     self.telemetry_exporter,
                     project=self.project_binding.project if self.project_binding is not None else None,
                 )
-                if self.profile.name == "worker" and self.telemetry_exporter is not None
+                if self.profile.name in _export_profiles and self.telemetry_exporter is not None
                 else None
             ),
         )
@@ -321,6 +341,51 @@ class RuntimeContainer:
             auth_config=self._resolved_auth_config(),
         )
 
+    def _bootstrap_registry(self) -> None:
+        """Eagerly bootstrap the DB-backed project registry before the sync
+        engine starts.
+
+        T1-003: ensures ``_flush_snapshot_to_db()`` completes (or fails loudly)
+        while the DB is quiescent — before ``_build_sync_engine()`` is called
+        and before ``job_adapter.start()`` schedules the startup-sync background
+        task whose ``_replace_*`` writes compete for the SQLite write lock
+        (finding F-01).
+
+        Failure handling per ADR-007: the exception is logged as ERROR and
+        *not* re-raised so the process can continue with the in-memory snapshot
+        (which is already populated by ``_load_snapshot``).  ``_snapshot_loaded``
+        remains ``False`` on flush failure, so the next registry access will
+        retry the flush automatically.
+        """
+        logger.info(
+            "RuntimeContainer._bootstrap_registry: bootstrapping project registry "
+            "(profile=%s) before SyncEngine startup",
+            self.profile.name,
+        )
+        try:
+            # list_projects() triggers _ensure_snapshot() → _load_snapshot()
+            # which calls _flush_snapshot_to_db() when the table is empty.
+            # On subsequent cold-starts where the table is already populated,
+            # this is a lightweight read-only snapshot load.
+            projects = db_project_manager.list_projects()
+            logger.info(
+                "RuntimeContainer._bootstrap_registry: registry bootstrap complete "
+                "(projects=%d) — sync engine may now start",
+                len(projects),
+            )
+        except Exception as exc:
+            # ADR-007: log loudly but do not crash startup.  The in-memory
+            # snapshot was populated by _load_snapshot (JSON fallback path or
+            # partial DB read).  _snapshot_loaded is False so the next access
+            # retries the flush.
+            logger.error(
+                "RuntimeContainer._bootstrap_registry: registry bootstrap failed "
+                "(profile=%s); sync engine will start but registry flush will be "
+                "retried on next access: %s",
+                self.profile.name,
+                exc,
+            )
+
     def _build_sync_engine(self) -> Any | None:
         if not self._sync_engine_enabled():
             return None
@@ -360,6 +425,46 @@ class RuntimeContainer:
         if self.storage_profile.profile == "local":
             return True
         return bool(self.storage_profile.filesystem_source_of_truth)
+
+    async def _warn_enterprise_ingestion_misconfiguration(self) -> None:
+        """T0-014: Emit a loud WARNING when enterprise + ingestion-off + zero sessions.
+
+        Runs after migrations so the sessions table is guaranteed to exist.
+        This is a log-only advisory; it does not raise or abort startup.
+        """
+        if self.storage_profile.profile != "enterprise":
+            return
+        if bool(self.storage_profile.filesystem_source_of_truth):
+            return
+        if self.db is None:
+            return
+        try:
+            import aiosqlite
+            if isinstance(self.db, aiosqlite.Connection):
+                async with self.db.execute("SELECT COUNT(*) FROM sessions") as cur:
+                    row = await cur.fetchone()
+                    session_count = int(row[0]) if row else 0
+            else:
+                # asyncpg Pool or Connection
+                row = await self.db.fetchrow("SELECT COUNT(*) FROM sessions")
+                session_count = int(row[0]) if row else 0
+        except Exception:
+            # Table may not exist on a brand-new DB; treat as zero.
+            session_count = 0
+
+        if session_count == 0:
+            logger.warning(
+                "CCDash enterprise profile is running with filesystem ingestion DISABLED "
+                "and the sessions table is EMPTY. The dashboard will show no data. "
+                "To fix: set CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED=true "
+                "and ensure the worker-watch service is running "
+                "(CCDASH_RUNTIME_PROFILE=worker-watch with CCDASH_STARTUP_SYNC_ENABLED=true). "
+                "See docs/guides for the enterprise deployment checklist. "
+                "(profile=%s, filesystem_source_of_truth=%s, session_count=%d)",
+                self.profile.name,
+                bool(self.storage_profile.filesystem_source_of_truth),
+                session_count,
+            )
 
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()
@@ -630,9 +735,37 @@ class RuntimeContainer:
         startup_sync_required = "startup_sync" in required_checks
         sync_provisioned = bool(status.get("syncProvisioned", False))
         watcher_check_status = "not_applicable"
+        watch_path_count = int(watcher_detail.get("watchPathCount", 0) or 0)
         if self.profile.capabilities.watch:
-            if watcher_state == "running":
+            # T3-003: Aggregate readyz rule incorporating per-project health (OQ-5).
+            # When projects map is populated (fan-out mode), derive aggregate from per-project
+            # states; otherwise fall back to the existing scalar watcher_state logic.
+            per_project_states = {
+                str(pid): str(entry.get("state", "unknown"))
+                for pid, entry in (watcher_detail.get("projects") or {}).items()
+                if isinstance(entry, dict)
+            }
+            if per_project_states:
+                # pass: all running; warn: any degraded/stopped but not required;
+                # fail: any not-running and profile requires watcher.
+                all_running = all(s == "running" for s in per_project_states.values())
+                any_not_running = any(s != "running" for s in per_project_states.values())
+                if all_running:
+                    watcher_check_status = "pass"
+                elif any_not_running and watcher_runtime_required:
+                    watcher_check_status = "fail"
+                else:
+                    watcher_check_status = "warn"
+            elif watcher_state == "running":
                 watcher_check_status = "pass"
+            elif watch_path_count == 0 and watcher_runtime_required:
+                # T0-003: Watch is configured and REQUIRED but zero paths resolved → hard fail.
+                # Only applies to required-watcher profiles (worker-watch). For optional-watcher
+                # profiles (local), zero paths is a degraded warn, not a hard fail — the watcher
+                # is expected but not configured, not a blocking condition.
+                # Synthesise the configured_no_paths state so the summary line fires.
+                watcher_state = "configured_no_paths"
+                watcher_check_status = "fail"
             elif watcher_runtime_required:
                 watcher_check_status = "fail"
             else:
@@ -737,15 +870,26 @@ class RuntimeContainer:
             self._probe_check(
                 code="worker_binding",
                 category="worker",
+                # T3-fix: fan-out mode (watcher_fan_out_bindings non-empty) is a fully valid
+                # binding resolution — primary project_binding is intentionally None in that
+                # mode because background scheduler jobs (sync, analytics) are not launched on
+                # the worker-watch profile.  Reporting "fail" for a healthy fan-out deployment
+                # was a production-blocking false-positive (Docker healthcheck → "unhealthy").
                 status=(
                     "not_applicable"
                     if not worker_binding_required
-                    else "pass" if self.project_binding is not None else "fail"
+                    else "pass"
+                    if self.project_binding is not None or bool(self.watcher_fan_out_bindings)
+                    else "fail"
                 ),
                 required="worker_binding" in required_checks,
                 summary=(
                     "Worker project binding is not required for this runtime."
                     if not worker_binding_required
+                    else "Worker project binding is resolved (fan-out mode: {} project(s)).".format(
+                        len(self.watcher_fan_out_bindings)
+                    )
+                    if self.watcher_fan_out_bindings
                     else "Worker project binding is resolved."
                     if self.project_binding is not None
                     else "Worker project binding is unresolved."
@@ -753,6 +897,12 @@ class RuntimeContainer:
                 detail=(
                     "Only worker runtimes require an explicit project binding."
                     if not worker_binding_required
+                    else (
+                        f"fan_out_mode=true fan_out_project_count={len(self.watcher_fan_out_bindings)} "
+                        f"configured={worker_binding_config.configured} "
+                        f"requested_project_id={worker_binding_config.project_id or 'n/a'}"
+                    )
+                    if self.watcher_fan_out_bindings
                     else (
                         f"configured={worker_binding_config.configured} "
                         f"requested_project_id={worker_binding_config.project_id or 'n/a'}"
@@ -765,6 +915,12 @@ class RuntimeContainer:
                     "resolvedProjectId": (
                         self.project_binding.project.id if self.project_binding is not None else None
                     ),
+                    # T3-fix: expose fan-out state so operators can see why primary binding is None.
+                    "fanOutMode": bool(self.watcher_fan_out_bindings),
+                    "fanOutProjectCount": len(self.watcher_fan_out_bindings),
+                    "fanOutProjectIds": [
+                        b.project.id for b in self.watcher_fan_out_bindings
+                    ],
                 },
             ),
             self._probe_check(
@@ -1026,6 +1182,22 @@ class RuntimeContainer:
                 "lastSyncError": None,
             }
 
+        # T3-003: per-project health breakdown (OQ-5 contract).
+        # Consumer resilience: missing `projects` → {}; per-entry missing fields
+        # → state='unknown', watchPathCount=0, lastChangeSyncAt=null.
+        raw_projects = detail.get("projects")
+        if not isinstance(raw_projects, dict):
+            raw_projects = {}
+        projects: dict[str, Any] = {}
+        for pid, entry in raw_projects.items():
+            if not isinstance(entry, dict):
+                entry = {}
+            projects[str(pid)] = {
+                "state": str(entry.get("state", "unknown")),
+                "watchPathCount": int(entry.get("watchPathCount", 0) or 0),
+                "lastChangeSyncAt": entry.get("lastChangeSyncAt"),
+            }
+
         return {
             "state": str(detail.get("state", "unknown")),
             "expected": bool(detail.get("expected", self.profile.capabilities.watch)),
@@ -1038,6 +1210,11 @@ class RuntimeContainer:
             "lastChangeCount": detail.get("lastChangeCount"),
             "lastSyncStatus": detail.get("lastSyncStatus"),
             "lastSyncError": detail.get("lastSyncError"),
+            # T3-003: per-project breakdown (OQ-5); missing → {} on older server versions
+            "projects": projects,
+            # T3-004: watcher reconcile loop last tick state
+            "lastReconcileAt": detail.get("lastReconcileAt"),
+            "lastReconcileError": detail.get("lastReconcileError"),
         }
 
     def _probe_check(
@@ -1228,12 +1405,54 @@ class RuntimeContainer:
             "warningCodes": [],
         }
 
-    def _resolve_startup_project_binding(self) -> ProjectBinding | None:
+    def _resolve_startup_project_binding(
+        self,
+    ) -> tuple[ProjectBinding | None, list[ProjectBinding]]:
+        """Resolve project binding(s) at startup.
+
+        Returns ``(primary_binding, fan_out_bindings)`` where:
+        - ``primary_binding`` is the single ``ProjectBinding`` used by all non-watch
+          background jobs (sync, telemetry, analytics).  None for profiles that do
+          not require a binding (api, local).
+        - ``fan_out_bindings`` is a list of ``ProjectBinding`` objects representing
+          every project the watcher should watch in fan-out mode.  Non-empty only
+          when the profile is ``worker-watch`` AND ``WORKER_WATCH_PROJECT_ID`` is
+          empty/unset (registry-driven).  When ``WORKER_WATCH_PROJECT_ID`` is
+          non-empty (env-pin), ``fan_out_bindings`` is empty and the single-project
+          scope is expressed via ``primary_binding`` (backward-compatible).
+
+        T3-001 / ADR-006: registry is the authoritative source for project
+        selection.  An empty registry is a valid transient state — log a warning
+        and return (None, []) rather than raising RuntimeError.
+        """
+        # Non-worker profiles do not need a binding.
         if self.profile.name not in {"worker", "worker-watch"}:
-            return None
+            return None, []
 
         binding_config = config.resolve_worker_binding_config()
-        if not binding_config.configured:
+
+        # T3-001: for worker-watch, check env-pin override first.
+        # Non-empty WORKER_WATCH_PROJECT_ID → single-project scope (backward-compat).
+        # Empty / unset → registry-driven fan-out across all registered projects.
+        effective_project_id = binding_config.project_id
+        if self.profile.name == "worker-watch":
+            watch_project_id = getattr(config, "WORKER_WATCH_PROJECT_ID", "")
+            if watch_project_id:
+                # Env-pin present: override effective_project_id, use single-project path.
+                effective_project_id = watch_project_id
+                logger.debug(
+                    "worker-watch profile: using CCDASH_WORKER_WATCH_PROJECT_ID=%s "
+                    "(overrides CCDASH_WORKER_PROJECT_ID=%s); single-project watcher scope",
+                    effective_project_id,
+                    binding_config.project_id,
+                )
+            else:
+                # Empty/unset → fan-out: delegate to registry, do NOT raise RuntimeError
+                # even if effective_project_id is also empty.
+                return self._resolve_watcher_fan_out_bindings()
+
+        # Single-project path (worker profile, or worker-watch with env-pin).
+        if not effective_project_id:
             raise RuntimeError(
                 f"Runtime profile '{self.profile.name}' requires a non-empty "
                 f"{config.CCDASH_WORKER_PROJECT_ID_ENV} before starting background jobs."
@@ -1243,14 +1462,30 @@ class RuntimeContainer:
             runtime_profile=self.profile,
             storage_profile=self.storage_profile,
         )
+
+        # P3-016: emit a warning when multiple projects exist but only one is bound,
+        # so operators know background jobs are scoped to the active project.
+        all_projects = workspace_registry.list_projects()
+        if len(all_projects) > 1 and not binding_config.project_id:
+            logger.warning(
+                "CCDash worker (profile=%s) found %d projects in the registry but no "
+                "explicit CCDASH_WORKER_PROJECT_ID is set. "
+                "Background jobs (sync, telemetry export, cache warming) will be bound "
+                "to the active project only. "
+                "Set CCDASH_WORKER_PROJECT_ID to silence this warning and make the "
+                "binding deterministic across restarts.",
+                self.profile.name,
+                len(all_projects),
+            )
+
         binding = workspace_registry.resolve_project_binding(
-            binding_config.project_id,
+            effective_project_id,
             allow_active_fallback=False,
         )
         if binding is None:
             raise RuntimeError(
                 f"Runtime profile '{self.profile.name}' could not resolve project "
-                f"'{binding_config.project_id}' from the workspace registry."
+                f"'{effective_project_id}' from the workspace registry."
             )
 
         logger.info(
@@ -1259,4 +1494,80 @@ class RuntimeContainer:
             binding.source,
             binding.paths.root.path,
         )
-        return binding
+        return binding, []
+
+    def _resolve_watcher_fan_out_bindings(
+        self,
+    ) -> tuple[ProjectBinding | None, list[ProjectBinding]]:
+        """Resolve all registered projects as watcher targets (fan-out mode).
+
+        Called when ``worker-watch`` profile has no ``WORKER_WATCH_PROJECT_ID`` env-pin.
+        Returns ``(None, [binding, ...])`` — the primary binding slot is left None
+        because background scheduler jobs (sync, analytics) are not launched in
+        the ``worker-watch`` profile; only the watcher tasks use these bindings.
+
+        ADR-006: ``workspace_registry.list_projects()`` is the authoritative source;
+        no ``is_active`` filter is applied (is_active is a UI signal, not an ingest gate).
+
+        Empty registry is a valid transient state (operator just installed CCDash but
+        has not yet run ``ccdash project add``).  Returns ``(None, [])`` with a WARNING
+        log — does NOT raise RuntimeError.
+        """
+        workspace_registry = build_workspace_registry(
+            runtime_profile=self.profile,
+            storage_profile=self.storage_profile,
+        )
+        all_projects = workspace_registry.list_projects()
+        if not all_projects:
+            logger.warning(
+                "worker-watch fan-out: DB registry returned 0 projects — watcher will "
+                "wait for projects to be registered (profile=%s). "
+                "Add a project with `ccdash project add` or set "
+                "CCDASH_WORKER_WATCH_PROJECT_ID to target a specific project.",
+                self.profile.name,
+            )
+            return None, []
+
+        bindings: list[ProjectBinding] = []
+        for project in all_projects:
+            project_id = str(getattr(project, "id", "") or "")
+            if not project_id:
+                continue
+            binding = workspace_registry.resolve_project_binding(
+                project_id,
+                allow_active_fallback=False,
+            )
+            if binding is None:
+                logger.warning(
+                    "worker-watch fan-out: could not resolve binding for project_id=%s — skipping",
+                    project_id,
+                )
+                continue
+            bindings.append(binding)
+            logger.info(
+                "worker-watch fan-out: resolved project binding "
+                "(project_id=%s, source=%s, project_root=%s)",
+                binding.project.id,
+                binding.source,
+                binding.paths.root.path,
+            )
+
+        if not bindings:
+            logger.warning(
+                "worker-watch fan-out: registry has %d projects but none could be resolved "
+                "to a valid binding — watcher will not start for any project (profile=%s).",
+                len(all_projects),
+                self.profile.name,
+            )
+            return None, []
+
+        logger.info(
+            "worker-watch fan-out: resolved %d project binding(s) from DB registry "
+            "(profile=%s, CCDASH_WATCHER_SYNC_CONCURRENCY=%d, "
+            "CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS=%d)",
+            len(bindings),
+            self.profile.name,
+            getattr(config, "WATCHER_SYNC_CONCURRENCY", 20),
+            getattr(config, "WATCHER_RECONCILE_INTERVAL_SECONDS", 60),
+        )
+        return None, bindings

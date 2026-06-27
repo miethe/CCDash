@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useData } from '@/contexts/DataContext';
 import { Btn, BtnPrimary, Chip, Dot } from './primitives';
+import { CommandPalette } from './CommandPalette';
+import { NewSpecModal } from './NewSpecModal';
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
@@ -100,8 +102,12 @@ export interface PlanningTopBarProps {
 }
 
 export function PlanningTopBar({ className }: PlanningTopBarProps) {
-  const { sessions } = useData();
+  const { sessions, activeProject } = useData();
   const { toasts, push: pushToast } = useTopBarToast();
+
+  // Modal visibility state
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [newSpecOpen, setNewSpecOpen] = useState(false);
 
   // Derive live-agent counts from sessions already in context.
   // "active" sessions map to the live-agent concept; thinkingLevel signals
@@ -112,10 +118,10 @@ export function PlanningTopBar({ className }: PlanningTopBarProps) {
     return { running: active.length, thinking: thinkingSet.length };
   }, [sessions]);
 
-  // ⌘K / Ctrl+K global keyboard handler
+  // ⌘K / Ctrl+K global keyboard handler — opens command palette
   const handleSearch = useCallback(() => {
-    pushToast('Search coming in v2 — press ⌘K to trigger when integrated.');
-  }, [pushToast]);
+    setPaletteOpen(true);
+  }, []);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -129,8 +135,15 @@ export function PlanningTopBar({ className }: PlanningTopBarProps) {
   }, [handleSearch]);
 
   const handleNewSpec = useCallback(() => {
-    pushToast('New spec — coming in v2.');
-  }, [pushToast]);
+    setNewSpecOpen(true);
+  }, []);
+
+  const handleSpecSuccess = useCallback(
+    (message: string) => {
+      pushToast(message);
+    },
+    [pushToast],
+  );
 
   return (
     <>
@@ -171,6 +184,20 @@ export function PlanningTopBar({ className }: PlanningTopBarProps) {
           </BtnPrimary>
         </div>
       </header>
+
+      {/* P5-009: ⌘K command palette */}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+      />
+
+      {/* P5-010: New spec modal */}
+      <NewSpecModal
+        open={newSpecOpen}
+        onClose={() => setNewSpecOpen(false)}
+        onSuccess={handleSpecSuccess}
+        projectId={activeProject?.id ?? ''}
+      />
 
       {/* Top-bar toasts — rendered here so they stay scoped to the planning shell */}
       {toasts.length > 0 && (

@@ -26,6 +26,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { FeatureCardDTO, FeatureRollupDTO } from '../../services/featureSurface';
 import type { Feature, PlanDocument } from '../../types';
@@ -163,19 +164,8 @@ vi.mock('../../services/useFeatureSurface', () => ({
   },
 }));
 
-vi.mock('../../services/featureSurfaceCache', () => ({
-  defaultFeatureSurfaceCache: {
-    get: vi.fn(),
-    set: vi.fn(),
-    delete: vi.fn(),
-    clear: vi.fn(),
-  },
-  invalidateFeatureSurface: vi.fn(),
-}));
-
-vi.mock('../../services/featureCacheBus', () => ({
-  featureCacheBus: { on: vi.fn(), off: vi.fn(), emit: vi.fn() },
-}));
+// T3-005: featureSurfaceCache and featureCacheBus deleted; TQ is the cache layer.
+// renderWorkbench wraps with QueryClientProvider so useQueryClient works.
 
 vi.mock('../../contexts/DataContext', () => ({
   useData: () => ({
@@ -276,6 +266,12 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+// T2-002: stub documents query so FeatureExecutionWorkbench renders without a QueryClientProvider
+vi.mock('../../services/queries/documents', () => ({
+  useDocumentsQuery: () => ({ data: [], isLoading: false, error: null }),
+  DOCUMENTS_PAGE_SIZE: 500,
+}));
+
 // ── Component under test ──────────────────────────────────────────────────────
 
 import { FeatureExecutionWorkbench } from '../FeatureExecutionWorkbench';
@@ -284,10 +280,13 @@ import * as UseFeatureSurfaceModule from '../../services/useFeatureSurface';
 // ── Render helper ─────────────────────────────────────────────────────────────
 
 function renderWorkbench() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(
-    <MemoryRouter>
-      <FeatureExecutionWorkbench />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <FeatureExecutionWorkbench />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

@@ -28,6 +28,7 @@ from backend import config, observability
 from backend.observability import otel
 from backend.models import Project
 from backend.parsers.sessions import parse_session_file
+from backend.parsers.workflow_sidecar import scan_workflow_sidecars
 from backend.ingestion.jsonl_adapter import jsonl_session_to_envelope
 from backend.ingestion.session_ingest_service import SessionIngestService
 from backend.parsers.documents import parse_document_file
@@ -57,6 +58,7 @@ from backend.services.source_identity import (
     SourceIdentityPolicy,
     resolve_source_identity,
     source_identity_policy_from_env,
+    source_identity_policy_from_resolved_paths,
 )
 from backend.document_linking import (
     alias_tokens_from_path,
@@ -81,6 +83,7 @@ from backend.application.live_updates.domain_events import (
     publish_session_transcript_append,
     publish_session_snapshot,
 )
+from backend.application.services.agent_queries import aclear_project_cache
 from backend.link_audit import analyze_suspect_links, suspects_as_dicts
 from backend.session_mappings import (
     load_session_mappings,
@@ -116,6 +119,62 @@ _COMMIT_HASH_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 _TASK_ID_TOKEN_RE = re.compile(r"\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b")
 _PHASE_TOKEN_RE = re.compile(r"\bphase[\s:_-]*(\d+)\b", re.IGNORECASE)
 _WORKING_TREE_COMMIT_HASH = "__working_tree__"
+
+
+# ── T0-002: path-alias auto-derivation ─────────────────────────────────────
+
+class _SimpleResolvedPath:
+    """Minimal duck-typed stand-in for ResolvedProjectPath."""
+    def __init__(self, field: str, path: Path) -> None:
+        self.field = field
+        self.path = path
+
+
+class _SimpleResolvedPaths:
+    """Minimal duck-typed stand-in for ResolvedProjectPaths."""
+    def __init__(self, project_id: str, root: Path, sessions: Path, plan_docs: Path, progress: Path) -> None:
+        self.project_id = project_id
+        self.root = _SimpleResolvedPath("root", root)
+        self.sessions = _SimpleResolvedPath("sessions", sessions)
+        self.plan_docs = _SimpleResolvedPath("plan_docs", plan_docs)
+        self.progress = _SimpleResolvedPath("progress", progress)
+
+
+def _build_merged_source_identity_policy(
+    *,
+    project_id: str,
+    project_path: str,
+    sessions_dir: Path,
+    docs_dir: Path,
+    progress_dir: Path,
+    env_policy: "SourceIdentityPolicy",
+) -> "SourceIdentityPolicy":
+    """Derive path aliases from resolved dirs and merge with env-based policy.
+
+    Env aliases are prepended so explicit env overrides match first.  The
+    derived path aliases serve as the auto-inferred fallback for operators
+    who have not set the six CCDASH_*_HOST/_CONTAINER pairs.
+    """
+    rp = _SimpleResolvedPaths(
+        project_id=project_id,
+        root=Path(project_path),
+        sessions=sessions_dir,
+        plan_docs=docs_dir,
+        progress=progress_dir,
+    )
+    derived_policy = source_identity_policy_from_resolved_paths(
+        [rp],
+        project_path=project_path,
+    )
+    # Merge: env aliases first (higher precedence), then derived aliases.
+    merged_aliases = tuple(env_policy.aliases) + tuple(
+        a for a in derived_policy.aliases
+        if a not in env_policy.aliases
+    )
+    return SourceIdentityPolicy(aliases=merged_aliases)
+
+
+# ───────────────────────────────────────────────────────────────────────────
 
 
 def _file_hash(path: Path) -> str:
@@ -539,6 +598,79 @@ def _first_phase(session_payload: dict[str, Any]) -> str:
             if phase:
                 return phase
     return _first_non_empty(session_payload, "phase")
+
+
+# ── Phase 5 (T5-003): workflow.json sidecar → session context-window join ──────
+# Behaviorally ADDITIVE and LOCALIZED: a discrete step that attributes a
+# context-window label (e.g. "1M") to a session by joining a nearby
+# ``workflow.json`` sidecar on runId/taskId within a ±1 min window. This does
+# NOT alter the sessions upsert key, the ingest-source boundary, or any linkage
+# (workflow_id / subagent_parent_id are log-derived in the parser and survive a
+# null/absent sidecar — AC-5.2). A missing/non-matching sidecar leaves
+# context_window null (AC-5.1 resilience). Could later move behind an
+# ingest-source port without changing this contract.
+_SIDECAR_JOIN_WINDOW_SECONDS = 60.0
+
+
+def _session_run_task_ids(session_payload: dict[str, Any]) -> tuple[str, str]:
+    """Extract (run_id, task_id) correlation keys from a session payload."""
+    run_id = _first_non_empty(session_payload, "runId", "run_id")
+    if not run_id:
+        forensics = session_payload.get("sessionForensics")
+        if isinstance(forensics, dict):
+            run_id = _first_non_empty(forensics, "runId", "run_id")
+    task_id = _first_non_empty(session_payload, "taskId", "task_id")
+    return run_id, task_id
+
+
+def _join_sidecar_context_window(session_payload: dict[str, Any], session_path: Path) -> str | None:
+    """Return the context-window label for *session_payload* from a sidecar, or None.
+
+    Tolerant of every failure mode (missing dir, malformed sidecar, no match):
+    returns ``None`` rather than raising, so ingestion is never blocked.
+    """
+    if not config.SIDECAR_CONTEXT_JOIN_ENABLED:
+        return None
+    try:
+        run_id, task_id = _session_run_task_ids(session_payload)
+        if not run_id and not task_id:
+            return None
+
+        try:
+            session_mtime = session_path.stat().st_mtime
+        except OSError:
+            session_mtime = None
+
+        # Search the session file's directory and its parent (subagents nest one
+        # level deeper than their workflow.json).
+        search_dirs: list[Path] = []
+        parent = session_path.parent
+        search_dirs.append(parent)
+        if parent.parent != parent:
+            search_dirs.append(parent.parent)
+
+        seen: set[Path] = set()
+        for directory in search_dirs:
+            if directory in seen:
+                continue
+            seen.add(directory)
+            for sidecar in scan_workflow_sidecars(directory):
+                if not sidecar.context_window:
+                    continue
+                id_match = (
+                    (bool(run_id) and sidecar.run_id == run_id)
+                    or (bool(task_id) and sidecar.task_id == task_id)
+                )
+                if not id_match:
+                    continue
+                # ±1 min window check (skip when we cannot compute either side).
+                if session_mtime is not None and sidecar.mtime is not None:
+                    if abs(sidecar.mtime - session_mtime) > _SIDECAR_JOIN_WINDOW_SECONDS:
+                        continue
+                return sidecar.context_window
+    except Exception:  # pragma: no cover - defensive; join must never block ingest
+        logger.debug("sidecar context-window join failed for %s", session_path, exc_info=True)
+    return None
 
 
 def _extract_pr_number_from_artifacts(artifacts: list[dict[str, Any]]) -> str:
@@ -1276,6 +1408,12 @@ class SyncEngine:
         self._test_source_errors: dict[str, str] = {}
         self._test_source_synced_at: dict[str, str] = {}
         self._source_identity_policy = source_identity_policy_from_env()
+        # Phase 7: per-(project_id, trigger) in-process coalescing guard.
+        # Set membership check + add are synchronous (no yield points between
+        # them), so the check-then-add is atomic in asyncio's single-threaded
+        # event loop.  Concurrent dispatches for the same key see the key as
+        # in-flight before any yield occurs; they coalesce (early return).
+        self._sync_in_flight: set[tuple[str, str]] = set()
 
     # ── Per-run filesystem traversal cache ─────────────────────────────────
     def _rglob(self, root: Path | str, pattern: str) -> tuple[Path, ...]:
@@ -1341,15 +1479,16 @@ class SyncEngine:
                         logs,
                     )
                 ),
-                replace_session_usage_attribution=lambda project_id, session_payload, logs, artifacts: (
+                replace_session_usage_attribution=lambda project_id, session_payload, logs, artifacts, _pg_conn=None: (
                     self._replace_session_usage_attribution(
                         project_id,
                         session_payload,
                         logs,
                         artifacts,
+                        _pg_conn=_pg_conn,
                     )
                 ),
-                replace_session_telemetry_events=lambda project_id, session_payload, logs, tools, files, artifacts: (
+                replace_session_telemetry_events=lambda project_id, session_payload, logs, tools, files, artifacts, _pg_conn=None: (
                     self._replace_session_telemetry_events(
                         project_id,
                         session_payload,
@@ -1358,23 +1497,26 @@ class SyncEngine:
                         files,
                         artifacts,
                         source="sync",
+                        _pg_conn=_pg_conn,
                     )
                 ),
-                replace_session_commit_correlations=lambda project_id, session_payload, logs, files: (
+                replace_session_commit_correlations=lambda project_id, session_payload, logs, files, _pg_conn=None: (
                     self._replace_session_commit_correlations(
                         project_id,
                         session_payload,
                         logs,
                         files,
                         source="sync",
+                        _pg_conn=_pg_conn,
                     )
                 ),
-                replace_session_intelligence_facts=lambda project_id, session_payload, canonical_rows, files: (
+                replace_session_intelligence_facts=lambda project_id, session_payload, canonical_rows, files, _pg_conn=None: (
                     self._replace_session_intelligence_facts(
                         project_id,
                         session_payload,
                         canonical_rows,
                         files,
+                        _pg_conn=_pg_conn,
                     )
                 ),
                 maybe_enqueue_telemetry_export=lambda project_id, session_payload: (
@@ -1408,6 +1550,7 @@ class SyncEngine:
         artifacts: list[dict[str, Any]],
         *,
         source: str,
+        _pg_conn: Any = None,
     ) -> int:
         session_id = _first_non_empty(session_payload, "id")
         if not session_id:
@@ -1458,39 +1601,42 @@ class SyncEngine:
                     source = excluded.source,
                     payload_json = excluded.payload_json
             """
-            for event in events:
-                await self.db.execute(
-                    insert_query,
-                    (
-                        event["project_id"],
-                        event["session_id"],
-                        event["root_session_id"],
-                        event["feature_id"],
-                        event["task_id"],
-                        event["commit_hash"],
-                        event["pr_number"],
-                        event["phase"],
-                        event["event_type"],
-                        event["tool_name"],
-                        event["model"],
-                        event["agent"],
-                        event["skill"],
-                        event["status"],
-                        event["duration_ms"],
-                        event["token_input"],
-                        event["token_output"],
-                        event["cost_usd"],
-                        event["occurred_at"],
-                        event["sequence_no"],
-                        event["source"],
-                        event["source_key"],
-                        event["payload_json"],
-                    ),
+            tuples = [
+                (
+                    event["project_id"],
+                    event["session_id"],
+                    event["root_session_id"],
+                    event["feature_id"],
+                    event["task_id"],
+                    event["commit_hash"],
+                    event["pr_number"],
+                    event["phase"],
+                    event["event_type"],
+                    event["tool_name"],
+                    event["model"],
+                    event["agent"],
+                    event["skill"],
+                    event["status"],
+                    event["duration_ms"],
+                    event["token_input"],
+                    event["token_output"],
+                    event["cost_usd"],
+                    event["occurred_at"],
+                    event["sequence_no"],
+                    event["source"],
+                    event["source_key"],
+                    event["payload_json"],
                 )
+                for event in events
+            ]
+            if tuples:
+                await self.db.executemany(insert_query, tuples)
+                otel.record_sync_insert_batch(table="telemetry_events", size=len(tuples))
             await self.db.commit()
             return len(events)
 
-        await self.db.execute(
+        _conn = _pg_conn if _pg_conn is not None else self.db
+        await _conn.execute(
             "DELETE FROM telemetry_events WHERE project_id = $1 AND session_id = $2",
             project_id,
             session_id,
@@ -1531,7 +1677,7 @@ class SyncEngine:
                 payload_json = EXCLUDED.payload_json
         """
         for event in events:
-            await self.db.execute(
+            await _conn.execute(
                 insert_query,
                 event["project_id"],
                 event["session_id"],
@@ -1605,6 +1751,7 @@ class SyncEngine:
         session_payload: dict[str, Any],
         logs: list[dict[str, Any]],
         artifacts: list[dict[str, Any]],
+        _pg_conn: Any = None,
     ) -> dict[str, int]:
         session_id = _first_non_empty(session_payload, "id")
         if not session_id:
@@ -1612,7 +1759,14 @@ class SyncEngine:
 
         events = build_session_usage_events(project_id, session_payload, logs)
         attributions = build_session_usage_attributions(session_payload, logs, artifacts, events)
-        await self.session_usage_repo.replace_session_usage(project_id, session_id, events, attributions)
+        if _pg_conn is not None:
+            await self.session_usage_repo.replace_session_usage(
+                project_id, session_id, events, attributions, conn=_pg_conn
+            )
+        else:
+            await self.session_usage_repo.replace_session_usage(
+                project_id, session_id, events, attributions
+            )
         return {"events": len(events), "attributions": len(attributions)}
 
     async def _replace_session_intelligence_facts(
@@ -1621,6 +1775,7 @@ class SyncEngine:
         session_payload: dict[str, Any],
         canonical_rows: list[dict[str, Any]],
         file_updates: list[dict[str, Any]],
+        _pg_conn: Any = None,
     ) -> dict[str, int]:
         session_id = _first_non_empty(session_payload, "id")
         if not session_id:
@@ -1641,9 +1796,12 @@ class SyncEngine:
             )
         scope_drift_facts = build_session_scope_drift_facts(session_payload, linked_docs, file_updates)
 
-        await self.session_intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts)
-        await self.session_intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts)
-        await self.session_intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts)
+        # Only forward _pg_conn on the Postgres path; the SQLite intelligence repo
+        # does not accept the kwarg (mirrors the _pg_conn_kw pattern in persist_envelope).
+        _ic_kw: dict[str, Any] = {} if _pg_conn is None else {"_pg_conn": _pg_conn}
+        await self.session_intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts, project_id, **_ic_kw)
+        await self.session_intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts, project_id, **_ic_kw)
+        await self.session_intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts, project_id, **_ic_kw)
         return {
             "sentiment": len(sentiment_facts),
             "churn": len(churn_facts),
@@ -1835,6 +1993,7 @@ class SyncEngine:
         files: list[dict[str, Any]],
         *,
         source: str,
+        _pg_conn: Any = None,
     ) -> int:
         session_id = _first_non_empty(session_payload, "id")
         if not session_id:
@@ -1896,7 +2055,8 @@ class SyncEngine:
                 )
             await self.db.commit()
         else:
-            await self.db.execute(
+            _conn = _pg_conn if _pg_conn is not None else self.db
+            await _conn.execute(
                 "DELETE FROM commit_correlations WHERE project_id = $1 AND session_id = $2",
                 project_id,
                 session_id,
@@ -1919,9 +2079,10 @@ class SyncEngine:
                     $16, $17, $18,
                     $19, $20, $21, $22
                 )
+                ON CONFLICT (project_id, source_key) DO NOTHING
             """
             for correlation in correlations:
-                await self.db.execute(
+                await _conn.execute(
                     insert_query,
                     correlation["project_id"],
                     correlation["session_id"],
@@ -2084,10 +2245,12 @@ class SyncEngine:
                 session_id = _first_non_empty(session, "id")
                 if not session_id:
                     continue
-                logs = await self.session_repo.get_logs(session_id)
-                tools = await self.session_repo.get_tool_usage(session_id)
-                files = await self.session_repo.get_file_updates(session_id)
-                artifacts = await self.session_repo.get_artifacts(session_id)
+                logs, tools, files, artifacts = await asyncio.gather(
+                    self.session_repo.get_logs(session_id),
+                    self.session_repo.get_tool_usage(session_id),
+                    self.session_repo.get_file_updates(session_id),
+                    self.session_repo.get_artifacts(session_id),
+                )
                 events_written += await self._replace_session_telemetry_events(
                     project_id,
                     session,
@@ -2195,7 +2358,7 @@ class SyncEngine:
                 derived_fields = _derive_claude_usage_fields(session)
                 if derived_fields == current_fields:
                     continue
-                await self.session_repo.update_usage_fields(session_id, derived_fields)
+                await self.session_repo.update_usage_fields(session_id, derived_fields, project_id)
                 sessions_updated += 1
             offset += len(sessions)
 
@@ -2241,7 +2404,7 @@ class SyncEngine:
                 derived_fields = await self._derive_session_observability_fields(project_id, session, logs)
                 if derived_fields == current_fields:
                     continue
-                await self.session_repo.update_observability_fields(session_id, derived_fields)
+                await self.session_repo.update_observability_fields(session_id, derived_fields, project_id)
                 sessions_updated += 1
             offset += len(sessions)
 
@@ -2947,10 +3110,14 @@ class SyncEngine:
         rebuild_links: bool = True,
         capture_analytics: bool = True,
         backfill_session_intelligence: bool = True,
+        allow_writeback: bool = True,
     ) -> dict:
         """Full incremental sync for a project.
 
         Returns stats dict with counts of synced entities.
+
+        *allow_writeback*: when False, inferred frontmatter write-back is
+        suppressed so CCDash never mutates non-active project repos.
         """
         stats = {
             "sessions_synced": 0,
@@ -2973,6 +3140,33 @@ class SyncEngine:
             "duration_ms": 0,
             "operation_id": "",
         }
+        # ── Phase 7: in-process coalescing guard ──────────────────────────────
+        # Key: (project_id, trigger).  The set-membership check and the add are
+        # both synchronous (no await between them), so the check-then-add is
+        # atomic in asyncio's cooperative single-threaded event loop.  A second
+        # concurrent caller for the same key runs its check AFTER the first
+        # caller's add (the first yield is only at _start_operation below), so
+        # it always sees the key as in-flight and coalesces.
+        # NULL/empty project_id is treated as a single degenerate bucket — it
+        # never merges distinct projects per AC 7.1.
+        # Deduped dispatches are logged (key + count), never silently dropped.
+        _coal_key: tuple[str, str] | None = None
+        if bool(getattr(config, "SYNC_COALESCING_ENABLED", True)):
+            _coal_key = (
+                str(getattr(project, "id", "") or ""),
+                trigger or "api",
+            )
+            if _coal_key in self._sync_in_flight:
+                logger.info(
+                    "sync_project coalesced key=(%s, %s) — in-flight sync detected; "
+                    "returning deduplicated result (no silent drop)",
+                    _coal_key[0],
+                    _coal_key[1],
+                )
+                stats["coalesced"] = True
+                return stats
+            self._sync_in_flight.add(_coal_key)
+        # ── End Phase 7 coalescing guard ──────────────────────────────────────
         if not operation_id:
             operation_id = await self._start_operation(
                 "full_sync",
@@ -3002,6 +3196,21 @@ class SyncEngine:
         # Reset the per-run rglob memo table.  Any stale entries from a prior
         # (possibly failed) run are discarded so this run gets a clean view.
         self._rglob_cache = {}
+
+        # T0-002: auto-derive source-identity aliases from resolved paths so
+        # operators don't need to hand-set CCDASH_*_HOST/_CONTAINER pairs.
+        # We synthesise a minimal ResolvedProjectPaths-like object from the
+        # individual path arguments, then merge with the env-based policy
+        # (env wins: env aliases are prepended so they match first).
+        self._source_identity_policy = _build_merged_source_identity_policy(
+            project_id=project.id,
+            project_path=str(getattr(project, "path", sessions_dir.parent)),
+            sessions_dir=sessions_dir,
+            docs_dir=docs_dir,
+            progress_dir=progress_dir,
+            env_policy=source_identity_policy_from_env(),
+        )
+
         try:
             with observability.start_span(
                 "ccdash.sync.project",
@@ -3077,7 +3286,12 @@ class SyncEngine:
                 )
 
                 # Phase 4: Features (derived from docs + progress)
-                f_stats = await self._sync_features(project.id, docs_dir, progress_dir)
+                f_stats = await self._sync_features(
+                    project.id,
+                    docs_dir,
+                    progress_dir,
+                    allow_writeback=allow_writeback,
+                )
                 stats["features_synced"] = f_stats["synced"]
                 link_state = await self._load_link_state(project.id)
                 rebuild_scope = self._should_rebuild_links_after_full_sync(
@@ -3150,6 +3364,7 @@ class SyncEngine:
 
             elapsed = int((time.monotonic() - t0) * 1000)
             stats["duration_ms"] = elapsed
+            otel.record_startup_sync(duration_ms=float(elapsed), project_id=project.id)
             await self._update_operation(
                 operation_id,
                 phase="completed",
@@ -3180,19 +3395,30 @@ class SyncEngine:
                     "linksCreated": int(stats.get("links_created", 0) or 0),
                     "operationId": operation_id,
                 }
-                await publish_feature_invalidation(
-                    project.id,
-                    reason="sync_project_completed",
-                    source="sync_engine",
-                    payload=_sync_payload,
-                )
+                try:
+                    await publish_feature_invalidation(
+                        project.id,
+                        reason="sync_project_completed",
+                        source="sync_engine",
+                        payload=_sync_payload,
+                    )
+                except Exception as e:
+                    logger.warning("live publish failed (non-fatal): %s", e)
                 # Fan out to planning topics — a full sync may change planning state.
-                await publish_planning_invalidation(
-                    project.id,
-                    reason="sync_project_completed",
-                    source="sync_engine",
-                    payload=_sync_payload,
-                )
+                try:
+                    await publish_planning_invalidation(
+                        project.id,
+                        reason="sync_project_completed",
+                        source="sync_engine",
+                        payload=_sync_payload,
+                    )
+                except Exception as e:
+                    logger.warning("live publish failed (non-fatal): %s", e)
+            # P2-002: evict project-scoped cache entries so subsequent reads
+            # reflect the freshly synced data instead of waiting for the 600 s TTL.
+            # aclear_project_cache() swallows its own errors so a cache eviction
+            # failure never aborts a completed sync.
+            await aclear_project_cache(project.id)
             return stats
         except Exception as exc:
             if should_finalize_operation:
@@ -3206,6 +3432,12 @@ class SyncEngine:
         finally:
             # Clear the per-run memo so the next sync run starts fresh.
             self._rglob_cache = {}
+            # Phase 7: release coalescing guard so subsequent dispatches for
+            # this key can proceed.  discard() is used (not remove()) so the
+            # finally is idempotent even if the key was never added (e.g. if
+            # coalescing is disabled or if the early-return path ran).
+            if _coal_key is not None:
+                self._sync_in_flight.discard(_coal_key)
 
     async def sync_planning_artifacts(
         self,
@@ -3278,6 +3510,7 @@ class SyncEngine:
                     operation_id=operation_id,
                 )
             stats["created"] = int(l_stats.get("created", 0))
+            otel.record_link_rebuild_commit(links_created=stats["created"])
             await self._save_link_state(
                 project_id,
                 trigger=trigger,
@@ -3306,19 +3539,25 @@ class SyncEngine:
                     "linksCreated": int(stats.get("created", 0) or 0),
                     "operationId": operation_id,
                 }
-                await publish_feature_invalidation(
-                    project_id,
-                    reason="rebuild_links_completed",
-                    source="sync_engine",
-                    payload=_links_payload,
-                )
+                try:
+                    await publish_feature_invalidation(
+                        project_id,
+                        reason="rebuild_links_completed",
+                        source="sync_engine",
+                        payload=_links_payload,
+                    )
+                except Exception as e:
+                    logger.warning("live publish failed (non-fatal): %s", e)
                 # Fan out: link rebuilds can alter cross-feature planning relationships.
-                await publish_planning_invalidation(
-                    project_id,
-                    reason="rebuild_links_completed",
-                    source="sync_engine",
-                    payload=_links_payload,
-                )
+                try:
+                    await publish_planning_invalidation(
+                        project_id,
+                        reason="rebuild_links_completed",
+                        source="sync_engine",
+                        payload=_links_payload,
+                    )
+                except Exception as e:
+                    logger.warning("live publish failed (non-fatal): %s", e)
             return stats
         except Exception as exc:
             if should_finalize_operation:
@@ -3388,6 +3627,7 @@ class SyncEngine:
                     operation_id=operation_id,
                 )
                 stats["auto_links_rebuilt"] = int(l_stats.get("created", 0))
+            otel.record_link_rebuild_commit(links_created=stats["auto_links_rebuilt"])
 
             stats["duration_ms"] = int((time.monotonic() - t0) * 1000)
             await self._update_operation(
@@ -3405,18 +3645,24 @@ class SyncEngine:
                     "linksRebuilt": stats["auto_links_rebuilt"],
                     "operationId": operation_id,
                 }
-                await publish_feature_invalidation(
-                    project_id,
-                    reason="rebuild_links_for_entities_completed",
-                    source="sync_engine",
-                    payload=_payload,
-                )
-                await publish_planning_invalidation(
-                    project_id,
-                    reason="rebuild_links_for_entities_completed",
-                    source="sync_engine",
-                    payload=_payload,
-                )
+                try:
+                    await publish_feature_invalidation(
+                        project_id,
+                        reason="rebuild_links_for_entities_completed",
+                        source="sync_engine",
+                        payload=_payload,
+                    )
+                except Exception as e:
+                    logger.warning("live publish failed (non-fatal): %s", e)
+                try:
+                    await publish_planning_invalidation(
+                        project_id,
+                        reason="rebuild_links_for_entities_completed",
+                        source="sync_engine",
+                        payload=_payload,
+                    )
+                except Exception as e:
+                    logger.warning("live publish failed (non-fatal): %s", e)
             return stats
         except Exception as exc:
             await self._finish_operation(
@@ -3864,6 +4110,7 @@ class SyncEngine:
         test_sources: list[ResolvedTestSource] | None = None,
         operation_id: str | None = None,
         trigger: str = "watcher",
+        allow_writeback: bool = True,
     ) -> dict:
         """Sync only specific changed files. Used by file watcher.
 
@@ -3951,14 +4198,14 @@ class SyncEngine:
                         sync_state_key = str(path)
                     await self.sync_repo.delete_sync_state(sync_state_key)
                     if path.suffix == ".jsonl":
-                        await self.session_repo.delete_by_source(str(path))
+                        await self.session_repo.delete_by_source(sync_state_key)
                         stats["sessions"] += 1
                         should_rebuild_links = True
                     elif self._match_source_for_path(resolved_test_sources, path):
                         stats["tests"] += 1
                     elif path.suffix == ".md":
-                        await self.document_repo.delete_by_source(str(path))
-                        await self.task_repo.delete_by_source(str(path))
+                        await self.document_repo.delete_by_source(sync_state_key)
+                        await self.task_repo.delete_by_source(sync_state_key)
                         if progress_dir in path.parents:
                             await self.task_repo.delete_by_source(_canonical_task_source(path, progress_dir))
                         stats["documents"] += 1
@@ -3968,7 +4215,19 @@ class SyncEngine:
                 else:
                     # Modified or added
                     if path.suffix == ".jsonl" and sessions_dir in path.parents:
-                        if await self._sync_single_session(project_id, path):
+                        # Resilience-by-default: a single malformed/constraint-violating session
+                        # must not abort the rest of the changed-files batch (and thus the watcher
+                        # loop). Log, record a parser failure metric, and continue with the others.
+                        try:
+                            synced_session = await self._sync_single_session(project_id, path)
+                        except Exception:
+                            observability.record_parser_failure("sessions", project_id=project_id)
+                            logger.exception(
+                                "Skipping session file that failed to sync",
+                                extra={"project_id": project_id, "file_path": str(path)},
+                            )
+                            continue
+                        if synced_session:
                             stats["sessions"] += 1
                             should_rebuild_links = True
                     else:
@@ -4042,6 +4301,7 @@ class SyncEngine:
                     project_root=project_root,
                     git_date_index=git_date_index,
                     dirty_paths=dirty_paths,
+                    allow_writeback=allow_writeback,
                 )
                 stats["features"] = f_stats.get("synced", 0)
                 if stats["features"] > 0:
@@ -4057,19 +4317,100 @@ class SyncEngine:
                         phase="links",
                         message="Rebuilding entity links after changed-file sync",
                     )
-                l_stats = await self._rebuild_entity_links(
-                    project_id,
-                    docs_dir,
-                    progress_dir,
-                    operation_id=operation_id,
-                )
-                stats["links_created"] = int(l_stats.get("created", 0))
-                await self._save_link_state(
-                    project_id,
-                    trigger=trigger,
-                    reason=rebuild_reason,
-                    links_created=stats["links_created"],
-                )
+                # BE-206/Phase-4: Incremental link rebuild — scoped to the affected session
+                # family when INCREMENTAL_LINK_REBUILD_ENABLED=True.  This avoids the global
+                # filesystem scan (_store_document_catalog_index via _rglob) that
+                # _rebuild_entity_links triggers when docs_dir/progress_dir are passed.
+                #
+                # Scoped path: collect session IDs from changed JSONL files (sessions were
+                # persisted in the loop above, so list_by_source is accurate here), then call
+                # rebuild_links_for_entities — a scoped delete-then-re-derive that does NOT
+                # walk the filesystem (no docs_dir/progress_dir passed to _rebuild_entity_links).
+                #
+                # Fallback to full rebuild when:
+                #   • INCREMENTAL_LINK_REBUILD_ENABLED=False
+                #   • link-logic version is stale (broad schema change needs full pass)
+                #   • should_rebuild_links=False (version-only trigger, not changed-files)
+                if (
+                    config.INCREMENTAL_LINK_REBUILD_ENABLED
+                    and should_rebuild_links
+                    and not should_rebuild_for_version
+                ):
+                    # --- Scoped (incremental) path ---
+                    # Collect session IDs for all changed JSONL files in this batch.
+                    changed_session_ids: list[str] = []
+                    for _ct, _path in changed_files:
+                        if _path.suffix == ".jsonl" and sessions_dir in _path.parents:
+                            _sync_key = self._canonical_source_key(project_id, _path, "session")
+                            try:
+                                _rows = await self.session_repo.list_by_source(_sync_key)
+                                for _row in _rows:
+                                    _sid = str(_row.get("id") or "").strip()
+                                    if _sid and _sid not in changed_session_ids:
+                                        changed_session_ids.append(_sid)
+                            except Exception:
+                                logger.warning(
+                                    "incremental link rebuild: failed to resolve session IDs"
+                                    " for %s — skipping",
+                                    str(_path),
+                                    extra={"project_id": project_id},
+                                )
+                    if changed_session_ids:
+                        logger.info(
+                            "sync_changed_files: incremental link rebuild"
+                            " — %d session(s) in family scope",
+                            len(changed_session_ids),
+                            extra={
+                                "project_id": project_id,
+                                "entity_count": len(changed_session_ids),
+                            },
+                        )
+                        observability.record_link_rebuild_scope("entities_changed")
+                        l_stats = await self.rebuild_links_for_entities(
+                            project_id,
+                            "session",
+                            changed_session_ids,
+                            trigger=trigger,
+                        )
+                        stats["links_created"] = int(l_stats.get("auto_links_rebuilt", 0))
+                    else:
+                        # No session IDs resolved (empty/orphan JSONL) — deferred to next
+                        # full sync.  Per AC-T4-002: no silent drop, no fallback to global
+                        # scan; log the deferred count for diagnostics.
+                        logger.info(
+                            "sync_changed_files: incremental rebuild deferred"
+                            " — no session IDs resolved from %d changed file(s);"
+                            " will be picked up on next full sync",
+                            len(changed_files),
+                            extra={"project_id": project_id},
+                        )
+                        observability.record_link_rebuild_scope("none")
+                        l_stats = {"created": 0, "auto_links_rebuilt": 0}
+                        stats["links_created"] = 0
+                    await self._save_link_state(
+                        project_id,
+                        trigger=trigger,
+                        reason=rebuild_reason,
+                        links_created=stats["links_created"],
+                    )
+                else:
+                    # --- Full (global) rebuild path ---
+                    # Used when: flag=False, link-logic version stale, or no changed-files
+                    # trigger.  Calls _rebuild_entity_links with docs_dir/progress_dir so
+                    # the document catalog index is also refreshed (filesystem walk).
+                    l_stats = await self._rebuild_entity_links(
+                        project_id,
+                        docs_dir,
+                        progress_dir,
+                        operation_id=operation_id,
+                    )
+                    stats["links_created"] = int(l_stats.get("created", 0))
+                    await self._save_link_state(
+                        project_id,
+                        trigger=trigger,
+                        reason=rebuild_reason,
+                        links_created=stats["links_created"],
+                    )
 
             if operation_id:
                 await self._update_operation(
@@ -4088,19 +4429,25 @@ class SyncEngine:
                     "linksCreated": int(stats.get("links_created", 0) or 0),
                     "operationId": operation_id,
                 }
-                await publish_feature_invalidation(
-                    project_id,
-                    reason="sync_changed_files_completed",
-                    source="sync_engine",
-                    payload=_changed_payload,
-                )
+                try:
+                    await publish_feature_invalidation(
+                        project_id,
+                        reason="sync_changed_files_completed",
+                        source="sync_engine",
+                        payload=_changed_payload,
+                    )
+                except Exception as e:
+                    logger.warning("live publish failed (non-fatal): %s", e)
                 # Fan out: changed feature files may update planning projection.
-                await publish_planning_invalidation(
-                    project_id,
-                    reason="sync_changed_files_completed",
-                    source="sync_engine",
-                    payload=_changed_payload,
-                )
+                try:
+                    await publish_planning_invalidation(
+                        project_id,
+                        reason="sync_changed_files_completed",
+                        source="sync_engine",
+                        payload=_changed_payload,
+                    )
+                except Exception as e:
+                    logger.warning("live publish failed (non-fatal): %s", e)
             return stats
         except Exception as exc:
             if should_finalize_operation:
@@ -4119,17 +4466,118 @@ class SyncEngine:
         if not sessions_dir.exists():
             return stats
 
-        for jsonl_file in sorted(self._rglob(sessions_dir, "*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+        # Light-mode: skip the full walk when manifest inode/mtime snapshot is unchanged.
+        resolved_roots = [sessions_dir]
+        manifest_key = str(sessions_dir)
+        skipped = await self._light_mode_scan_skip(
+            resolved_roots, "*.jsonl", manifest_key, force
+        )
+        if skipped:
+            return stats
+
+        # ── Phase 7: recent-first parse + backfill ────────────────────────────
+        # OQ-3 resolution: N-most-recent with mtime tiebreak.
+        # All session files are sorted mtime-descending (most recent first).
+        # When SYNC_RECENT_FIRST_ENABLED=True and the total count exceeds N, the
+        # first N files form the "recent window" (processed first so recent
+        # sessions are queryable within seconds); the rest are backfilled in the
+        # same call.  When the feature is disabled or the file count <= N, all
+        # files are processed in one pass (identical to the previous behaviour).
+        # Fallback: if the flag is off or window is empty, baseline full-scan
+        # ordering is preserved (no regression).
+        # No silent caps: backfill_count is asserted == baseline_count;
+        # discrepancies are surfaced as structured WARNING logs.
+        all_files = sorted(
+            self._rglob(sessions_dir, "*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        baseline_count = len(all_files)
+
+        recent_first_enabled = bool(getattr(config, "SYNC_RECENT_FIRST_ENABLED", True))
+        recent_first_n = max(1, int(getattr(config, "SYNC_RECENT_FIRST_N", 200)))
+
+        if recent_first_enabled and baseline_count > recent_first_n:
+            recent_files = all_files[:recent_first_n]
+            backfill_files = all_files[recent_first_n:]
+        else:
+            # Fewer files than N, or feature disabled: process all in one pass
+            recent_files = all_files
+            backfill_files = []
+
+        # --- Recent window (priority pass) ---
+        recent_synced = 0
+        recent_skipped = 0
+        for jsonl_file in recent_files:
             synced = await self._sync_single_session(project_id, jsonl_file, force)
             if synced:
-                stats["synced"] += 1
+                recent_synced += 1
             else:
-                stats["skipped"] += 1
+                recent_skipped += 1
 
+        # Log when the recent window is populated and backfill work remains.
+        if backfill_files:
+            logger.info(
+                "sync_sessions recent_first_window_ready: project_id=%s "
+                "recent_synced=%d recent_skipped=%d backfill_deferred=%d",
+                project_id,
+                recent_synced,
+                recent_skipped,
+                len(backfill_files),
+            )
+
+        # --- Backfill pass (remaining sessions after recent window) ---
+        backfill_synced = 0
+        backfill_skipped = 0
+        for jsonl_file in backfill_files:
+            synced = await self._sync_single_session(project_id, jsonl_file, force)
+            if synced:
+                backfill_synced += 1
+            else:
+                backfill_skipped += 1
+
+        stats["synced"] = recent_synced + backfill_synced
+        stats["skipped"] = recent_skipped + backfill_skipped
+
+        # Phase 7 parity check: total processed == baseline (no silent loss).
+        # A mismatch means some files were neither synced nor skipped — log as
+        # WARNING so operators can investigate without silently capping data.
+        total_processed = stats["synced"] + stats["skipped"]
+        if total_processed != baseline_count:
+            logger.warning(
+                "sync_sessions parity_check_FAILED: project_id=%s "
+                "baseline=%d processed=%d dropped=%d — "
+                "possible silent loss; investigate sync_state",
+                project_id,
+                baseline_count,
+                total_processed,
+                baseline_count - total_processed,
+            )
+        else:
+            logger.debug(
+                "sync_sessions parity_check_ok: project_id=%s "
+                "baseline=%d processed=%d",
+                project_id,
+                baseline_count,
+                total_processed,
+            )
+
+        if backfill_files:
+            logger.info(
+                "sync_sessions backfill_complete: project_id=%s "
+                "backfill_synced=%d backfill_skipped=%d",
+                project_id,
+                backfill_synced,
+                backfill_skipped,
+            )
+        # ── End Phase 7 recent-first ──────────────────────────────────────────
+
+        # Update manifest after full walk so next run can skip when nothing changed.
+        await self._update_manifest_for_roots(resolved_roots, "*.jsonl")
         return stats
 
     async def _session_source_needs_lineage_backfill(self, file_path: str) -> bool:
-        rows = await self.session_repo.list_by_source(file_path, workspace_id=self._WORKSPACE_ID)
+        rows = await self.session_repo.list_by_source(file_path)
         if not rows:
             return False
         for row in rows:
@@ -4189,17 +4637,52 @@ class SyncEngine:
                 session_payload = {}
 
             if session_payload:
+                # T5-003: additive sidecar join — attribute context_window (e.g.
+                # "1M") when a matching workflow.json sidecar is found. No match
+                # leaves the (already-null) contextWindow untouched (AC-5.1).
+                sidecar_context_window = _join_sidecar_context_window(session_payload, path)
+                if sidecar_context_window:
+                    session_payload["contextWindow"] = sidecar_context_window
+                # T11-004: launch-time capture sidecar fields (launcher, profile,
+                # effortTier, modelVariant) are already present in session_payload
+                # via AgentSession.model_dump() — the parser sets them from the
+                # <session-id>.capture.json sidecar at parse time. No additional
+                # injection is needed here. The repo upsert uses COALESCE so a null
+                # value on re-ingest never clobbers a previously-captured value (AC-11.C).
                 envelope = jsonl_session_to_envelope(
                     session_payload,
                     source_identity=sync_file_path,
                     source_uri=file_path,
                 )
-                await self._get_session_ingest_service().persist_envelope(
-                    project_id,
-                    envelope,
-                    observed_source_file=file_path,
-                    telemetry_source="sync",
-                )
+                if not isinstance(self.db, aiosqlite.Connection):
+                    # Postgres path: acquire one pool connection and wrap all
+                    # per-session INSERTs in a single transaction.  This ensures
+                    # the parent `sessions` row and every FK-constrained child
+                    # table (session_logs, session_tool_usage, session_file_updates,
+                    # session_artifacts, session_usage_events,
+                    # session_usage_attributions) are visible to each other on the
+                    # same connection — preventing ForeignKeyViolationError when
+                    # child rows are inserted before the parent commits on a
+                    # different pool connection.
+                    from backend.db.repositories.postgres._transactions import (  # noqa: PLC0415
+                        postgres_transaction as _pg_txn,
+                    )
+                    async with _pg_txn(self.db) as _pg_conn:
+                        await self._get_session_ingest_service().persist_envelope(
+                            project_id,
+                            envelope,
+                            observed_source_file=file_path,
+                            telemetry_source="sync",
+                            _pg_conn=_pg_conn,
+                        )
+                else:
+                    # SQLite path: behavior unchanged.
+                    await self._get_session_ingest_service().persist_envelope(
+                        project_id,
+                        envelope,
+                        observed_source_file=file_path,
+                        telemetry_source="sync",
+                    )
 
         # Update sync state
         await self.sync_repo.upsert_sync_state({
@@ -4527,8 +5010,13 @@ class SyncEngine:
         project_root: Path | None = None,
         git_date_index: dict[str, dict[str, str]] | None = None,
         dirty_paths: set[str] | None = None,
+        allow_writeback: bool = True,
     ) -> dict:
-        """Re-derive features from docs + progress and upsert all."""
+        """Re-derive features from docs + progress and upsert all.
+
+        *allow_writeback*: forwarded to scan_features; set False for non-active
+        projects to prevent frontmatter mutation on disk.
+        """
         stats = {"synced": 0, "pruned_aliases": 0}
 
         project_root = project_root or infer_project_root(docs_dir, progress_dir)
@@ -4547,11 +5035,19 @@ class SyncEngine:
         else:
             resolved_git_date_index = dict(git_date_index)
 
+        # Derive worknotes_dir from project_root (.claude/worknotes relative to root).
+        _worknotes_dir: Path | None = None
+        if project_root is not None:
+            _candidate = project_root / ".claude" / "worknotes"
+            if _candidate.exists():
+                _worknotes_dir = _candidate
         features = scan_features(
             docs_dir,
             progress_dir,
             git_date_index=resolved_git_date_index,
             dirty_paths=resolved_dirty_paths,
+            allow_writeback=allow_writeback,
+            worknotes_dir=_worknotes_dir,
         )
         for feature in features:
             try:
@@ -5805,13 +6301,86 @@ class SyncEngine:
 
     # ── Analytics Snapshot ──────────────────────────────────────────
 
+    # ── Retention helpers ────────────────────────────────────────────────
+
+    async def _prune_telemetry_events(self, project_id: str, retention_days: int, batch_size: int = 1000) -> int:
+        """Batch-delete telemetry_events older than retention_days for project_id.
+
+        Runs only when RETENTION_PRUNE_ENABLED=true.  Deletes in batches to
+        avoid lock contention on SQLite.  Returns total rows deleted.
+
+        NOTE: T1-003 — telemetry prune implemented directly in sync_engine
+        because analytics.py (B1) did not yet expose a prune method for
+        telemetry_events.  If B1 later adds prune_telemetry_older_than_days()
+        to analytics.py, delegate there and remove this method.
+        """
+        total_deleted = 0
+        if isinstance(self.db, aiosqlite.Connection):
+            while True:
+                async with self.db.execute(
+                    """
+                    DELETE FROM telemetry_events
+                    WHERE project_id = ?
+                      AND occurred_at < datetime('now', ? || ' days')
+                      AND rowid IN (
+                          SELECT rowid FROM telemetry_events
+                          WHERE project_id = ?
+                            AND occurred_at < datetime('now', ? || ' days')
+                          LIMIT ?
+                      )
+                    """,
+                    (project_id, f"-{retention_days}", project_id, f"-{retention_days}", batch_size),
+                ) as cur:
+                    deleted = cur.rowcount or 0
+                await self.db.commit()
+                total_deleted += deleted
+                if deleted < batch_size:
+                    break
+        else:
+            # PostgreSQL: single batched DELETE per call (asyncpg has no rowcount loop needed)
+            while True:
+                deleted = await self.db.fetchval(
+                    """
+                    WITH batch AS (
+                        SELECT id FROM telemetry_events
+                        WHERE project_id = $1
+                          AND occurred_at < (NOW() - ($2 || ' days')::interval)
+                        LIMIT $3
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    DELETE FROM telemetry_events
+                    WHERE id IN (SELECT id FROM batch)
+                    """,
+                    project_id,
+                    str(retention_days),
+                    batch_size,
+                )
+                deleted = deleted or 0
+                total_deleted += deleted
+                if deleted < batch_size:
+                    break
+        return total_deleted
+
     async def _capture_analytics(self, project_id: str) -> None:
-        """Capture a point-in-time snapshot of project metrics."""
+        """Capture a point-in-time snapshot of project metrics.
+
+        T1-007: Replaces the prior N+1 loop (≈12–15K queries for 367 features)
+        with a small bounded set of batched reads:
+          - 4 project-level stat queries (session, task, feature, tool)
+          - 1 raw SQL query for project file churn
+          - 1 CTE query aggregating per-feature session metrics via
+            entity_links JOIN sessions JOIN session_tool_usage JOIN
+            session_file_updates (GROUP BY feature)
+          - 1 GROUP BY query for per-feature task counts from tasks table
+        Total: ~7 queries regardless of project/feature count.
+        """
+        _analytics_t0 = time.monotonic()
         with observability.start_span(
             "ccdash.sync.analytics_snapshot",
             {"ccdash.project_id": project_id},
         ):
             now = datetime.now(timezone.utc).isoformat()
+            _rows_inserted: list[int] = [0]
 
             async def insert_metric(
                 metric_type: str,
@@ -5820,28 +6389,40 @@ class SyncEngine:
                 metadata: dict[str, Any] | None = None,
                 entity_links: list[tuple[str, str]] | None = None,
             ) -> None:
+                # T1-001: insert_entry called for period='point' metrics.
+                # TODO(T1-001): When analytics.py exposes upsert_point_entry()
+                # (B1 ON CONFLICT path), call that here for period='point' so
+                # same-day snapshots overwrite instead of append.  Until then,
+                # insert_entry appends; consumers use get_latest_entries (HAVING)
+                # to select the most recent row.
+                _meta = metadata or {}
+                _scope = _meta.get("scope", "project")
+                _scope_id = str(_meta.get("featureId", "")) if _scope == "feature" else ""
                 analytics_id = await self.analytics_repo.insert_entry({
                     "project_id": project_id,
                     "metric_type": metric_type,
                     "value": value,
                     "captured_at": now,
-                    "metadata_json": metadata or {},
+                    "metadata_json": _meta,
+                    "scope": _scope,
+                    "scope_id": _scope_id,
                 })
+                _rows_inserted[0] += 1
                 links = entity_links or [("project", project_id)]
                 for entity_type, entity_id in links:
                     if entity_type and entity_id:
                         await self.analytics_repo.link_to_entity(analytics_id, entity_type, entity_id)
 
-            # 1. Session Metrics
-            s_stats = await self.session_repo.get_project_stats(project_id, workspace_id=self._WORKSPACE_ID)
+            # ── 1. Project-level session metrics (1 query) ────────────────
+            s_stats = await self.session_repo.get_project_stats(project_id)
 
             await insert_metric("session_count", s_stats.get("count", 0), metadata={"scope": "project"})
             await insert_metric("session_cost", s_stats.get("cost", 0.0), metadata={"scope": "project", "unit": "usd"})
             await insert_metric("session_tokens", s_stats.get("tokens", 0), metadata={"scope": "project", "unit": "tokens"})
             await insert_metric("session_duration", s_stats.get("duration", 0.0), metadata={"scope": "project", "unit": "seconds"})
 
-            # 2. Task Metrics
-            t_stats = await self.task_repo.get_project_stats(project_id, workspace_id=self._WORKSPACE_ID)
+            # ── 2. Project-level task metrics (1 query) ───────────────────
+            t_stats = await self.task_repo.get_project_stats(project_id)
 
             await insert_metric(
                 "task_velocity",
@@ -5854,18 +6435,18 @@ class SyncEngine:
                 metadata={"scope": "project", "unit": "percent"},
             )
 
-            # 3. Feature Progress
-            f_stats = await self.feature_repo.get_project_stats(project_id, workspace_id=self._WORKSPACE_ID)
+            # ── 3. Feature-level progress average (1 query) ───────────────
+            f_stats = await self.feature_repo.get_project_stats(project_id)
 
             await insert_metric("feature_progress", f_stats.get("avg_progress", 0.0), metadata={"scope": "project", "unit": "percent"})
 
-            # 4. Tool Usage
-            tool_stats = await self.session_repo.get_tool_stats(project_id, workspace_id=self._WORKSPACE_ID)
+            # ── 4. Project-level tool usage (1 query) ─────────────────────
+            tool_stats = await self.session_repo.get_tool_stats(project_id)
 
             await insert_metric("tool_call_count", tool_stats.get("calls", 0), metadata={"scope": "project"})
             await insert_metric("tool_success_rate", tool_stats.get("success_rate", 0.0), metadata={"scope": "project", "unit": "percent"})
 
-            # 5. File churn (project)
+            # ── 5. Project file churn (1 raw query) ───────────────────────
             if isinstance(self.db, aiosqlite.Connection):
                 async with self.db.execute(
                     """
@@ -5892,22 +6473,226 @@ class SyncEngine:
 
             await insert_metric("file_churn", project_file_churn, metadata={"scope": "project"})
 
-            # 6. Feature-scoped metrics (multi-entity analytics links)
-            feature_rows = await self.feature_repo.list_all(project_id, workspace_id=self._WORKSPACE_ID)
+            # ── 6. Feature-scoped metrics — batched CTE (replaces N+1) ───
+            #
+            # T1-007: ONE query joins entity_links → sessions → tool_usage →
+            # file_updates (GROUP BY feature), aggregating all per-feature
+            # session metrics in a single round-trip.  A second GROUP BY query
+            # fetches per-feature task counts from the tasks table.
+            #
+            # Relies on idx_sessions_project_status_updated (P1-004) and the
+            # entity_links indexes from batch_0.
+
+            # 6a. Per-feature task counts (1 query, GROUP BY feature_id)
+            feature_task_agg: dict[str, dict[str, Any]] = {}
+            if isinstance(self.db, aiosqlite.Connection):
+                async with self.db.execute(
+                    """
+                    SELECT
+                        feature_id,
+                        COUNT(*) AS total_tasks,
+                        SUM(CASE WHEN lower(status) IN ('done', 'deferred', 'completed') THEN 1 ELSE 0 END) AS completed_tasks
+                    FROM tasks
+                    WHERE project_id = ?
+                      AND feature_id IS NOT NULL AND feature_id != ''
+                    GROUP BY feature_id
+                    """,
+                    (project_id,),
+                ) as cur:
+                    for r in await cur.fetchall():
+                        feature_task_agg[str(r[0])] = {"total": int(r[1] or 0), "completed": int(r[2] or 0)}
+            else:
+                task_rows = await self.db.fetch(
+                    """
+                    SELECT
+                        feature_id,
+                        COUNT(*) AS total_tasks,
+                        SUM(CASE WHEN lower(status) IN ('done', 'deferred', 'completed') THEN 1 ELSE 0 END) AS completed_tasks
+                    FROM tasks
+                    WHERE project_id = $1
+                      AND feature_id IS NOT NULL AND feature_id != ''
+                    GROUP BY feature_id
+                    """,
+                    project_id,
+                )
+                for r in task_rows:
+                    feature_task_agg[str(r["feature_id"])] = {
+                        "total": int(r["total_tasks"] or 0),
+                        "completed": int(r["completed_tasks"] or 0),
+                    }
+
+            # 6b. Per-feature session aggregates via entity_links CTE (1 query)
+            feature_session_agg: dict[str, dict[str, Any]] = {}
+            if isinstance(self.db, aiosqlite.Connection):
+                async with self.db.execute(
+                    """
+                    WITH linked_sessions AS (
+                        SELECT
+                            el.source_id AS feature_id,
+                            s.id AS session_id,
+                            COALESCE(s.total_cost, 0.0) AS cost,
+                            COALESCE(
+                                CASE WHEN s.observed_tokens > 0 THEN s.observed_tokens
+                                     ELSE s.tokens_in + s.tokens_out END,
+                                0
+                            ) AS tokens,
+                            COALESCE(s.duration_seconds, 0.0) AS duration
+                        FROM entity_links el
+                        JOIN sessions s ON s.id = el.target_id
+                        WHERE el.source_type = 'feature'
+                          AND el.target_type = 'session'
+                          AND el.link_type = 'related'
+                          AND s.project_id = ?
+                    ),
+                    tool_agg AS (
+                        SELECT
+                            ls.feature_id,
+                            SUM(COALESCE(stu.call_count, 0)) AS tool_calls,
+                            SUM(COALESCE(stu.success_count, 0)) AS tool_success
+                        FROM linked_sessions ls
+                        JOIN session_tool_usage stu ON stu.session_id = ls.session_id
+                        GROUP BY ls.feature_id
+                    ),
+                    file_agg AS (
+                        SELECT
+                            ls.feature_id,
+                            COUNT(fu.id) AS file_churn
+                        FROM linked_sessions ls
+                        LEFT JOIN session_file_updates fu ON fu.session_id = ls.session_id
+                        GROUP BY ls.feature_id
+                    ),
+                    session_agg AS (
+                        SELECT
+                            feature_id,
+                            COUNT(DISTINCT session_id) AS session_count,
+                            SUM(cost) AS total_cost,
+                            SUM(tokens) AS total_tokens,
+                            SUM(duration) AS total_duration
+                        FROM linked_sessions
+                        GROUP BY feature_id
+                    )
+                    SELECT
+                        sa.feature_id,
+                        sa.session_count,
+                        sa.total_cost,
+                        sa.total_tokens,
+                        sa.total_duration,
+                        COALESCE(ta.tool_calls, 0) AS tool_calls,
+                        COALESCE(ta.tool_success, 0) AS tool_success,
+                        COALESCE(fa.file_churn, 0) AS file_churn
+                    FROM session_agg sa
+                    LEFT JOIN tool_agg ta ON ta.feature_id = sa.feature_id
+                    LEFT JOIN file_agg fa ON fa.feature_id = sa.feature_id
+                    WHERE sa.session_count > 0
+                    """,
+                    (project_id,),
+                ) as cur:
+                    for r in await cur.fetchall():
+                        fid = str(r[0])
+                        feature_session_agg[fid] = {
+                            "session_count": int(r[1] or 0),
+                            "cost": float(r[2] or 0.0),
+                            "tokens": int(r[3] or 0),
+                            "total_duration": float(r[4] or 0.0),
+                            "tool_calls": int(r[5] or 0),
+                            "tool_success": int(r[6] or 0),
+                            "file_churn": int(r[7] or 0),
+                        }
+            else:
+                # PostgreSQL path — same CTE with $1 placeholder
+                feat_rows = await self.db.fetch(
+                    """
+                    WITH linked_sessions AS (
+                        SELECT
+                            el.source_id AS feature_id,
+                            s.id AS session_id,
+                            COALESCE(s.total_cost, 0.0) AS cost,
+                            COALESCE(
+                                CASE WHEN s.observed_tokens > 0 THEN s.observed_tokens
+                                     ELSE s.tokens_in + s.tokens_out END,
+                                0
+                            ) AS tokens,
+                            COALESCE(s.duration_seconds, 0.0) AS duration
+                        FROM entity_links el
+                        JOIN sessions s ON s.id = el.target_id
+                        WHERE el.source_type = 'feature'
+                          AND el.target_type = 'session'
+                          AND el.link_type = 'related'
+                          AND s.project_id = $1
+                    ),
+                    tool_agg AS (
+                        SELECT
+                            ls.feature_id,
+                            SUM(COALESCE(stu.call_count, 0)) AS tool_calls,
+                            SUM(COALESCE(stu.success_count, 0)) AS tool_success
+                        FROM linked_sessions ls
+                        JOIN session_tool_usage stu ON stu.session_id = ls.session_id
+                        GROUP BY ls.feature_id
+                    ),
+                    file_agg AS (
+                        SELECT
+                            ls.feature_id,
+                            COUNT(fu.id) AS file_churn
+                        FROM linked_sessions ls
+                        LEFT JOIN session_file_updates fu ON fu.session_id = ls.session_id
+                        GROUP BY ls.feature_id
+                    ),
+                    session_agg AS (
+                        SELECT
+                            feature_id,
+                            COUNT(DISTINCT session_id) AS session_count,
+                            SUM(cost) AS total_cost,
+                            SUM(tokens) AS total_tokens,
+                            SUM(duration) AS total_duration
+                        FROM linked_sessions
+                        GROUP BY feature_id
+                    )
+                    SELECT
+                        sa.feature_id,
+                        sa.session_count,
+                        sa.total_cost,
+                        sa.total_tokens,
+                        sa.total_duration,
+                        COALESCE(ta.tool_calls, 0) AS tool_calls,
+                        COALESCE(ta.tool_success, 0) AS tool_success,
+                        COALESCE(fa.file_churn, 0) AS file_churn
+                    FROM session_agg sa
+                    LEFT JOIN tool_agg ta ON ta.feature_id = sa.feature_id
+                    LEFT JOIN file_agg fa ON fa.feature_id = sa.feature_id
+                    WHERE sa.session_count > 0
+                    """,
+                    project_id,
+                )
+                for r in feat_rows:
+                    fid = str(r["feature_id"])
+                    feature_session_agg[fid] = {
+                        "session_count": int(r["session_count"] or 0),
+                        "cost": float(r["total_cost"] or 0.0),
+                        "tokens": int(r["total_tokens"] or 0),
+                        "total_duration": float(r["total_duration"] or 0.0),
+                        "tool_calls": int(r["tool_calls"] or 0),
+                        "tool_success": int(r["tool_success"] or 0),
+                        "file_churn": int(r["file_churn"] or 0),
+                    }
+
+            # 6c. Emit per-feature analytics rows from the in-memory rollup
+            feature_rows = await self.feature_repo.list_all(project_id)
             for feature_row in feature_rows:
                 feature_id = str(feature_row.get("id") or "").strip()
                 if not feature_id:
                     continue
                 feature_name = str(feature_row.get("name") or "")
                 feature_links = [("project", project_id), ("feature", feature_id)]
+                feature_meta = {
+                    "scope": "feature",
+                    "featureId": feature_id,
+                    "featureName": feature_name,
+                }
 
-                feature_tasks = await self.task_repo.list_by_feature(feature_id, None, workspace_id="default-local")  # TODO(workspace-routing)
-                total_feature_tasks = len(feature_tasks)
-                completed_feature_tasks = sum(
-                    1
-                    for task in feature_tasks
-                    if str(task.get("status") or "").strip().lower() in {"done", "deferred", "completed"}
-                )
+                # Task counts from batched GROUP BY result
+                t_agg = feature_task_agg.get(feature_id, {})
+                total_feature_tasks = t_agg.get("total", 0)
+                completed_feature_tasks = t_agg.get("completed", 0)
                 completion_pct = (
                     (float(completed_feature_tasks) / float(total_feature_tasks) * 100.0)
                     if total_feature_tasks > 0
@@ -5924,11 +6709,6 @@ class SyncEngine:
                     else 0.0
                 )
 
-                feature_meta = {
-                    "scope": "feature",
-                    "featureId": feature_id,
-                    "featureName": feature_name,
-                }
                 await insert_metric(
                     "task_velocity",
                     completed_feature_tasks,
@@ -5948,57 +6728,18 @@ class SyncEngine:
                     entity_links=feature_links,
                 )
 
-                feature_session_links = await self.link_repo.get_links_for("feature", feature_id, "related", workspace_id=self._WORKSPACE_ID)
-                linked_session_ids: set[str] = set()
-                for link in feature_session_links:
-                    if str(link.get("source_type") or "") != "feature":
-                        continue
-                    if str(link.get("source_id") or "") != feature_id:
-                        continue
-                    if str(link.get("target_type") or "") != "session":
-                        continue
-                    target_id = str(link.get("target_id") or "").strip()
-                    if target_id:
-                        linked_session_ids.add(target_id)
-
-                if not linked_session_ids:
-                    continue
-
-                feature_session_count = 0
-                feature_cost = 0.0
-                feature_tokens = 0
-                feature_duration = 0.0
-                feature_tool_calls = 0
-                feature_tool_success = 0
-                feature_file_churn = 0
-
-                for session_id in linked_session_ids:
-                    session_row = await self.session_repo.get_by_id(session_id, workspace_id=self._WORKSPACE_ID)
-                    if not session_row:
-                        continue
-
-                    feature_session_count += 1
-                    feature_cost += _coerce_float(session_row.get("total_cost"))
-                    feature_tokens += _coerce_int(session_row.get("tokens_in")) + _coerce_int(session_row.get("tokens_out"))
-                    feature_duration += _coerce_float(session_row.get("duration_seconds"))
-
-                    tool_rows = await self.session_repo.get_tool_usage(session_id)
-                    for tool_row in tool_rows:
-                        call_count = _coerce_int(tool_row.get("call_count"))
-                        success_count = _coerce_int(tool_row.get("success_count"))
-                        feature_tool_calls += max(0, call_count)
-                        feature_tool_success += max(0, min(call_count, success_count))
-
-                    file_updates = await self.session_repo.get_file_updates(session_id)
-                    feature_file_churn += len(file_updates)
-
-                if feature_session_count > 0:
+                # Session/tool/file metrics from CTE aggregation
+                s_agg = feature_session_agg.get(feature_id)
+                if s_agg and s_agg["session_count"] > 0:
+                    feature_session_count = s_agg["session_count"]
+                    feature_tool_calls = s_agg["tool_calls"]
+                    feature_tool_success = s_agg["tool_success"]
                     feature_tool_success_rate = (
                         (float(feature_tool_success) / float(feature_tool_calls) * 100.0)
                         if feature_tool_calls > 0
                         else 0.0
                     )
-                    feature_duration_avg = float(feature_duration) / float(feature_session_count)
+                    feature_duration_avg = s_agg["total_duration"] / float(feature_session_count)
                     session_meta = {
                         **feature_meta,
                         "scope": "feature",
@@ -6007,13 +6748,13 @@ class SyncEngine:
                     await insert_metric("session_count", feature_session_count, metadata=session_meta, entity_links=feature_links)
                     await insert_metric(
                         "session_cost",
-                        feature_cost,
+                        s_agg["cost"],
                         metadata={**session_meta, "unit": "usd"},
                         entity_links=feature_links,
                     )
                     await insert_metric(
                         "session_tokens",
-                        feature_tokens,
+                        s_agg["tokens"],
                         metadata={**session_meta, "unit": "tokens"},
                         entity_links=feature_links,
                     )
@@ -6037,7 +6778,46 @@ class SyncEngine:
                     )
                     await insert_metric(
                         "file_churn",
-                        feature_file_churn,
+                        s_agg["file_churn"],
                         metadata=session_meta,
                         entity_links=feature_links,
                     )
+
+            # ── 7. Retention pruning (T1-003, worker/sync-path, default OFF) ─
+            #
+            # CCDASH_RETENTION_PRUNE_ENABLED must be explicitly set to true.
+            # Both prunes are batched (batch_size=1000) to limit lock contention.
+            if config.RETENTION_PRUNE_ENABLED:
+                # Analytics entries prune — delegated to analytics_repo if
+                # prune_entries_older_than_days is available (B1 T1-001);
+                # otherwise skipped with a warning until B1 lands.
+                # TODO(T1-001/T1-003): Replace hasattr guard with direct call once
+                # analytics.py exposes prune_entries_older_than_days().
+                prune_fn = getattr(self.analytics_repo, "prune_entries_older_than_days", None)
+                if prune_fn is not None:
+                    analytics_pruned = await prune_fn(
+                        config.ANALYTICS_RETENTION_DAYS, batch_size=1000
+                    )
+                    logger.info(
+                        f"[retention] analytics_entries pruned {analytics_pruned} rows "
+                        f"(>{config.ANALYTICS_RETENTION_DAYS}d) for project={project_id}"
+                    )
+                else:
+                    logger.warning(
+                        "[retention] prune_entries_older_than_days not yet available on "
+                        "analytics_repo; skipping analytics prune (T1-001/T1-003 pending B1)"
+                    )
+
+                # Telemetry events prune — implemented here (sync_engine owns telemetry writes)
+                telemetry_pruned = await self._prune_telemetry_events(
+                    project_id, config.TELEMETRY_RETENTION_DAYS
+                )
+                logger.info(
+                    f"[retention] telemetry_events pruned {telemetry_pruned} rows "
+                    f"(>{config.TELEMETRY_RETENTION_DAYS}d) for project={project_id}"
+                )
+            otel.record_analytics_snapshot(
+                duration_ms=(time.monotonic() - _analytics_t0) * 1000,
+                rows=_rows_inserted[0],
+                project_id=project_id,
+            )

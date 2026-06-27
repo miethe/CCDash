@@ -22,6 +22,10 @@ T = TypeVar("T")
 CLI_PROFILE = get_runtime_profile("test")
 OUTPUT_MODE = OutputMode.human
 PROJECT_OVERRIDE: str | None = None
+OFFLINE: bool = False
+EPHEMERAL: bool = False
+REFRESH: bool = False
+OFFLINE_CONFIG: str | None = None
 
 _container: RuntimeContainer | None = None
 
@@ -72,6 +76,35 @@ async def get_app_request(
 async def execute_query(
     query: Callable[[RequestContext, CorePorts], Awaitable[T]],
 ) -> T:
+    if OFFLINE:
+        # Local-filesystem mode: bootstrap an offline-scoped runtime container,
+        # run a synchronous read-only sync against the project's raw session
+        # logs, then run the query against the seeded offline cache DB.
+        from backend.cli import offline
+
+        container = await offline.bootstrap_offline(
+            ephemeral=EPHEMERAL,
+            config_path=OFFLINE_CONFIG,
+        )
+        try:
+            manager = offline.get_offline_manager()
+            await offline.ensure_synced(
+                manager,
+                container.db,
+                project_id=PROJECT_OVERRIDE,
+                refresh=REFRESH,
+            )
+            typer.echo(
+                "⚠  Offline mode: results parsed directly from local session logs. "
+                "Cost, analytics, and cross-run intelligence require the full backend and are "
+                "omitted or shown as zero.",
+                err=True,
+            )
+            context, ports = await get_app_request(container)
+            return await query(context, ports)
+        finally:
+            await offline.shutdown_offline()
+
     container = await bootstrap_cli()
     try:
         context, ports = await get_app_request(container)

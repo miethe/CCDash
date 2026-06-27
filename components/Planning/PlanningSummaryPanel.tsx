@@ -20,6 +20,7 @@ export interface PlanningSummaryPanelProps {
   onDrillDown?: (type: ArtifactDrillDownType) => void;
   activeStatusBucket?: PlanningStatusBucket | null;
   activeSignal?: PlanningSignal | null;
+  onSeeAll?: (bucket: PlanningStatusBucket) => void;
 }
 
 interface FeatureRowProps {
@@ -35,6 +36,8 @@ interface AttentionColumnProps {
   onSelectFeature?: (featureId: string) => void;
   onPrefetchFeature?: (featureId: string) => void;
   accent: string;
+  bucket: PlanningStatusBucket;
+  onSeeAll?: (bucket: PlanningStatusBucket) => void;
 }
 
 const ROW_LIMIT = 8;
@@ -100,6 +103,8 @@ function AttentionColumn({
   onSelectFeature,
   onPrefetchFeature,
   accent,
+  bucket,
+  onSeeAll,
 }: AttentionColumnProps) {
   const visible = items.slice(0, ROW_LIMIT);
   const overflow = items.length - ROW_LIMIT;
@@ -130,9 +135,19 @@ function AttentionColumn({
               />
             ))}
             {overflow > 0 ? (
-              <p className="mt-1 text-center text-[11px] text-[color:var(--ink-3)]">
-                +{overflow} more
-              </p>
+              onSeeAll ? (
+                <button
+                  type="button"
+                  className="mt-1 w-full text-center text-[11px] text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--brand)] focus-visible:outline-none focus-visible:underline"
+                  onClick={() => onSeeAll(bucket)}
+                >
+                  +{overflow} more
+                </button>
+              ) : (
+                <p className="mt-1 text-center text-[11px] text-[color:var(--ink-3)]">
+                  +{overflow} more
+                </p>
+              )
             ) : null}
           </>
         )}
@@ -148,6 +163,7 @@ export function PlanningSummaryPanel({
   onDrillDown,
   activeStatusBucket = null,
   activeSignal = null,
+  onSeeAll,
 }: PlanningSummaryPanelProps) {
   if (summary.featureSummaries.length === 0) {
     return (
@@ -254,6 +270,8 @@ export function PlanningSummaryPanel({
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
           accent="var(--warn)"
+          bucket="stale_or_mismatched"
+          onSeeAll={onSeeAll}
         />
         <AttentionColumn
           title="Blocked Features"
@@ -262,6 +280,8 @@ export function PlanningSummaryPanel({
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
           accent="var(--err)"
+          bucket="blocked"
+          onSeeAll={onSeeAll}
         />
         <AttentionColumn
           title="Mismatched / Reversed"
@@ -270,6 +290,8 @@ export function PlanningSummaryPanel({
           onSelectFeature={onSelectFeature}
           onPrefetchFeature={onPrefetchFeature}
           accent="var(--mag)"
+          bucket="stale_or_mismatched"
+          onSeeAll={onSeeAll}
         />
       </div>
     </section>

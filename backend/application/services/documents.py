@@ -302,8 +302,8 @@ class DocumentQueryService:
             return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
         repo = ports.storage.documents()
-        rows = await repo.list_paginated(project.id, offset, limit, filters, workspace_id="default-local")  # TODO(workspace-routing)
-        total = await repo.count(project.id, filters, workspace_id="default-local")  # TODO(workspace-routing)
+        rows = await repo.list_paginated(project.id, offset, limit, filters)
+        total = await repo.count(project.id, filters)
         items = [_map_document_row_to_model(row, include_content=False) for row in rows]
         return PaginatedResponse(items=items, total=total, offset=offset, limit=limit)
 
@@ -317,7 +317,7 @@ class DocumentQueryService:
         project = resolve_project(context, ports)
         if project is None:
             return {"total": 0}
-        return await ports.storage.documents().get_catalog_facets(project.id, filters, workspace_id="default-local")  # TODO(workspace-routing)
+        return await ports.storage.documents().get_catalog_facets(project.id, filters)
 
     async def get_document(
         self,
@@ -399,9 +399,9 @@ class DocumentQueryService:
         doc_id_list = sorted(document_ids)
 
         feature_map, session_map, doc_map = await asyncio.gather(
-            feature_repo.get_many_by_ids(feature_id_list, workspace_id="default-local"),  # TODO(workspace-routing)
-            session_repo.get_many_by_ids(session_id_list, workspace_id="default-local"),  # TODO(workspace-routing)
-            doc_repo.get_many_by_ids(doc_id_list, workspace_id="default-local"),  # TODO(workspace-routing)
+            feature_repo.get_many_by_ids(feature_id_list),
+            session_repo.get_many_by_ids(session_id_list, project_id=project.id),
+            doc_repo.get_many_by_ids(doc_id_list),
         )
 
         features = []
@@ -419,7 +419,7 @@ class DocumentQueryService:
             )
 
         tasks = []
-        for task_row in await task_repo.list_all(project.id, workspace_id="default-local"):  # TODO(workspace-routing)
+        for task_row in await task_repo.list_all(project.id):
             task_id = str(task_row.get("id") or "")
             if task_id not in task_ids:
                 continue
@@ -482,16 +482,16 @@ class DocumentQueryService:
         doc_id: str,
     ) -> dict[str, Any] | None:
         repo = ports.storage.documents()
-        row = await repo.get_by_id(doc_id, workspace_id="default-local")  # TODO(workspace-routing)
+        row = await repo.get_by_id(doc_id)
         if row:
             return row
 
-        row = await repo.get_by_path(project_id, doc_id, workspace_id="default-local")  # TODO(workspace-routing)
+        row = await repo.get_by_path(project_id, doc_id)
         if row:
             return row
 
         if doc_id.startswith("DOC-"):
             candidate_path = normalize_ref_path(doc_id[4:].replace("-", "/"))
             if candidate_path:
-                return await repo.get_by_path(project_id, candidate_path, workspace_id="default-local")  # TODO(workspace-routing)
+                return await repo.get_by_path(project_id, candidate_path)
         return None

@@ -1,8 +1,12 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
+import { useSessionsQuery } from '../services/queries/sessions';
+import { useFeaturesQuery } from '../services/queries/features';
+import { useDocumentsQuery } from '../services/queries/documents';
 import { useModelColors } from '../contexts/ModelColorsContext';
 import { AgentSession, SessionLog, SessionArtifact, PlanDocument, Feature, ProjectTask, SessionTranscriptAppendPayload } from '../types';
 import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
@@ -39,6 +43,7 @@ import {
 import { getLegacyFeatureDetail, getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../services/featureSurface';
 import { apiFetch } from '../services/apiClient';
 import { isMemoryGuardEnabled } from '../lib/featureFlags';
+import { uiStateKeys } from '../services/queryKeys';
 import { SessionFeaturesView, TranscriptView } from './SessionInspector/TranscriptView';
 
 const MAIN_SESSION_AGENT = 'Main Session';
@@ -1339,13 +1344,13 @@ const ArtifactDetailsModal: React.FC<{
     );
 };
 
-const ArtifactsView: React.FC<{
+const ArtifactsView = React.memo<{
     session: AgentSession;
     threadSessions: AgentSession[];
     subagentNameBySessionId: Map<string, string>;
     onOpenThread: (sessionId: string) => void;
     highlightedSourceLogId?: string | null;
-}> = ({ session, threadSessions, subagentNameBySessionId, onOpenThread, highlightedSourceLogId }) => {
+}>(({ session, threadSessions, subagentNameBySessionId, onOpenThread, highlightedSourceLogId }) => {
     const [selectedGroup, setSelectedGroup] = useState<ArtifactGroup | null>(null);
     const [activeSubTab, setActiveSubTab] = useState<'commands' | 'skills' | 'agents' | 'tools'>('commands');
     const commandTagArtifactTypes = useMemo(
@@ -1766,7 +1771,7 @@ const ArtifactsView: React.FC<{
             )}
         </>
     );
-};
+});
 
 // --- Analytics Sub-Components ---
 
@@ -1853,7 +1858,7 @@ const formatTimelineLabel = (rawTime: string): string => {
     return rawTime || 'Unknown';
 };
 
-const TokenTimeline: React.FC<{ sessions: AgentSession[] }> = ({ sessions }) => {
+const TokenTimeline = React.memo<{ sessions: AgentSession[] }>(({ sessions }) => {
     const timelineData = useMemo(() => {
         type TimelineBucket = {
             time: string;
@@ -2055,9 +2060,9 @@ const TokenTimeline: React.FC<{ sessions: AgentSession[] }> = ({ sessions }) => 
             </div>
         </div>
     );
-};
+});
 
-const AnalyticsView: React.FC<{
+const AnalyticsView = React.memo<{
     session: AgentSession;
     threadSessions: AgentSession[];
     threadSessionDetails: Record<string, AgentSession>;
@@ -2066,7 +2071,7 @@ const AnalyticsView: React.FC<{
     sessionBlockInsightsEnabled: boolean;
     runtimeStatus: ReturnType<typeof useData>['runtimeStatus'];
     onOpenSession: (sessionId: string) => void;
-}> = ({
+}>(({
     session,
     threadSessions,
     threadSessionDetails,
@@ -2597,15 +2602,15 @@ const AnalyticsView: React.FC<{
             )}
         </div>
     );
-};
+});
 
-const AgentsView: React.FC<{
+const AgentsView = React.memo<{
     session: AgentSession;
     onSelectAgent: (agentName: string) => void;
     threadSessions: AgentSession[];
     subagentNameBySessionId: Map<string, string>;
     onOpenThread: (sessionId: string) => void;
-}> = ({ session, onSelectAgent, threadSessions, subagentNameBySessionId, onOpenThread }) => {
+}>(({ session, onSelectAgent, threadSessions, subagentNameBySessionId, onOpenThread }) => {
     const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
     const logAgents = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || MAIN_SESSION_AGENT)));
@@ -2675,7 +2680,7 @@ const AgentsView: React.FC<{
             })}
         </div>
     );
-};
+});
 
 type ImpactSignal = 'positive' | 'risk' | 'neutral';
 type ImpactCategory = 'code' | 'tests' | 'artifacts' | 'workflow' | 'system';
@@ -2722,7 +2727,7 @@ const formatImpactEventTime = (timestamp: string, timestampMs: number): string =
     return timestamp || 'unknown';
 };
 
-const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionFeatureLink[] }> = ({ session, linkedFeatureLinks }) => {
+const ImpactView = React.memo<{ session: AgentSession; linkedFeatureLinks: SessionFeatureLink[] }>(({ session, linkedFeatureLinks }) => {
     const [eventFilter, setEventFilter] = useState<'all' | ImpactCategory>('all');
 
     const impactModel = useMemo(() => {
@@ -3170,9 +3175,9 @@ const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionF
             </div>
         </div>
     );
-};
+});
 
-const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) => {
+const SessionForensicsView = React.memo<{ session: AgentSession }>(({ session }) => {
     const forensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
     const thinking = useMemo(() => asRecord(forensics.thinking), [forensics]);
     const entryContext = useMemo(() => asRecord(forensics.entryContext), [forensics]);
@@ -3238,6 +3243,13 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                         <div className="text-[11px] text-foreground font-mono break-all">{String(forensics.sessionFile || '')}</div>
                         <div className="text-muted-foreground">Claude Root</div>
                         <div className="text-[11px] text-foreground font-mono break-all">{String(forensics.claudeRoot || '')}</div>
+                        {/* T11-005: Launch-time capture fields (R-P2 / AC-11.D).
+                            null/absent == "not captured" — a contract state, never an error.
+                            Render an explicit muted fallback; never "undefined", never crash. */}
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Launcher</span><span className={`font-mono truncate max-w-[60%] ${session.launcher ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.launcher || 'Not captured'}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Profile</span><span className={`font-mono truncate max-w-[60%] ${session.profile ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.profile || 'Not captured'}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Effort Tier</span><span className={`font-mono truncate max-w-[60%] ${session.effortTier ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.effortTier || 'Not captured'}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Model Variant</span><span className={`font-mono truncate max-w-[60%] ${session.modelVariant ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.modelVariant || 'Not captured'}</span></div>
                     </div>
                 </div>
 
@@ -3770,7 +3782,7 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
             </div>
         </div>
     );
-};
+});
 
 // --- Main Container ---
 
@@ -3948,8 +3960,10 @@ const buildSessionFilterPayload = (filters: Partial<SessionFilters>): SessionFil
 const areSessionFiltersEqual = (left: Partial<SessionFilters>, right: Partial<SessionFilters>): boolean =>
     JSON.stringify(buildSessionFilterPayload(left)) === JSON.stringify(buildSessionFilterPayload(right));
 
-const SessionFilterBar: React.FC = () => {
-    const { sessionFilters, setSessionFilters, sessions } = useData();
+const SessionFilterBar = React.memo(() => {
+    const { sessionFilters, setSessionFilters, activeProject } = useData();
+    const { data: sessionsData } = useSessionsQuery({ projectId: activeProject?.id });
+    const sessions = sessionsData?.pages.flatMap(p => p.items) ?? [];
     const [localFilters, setLocalFilters] = useState<SessionFilters>(() => buildSessionFilterPayload(sessionFilters));
     const [modelFacets, setModelFacets] = useState<SessionModelFacet[]>([]);
     const [modelFacetsLoading, setModelFacetsLoading] = useState(false);
@@ -4566,16 +4580,19 @@ const SessionFilterBar: React.FC = () => {
             </SidebarFiltersSection>
         </SidebarFiltersPortal>
     );
-};
+});
 
-const SessionDetail: React.FC<{
+const SessionDetail = React.memo<{
     session: AgentSession;
     onBack: () => void;
     onOpenSession: (sessionId: string) => void;
     initialTab: SessionInspectorTab;
     onTabChange: (tab: SessionInspectorTab) => void;
-}> = ({ session, onBack, onOpenSession, initialTab, onTabChange }) => {
+}>(({ session, onBack, onOpenSession, initialTab, onTabChange }) => {
     const { activeProject, getSessionById, features, runtimeStatus } = useData();
+    // Mount useFeaturesQuery so features are fetched on cold load (T4-003).
+    // useData().features reads from TQ cache — it does not trigger a fetch itself.
+    useFeaturesQuery({ projectId: activeProject?.id });
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<SessionInspectorTab>(initialTab);
@@ -4602,48 +4619,39 @@ const SessionDetail: React.FC<{
         onTabChange(tab);
     }, [onTabChange]);
 
+    const conversationFamilyId = (session.conversationFamilyId || '').trim();
+    const fallbackRootSessionId = session.rootSessionId || session.id;
+    const threadSessionsQueryKey = useMemo(
+        () => ['thread-sessions', conversationFamilyId || fallbackRootSessionId],
+        [conversationFamilyId, fallbackRootSessionId],
+    );
+    const { data: threadSessionsData } = useQuery({
+        queryKey: threadSessionsQueryKey,
+        queryFn: async () => {
+            const params = new URLSearchParams({
+                offset: '0',
+                limit: '500',
+                sort_by: 'started_at',
+                sort_order: 'desc',
+                include_subagents: 'true',
+            });
+            if (conversationFamilyId) {
+                params.set('conversation_family_id', conversationFamilyId);
+            } else {
+                params.set('root_session_id', fallbackRootSessionId);
+            }
+            const res = await apiFetch(`/api/sessions?${params.toString()}`);
+            if (!res.ok) throw new Error('Failed to load thread sessions');
+            const data = await res.json();
+            return (data.items || []) as AgentSession[];
+        },
+        staleTime: ACTIVE_SESSION_DETAIL_POLL_MS,
+        // Only auto-poll for active sessions; pauses when tab is hidden (default).
+        refetchInterval: session.status === 'active' ? ACTIVE_SESSION_DETAIL_POLL_MS : false,
+    });
     useEffect(() => {
-        let cancelled = false;
-        const conversationFamilyId = (session.conversationFamilyId || '').trim();
-        const fallbackRootSessionId = session.rootSessionId || session.id;
-        const load = async () => {
-            try {
-                const params = new URLSearchParams({
-                    offset: '0',
-                    limit: '500',
-                    sort_by: 'started_at',
-                    sort_order: 'desc',
-                    include_subagents: 'true',
-                });
-                if (conversationFamilyId) {
-                    params.set('conversation_family_id', conversationFamilyId);
-                } else {
-                    params.set('root_session_id', fallbackRootSessionId);
-                }
-                const res = await apiFetch(`/api/sessions?${params.toString()}`);
-                if (!res.ok) return;
-                const data = await res.json();
-                if (!cancelled) {
-                    setThreadSessions(data.items || []);
-                }
-            } catch (e) {
-                console.error('Failed to load thread sessions', e);
-            }
-        };
-        void load();
-        let intervalId: number | null = null;
-        if (session.status === 'active') {
-            intervalId = window.setInterval(() => {
-                void load();
-            }, ACTIVE_SESSION_DETAIL_POLL_MS);
-        }
-        return () => {
-            cancelled = true;
-            if (intervalId !== null) {
-                window.clearInterval(intervalId);
-            }
-        };
-    }, [session.conversationFamilyId, session.id, session.rootSessionId, session.status]);
+        if (threadSessionsData) setThreadSessions(threadSessionsData);
+    }, [threadSessionsData]);
 
     useEffect(() => {
         setThreadSessionDetails(prev => ({ ...prev, [session.id]: session }));
@@ -4884,21 +4892,21 @@ const SessionDetail: React.FC<{
         return names;
     }, [session.logs, threadSessions]);
 
-    const handleSelectAgent = (agent: string) => {
+    const handleSelectAgent = useCallback((agent: string) => {
         setFilterAgent(agent || null); // Empty string resets filter
         setActiveTabWithSync('transcript');
-    };
+    }, [setActiveTabWithSync]);
 
-    const handleJumpToTranscript = (agentName?: string) => {
+    const handleJumpToTranscript = useCallback((agentName?: string) => {
         if (agentName) setFilterAgent(agentName);
         else setFilterAgent(null);
         setActiveTabWithSync('transcript');
-    }
+    }, [setActiveTabWithSync]);
 
-    const handleShowLinked = (tab: 'activity' | 'artifacts', sourceLogId: string) => {
+    const handleShowLinked = useCallback((tab: 'activity' | 'artifacts', sourceLogId: string) => {
         setLinkedSourceLogId(sourceLogId);
         setActiveTabWithSync(tab);
-    };
+    }, [setActiveTabWithSync]);
 
     const primaryFeatureLink = useMemo(
         () => linkedFeatureLinks.find(link => link.isPrimaryLink) || null,
@@ -5056,6 +5064,33 @@ const SessionDetail: React.FC<{
                                 <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${threadKindBadge.style}`}>
                                     {threadKindBadge.label}
                                 </span>
+                                {/* Phase 5 detection badges (T5-008). Each is a contract
+                                    state: absent field → badge simply not rendered, never
+                                    a placeholder, "null", or crash (AC-5.4 resilience). */}
+                                {session.contextWindow ? (
+                                    <span
+                                        className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/30"
+                                        title={`Context window: ${session.contextWindow}`}
+                                    >
+                                        {session.contextWindow} ctx
+                                    </span>
+                                ) : null}
+                                {session.skillName ? (
+                                    <span
+                                        className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/30"
+                                        title={`Skill: ${session.skillName}`}
+                                    >
+                                        {session.skillName}
+                                    </span>
+                                ) : null}
+                                {session.subagentParentId ? (
+                                    <span
+                                        className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-surface-muted text-muted-foreground border border-panel-border font-mono"
+                                        title={`Subagent of ${session.subagentParentId}`}
+                                    >
+                                        ↳ subagent
+                                    </span>
+                                ) : null}
                             </div>
                         </div>
                     </div>
@@ -5370,10 +5405,29 @@ const SessionDetail: React.FC<{
             )}
         </div>
     );
-};
+});
+
+// T6-001: estimated row height for session list virtualizer.
+const SESSION_LIST_ITEM_ESTIMATE_PX = 88;
+// T6-001: fallback item cap when virtualizer container height is 0.
+const SESSION_LIST_FALLBACK_CAP = 200;
+// T6-001: height for each virtualized session list container.
+const SESSION_LIST_CONTAINER_HEIGHT_PX = 600;
 
 export const SessionInspector: React.FC = () => {
-    const { sessions, loadMoreSessions, hasMoreSessions, getSessionById, loading } = useData();
+    const { activeProject, getSessionById, loading } = useData();
+    const queryClient = useQueryClient();
+    const {
+        data: sessionsData,
+        fetchNextPage,
+        hasNextPage,
+    } = useSessionsQuery({ projectId: activeProject?.id });
+    // Mount useDocumentsQuery so documents are fetched on cold load (T4-003).
+    // SessionInspectorPanels.ActivityView/FilesView read useData().documents — no fetch without this.
+    useDocumentsQuery({ projectId: activeProject?.id });
+    const sessions = sessionsData?.pages.flatMap(p => p.items) ?? [];
+    const loadMoreSessions = fetchNextPage;
+    const hasMoreSessions = Boolean(hasNextPage);
     const [searchParams, setSearchParams] = useSearchParams();
     const [selectedSession, setSelectedSession] = useState<AgentSession | null>(null);
     const [sessionBackStack, setSessionBackStack] = useState<AgentSession[]>([]);
@@ -5594,41 +5648,35 @@ export const SessionInspector: React.FC = () => {
         };
     }, [refreshSelectedSessionDetail, selectedSessionId, selectedSessionStatus, sessionLiveEnabled]);
 
+    // Polling fallback: only active when live updates are disabled or in backoff/closed.
+    const sessionDetailPollEnabled = Boolean(
+        selectedSession
+        && selectedSession.status === 'active'
+        && (!sessionLiveEnabled || ['backoff', 'closed'].includes(selectedSessionLiveStatus)),
+    );
+    const { data: polledSessionDetail } = useQuery({
+        queryKey: ['session-detail-poll', selectedSessionId],
+        queryFn: () => getSessionById(selectedSessionId!, { force: true }),
+        enabled: sessionDetailPollEnabled && !!selectedSessionId,
+        staleTime: 0,
+        // Visibility-aware: refetchIntervalInBackground defaults to false.
+        refetchInterval: sessionDetailPollEnabled ? ACTIVE_SESSION_DETAIL_POLL_MS : false,
+    });
+    // Sync polled data back to selectedSession state.
     useEffect(() => {
-        if (!selectedSession || selectedSession.status !== 'active') {
-            return undefined;
-        }
-        if (sessionLiveEnabled && !['backoff', 'closed'].includes(selectedSessionLiveStatus)) {
-            return undefined;
-        }
-
-        let cancelled = false;
-        const pollSessionDetail = async () => {
-            const refreshed = await getSessionById(selectedSession.id, { force: true });
-            if (!refreshed || cancelled) return;
-            setSelectedSession(current => {
-                if (!current || current.id !== refreshed.id) return current;
-                if (
-                    current.status === refreshed.status
-                    && current.updatedAt === refreshed.updatedAt
-                    && current.logs.length === refreshed.logs.length
-                ) {
-                    return current;
-                }
-                return refreshed;
-            });
-        };
-
-        void pollSessionDetail();
-        const interval = window.setInterval(() => {
-            void pollSessionDetail();
-        }, ACTIVE_SESSION_DETAIL_POLL_MS);
-
-        return () => {
-            cancelled = true;
-            window.clearInterval(interval);
-        };
-    }, [getSessionById, selectedSession, selectedSessionLiveStatus, sessionLiveEnabled]);
+        if (!polledSessionDetail) return;
+        setSelectedSession(current => {
+            if (!current || current.id !== polledSessionDetail.id) return current;
+            if (
+                current.status === polledSessionDetail.status
+                && current.updatedAt === polledSessionDetail.updatedAt
+                && current.logs.length === polledSessionDetail.logs.length
+            ) {
+                return current;
+            }
+            return polledSessionDetail;
+        });
+    }, [polledSessionDetail]);
 
     const handleBackFromSession = useCallback(() => {
         if (sessionBackStack.length === 0) {
@@ -5706,6 +5754,50 @@ export const SessionInspector: React.FC = () => {
         [sessionThreadRoots, liveNowMs]
     );
 
+    // T6-001: Refs for virtualizer scroll containers (past sessions — threaded + cards modes).
+    const pastThreadsContainerRef = useRef<HTMLDivElement>(null);
+    const pastCardsContainerRef = useRef<HTMLDivElement>(null);
+
+    // T6-001: Restore scroll offset from TQ query meta on mount.
+    const projectId = activeProject?.id ?? '';
+    const savedScrollOffset = queryClient.getQueryData<number>(
+        uiStateKeys.sessionListScrollOffset(projectId)
+    ) ?? 0;
+
+    // T6-001: Virtualizer for past session thread roots (threaded view).
+    const pastThreadsVirtualizer = useVirtualizer({
+        count: pastSessionThreadRoots.length,
+        getScrollElement: () => pastThreadsContainerRef.current,
+        estimateSize: () => SESSION_LIST_ITEM_ESTIMATE_PX,
+        overscan: 5,
+        initialOffset: savedScrollOffset,
+    });
+
+    // T6-001: Virtualizer for past sessions flat cards view.
+    const pastCardsVirtualizer = useVirtualizer({
+        count: pastSessions.length,
+        getScrollElement: () => pastCardsContainerRef.current,
+        estimateSize: () => SESSION_LIST_ITEM_ESTIMATE_PX,
+        overscan: 5,
+        initialOffset: savedScrollOffset,
+    });
+
+    // T6-001: Persist scroll offset on unmount so back-nav restores position.
+    useEffect(() => {
+        const threadContainer = pastThreadsContainerRef.current;
+        const cardsContainer = pastCardsContainerRef.current;
+        return () => {
+            const offset = threadContainer?.scrollTop ?? cardsContainer?.scrollTop ?? 0;
+            if (offset > 0) {
+                queryClient.setQueryData(
+                    uiStateKeys.sessionListScrollOffset(projectId),
+                    offset,
+                );
+            }
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId]);
+
     const openSessionFromList = useCallback((session: AgentSession) => {
         setSessionBackStack([]);
         setActiveSessionTab('transcript');
@@ -5720,6 +5812,15 @@ export const SessionInspector: React.FC = () => {
         if (!selectedSession) return;
         updateSessionSearchParams(selectedSession.id, tab, { replace: true });
     }, [selectedSession, updateSessionSearchParams]);
+
+    // Stable callback for SessionDetail onOpenSession prop (avoids defeating React.memo).
+    const handleDetailOpenSession = useCallback((sessionId: string) => {
+        void openSession(sessionId, undefined, {
+            pushCurrent: true,
+            syncUrl: true,
+            tab: activeSessionTab,
+        });
+    }, [openSession, activeSessionTab]);
 
     const toggleThreadChildren = useCallback((sessionId: string) => {
         setExpandedThreadSessionIds(prev => {
@@ -5768,13 +5869,7 @@ export const SessionInspector: React.FC = () => {
             <SessionDetail
                 session={selectedSession}
                 onBack={handleBackFromSession}
-                onOpenSession={(sessionId) => {
-                    void openSession(sessionId, undefined, {
-                        pushCurrent: true,
-                        syncUrl: true,
-                        tab: activeSessionTab,
-                    });
-                }}
+                onOpenSession={handleDetailOpenSession}
                 initialTab={activeSessionTab}
                 onTabChange={handleSessionTabChange}
             />
@@ -5888,26 +5983,125 @@ export const SessionInspector: React.FC = () => {
                     </h3>
 
                     {sessionsViewMode === 'threaded' ? (
-                        <div className="space-y-4">
-                            {pastSessionThreadRoots.map(node => renderThreadNode(node))}
-                            {pastSessionThreadRoots.length === 0 && (
-                                <div className="col-span-full border border-dashed border-panel-border rounded-2xl p-10 text-center text-muted-foreground bg-panel/10">
-                                    <Zap size={32} className="mx-auto mb-3 opacity-10" />
-                                    <p className="text-sm">No historical sessions found.</p>
-                                </div>
-                            )}
-                        </div>
+                        pastSessionThreadRoots.length === 0 ? (
+                            <div className="border border-dashed border-panel-border rounded-2xl p-10 text-center text-muted-foreground bg-panel/10">
+                                <Zap size={32} className="mx-auto mb-3 opacity-10" />
+                                <p className="text-sm">No historical sessions found.</p>
+                            </div>
+                        ) : (
+                            /* T6-001: Virtualized threaded list. Container needs explicit height.
+                               Fallback: if height=0 (container not yet laid out), cap to
+                               SESSION_LIST_FALLBACK_CAP items and log a warning. */
+                            (() => {
+                                const containerH = pastThreadsContainerRef.current?.clientHeight ?? 0;
+                                if (containerH === 0) {
+                                    // Height=0 fallback: render a bounded slice without virtualizer.
+                                    const cappedItems = pastSessionThreadRoots.slice(0, SESSION_LIST_FALLBACK_CAP);
+                                    if (pastSessionThreadRoots.length > SESSION_LIST_FALLBACK_CAP) {
+                                        console.warn(
+                                            `[SessionInspector] pastSessionThreadRoots virtualizer container height=0; ` +
+                                            `capping render to ${SESSION_LIST_FALLBACK_CAP} of ${pastSessionThreadRoots.length} items.`
+                                        );
+                                    }
+                                    return (
+                                        <div ref={pastThreadsContainerRef} className="space-y-4" style={{ height: SESSION_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}>
+                                            {cappedItems.map(node => renderThreadNode(node))}
+                                        </div>
+                                    );
+                                }
+                                const virtualItems = pastThreadsVirtualizer.getVirtualItems();
+                                const totalSize = pastThreadsVirtualizer.getTotalSize();
+                                return (
+                                    <div
+                                        ref={pastThreadsContainerRef}
+                                        style={{ height: SESSION_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}
+                                        className="custom-scrollbar"
+                                    >
+                                        <div style={{ height: totalSize, position: 'relative' }}>
+                                            {virtualItems.map(virtualRow => (
+                                                <div
+                                                    key={pastSessionThreadRoots[virtualRow.index].session.id}
+                                                    data-index={virtualRow.index}
+                                                    ref={pastThreadsVirtualizer.measureElement}
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: 0,
+                                                        left: 0,
+                                                        width: '100%',
+                                                        transform: `translateY(${virtualRow.start}px)`,
+                                                        paddingBottom: 16,
+                                                    }}
+                                                >
+                                                    {renderThreadNode(pastSessionThreadRoots[virtualRow.index])}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()
+                        )
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                            {pastSessions.map(session => (
-                                <SessionSummaryCard
-                                    key={session.id}
-                                    session={session}
-                                    statusOverride="completed"
-                                    onClick={() => openSessionFromList(session)}
-                                />
-                            ))}
-                        </div>
+                        /* T6-001: Virtualized flat cards list. Same fallback pattern. */
+                        (() => {
+                            const containerH = pastCardsContainerRef.current?.clientHeight ?? 0;
+                            if (containerH === 0) {
+                                const cappedItems = pastSessions.slice(0, SESSION_LIST_FALLBACK_CAP);
+                                if (pastSessions.length > SESSION_LIST_FALLBACK_CAP) {
+                                    console.warn(
+                                        `[SessionInspector] pastSessions virtualizer container height=0; ` +
+                                        `capping render to ${SESSION_LIST_FALLBACK_CAP} of ${pastSessions.length} items.`
+                                    );
+                                }
+                                return (
+                                    <div ref={pastCardsContainerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5" style={{ height: SESSION_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}>
+                                        {cappedItems.map(session => (
+                                            <SessionSummaryCard
+                                                key={session.id}
+                                                session={session}
+                                                statusOverride="completed"
+                                                onClick={() => openSessionFromList(session)}
+                                            />
+                                        ))}
+                                    </div>
+                                );
+                            }
+                            const virtualItems = pastCardsVirtualizer.getVirtualItems();
+                            const totalSize = pastCardsVirtualizer.getTotalSize();
+                            return (
+                                <div
+                                    ref={pastCardsContainerRef}
+                                    style={{ height: SESSION_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}
+                                    className="custom-scrollbar"
+                                >
+                                    <div style={{ height: totalSize, position: 'relative' }}>
+                                        {virtualItems.map(virtualRow => {
+                                            const session = pastSessions[virtualRow.index];
+                                            return (
+                                                <div
+                                                    key={session.id}
+                                                    data-index={virtualRow.index}
+                                                    ref={pastCardsVirtualizer.measureElement}
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: 0,
+                                                        left: 0,
+                                                        width: '100%',
+                                                        transform: `translateY(${virtualRow.start}px)`,
+                                                        paddingBottom: 16,
+                                                    }}
+                                                >
+                                                    <SessionSummaryCard
+                                                        session={session}
+                                                        statusOverride="completed"
+                                                        onClick={() => openSessionFromList(session)}
+                                                    />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            );
+                        })()
                     )}
 
                     {hasMoreSessions && (

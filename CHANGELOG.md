@@ -2,8 +2,43 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`ccdash persona extract` CLI** — Post-session, deterministic (no-model, no-DB-write) extraction of high-signal persona-candidate lines from a single Claude Code session JSONL into the universal persona memory bank's `_inbox/capture.jsonl` queue (P4 of the universal persona memory system; additive third capture source alongside `op remember` and the live-session hooks). Eight deterministic regex rules (R1–R8) over user-message text only, dedup by `(category, normalized_text_hash)`, `flock`-guarded inbox append, and an atomic `_meta/ccdash-extract-state.json` watermark for per-session idempotency. Strictly per-session: `--session <id>` xor `--latest` xor `--since <iso>` (the last hard-capped at N≤25); no `--all`, no cache-DB access. Honors `OP_PERSONA_HOME`; `--dry-run` and `--json` supported; `ccdash persona extract status` shows the state file. Emitted lines match the frozen agentic_meta_dev candidate-line contract byte-for-byte.
+- **Branch-aware planning intelligence**: Surface git branch, commit, and PR provenance across planning surfaces with live session awareness and automatic polling.
+  - Active-session chips on CommandCenterFeatureCard showing running sessions with agent name and transcript links; displays empty state when no sessions are running.
+  - git_branch chip on PlanningAgentSessionBoard session cards with three distinct states: populated branch name, Codex-specific "no branch" indicator, and generic "branch unknown" fallback for non-Codex sessions with null branch.
+  - Commit/PR provenance click-dialog on CommandCenterFeatureCard linking to commit refs and PR refs from feature data with labeled provenance identifiers.
+  - Per-phase session links in CommandCenterDetailPanel showing linked sessions below each phase row with agent name, start time, and clickable transcript links.
+  - "Open full detail" bridge button in CommandCenterDetailPanel providing one-click navigation to full feature detail modal.
+  - Automatic 15s polling (`refetchInterval: 15_000`) on both planning command center and planning agent session board surfaces; backend endpoint cache TTL reduced to 30s for sub-45s end-to-end freshness.
+- **System-wide live agent count chip on the home dashboard**: shows total running agents across all projects with per-project staleness indicators. Available via REST (`GET /api/agent/system/active-count`), MCP (`ccdash_system_active_count`), and CLI (`ccdash system active-count`). Backed by `SystemMetricsQueryService` with bounded fan-out (`CCDASH_SYSTEM_METRICS_CONCURRENCY`, default 10), memoized cache (`CCDASH_SYSTEM_METRICS_CACHE_TTL_SECONDS`, default 30s), and a configurable staleness horizon (`CCDASH_SYSTEM_METRICS_STALE_HORIZON_SECONDS`, default 3600s).
+- **Cross-project session detail and transcript** — Full session bundles (transcript, subagent tree, tokens, artifacts, entity links) are now accessible for any registered project via all three transport surfaces.
+  - REST: `GET /api/v1/sessions/{id}/detail` and `GET /api/v1/sessions/{id}/transcript`; `project_id` required (HTTP 400 on missing, no active-project fallback); cursor pagination via `{items,cursor,limit,nextCursor}` envelope (default 200, max 1000 entries per page).
+  - MCP: `ccdash_session_search`, `ccdash_session_detail`, and `ccdash_session_transcript` tools with configurable payload chunk budget.
+  - CLI: `ccdash session` group wired to the transport-neutral detail service.
+- **Layered transcript redaction** — All session transcript egress (REST, MCP, CLI) passes through a two-layer redaction filter before leaving the process: Layer 1 scans for nine secret-pattern groups (API keys, bearer tokens, AWS/GCP credentials, PEM headers, GitHub PATs, `.env` assignments, 64-char hex tokens); Layer 2 applies tool-name-aware field redaction for `Bash`, `Write`, `Edit`, `MultiEdit`, and `computer_use` tool arguments. Configurable via `CCDASH_REDACTION_PATTERNS_ENABLED` and `CCDASH_REDACTION_TOOL_AWARE_ENABLED` (both default `true`, fail-closed). Redaction event logs emit a count only; secret values are never written to logs.
+- **Session detection columns** — Five new session fields (`model_slug`, `workflow_id`, `subagent_parent_id`, `skill_name`, `context_window`) derived from JSONL log signals and an optional `workflow.json` sidecar with ±60-second session join (`CCDASH_SIDECAR_CONTEXT_JOIN_ENABLED`, default `true`). Session Inspector surfaces detection badges for context window and skill; Dashboard surfaces a coverage summary; all fields render defined fallbacks when absent.
+- **Fable model pricing tier** — Claude Fable family added to the pricing catalog at $2.00/$10.00 per million input/output tokens, distinct from Sonnet ($3.00/$15.00); `claude-fable-4` and `claude-fable-4-5` resolve to the Fable tier automatically.
+- **Sync coalescing guard** — Concurrent sync requests for the same `(project_id, trigger)` pair are deduplicated: an asyncio in-process guard discards redundant dispatches immediately; the durable job queue enforces a single pending-or-running depth limit per key. Controlled by `CCDASH_SYNC_COALESCING_ENABLED` (default `true`).
+- **Recent-first sync with lazy full backfill** — On each sync the N most-recently-modified JSONL files (default `CCDASH_SYNC_RECENT_FIRST_N=200`) are parsed first so the UI is responsive before the full archive completes; a complete backfill pass with a parity check follows in the same sync call. Controlled by `CCDASH_SYNC_RECENT_FIRST_ENABLED` (default `true`).
+- **Periodic cross-project reconcile and watcher self-heal** — A background job (`CCDASH_RECONCILE_INTERVAL_SECONDS`, default 300 s) iterates all DB-registered projects, syncs drifted data, re-binds crashed or absent file watchers, and picks up projects added after boot without a server restart. Watcher re-bind controlled by `CCDASH_WATCHER_HEAL_ENABLED` (default `true`).
+- **External `/api/v1` configuration and capability advertisement** — `GET /api/v1/capabilities` advertises supported features for external agent integrations; `CCDASH_CORS_ALLOWED_ORIGINS` and `CCDASH_HOST` configure CORS allowed origins and the HTTP listen address for LAN and container deployments; `CCDASH_API_TOKEN` enables optional bearer authentication (absent = local-only, no auth required). Checked-in OpenAPI spec and reference client at `scripts/intenttree_example_client.py`. See `docs/guides/external-api-lan-deployment.md`.
+- **Launch-time profile and effort capture** — A fail-open `SessionStart` hook (`scripts/hooks/ccdash_capture_session_start.py`) records `launcher`, `profile`, `effort_tier`, and `model_variant` from `CCDASH_LAUNCHER` / `CCDASH_LAUNCH_PROFILE` / `CCDASH_LAUNCH_EFFORT` / `CCDASH_LAUNCH_MODEL` env vars into a `.capture.json` sidecar at session start; unknown attributes are always `null`, never defaulted. Fields exposed as `launcherIdentity`, `launchProfile`, `effortTier`, `modelVariant` in session detail; Session Inspector shows "Not captured" fallbacks for pre-hook sessions. Setup guide: `docs/guides/launch-time-capture-convention.md`.
+- **`/readyz` health probe** — `GET /readyz` returns `{db_connected, migration_head_applied, queue_reachable}` as structured JSON (HTTP 200 if all pass, HTTP 503 on any failure); used as the Docker Compose healthcheck for api and worker containers.
+
+### Fixed
+
+- **W1: Dashboard now lands on the DB-active project on first load** — Registry-authoritative `ORDER BY is_active DESC` + FE app-shell scope guard ensures the correct active project is selected automatically. Seed/example projects are flagged via `is_seed` and excluded from default selection.
+- **W3: Postgres in-place upgrade from schema v29→v35 no longer crashes** — Fixed both the project_id-dependent CREATE INDEX ordering AND a deeper composite child-table FK issue. Inline `REFERENCES sessions(project_id, id)` FKs moved out of the table-creation blob into the versioned composite-PK migration. Validated by a real seeded-PG container smoke (`npm run docker:hosted:smoke:seeded-pg`).
+- **Session data now reflects the active project after a project switch**: `POST /api/projects/active/{id}` atomically rebinds the file watcher to the new project's `sessions_dir`, `docs_dir`, and `progress_dir`, triggers a one-shot sync, and returns `watcherRebound: true` in the response. Session counts, analytics, and live metrics now immediately reflect the correct project. `GET /api/health/detail` watcher `watchPaths` field updates on switch. If the new project's paths do not exist, the API returns HTTP 4xx and the watcher remains on the previous project's paths (no half-rebound state).
+- **Cross-project session read isolation** — `get_by_id`, `get_many_by_ids`, and session-family reads now enforce a strict `project_id` predicate in both SQLite and Postgres repositories; session rows from one project can no longer appear in another project's detail, family, or drilldown views. Previously, missing or empty `project_id` inputs silently fell back to the active project, enabling stale-project reads across all ID-based lookups.
+- **Novel model IDs no longer silently billed at Sonnet rates** — Unrecognized model slugs now return `cost_pricing_status: "unpriced"` with `display_cost_usd: null` instead of inheriting Sonnet pricing ($3.00/$15.00 per million); the analytics API exposes `costPricingStatus` for UI-layer handling.
+- **PostgreSQL-specific migration and runtime defects** — Five bugs in the Postgres/container path fixed: functional index `(captured_at::date)` IMMUTABLE violation replaced with `left(captured_at, 10)`; `pgvector` extension requirement declared in compose (`pgvector/pgvector:pg15`); `RuntimeJobState` dataclass `slots` declaration corrected for `_drain_task`; `Pool.transaction()` replaced with single-connection `_acquire()` for correct `FOR UPDATE SKIP LOCKED` semantics; compose `seed` service added for worker project binding on fresh databases.
+
 ### Changed
 
+- **W2: `CCDASH_WORKER_WATCH_PROJECT_ID` is now OPTIONAL** — An empty or unset scope filter makes the watcher derive its targets from the DB registry (all registered projects) instead of requiring a hand-pinned id. Adds per-project watcher health rollup in `/api/health/detail`, a 60s registry reconcile loop, bounded sync concurrency (`CCDASH_WATCHER_SYNC_CONCURRENCY`), and `CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS`.
 - **Planning / Forensics Boundary Extraction**: Separated planning and execution workflows from session forensics and metrics through bounded shared evidence contracts. Key changes:
   - Added `FeatureEvidenceSummary` as a transport-neutral backend service/DTO providing bounded session counts, token totals, workflow mix, and freshness metadata without transcript-log enrichment.
   - Planning queries now consume the bounded evidence summary instead of full `FeatureForensicsQueryService` forensic detail, eliminating import-time singleton coupling in `planning.py`.
@@ -11,15 +46,37 @@
   - Frontend feature detail modal split into domain-owned modules: shared shell (`FeatureDetailShell`), planning-owned tabs, forensics/session-owned tabs, and execution/test-owned tabs with preserved cache invalidation bus semantics.
   - `WorkflowEffectivenessSurface` moved from `components/execution/` to `components/Workflows/` — workflow diagnostics is now a product module; Analytics retains discoverability via the Workflow Intel tab.
   - CLI v1 feature contract (`/api/v1/features/*`) and existing planning/forensics API response shapes remain stable.
+- **`CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` default changed to `true`** — The family-scoped incremental rebuild path is now active by default on the watcher hot path; set `false` to revert to the global filesystem-scan fallback.
+- **`CCDASH_SYNC_ALL_PROJECTS` default changed to `false`** — Boot-time all-projects sweeps are now opt-in; cross-project freshness is provided by the periodic reconcile job. Set `true` to restore the prior on-boot sweep.
+- **Compose service ports bound to loopback by default** — PostgreSQL (5432), API (8000), and worker (9465) container host ports now bind to `127.0.0.1` instead of `0.0.0.0`; operators exposing services to the LAN must explicitly override and set strong `CCDASH_POSTGRES_PASSWORD` and `CCDASH_API_TOKEN` values. CORS rejects wildcard origins with `allow_credentials=True`; bearer token comparison uses constant-time `hmac.compare_digest`.
+
+### Maintenance
+
+- **W4: Accumulated findings triage** — Triaged 6 accumulated findings: F-001, F-002, F-003, F-W3-001, F-W3-002 resolved; F-W6-001 deferred.
 
 ### Added
 
+- **Live agents count widget and API**: Exposes the per-project "currently running agents" count through all three CCDash transports (REST, MCP, CLI) and renders it as a live chip on the Dashboard. The count reflects sessions with `status='active'` and `updated_at` within the last 10 minutes, defending against stale-active rows from un-rebounded file watchers. Dashboard chip polls every 10 seconds and degrades to `--` on API error without crashing. Adds `GET /api/agent/live/active-count`, MCP tool `ccdash_live_active_count`, and CLI command `ccdash live active-count [--project <id>] [--json]`. Adds composite index `idx_sessions_project_status_updated` on the `sessions` table (SQLite and PostgreSQL) to make the count query cheap.
 - **Artifact intelligence surfaces and agent access**: Added Analytics artifact rankings, Execution Workbench artifact optimization recommendations, Settings SkillMeat snapshot health, and agent/operator access through `ccdash artifact` CLI commands and the `artifact_recommendations` MCP tool.
 - **Per-message token usage in session transcript**: Every assistant message in the session inspector now shows a compact token caption (e.g. `1.2K tok · cached 800`) beneath the message body. Hovering or clicking the caption opens a popover with the full per-turn breakdown: input, output, cache read, cache creation, total, and tool-call count. User messages and messages without usage data render no caption.
   - Backend: four new nullable columns on `session_messages` (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`) in both SQLite (schema v26) and PostgreSQL (schema v27) migrations.
   - Parser: the Claude Code JSONL parser already extracts `message.usage` into message metadata; the projection layer now promotes those fields into the dedicated columns on sync.
   - API: `GET /api/sessions/{id}/logs` response includes `tokenUsage` (camelCase, null for messages without data) per message.
   - Re-sync required for existing sessions: historical sessions will show captions after their next sync; no manual backfill is needed.
+
+### Performance
+
+- **Frontend data-layer refactor: TanStack Query migration** — Replaced three hand-rolled server-state caches with TanStack Query; back-navigation renders instantly from cache for all previously-visited routes.
+- **Watcher hot-path link rebuild is now family-scoped** — Adding or modifying a JSONL file triggers a scoped entity-link rebuild for the affected session IDs only (no filesystem walk); the prior code path walked all `.md` files on every watcher event regardless of the `CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED` flag setting.
+- **Sync coalescing eliminates redundant concurrent syncs** — Multiple concurrent sync dispatches for the same project and trigger coalesce to a single real sync, reducing DB write contention and CPU load under rapid-change or multi-watcher workloads.
+
+### Changed
+
+- **Dashboard and planning cold-load optimization** — Dashboard cold load reduced to 1 network request (was 8–9 parallel); tasks and features requests now paginated (no longer limit=5000).
+
+### Improved
+
+- **List virtualization for scale** — Session list, document list, and feature list virtualized via @tanstack/react-virtual.
 
 ## [0.2.0] - 2026-04-28
 ### Added

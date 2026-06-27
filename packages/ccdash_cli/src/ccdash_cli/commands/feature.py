@@ -131,7 +131,7 @@ def feature_show(
         n_sessions = len(data.get("linked_sessions", []))
         typer.secho(
             f"Sessions: {n_sessions} linked"
-            f" — run 'ccdash feature sessions {feature_id}' for paginated details.",
+            f" — run 'ccdash-cli feature sessions {feature_id}' for paginated details.",
             dim=True,
         )
 

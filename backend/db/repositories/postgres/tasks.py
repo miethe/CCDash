@@ -5,6 +5,8 @@ import json
 from datetime import datetime, timezone
 import asyncpg
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
+
 class PostgresTaskRepository:
     """PostgreSQL-backed task storage."""
 
@@ -64,7 +66,7 @@ class PostgresTaskRepository:
             data_json,
         )
 
-    async def get_by_id(self, task_id: str, *, workspace_id: str) -> dict | None:
+    async def get_by_id(self, task_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
         """Fetch a single task by PK, scoped to workspace_id.
 
         Returns None when the task does not exist OR belongs to a different
@@ -77,7 +79,7 @@ class PostgresTaskRepository:
         )
         return dict(row) if row else None
 
-    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         if project_id:
             rows = await self.db.fetch(
                 "SELECT * FROM tasks WHERE workspace_id = $1 AND project_id = $2 ORDER BY updated_at DESC",
@@ -92,7 +94,7 @@ class PostgresTaskRepository:
             )
         return [dict(r) for r in rows]
 
-    async def list_paginated(self, project_id: str | None, offset: int, limit: int, *, workspace_id: str) -> list[dict]:
+    async def list_paginated(self, project_id: str | None, offset: int, limit: int, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         if project_id:
             rows = await self.db.fetch(
                 "SELECT * FROM tasks WHERE workspace_id = $1 AND project_id = $2 ORDER BY updated_at DESC LIMIT $3 OFFSET $4",
@@ -110,7 +112,7 @@ class PostgresTaskRepository:
             )
         return [dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None, *, workspace_id: str) -> int:
+    async def count(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
         if project_id:
             value = await self.db.fetchval(
                 "SELECT COUNT(*) FROM tasks WHERE workspace_id = $1 AND project_id = $2",
@@ -129,7 +131,7 @@ class PostgresTaskRepository:
         feature_id: str,
         phase_id: str | None = None,
         *,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         """Return tasks for a feature, scoped to workspace_id (ADR-008 §Data Isolation)."""
         if phase_id:
@@ -147,7 +149,7 @@ class PostgresTaskRepository:
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM tasks WHERE source_file = $1", source_file)
 
-    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         completed = await self.db.fetchval(
             "SELECT COUNT(*) FROM tasks WHERE workspace_id = $1 AND project_id = $2 AND lower(status) IN ('done', 'deferred', 'completed')",
             workspace_id,

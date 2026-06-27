@@ -124,10 +124,10 @@ class TestIngestEndpoint(unittest.TestCase):
                 "backend.adapters.jobs.runtime.file_watcher.stop",
                 new_callable=lambda: lambda: AsyncMock(),
             ),
-            patch(
-                "backend.runtime_ports.project_manager.get_active_project",
-                return_value=None,
-            ),
+            # Project resolution on the ingest path is driven by the workspace
+            # AuthContext (see dependency_overrides below), not a module-level
+            # active-project lookup — ADR-006 made the registry DB-authoritative,
+            # so the old runtime_ports.project_manager singleton no longer exists.
         ]
         for p in cls._patches:
             p.start()
@@ -203,9 +203,9 @@ class TestIngestEndpoint(unittest.TestCase):
 
         # The app uses CCDASH_DB_PATH env var.  We read it from the connection
         # module that already has it expanded.
-        from backend.db.connection import DB_PATH
+        from backend.db.connection import _resolve_db_path
 
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(_resolve_db_path()))
         try:
             cur = conn.execute(
                 "SELECT COUNT(*) FROM sessions WHERE source_ref = ?",
@@ -216,13 +216,13 @@ class TestIngestEndpoint(unittest.TestCase):
         finally:
             conn.close()
 
-    def _get_cursor_value(self, project_id: str, workspace_id: str = "default") -> str | None:
+    def _get_cursor_value(self, project_id: str, workspace_id: str = "default-local") -> str | None:
         """Return last_cursor from ingest_cursors for (remote_ingest, project_id, workspace_id)."""
         import sqlite3
 
-        from backend.db.connection import DB_PATH
+        from backend.db.connection import _resolve_db_path
 
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(_resolve_db_path()))
         try:
             cur = conn.execute(
                 """
@@ -412,30 +412,40 @@ class TestIngestEndpoint(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_g_cursor_advances_to_last_accepted_event_id(self) -> None:
-        # Use a unique project_id so we don't collide with other tests.
+        # Per ADR-010 the workspace token's AuthContext.project_id is the routing
+        # key (x-ccdash-project-id is advisory only). Override the auth context to
+        # this test's unique project so the cursor row is isolated and keyed by it.
         project_id = f"cursor-test-{_event_id()[:8]}"
         events = [_make_event() for _ in range(3)]
         last_event_id = events[-1]["event_id"]
 
-        resp = self.client.post(
-            "/api/v1/ingest/sessions",
-            content=_ndjson(*events),
-            headers={
-                "Content-Type": "application/x-ndjson",
-                "x-ccdash-project-id": project_id,
-            },
+        self._app.dependency_overrides[get_auth_context] = (
+            lambda: AuthContext.synthesize_local(project_id=project_id)
         )
+        try:
+            resp = self.client.post(
+                "/api/v1/ingest/sessions",
+                content=_ndjson(*events),
+                headers={
+                    "Content-Type": "application/x-ndjson",
+                    "x-ccdash-project-id": project_id,
+                },
+            )
 
-        self.assertEqual(resp.status_code, 200, resp.text)
-        data = resp.json()
-        self.assertEqual(data["accepted"], 3, data)
+            self.assertEqual(resp.status_code, 200, resp.text)
+            data = resp.json()
+            self.assertEqual(data["accepted"], 3, data)
 
-        # The response envelope must carry the last accepted event_id.
-        self.assertEqual(data["cursor_advanced_to"], last_event_id, data)
+            # The response envelope must carry the last accepted event_id.
+            self.assertEqual(data["cursor_advanced_to"], last_event_id, data)
 
-        # The DB row must also reflect the advance.
-        db_cursor = self._get_cursor_value(project_id)
-        self.assertEqual(db_cursor, last_event_id, f"DB cursor={db_cursor!r}")
+            # The DB row must also reflect the advance.
+            db_cursor = self._get_cursor_value(project_id)
+            self.assertEqual(db_cursor, last_event_id, f"DB cursor={db_cursor!r}")
+        finally:
+            self._app.dependency_overrides[get_auth_context] = (
+                lambda: AuthContext.synthesize_local(project_id="test-project")
+            )
 
     # ------------------------------------------------------------------
     # Content-Type guard

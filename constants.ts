@@ -388,4 +388,37 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
   }
 ];
 
+export const DOCUMENTS_PAGE_SIZE = 500;
 export const MAX_DOCUMENTS_IN_MEMORY = 2000;
+export const MAX_SESSIONS_IN_MEMORY = 2000;
+
+/**
+ * MPCC-102: Default for the multi-project command-center capability flag.
+ * Components must use `caps.multiProjectCommandCenterEnabled ?? MULTI_PROJECT_COMMAND_CENTER_ENABLED_DEFAULT`
+ * so the feature remains off when the capability is absent (resilience-by-default).
+ * The authoritative runtime value comes from `getLaunchCapabilities().multiProjectCommandCenterEnabled`.
+ */
+export const MULTI_PROJECT_COMMAND_CENTER_ENABLED_DEFAULT = false;
+
+/**
+ * MPCC-403: Env-var-driven feature flag for the multi-project command-center.
+ *
+ * Set VITE_CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED=true to enable the
+ * portfolio mode features.  Defaults to false (opt-in).
+ *
+ * The authoritative runtime value is read once at module load so that every
+ * query hook and gate that imports this constant gets a stable boolean.
+ */
+function readBoolEnv(raw: string | undefined, fallback: boolean): boolean {
+  if (typeof raw !== 'string' || !raw.trim()) return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+export const MULTI_PROJECT_COMMAND_CENTER_ENABLED: boolean = readBoolEnv(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED : undefined),
+  MULTI_PROJECT_COMMAND_CENTER_ENABLED_DEFAULT,
+);

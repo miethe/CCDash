@@ -6,13 +6,15 @@ from datetime import datetime, timezone
 import aiosqlite
 
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
+
 class SqliteEntityLinkRepository:
     """Entity links with tree queries and bidirectional lookups."""
 
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
-    async def upsert(self, link_data: dict, *, workspace_id: str) -> int:
+    async def upsert(self, link_data: dict, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
         now = datetime.now(timezone.utc).isoformat()
         async with self.db.execute(
             """INSERT INTO entity_links (
@@ -41,8 +43,94 @@ class SqliteEntityLinkRepository:
             await self.db.commit()
             return cur.lastrowid or 0
 
+    async def bulk_upsert(self, links: list[dict], project_id: str | None = None) -> int:
+        """Insert or update a batch of entity links in a single transaction.
+
+        Builds one param-tuple list and issues a single ``executemany`` followed
+        by a single ``commit``.  Reduces ~25K individual transactions during a
+        full link rebuild to exactly one.
+
+        The optional ``project_id`` argument populates the ``project_id`` column
+        when it is present in the schema (added by T1-019).  If the column does
+        not yet exist the value is silently dropped — callers must NOT rely on it
+        being persisted until after T1-019 has run.
+
+        Returns the number of links processed (not necessarily inserted — some
+        may resolve to ON CONFLICT DO UPDATE).
+        """
+        if not links:
+            return 0
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Probe whether the project_id column exists so we degrade gracefully
+        # when running against a schema that predates T1-019.
+        has_project_id_col = False
+        try:
+            async with self.db.execute(
+                "SELECT project_id FROM entity_links LIMIT 0"
+            ):
+                has_project_id_col = True
+        except Exception:
+            has_project_id_col = False
+
+        if has_project_id_col:
+            sql = """INSERT INTO entity_links (
+                source_type, source_id, target_type, target_id,
+                link_type, origin, confidence, depth, sort_order,
+                metadata_json, created_at, project_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_type, source_id, target_type, target_id, link_type) DO UPDATE SET
+                origin=excluded.origin, confidence=excluded.confidence,
+                depth=excluded.depth, sort_order=excluded.sort_order,
+                metadata_json=excluded.metadata_json,
+                project_id=COALESCE(excluded.project_id, entity_links.project_id)"""
+            params = [
+                (
+                    lnk["source_type"], lnk["source_id"],
+                    lnk["target_type"], lnk["target_id"],
+                    lnk.get("link_type", "related"),
+                    lnk.get("origin", "auto"),
+                    lnk.get("confidence", 1.0),
+                    lnk.get("depth", 0),
+                    lnk.get("sort_order", 0),
+                    lnk.get("metadata_json"),
+                    now,
+                    lnk.get("project_id") or project_id,
+                )
+                for lnk in links
+            ]
+        else:
+            sql = """INSERT INTO entity_links (
+                source_type, source_id, target_type, target_id,
+                link_type, origin, confidence, depth, sort_order,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_type, source_id, target_type, target_id, link_type) DO UPDATE SET
+                origin=excluded.origin, confidence=excluded.confidence,
+                depth=excluded.depth, sort_order=excluded.sort_order,
+                metadata_json=excluded.metadata_json"""
+            params = [
+                (
+                    lnk["source_type"], lnk["source_id"],
+                    lnk["target_type"], lnk["target_id"],
+                    lnk.get("link_type", "related"),
+                    lnk.get("origin", "auto"),
+                    lnk.get("confidence", 1.0),
+                    lnk.get("depth", 0),
+                    lnk.get("sort_order", 0),
+                    lnk.get("metadata_json"),
+                    now,
+                )
+                for lnk in links
+            ]
+
+        await self.db.executemany(sql, params)
+        await self.db.commit()
+        return len(links)
+
     async def get_links_for(
-        self, entity_type: str, entity_id: str, link_type: str | None = None, *, workspace_id: str,
+        self, entity_type: str, entity_id: str, link_type: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         if link_type:
             query = """SELECT * FROM entity_links
@@ -62,7 +150,7 @@ class SqliteEntityLinkRepository:
             return [dict(r) for r in await cur.fetchall()]
 
     async def get_links_for_many(
-        self, entity_type: str, entity_ids: list[str], *, workspace_id: str,
+        self, entity_type: str, entity_ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, list[dict]]:
         """Fetch entity links for many entity ids in a single query.
 
@@ -91,7 +179,7 @@ class SqliteEntityLinkRepository:
                     result[row["target_id"]].append(row)
         return result
 
-    async def get_tree(self, entity_type: str, entity_id: str, *, workspace_id: str) -> dict:
+    async def get_tree(self, entity_type: str, entity_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         """Get full tree: parents, children, siblings."""
         async with self.db.execute(
             """SELECT * FROM entity_links

@@ -3,10 +3,15 @@
 from backend.application.services.agent_queries import cache
 from backend.application.services.agent_queries.cache import (
     _query_cache,
+    aclear_project_cache,
+    cache_get,
+    cache_set,
     clear_cache,
+    clear_project_cache,
     compute_cache_key,
     get_cache,
     get_data_version_fingerprint,
+    init_postgres_cache_backend,
 )
 from backend.application.services.agent_queries._filters import (
     AgentQueryProjectScope,
@@ -19,8 +24,12 @@ from backend.application.services.agent_queries._filters import (
 from backend.application.services.agent_queries.models import (
     AARReportDTO,
     AgentQueryEnvelope,
+    AnalyticsKPIsDTO,
+    AnalyticsOverviewBundleDTO,
+    AnalyticsTopModelDTO,
     Bottleneck,
     CostSummary,
+    DashboardBundleDTO,
     DocumentRef,
     FeatureEvidenceSummary,
     FeatureForensicsDTO,
@@ -33,15 +42,39 @@ from backend.application.services.agent_queries.models import (
     PhaseOperationsDTO,
     PhaseTaskItem,
     PlanningArtifactRef,
+    PlanningCommandAlternativeDTO,
+    PlanningCommandCapabilityDTO,
+    PlanningCommandCenterArtifactDTO,
+    PlanningCommandCenterBlockerDTO,
+    PlanningCommandCenterCapabilitiesDTO,
+    PlanningCommandCenterFeatureDTO,
+    PlanningCommandCenterGitStateDTO,
+    PlanningCommandCenterItemDTO,
+    PlanningCommandCenterLaunchAgentDTO,
+    PlanningCommandCenterLaunchBatchDTO,
+    PlanningCommandCenterPageDTO,
+    PlanningCommandCenterPhaseDTO,
+    PlanningCommandCenterPhaseRowDTO,
+    PlanningCommandCenterPullRequestDTO,
+    PlanningCommandCenterRelatedFileDTO,
+    PlanningCommandCenterStatusDTO,
+    PlanningCommandCenterStoryPointsDTO,
+    PlanningCommandCenterTierDTO,
+    PlanningCommandCenterWorktreeDTO,
+    PlanningCommandResolutionDTO,
+    PlanningCommandRuleId,
+    PlanningCommandTargetArtifactDTO,
     PlanningNextRunPreviewDTO,
     PlanningNodeCountsByType,
     PlanningOpenQuestionItem,
     PlanningSpikeItem,
+    PlanningViewBundleDTO,
     ProjectPlanningSummaryDTO,
     ProjectPlanningGraphDTO,
     ProjectStatusDTO,
     PromptContextSelection,
     QueryStatus,
+    SessionCardDTO,
     SessionRef,
     SessionSummary,
     SnapshotDiagnosticsDTO,
@@ -56,10 +89,15 @@ from backend.application.services.agent_queries.models import (
     WorkflowObservation,
     WorkflowSummary,
 )
+from backend.application.services.agent_queries.analytics_bundle import AnalyticsBundleQueryService
 from backend.application.services.agent_queries.artifact_intelligence import ArtifactIntelligenceQueryService
+from backend.application.services.agent_queries.dashboard import DashboardQueryService
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
 from backend.application.services.agent_queries.feature_evidence_summary import FeatureEvidenceSummaryService
+from backend.application.services.agent_queries.live_metrics import LiveActiveCountDTO, LiveMetricsQueryService
 from backend.application.services.agent_queries.planning import PlanningQueryService
+from backend.application.services.agent_queries.planning_command_center import PlanningCommandCenterQueryService
+from backend.application.services.agent_queries.planning_command_resolver import PlanningCommandResolver
 from backend.application.services.agent_queries.project_status import ProjectStatusQueryService
 from backend.application.services.agent_queries.reporting import ReportingQueryService
 from backend.application.services.agent_queries.planning_sessions import (
@@ -69,13 +107,16 @@ from backend.application.services.agent_queries.planning_sessions import (
 from backend.application.services.agent_queries.workflow_intelligence import WorkflowDiagnosticsQueryService
 
 __all__ = [
-    # Cache module and helpers (CACHE-003)
+    # Cache module and helpers (CACHE-003, P2-001, P2-002, P2-006)
     "cache",
     "_query_cache",
+    "aclear_project_cache",
     "clear_cache",
+    "clear_project_cache",
     "compute_cache_key",
     "get_cache",
     "get_data_version_fingerprint",
+    "init_postgres_cache_backend",
     # DTOs and shared contracts
     "AARReportDTO",
     "AgentQueryEnvelope",
@@ -88,6 +129,9 @@ __all__ = [
     "FeatureForensicsDTO",
     "ArtifactIntelligenceQueryService",
     "KeyMetrics",
+    # Live metrics (live-agents-count-v1)
+    "LiveActiveCountDTO",
+    "LiveMetricsQueryService",
     "ProjectStatusDTO",
     "ProjectStatusQueryService",
     "QueryStatus",
@@ -113,6 +157,8 @@ __all__ = [
     "resolve_time_window",
     # Planning query service and DTOs (PCP-201)
     "PlanningQueryService",
+    "PlanningCommandCenterQueryService",
+    "PlanningCommandResolver",
     "FeaturePlanningContextDTO",
     "FeatureSummaryItem",
     "OpenQuestionResolutionDTO",
@@ -120,6 +166,28 @@ __all__ = [
     "PhaseOperationsDTO",
     "PhaseTaskItem",
     "PlanningArtifactRef",
+    "PlanningCommandAlternativeDTO",
+    "PlanningCommandCapabilityDTO",
+    "PlanningCommandCenterArtifactDTO",
+    "PlanningCommandCenterBlockerDTO",
+    "PlanningCommandCenterCapabilitiesDTO",
+    "PlanningCommandCenterFeatureDTO",
+    "PlanningCommandCenterGitStateDTO",
+    "PlanningCommandCenterItemDTO",
+    "PlanningCommandCenterLaunchAgentDTO",
+    "PlanningCommandCenterLaunchBatchDTO",
+    "PlanningCommandCenterPageDTO",
+    "PlanningCommandCenterPhaseDTO",
+    "PlanningCommandCenterPhaseRowDTO",
+    "PlanningCommandCenterPullRequestDTO",
+    "PlanningCommandCenterRelatedFileDTO",
+    "PlanningCommandCenterStatusDTO",
+    "PlanningCommandCenterStoryPointsDTO",
+    "PlanningCommandCenterTierDTO",
+    "PlanningCommandCenterWorktreeDTO",
+    "PlanningCommandResolutionDTO",
+    "PlanningCommandRuleId",
+    "PlanningCommandTargetArtifactDTO",
     "PlanningNodeCountsByType",
     "PlanningOpenQuestionItem",
     "PlanningSpikeItem",
@@ -133,4 +201,13 @@ __all__ = [
     "NextRunContextRef",
     "PlanningNextRunPreviewDTO",
     "PromptContextSelection",
+    # P5a fat-read bundle services and DTOs (T5-001, T5-003, T5-004)
+    "AnalyticsBundleQueryService",
+    "AnalyticsKPIsDTO",
+    "AnalyticsOverviewBundleDTO",
+    "AnalyticsTopModelDTO",
+    "DashboardBundleDTO",
+    "DashboardQueryService",
+    "PlanningViewBundleDTO",
+    "SessionCardDTO",
 ]

@@ -23,7 +23,8 @@ from backend.models import (
     FeatureExecutionWarning,
     PaginatedResponse,
 )
-from backend.project_manager import project_manager
+# T1-007 / ADR-006: use the DB-backed authoritative registry.
+from backend.project_manager import db_project_manager as project_manager
 from backend.db import connection
 from backend.db.factory import (
     get_analytics_repository,
@@ -63,6 +64,12 @@ from backend.services.feature_execution import (
 from backend.services.agentic_intelligence_flags import stack_recommendations_enabled
 from backend.services.stack_recommendations import build_stack_recommendations
 from backend.observability import otel as _otel
+from backend.application.services.agent_queries.cache import (
+    cache_get,
+    cache_set,
+    compute_cache_key,
+)
+from backend.db.repositories.feature_queries import PhaseSummaryBulkQuery
 
 
 features_router = APIRouter(prefix="/api/features", tags=["features"])
@@ -111,10 +118,17 @@ _STATUS_RANK = {
 }
 
 
-def _classify_filter_kind(*, status: str | None = None, q: str | None = None) -> str:
-    """Derive a cardinality-safe filter label for observability attributes."""
-    has_status = bool(status and status.strip())
-    has_search = bool(q and q.strip())
+def _classify_filter_kind(*, status: object = None, q: object = None) -> str:
+    """Derive a cardinality-safe filter label for observability attributes.
+
+    Accepts the raw FastAPI Query-annotated parameter values; defensively casts
+    to str so direct (non-HTTP) calls (e.g. in unit tests) that receive an
+    un-resolved Query object rather than None don't raise AttributeError.
+    """
+    _status = status if isinstance(status, str) else None
+    _q = q if isinstance(q, str) else None
+    has_status = bool(_status and _status.strip())
+    has_search = bool(_q and _q.strip())
     if has_status and has_search:
         return "both"
     if has_status:
@@ -840,17 +854,47 @@ async def list_features(
     status: str | None = Query(default=None),
     q: str | None = Query(default=None),
 ):
-    """Return paginated discovered features from DB."""
+    """Return paginated discovered features from DB.
+
+    Server-side result is memoized under the ``legacy_features_list`` endpoint
+    key (P2-016).  Phases for the full page are loaded in a single batch query
+    instead of one query per feature (N+1 elimination).
+    """
     _obs_started = _time_mod.monotonic()
     project = project_manager.get_active_project()
     if not project:
         return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
+
+    # ── P2-016: server-side cache check ────────────────────────────────────
+    from backend import config as _cfg  # noqa: PLC0415 — lazy to avoid import-order issues
+    _cache_params: dict[str, Any] = {"offset": offset, "limit": limit, "status": status, "q": q}
+    _cache_key = compute_cache_key("legacy_features_list", project.id, _cache_params, None)
+    if _cfg.CCDASH_QUERY_CACHE_TTL_SECONDS > 0:
+        _cached = await cache_get(_cache_key)
+        if _cached is not None:
+            return _cached
 
     db = await connection.get_connection()
     repo = get_feature_repository(db)
 
     features_data = await repo.list_paginated(project.id, offset, limit, workspace_id="default-local")
     total = await repo.count(project.id, workspace_id="default-local")
+
+    # ── P2-016: batch-load phases for all feature IDs in ONE query ──────────
+    # Replaces the per-feature get_phases() call (N+1 elimination).
+    feature_ids = [f["id"] for f in features_data if f.get("id")]
+    phases_by_feature: dict[str, list] = {}
+    if feature_ids:
+        try:
+            bulk_query = PhaseSummaryBulkQuery(
+                feature_ids=feature_ids,
+                include_progress=True,
+                include_counts=True,
+            )
+            phases_by_feature = await repo.list_phase_summaries_for_features(project.id, bulk_query)
+        except Exception:
+            logger.exception("Batch phase load failed; falling back to empty phases")
+            phases_by_feature = {}
 
     results: list[Feature] = []
     for f in features_data:
@@ -864,23 +908,28 @@ async def list_features(
                 phase_key = str(phase_blob.get("phase", ""))
                 blob_phase_deferred[phase_key] = _safe_int(phase_blob.get("deferredTasks", 0), 0)
 
-            # Phases
-            phases_data = await repo.get_phases(f["id"])
+            # ── Phases: use pre-loaded batch result (P2-016 N+1 elimination) ──
+            feature_phase_summaries = phases_by_feature.get(f["id"], [])
             phases = []
             total_deferred = 0
-            for p in phases_data:
-                phase_deferred = blob_phase_deferred.get(str(p.get("phase", "")), 0)
+            for ps in feature_phase_summaries:
+                # ps is a PhaseSummary; convert to the dict shape the rest of the code expects
+                phase_key_str = str(ps.order_index) if ps.order_index is not None else ""
+                phase_deferred = blob_phase_deferred.get(phase_key_str, 0)
                 total_deferred += phase_deferred
                 phases.append({
-                    "id": p.get("id"),
-                    "phase": str(p.get("phase", "")),
-                    "title": str(p.get("title") or ""),
-                    "status": str(p.get("status") or "backlog"),
-                    "progress": _safe_int(p.get("progress"), 0),
-                    "totalTasks": _safe_int(p.get("total_tasks"), 0),
-                    "completedTasks": _safe_int(p.get("completed_tasks"), 0),
+                    "id": ps.phase_id,
+                    "phase": phase_key_str,
+                    "title": str(ps.name or ""),
+                    "status": str(ps.status or "backlog"),
+                    "progress": _safe_int(
+                        int(round((ps.progress or 0.0) * 100)) if ps.progress is not None else 0,
+                        0,
+                    ),
+                    "totalTasks": _safe_int(ps.total_tasks, 0),
+                    "completedTasks": _safe_int(ps.completed_tasks, 0),
                     "deferredTasks": phase_deferred,
-                    "tasks": [], # stripped for list
+                    "tasks": [],  # stripped for list view
                 })
 
             deferred_tasks = _safe_int(data.get("deferredTasks", total_deferred), total_deferred)
@@ -939,6 +988,18 @@ async def list_features(
                 _apply_feature_execution_derived_state(feature, derived_states.get(feature.id))
         except Exception:
             logger.exception("Failed to derive dependency/family state for feature list")
+
+    response = PaginatedResponse(items=results, total=total, offset=offset, limit=limit)
+
+    # ── P2-016: store result in cache ───────────────────────────────────────
+    if _cfg.CCDASH_QUERY_CACHE_TTL_SECONDS > 0:
+        await cache_set(
+            _cache_key,
+            response,
+            _cfg.CCDASH_QUERY_CACHE_TTL_SECONDS,
+            project.id,
+        )
+
     _otel.record_feature_surface_request(
         endpoint="list",
         filter_kind=_classify_filter_kind(status=status, q=q),
@@ -946,7 +1007,7 @@ async def list_features(
         payload_bytes=_estimate_payload_bytes(results),
         duration_ms=(_time_mod.monotonic() - _obs_started) * 1000.0,
     )
-    return PaginatedResponse(items=results, total=total, offset=offset, limit=limit)
+    return response
 
 
 @features_router.get("/task-source", response_model=TaskSourceResponse)

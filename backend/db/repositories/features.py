@@ -7,6 +7,7 @@ from typing import Any
 
 import aiosqlite
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.feature_queries import (
     DateRange,
     FeatureListPage,
@@ -41,7 +42,7 @@ def _build_feature_list_where_clause(
     project_id: str,
     query: FeatureListQuery,
     *,
-    workspace_id: str,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> tuple[str, list[Any]]:
     """Build the WHERE clause and parameter list for feature list / count queries.
 
@@ -192,7 +193,7 @@ class SqliteFeatureRepository:
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
-    async def upsert(self, feature_data: dict, project_id: str, *, workspace_id: str) -> None:
+    async def upsert(self, feature_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = feature_data.get("createdAt", "") or now
         updated_at = feature_data.get("updatedAt", "") or now
@@ -202,14 +203,17 @@ class SqliteFeatureRepository:
         await self.db.execute(
             """INSERT INTO features (
                 id, project_id, workspace_id, name, status, category,
-                tags_json, deferred_tasks, planned_at, started_at,
+                tags_json, owners_json, linked_docs_json,
+                deferred_tasks, planned_at, started_at,
                 total_tasks, completed_tasks, parent_feature_id,
                 created_at, updated_at, completed_at, data_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, status=excluded.status,
                 category=excluded.category,
                 tags_json=excluded.tags_json,
+                owners_json=excluded.owners_json,
+                linked_docs_json=excluded.linked_docs_json,
                 deferred_tasks=excluded.deferred_tasks,
                 planned_at=excluded.planned_at,
                 started_at=excluded.started_at,
@@ -227,6 +231,8 @@ class SqliteFeatureRepository:
                 feature_data.get("status", "backlog"),
                 feature_data.get("category", ""),
                 json.dumps(feature_data.get("tags", [])),
+                json.dumps(feature_data.get("owners", [])),
+                json.dumps(feature_data.get("linkedDocs", [])),
                 int(feature_data.get("deferredTasks", 0) or 0),
                 feature_data.get("plannedAt", "") or "",
                 feature_data.get("startedAt", "") or "",
@@ -241,7 +247,7 @@ class SqliteFeatureRepository:
         )
         await self.db.commit()
 
-    async def get_by_id(self, feature_id: str, *, workspace_id: str) -> dict | None:
+    async def get_by_id(self, feature_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
         """Fetch a single feature by PK, scoped to workspace_id.
 
         Returns None when the feature does not exist OR belongs to a different
@@ -254,7 +260,7 @@ class SqliteFeatureRepository:
             row = await cur.fetchone()
             return dict(row) if row else None
 
-    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str) -> dict[str, dict]:
+    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict[str, dict]:
         """Fetch multiple features in a single query, scoped to workspace_id.
 
         Returns a dict keyed by feature id.  Features belonging to a different
@@ -270,7 +276,7 @@ class SqliteFeatureRepository:
             rows = await cur.fetchall()
         return {row["id"]: dict(row) for row in rows}
 
-    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         if project_id:
             async with self.db.execute(
                 "SELECT * FROM features WHERE workspace_id = ? AND project_id = ? ORDER BY name LIMIT ?",
@@ -292,7 +298,7 @@ class SqliteFeatureRepository:
         limit: int,
         *,
         keyword: str | None = None,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         # SQLite LIKE is case-insensitive for ASCII by default; LOWER() ensures
         # consistent behaviour across all character sets.
@@ -326,7 +332,7 @@ class SqliteFeatureRepository:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def count(self, project_id: str | None = None, *, keyword: str | None = None, workspace_id: str) -> int:
+    async def count(self, project_id: str | None = None, *, keyword: str | None = None, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
         if keyword:
             pattern = f"%{keyword.lower()}%"
             if project_id:
@@ -404,7 +410,7 @@ class SqliteFeatureRepository:
         project_id: str,
         query: PhaseSummaryBulkQuery,
         *,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, list[PhaseSummary]]:
         """Return phase summaries for all requested features in a single query.
 
@@ -496,7 +502,7 @@ class SqliteFeatureRepository:
         project_id: str,
         query: FeatureListQuery,
         *,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> FeatureListPage:
         """Return a paginated, fully-filtered list of feature card dicts.
 
@@ -544,7 +550,7 @@ class SqliteFeatureRepository:
         project_id: str,
         query: FeatureListQuery,
         *,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> int:
         """Return post-filter, pre-pagination count for ``query``."""
         where_sql, params = _build_feature_list_where_clause(project_id, query, workspace_id=workspace_id)
@@ -555,7 +561,81 @@ class SqliteFeatureRepository:
             row = await cur.fetchone()
             return int(row[0]) if row else 0
 
-    async def get_project_stats(self, project_id: str, *, workspace_id: str) -> dict:
+    # ---------------------------------------------------------------------------
+    # Summary / planning-agent projection (P2-008)
+    # ---------------------------------------------------------------------------
+
+    #: Terminal feature statuses excluded by default from ``list_summary``.
+    _TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "deferred", "completed"})
+
+    async def list_summary(
+        self,
+        project_id: str,
+        *,
+        include_terminal: bool = False,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """Return a lightweight column-projected list for planning-agent consumers.
+
+        Selected columns: ``id``, ``name``, ``status``, ``category``,
+        ``updated_at``, ``phases_json``.  ``data_json`` is **not** included.
+
+        ``phases_json`` is a JSON array where each element has the shape::
+
+            {"phase": "...", "title": "...", "status": "...", "progress": N,
+             "total_tasks": N, "completed_tasks": N}
+
+        By default features with terminal statuses (``done``, ``deferred``,
+        ``completed``) are excluded.  Pass ``include_terminal=True`` to include
+        them.
+
+        This method is intentionally *additive* — it does not replace
+        :meth:`list_all`.
+        """
+        params: list[Any] = [project_id]
+        terminal_clause = ""
+        if not include_terminal:
+            placeholders = ",".join("?" for _ in self._TERMINAL_STATUSES)
+            terminal_clause = f"AND f.status NOT IN ({placeholders})"
+            params.extend(sorted(self._TERMINAL_STATUSES))
+
+        params.append(limit)
+        sql = f"""
+            SELECT
+                f.id,
+                f.name,
+                f.status,
+                f.category,
+                f.updated_at,
+                COALESCE(
+                    (
+                        SELECT json_group_array(
+                            json_object(
+                                'phase', fp.phase,
+                                'title', fp.title,
+                                'status', fp.status,
+                                'progress', fp.progress,
+                                'total_tasks', fp.total_tasks,
+                                'completed_tasks', fp.completed_tasks
+                            )
+                        )
+                        FROM feature_phases fp
+                        WHERE fp.feature_id = f.id
+                        ORDER BY fp.phase
+                    ),
+                    '[]'
+                ) AS phases_json
+            FROM features f
+            WHERE f.project_id = ?
+            {terminal_clause}
+            ORDER BY f.updated_at DESC, f.id ASC
+            LIMIT ?
+        """
+        async with self.db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_project_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         """Get aggregated feature statistics."""
         query = """
             SELECT AVG(

@@ -15,6 +15,9 @@ from fastapi import HTTPException
 
 from backend.application.services.agent_queries import (
     FeaturePlanningContextDTO,
+    PlanningCommandCenterFeatureDTO,
+    PlanningCommandCenterItemDTO,
+    PlanningCommandCenterPageDTO,
     PhaseOperationsDTO,
     ProjectPlanningGraphDTO,
     ProjectPlanningSummaryDTO,
@@ -32,6 +35,8 @@ class PlanningRouterRegistrationTests(unittest.TestCase):
 
         self.assertIn("/api/agent/planning/summary", paths)
         self.assertIn("/api/agent/planning/graph", paths)
+        self.assertIn("/api/agent/planning/command-center", paths)
+        self.assertIn("/api/agent/planning/command-center/{feature_id}", paths)
         self.assertIn("/api/agent/planning/features/{feature_id}", paths)
         self.assertIn(
             "/api/agent/planning/features/{feature_id}/phases/{phase_number}",
@@ -40,6 +45,8 @@ class PlanningRouterRegistrationTests(unittest.TestCase):
 
         self.assertIn("get", paths["/api/agent/planning/summary"])
         self.assertIn("get", paths["/api/agent/planning/graph"])
+        self.assertIn("get", paths["/api/agent/planning/command-center"])
+        self.assertIn("get", paths["/api/agent/planning/command-center/{feature_id}"])
         self.assertIn("get", paths["/api/agent/planning/features/{feature_id}"])
         self.assertIn(
             "get",
@@ -153,6 +160,112 @@ class GetPlanningSummaryTests(unittest.IsolatedAsyncioTestCase):
             include_terminal=True,
             limit=25,
         )
+
+
+class GetPlanningCommandCenterTests(unittest.IsolatedAsyncioTestCase):
+    """GET /api/agent/planning/command-center"""
+
+    async def test_happy_path_delegates_filters_and_returns_page(self) -> None:
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = PlanningCommandCenterPageDTO(project_id="proj-1", source_refs=["proj-1"])
+
+        with patch.object(
+            agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)
+        ) as resolve_mock:
+            with patch.object(
+                agent_router.planning_command_center_query_service,
+                "get_command_center",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_planning_command_center(
+                    project_id="proj-1",
+                    q="launch",
+                    status="review",
+                    phase=2,
+                    artifact_type="implementation_plan",
+                    worktree_state="ready",
+                    pr_state="linked",
+                    launch_readiness="ready",
+                    sort_by="phase",
+                    sort_direction="asc",
+                    page=2,
+                    page_size=25,
+                    request_context=object(),
+                    core_ports=object(),
+                )
+
+        self.assertIs(result, dto)
+        resolve_mock.assert_awaited_once()
+        service_mock.assert_awaited_once_with(
+            app_request.context,
+            app_request.ports,
+            project_id_override="proj-1",
+            q="launch",
+            status="review",
+            phase=2,
+            artifact_type="implementation_plan",
+            worktree_state="ready",
+            pr_state="linked",
+            launch_readiness="ready",
+            sort_by="phase",
+            sort_direction="asc",
+            page=2,
+            page_size=25,
+        )
+
+
+class GetPlanningCommandCenterItemTests(unittest.IsolatedAsyncioTestCase):
+    """GET /api/agent/planning/command-center/{feature_id}"""
+
+    async def test_happy_path_delegates_and_returns_item(self) -> None:
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = PlanningCommandCenterItemDTO(
+            feature=PlanningCommandCenterFeatureDTO(feature_id="feat-1", name="Feature One")
+        )
+
+        with patch.object(
+            agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)
+        ):
+            with patch.object(
+                agent_router.planning_command_center_query_service,
+                "get_command_center_item",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_planning_command_center_item(
+                    feature_id="feat-1",
+                    project_id="proj-1",
+                    request_context=object(),
+                    core_ports=object(),
+                )
+
+        self.assertIs(result, dto)
+        service_mock.assert_awaited_once_with(
+            app_request.context,
+            app_request.ports,
+            feature_id="feat-1",
+            project_id_override="proj-1",
+        )
+
+    async def test_missing_feature_raises_404(self) -> None:
+        app_request = SimpleNamespace(context=object(), ports=object())
+
+        with patch.object(
+            agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)
+        ):
+            with patch.object(
+                agent_router.planning_command_center_query_service,
+                "get_command_center_item",
+                new=AsyncMock(return_value=None),
+            ):
+                with self.assertRaises(HTTPException) as raised:
+                    await agent_router.get_planning_command_center_item(
+                        feature_id="missing",
+                        project_id=None,
+                        request_context=object(),
+                        core_ports=object(),
+                    )
+
+        self.assertEqual(raised.exception.status_code, 404)
 
 
 class GetPlanningGraphTests(unittest.IsolatedAsyncioTestCase):

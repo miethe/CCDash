@@ -1,9 +1,13 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { useFeatureSurface } from '../services/useFeatureSurface';
+import { useFeaturesQuery } from '../services/queries/features';
+import { useDocumentsQuery } from '../services/queries/documents';
 import {
   ExecutionGateStateValue,
   Feature,
@@ -48,12 +52,7 @@ import {
   planningRouteFeatureModalHref,
   type PlanningFeatureModalTab,
 } from '../services/planningRoutes';
-import { invalidateFeatureSurface } from '../services/featureSurfaceCache';
-// P4-011: publish feature-write events so BOTH caches are invalidated via the
-// featureCacheBus.  The explicit invalidateFeatureSurface() call below is kept
-// as a belt-and-suspenders guard for React state reset; the bus handles the
-// planning cache.  See feature-surface-planning-cache-coordination.md
-import { publishFeatureWriteEvent } from '../services/featureCacheBus';
+import { featureSurfaceKeys } from '../services/queryKeys';
 import {
   cardDTOBoardStage,
   cardDTOToFeature,
@@ -743,7 +742,7 @@ const getFeatureDateModule = (feature: Feature): {
   };
 };
 
-const ProgressBar = ({
+const ProgressBar = React.memo(({
   completed,
   deferred = 0,
   total,
@@ -776,7 +775,7 @@ const ProgressBar = ({
       </span>
     </div>
   );
-};
+});
 
 const DocTypeIcon = ({ docType }: { docType: string }) => {
   switch (docType) {
@@ -793,7 +792,7 @@ const DocTypeBadge = ({ docType }: { docType: string }) => {
   return <span className="text-[9px] uppercase font-bold">{getDocTypeLabel(docType)}</span>;
 };
 
-const FeatureDateStack = ({ feature }: { feature: Feature }) => {
+const FeatureDateStack = React.memo(({ feature }: { feature: Feature }) => {
   const dateModule = getFeatureDateModule(feature);
   return (
     <div className="rounded-md border border-panel-border bg-surface-overlay/70 px-2.5 py-2">
@@ -807,9 +806,9 @@ const FeatureDateStack = ({ feature }: { feature: Feature }) => {
       </div>
     </div>
   );
-};
+});
 
-const FeatureKanbanDateModule = ({ feature }: { feature: Feature }) => {
+const FeatureKanbanDateModule = React.memo(({ feature }: { feature: Feature }) => {
   const dateModule = getFeatureDateModule(feature);
   const firstLabel = dateModule.first.label === 'Planned' ? 'P' : 'S';
   const firstDate = formatFeatureDateCompact(dateModule.first.value);
@@ -832,11 +831,11 @@ const FeatureKanbanDateModule = ({ feature }: { feature: Feature }) => {
       </div>
     </div>
   );
-};
+});
 
 // ── Status Dropdown ────────────────────────────────────────────────
 
-const StatusDropdown = ({
+const StatusDropdown = React.memo(({
   status,
   onStatusChange,
   size = 'sm',
@@ -866,7 +865,7 @@ const StatusDropdown = ({
       ))}
     </select>
   );
-};
+});
 
 
 
@@ -913,7 +912,7 @@ const groupDocsByPhaseLabel = (docs: LinkedDocument[]): Array<{ label: string; d
     });
 };
 
-const FeatureDocCard = ({
+const FeatureDocCard = React.memo(({
   doc,
   primary,
   compact = false,
@@ -980,11 +979,11 @@ const FeatureDocCard = ({
       )}
     </div>
   </button>
-);
+));
 
 // ── Task Source Dialog ─────────────────────────────────────────────
 
-const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () => void }) => {
+const TaskSourceDialog = React.memo(({ task, onClose }: { task: ProjectTask; onClose: () => void }) => {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1048,7 +1047,7 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
       </div>
     </div>
   );
-};
+});
 
 // ── Feature Detail Modal ───────────────────────────────────────────
 
@@ -1069,7 +1068,12 @@ export const ProjectBoardFeatureModal = ({
   launchedFromPlanning?: boolean;
 }) => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { activeProject, updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
+  // T4-003 (modal-local): mount useDocumentsQuery inside the feature modal so
+  // documents are fetched when the modal opens. Board root no longer eager-fetches
+  // documents (removed to prevent over-fetch on cold load).
+  useDocumentsQuery({ projectId: activeProject?.id });
   // P5-005: Read the v2 flag once at mount so both the modal section hook and
   // the legacy refresh callbacks pick a consistent path for this modal instance.
   const { runtimeStatus: modalRuntimeStatus } = useAppRuntime();
@@ -1411,29 +1415,37 @@ export const ProjectBoardFeatureModal = ({
     },
   });
 
-  useEffect(() => {
-    if (featureLiveEnabled && !['backoff', 'closed'].includes(featureLiveStatus)) {
-      return undefined;
-    }
-    const interval = setInterval(() => {
+  // Polling fallback: fires only when live-update channel is absent/backoff/closed.
+  // Visibility-aware: refetchIntervalInBackground defaults to false (pauses when tab hidden).
+  const featureModalPollEnabled = featureLiveEnabled
+    ? ['backoff', 'closed'].includes(featureLiveStatus)
+    : true;
+  useQuery({
+    queryKey: ['feature-modal-poll', feature.id, activeTab],
+    queryFn: async () => {
       // Overview shell always refreshes (open-cost; always "active").
-      void refreshFeatureDetail();
+      await refreshFeatureDetail();
 
       // Heavy sections follow the P4-006 policy via applyLiveRefreshPolicy.
       // P4-003 / P4-006: sessions — guard both the legacy fetch ref AND the
       // section status so we never fetch sessions that were never loaded.
-      void applyLiveRefreshPolicy(
-        'sessions',
-        () => sessionsFetchedRef.current ? refreshLinkedSessions() : Promise.resolve(),
-      );
-      void applyLiveRefreshPolicy('phases', () => Promise.resolve());
-      void applyLiveRefreshPolicy('docs', () => Promise.resolve());
-      void applyLiveRefreshPolicy('relations', () => Promise.resolve());
-      void applyLiveRefreshPolicy('history', () => Promise.resolve());
-      void applyLiveRefreshPolicy('test-status', () => refreshFeatureTestHealth());
-    }, FEATURE_MODAL_POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [activeTab, applyLiveRefreshPolicy, featureLiveEnabled, featureLiveStatus, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
+      await Promise.all([
+        applyLiveRefreshPolicy(
+          'sessions',
+          () => sessionsFetchedRef.current ? refreshLinkedSessions() : Promise.resolve(),
+        ),
+        applyLiveRefreshPolicy('phases', () => Promise.resolve()),
+        applyLiveRefreshPolicy('docs', () => Promise.resolve()),
+        applyLiveRefreshPolicy('relations', () => Promise.resolve()),
+        applyLiveRefreshPolicy('history', () => Promise.resolve()),
+        applyLiveRefreshPolicy('test-status', () => refreshFeatureTestHealth()),
+      ]);
+      return null;
+    },
+    enabled: featureModalPollEnabled,
+    staleTime: 0,
+    refetchInterval: featureModalPollEnabled ? FEATURE_MODAL_POLL_INTERVAL_MS : false,
+  });
 
   useEffect(() => {
     if (updatingStatus) return;
@@ -1475,8 +1487,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updateFeatureStatus(feature.id, newStatus);
-      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
-      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'status' });
+      // T3-005: invalidate feature surface TQ cache on status change.
+      void queryClient.invalidateQueries({ queryKey: featureSurfaceKeys.all(activeProject?.id ?? '') });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -1522,8 +1534,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updatePhaseStatus(feature.id, phaseId, newStatus);
-      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
-      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'phase' });
+      // T3-005: invalidate feature surface TQ cache on phase change.
+      void queryClient.invalidateQueries({ queryKey: featureSurfaceKeys.all(activeProject?.id ?? '') });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -1557,8 +1569,8 @@ export const ProjectBoardFeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updateTaskStatus(feature.id, phaseId, taskId, newStatus, previousTaskStatus);
-      // P4-011: invalidate both planning + surface caches via the cross-cache bus.
-      publishFeatureWriteEvent({ projectId: activeProject?.id, featureIds: [feature.id], kind: 'task' });
+      // T3-005: invalidate feature surface TQ cache on task change.
+      void queryClient.invalidateQueries({ queryKey: featureSurfaceKeys.all(activeProject?.id ?? '') });
     } catch (error) {
       if (previousFeatureSnapshot) {
         setFullFeature(previousFeatureSnapshot);
@@ -2695,7 +2707,7 @@ export const ProjectBoardFeatureModal = ({
  * Lightweight linked-doc count badge driven from rollup data.
  * Shows a neutral '—' while rollup is still loading (count === null).
  */
-const RollupLinkedDocsBadge = ({
+const RollupLinkedDocsBadge = React.memo(({
   count,
   loading,
   onClick,
@@ -2724,9 +2736,9 @@ const RollupLinkedDocsBadge = ({
       <span className="font-mono">{loading && count === null ? '—' : count}</span>
     </button>
   );
-};
+});
 
-const FeatureSessionIndicator = ({
+const FeatureSessionIndicator = React.memo(({
   summary,
   loading,
 }: {
@@ -2796,9 +2808,9 @@ const FeatureSessionIndicator = ({
       </div>
     </div>
   );
-};
+});
 
-const FeatureCard = ({
+const FeatureCard = React.memo(({
   card,
   rollup,
   rollupLoading,
@@ -2935,11 +2947,11 @@ const FeatureCard = ({
       </div>
     </div>
   );
-};
+});
 
 // ── List View Card ─────────────────────────────────────────────────
 
-const FeatureListCard = ({
+const FeatureListCard = React.memo(({
   card,
   rollup,
   rollupLoading,
@@ -3030,11 +3042,11 @@ const FeatureListCard = ({
       </div>
     </div>
   );
-};
+});
 
 // ── Status Column (Board View) ─────────────────────────────────────
 
-const StatusColumn = ({
+const StatusColumn = React.memo(({
   title,
   status,
   cards,
@@ -3115,9 +3127,16 @@ const StatusColumn = ({
       </div>
     </div>
   );
-};
+});
 
 // ── Main Component ─────────────────────────────────────────────────
+
+// T6-003: Virtualization constants for the legacy feature list view.
+// The v2 surface is paginated 50/page and unchanged; virtualization guards
+// the list view which can accumulate many cards in the legacy path.
+const FEATURE_LIST_ITEM_ESTIMATE_PX = 160;
+const FEATURE_LIST_FALLBACK_CAP = 200;
+const FEATURE_LIST_CONTAINER_HEIGHT_PX = 640;
 
 // ── Sort mapping: board sort options → hook sortBy param ─────────────────────
 // The board uses 'date' | 'progress' | 'tasks'; the hook/API uses string keys.
@@ -3131,7 +3150,14 @@ function boardSortToApiSort(sort: 'date' | 'progress' | 'tasks'): string {
 }
 
 export const ProjectBoard: React.FC = () => {
-  const { features: apiFeatures, activeProject, updateFeatureStatus } = useData();
+  const { activeProject, updateFeatureStatus } = useData();
+  const queryClient = useQueryClient();
+  // T2-004: legacy apiFeatures path now sourced from paginated TQ hook instead of
+  // useData().features (which was backed by limit=5000). Page 0 is sufficient for
+  // the uses here: modal lookup, status-check guard, category derivation, and the
+  // selectedFeature sync effect — all fall back to surfaceCards when items is empty.
+  const { data: apiFeaturesPage } = useFeaturesQuery({ projectId: activeProject?.id });
+  const apiFeatures = apiFeaturesPage?.items ?? [];
   // P5-005: Read the v2 flag once at mount so the hook picks a path and keeps it.
   const { runtimeStatus } = useAppRuntime();
   const v2Enabled = isFeatureSurfaceV2Enabled(runtimeStatus);
@@ -3267,10 +3293,8 @@ export const ProjectBoard: React.FC = () => {
     const currentStatus = card?.status ?? legacyFeature?.status;
     if (currentStatus === undefined || currentStatus === newStatus) return;
     await updateFeatureStatus(featureId, newStatus);
-    // P4-011: publish to the cross-cache bus (invalidates planning + surface caches).
-    publishFeatureWriteEvent({ projectId: activeProjectId, featureIds: [featureId], kind: 'status' });
-    // Belt-and-suspenders: also call the surface helper directly for React state reset.
-    invalidateFeatureSurface({ projectId: activeProjectId, featureIds: [featureId] });
+    // T3-005: invalidate feature surface TQ cache on status change.
+    void queryClient.invalidateQueries({ queryKey: featureSurfaceKeys.all(activeProjectId ?? '') });
   }, [surfaceCards, apiFeatures, updateFeatureStatus, activeProjectId]);
 
   const handleCardDragStart = useCallback((featureId: string) => {
@@ -3337,6 +3361,10 @@ export const ProjectBoard: React.FC = () => {
       openFeatureModal('phaseCount' in feature ? cardDTOToFeature(feature) : feature, initialTab);
     }
   }, [apiFeatures, surfaceCards, openFeatureModal]);
+
+  // Stable callbacks for StatusColumn props — avoids inline arrow defeat of React.memo.
+  const handleCardClickOverview = useCallback((id: string) => openFeatureModalById(id, 'overview'), [openFeatureModalById]);
+  const handleCardClickDocs = useCallback((id: string) => openFeatureModalById(id, 'docs'), [openFeatureModalById]);
 
   const hasPendingFilterChanges = (
     draftSearchQuery !== searchQuery
@@ -3460,6 +3488,16 @@ export const ProjectBoard: React.FC = () => {
       page: 1,
     });
   };
+
+  // T6-003: Virtualizer for the list view (legacy feature list, up to 5000 entries).
+  // The v2 surface is paginated 50/page — only the list view needs guarding.
+  const featureListContainerRef = useRef<HTMLDivElement>(null);
+  const featureListVirtualizer = useVirtualizer({
+    count: surfaceCards.length,
+    getScrollElement: () => featureListContainerRef.current,
+    estimateSize: () => FEATURE_LIST_ITEM_ESTIMATE_PX,
+    overscan: 5,
+  });
 
   return (
     <div className="h-full flex flex-col relative">
@@ -3704,8 +3742,8 @@ export const ProjectBoard: React.FC = () => {
               cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'backlog')}
               rollups={surfaceRollups}
               rollupLoading={surfaceRollupState === 'loading'}
-              onCardClick={(id) => openFeatureModalById(id, 'overview')}
-              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
+              onCardClick={handleCardClickOverview}
+              onCardDocsClick={handleCardClickDocs}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -3721,8 +3759,8 @@ export const ProjectBoard: React.FC = () => {
               cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'in-progress')}
               rollups={surfaceRollups}
               rollupLoading={surfaceRollupState === 'loading'}
-              onCardClick={(id) => openFeatureModalById(id, 'overview')}
-              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
+              onCardClick={handleCardClickOverview}
+              onCardDocsClick={handleCardClickDocs}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -3738,8 +3776,8 @@ export const ProjectBoard: React.FC = () => {
               cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'review')}
               rollups={surfaceRollups}
               rollupLoading={surfaceRollupState === 'loading'}
-              onCardClick={(id) => openFeatureModalById(id, 'overview')}
-              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
+              onCardClick={handleCardClickOverview}
+              onCardDocsClick={handleCardClickDocs}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -3755,8 +3793,8 @@ export const ProjectBoard: React.FC = () => {
               cards={surfaceCards.filter(c => cardDTOBoardStage(c) === 'done')}
               rollups={surfaceRollups}
               rollupLoading={surfaceRollupState === 'loading'}
-              onCardClick={(id) => openFeatureModalById(id, 'overview')}
-              onCardDocsClick={(id) => openFeatureModalById(id, 'docs')}
+              onCardClick={handleCardClickOverview}
+              onCardDocsClick={handleCardClickDocs}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -3768,29 +3806,91 @@ export const ProjectBoard: React.FC = () => {
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-6">
-            {surfaceCards.map(c => (
-              <FeatureListCard
-                key={c.id}
-                card={c}
-                rollup={surfaceRollups.get(c.id)}
-                rollupLoading={surfaceRollupState === 'loading'}
-                onClick={() => openFeatureModalById(c.id, 'overview')}
-                onOpenDocs={() => openFeatureModalById(c.id, 'docs')}
-                onStatusChange={(newStatus) => handleStatusChange(c.id, newStatus)}
-              />
-            ))}
-            {surfaceCards.length === 0 && surfaceListState !== 'loading' && (
-              <div className="col-span-full py-12 text-center text-muted-foreground border border-dashed border-panel-border rounded-xl">
-                No features match your filters.
+          /* T6-003: Virtualized legacy feature list. v2 surface is paginated 50/page
+             and is already bounded; this guard handles the legacy path where
+             surfaceCards can accumulate up to 5000 entries. Same height=0 fallback. */
+          (() => {
+            if (surfaceCards.length === 0) {
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-6">
+                  {surfaceListState !== 'loading' && (
+                    <div className="col-span-full py-12 text-center text-muted-foreground border border-dashed border-panel-border rounded-xl">
+                      No features match your filters.
+                    </div>
+                  )}
+                  {surfaceListState === 'loading' && (
+                    <div className="col-span-full py-12 text-center text-muted-foreground border border-dashed border-panel-border rounded-xl">
+                      Loading features…
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            const containerH = featureListContainerRef.current?.clientHeight ?? 0;
+            if (containerH === 0) {
+              const capped = surfaceCards.slice(0, FEATURE_LIST_FALLBACK_CAP);
+              if (surfaceCards.length > FEATURE_LIST_FALLBACK_CAP) {
+                console.warn(
+                  `[ProjectBoard] feature list virtualizer container height=0; ` +
+                  `capping render to ${FEATURE_LIST_FALLBACK_CAP} of ${surfaceCards.length} cards.`
+                );
+              }
+              return (
+                <div ref={featureListContainerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-6" style={{ height: FEATURE_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}>
+                  {capped.map(c => (
+                    <FeatureListCard
+                      key={c.id}
+                      card={c}
+                      rollup={surfaceRollups.get(c.id)}
+                      rollupLoading={surfaceRollupState === 'loading'}
+                      onClick={() => openFeatureModalById(c.id, 'overview')}
+                      onOpenDocs={() => openFeatureModalById(c.id, 'docs')}
+                      onStatusChange={(newStatus) => handleStatusChange(c.id, newStatus)}
+                    />
+                  ))}
+                </div>
+              );
+            }
+            const virtualItems = featureListVirtualizer.getVirtualItems();
+            const totalSize = featureListVirtualizer.getTotalSize();
+            return (
+              <div
+                ref={featureListContainerRef}
+                style={{ height: FEATURE_LIST_CONTAINER_HEIGHT_PX, overflowY: 'auto' }}
+                className="custom-scrollbar"
+              >
+                <div style={{ height: totalSize, position: 'relative' }}>
+                  {virtualItems.map(vRow => {
+                    const c = surfaceCards[vRow.index];
+                    return (
+                      <div
+                        key={c.id}
+                        data-index={vRow.index}
+                        ref={featureListVirtualizer.measureElement}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${vRow.start}px)`,
+                          paddingBottom: 24,
+                        }}
+                      >
+                        <FeatureListCard
+                          card={c}
+                          rollup={surfaceRollups.get(c.id)}
+                          rollupLoading={surfaceRollupState === 'loading'}
+                          onClick={() => openFeatureModalById(c.id, 'overview')}
+                          onOpenDocs={() => openFeatureModalById(c.id, 'docs')}
+                          onStatusChange={(newStatus) => handleStatusChange(c.id, newStatus)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            )}
-            {surfaceListState === 'loading' && surfaceCards.length === 0 && (
-              <div className="col-span-full py-12 text-center text-muted-foreground border border-dashed border-panel-border rounded-xl">
-                Loading features…
-              </div>
-            )}
-          </div>
+            );
+          })()
         )}
       </div>
 

@@ -1,7 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { FileTree } from '@miethe/ui/content-viewer';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useQueryClient } from '@tanstack/react-query';
 import { useData } from '../contexts/DataContext';
+import { useDocumentsQuery } from '../services/queries/documents';
+import { documentsKeys } from '../services/queryKeys';
+import { useFeaturesQuery } from '../services/queries/features';
+import type { InfiniteData } from '@tanstack/react-query';
+import type { PaginatedResponse } from '../contexts/dataContextShared';
 import {
     ExecutionGateStateValue,
     Feature,
@@ -19,6 +26,15 @@ import { EffectiveStatusChips, MismatchBadge } from '@/components/shared/Plannin
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { resolveContentViewerFrontmatter } from '../lib/contentViewer';
 import { buildDocumentFileTree } from '../lib/documentFileTree';
+
+// --- Virtualization constants ---
+// T6-002: Estimated row height for the card/list virtualizer.
+const DOC_CARD_ESTIMATE_PX = 220;
+const DOC_LIST_ROW_ESTIMATE_PX = 56;
+// T6-002: Fallback item cap when virtualizer container height is 0.
+const DOC_LIST_FALLBACK_CAP = 200;
+// T6-002: Fixed height for the document list virtualized container.
+const DOC_CONTAINER_HEIGHT_PX = 640;
 
 // --- Types ---
 type ViewMode = 'card' | 'list' | 'folder';
@@ -275,7 +291,30 @@ const getFamilyRecommendationLabel = (summary?: FeatureFamilySummary | null): st
 // --- Main Page Component ---
 
 export const PlanCatalog: React.FC = () => {
-    const { documents, features } = useData();
+    const { features, activeProject, documents } = useData();
+    const queryClient = useQueryClient();
+    // T2-002: fire the documents query so TanStack Query owns the fetch/cache;
+    // read the list via the useData() facade (the facade is removed in P4, at
+    // which point consumers read the hook return directly).
+    useDocumentsQuery({ projectId: activeProject?.id });
+    // Mount useFeaturesQuery so features are fetched on cold load (T4-003).
+    // useData().features reads from TQ cache — it does not trigger a fetch itself.
+    useFeaturesQuery({ projectId: activeProject?.id });
+
+    // T6-002: Read `total` from the raw TQ cache (pre-select pages) so the count
+    // badge reflects the true server total, not the MAX_DOCUMENTS_IN_MEMORY cap.
+    const projectId = activeProject?.id ?? '';
+    const rawDocQueryState = queryClient.getQueryState<InfiniteData<PaginatedResponse<PlanDocument>>>(
+        documentsKeys.list(projectId)
+    );
+    const documentTotal: number = rawDocQueryState?.data?.pages.length
+        ? rawDocQueryState.data.pages[rawDocQueryState.data.pages.length - 1].total
+        : documents.length;
+
+    // T6-002: Refs and virtualizers for document card/list views.
+    const docCardContainerRef = useRef<HTMLDivElement>(null);
+    const docListContainerRef = useRef<HTMLDivElement>(null);
+
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const [viewMode, setViewMode] = useState<ViewMode>('card');
@@ -547,6 +586,20 @@ export const PlanCatalog: React.FC = () => {
         setCompletedTo('');
     };
 
+    // T6-002: Virtualizers for card and list views (filteredDocs as the data source).
+    const docCardVirtualizer = useVirtualizer({
+        count: filteredDocs.length,
+        getScrollElement: () => docCardContainerRef.current,
+        estimateSize: () => DOC_CARD_ESTIMATE_PX,
+        overscan: 5,
+    });
+    const docListVirtualizer = useVirtualizer({
+        count: filteredDocs.length,
+        getScrollElement: () => docListContainerRef.current,
+        estimateSize: () => DOC_LIST_ROW_ESTIMATE_PX,
+        overscan: 8,
+    });
+
     return (
         <div className="h-full flex flex-col relative">
             <SidebarFiltersPortal>
@@ -719,7 +772,15 @@ export const PlanCatalog: React.FC = () => {
             {/* Page Header */}
             <div className="mb-6 flex justify-between items-center">
                 <div>
-                    <h2 className="text-2xl font-bold text-slate-100">Plan Documents</h2>
+                    <h2 className="text-2xl font-bold text-slate-100">
+                        Plan Documents
+                        {/* T6-002: Count badge reads `total` from TQ query (not documents.length). */}
+                        {documentTotal > 0 && (
+                            <span className="ml-3 inline-flex items-center rounded-full border border-slate-700 bg-slate-800 px-2.5 py-0.5 text-sm font-mono text-slate-400">
+                                {documentTotal.toLocaleString()}
+                            </span>
+                        )}
+                    </h2>
                     <p className="text-slate-400 text-sm">Catalog of project plans, PRDs, reports, and progress artifacts.</p>
                     <div className="mt-3 flex flex-wrap gap-2">
                         {([
@@ -757,8 +818,11 @@ export const PlanCatalog: React.FC = () => {
 
                 {/* CARD VIEW */}
                 {viewMode === 'card' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 overflow-y-auto h-full pb-6">
-                        {filteredDocs.map(doc => {
+                    /* T6-002: Virtualized card view. Container needs explicit height.
+                       Fallback: if height=0 cap to DOC_LIST_FALLBACK_CAP items + warn. */
+                    (() => {
+                        const containerH = docCardContainerRef.current?.clientHeight ?? 0;
+                        const renderDoc = (doc: PlanDocument) => {
                             const linkedFeatures = resolveLinkedFeatures(doc);
                             const primaryFeature = linkedFeatures[0]?.feature;
                             const primaryDate = getPrimaryDocumentDate(doc);
@@ -905,8 +969,51 @@ export const PlanCatalog: React.FC = () => {
                                     </div>
                                 </div>
                             );
-                        })}
-                    </div>
+                        };
+                        if (containerH === 0) {
+                            const capped = filteredDocs.slice(0, DOC_LIST_FALLBACK_CAP);
+                            if (filteredDocs.length > DOC_LIST_FALLBACK_CAP) {
+                                console.warn(
+                                    `[PlanCatalog] card virtualizer container height=0; ` +
+                                    `capping render to ${DOC_LIST_FALLBACK_CAP} of ${filteredDocs.length} docs.`
+                                );
+                            }
+                            return (
+                                <div ref={docCardContainerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 overflow-y-auto pb-6" style={{ minHeight: DOC_CONTAINER_HEIGHT_PX }}>
+                                    {capped.map(doc => renderDoc(doc))}
+                                </div>
+                            );
+                        }
+                        const virtualItems = docCardVirtualizer.getVirtualItems();
+                        const totalSize = docCardVirtualizer.getTotalSize();
+                        return (
+                            <div
+                                ref={docCardContainerRef}
+                                className="overflow-y-auto h-full custom-scrollbar"
+                                style={{ minHeight: DOC_CONTAINER_HEIGHT_PX }}
+                            >
+                                <div style={{ height: totalSize, position: 'relative' }}>
+                                    {virtualItems.map(vRow => (
+                                        <div
+                                            key={filteredDocs[vRow.index].id}
+                                            data-index={vRow.index}
+                                            ref={docCardVirtualizer.measureElement}
+                                            style={{
+                                                position: 'absolute',
+                                                top: 0,
+                                                left: 0,
+                                                width: '100%',
+                                                transform: `translateY(${vRow.start}px)`,
+                                                paddingBottom: 24,
+                                            }}
+                                        >
+                                            {renderDoc(filteredDocs[vRow.index])}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        );
+                    })()
                 )}
 
                 {/* LIST VIEW */}
@@ -922,8 +1029,10 @@ export const PlanCatalog: React.FC = () => {
                             <div className="col-span-1">Updated</div>
                             <div className="col-span-2">Date Confidence</div>
                         </div>
-                        <div className="overflow-y-auto flex-1">
-                            {filteredDocs.map(doc => {
+                        {/* T6-002: Virtualized list rows. Same fallback pattern. */}
+                        {(() => {
+                            const containerH = docListContainerRef.current?.clientHeight ?? 0;
+                            const renderListRow = (doc: PlanDocument) => {
                                 const primaryDate = getPrimaryDocumentDate(doc);
                                 const linkedFeature = resolveLinkedFeatures(doc)[0];
                                 const primaryFeature = linkedFeature?.feature;
@@ -964,8 +1073,46 @@ export const PlanCatalog: React.FC = () => {
                                         </div>
                                     </div>
                                 );
-                            })}
-                        </div>
+                            };
+                            if (containerH === 0) {
+                                const capped = filteredDocs.slice(0, DOC_LIST_FALLBACK_CAP);
+                                if (filteredDocs.length > DOC_LIST_FALLBACK_CAP) {
+                                    console.warn(
+                                        `[PlanCatalog] list virtualizer container height=0; ` +
+                                        `capping render to ${DOC_LIST_FALLBACK_CAP} of ${filteredDocs.length} docs.`
+                                    );
+                                }
+                                return (
+                                    <div ref={docListContainerRef} className="overflow-y-auto flex-1">
+                                        {capped.map(doc => renderListRow(doc))}
+                                    </div>
+                                );
+                            }
+                            const virtualItems = docListVirtualizer.getVirtualItems();
+                            const totalSize = docListVirtualizer.getTotalSize();
+                            return (
+                                <div ref={docListContainerRef} className="overflow-y-auto flex-1">
+                                    <div style={{ height: totalSize, position: 'relative' }}>
+                                        {virtualItems.map(vRow => (
+                                            <div
+                                                key={filteredDocs[vRow.index].id}
+                                                data-index={vRow.index}
+                                                ref={docListVirtualizer.measureElement}
+                                                style={{
+                                                    position: 'absolute',
+                                                    top: 0,
+                                                    left: 0,
+                                                    width: '100%',
+                                                    transform: `translateY(${vRow.start}px)`,
+                                                }}
+                                            >
+                                                {renderListRow(filteredDocs[vRow.index])}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
 

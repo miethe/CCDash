@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
+import { useDocumentsQuery } from '../../services/queries/documents';
 import type { PlanDocument } from '../../types';
 import { DocumentModal } from '../DocumentModal';
 import type {
@@ -34,7 +35,10 @@ import type {
   PlanningTokenUsageByModel,
   PhaseContextItem,
 } from '../../types';
-import { getFeaturePlanningContext, PlanningApiError, resolvePlanningOpenQuestion } from '../../services/planning';
+import { PlanningApiError, resolvePlanningOpenQuestion } from '../../services/planning';
+import { usePlanningFeatureContextQuery } from '../../services/queries/planning';
+import { planningKeys } from '../../services/queryKeys';
+import { useQueryClient } from '@tanstack/react-query';
 import { planningRouteFeatureModalHref } from '../../services/planningRoutes';
 import { featurePlanningTopic } from '../../services/live/topics';
 import { useLiveInvalidation } from '../../services/live/useLiveInvalidation';
@@ -1549,17 +1553,19 @@ function BottomToast({ message, tone }: { message: string; tone: 'exec' | 'error
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-type DetailFetchState =
-  | { phase: 'idle' }
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'ready'; context: FeaturePlanningContext };
-
 export function PlanningNodeDetail() {
   const { featureId } = useParams<{ featureId: string }>();
   const navigate = useNavigate();
-  const { activeProject, documents } = useData();
-  const [state, setState] = useState<DetailFetchState>({ phase: 'idle' });
+  const { activeProject } = useData();
+  const queryClient = useQueryClient();
+  // T2-002: documents from TanStack Query hook
+  const { data: documents = [] } = useDocumentsQuery({ projectId: activeProject?.id });
+  // TQ-backed feature context query (T3-002).
+  const contextQuery = usePlanningFeatureContextQuery({
+    projectId: activeProject?.id,
+    featureId: featureId ?? null,
+    enabled: !!activeProject?.id && !!featureId,
+  });
   const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
   const [openQuestions, setOpenQuestions] = useState<PlanningOpenQuestionItem[]>([]);
   const [executionViewMode, setExecutionViewMode] = useState<ExecutionViewMode>('batches');
@@ -1618,41 +1624,36 @@ export function PlanningNodeDetail() {
     };
   }, []);
 
-  const loadContext = useCallback(async () => {
-    if (!featureId) {
-      setState({ phase: 'idle' });
-      return;
-    }
-    setState({ phase: 'loading' });
-    try {
-      const context = await getFeaturePlanningContext(featureId, {
-        projectId: activeProject?.id,
-      });
-      setState({ phase: 'ready', context });
-      setOpenQuestions(context.openQuestions ?? []);
-    } catch (err) {
-      const message =
-        err instanceof PlanningApiError
-          ? `Planning API error (${err.status}): ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : 'Failed to load feature planning context.';
-      setState({ phase: 'error', message });
-    }
-  }, [featureId, activeProject?.id]);
-
+  // Sync openQuestions from TQ data when context loads or updates.
+  const prevContextRef = useRef(contextQuery.data);
   useEffect(() => {
-    void loadContext();
-  }, [loadContext]);
+    if (prevContextRef.current !== contextQuery.data && contextQuery.data) {
+      prevContextRef.current = contextQuery.data;
+      setOpenQuestions(contextQuery.data.openQuestions ?? []);
+    }
+  }, [contextQuery.data]);
 
-  // Live invalidation
+  // Live invalidation — triggers TQ refetch instead of manual fetch.
   const liveTopics = featureId ? [featurePlanningTopic(featureId)] : [];
   const liveStatus = useLiveInvalidation({
     topics: liveTopics,
     enabled: liveTopics.length > 0,
-    onInvalidate: () => loadContext(),
+    onInvalidate: () => {
+      if (activeProject?.id && featureId) {
+        void queryClient.invalidateQueries({
+          queryKey: planningKeys.featureContext(activeProject.id, featureId),
+        });
+      }
+    },
   });
-  const readyContext = state.phase === 'ready' ? state.context : null;
+  const readyContext = contextQuery.data ?? null;
+  const contextErrorMessage = contextQuery.error
+    ? contextQuery.error instanceof PlanningApiError
+      ? `Planning API error (${contextQuery.error.status}): ${contextQuery.error.message}`
+      : contextQuery.error instanceof Error
+        ? contextQuery.error.message
+        : 'Failed to load feature planning context.'
+    : null;
   const executionPhases = useMemo(
     () => buildExecutionPhases(readyContext?.phases ?? []),
     [readyContext?.phases],
@@ -1689,7 +1690,7 @@ export function PlanningNodeDetail() {
     );
   }
 
-  if (state.phase === 'idle' || state.phase === 'loading') {
+  if (contextQuery.isPending) {
     return (
       <DrawerShell>
         <DrawerStateHeader onClose={closeDetail}>
@@ -1702,7 +1703,7 @@ export function PlanningNodeDetail() {
     );
   }
 
-  if (state.phase === 'error') {
+  if (contextQuery.isError) {
     return (
       <DrawerShell>
         <DrawerStateHeader onClose={closeDetail}>
@@ -1716,13 +1717,16 @@ export function PlanningNodeDetail() {
           </button>
         </DrawerStateHeader>
         <DrawerBody>
-          <DetailError message={state.message} onRetry={() => void loadContext()} />
+          <DetailError
+            message={contextErrorMessage ?? 'Failed to load feature planning context.'}
+            onRetry={() => void contextQuery.refetch()}
+          />
         </DrawerBody>
       </DrawerShell>
     );
   }
 
-  const { context } = state;
+  const context = contextQuery.data;
   const planningStatus = castPlanningStatus(context.planningStatus);
   const isMismatch = context.mismatchState !== 'aligned' && context.mismatchState !== 'unknown';
   const mismatchReason = planningStatus?.mismatchState?.reason ?? context.mismatchState;

@@ -7,6 +7,7 @@ import unittest
 import aiosqlite
 
 from backend.db.repositories.sessions import SqliteSessionRepository, compute_source_ref
+from backend.db.sqlite_migrations import run_migrations
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +136,8 @@ _CREATE_SESSIONS_TABLE = """
         impact_history_json TEXT,
         thinking_level TEXT,
         session_forensics_json TEXT,
-        source_ref TEXT
+        source_ref TEXT,
+        workspace_id TEXT NOT NULL DEFAULT 'default-local'
     )
 """
 
@@ -148,8 +150,7 @@ class SessionsSourceRefRepositoryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.db = await aiosqlite.connect(":memory:")
         self.db.row_factory = aiosqlite.Row
-        await self.db.execute(_CREATE_SESSIONS_TABLE)
-        await self.db.commit()
+        await run_migrations(self.db)
         self.repo = SqliteSessionRepository(self.db)
 
     async def asyncTearDown(self) -> None:

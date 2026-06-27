@@ -46,3 +46,10 @@ build/
 artifacts/
 
 .env
+
+# Local machine state (untracked; see .env.example for template)
+projects.json
+
+# Claude Code worktrees (live git worktrees, never commit as files)
+.claude/worktrees/
+.claude/scheduled_tasks.lock

@@ -26,7 +26,14 @@ const mockDocuments: PlanDocument[] = [];
 let mockActiveProject: { id: string; name: string } | null = { id: 'proj-1', name: 'My Project' };
 
 vi.mock('../../../contexts/DataContext', () => ({
-  useData: () => ({ activeProject: mockActiveProject, documents: mockDocuments }),
+  useData: () => ({ activeProject: mockActiveProject }),
+}));
+
+// T2-002: stub useDocumentsQuery so the component renders without a QueryClientProvider.
+// Tests control documents via mockDocuments (same array reference as before).
+vi.mock('../../../services/queries/documents', () => ({
+  useDocumentsQuery: () => ({ data: mockDocuments, isLoading: false, error: null }),
+  DOCUMENTS_PAGE_SIZE: 500,
 }));
 
 vi.mock('../../../services/live/useLiveInvalidation', () => ({

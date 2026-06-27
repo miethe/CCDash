@@ -367,7 +367,7 @@ def resolve_target(
             import sys
             print(
                 f"error: target '{target_name}' not found in config. "
-                f"Add it with: ccdash target add {target_name} <url>",
+                f"Add it with: ccdash-cli target add {target_name} <url>",
                 file=sys.stderr,
             )
             sys.exit(1)

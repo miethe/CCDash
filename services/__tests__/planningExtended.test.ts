@@ -215,7 +215,7 @@ describe('getProjectPlanningGraph (extended)', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/agent/planning/graph?project_id=proj-abc',
-      { credentials: 'same-origin' },
+      expect.objectContaining({ credentials: 'same-origin' }),
     );
   });
 
@@ -294,7 +294,7 @@ describe('getFeaturePlanningContext (extended)', () => {
       })),
     ));
 
-    const result = await getFeaturePlanningContext('feat-1', { forceRefresh: true });
+    const result = await getFeaturePlanningContext('feat-1');
 
     expect(result.phases).toHaveLength(1);
     const phase = result.phases[0];
@@ -332,7 +332,7 @@ describe('getFeaturePlanningContext (extended)', () => {
       })),
     ));
 
-    const result = await getFeaturePlanningContext('feat-1', { forceRefresh: true });
+    const result = await getFeaturePlanningContext('feat-1');
     const phase = result.phases[0];
     expect(phase.blockedBatchIds).toEqual(['batch-A', 'batch-B']);
     expect(phase.deferredTasks).toBe(1);

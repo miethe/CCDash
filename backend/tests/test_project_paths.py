@@ -282,6 +282,7 @@ class ProjectPathResolverTests(unittest.TestCase):
         self.assertEqual(payload.planDocs.path, "/tmp/project-2/docs")
 
     def test_projects_router_rejects_hosted_active_project_mutation(self) -> None:
+        import asyncio
         project = Project.model_validate({"id": "project-1", "name": "Project 1", "path": "/tmp/project-1"})
         switched: list[str] = []
         registry = types.SimpleNamespace(
@@ -301,9 +302,18 @@ class ProjectPathResolverTests(unittest.TestCase):
             runtime_profile="api",
             trace=TraceContext(request_id="req-hosted-switch"),
         )
+        # set_active_project is now async and has an additional `request: Request` parameter.
+        # A minimal Request stub is sufficient for the hosted-project guard path (it only
+        # accesses request.app.state.runtime_jobs, which is unreachable for hosted requests).
+        fake_request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace()))
+
+        async def _run() -> None:
+            await projects_router.set_active_project(
+                "project-1", fake_request, core_ports, request_context
+            )
 
         with self.assertRaises(HTTPException) as ctx:
-            projects_router.set_active_project("project-1", core_ports, request_context)
+            asyncio.run(_run())
 
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(switched, [])

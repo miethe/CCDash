@@ -9,19 +9,44 @@ import asyncpg
 from backend.db.repositories.postgres._transactions import postgres_transaction
 
 
+def _coerce_index(value: object) -> int:
+    """Coerce a raw messageIndex (object) to int, matching the prior ``int(... or 0)``
+    behavior: numeric ints/floats and numeric strings convert; anything else → 0."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value)
+    return 0
+
+
 class PostgresSessionMessageRepository:
     def __init__(self, db: asyncpg.Connection):
         self.db = db
 
-    async def replace_session_messages(self, session_id: str, messages: list[dict[str, object]]) -> None:
-        async with postgres_transaction(self.db) as conn:
+    async def replace_session_messages(
+        self,
+        session_id: str,
+        messages: list[dict[str, object]],
+        project_id: str = "",
+        _pg_conn: Any = None,
+    ) -> None:
+        async def _execute(conn: Any) -> None:
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", session_id)
             await conn.execute("DELETE FROM session_messages WHERE session_id = $1", session_id)
             if not messages:
                 return
 
-            records = []
+            # Dedupe by message_index keeping the last occurrence so the executemany payload never
+            # contains duplicate (session_id, message_index) pairs (the ON CONFLICT below resolves
+            # cross-call collisions, but in-payload duplicates would raise mid-statement).
+            deduped: dict[int, dict[str, object]] = {}
             for message in messages:
+                deduped[_coerce_index(message.get("messageIndex", 0))] = message
+
+            records = []
+            for message in deduped.values():
                 metadata = message.get("metadata")
                 metadata_json = json.dumps(metadata) if isinstance(metadata, dict) else None
                 token_usage = message.get("tokenUsage")
@@ -40,8 +65,9 @@ class PostgresSessionMessageRepository:
                     cache_creation_input_tokens = int(_cc) if isinstance(_cc, (int, float)) else None
                 records.append(
                     (
+                        project_id,
                         session_id,
-                        int(message.get("messageIndex", 0) or 0),
+                        _coerce_index(message.get("messageIndex", 0)),
                         str(message.get("sourceLogId", "") or ""),
                         str(message.get("messageId", "") or ""),
                         str(message.get("role", "") or ""),
@@ -70,18 +96,19 @@ class PostgresSessionMessageRepository:
             await conn.executemany(
                 """
                 INSERT INTO session_messages (
-                    session_id, message_index, source_log_id, message_id, role, message_type,
+                    project_id, session_id, message_index, source_log_id, message_id, role, message_type,
                     content, event_timestamp, agent_name, tool_name, tool_call_id,
                     related_tool_call_id, linked_session_id, entry_uuid, parent_entry_uuid,
                     root_session_id, conversation_family_id, thread_session_id,
                     parent_session_id, source_provenance, metadata_json,
                     input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                    $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
-                    $22, $23, $24, $25
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                    $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+                    $23, $24, $25, $26
                 )
                 ON CONFLICT (session_id, message_index) DO UPDATE SET
+                    project_id = EXCLUDED.project_id,
                     source_log_id = EXCLUDED.source_log_id,
                     message_id = EXCLUDED.message_id,
                     role = EXCLUDED.role,
@@ -108,6 +135,12 @@ class PostgresSessionMessageRepository:
                 """,
                 records,
             )
+
+        if _pg_conn is not None:
+            await _execute(_pg_conn)
+        else:
+            async with postgres_transaction(self.db) as conn:
+                await _execute(conn)
 
     async def list_by_session(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict[str, object]]:
         safe_limit = max(1, min(int(limit or 5000), 5001))

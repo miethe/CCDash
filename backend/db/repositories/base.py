@@ -5,7 +5,10 @@ Abstract interfaces for all DB access. Concrete implementations
 """
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable, Any
+import asyncio
+import logging
+import time
+from typing import Awaitable, Callable, Protocol, TypeVar, runtime_checkable, Any
 
 from backend.application.ports.ingest import IngestCursor
 from backend.models import SkillMeatArtifactSnapshot, SnapshotDiagnostics, SnapshotFreshnessMeta
@@ -14,32 +17,210 @@ from backend.models import SkillMeatArtifactSnapshot, SnapshotDiagnostics, Snaps
 # See T4-005 for the audit that will replace these with real workspace IDs.
 DEFAULT_WORKSPACE_ID = "default-local"
 
+_logger = logging.getLogger("ccdash.db.repositories")
+
+_T = TypeVar("_T")
+
+
+# ── Shared locked-retry helpers ─────────────────────────────────────────────
+
+
+def _is_locked_msg(exc: Exception) -> bool:
+    """Return True when *exc* signals a SQLite database-lock condition."""
+    msg = str(exc).lower()
+    return "database is locked" in msg or "database table is locked" in msg
+
+
+# Keep the old name as an alias so existing callers in tests are unaffected.
+_is_aiosqlite_locked = _is_locked_msg
+
+
+def retry_on_locked_sync(
+    fn: Callable[[], _T],
+    *,
+    max_retries: int = 3,
+    backoff: float = 0.5,
+    repo: str = "unknown",
+) -> _T:
+    """Call *fn* and return its result, retrying on SQLite database-locked errors.
+
+    Synchronous counterpart to :func:`retry_on_locked` for use with stdlib
+    ``sqlite3`` connections (e.g. :class:`SqliteProjectRepository`).
+
+    On each locked retry, sleeps ``backoff * attempt`` seconds (attempt starts
+    at 1) and increments ``ccdash_db_write_failures_total{repo, reason=locked}``.
+
+    On exhaustion of *max_retries* locked retries, or on any non-locked
+    ``OperationalError``, the original exception is re-raised.  The counter
+    increment for the final failure is emitted before re-raising.  Non-locked
+    errors are re-raised immediately without any retry.
+
+    The counter increment is guarded so it never raises.
+
+    Args:
+        fn:          Callable with no arguments to invoke.
+        max_retries: Maximum number of times to retry on a locked error.
+                     The function is called at most ``max_retries + 1`` times.
+        backoff:     Base sleep duration in seconds; sleep = backoff * attempt.
+        repo:        Repository name for the Prometheus ``repo`` label.
+
+    Returns:
+        The return value of *fn()* on success.
+
+    Raises:
+        sqlite3.OperationalError: After exhausting retries on locked, or
+            immediately for any non-locked OperationalError.
+        Any other exception raised by *fn* propagates immediately.
+    """
+    import sqlite3 as _sqlite3  # local import to avoid hard dependency at module level
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except _sqlite3.OperationalError as exc:
+            if not _is_locked_msg(exc):
+                # Non-locked error: count and re-raise immediately
+                try:
+                    from backend.observability import otel
+                    otel.record_db_write_failure(repo=repo, reason="other")
+                except Exception:
+                    pass
+                raise
+            last_exc = exc
+            # Count each locked failure (including final exhaustion)
+            try:
+                from backend.observability import otel
+                otel.record_db_write_failure(repo=repo, reason="locked")
+            except Exception:
+                pass
+            if attempt >= max_retries:
+                break
+            delay = backoff * (attempt + 1)
+            _logger.warning(
+                "retry_on_locked_sync: repo=%s locked (attempt %d/%d); retrying in %.2f s: %s",
+                repo,
+                attempt + 1,
+                max_retries,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+
+    assert last_exc is not None
+    raise last_exc
+
+
+async def retry_on_locked(
+    fn: Callable[[], Awaitable[_T]],
+    *,
+    max_retries: int = 3,
+    backoff: float = 0.5,
+    repo: str = "unknown",
+) -> _T:
+    """Call *fn* and return its result, retrying on SQLite database-locked errors.
+
+    On each locked retry, sleeps ``backoff * attempt`` seconds (attempt starts
+    at 1) and increments ``ccdash_db_write_failures_total{repo, reason=locked}``.
+
+    On exhaustion of *max_retries* locked retries, or on any non-locked
+    ``OperationalError``, the original exception is re-raised.  The counter
+    increment for the final failure is emitted before re-raising.  Non-locked
+    errors are re-raised immediately without any retry.
+
+    The counter increment is guarded so it never raises.
+
+    Args:
+        fn:          Async callable with no arguments to invoke.
+        max_retries: Maximum number of times to retry on a locked error.
+                     The function is called at most ``max_retries + 1`` times.
+        backoff:     Base sleep duration in seconds; sleep = backoff * attempt.
+        repo:        Repository name for the Prometheus ``repo`` label.
+
+    Returns:
+        The return value of *fn()* on success.
+
+    Raises:
+        aiosqlite.OperationalError: After exhausting retries on locked, or
+            immediately for any non-locked OperationalError.
+        Any other exception raised by *fn* propagates immediately.
+    """
+    import aiosqlite  # local import to avoid hard dependency at module level
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await fn()
+        except aiosqlite.OperationalError as exc:
+            if not _is_aiosqlite_locked(exc):
+                # Non-locked error: count and re-raise immediately
+                try:
+                    from backend.observability import otel
+                    otel.record_db_write_failure(repo=repo, reason="other")
+                except Exception:
+                    pass
+                raise
+            last_exc = exc
+            # Count each locked failure (including final exhaustion)
+            try:
+                from backend.observability import otel
+                otel.record_db_write_failure(repo=repo, reason="locked")
+            except Exception:
+                pass
+            if attempt >= max_retries:
+                break
+            delay = backoff * (attempt + 1)
+            _logger.warning(
+                "retry_on_locked: repo=%s locked (attempt %d/%d); retrying in %.2f s: %s",
+                repo,
+                attempt + 1,
+                max_retries,
+                delay,
+                exc,
+            )
+            await asyncio.sleep(delay)
+
+    assert last_exc is not None
+    raise last_exc
+
 
 # ── Session Repository ──────────────────────────────────────────────
 
 @runtime_checkable
 class SessionRepository(Protocol):
-    async def upsert(self, session_data: dict, project_id: str, *, workspace_id: str, source_ref: str | None = None) -> None: ...
-    async def get_by_id(self, session_id: str) -> dict | None: ...
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]: ...
+    async def upsert(self, session_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID, source_ref: str | None = None) -> None: ...
+    async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None: ...
+    async def get_many_by_ids(self, ids: list[str], project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict[str, dict]: ...
     async def list_by_source(self, source_file: str) -> list[dict]: ...
     async def list_paginated(
         self, offset: int, limit: int, project_id: str | None = None,
         sort_by: str = "started_at", sort_order: str = "desc", filters: dict | None = None,
-        *, workspace_id: str,
+        *, workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]: ...
-    async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str) -> int: ...
-    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str) -> list[dict]: ...
-    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str) -> list[dict]: ...
+    async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int: ...
+    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]: ...
+    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]: ...
     async def delete_by_source(self, source_file: str) -> None: ...
-    async def update_usage_fields(self, session_id: str, usage_fields: dict[str, int]) -> None: ...
-    async def update_observability_fields(self, session_id: str, observability_fields: dict[str, Any]) -> None: ...
+    async def update_usage_fields(self, session_id: str, usage_fields: dict[str, int], project_id: str = "") -> None: ...  # TODO(FC-1): remove default once all callers are confirmed
+    async def update_observability_fields(self, session_id: str, observability_fields: dict[str, Any], project_id: str = "") -> None: ...  # TODO(FC-1): remove default once all callers are confirmed
+    async def update_session_badges(
+        self,
+        session_id: str,
+        *,
+        command_slug: str,
+        latest_summary: str,
+        subagent_type: str,
+        models_used: list,
+        agents_used: list,
+        skills_used: list,
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None: ...
 
     # Detail tables
-    async def upsert_logs(self, session_id: str, logs: list[dict]) -> None: ...
-    async def upsert_tool_usage(self, session_id: str, tools: list[dict]) -> None: ...
-    async def upsert_file_updates(self, session_id: str, updates: list[dict]) -> None: ...
-    async def upsert_artifacts(self, session_id: str, artifacts: list[dict]) -> None: ...
+    async def upsert_logs(self, session_id: str, logs: list[dict], project_id: str = "") -> None: ...
+    async def upsert_tool_usage(self, session_id: str, tools: list[dict], project_id: str = "") -> None: ...
+    async def upsert_file_updates(self, session_id: str, updates: list[dict], project_id: str = "") -> None: ...
+    async def upsert_artifacts(self, session_id: str, artifacts: list[dict], project_id: str = "") -> None: ...  # TODO(FC-1): remove default once all callers are confirmed
     async def get_logs(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]: ...
     async def get_tool_usage(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]: ...
     async def get_file_updates(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]: ...
@@ -51,7 +232,9 @@ class SessionRepository(Protocol):
 
 @runtime_checkable
 class SessionMessageRepository(Protocol):
-    async def replace_session_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None: ...
+    async def replace_session_messages(
+        self, session_id: str, messages: list[dict[str, Any]], project_id: str = "",
+    ) -> None: ...
     async def list_by_session(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict[str, Any]]: ...
     async def search_messages(
         self,
@@ -67,11 +250,11 @@ class SessionMessageRepository(Protocol):
 
 @runtime_checkable
 class SessionIntelligenceRepository(Protocol):
-    async def replace_session_sentiment_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None: ...
+    async def replace_session_sentiment_facts(self, session_id: str, facts: list[dict[str, Any]], project_id: str = "") -> None: ...  # TODO(FC-1): remove default once all callers are confirmed
     async def list_session_sentiment_facts(self, session_id: str) -> list[dict[str, Any]]: ...
-    async def replace_session_code_churn_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None: ...
+    async def replace_session_code_churn_facts(self, session_id: str, facts: list[dict[str, Any]], project_id: str = "") -> None: ...  # TODO(FC-1): remove default once all callers are confirmed
     async def list_session_code_churn_facts(self, session_id: str) -> list[dict[str, Any]]: ...
-    async def replace_session_scope_drift_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None: ...
+    async def replace_session_scope_drift_facts(self, session_id: str, facts: list[dict[str, Any]], project_id: str = "") -> None: ...  # TODO(FC-1): remove default once all callers are confirmed
     async def list_session_scope_drift_facts(self, session_id: str) -> list[dict[str, Any]]: ...
     async def list_backfill_sessions(
         self,
@@ -106,16 +289,16 @@ class SessionIntelligenceRepository(Protocol):
 
 @runtime_checkable
 class DocumentRepository(Protocol):
-    async def upsert(self, doc_data: dict, project_id: str, *, workspace_id: str) -> None: ...
+    async def upsert(self, doc_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None: ...
     async def get_by_id(self, doc_id: str) -> dict | None: ...
     async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]: ...
-    async def get_by_path(self, project_id: str, canonical_path: str, *, workspace_id: str) -> dict | None: ...
+    async def get_by_path(self, project_id: str, canonical_path: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None: ...
     async def list_paginated(
-        self, project_id: str, offset: int, limit: int, filters: dict | None = None, *, workspace_id: str,
+        self, project_id: str, offset: int, limit: int, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]: ...
-    async def count(self, project_id: str, filters: dict | None = None, *, workspace_id: str) -> int: ...
-    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]: ...
-    async def get_catalog_facets(self, project_id: str, filters: dict | None = None, *, workspace_id: str) -> dict: ...
+    async def count(self, project_id: str, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int: ...
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]: ...
+    async def get_catalog_facets(self, project_id: str, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict: ...
     async def delete_by_source(self, source_file: str) -> None: ...
 
 
@@ -123,14 +306,14 @@ class DocumentRepository(Protocol):
 
 @runtime_checkable
 class TaskRepository(Protocol):
-    async def upsert(self, task_data: dict, project_id: str, *, workspace_id: str) -> None: ...
+    async def upsert(self, task_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None: ...
     async def get_by_id(self, task_id: str) -> dict | None: ...
     async def list_paginated(
-        self, project_id: str | None, offset: int, limit: int, *, workspace_id: str,
+        self, project_id: str | None, offset: int, limit: int, *, workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]: ...
-    async def count(self, project_id: str | None = None, *, workspace_id: str) -> int: ...
-    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]: ...
-    async def list_by_feature(self, feature_id: str, phase_id: str | None = None, *, workspace_id: str) -> list[dict]: ...
+    async def count(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int: ...
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]: ...
+    async def list_by_feature(self, feature_id: str, phase_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]: ...
     async def delete_by_source(self, source_file: str) -> None: ...
 
 
@@ -138,14 +321,14 @@ class TaskRepository(Protocol):
 
 @runtime_checkable
 class FeatureRepository(Protocol):
-    async def upsert(self, feature_data: dict, project_id: str, *, workspace_id: str) -> None: ...
+    async def upsert(self, feature_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None: ...
     async def get_by_id(self, feature_id: str) -> dict | None: ...
     async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]: ...
     async def list_paginated(
-        self, project_id: str | None, offset: int, limit: int, *, workspace_id: str,
+        self, project_id: str | None, offset: int, limit: int, *, workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]: ...
-    async def count(self, project_id: str | None = None, *, workspace_id: str) -> int: ...
-    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]: ...
+    async def count(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int: ...
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]: ...
     async def upsert_phases(self, feature_id: str, phases: list[dict]) -> None: ...
     async def get_phases(self, feature_id: str) -> list[dict]: ...
     async def delete(self, feature_id: str) -> None: ...
@@ -155,14 +338,15 @@ class FeatureRepository(Protocol):
 
 @runtime_checkable
 class EntityLinkRepository(Protocol):
-    async def upsert(self, link_data: dict, *, workspace_id: str) -> int: ...
+    async def upsert(self, link_data: dict, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int: ...
+    async def bulk_upsert(self, links: list[dict], project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int: ...
     async def get_links_for(
-        self, entity_type: str, entity_id: str, link_type: str | None = None, *, workspace_id: str,
+        self, entity_type: str, entity_id: str, link_type: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]: ...
     async def get_links_for_many(
-        self, entity_type: str, entity_ids: list[str], *, workspace_id: str,
+        self, entity_type: str, entity_ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, list[dict]]: ...
-    async def get_tree(self, entity_type: str, entity_id: str, *, workspace_id: str) -> dict: ...
+    async def get_tree(self, entity_type: str, entity_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict: ...
     async def delete_link(
         self,
         source_type: str,
@@ -259,12 +443,18 @@ class TelemetryQueueRepository(Protocol):
 class AnalyticsRepository(Protocol):
     async def insert_entry(self, entry: dict) -> int: ...
     async def link_to_entity(self, analytics_id: int, entity_type: str, entity_id: str) -> None: ...
+    async def prune_entries_older_than_days(self, days: int = 90, batch_size: int = 1000) -> int: ...
+    async def prune_telemetry_older_than_days(self, days: int = 90, batch_size: int = 1000) -> int: ...
     async def get_trends(
         self, project_id: str, metric_type: str, period: str = "daily",
         start: str | None = None, end: str | None = None,
+        *, scope: str = "project", scope_id: str | None = None,
     ) -> list[dict]: ...
     async def get_metric_types(self) -> list[dict]: ...
-    async def get_latest_entries(self, project_id: str, metric_types: list[str]) -> dict[str, float]: ...
+    async def get_latest_entries(
+        self, project_id: str, metric_types: list[str],
+        *, scope: str = "project", scope_id: str | None = None,
+    ) -> dict[str, float]: ...
     async def list_artifact_analytics_rows(
         self,
         *,
@@ -286,6 +476,8 @@ class SessionUsageRepository(Protocol):
         session_id: str,
         events: list[dict[str, Any]],
         attributions: list[dict[str, Any]],
+        *,
+        conn: Any = None,
     ) -> None: ...
     async def get_session_usage_events(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict[str, Any]]: ...
     async def get_session_usage_attributions(self, session_id: str) -> list[dict[str, Any]]: ...
@@ -553,7 +745,7 @@ class IngestCursorRepository(Protocol):
         *,
         source_id: str,
         project_id: str,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
         cursor_value: str,
         occurred_at: str,
     ) -> None: ...
@@ -563,7 +755,7 @@ class IngestCursorRepository(Protocol):
         *,
         source_id: str,
         project_id: str,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
         error_message: str,
     ) -> None: ...
 

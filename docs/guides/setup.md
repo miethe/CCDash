@@ -45,7 +45,7 @@ npm install
 
 Copy `.env.example` to `.env` and set values as needed:
 
-- `GEMINI_API_KEY` for AI insight features
+- `CCDASH_GEMINI_API_KEY` for server-side AI insight proxy (key is never shipped in client bundle)
 - `CCDASH_BACKEND_HOST` (default `127.0.0.1`)
 - `CCDASH_BACKEND_PORT` (default `8000`)
 - `CCDASH_API_PROXY_TARGET` (default `http://127.0.0.1:8000`)
@@ -57,9 +57,10 @@ Copy `.env.example` to `.env` and set values as needed:
 - `VITE_CCDASH_LIVE_EXECUTION_ENABLED` (default `true`; execution live updates)
 - `VITE_CCDASH_LIVE_SESSIONS_ENABLED` (default `true`; session live updates)
 - `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` (default `false`; active-session transcript append delivery)
-- `VITE_CCDASH_LIVE_FEATURES_ENABLED` (default `false`; feature board/modal live invalidation)
-- `VITE_CCDASH_LIVE_TESTS_ENABLED` (default `false`; test visualizer live invalidation)
-- `VITE_CCDASH_LIVE_OPS_ENABLED` (default `false`; Ops panel live invalidation)
+- `VITE_CCDASH_LIVE_FEATURES_ENABLED` (default `false`; feature board/modal live invalidation via SSE; when `false`, falls back to 30-second polling)
+- `VITE_CCDASH_LIVE_TESTS_ENABLED` (default `false`; test visualizer live invalidation via SSE; when `false`, falls back to 30-second polling)
+- `VITE_CCDASH_LIVE_OPS_ENABLED` (default `false`; Ops panel live invalidation via SSE; when `false`, falls back to 30-second polling)
+- `CCDASH_LIVE_TEST_UPDATES_ENABLED` (default `true`; backend gate for test live invalidation; must be `true` for test SSE delivery to work)
 - `CCDASH_STORAGE_PROFILE` (`local` or `enterprise`; storage profile selector)
 - `CCDASH_DB_BACKEND` (`sqlite` or `postgres`; compatibility input)
 - `CCDASH_DATABASE_URL` (required for Postgres-backed modes)

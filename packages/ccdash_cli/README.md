@@ -2,7 +2,7 @@
 
 Standalone CCDash operator CLI.
 
-This package installs the global `ccdash` command. It talks to a running CCDash server over HTTP and does not import the backend runtime from the repository.
+This package installs the global `ccdash-cli` command. It talks to a running CCDash server over HTTP and does not import the backend runtime from the repository.
 
 ## Install
 
@@ -33,8 +33,8 @@ python -m pip install ./packages/ccdash_contracts ./packages/ccdash_cli
 Verify the install:
 
 ```bash
-ccdash --version
-ccdash target show
+ccdash-cli --version
+ccdash-cli target show
 ```
 
 ## Quick Start
@@ -42,19 +42,41 @@ ccdash target show
 Use the implicit local target with a local server on `http://localhost:8000`:
 
 ```bash
-ccdash status project
-ccdash feature list
-ccdash report feature FEAT-123
-ccdash report aar --feature FEAT-123
+ccdash-cli status project
+ccdash-cli feature list
+ccdash-cli report feature FEAT-123
+ccdash-cli report aar --feature FEAT-123
+```
+
+Register a new project:
+
+```bash
+# Register a project (generates a UUID for the project id automatically)
+ccdash-cli project add --name "My Repo" --path /home/user/myrepo
+
+# Register and immediately set as the active project
+ccdash-cli project add --name "My Repo" --path /home/user/myrepo --active
+
+# List all projects (table output)
+ccdash-cli project list
+
+# List projects as JSON
+ccdash-cli project list --output json
+
+# Switch active project
+ccdash-cli project use <project-id>
+
+# Re-register an existing path (--force bypasses idempotency check)
+ccdash-cli project add --name "My Repo" --path /home/user/myrepo --force
 ```
 
 Add and use a named remote target:
 
 ```bash
-ccdash target add staging https://ccdash-staging.example.com --project my-project
-ccdash target use staging
-ccdash target show
-ccdash target check staging
+ccdash-cli target add staging https://ccdash-staging.example.com --project my-project
+ccdash-cli target use staging
+ccdash-cli target show
+ccdash-cli target check staging
 ```
 
 ## Config And Auth
@@ -77,16 +99,16 @@ Per-field overrides:
 Authentication behavior:
 
 - The CLI sends a bearer token only when one resolves from `CCDASH_TOKEN` or the OS keyring.
-- `ccdash target login <name>` stores a token in the keyring under `target:<name>`.
-- `ccdash target show` reports the resolved URL, project, auth state, and whether the target came from config or the implicit local fallback.
-- `ccdash target check <name>` verifies reachability first, then confirms whether the server accepts the resolved credentials.
+- `ccdash-cli target login <name>` stores a token in the keyring under `target:<name>`.
+- `ccdash-cli target show` reports the resolved URL, project, auth state, and whether the target came from config or the implicit local fallback.
+- `ccdash-cli target check <name>` verifies reachability first, then confirms whether the server accepts the resolved credentials.
 - The implicit local target is unauthenticated by default. Remote servers may still reject requests without a token, depending on server configuration.
 
 ## Troubleshooting
 
-- `ccdash target show` to confirm the resolved target, project, and auth source.
-- `ccdash doctor` to check live connectivity and inspect the reported server instance metadata.
-- `ccdash target check <name>` when you need an explicit auth validation for a named target.
+- `ccdash-cli target show` to confirm the resolved target, project, and auth source.
+- `ccdash-cli doctor` to check live connectivity and inspect the reported server instance metadata.
+- `ccdash-cli target check <name>` when you need an explicit auth validation for a named target.
 - If no keyring backend is available, set `CCDASH_TOKEN` instead of using `target login`.
 - The CLI warns when a non-localhost target uses plain `http://`; prefer `https://` for remote targets.
 
@@ -95,7 +117,16 @@ Authentication behavior:
 These commands are the shortest end-to-end operator sanity check after install:
 
 ```bash
-ccdash --version
-ccdash target show
-ccdash doctor
+ccdash-cli --version
+ccdash-cli target show
+ccdash-cli doctor
+```
+
+Project onboarding smoke check (requires a running CCDash server):
+
+```bash
+ccdash-cli target check local
+ccdash-cli project add --name "Smoke" --path /tmp/smoke
+ccdash-cli project list
+ccdash-cli project use <id-from-list>
 ```

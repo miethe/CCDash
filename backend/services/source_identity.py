@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Mapping, Literal, NewType
+from typing import Any, Iterable, Mapping, Literal, NewType
 
 
 SourceKey = NewType("SourceKey", str)
@@ -268,6 +268,66 @@ def _add_alias_pair(
         )
 
 
+def source_identity_policy_from_resolved_paths(
+    resolved_paths_seq: "Iterable[Any]",
+    *,
+    project_path: "str | None" = None,
+) -> SourceIdentityPolicy:
+    """Deterministically build a SourceIdentityPolicy from ResolvedProjectPaths.
+
+    Derives SourceRootAlias entries from the host→container mapping implied by
+    one or more ResolvedProjectPaths instances so that operators do not need to
+    hand-set the six CCDASH_*_HOST / *_CONTAINER env pairs.
+
+    Each ResolvedProjectPaths contributes up to four alias pairs:
+      - ``root`` → root_id ``project_root_{project_id}``
+      - ``sessions`` → root_id ``sessions_{project_id}``
+      - ``plan_docs`` → root_id ``plan_docs_{project_id}``
+      - ``progress`` → root_id ``progress_{project_id}``
+
+    When ``project_path`` is supplied alongside a resolved path, both the raw
+    project.path (host) and the resolved.path (container or canonical) are
+    registered as aliases under the same root_id so they collapse to the same
+    source key.
+
+    Args:
+        resolved_paths_seq: Iterable of ResolvedProjectPaths (or any object
+            with ``.project_id``, ``.root``, ``.sessions``, ``.plan_docs``,
+            ``.progress`` attributes each carrying a ``.path: Path``).
+        project_path: Optional raw host project root path (project.path).
+            When provided, creates an alias pair between this host path and
+            the resolved root so host and container paths collapse.
+
+    Returns:
+        SourceIdentityPolicy with all derived aliases.  Falls back gracefully
+        on missing/None paths (they are skipped).
+    """
+    aliases: list[SourceRootAlias] = []
+
+    for rp in resolved_paths_seq:
+        pid: str = getattr(rp, "project_id", "") or ""
+        if not pid:
+            continue
+
+        def _add(root_id_suffix: str, resolved_attr: str, raw_host: "str | None" = None) -> None:
+            attr_obj = getattr(rp, resolved_attr, None)
+            resolved = getattr(attr_obj, "path", None)
+            resolved_str = str(resolved) if resolved is not None else None
+            _add_alias_pair(
+                aliases,
+                root_id=f"{root_id_suffix}_{pid}",
+                first=resolved_str,
+                second=raw_host,
+            )
+
+        _add("project_root", "root", project_path)
+        _add("sessions", "sessions")
+        _add("plan_docs", "plan_docs")
+        _add("progress", "progress")
+
+    return SourceIdentityPolicy(aliases=tuple(aliases))
+
+
 def source_identity_policy_from_env(
     env: Mapping[str, str] | None = None,
 ) -> SourceIdentityPolicy:
@@ -323,4 +383,5 @@ __all__ = [
     "format_known_source_key",
     "resolve_source_identity",
     "source_identity_policy_from_env",
+    "source_identity_policy_from_resolved_paths",
 ]

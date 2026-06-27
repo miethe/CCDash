@@ -13,6 +13,8 @@ import aiosqlite
 from backend.application.ports.ingest import IngestCursor
 
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -93,7 +95,7 @@ class SqliteIngestCursorRepository:
         *,
         source_id: str,
         project_id: str,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
         cursor_value: str,
         occurred_at: str,
     ) -> None:
@@ -116,7 +118,7 @@ class SqliteIngestCursorRepository:
         *,
         source_id: str,
         project_id: str,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
         error_message: str,
     ) -> None:
         await self.db.execute(
@@ -198,7 +200,7 @@ class PostgresIngestCursorRepository:
         *,
         source_id: str,
         project_id: str,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
         cursor_value: str,
         occurred_at: str,
     ) -> None:
@@ -224,7 +226,7 @@ class PostgresIngestCursorRepository:
         *,
         source_id: str,
         project_id: str,
-        workspace_id: str,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
         error_message: str,
     ) -> None:
         await self.db.execute(

@@ -20,11 +20,11 @@ Increase timeout via flag or environment variable:
 
 ```bash
 # Per-command flag (highest precedence)
-ccdash --timeout 120 feature show FEAT-123
+ccdash-cli --timeout 120 feature show FEAT-123
 
 # Environment variable
 export CCDASH_TIMEOUT=120
-ccdash feature show FEAT-123
+ccdash-cli feature show FEAT-123
 ```
 
 **Precedence order:**
@@ -38,18 +38,18 @@ Check active timeout configuration:
 
 ```bash
 # Show active timeout and its source (flag / env / default)
-ccdash doctor
+ccdash-cli doctor
 
 # Per-target timeout check
-ccdash target check local
+ccdash-cli target check local
 ```
 
 ## Eventual-Consistency Note
 
-For `ccdash feature show`, the `linked_sessions` field may lag briefly. The CLI surfaces a `sessions_note` hint. If session linkage appears stale:
+For `ccdash-cli feature show`, the `linked_sessions` field may lag briefly. The CLI surfaces a `sessions_note` hint. If session linkage appears stale:
 
 - Retry after a few seconds (sync engine catches up)
-- Use `ccdash feature sessions <id>` for authoritative linked sessions
+- Use `ccdash-cli feature sessions <id>` for authoritative linked sessions
 
 ## When to Escalate
 

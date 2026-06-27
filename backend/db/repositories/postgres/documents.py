@@ -17,6 +17,8 @@ from backend.document_linking import (
 )
 
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
+
 class PostgresDocumentRepository:
     """Postgres-backed document storage with typed metadata and refs."""
 
@@ -358,7 +360,7 @@ class PostgresDocumentRepository:
                 [(doc_data["id"], project_id, kind, raw, norm, source_field) for kind, raw, norm, source_field in rows],
             )
 
-    async def get_by_id(self, doc_id: str, *, workspace_id: str) -> dict | None:
+    async def get_by_id(self, doc_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
         """Fetch a single document by PK, scoped to workspace_id.
 
         Returns None when the document does not exist OR belongs to a different
@@ -371,7 +373,7 @@ class PostgresDocumentRepository:
         )
         return dict(row) if row else None
 
-    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str) -> dict[str, dict]:
+    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict[str, dict]:
         """Fetch multiple documents in a single query, scoped to workspace_id.
 
         Returns a dict keyed by document id.  Documents belonging to a different
@@ -386,7 +388,7 @@ class PostgresDocumentRepository:
         )
         return {row["id"]: dict(row) for row in rows}
 
-    async def get_by_path(self, project_id: str, canonical_path: str, *, workspace_id: str) -> dict | None:
+    async def get_by_path(self, project_id: str, canonical_path: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
         """Fetch a document by project + path, scoped to workspace_id."""
         row = await self.db.fetchrow(
             "SELECT * FROM documents WHERE workspace_id = $1 AND project_id = $2 AND canonical_path = $3 LIMIT 1",
@@ -396,7 +398,7 @@ class PostgresDocumentRepository:
         )
         return dict(row) if row else None
 
-    async def list_paginated(self, project_id: str, offset: int, limit: int, filters: dict | None = None, *, workspace_id: str) -> list[dict]:
+    async def list_paginated(self, project_id: str, offset: int, limit: int, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         params_with_page = [*params, limit, offset]
         query = f"""
@@ -411,12 +413,12 @@ class PostgresDocumentRepository:
         rows = await self.db.fetch(query, *params_with_page)
         return [dict(row) for row in rows]
 
-    async def count(self, project_id: str, filters: dict | None = None, *, workspace_id: str) -> int:
+    async def count(self, project_id: str, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
         where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         row = await self.db.fetchrow(f"SELECT COUNT(*) AS total FROM documents WHERE {where_sql}", *params)
         return int(row["total"] if row else 0)
 
-    async def list_all(self, project_id: str | None = None, *, workspace_id: str) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         if project_id:
             return await self.list_paginated(project_id, 0, 5000, {}, workspace_id=workspace_id)
         # WORKSPACE-AUDIT-EXEMPT: cross-project list scoped to a single workspace.
@@ -427,7 +429,7 @@ class PostgresDocumentRepository:
         )
         return [dict(row) for row in rows]
 
-    async def get_catalog_facets(self, project_id: str, filters: dict | None = None, *, workspace_id: str) -> dict:
+    async def get_catalog_facets(self, project_id: str, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         facets: dict[str, dict[str, int] | int] = {
             "total": 0,
@@ -468,6 +470,43 @@ class PostgresDocumentRepository:
             facets[facet_name] = {str(row["key"]): int(row["count"]) for row in rows}
 
         return facets
+
+    async def list_summary(
+        self,
+        project_id: str,
+        *,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """Return a lightweight column-projected list for planning-agent consumers.
+
+        Selected columns: ``id``, ``title``, ``status``, ``doc_type``,
+        ``updated_at``.  ``content``, ``frontmatter_json``, ``metadata_json``
+        and other heavy fields are **not** included.
+
+        Results are ordered by ``updated_at DESC, title ASC``.
+
+        This method is intentionally *additive* — it does not replace
+        :meth:`list_all`.
+        """
+        rows = await self.db.fetch(
+            """
+            SELECT
+                id,
+                title,
+                status,
+                doc_type,
+                updated_at
+            FROM documents
+            WHERE project_id = $1
+            ORDER BY
+                COALESCE(updated_at, '') DESC,
+                title ASC
+            LIMIT $2
+            """,
+            project_id,
+            limit,
+        )
+        return [dict(r) for r in rows]
 
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM documents WHERE source_file = $1", source_file)

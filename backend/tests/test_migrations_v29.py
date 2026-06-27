@@ -1,4 +1,4 @@
-"""Tests for schema migration v29.
+"""Tests for schema migration v37.
 
 ADR-008: workspace-scoped bearer auth — workspaces + workspace_tokens tables;
 workspace_id column on all scoped tables; ingest_cursors default normalised.
@@ -12,7 +12,7 @@ Verifies:
 - workspace_id column is NOT required to pre-exist (net-new install path)
 - ingest_cursors rows with workspace_id = 'default' are rewritten to 'default-local'
 - workspace_tokens table is EMPTY after migration (bootstrap row is T4-006's job)
-- Schema version is bumped to 29
+- Schema version is bumped to 37
 - Running migrations twice is a no-op (idempotency)
 """
 from __future__ import annotations
@@ -24,25 +24,25 @@ import aiosqlite
 from backend.db import sqlite_migrations
 
 
-class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
-    """Schema v29 migration unit tests (SQLite only).
+class MigrationV37Tests(unittest.IsolatedAsyncioTestCase):
+    """Schema v37 migration unit tests (SQLite only).
 
-    The v28 fixture is built by running the full _TABLES DDL and then
-    applying the v28 run_migrations steps in isolation.  We use a
-    temporarily patched SCHEMA_VERSION=28 so that run_migrations stops
-    after completing v28 work and before applying v29 steps.
+    The v36 fixture is built by running the full _TABLES DDL and then
+    applying the v36 run_migrations steps in isolation.  We use a
+    temporarily patched SCHEMA_VERSION=36 so that run_migrations stops
+    after completing v36 work and before applying v37 steps.
     """
 
-    async def _build_v28_db(self) -> aiosqlite.Connection:
-        """Return an in-memory DB at schema version 28 (pre-v29 state).
+    async def _build_v36_db(self) -> aiosqlite.Connection:
+        """Return an in-memory DB at schema version 36 (pre-v37 state).
 
-        Strategy: patch SCHEMA_VERSION to 28, run migrations from v0, then
+        Strategy: patch SCHEMA_VERSION to 36, run migrations from v0, then
         restore.  This ensures the fixture has the full correct schema
         (including all columns and indexes referenced by _TABLES) and that
-        ingest_cursors has the v28 DEFAULT 'default' workspace_id value.
+        ingest_cursors has the v36 DEFAULT 'default' workspace_id value.
         """
         original_version = sqlite_migrations.SCHEMA_VERSION
-        sqlite_migrations.SCHEMA_VERSION = 28
+        sqlite_migrations.SCHEMA_VERSION = 36
         try:
             db = await aiosqlite.connect(":memory:")
             await sqlite_migrations.run_migrations(db)
@@ -53,8 +53,8 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
     # ── Table existence ─────────────────────────────────────────────────────
 
     async def test_workspaces_table_exists(self) -> None:
-        """workspaces table is created by v29 migration."""
-        db = await self._build_v28_db()
+        """workspaces table is created by v37 migration."""
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -64,11 +64,11 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
         ) as cur:
             row = await cur.fetchone()
 
-        self.assertIsNotNone(row, "workspaces table not found after v29 migration")
+        self.assertIsNotNone(row, "workspaces table not found after v37 migration")
 
     async def test_workspace_tokens_table_exists(self) -> None:
-        """workspace_tokens table is created by v29 migration."""
-        db = await self._build_v28_db()
+        """workspace_tokens table is created by v37 migration."""
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -78,7 +78,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
         ) as cur:
             row = await cur.fetchone()
 
-        self.assertIsNotNone(row, "workspace_tokens table not found after v29 migration")
+        self.assertIsNotNone(row, "workspace_tokens table not found after v37 migration")
 
     # ── Column introspection ─────────────────────────────────────────────────
 
@@ -89,7 +89,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_workspaces_columns(self) -> None:
         """workspaces table has the expected columns per ADR-008 §Schema."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -102,7 +102,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_workspace_tokens_columns(self) -> None:
         """workspace_tokens table has the expected columns per ADR-008 §Schema."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -125,7 +125,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ix_workspace_tokens_workspace_index_created(self) -> None:
         """ix_workspace_tokens_workspace partial index exists after migration."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -142,7 +142,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ix_workspace_tokens_hash_index_created(self) -> None:
         """ix_workspace_tokens_hash partial index exists after migration."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -160,7 +160,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_default_local_workspace_seeded(self) -> None:
         """default-local workspace seed row exists after migration."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -171,13 +171,13 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
         ) as cur:
             row = await cur.fetchone()
 
-        self.assertIsNotNone(row, "default-local workspace row not found after v29 migration")
+        self.assertIsNotNone(row, "default-local workspace row not found after v37 migration")
         self.assertEqual(row[1], "Default Local Workspace")
         self.assertEqual(row[2], "active")
 
     async def test_workspace_tokens_is_empty_after_migration(self) -> None:
         """workspace_tokens is empty after migration (bootstrap is T4-006's job)."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -191,7 +191,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_scoped_tables_have_workspace_id_column(self) -> None:
         """sessions, documents, tasks, features, entity_links all gain workspace_id."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -201,12 +201,12 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(
                 "workspace_id",
                 cols,
-                f"workspace_id column missing on table '{table}' after v29 migration",
+                f"workspace_id column missing on table '{table}' after v37 migration",
             )
 
     async def test_workspace_id_default_is_default_local(self) -> None:
         """Inserting a row without workspace_id gets 'default-local' via column DEFAULT."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -230,7 +230,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ingest_cursors_legacy_default_rewritten(self) -> None:
         """v28 rows with workspace_id='default' are rewritten to 'default-local' by v29."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         # Insert a v28-style row with the old 'default' workspace_id.
@@ -256,7 +256,7 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ingest_cursors_already_default_local_unchanged(self) -> None:
         """Rows already using 'default-local' are unaffected by the normalisation UPDATE."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await db.execute(
@@ -277,9 +277,9 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
 
     # ── Schema version ───────────────────────────────────────────────────────
 
-    async def test_schema_version_bumped_to_29(self) -> None:
-        """Schema version is recorded as 29 after migration."""
-        db = await self._build_v28_db()
+    async def test_schema_version_bumped_to_37(self) -> None:
+        """Schema version is recorded as 37 after migration."""
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -288,13 +288,13 @@ class MigrationV29Tests(unittest.IsolatedAsyncioTestCase):
             row = await cur.fetchone()
 
         self.assertEqual(row[0], sqlite_migrations.SCHEMA_VERSION)
-        self.assertEqual(sqlite_migrations.SCHEMA_VERSION, 29)
+        self.assertEqual(sqlite_migrations.SCHEMA_VERSION, 37)
 
     # ── Idempotency ───────────────────────────────────────────────────────────
 
     async def test_migration_is_idempotent(self) -> None:
         """Running migration twice produces identical post-state with no drift."""
-        db = await self._build_v28_db()
+        db = await self._build_v36_db()
         self.addAsyncCleanup(db.close)
 
         # Pre-seed a legacy ingest_cursors row.

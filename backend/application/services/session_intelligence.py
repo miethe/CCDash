@@ -165,11 +165,18 @@ class SessionIntelligenceQueryService:
         session_id: str,
     ) -> SessionIntelligenceDetailResponse | None:
         project = resolve_project(context, ports)
-        session_row = await ports.storage.sessions().get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
-        if project is None or not session_row or str(session_row.get("project_id") or "") != project.id:
+        if project is None:
             return None
 
-        sentiment_rows, churn_rows, scope_rows = await _load_facts(ports, session_id)
+        # Batch the session row fetch and all three fact reads into a single
+        # asyncio.gather call, cutting sequential round-trips from 4 to 1.
+        session_row, (sentiment_rows, churn_rows, scope_rows) = await asyncio.gather(
+            ports.storage.sessions().get_by_id(session_id, project_id=project.id),
+            _load_facts(ports, session_id),
+        )
+        if not session_row or str(session_row.get("project_id") or "") != project.id:
+            return None
+
         rollup = _rollup_from_facts(session_row, sentiment_rows, churn_rows, scope_rows)
         return SessionIntelligenceDetailResponse(
             sessionId=session_id,
@@ -409,7 +416,6 @@ class SessionIntelligenceQueryService:
             "started_at",
             "desc",
             filters,
-            workspace_id="default-local",  # TODO(workspace-routing)
         )
         if session_id:
             rows = [row for row in rows if str(row.get("id") or "") == session_id]
@@ -846,7 +852,7 @@ class HistoricalSessionIntelligenceBackfillService:
             file_updates = await session_repo.get_file_updates(session_id)
             linked_docs = await _linked_documents(document_repo, project_id, session_row)
 
-            await session_message_repo.replace_session_messages(session_id, canonical_rows)
+            await session_message_repo.replace_session_messages(session_id, canonical_rows, project_id)
             await _replace_session_intelligence_facts(
                 intelligence_repo,
                 session_id,
@@ -854,6 +860,7 @@ class HistoricalSessionIntelligenceBackfillService:
                 canonical_rows,
                 file_updates,
                 linked_docs,
+                project_id,
             )
 
             embedding_blocks = build_session_embedding_blocks(canonical_rows)
@@ -982,7 +989,6 @@ async def _linked_documents(document_repo: Any, project_id: str, session_row: di
         0,
         200,
         filters={"feature": feature_id, "include_progress": True},
-        workspace_id="default-local",  # TODO(workspace-routing)
     )
 
 
@@ -993,13 +999,14 @@ async def _replace_session_intelligence_facts(
     canonical_rows: list[dict[str, Any]],
     file_updates: list[dict[str, Any]],
     linked_docs: list[dict[str, Any]],
+    project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
 ) -> None:
     sentiment_facts = build_session_sentiment_facts(session_row, canonical_rows)
     churn_facts = build_session_code_churn_facts(session_row, canonical_rows, file_updates)
     scope_drift_facts = build_session_scope_drift_facts(session_row, linked_docs, file_updates)
-    await intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts)
-    await intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts)
-    await intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts)
+    await intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts, project_id)
+    await intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts, project_id)
+    await intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts, project_id)
 
 
 def _normalize_canonical_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

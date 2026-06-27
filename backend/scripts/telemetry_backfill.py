@@ -12,7 +12,8 @@ import argparse
 import asyncio
 
 from backend.db import connection, migrations, sync_engine
-from backend.project_manager import project_manager
+# T1-007 / ADR-006: use the DB-backed authoritative registry.
+from backend.project_manager import db_project_manager as project_manager
 
 
 async def _run(project_id: str | None, all_projects: bool) -> int:

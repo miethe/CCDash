@@ -1,4 +1,4 @@
-"""Tests for schema migration v28.
+"""Tests for schema migration v36.
 
 ADR-009: SessionIngestSource port + ingest_cursors watermark table;
 source_ref column on sessions.
@@ -18,42 +18,29 @@ import aiosqlite
 from backend.db import sqlite_migrations
 
 
-# Minimal sessions-table DDL for a version-27 database.  We use a subset of
-# columns sufficient for the migration under test; other columns are omitted so
-# the fixture stays concise and resilient to future sessions additions.
-_V27_SESSIONS_DDL = """
-CREATE TABLE schema_version (
-    version INTEGER NOT NULL,
-    applied TEXT NOT NULL DEFAULT (datetime('now'))
-);
+class MigrationV36Tests(unittest.IsolatedAsyncioTestCase):
+    """Schema v36 migration unit tests (SQLite only)."""
 
-CREATE TABLE sessions (
-    id               TEXT PRIMARY KEY,
-    project_id       TEXT NOT NULL,
-    status           TEXT DEFAULT 'completed',
-    source_file      TEXT NOT NULL,
-    started_at       TEXT DEFAULT '',
-    ended_at         TEXT DEFAULT '',
-    created_at       TEXT NOT NULL,
-    updated_at       TEXT NOT NULL
-);
-"""
+    async def _build_v35_db(self) -> aiosqlite.Connection:
+        """Return an in-memory DB at schema version 35 (pre-v36 state).
 
-
-class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
-    """Schema v28 migration unit tests (SQLite only)."""
-
-    async def _build_v27_db(self) -> aiosqlite.Connection:
-        """Return an in-memory DB seeded at schema version 27."""
-        db = await aiosqlite.connect(":memory:")
-        await db.executescript(_V27_SESSIONS_DDL)
-        await db.execute("INSERT INTO schema_version (version) VALUES (27)")
-        await db.commit()
+        Strategy: patch SCHEMA_VERSION to 35, run migrations from v0, then
+        restore.  This yields a complete v35 schema (composite-PK sessions
+        table, launch-capture columns, but no source_ref column and no
+        ingest_cursors table yet).
+        """
+        original_version = sqlite_migrations.SCHEMA_VERSION
+        sqlite_migrations.SCHEMA_VERSION = 35
+        try:
+            db = await aiosqlite.connect(":memory:")
+            await sqlite_migrations.run_migrations(db)
+        finally:
+            sqlite_migrations.SCHEMA_VERSION = original_version
         return db
 
     async def test_source_ref_backfill(self) -> None:
-        """source_ref is set to 'fs:' + source_file for existing rows after v28 runs."""
-        db = await self._build_v27_db()
+        """source_ref is set to 'fs:' + source_file for existing rows after v36 runs."""
+        db = await self._build_v35_db()
         self.addAsyncCleanup(db.close)
 
         # Insert a session row with source_file set and source_ref absent (column not yet added).
@@ -73,7 +60,7 @@ class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_source_ref_null_when_source_file_empty(self) -> None:
         """Rows with empty source_file do not get a source_ref backfill."""
-        db = await self._build_v27_db()
+        db = await self._build_v35_db()
         self.addAsyncCleanup(db.close)
 
         await db.execute(
@@ -92,7 +79,7 @@ class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ix_sessions_source_ref_index_created(self) -> None:
         """ix_sessions_source_ref index exists after migration."""
-        db = await self._build_v27_db()
+        db = await self._build_v35_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -105,8 +92,8 @@ class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(row, "ix_sessions_source_ref index not found after migration")
 
     async def test_ingest_cursors_table_exists(self) -> None:
-        """ingest_cursors table is created by v28 migration."""
-        db = await self._build_v27_db()
+        """ingest_cursors table is created by v36 migration."""
+        db = await self._build_v35_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -120,7 +107,7 @@ class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ingest_cursors_workspace_id_defaults(self) -> None:
         """ingest_cursors accepts inserts and workspace_id defaults to 'default'."""
-        db = await self._build_v27_db()
+        db = await self._build_v35_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -144,7 +131,7 @@ class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ingest_cursors_ix_workspace_index_created(self) -> None:
         """ix_ingest_cursors_workspace index is created."""
-        db = await self._build_v27_db()
+        db = await self._build_v35_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -156,9 +143,9 @@ class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(row, "ix_ingest_cursors_workspace index not found after migration")
 
-    async def test_schema_version_bumped_to_28(self) -> None:
-        """Schema version is recorded as 28 after migration."""
-        db = await self._build_v27_db()
+    async def test_schema_version_bumped_to_36(self) -> None:
+        """Schema version is recorded as the current SCHEMA_VERSION after migration."""
+        db = await self._build_v35_db()
         self.addAsyncCleanup(db.close)
 
         await sqlite_migrations.run_migrations(db)
@@ -168,13 +155,13 @@ class MigrationV28Tests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(row[0], sqlite_migrations.SCHEMA_VERSION)
         # SCHEMA_VERSION is bumped by each subsequent migration version.
-        # Assert that it is at least 28, not that it equals exactly 28,
+        # Assert that it is at least 36, not that it equals exactly 36,
         # so this test remains valid as the codebase advances.
-        self.assertGreaterEqual(sqlite_migrations.SCHEMA_VERSION, 28)
+        self.assertGreaterEqual(sqlite_migrations.SCHEMA_VERSION, 36)
 
     async def test_migration_is_idempotent(self) -> None:
         """Running migration twice does not raise and does not duplicate rows."""
-        db = await self._build_v27_db()
+        db = await self._build_v35_db()
         self.addAsyncCleanup(db.close)
 
         await db.execute(

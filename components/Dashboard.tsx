@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useData } from '../contexts/DataContext';
-import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu, LayoutGrid, ShieldAlert, CheckCircle2, Clock } from 'lucide-react';
+import { useDashboardBundleQuery, useDashboardChartQuery, useLiveAgentsCountQuery } from '../services/queries/dashboard';
+import { useAnalyticsOverviewQuery } from '../services/queries/analytics';
+import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu, LayoutGrid, ShieldAlert, CheckCircle2, Clock, Activity } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
-import { analyticsService } from '../services/analytics';
 import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../lib/chartTheme';
-import { type AnalyticsOverview, type SessionCostCalibrationSummary } from '../types';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { Button } from './ui/button';
 import { Surface, AlertSurface } from './ui/surface';
 import { cn } from '../lib/utils';
 import { useFeatureSurface } from '../services/useFeatureSurface';
+import { SystemMetricsChip } from './SystemMetricsChip';
 
 const STAT_TONE_STYLES: Record<string, string> = {
   primary: 'border-primary-border bg-primary/10 text-primary-foreground',
@@ -35,6 +36,43 @@ const StatCard = ({ label, value, sub, icon: Icon, tone }: any) => (
   </Surface>
 );
 
+// ── Live agents count chip ────────────────────────────────────────────────────
+
+interface LiveAgentsChipProps {
+  /** Integer count, or null when data is unavailable. */
+  count: number | null;
+}
+
+/**
+ * Displays the number of currently active agent sessions.
+ *
+ * Resilience contract (R-P2): renders "--" when count is null, an error occurred,
+ * or the API field is absent. Never shows "0" for unavailable data — 0 means
+ * genuinely no active sessions.
+ */
+const LiveAgentsChip: React.FC<LiveAgentsChipProps> = ({ count }) => {
+  const isAvailable = count !== null;
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm',
+        isAvailable && count > 0
+          ? 'border-success-border bg-success/10 text-success-foreground'
+          : 'border-primary-border bg-primary/10 text-primary-foreground',
+      )}
+      title="Active agent sessions in the last 10 minutes"
+    >
+      <Activity size={14} className="shrink-0" />
+      <span className="font-semibold tabular-nums">
+        {isAvailable ? count.toLocaleString() : '--'}
+      </span>
+      <span className="text-xs">live agents</span>
+    </div>
+  );
+};
+// useLiveAgentsCount (setInterval) replaced by useLiveAgentsCountQuery (TQ refetchInterval).
+// T4-006-1: no manual setInterval remains in this file.
+
 // ── Feature surface summary chip ──────────────────────────────────────────────
 
 const FeatureSummaryChip = ({
@@ -56,7 +94,34 @@ const FeatureSummaryChip = ({
 );
 
 export const Dashboard: React.FC = () => {
-  const { sessions, tasks, loading } = useData();
+  const { activeProject, tasks } = useData();
+
+  // T5-005 / T5-006: Replace separate useSessionsQuery + useTasksQuery with
+  // a single fat-read bundle.  Cold Dashboard load now issues ONE GET /api/v1/dashboard.
+  // AC-R-P2 resilience: sessions ?? [] and taskCounts ?? {} are applied in the hook.
+  const {
+    sessions: bundleSessions,
+    taskCounts,
+  } = useDashboardBundleQuery({ projectId: activeProject?.id });
+
+  // T5-007: KPI cards migrated to TanStack Query — decouples slow overview
+  // endpoint from the chart series calls; provides loading/error affordances.
+  const {
+    data: overviewData,
+    isLoading: overviewLoading,
+    isError: overviewError,
+  } = useAnalyticsOverviewQuery({ projectId: activeProject?.id });
+
+  // Adapt SessionCardDTO (snake_case) to the shape used by analyticsData below.
+  const sessions = bundleSessions.map(s => ({
+    startedAt: s.started_at ?? undefined,
+    totalCost: s.total_cost ?? 0,
+    qualityRating: undefined as number | undefined,
+  }));
+
+  // T4-011 / T4-006-1: Live agents count via TQ refetchInterval (replaces setInterval).
+  // Returns null before first fetch or on error — R-P2 resilience contract.
+  const liveAgentsCount = useLiveAgentsCountQuery();
 
   // Feature surface — one bounded page fetch + one rollup batch.
   // pageSize:1 is sufficient to get totals; rollup fields give cost+session
@@ -94,12 +159,26 @@ export const Dashboard: React.FC = () => {
     return cost;
   }, [surfaceRollups]);
 
+  // Phase 5 (T5-008): detection coverage summary derived from the session bundle.
+  // Resilience: fields the bundle omits simply don't count — a session with no
+  // context_window / skill_name is "not detected", never an error or "null" text.
+  const detectionCoverage = useMemo(() => {
+    let contextDetected = 0;
+    const skills = new Set<string>();
+    for (const s of bundleSessions) {
+      if ((s.context_window ?? '').toString().trim()) contextDetected += 1;
+      const skill = (s.skill_name ?? '').toString().trim();
+      if (skill) skills.add(skill);
+    }
+    return { contextDetected, skillCount: skills.size };
+  }, [bundleSessions]);
+
   const [insight, setInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
-  const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
-  const [costCalibration, setCostCalibration] = useState<SessionCostCalibrationSummary | null>(null);
-  const [chartData, setChartData] = useState<Array<{ date: string; cost: number; velocity: number }>>([]);
-  const [modelData, setModelData] = useState<Array<{ name: string; usage: number }>>([]);
+
+  // T4-011: Chart series + calibration via TQ (replaces useEffect + local state).
+  // isLoading is available but not rendered (chart shows empty gracefully while loading).
+  const { chartData, costCalibration } = useDashboardChartQuery({ projectId: activeProject?.id });
 
   // Derive analytics from real session data
   const analyticsData = useMemo(() => {
@@ -113,7 +192,7 @@ export const Dashboard: React.FC = () => {
 
   const handleGenerateInsight = async () => {
     setLoadingInsight(true);
-    const insightMetrics = (chartData.length > 0 ? chartData : analyticsData).map(point => ({
+    const insightMetrics = (chartData.length > 0 ? chartData : analyticsData).map((point: { date: string; cost: number }) => ({
       name: point.date,
       value: Number(point.cost || 0),
       unit: '$',
@@ -123,55 +202,14 @@ export const Dashboard: React.FC = () => {
     setLoadingInsight(false);
   };
 
-  useEffect(() => {
-    let mounted = true;
-    const loadAnalytics = async () => {
-      try {
-        const [ov, calibration, costSeries, velocitySeries] = await Promise.all([
-          analyticsService.getOverview(),
-          analyticsService.getSessionCostCalibration(),
-          analyticsService.getSeries({ metric: 'session_cost', period: 'daily', limit: 120 }),
-          analyticsService.getSeries({ metric: 'task_velocity', period: 'daily', limit: 120 }),
-        ]);
-        if (!mounted) return;
-        setOverview(ov);
-        setCostCalibration(calibration);
-        setModelData((ov.topModels || []).slice(0, 6));
-
-        const byDate = new Map<string, { date: string; cost: number; velocity: number }>();
-        for (const point of costSeries.items || []) {
-          const date = String(point.captured_at || '').slice(0, 10);
-          if (!date) continue;
-          const current = byDate.get(date) || { date, cost: 0, velocity: 0 };
-          current.cost = Number(point.value || 0);
-          byDate.set(date, current);
-        }
-        for (const point of velocitySeries.items || []) {
-          const date = String(point.captured_at || '').slice(0, 10);
-          if (!date) continue;
-          const current = byDate.get(date) || { date, cost: 0, velocity: 0 };
-          current.velocity = Number(point.value || 0);
-          byDate.set(date, current);
-        }
-        setChartData(Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date)));
-      } catch (err) {
-        console.error('Failed to load analytics overview:', err);
-      }
-    };
-    loadAnalytics();
-    return () => {
-      mounted = false;
-    };
-  }, [sessions.length, tasks.length]);
-
   const workloadMetrics = useMemo(
     () => resolveTokenMetrics({
-      modelIOTokens: overview?.kpis?.modelIOTokens,
-      cacheInputTokens: overview?.kpis?.cacheInputTokens,
-      observedTokens: overview?.kpis?.observedTokens,
-      toolReportedTokens: overview?.kpis?.toolReportedTokens,
+      modelIOTokens: overviewData?.kpis?.modelIOTokens,
+      cacheInputTokens: overviewData?.kpis?.cacheInputTokens,
+      observedTokens: overviewData?.kpis?.observedTokens,
+      toolReportedTokens: overviewData?.kpis?.toolReportedTokens,
     }),
-    [overview],
+    [overviewData],
   );
 
   return (
@@ -226,55 +264,83 @@ export const Dashboard: React.FC = () => {
           <FeatureSummaryChip icon={Clock} label="active" count={featureCounts.active} tone="primary" />
           <FeatureSummaryChip icon={ShieldAlert} label="blocked" count={featureCounts.blocked} tone="danger" />
           <FeatureSummaryChip icon={CheckCircle2} label="completed" count={featureCounts.completed} tone="success" />
+          {/* live-agents-count-v1: live active-agents chip; polls /api/agent/live/active-count every 10 s */}
+          <LiveAgentsChip count={liveAgentsCount} />
         </div>
       </Surface>
 
-      {/* KPI Cards */}
+      {/* System-wide live agent count — polls /api/agent/system/active-count every 30 s.
+          Placed between Feature Portfolio and KPI cards per OQ-EXP-1. */}
+      <SystemMetricsChip />
+
+      {/* KPI Cards — TQ-managed (T5-007). Shows loading placeholders while fetching,
+          error affordance on failure, never renders literal 0 for unavailable data. */}
+      {overviewError && !overviewData && (
+        <AlertSurface intent="danger" className="text-sm">
+          Analytics KPIs could not be loaded. The chart and calibration data below may still be available.
+        </AlertSurface>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <StatCard
           label="Observed Workload (30d)"
-          value={formatTokenCount(workloadMetrics.workloadTokens)}
-          sub={`${formatTokenCount(workloadMetrics.cacheInputTokens)} cache input (${formatPercent(workloadMetrics.cacheShare)})`}
+          value={!overviewData ? '—' : formatTokenCount(workloadMetrics.workloadTokens)}
+          sub={!overviewData ? 'Loading...' : `${formatTokenCount(workloadMetrics.cacheInputTokens)} cache input (${formatPercent(workloadMetrics.cacheShare)})`}
           icon={Cpu}
           tone="info"
         />
         <StatCard
           label="Total Spend (30d)"
-          value={`$${Number(overview?.kpis?.sessionCost || 0).toFixed(2)}`}
-          sub={`${costCalibration?.comparableSessionCount || 0} comparable sessions • ${formatTokenCount(workloadMetrics.modelIOTokens)} model IO`}
+          value={!overviewData ? '—' : `$${Number(overviewData?.kpis?.sessionCost || 0).toFixed(2)}`}
+          sub={!overviewData ? 'Loading...' : `${costCalibration?.comparableSessionCount || 0} comparable sessions • ${formatTokenCount(workloadMetrics.modelIOTokens)} model IO`}
           icon={DollarSign}
           tone="success"
         />
         <StatCard
           label="Avg. Session Quality"
-          value={`${Number(overview?.kpis?.taskCompletionPct || 0).toFixed(1)}%`}
+          value={!overviewData ? '—' : `${Number(overviewData?.kpis?.taskCompletionPct || 0).toFixed(1)}%`}
           sub="Task completion across done/deferred/completed"
           icon={TrendingUp}
           tone="primary"
         />
         <StatCard
           label="Tool Success Rate"
-          value={`${Number(overview?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
-          sub={`${Number(overview?.kpis?.toolCallCount || 0).toLocaleString()} tool calls tracked`}
+          value={!overviewData ? '—' : `${Number(overviewData?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
+          sub={!overviewData ? 'Loading...' : `${Number(overviewData?.kpis?.toolCallCount || 0).toLocaleString()} tool calls tracked`}
           icon={AlertTriangle}
           tone="danger"
         />
         <StatCard
           label="Features Shipped"
-          value={`${Number(overview?.kpis?.taskVelocity || 0).toLocaleString()}`}
-          sub={`${Number(overview?.kpis?.sessionCount || 0).toLocaleString()} sessions in scope`}
+          value={!overviewData ? '—' : `${Number(overviewData?.kpis?.taskVelocity || 0).toLocaleString()}`}
+          sub={!overviewData ? 'Loading...' : `${Number(overviewData?.kpis?.sessionCount || 0).toLocaleString()} sessions • ${taskCounts['done'] ?? 0} done tasks`}
           icon={Zap}
           tone="warning"
         />
       </div>
 
       <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
-        Display spend prefers reported cost, then recalculated cost, then estimated fallback. Current-context snapshots were captured for {Number(overview?.kpis?.contextSessionCount || 0).toLocaleString()} recent sessions at an average {Number(overview?.kpis?.avgContextUtilizationPct || 0).toFixed(1)}% utilization.
+        Display spend prefers reported cost, then recalculated cost, then estimated fallback. Current-context snapshots were captured for {Number(overviewData?.kpis?.contextSessionCount || 0).toLocaleString()} recent sessions at an average {Number(overviewData?.kpis?.avgContextUtilizationPct || 0).toFixed(1)}% utilization.
       </AlertSurface>
 
       <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
         Calibration coverage: {Number(costCalibration?.comparableSessionCount || 0).toLocaleString()} comparable sessions, average mismatch {(Number(costCalibration?.avgMismatchPct || 0) * 100).toFixed(1)}%, average cost confidence {(Number(costCalibration?.avgCostConfidence || 0) * 100).toFixed(0)}%.
       </AlertSurface>
+
+      {/* Phase 5 detection coverage — only rendered when something was detected.
+          Missing context_window / skill_name → this note is simply omitted (the
+          explicit missing-field fallback for the Dashboard surface, R-P2). */}
+      {(detectionCoverage.contextDetected > 0 || detectionCoverage.skillCount > 0) && (
+        <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
+          Detection coverage:{' '}
+          {detectionCoverage.contextDetected > 0
+            ? `${detectionCoverage.contextDetected.toLocaleString()} session(s) with a detected context window`
+            : 'no context-window sidecar matches'}
+          {detectionCoverage.skillCount > 0
+            ? ` • ${detectionCoverage.skillCount.toLocaleString()} distinct skill(s) attributed`
+            : ''}
+          .
+        </AlertSurface>
+      )}
 
       {/* Main Chart Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -332,7 +398,7 @@ export const Dashboard: React.FC = () => {
           <h3 className="mb-6 text-lg font-semibold text-panel-foreground">Top Agent Models</h3>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={modelData} layout="vertical">
+              <BarChart data={(overviewData?.top_models ?? []).slice(0, 6)} layout="vertical">
                 <CartesianGrid {...chartTheme.grid} horizontal vertical={false} />
                 <XAxis type="number" hide />
                 <YAxis dataKey="name" type="category" width={80} {...chartTheme.axis} />

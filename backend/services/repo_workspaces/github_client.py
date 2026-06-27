@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import logging
 import os
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+import aiohttp
+
 from backend.models import GitHubIntegrationSettings, GitRepoRef
+
+logger = logging.getLogger("ccdash.github_client")
+
+# Simple in-memory cache for PR status results: key → (data, expire_at)
+_PR_STATUS_CACHE: dict[str, tuple[dict, float]] = {}
+_PR_STATUS_TTL_SECONDS: float = 60.0
 
 
 class GitHubRepoUrlError(ValueError):
@@ -66,6 +76,100 @@ def normalize_github_repo_ref(repo_ref: GitRepoRef) -> GitRepoRef:
         repoSubpath=repo_subpath,
         writeEnabled=bool(repo_ref.writeEnabled),
     )
+
+
+async def fetch_pr_status(
+    repo_slug: str,
+    pr_number: int,
+    token: str = "",
+    ttl_seconds: float = _PR_STATUS_TTL_SECONDS,
+) -> dict:
+    """Fetch live PR status from GitHub API for the given repo slug and PR number.
+
+    Returns a dict with keys ``state`` (``open``/``closed``/``merged``) and
+    ``review_status`` (``approved``/``changes_requested``/``pending``/``unknown``).
+
+    Fail-soft: returns ``{}`` on ANY exception or timeout so that callers can
+    fall back gracefully.  Results are cached in-process for ``ttl_seconds``
+    (default 60 s) keyed by ``repo_slug + pr_number``.
+    """
+    cache_key = f"{repo_slug}:{pr_number}"
+    now = time.monotonic()
+    cached = _PR_STATUS_CACHE.get(cache_key)
+    if cached is not None:
+        data, expire_at = cached
+        if now < expire_at:
+            return dict(data)
+
+    clean_slug = str(repo_slug or "").strip().strip("/")
+    pr_num = int(pr_number or 0)
+    if not clean_slug or pr_num <= 0:
+        return {}
+
+    clean_token = str(token or "").strip()
+    if not clean_token:
+        # No token configured — skip the API call entirely
+        return {}
+
+    headers = {
+        "Authorization": f"Bearer {clean_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    pr_url = f"https://api.github.com/repos/{clean_slug}/pulls/{pr_num}"
+    reviews_url = f"{pr_url}/reviews"
+    timeout = aiohttp.ClientTimeout(total=10.0)
+
+    result: dict = {}
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Fetch PR state
+            async with session.get(pr_url, headers=headers) as resp:
+                if resp.status == 200:
+                    pr_data = await resp.json()
+                    merged = bool(pr_data.get("merged"))
+                    if merged:
+                        state = "merged"
+                    else:
+                        state = str(pr_data.get("state") or "open")
+                    result["state"] = state
+                else:
+                    logger.debug(
+                        "fetch_pr_status: unexpected status %s for %s#%s",
+                        resp.status, clean_slug, pr_num,
+                    )
+                    return {}
+
+            # Fetch review status
+            async with session.get(reviews_url, headers=headers) as resp:
+                review_status = "unknown"
+                if resp.status == 200:
+                    reviews = await resp.json()
+                    if isinstance(reviews, list) and reviews:
+                        # Latest non-dismissed review per reviewer
+                        latest: dict[str, str] = {}
+                        for review in reviews:
+                            reviewer = str((review.get("user") or {}).get("login") or "")
+                            state_r = str(review.get("state") or "")
+                            if reviewer and state_r and state_r != "DISMISSED":
+                                latest[reviewer] = state_r
+                        states = set(latest.values())
+                        if "APPROVED" in states and "CHANGES_REQUESTED" not in states:
+                            review_status = "approved"
+                        elif "CHANGES_REQUESTED" in states:
+                            review_status = "changes_requested"
+                        elif states:
+                            review_status = "pending"
+                result["review_status"] = review_status
+    except Exception:
+        logger.debug(
+            "fetch_pr_status: failed for %s#%s (fail-soft)",
+            clean_slug, pr_num, exc_info=True,
+        )
+        return {}
+
+    _PR_STATUS_CACHE[cache_key] = (result, now + ttl_seconds)
+    return result
 
 
 class GitHubClient:

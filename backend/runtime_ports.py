@@ -1,9 +1,12 @@
 """Core port composition shared by runtime bootstraps and compatibility paths."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from backend import config
+
+logger = logging.getLogger("ccdash.runtime_ports")
 from backend.adapters.auth import (
     create_auth_identity_provider,
     LocalIdentityProvider,
@@ -18,7 +21,7 @@ from backend.db.migration_governance import (
     build_migration_governance_metadata,
     resolve_storage_composition_contract,
 )
-from backend.project_manager import ProjectManager, project_manager
+from backend.project_manager import DbProjectManager, ProjectManager, db_project_manager
 from backend.runtime.profiles import RuntimeProfile
 from backend.runtime.storage_contract import (
     get_runtime_storage_contract,
@@ -42,7 +45,10 @@ def build_core_ports(
     job_scheduler: Any | None = None,
     integration_client: Any | None = None,
 ) -> CorePorts:
-    workspace_manager = manager or project_manager
+    # T1-004 / ADR-006: default to db_project_manager (DB-backed authoritative
+    # registry).  The ``manager`` override is accepted ONLY for test wiring; no
+    # production call site should supply it.
+    workspace_manager = manager or db_project_manager
     resolved_storage_profile = storage_profile or config.STORAGE_PROFILE
     validate_runtime_storage_pairing(runtime_profile, resolved_storage_profile)
     resolved_identity_provider = identity_provider or _build_identity_provider(
@@ -55,10 +61,13 @@ def build_core_ports(
         workspace_registry=workspace_registry or build_workspace_registry(
             runtime_profile=runtime_profile,
             storage_profile=resolved_storage_profile,
+            # T1-007: workspace_manager == db_project_manager in production
+            # (manager kwarg is None at all production call sites).  Only tests
+            # supply a non-None manager= to build_core_ports.
             manager=workspace_manager,
         ),
         storage=storage or _build_storage_unit_of_work(db, runtime_profile, resolved_storage_profile),
-        job_scheduler=job_scheduler or InProcessJobScheduler(),
+        job_scheduler=job_scheduler or _build_job_scheduler(db),
         integration_client=integration_client or NoopIntegrationClient(),
     )
 
@@ -128,7 +137,14 @@ def build_workspace_registry(
     manager: ProjectManager | None = None,
 ) -> ProjectManagerWorkspaceRegistry:
     _ = runtime_profile, storage_profile
-    return ProjectManagerWorkspaceRegistry(manager or project_manager)
+    if manager is not None:
+        # T1-007: explicit override accepted ONLY for test wiring.
+        # No production call site should supply ``manager=`` with the legacy
+        # JSON-backed ProjectManager.
+        return ProjectManagerWorkspaceRegistry(manager)
+    # ADR-006 / T1-004: DB-backed registry is the sole authoritative runtime
+    # store.  The JSON-backed legacy manager is never used here.
+    return ProjectManagerWorkspaceRegistry(db_project_manager)
 
 
 def _build_identity_provider(
@@ -169,6 +185,26 @@ def _build_auth_metadata(
         ),
         "missingRequiredVariables": list(resolved_auth_config.missing_required_variables),
     }
+
+
+def _build_job_scheduler(db: Any) -> Any:
+    """Return the appropriate JobScheduler based on JOB_QUEUE_BACKEND config.
+
+    P3-006-FU: when JOB_QUEUE_BACKEND != 'memory', compose a
+    DurableJobScheduler backed by the DB (sqlite or postgres).  The
+    DurableJobScheduler.schedule() method is drop-in-compatible with
+    InProcessJobScheduler — existing call-sites in runtime.py are unchanged.
+    When backend is 'memory' (default for local/dev), InProcessJobScheduler
+    is returned directly so there is zero behaviour change.
+    """
+    backend = str(getattr(config, "JOB_QUEUE_BACKEND", "memory")).strip().lower() or "memory"
+    if backend == "memory":
+        return InProcessJobScheduler()
+    # Durable path: sqlite or postgres — delegate to make_durable_scheduler.
+    from backend.adapters.jobs.durable_queue import make_durable_scheduler  # noqa: PLC0415
+
+    logger.debug("build_core_ports: using DurableJobScheduler (backend=%s)", backend)
+    return make_durable_scheduler(db, backend=backend)
 
 
 def _build_storage_unit_of_work(

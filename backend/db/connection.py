@@ -20,16 +20,8 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-# Database file location.
-#
-# NOTE: DB_PATH is intentionally re-resolved inside _resolve_db_path() on every
-# get_connection() call so tests (and other callers) can override CCDASH_DB_PATH
-# via patch.dict(os.environ, ...) AFTER the module is imported. Module-level
-# evaluation would freeze the path at import time and silently route every
-# test class to the shared dev DB — a latent isolation bug that surfaces as
-# "database is locked" when multiple test runs collide.
-DB_DIR = config.PROJECT_ROOT / "data"
-DB_PATH = Path(os.getenv("CCDASH_DB_PATH", str(DB_DIR / "ccdash_cache.db")))
+# Database file location — path is owned by config.DB_PATH (single env-var read point)
+DB_PATH = config.DB_PATH
 SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("CCDASH_SQLITE_BUSY_TIMEOUT_MS", "30000")))
 
 # Type alias for DB connection/pool
@@ -45,7 +37,7 @@ def _resolve_db_path() -> Path:
     their state; that override only matters if we read the env var here rather
     than at module import time.
     """
-    return Path(os.getenv("CCDASH_DB_PATH", str(DB_DIR / "ccdash_cache.db")))
+    return Path(os.getenv("CCDASH_DB_PATH", str(config.DB_PATH)))
 
 
 async def get_connection() -> DbConnection:
@@ -70,7 +62,14 @@ async def get_connection() -> DbConnection:
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA foreign_keys=ON")
         await conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
-        logger.info(f"Database connection established: {db_path}")
+        # Performance tuning pragmas (SQLite / dev-only; Postgres path returns early above)
+        _cache_size_kb = int(os.getenv("CCDASH_SQLITE_CACHE_SIZE_KB", "-131072"))  # 128 MB negative=KB
+        await conn.execute(f"PRAGMA cache_size={_cache_size_kb}")
+        await conn.execute("PRAGMA synchronous=NORMAL")
+        await conn.execute(f"PRAGMA mmap_size={int(os.getenv('CCDASH_SQLITE_MMAP_SIZE', '268435456'))}")  # 256 MB
+        await conn.execute("PRAGMA wal_autocheckpoint=1000")
+        await conn.execute("PRAGMA temp_store=MEMORY")
+        logger.info(f"Database connection established: {DB_PATH}")
         _connection = conn
         return _connection
 

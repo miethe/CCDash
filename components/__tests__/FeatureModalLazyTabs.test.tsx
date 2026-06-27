@@ -84,13 +84,11 @@ vi.mock('../../services/useFeatureSurface', () => ({
   })),
 }));
 
-vi.mock('../../services/featureSurfaceCache', () => ({
-  invalidateFeatureSurface: vi.fn(),
-}));
-
-vi.mock('../../services/featureCacheBus', () => ({
-  publishFeatureWriteEvent: vi.fn(),
-}));
+// T3-005: featureSurfaceCache and featureCacheBus deleted; TQ is the cache layer.
+vi.mock('@tanstack/react-query', async () => {
+  const actual = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
+  return { ...actual, useQueryClient: () => ({ invalidateQueries: vi.fn(), clear: vi.fn() }) };
+});
 
 vi.mock('../../contexts/DataContext', () => ({
   useData: () => ({

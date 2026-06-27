@@ -56,6 +56,7 @@ class PostgresSessionMessageRepositoryTests(unittest.IsolatedAsyncioTestCase):
                     },
                 }
             ],
+            "proj-1",
         )
 
         self.assertEqual(conn.execute_calls[0][0], "SELECT pg_advisory_xact_lock(hashtext($1))")
@@ -66,7 +67,10 @@ class PostgresSessionMessageRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(conn.executemany_calls), 1)
         insert_query, records = conn.executemany_calls[0]
         self.assertIn("ON CONFLICT (session_id, message_index) DO UPDATE SET", insert_query)
+        self.assertIn("project_id = EXCLUDED.project_id", insert_query)
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0][0], "session-1")
-        self.assertEqual(records[0][1], 0)
+        # project_id is now the first bound column, then session_id, then message_index.
+        self.assertEqual(records[0][0], "proj-1")
+        self.assertEqual(records[0][1], "session-1")
+        self.assertEqual(records[0][2], 0)
         self.assertEqual(records[0][-4:], (10, 20, 3, 4))

@@ -8,6 +8,7 @@ import typer
 from ccdash_cli.commands.daemon import daemon_app
 from ccdash_cli.commands.doctor import doctor_app
 from ccdash_cli.commands.feature import feature_app
+from ccdash_cli.commands.project import project_app
 from ccdash_cli.commands.report import report_app
 from ccdash_cli.commands.session import session_app
 from ccdash_cli.commands.status import status_app
@@ -28,6 +29,7 @@ app.add_typer(doctor_app, name="doctor")
 app.add_typer(status_app, name="status")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(feature_app, name="feature")
+app.add_typer(project_app, name="project")
 app.add_typer(report_app, name="report")
 app.add_typer(session_app, name="session")
 

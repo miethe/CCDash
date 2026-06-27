@@ -266,6 +266,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 }
                 for i in range(6000)
             ],
+            project_id="project-1",
         )
 
         first_page = await self.repo.get_logs("S-main")

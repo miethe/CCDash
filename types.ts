@@ -3,7 +3,7 @@ export type TaskStatus = 'todo' | 'backlog' | 'in-progress' | 'review' | 'done' 
 
 export type DateConfidence = 'high' | 'medium' | 'low';
 
-export type AuthSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'unauthorized';
+export type AuthSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'unauthorized' | 'unavailable';
 
 export type AuthErrorClassification = 'unauthenticated' | 'unauthorized' | null;
 
@@ -396,6 +396,21 @@ export interface AgentSession {
   taskId: string;
   status: 'active' | 'completed';
   model: string;
+  // ── Phase 5 detection fields (log-derivable; all optional/nullable) ──
+  // Each absence is a contract state, never an error: render a fallback, never "null".
+  modelSlug?: string; // canonical bare model slug ("" when absent)
+  workflowId?: string | null; // workflow grouping id (null == standalone)
+  subagentParentId?: string | null; // parent session id for subagents (null otherwise)
+  skillName?: string | null; // primary attributed skill (null == none derivable)
+  contextWindow?: string | null; // e.g. "1M" when a sidecar matched; null otherwise
+  // ── Phase 11 launch-time capture fields (T11-005; R-P2 / AC-11.D) ──
+  // Written by the SessionStart hook via the <session-id>.capture.json sidecar.
+  // null/absent == "not captured" (a contract state, never an error): the FE
+  // renders an explicit muted fallback, never "undefined" and never a crash.
+  launcher?: string | null; // launch path identity (e.g. "ica-claude.sh")
+  profile?: string | null; // launch profile (e.g. "ica-delegate")
+  effortTier?: string | null; // effort/ultracode tier; never defaulted
+  modelVariant?: string | null; // launch-time model id (e.g. "claude-opus-4-8[1m]")
   modelDisplayName?: string;
   modelProvider?: string;
   modelFamily?: string;
@@ -1927,6 +1942,10 @@ export interface Project {
   path: string;
   description: string;
   repoUrl: string;
+  /** True when this project is the server-designated active project. Missing/null === false. */
+  is_active?: boolean | null;
+  /** True when this project belongs to the bootstrap seed set. Missing/null === false. */
+  is_seed?: boolean | null;
   agentPlatforms: string[];
   planDocsPath: string;
   sessionsPath: string;
@@ -3255,6 +3274,10 @@ export interface FeatureSummaryItem {
   phaseCount: number;
   blockedPhaseCount: number;
   nodeCount: number;
+  /** Commit SHAs linked to this feature from planning doc frontmatter. Empty array when unavailable. */
+  commitRefs?: string[];
+  /** PR references linked to this feature from planning doc frontmatter. Empty array when unavailable. */
+  prRefs?: string[];
 }
 
 export interface PlanningStatusCounts {
@@ -3324,6 +3347,24 @@ export interface ProjectPlanningGraph extends AgentQueryEnvelope {
   featureTokenRollups?: Record<string, FeatureTokenRollup>;
 }
 
+/**
+ * Compact session reference surfaced inside a PhaseContextItem.
+ *
+ * Matches the backend SessionLink DTO exactly (session_id, agent_name,
+ * start_time, transcript_href).  All fields except session_id are nullable
+ * so the interface is resilience-safe when individual DB columns are absent.
+ */
+export interface SessionLink {
+  /** Unique session identifier. */
+  sessionId: string;
+  /** Display name of the agent that ran the session.  Null when unavailable. */
+  agentName?: string | null;
+  /** ISO-8601 start time of the session.  Null when unavailable. */
+  startTime?: string | null;
+  /** Deep-link to the session transcript view.  Null when unavailable. */
+  transcriptHref?: string | null;
+}
+
 /** One phase's planning context inside FeaturePlanningContext. */
 export interface PhaseContextItem {
   phaseId: string;
@@ -3342,6 +3383,13 @@ export interface PhaseContextItem {
   totalTasks: number;
   completedTasks: number;
   deferredTasks: number;
+  /**
+   * Inverse phase→sessions mapping.  Keys are phase numbers (integers); values
+   * are compact session references linked to that phase.  Undefined when the
+   * query returned no results or the field is not yet populated by the backend.
+   * Consumers MUST guard with optional chaining before iterating entries.
+   */
+  linkedSessionsByPhase?: Record<number, SessionLink[]>;
 }
 
 /** Single-feature planning context including graph, status, and phases (PCP-201 query 3). */
@@ -3482,6 +3530,16 @@ export interface PlanningAgentSessionCard {
   tokenSummary?: SessionTokenSummary;
   relationships: BoardSessionRelationship[];
   activityMarkers: SessionActivityMarker[];
+  /** Git branch the session ran on.  Null when not captured or unavailable. */
+  gitBranch?: string | null;
+  /** Abbreviated or full git commit hash associated with the session.  Null when unavailable. */
+  gitCommitHash?: string | null;
+  /**
+   * Platform/agent-runtime identifier (e.g. "codex", "claude-code").
+   * Null or absent when not captured.  FE branches on this field directly —
+   * never infer the platform from other session attributes.
+   */
+  platform?: string | null;
 }
 
 /** A column of cards on the Planning Agent Session Board, keyed by the active grouping. */
@@ -3545,4 +3603,473 @@ export interface PlanningNextRunPreview {
   dataFreshness?: string;
   /** ISO-8601 timestamp when this payload was assembled by the backend. */
   generatedAt?: string;
+}
+
+// ── Planning Command Center (PCC) ────────────────────────────────────────────
+
+export interface PlanningCommandTargetArtifact {
+  path: string;
+  docType: string;
+  title: string;
+  exists?: boolean | null;
+  sourceRef: string;
+}
+
+export interface PlanningCommandCapability {
+  name: string;
+  supported: boolean;
+  required: boolean;
+  warning: string;
+  fallbackCommand: string;
+}
+
+export interface PlanningCommandAlternative {
+  ruleId: string;
+  command: string;
+  confidence: number;
+  rationale: string;
+  targetArtifactPath: string;
+  targetArtifactDocType: string;
+  phase?: number | null;
+  warnings: string[];
+  requiredCapabilities: PlanningCommandCapability[];
+}
+
+export interface PlanningCommandResolution {
+  command: string;
+  ruleId: string;
+  confidence: number;
+  rationale: string;
+  targetArtifactPath: string;
+  targetArtifactDocType: string;
+  targetArtifact?: PlanningCommandTargetArtifact | null;
+  phase?: number | null;
+  warnings: string[];
+  alternatives: PlanningCommandAlternative[];
+  requiredCapabilities: PlanningCommandCapability[];
+}
+
+export interface PlanningCommandCenterFeature {
+  featureId: string;
+  featureSlug: string;
+  name: string;
+  category: string;
+  tags: string[];
+  priority: string;
+  summary: string;
+}
+
+export interface PlanningCommandCenterStatus {
+  rawStatus: string;
+  effectiveStatus: string;
+  planningSignal: string;
+  mismatchState: string;
+  isMismatch: boolean;
+}
+
+export interface PlanningCommandCenterStoryPoints {
+  total: number;
+  remaining: number;
+  completed: number;
+}
+
+export interface PlanningCommandCenterPhase {
+  currentPhase?: number | null;
+  nextPhase?: number | null;
+  totalPhases: number;
+  completedPhases: number;
+}
+
+export interface PlanningCommandCenterArtifact {
+  artifactId: string;
+  path: string;
+  docType: string;
+  title: string;
+  status: string;
+  exists?: boolean | null;
+}
+
+export interface PlanningCommandCenterRelatedFile {
+  path: string;
+  docType: string;
+  sizeBytes?: number | null;
+  lastModified: string;
+  addable: boolean;
+}
+
+export interface PlanningCommandCenterPhaseRow {
+  phaseNumber?: number | null;
+  name: string;
+  storyPoints?: number | null;
+  phaseFiles: string[];
+  domain: string;
+  model: string;
+  agents: string[];
+  status: string;
+  details: Record<string, unknown>;
+  /**
+   * Compact session references linked to this phase via the inverse
+   * phase→sessions query.  Absent or undefined when no sessions are linked.
+   * Consumers MUST guard with optional chaining before iterating.
+   */
+  linkedSessions?: SessionLink[] | null;
+}
+
+export interface PlanningCommandCenterLaunchAgent {
+  agentId: string;
+  label: string;
+  skills: string[];
+  tools: string[];
+  state: string;
+}
+
+export interface PlanningCommandCenterLaunchBatch {
+  batchId: string;
+  label: string;
+  readiness: string;
+  agents: PlanningCommandCenterLaunchAgent[];
+  queuedCount: number;
+  runningCount: number;
+}
+
+export interface PlanningCommandCenterWorktree {
+  contextId: string;
+  path: string;
+  branch: string;
+  status: string;
+  phaseNumber?: number | null;
+  batchId: string;
+}
+
+export interface PlanningCommandCenterGitState {
+  pathExists?: boolean | null;
+  head: string;
+  dirtyCount?: number | null;
+  stashCount?: number | null;
+  upstream: string;
+  ahead?: number | null;
+  behind?: number | null;
+  probedAt: string;
+  warnings: string[];
+}
+
+export interface PlanningCommandCenterPullRequest {
+  provider: string;
+  number?: number | null;
+  url: string;
+  state: string;
+  reviewStatus: string;
+}
+
+export interface PlanningCommandCenterBlocker {
+  label: string;
+  reason: string;
+  severity: string;
+}
+
+export interface PlanningCommandCenterCapabilities {
+  copyCommand: boolean;
+  launch: boolean;
+  review: boolean;
+  merge: boolean;
+  cleanup: boolean;
+  openPr: boolean;
+  editCommand: boolean;
+}
+
+export interface PlanningCommandCenterItem {
+  feature: PlanningCommandCenterFeature;
+  status: PlanningCommandCenterStatus;
+  storyPoints: PlanningCommandCenterStoryPoints;
+  phase: PlanningCommandCenterPhase;
+  artifacts: PlanningCommandCenterArtifact[];
+  targetArtifact?: PlanningCommandTargetArtifact | null;
+  command?: PlanningCommandResolution | null;
+  relatedFiles: PlanningCommandCenterRelatedFile[];
+  phaseRows: PlanningCommandCenterPhaseRow[];
+  launchBatch?: PlanningCommandCenterLaunchBatch | null;
+  worktree?: PlanningCommandCenterWorktree | null;
+  gitState?: PlanningCommandCenterGitState | null;
+  pullRequest?: PlanningCommandCenterPullRequest | null;
+  blockers: PlanningCommandCenterBlocker[];
+  lastActivity: { timestamp?: string; actor?: string; source?: string };
+  capabilities: PlanningCommandCenterCapabilities;
+  /**
+   * Compact references to currently-running agent sessions for this work item.
+   * Absent or empty array when no sessions are active.
+   * Consumers MUST guard with optional chaining before dereferencing elements.
+   * Uses the same AggregateWorkItemSession shape defined below for consistency.
+   */
+  activeSessions?: AggregateWorkItemSession[];
+  /**
+   * Commit SHAs linked to this feature from planning doc frontmatter / document_refs.
+   * Absent or empty array when unavailable. Consumers MUST guard before dereferencing.
+   */
+  commitRefs?: string[];
+  /**
+   * PR references (URLs or "#NNN" short forms) linked to this feature.
+   * Absent or empty array when unavailable. Consumers MUST guard before dereferencing.
+   */
+  prRefs?: string[];
+}
+
+export interface PlanningCommandCenterPage extends AgentQueryEnvelope {
+  projectId: string;
+  items: PlanningCommandCenterItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sortBy: string;
+  sortDirection: 'asc' | 'desc';
+  warnings: string[];
+}
+
+// ── System-wide metrics (GET /api/agent/system/active-count) ─────────────────
+
+/**
+ * Per-project live agent count summary returned as part of SystemActiveCount.
+ * Fields use snake_case to match the wire format, consistent with other API
+ * DTOs in this file that preserve the backend's naming convention.
+ */
+export interface ProjectActiveCountSummary {
+  project_id: string;
+  project_name: string;
+  /** Active agent count for this project; null when the count could not be determined. */
+  count: number | null;
+  /** True when the project data is known-stale; null is treated as true by the frontend. */
+  is_stale: boolean | null;
+  /** ISO-8601 timestamp of the most recent sync for this project; null when unavailable. */
+  last_synced_at: string | null;
+  /** Error message when the project query failed; null on success. */
+  error: string | null;
+}
+
+/**
+ * Aggregate response from GET /api/agent/system/active-count.
+ * "partial" status means at least one per_project entry has an error.
+ */
+export interface SystemActiveCount {
+  total: number;
+  per_project: ProjectActiveCountSummary[];
+  /** ISO-8601 timestamp when this payload was generated. */
+  generated_at: string;
+  /** The active-session window in seconds used by the backend. */
+  window_seconds: number;
+  /** "ok" when all projects queried successfully; "partial" when ≥1 error. */
+  status: 'ok' | 'partial';
+}
+
+// ── Multi-Project Planning Command Center DTOs (MPCC-101) ─────────────────────
+// These interfaces freeze the aggregate DTO contract for the Multi-Project
+// Planning Command Center.  They embed the V1 single-project shapes
+// (PlanningCommandCenterItem, PlanningAgentSessionCard) and add the extra
+// cross-project identity fields needed for the multi-project board and rail.
+
+/**
+ * Optional per-project rendering hints stored alongside project configuration.
+ *
+ * All fields are optional.  Absent fields get deterministic fallbacks:
+ * - color: consistent-hash HSL from project id
+ * - group: "default"
+ * - sortOrder: alphabetical by project name
+ * - labelOverride: project name as-is
+ */
+export interface ProjectDisplayMetadata {
+  /** Hex or CSS color used to tint project chips and rails.  E.g. "#6366f1". */
+  color?: string;
+  /** Free-form group label used to cluster projects in the multi-project rail. */
+  group?: string;
+  /** Explicit sort position within a group.  Lower values sort first. */
+  sortOrder?: number;
+  /** Short display label to use instead of the project name. */
+  labelOverride?: string;
+}
+
+/** Aggregate work-item counts for a project in the multi-project view. */
+export interface ProjectWorkItemCounts {
+  workItems: number;
+  blocked: number;
+  review: number;
+  stale: number;
+  activeSessions: number;
+  errors: number;
+}
+
+/**
+ * Per-project identity, counts, and freshness for multi-project views.
+ *
+ * Surfaced in both MultiProjectCommandCenterResponse and
+ * MultiProjectSessionBoardResponse to power the project rail and filter
+ * controls without requiring per-project detail fetches.
+ *
+ * - isStale: true when backend data is known-stale; null = unknown
+ * - error: non-null when the per-project aggregate query failed
+ * - lastUpdated: ISO-8601 timestamp of most-recently-synced artifact
+ * - freshnessSeconds: age of oldest contributing row in seconds
+ */
+export interface ProjectSummary {
+  projectId: string;
+  name: string;
+  displayMetadata: ProjectDisplayMetadata;
+  counts: ProjectWorkItemCounts;
+  isStale: boolean | null;
+  error: string | null;
+  lastUpdated: string | null;
+  freshnessSeconds: number | null;
+}
+
+/**
+ * Minimal cross-project identity fields embedded in every aggregate item/card.
+ *
+ * Carries the resolved (post-fallback) color and group so a renderer can
+ * color-code and route a card back to its source project without consulting
+ * projectSummaries.
+ */
+export interface ProjectIdentityFields {
+  projectId: string;
+  projectName: string;
+  /** Resolved color after deterministic fallback.  Always a hex string. */
+  projectColor?: string;
+  /** Resolved group label after fallback to "default". */
+  projectGroup?: string;
+}
+
+/**
+ * A single planning command-center work item annotated with project identity.
+ *
+ * Embeds the V1 PlanningCommandCenterItem shape via `item` plus the
+ * cross-project identity fields for rendering in the multi-project board.
+ * The V1 shape is embedded as an object (not re-declared) so V1 consumers
+ * of the nested shape remain unaffected when aggregate fields change.
+ */
+/** Minimal session reference embedded in AggregateWorkItem.activeSessions. */
+export interface AggregateWorkItemSession {
+  sessionId: string;
+  state?: string;
+  agentName?: string;
+}
+
+export interface AggregateWorkItem {
+  project: ProjectIdentityFields;
+  /** Full V1 work-item payload. */
+  item: PlanningCommandCenterItem;
+  /**
+   * Compact references to currently-active agent sessions for this work item.
+   * Optional — absent or empty when no sessions are running.
+   * Consumers MUST guard with optional chaining before dereferencing elements.
+   */
+  activeSessions?: AggregateWorkItemSession[];
+}
+
+/** Compact summary of a worker or subagent nested under an aggregate session card. */
+export interface AggregateSessionWorkerSummary {
+  sessionId: string;
+  agentName?: string;
+  state: string;
+  model?: string;
+  startedAt?: string;
+  lastActivityAt?: string;
+  durationSeconds?: number;
+}
+
+/**
+ * A planning agent session card annotated with project identity.
+ *
+ * Embeds the V1 PlanningAgentSessionCard shape via `card` plus the
+ * cross-project identity fields and an optional worker/subagent summary list.
+ */
+export interface AggregateSessionCard {
+  project: ProjectIdentityFields;
+  /** Full V1 session card payload. */
+  card: PlanningAgentSessionCard;
+  /**
+   * Compact summaries of worker/subagent sessions nested under this card.
+   * Present when the session is a root session with child workers.
+   * Empty array when there are no workers or child data is unavailable.
+   */
+  workers: AggregateSessionWorkerSummary[];
+}
+
+/** Standard pagination envelope matching the V1 PlanningCommandCenterPage conventions. */
+export interface AggregatePagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * A per-project warning or partial-status message for multi-project responses.
+ *
+ * severity mirrors PlanningCommandCenterBlocker.severity levels.
+ * code is a machine-readable key for programmatic handling.
+ */
+export interface ProjectWarning {
+  projectId: string;
+  message: string;
+  severity: 'low' | 'medium' | 'high';
+  /** Machine-readable code, e.g. "sync_stale" | "feature_load_failed" | "session_load_failed". */
+  code: string;
+}
+
+/**
+ * Aggregate response for the multi-project Planning Command Center.
+ *
+ * - items: flat list of AggregateWorkItem spanning all projects
+ * - projectSummaries: per-project identity + count snapshot (drives project rail)
+ * - pagination: standard page token
+ * - warnings: per-project and global partial-status messages
+ * - status: "ok" | "partial" | "error"
+ *
+ * When status is "partial" at least one project's aggregate query failed or
+ * returned incomplete data; warnings carries per-project detail.
+ */
+export interface MultiProjectCommandCenterResponse {
+  status: 'ok' | 'partial' | 'error';
+  items: AggregateWorkItem[];
+  projectSummaries: ProjectSummary[];
+  pagination: AggregatePagination;
+  warnings: ProjectWarning[];
+  generatedAt?: string;
+  dataFreshness?: string;
+}
+
+/**
+ * A column in the multi-project session board, keyed by the active grouping.
+ *
+ * Mirrors PlanningBoardGroup but contains AggregateSessionCard instances that
+ * carry project identity fields.
+ */
+export interface AggregateBoardGroup {
+  groupKey: string;
+  groupLabel: string;
+  groupType: string;
+  cards: AggregateSessionCard[];
+  cardCount: number;
+}
+
+/**
+ * Aggregate response for the multi-project active-session board.
+ *
+ * - groups: board columns under the active grouping
+ * - projectSummaries: per-project identity + count snapshot
+ * - pagination: standard pagination token
+ * - warnings: per-project and global partial-status messages
+ * - grouping: dimension used to group cards (mirrors PlanningBoardGroupingMode)
+ * - totalCardCount / activeCount / completedCount: header summary strip tallies
+ *
+ * When status is "partial" at least one project's session query failed.
+ */
+export interface MultiProjectSessionBoardResponse {
+  status: 'ok' | 'partial' | 'error';
+  grouping: string;
+  groups: AggregateBoardGroup[];
+  projectSummaries: ProjectSummary[];
+  pagination: AggregatePagination;
+  warnings: ProjectWarning[];
+  totalCardCount: number;
+  activeCount: number;
+  completedCount: number;
+  generatedAt?: string;
+  dataFreshness?: string;
 }

@@ -61,7 +61,7 @@ class RepositoryTokenPersistenceTests(unittest.IsolatedAsyncioTestCase):
         db = await _make_db()
         self.addAsyncCleanup(db.close)
         repo = SqliteSessionMessageRepository(db)
-        await repo.replace_session_messages("s-1", messages)
+        await repo.replace_session_messages("s-1", messages, "proj-1")
         return await repo.list_by_session("s-1")
 
     async def test_token_usage_written_to_columns(self) -> None:

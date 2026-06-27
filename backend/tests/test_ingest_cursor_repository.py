@@ -47,12 +47,12 @@ class SqliteIngestCursorRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(cursor.last_error)
         self.assertIsNone(cursor.last_error_at)
 
-    async def test_get_or_create_workspace_defaults_to_default(self) -> None:
+    async def test_get_or_create_workspace_defaults_to_default_local(self) -> None:
         cursor = await self.repo.get_or_create(
             source_id="filesystem",
             project_id="proj-2",
         )
-        self.assertEqual(cursor.workspace_id, "default")
+        self.assertEqual(cursor.workspace_id, "default-local")
 
     async def test_get_or_create_existing_row_no_overwrite(self) -> None:
         # Create and advance so last_cursor is non-NULL.

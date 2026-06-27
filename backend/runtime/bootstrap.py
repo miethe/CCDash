@@ -1,20 +1,29 @@
 """Shared FastAPI app builder for runtime profiles."""
 from __future__ import annotations
 
+import logging
+import os
+import sqlite3
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Request, status
+import aiosqlite
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger("ccdash.runtime.bootstrap")
 
 from backend.application.context import RequestContext
 from backend import config
 from backend.db import connection
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
+from backend.routers.ai import ai_router
 from backend.routers.analytics import analytics_router
 from backend.routers.agent import agent_router
 from backend.routers.auth import auth_router
+from backend.routers.council import arc_router
+from backend.routers.meatywiki import meatywiki_router
 from backend.routers.client_v1 import client_v1_router
 from backend.routers.ingest import ingest_router
 from backend.routers.api import documents_router, sessions_router, tasks_router
@@ -36,6 +45,95 @@ from backend.runtime.dependencies import get_request_context
 from backend.runtime.profiles import RuntimeProfile, RuntimeProfileName, get_runtime_profile
 
 
+# ── T9-008: /readyz check helpers ────────────────────────────────────────────
+# Module-level async functions so tests can patch them independently.
+
+async def _readyz_check_db() -> tuple[bool, str | None]:
+    """Return (ok, error_detail). ok=True if the DB connection is reachable.
+
+    Attempts a lightweight SELECT 1 on the existing singleton connection.
+    Returns False (with a detail string) if the connection is absent or the
+    query raises an exception.  Never raises.
+    """
+    try:
+        db = connection._connection
+        if db is None:
+            # Connection not yet established; return not-ready without creating one.
+            # A readiness probe must observe state, not change it.
+            return False, "db not connected"
+        if isinstance(db, aiosqlite.Connection):
+            await db.execute("SELECT 1")
+        else:
+            # asyncpg Pool — acquire and ping
+            async with db.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+        return True, None
+    except Exception as exc:
+        return False, str(exc)[:200]
+
+
+async def _readyz_check_migration_head() -> tuple[bool, str | None]:
+    """Return (ok, error_detail). ok=True if the migration head version is applied.
+
+    Queries the ``migrations_applied`` ledger table and verifies that the
+    current SCHEMA_VERSION row exists.  Returns False with a detail string when
+    the row is absent or the query fails.  Never raises.
+    """
+    try:
+        db = connection._connection
+        if db is None:
+            return False, "db not connected"
+        if config.DB_BACKEND == "postgres":
+            from backend.db.postgres_migrations import SCHEMA_VERSION
+        else:
+            from backend.db.sqlite_migrations import SCHEMA_VERSION  # type: ignore[assignment]
+
+        if isinstance(db, aiosqlite.Connection):
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM migrations_applied WHERE version = ?",
+                (SCHEMA_VERSION,),
+            )
+            row = await cursor.fetchone()
+            applied = bool(row and row[0] >= 1)
+        else:
+            async with db.acquire() as conn:
+                count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM migrations_applied WHERE version = $1",
+                    SCHEMA_VERSION,
+                )
+                applied = bool(count and count >= 1)
+        if applied:
+            return True, None
+        return False, f"migration head v{SCHEMA_VERSION} not found in migrations_applied"
+    except Exception as exc:
+        return False, str(exc)[:200]
+
+
+async def _readyz_check_queue_backend() -> tuple[bool, str | None]:
+    """Return (ok, error_detail). ok=True if the queue backend is reachable.
+
+    * Memory backend (JOB_QUEUE_BACKEND=memory): always ok (no external dep).
+    * SQLite/Postgres backends: probes the ``job_queue`` table with a cheap
+      COUNT(*) query.  Returns False if the connection or query fails.
+    Never raises.
+    """
+    queue_backend = getattr(config, "JOB_QUEUE_BACKEND", "memory").strip().lower()
+    if queue_backend == "memory":
+        return True, None
+    try:
+        db = connection._connection
+        if db is None:
+            return False, "db not connected"
+        if isinstance(db, aiosqlite.Connection):
+            await db.execute("SELECT 1 FROM job_queue LIMIT 1")
+        else:
+            async with db.acquire() as conn:
+                await conn.fetchval("SELECT COUNT(*) FROM job_queue")
+        return True, None
+    except Exception as exc:
+        return False, str(exc)[:200]
+
+
 def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     runtime_profile = get_runtime_profile(profile) if isinstance(profile, str) else profile
     container = RuntimeContainer(profile=runtime_profile)
@@ -55,13 +153,40 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     app.state.runtime_profile = runtime_profile
     app.state.runtime_container = container
 
+    # Dev CORS origins (localhost) are only included when running the local runtime profile
+    # or when CCDASH_DEV_CORS=true is explicitly set. Enterprise/api profiles allow only
+    # config.FRONTEND_ORIGIN so that hardcoded localhost origins are not present in prod.
+    _dev_cors = runtime_profile.name in ("local",) or (
+        os.getenv("CCDASH_DEV_CORS", "").strip().lower() in {"1", "true", "yes", "on"}
+    )
+    _cors_origins = [config.FRONTEND_ORIGIN]
+    if _dev_cors:
+        _cors_origins += ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # T10-003: merge CCDASH_CORS_ALLOWED_ORIGINS (LAN / IntentTree agent origins).
+    # Additive only — existing origins are preserved; unset = no change.
+    _extra_cors_origins = [
+        o.strip()
+        for o in getattr(config, "CCDASH_CORS_ALLOWED_ORIGINS", "").split(",")
+        if o.strip()
+    ]
+    # Safety: wildcard origins must not be used with allow_credentials=True — a
+    # browser will refuse the response and CORS would silently break for all
+    # credentialed callers.  Drop any "*" entries and warn the operator.
+    _wildcard_dropped = [o for o in _extra_cors_origins if o == "*"]
+    if _wildcard_dropped:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "CCDASH_CORS_ALLOWED_ORIGINS contained wildcard origin(s) ('*') which are "
+            "not permitted when allow_credentials=True (browser security requirement). "
+            "Wildcard entries were removed from the CORS allow-list.  "
+            "Specify explicit origins instead."
+        )
+        _extra_cors_origins = [o for o in _extra_cors_origins if o != "*"]
+    if _extra_cors_origins:
+        _cors_origins = _cors_origins + _extra_cors_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            config.FRONTEND_ORIGIN,
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -109,6 +234,42 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     ) -> dict[str, Any]:
         runtime_status = container.runtime_status()
         return _build_health_payload(runtime_status, runtime_profile)
+
+    # T9-008: richer /readyz probe for the API runtime.
+    # Checks DB connectivity, migration-head-applied, and queue-backend reachability.
+    # Returns HTTP 200 only when all three checks pass. Non-200 (503) with a
+    # structured reason payload naming the failing dependency on any failure.
+    # The check functions are module-level so they can be patched in tests.
+    @app.get("/readyz")
+    async def readyz_api(resp: Response) -> dict[str, Any]:
+        db_ok, db_err = await _readyz_check_db()
+        mig_ok, mig_err = await _readyz_check_migration_head()
+        queue_ok, queue_err = await _readyz_check_queue_backend()
+
+        checks: dict[str, bool] = {
+            "db_connected": db_ok,
+            "migration_head_applied": mig_ok,
+            "queue_reachable": queue_ok,
+        }
+        reasons: list[dict[str, str]] = []
+        if not db_ok:
+            reasons.append({"code": "db_unreachable", "detail": db_err or ""})
+        if not mig_ok:
+            reasons.append({"code": "migration_behind", "detail": mig_err or ""})
+        if not queue_ok:
+            reasons.append({"code": "queue_unreachable", "detail": queue_err or ""})
+
+        ready = not reasons
+        if not ready:
+            resp.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "schemaVersion": "1",
+            "runtimeProfile": str(getattr(runtime_profile, "name", "api")),
+            "ready": ready,
+            "checks": checks,
+            "reasons": reasons,
+            "reasonCodes": [r["code"] for r in reasons],
+        }
 
     return app
 
@@ -257,6 +418,125 @@ def _resolve_auth_mode(runtime_profile: RuntimeProfile) -> str:
     return "single_bearer"
 
 
+# ---------------------------------------------------------------------------
+# T2-003: Extended health-detail sub-builders
+# Each section is wrapped in its own try/except so a transient failure yields
+# null fields rather than a 500.
+# ---------------------------------------------------------------------------
+
+def _build_registry_detail() -> dict[str, Any]:
+    """Return { project_count, last_flush_status } from the DB-backed project registry.
+
+    last_flush_status derivation:
+    - SqliteProjectRepository.count() is called on the configured DB path.
+    - If the call succeeds → "ok".
+    - If the DB is locked (OperationalError with "locked" in message) → "locked".
+    - Any other exception → "failed".
+    - If the DB path is not yet available (file missing + table not yet created) → "unknown".
+    """
+    project_count: int | None = None
+    last_flush_status: str = "unknown"
+    try:
+        from backend.db.repositories.projects import SqliteProjectRepository
+        repo = SqliteProjectRepository(db_path=str(config.DB_PATH))
+        repo.ensure_table()
+        project_count = repo.count()
+        last_flush_status = "ok"
+    except sqlite3.OperationalError as exc:
+        msg = str(exc).lower()
+        if "locked" in msg:
+            last_flush_status = "locked"
+        else:
+            last_flush_status = "failed"
+    except RuntimeError as exc:
+        # ensure_table() raises RuntimeError when the projects table does not
+        # exist (i.e. migrations have not run yet).  This is the documented
+        # "table not yet created" → "unknown" path, not a genuine flush failure.
+        if "migrations must run" in str(exc).lower() or "does not exist" in str(exc).lower():
+            last_flush_status = "unknown"
+        else:
+            last_flush_status = "failed"
+    except Exception:
+        last_flush_status = "failed"
+    return {
+        "project_count": project_count,
+        "last_flush_status": last_flush_status,
+    }
+
+
+def _build_db_detail() -> dict[str, Any]:
+    """Return { size_bytes, freelist_bytes, backend } for the configured DB.
+
+    For SQLite: reads file size from disk and PRAGMA freelist_count * page_size.
+    For PostgreSQL: size_bytes and freelist_bytes are null (not applicable).
+    backend is always populated from config.DB_BACKEND.
+    """
+    backend: str = str(getattr(config, "DB_BACKEND", "sqlite")).lower() or "sqlite"
+    size_bytes: int | None = None
+    freelist_bytes: int | None = None
+    try:
+        if backend == "sqlite":
+            db_path = config.DB_PATH
+            try:
+                size_bytes = int(os.path.getsize(str(db_path)))
+            except (OSError, TypeError):
+                size_bytes = None
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=5, check_same_thread=False)
+                try:
+                    conn.execute("PRAGMA busy_timeout = 30000")
+                    freelist_count = conn.execute("PRAGMA freelist_count").fetchone()
+                    page_size_row = conn.execute("PRAGMA page_size").fetchone()
+                    if freelist_count and page_size_row:
+                        freelist_bytes = int(freelist_count[0]) * int(page_size_row[0])
+                finally:
+                    conn.close()
+            except Exception:
+                freelist_bytes = None
+    except Exception:
+        size_bytes = None
+        freelist_bytes = None
+    return {
+        "size_bytes": size_bytes,
+        "freelist_bytes": freelist_bytes,
+        "backend": backend,
+    }
+
+
+def _build_retention_detail(runtime_status: dict[str, Any]) -> dict[str, Any]:
+    """Return { last_run, enabled } for the retention job.
+
+    last_run is sourced from the retentionPrune job observation's last_success_at
+    field recorded by RuntimeJobAdapter._mark_job_success() in
+    backend/adapters/jobs/runtime.py.  It is null if the job has never
+    completed successfully.
+
+    enabled reflects config.RETENTION_PRUNE_ENABLED; it is always populated
+    even if last_run retrieval fails.
+    """
+    enabled: bool = bool(getattr(config, "RETENTION_PRUNE_ENABLED", False))
+    last_run: str | None = None
+    try:
+        worker_probe = runtime_status.get("workerProbe")
+        if worker_probe:
+            jobs = worker_probe.get("jobs", {})
+            retention_job = jobs.get("retentionPrune", {})
+            last_run = retention_job.get("lastSuccessAt") or None
+        else:
+            # Non-worker profile: attempt to read from job_observations via
+            # the container stored in the runtime_status dict.
+            job_obs = runtime_status.get("_job_observations")
+            if job_obs and "retentionPrune" in job_obs:
+                obs = job_obs["retentionPrune"]
+                last_run = getattr(obs, "last_success_at", None)
+    except Exception:
+        last_run = None
+    return {
+        "last_run": last_run,
+        "enabled": enabled,
+    }
+
+
 def _build_live_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:
     probe_contract = _require_probe_contract(runtime_status)
     live = _probe_contract_section(probe_contract, "live")
@@ -333,6 +613,10 @@ def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any
         # Feature-surface v2 rollout flag exposed at the detail level so the FE
         # can read it from the same /api/health/detail probe it already polls.
         "featureSurfaceV2Enabled": config.CCDASH_FEATURE_SURFACE_V2_ENABLED,
+        # T2-003: extended health detail fields — reuse sub-builders, no duplication
+        "registry": _build_registry_detail(),
+        "db": _build_db_detail(),
+        "retention": _build_retention_detail(runtime_status),
     }
 
 
@@ -371,6 +655,7 @@ def _serialize_storage_profile_validation_matrix(entries: object) -> list[dict[s
 
 
 def _register_routers(app: FastAPI) -> None:
+    app.include_router(ai_router)
     app.include_router(auth_router)
     app.include_router(sessions_router)
     app.include_router(documents_router)
@@ -394,3 +679,5 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(observability_router)
     app.include_router(client_v1_router)
     app.include_router(ingest_router)
+    app.include_router(arc_router)
+    app.include_router(meatywiki_router)

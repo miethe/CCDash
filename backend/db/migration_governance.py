@@ -1,4 +1,81 @@
-"""Governance matrix for supported storage compositions and migration backends."""
+"""Governance matrix for supported storage compositions and migration backends.
+
+Column/Constraint Parity Normalization
+======================================
+``column_parity_diff`` and ``get_column_parity_diff_all`` parse the DDL for each
+shared table and compare column structure across backends after applying a
+canonical type-normalization mapping.  The goal is to surface *structural* drift
+(genuinely missing columns, wrong nullability, wrong defaults) while suppressing
+noise from expected cross-backend type aliases.
+
+Type normalization rules (SQLite raw → canonical, Postgres raw → canonical):
+  TEXT, VARCHAR(n), CHARACTER VARYING(n), CLOB  → "text"
+  INTEGER, INT, INT4, SMALLINT, TINYINT         → "integer"
+  BIGINT, INT8                                  → "integer"   (width alias only)
+  SERIAL                                        → "integer"   (identity strategy, already categorized)
+  BIGSERIAL                                     → "integer"   (identity strategy, already categorized)
+  REAL, FLOAT, FLOAT4                           → "real"      (floating-point, already categorized)
+  DOUBLE PRECISION, FLOAT8                      → "real"      (floating-point, already categorized)
+  NUMERIC, DECIMAL                              → "real"
+  BOOLEAN                                       → "integer"   (SQLite stores bools as 0/1 INTEGER;
+                                                               already categorized as identity_column_strategy
+                                                               sibling; treat as equivalent)
+  JSONB                                         → "text"      (json_storage category; already categorized)
+  TIMESTAMP WITH TIME ZONE, TIMESTAMPTZ        → "text"      (timestamp_default_expression category;
+                                                               already categorized; Postgres TIMESTAMPTZ
+                                                               used for audit-trail columns and is
+                                                               semantically equivalent to TEXT ISO-8601)
+  DATETIME                                      → "text"      (SQLite datetime alias → text)
+
+Default-value normalization:
+  SQLite ``(datetime('now'))`` and Postgres ``CURRENT_TIMESTAMP`` / ``CURRENT_TIMESTAMP::text``
+  are both normalized to the sentinel ``"<timestamp_now>"`` because the
+  timestamp_default_expression difference is already in the approved category list.
+
+Allowlist of known structural drift items
+==========================================
+Some tables have deliberate structural differences that cannot be collapsed by
+type-normalization alone.  These are recorded in
+  .claude/findings/ccdash-db-design-remediation-findings.md
+and listed here explicitly so the CI test can assert an *empty* diff after
+exclusions are applied.
+
+  DRIFT-001  outbound_telemetry_queue / event_type column
+    The SQLite baseline _TABLES DDL omits event_type; it is added via the
+    _migrate_outbound_telemetry_queue_add_event_type() procedure.  The Postgres
+    baseline _TABLES DDL includes it from the start.  Both backends *converge* at
+    runtime once the SQLite migration runs; the DDL-level difference is a
+    bootstrapping artifact, not a semantic schema gap.  Excluded from the parity
+    assertion.
+
+  DRIFT-002  session_relationships / created_at nullability
+    SQLite: TEXT NOT NULL DEFAULT (datetime('now'))
+    Postgres: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP  (nullable)
+    After type normalization both become "text" with default "<timestamp_now>", but
+    SQLite marks the column NOT NULL while Postgres allows NULL.  This is a minor
+    real drift; it is harmless in practice (the repo layer always writes a value),
+    but is captured here for auditability.  Excluded from the parity assertion.
+
+  DRIFT-003  oq_resolutions / created_at and updated_at nullability
+    SQLite: TEXT NOT NULL DEFAULT (datetime('now'))
+    Postgres: TEXT DEFAULT CURRENT_TIMESTAMP::text  (nullable)
+    Both columns carry the same semantic intent (record creation/update time) and
+    the repository always provides a value.  The NOT NULL constraint on the SQLite
+    side is tighter but harmless; excluded from the parity assertion.
+
+  DRIFT-004  session_sentiment_facts / evidence_json NOT NULL constraint
+  DRIFT-005  session_code_churn_facts / evidence_json NOT NULL constraint
+  DRIFT-006  session_scope_drift_facts / evidence_json NOT NULL constraint
+    SQLite:   evidence_json TEXT DEFAULT '{}'               (nullable)
+    Postgres: evidence_json JSONB NOT NULL DEFAULT '{}'     (NOT NULL)
+    The json_storage difference category already accounts for TEXT vs JSONB.
+    The NOT NULL mismatch is a genuine structural drift: Postgres was given the
+    tighter constraint when these tables were authored, but the SQLite DDL was
+    not updated in kind.  Fixing the SQLite DDL to add NOT NULL would change
+    applied-migration semantics (existing NULLs would become invalid), so the
+    divergence is recorded here rather than patched.  The repository layer
+    always writes a non-NULL JSON object so no NULL values exist in practice.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -323,3 +400,351 @@ def validate_migration_governance_contract() -> None:
                 f"Composition '{composition.composition}' has isolation_modes={composition.isolation_modes}, "
                 f"expected={expected_isolation}"
             )
+
+
+# ── Column/Constraint Parity (T3-009) ─────────────────────────────────────────
+
+# Canonical type mapping: (uppercased token prefix → canonical type string).
+# Longer prefixes must come before shorter ones that are prefixes of them.
+_TYPE_NORM_MAP: tuple[tuple[str, str], ...] = (
+    # Postgres serial identity types → integer (identity strategy: already categorized)
+    ("BIGSERIAL", "integer"),
+    ("SERIAL", "integer"),
+    # Floating-point → real (floating_point_type: already categorized)
+    ("DOUBLE PRECISION", "real"),
+    ("FLOAT8", "real"),
+    ("FLOAT4", "real"),
+    ("FLOAT", "real"),
+    ("REAL", "real"),
+    ("NUMERIC", "real"),
+    ("DECIMAL", "real"),
+    # Integer family
+    ("BIGINT", "integer"),
+    ("INT8", "integer"),
+    ("INT4", "integer"),
+    ("INTEGER", "integer"),
+    ("SMALLINT", "integer"),
+    ("TINYINT", "integer"),
+    ("INT", "integer"),
+    # Boolean → integer (SQLite stores as 0/1 INTEGER)
+    ("BOOLEAN", "integer"),
+    ("BOOL", "integer"),
+    # JSONB → text (json_storage: already categorized)
+    ("JSONB", "text"),
+    ("JSON", "text"),
+    # Timestamp with time zone → text (timestamp_default_expression: already categorized)
+    ("TIMESTAMP WITH TIME ZONE", "text"),
+    ("TIMESTAMPTZ", "text"),
+    ("TIMESTAMP", "text"),
+    ("DATETIME", "text"),
+    # Text family
+    ("CHARACTER VARYING", "text"),
+    ("VARCHAR", "text"),
+    ("CLOB", "text"),
+    ("TEXT", "text"),
+)
+
+# Default-value normalization sentinels.
+_TIMESTAMP_NOW_DEFAULTS = frozenset({
+    "DATETIME('NOW')",
+    "(DATETIME('NOW'))",
+    "CURRENT_TIMESTAMP",
+    "CURRENT_TIMESTAMP::TEXT",
+    "(DATETIME('NOW'))::TEXT",
+    "NOW()",
+    # Unstripped variants sometimes produced by the extractor
+    "DATETIME('NOW'))",
+})
+
+# Allowlist of (table, column) pairs excluded from the parity assertion.
+# Each entry references a DRIFT-NNN item documented in this module's docstring
+# and in .claude/findings/ccdash-db-design-remediation-findings.md.
+COLUMN_PARITY_DRIFT_ALLOWLIST: frozenset[tuple[str, str]] = frozenset({
+    # DRIFT-001: event_type exists in Postgres baseline DDL but not in SQLite _TABLES
+    # (added via migration procedure instead).
+    ("outbound_telemetry_queue", "event_type"),
+    # DRIFT-002: created_at NOT NULL in SQLite, nullable in Postgres
+    ("session_relationships", "created_at"),
+    # DRIFT-003: created_at / updated_at NOT NULL in SQLite, nullable in Postgres
+    ("oq_resolutions", "created_at"),
+    ("oq_resolutions", "updated_at"),
+    # DRIFT-004/005/006: evidence_json NOT NULL in Postgres, nullable in SQLite
+    # (json_storage type difference already categorized; NOT NULL gap recorded here)
+    ("session_sentiment_facts", "evidence_json"),
+    ("session_code_churn_facts", "evidence_json"),
+    ("session_scope_drift_facts", "evidence_json"),
+    # Phase 5 detection columns (T5-006/T5-007): model_slug, workflow_id,
+    # subagent_parent_id, skill_name, context_window are declared identically in
+    # BOTH the SQLite and Postgres `sessions` CREATE TABLE DDL (same type TEXT,
+    # same nullability, same default). They are therefore PARITY-CLEAN by
+    # construction and intentionally NOT allowlisted — any drift here is a real
+    # regression the parity test must catch.
+})
+
+# Regex for splitting a column line into (name, type-and-rest)
+_COL_NAME_RE = re.compile(r"^\s*(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s+(?P<rest>.+)", re.DOTALL)
+# Matches table-level constraint keywords that are not column definitions
+_CONSTRAINT_KEYWORDS = frozenset({
+    "PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT", "INDEX",
+})
+
+
+def _normalize_type(raw: str) -> str:
+    """Return the canonical type string for a raw SQL type token."""
+    upper = raw.strip().upper()
+    for prefix, canonical in _TYPE_NORM_MAP:
+        if upper.startswith(prefix):
+            return canonical
+    # Fallback: lowercase the first token
+    return upper.split("(")[0].split()[0].lower()
+
+
+def _normalize_default(raw: str) -> str:
+    """Normalize a DEFAULT value to suppress known-equivalent expressions."""
+    cleaned = raw.strip()
+    # Strip outer parens that wrap the entire expression (SQLite convention)
+    while cleaned.startswith("(") and cleaned.endswith(")"):
+        cleaned = cleaned[1:-1].strip()
+    upper = cleaned.upper()
+    if upper in _TIMESTAMP_NOW_DEFAULTS:
+        return "<timestamp_now>"
+    # Strip PostgreSQL type-cast suffix (e.g. '{}'::jsonb → '{}', '[]'::jsonb → '[]')
+    cleaned = re.sub(r"::\s*\w+(\s+\w+)*(\[\])?$", "", cleaned).strip()
+    # Strip surrounding quotes
+    cleaned = cleaned.strip("'\"")
+    # Normalize boolean literals to 0/1 so SQLite DEFAULT 0 == Postgres DEFAULT FALSE
+    if cleaned.upper() == "FALSE":
+        return "0"
+    if cleaned.upper() == "TRUE":
+        return "1"
+    return cleaned.lower()
+
+
+def _parse_table_columns(body: str) -> dict[str, tuple[str, bool, str]]:
+    """Parse a CREATE TABLE body into a normalized column map.
+
+    Returns:
+        {column_name: (normalized_type, nullable, normalized_default)}
+
+    Table-level constraints (PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY) are
+    skipped.  Inline PRIMARY KEY / NOT NULL modifiers are tracked.
+    """
+    result: dict[str, tuple[str, bool, str]] = {}
+
+    # Strip SQL line comments BEFORE splitting on commas.  Comments can
+    # contain commas (e.g. "-- ... the repository layer, which binds ...")
+    # that would otherwise produce spurious split points.
+    body_no_comments = re.sub(r"--[^\n]*", "", body)
+
+    # Split on commas at the top level (not inside parentheses or quotes)
+    parts: list[str] = []
+    depth = 0
+    buf: list[str] = []
+    in_sq = False  # inside single-quoted string
+    for ch in body_no_comments:
+        if ch == "'" and not in_sq:
+            in_sq = True
+            buf.append(ch)
+        elif ch == "'" and in_sq:
+            in_sq = False
+            buf.append(ch)
+        elif in_sq:
+            buf.append(ch)
+        elif ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth -= 1
+            buf.append(ch)
+        elif ch == "," and depth == 0:
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        parts.append("".join(buf).strip())
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        # Skip block comment fragments or parts with no identifier-like content
+        if part.startswith("/*") or not re.search(r"[a-zA-Z_]", part):
+            continue
+
+        m = _COL_NAME_RE.match(part)
+        if not m:
+            continue
+
+        name = m.group("name").lower()
+        rest = m.group("rest").strip()
+
+        # Skip table-level constraints
+        if name.upper() in _CONSTRAINT_KEYWORDS:
+            continue
+
+        # Extract type: everything up to the first constraint keyword or end
+        rest_upper = rest.upper()
+        type_end = len(rest)
+        for kw in ("NOT NULL", "NULL", "DEFAULT", "PRIMARY KEY", "REFERENCES",
+                   "CHECK", "UNIQUE", "CONSTRAINT"):
+            idx = rest_upper.find(kw)
+            if idx != -1 and idx < type_end:
+                type_end = idx
+
+        raw_type = rest[:type_end].strip()
+        normalized_type = _normalize_type(raw_type)
+
+        # Nullable: column is nullable unless NOT NULL is present
+        nullable = "NOT NULL" not in rest_upper
+
+        # Default value — extract everything after DEFAULT up to the next
+        # constraint keyword, handling nested parentheses correctly.
+        default_val = ""
+        default_kw_match = re.search(r"\bDEFAULT\b", rest, re.IGNORECASE)
+        if default_kw_match:
+            after_default = rest[default_kw_match.end():].strip()
+            # Walk character-by-character to handle nested parens
+            depth_d = 0
+            buf_d: list[str] = []
+            in_single_quote = False
+            for ch in after_default:
+                if ch == "'" and not in_single_quote:
+                    in_single_quote = True
+                    buf_d.append(ch)
+                elif ch == "'" and in_single_quote:
+                    in_single_quote = False
+                    buf_d.append(ch)
+                elif in_single_quote:
+                    buf_d.append(ch)
+                elif ch == "(":
+                    depth_d += 1
+                    buf_d.append(ch)
+                elif ch == ")":
+                    if depth_d == 0:
+                        break  # End of the column definition section
+                    depth_d -= 1
+                    buf_d.append(ch)
+                elif ch == "," and depth_d == 0:
+                    break
+                else:
+                    # Stop at constraint keywords at depth 0
+                    remainder = "".join(buf_d) + ch + after_default[len(buf_d) + 1:]
+                    tok_upper = "".join(buf_d).strip().upper()
+                    # Check if we've hit a constraint keyword that terminates the default
+                    hit_kw = False
+                    for kw in ("NOT NULL", "NULL", "PRIMARY KEY", "REFERENCES",
+                               "CHECK", "UNIQUE", "CONSTRAINT"):
+                        if tok_upper.endswith(kw):
+                            # Remove the keyword we accidentally collected
+                            buf_d = buf_d[: -len(kw)]
+                            hit_kw = True
+                            break
+                    if hit_kw:
+                        break
+                    buf_d.append(ch)
+            raw_default = "".join(buf_d).strip()
+            # Strip trailing constraint keyword tokens that slipped through
+            for kw in ("NOT NULL", "NULL", "PRIMARY KEY", "REFERENCES",
+                       "CHECK", "UNIQUE", "CONSTRAINT"):
+                if raw_default.upper().endswith(kw):
+                    raw_default = raw_default[: -len(kw)].strip()
+            if raw_default:
+                default_val = _normalize_default(raw_default)
+
+        result[name] = (normalized_type, nullable, default_val)
+
+    return result
+
+
+def column_parity_diff(table: str) -> dict[str, dict[str, dict]]:
+    """Return a machine-readable diff for *table* across the two shared backends.
+
+    Returns an empty dict when the table is structurally identical (after type
+    normalization and allowlist exclusions).  Returns::
+
+        {table: {"sqlite": <normalized_cols>, "postgres": <normalized_cols>}}
+
+    when any structural difference is detected.
+
+    Each *normalized_cols* value is a mapping of
+    ``{column_name: {"type": str, "nullable": bool, "default": str}}``.
+
+    Only columns in the intersection/symmetric-difference are included in the
+    diff output – columns present in both backends and identical are omitted
+    from the per-side representations to keep the output concise.
+    """
+    sqlite_blocks = _backend_table_blocks(sqlite_migrations)
+    postgres_blocks = _backend_table_blocks(postgres_migrations)
+
+    if table not in sqlite_blocks or table not in postgres_blocks:
+        # Table not shared; no parity diff to compute.
+        return {}
+
+    sqlite_cols = _parse_table_columns(sqlite_blocks[table])
+    postgres_cols = _parse_table_columns(postgres_blocks[table])
+
+    # Build symmetric diff: columns that differ or exist on one side only,
+    # excluding allowlisted (table, column) pairs and suppressing differences
+    # that fall under already-categorized backend difference categories.
+    all_cols = set(sqlite_cols) | set(postgres_cols)
+    differing: set[str] = set()
+    for col in all_cols:
+        if (table, col) in COLUMN_PARITY_DRIFT_ALLOWLIST:
+            continue
+        sq = sqlite_cols.get(col)
+        pg = postgres_cols.get(col)
+        if sq == pg:
+            continue
+        # Suppress timestamp-default nullability drift.
+        # Postgres TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP columns
+        # are nullable by DDL convention; the SQLite equivalent TEXT NOT NULL
+        # DEFAULT (datetime('now')) is NOT NULL.  Both sides normalize to
+        # type="text" default="<timestamp_now>"; the nullability gap is
+        # already categorized as "timestamp_default_expression".
+        if (
+            sq is not None and pg is not None
+            and sq[0] == pg[0]          # same normalized type
+            and sq[2] == pg[2] == "<timestamp_now>"  # both timestamp defaults
+            and sq[1] != pg[1]          # only nullability differs
+        ):
+            continue
+        differing.add(col)
+
+    if not differing:
+        return {}
+
+    def _fmt(cols: dict[str, tuple[str, bool, str]], relevant: set[str]) -> dict:
+        return {
+            col: {"type": cols[col][0], "nullable": cols[col][1], "default": cols[col][2]}
+            for col in sorted(relevant)
+            if col in cols
+        }
+
+    return {
+        table: {
+            "sqlite": _fmt(sqlite_cols, differing),
+            "postgres": _fmt(postgres_cols, differing),
+        }
+    }
+
+
+@lru_cache(maxsize=1)
+def get_column_parity_diff_all() -> dict[str, dict[str, dict]]:
+    """Return merged column-parity diff across all shared tables.
+
+    Returns an empty dict when no structural drift is found (after type
+    normalization and allowlist exclusions).  Suitable for a CI assertion::
+
+        assert get_column_parity_diff_all() == {}
+    """
+    sqlite_tables = get_sqlite_migration_tables()
+    postgres_enterprise = get_enterprise_only_postgres_tables()
+    postgres_all = get_postgres_migration_tables()
+    shared_tables = sorted(sqlite_tables & (postgres_all - postgres_enterprise))
+
+    merged: dict[str, dict[str, dict]] = {}
+    for table in shared_tables:
+        diff = column_parity_diff(table)
+        merged.update(diff)
+    return merged

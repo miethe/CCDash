@@ -27,19 +27,32 @@ class SqliteSessionIntelligenceRepository:
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
-    async def replace_session_sentiment_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None:
-        await self.db.execute("DELETE FROM session_sentiment_facts WHERE session_id = ?", (session_id,))
+    async def replace_session_sentiment_facts(
+        self,
+        session_id: str,
+        facts: list[dict[str, Any]],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
+        # Scope DELETE to (project_id, session_id) so project-A's writer never clears
+        # project-B's rows that share the same session_id.  Legacy NULL/'' rows are
+        # also cleared for this session so orphaned pre-v31 rows are replaced, not left dangling.
+        await self.db.execute(
+            "DELETE FROM session_sentiment_facts "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
         for fact in facts:
             await self.db.execute(
                 """
                 INSERT INTO session_sentiment_facts (
-                    session_id, feature_id, root_session_id, thread_session_id,
+                    project_id, session_id, feature_id, root_session_id, thread_session_id,
                     source_message_id, source_log_id, message_index,
                     sentiment_label, sentiment_score, confidence,
                     heuristic_version, evidence_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    project_id,
                     session_id,
                     str(fact.get("feature_id") or ""),
                     str(fact.get("root_session_id") or ""),
@@ -71,22 +84,33 @@ class SqliteSessionIntelligenceRepository:
             row["evidence_json"] = _loads_dict(row.get("evidence_json"))
         return rows
 
-    async def replace_session_code_churn_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None:
-        await self.db.execute("DELETE FROM session_code_churn_facts WHERE session_id = ?", (session_id,))
+    async def replace_session_code_churn_facts(
+        self,
+        session_id: str,
+        facts: list[dict[str, Any]],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
+        # Scope DELETE to (project_id, session_id) — see replace_session_sentiment_facts for rationale.
+        await self.db.execute(
+            "DELETE FROM session_code_churn_facts "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
         for fact in facts:
             await self.db.execute(
                 """
                 INSERT INTO session_code_churn_facts (
-                    session_id, feature_id, root_session_id, thread_session_id,
+                    project_id, session_id, feature_id, root_session_id, thread_session_id,
                     file_path, first_source_log_id, last_source_log_id,
                     first_message_index, last_message_index,
                     touch_count, distinct_edit_turn_count, repeat_touch_count, rewrite_pass_count,
                     additions_total, deletions_total, net_diff_total,
                     churn_score, progress_score, low_progress_loop,
                     confidence, heuristic_version, evidence_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    project_id,
                     session_id,
                     str(fact.get("feature_id") or ""),
                     str(fact.get("root_session_id") or ""),
@@ -129,18 +153,29 @@ class SqliteSessionIntelligenceRepository:
             row["evidence_json"] = _loads_dict(row.get("evidence_json"))
         return rows
 
-    async def replace_session_scope_drift_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None:
-        await self.db.execute("DELETE FROM session_scope_drift_facts WHERE session_id = ?", (session_id,))
+    async def replace_session_scope_drift_facts(
+        self,
+        session_id: str,
+        facts: list[dict[str, Any]],
+        project_id: str = "",  # TODO(FC-1): remove default once all callers are confirmed
+    ) -> None:
+        # Scope DELETE to (project_id, session_id) — see replace_session_sentiment_facts for rationale.
+        await self.db.execute(
+            "DELETE FROM session_scope_drift_facts "
+            "WHERE session_id = ? AND (project_id = ? OR project_id IS NULL OR project_id = '')",
+            (session_id, project_id),
+        )
         for fact in facts:
             await self.db.execute(
                 """
                 INSERT INTO session_scope_drift_facts (
-                    session_id, feature_id, root_session_id, thread_session_id,
+                    project_id, session_id, feature_id, root_session_id, thread_session_id,
                     planned_path_count, actual_path_count, matched_path_count, out_of_scope_path_count,
                     drift_ratio, adherence_score, confidence, heuristic_version, evidence_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    project_id,
                     session_id,
                     str(fact.get("feature_id") or ""),
                     str(fact.get("root_session_id") or ""),

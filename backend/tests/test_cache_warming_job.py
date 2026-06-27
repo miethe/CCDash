@@ -1,4 +1,4 @@
-"""Integration tests for the background cache warming job (Phase 4).
+"""Integration tests for the background cache warming job (Phase 4 + P2-014).
 
 Tests cover:
 - BG-004: The warming coroutine is invoked at least once within the configured
@@ -8,6 +8,8 @@ Tests cover:
   (``_start_cache_warming_task`` returns None and no Task is created).
 - TEST-004-C2: The warming task does not block concurrent coroutines (non-blocking).
 - TEST-004-C5: The query cache contains entries after a warming cycle completes.
+- P2-014: The warmer covers all 10 memoized endpoints (not just 2); per-feature
+  endpoints (feature_forensics, feature-evidence-summary, aar_report) are excluded.
 
 All tests are hermetic — they monkeypatch config, stub out service calls, and
 use an in-process asyncio event loop via ``asyncio.run`` / ``IsolatedAsyncioTestCase``.
@@ -21,7 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.adapters.jobs.runtime import RuntimeJobAdapter
+from backend.adapters.jobs.runtime import RuntimeJobAdapter  # noqa: E402 (also used as class ref in assertions)
 from backend.application.context import (
     ProjectScope,
 )
@@ -228,6 +230,22 @@ class TestStartupSyncOwnership(unittest.IsolatedAsyncioTestCase):
 class TestCacheWarmingJobRuns(unittest.IsolatedAsyncioTestCase):
     """The warming task calls both service methods and swallows service errors."""
 
+    @staticmethod
+    def _all_service_patches():
+        """Return a mapping of patch-target → AsyncMock for all expanded warm targets."""
+        return {
+            "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.planning.PlanningQueryService.get_project_planning_summary": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.planning.PlanningQueryService.get_project_planning_graph": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.multi_project_planning_command_center.MultiProjectPlanningCommandCenterQueryService.get_multi_project_command_center": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.multi_project_planning_sessions.MultiProjectActiveSessionBoardQueryService.get_multi_project_session_board": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.system_metrics.SystemMetricsQueryService.get_system_active_count": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.live_metrics.LiveMetricsQueryService.get_active_count": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.analytics_bundle.AnalyticsBundleQueryService.get_analytics_overview_bundle": AsyncMock(return_value=MagicMock()),
+            "backend.application.services.agent_queries.dashboard.DashboardQueryService.get_dashboard_bundle": AsyncMock(return_value=MagicMock()),
+        }
+
     async def _run_one_warming_cycle(
         self,
         project_status_side_effect=None,
@@ -235,40 +253,47 @@ class TestCacheWarmingJobRuns(unittest.IsolatedAsyncioTestCase):
         interval: int = 1,
     ):
         """Helper that starts the warming task, waits long enough for one cycle,
-        then cancels the task and returns (status_call_count, workflow_call_count)."""
+        then cancels the task and returns (adapter, status_call_count, workflow_call_count)."""
         project = _make_project()
         adapter = _make_adapter(project)
 
-        status_mock = AsyncMock(return_value=MagicMock())
-        workflow_mock = AsyncMock(return_value=MagicMock())
+        patches = self._all_service_patches()
+        status_mock = patches[
+            "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status"
+        ]
+        workflow_mock = patches[
+            "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics"
+        ]
         if project_status_side_effect is not None:
             status_mock.side_effect = project_status_side_effect
         if workflow_side_effect is not None:
             workflow_mock.side_effect = workflow_side_effect
 
-        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
-             patch(
-                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
-                 status_mock,
-             ), \
-             patch(
-                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
-                 workflow_mock,
-             ):
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
             mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = interval
             mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
             mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
 
-            task = adapter._start_cache_warming_task()
-            assert task is not None
+            active_patches = []
+            for target, mock_obj in patches.items():
+                p = patch(target, mock_obj)
+                p.start()
+                active_patches.append(p)
 
-            # Wait slightly beyond one interval so the loop body executes once.
-            await asyncio.sleep(interval + 0.3)
-            task.cancel()
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
+                task = adapter._start_cache_warming_task()
+                assert task is not None
+
+                # Wait slightly beyond one interval so the loop body executes once.
+                await asyncio.sleep(interval + 0.3)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            finally:
+                for p in active_patches:
+                    p.stop()
 
         return adapter, status_mock.call_count, workflow_mock.call_count
 
@@ -289,63 +314,57 @@ class TestCacheWarmingJobRuns(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cache_warming["backlogCount"], 0)
         self.assertIsNotNone(cache_warming["checkpointAt"])
         self.assertIsNotNone(cache_warming["lastSuccessAt"])
+        # All 10 expanded targets must appear in the success details.
         self.assertEqual(
             cache_warming["details"]["targets"],
-            ["project_status", "workflow_diagnostics"],
+            list(RuntimeJobAdapter._CACHE_WARM_TARGETS),
         )
 
     async def test_service_error_does_not_crash_task(self):
-        """An exception in get_status must not crash the warming task."""
-        # Both services raise; the task should still be cancellable (not dead from exception).
+        """An exception in any service must not crash the warming task."""
+        # All services raise; the task should still be cancellable (not dead from exception).
         project = _make_project()
         adapter = _make_adapter(project)
 
-        status_mock = AsyncMock(side_effect=RuntimeError("boom"))
-        workflow_mock = AsyncMock(side_effect=RuntimeError("boom"))
+        # Build patches where every service raises.
+        patches = self._all_service_patches()
+        for mock_obj in patches.values():
+            mock_obj.side_effect = RuntimeError("boom")
 
-        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
-             patch(
-                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
-                 status_mock,
-             ), \
-             patch(
-                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
-                 workflow_mock,
-             ):
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
             mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 1
             mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
             mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
 
-            task = adapter._start_cache_warming_task()
-            assert task is not None
+            active_patches = []
+            for target, mock_obj in patches.items():
+                p = patch(target, mock_obj)
+                p.start()
+                active_patches.append(p)
 
-            # Wait for one full cycle — the errors should be caught, not re-raised.
-            await asyncio.sleep(1.5)
-            # Task should still be running (not done due to an exception).
-            self.assertFalse(task.done(), "Task must still be alive after service errors")
-
-            task.cancel()
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
+                task = adapter._start_cache_warming_task()
+                assert task is not None
+
+                # Wait for one full cycle — the errors should be caught, not re-raised.
+                await asyncio.sleep(1.5)
+                # Task should still be running (not done due to an exception).
+                self.assertFalse(task.done(), "Task must still be alive after service errors")
+
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            finally:
+                for p in active_patches:
+                    p.stop()
 
     async def test_task_is_named_correctly(self):
         project = _make_project()
         adapter = _make_adapter(project)
 
-        status_mock = AsyncMock(return_value=MagicMock())
-        workflow_mock = AsyncMock(return_value=MagicMock())
-
-        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
-             patch(
-                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
-                 status_mock,
-             ), \
-             patch(
-                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
-                 workflow_mock,
-             ):
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
             mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 60
             mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
             mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
@@ -398,23 +417,10 @@ class TestCacheWarmingJobRuns(unittest.IsolatedAsyncioTestCase):
         project = _make_project()
         adapter = _make_adapter(project)
 
-        status_mock = AsyncMock(return_value=MagicMock())
-        workflow_mock = AsyncMock(return_value=MagicMock())
-
-        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
-             patch(
-                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
-                 status_mock,
-             ), \
-             patch(
-                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
-                 workflow_mock,
-             ):
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
             mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 60
             mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
             mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
-            # Suppress analytics + telemetry task creation so only cache task starts.
-            mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
 
             task = adapter._start_cache_warming_task()
             assert task is not None
@@ -439,18 +445,7 @@ class TestCacheWarmingStop(unittest.IsolatedAsyncioTestCase):
         project = _make_project()
         adapter = _make_adapter(project)
 
-        status_mock = AsyncMock(return_value=MagicMock())
-        workflow_mock = AsyncMock(return_value=MagicMock())
-
-        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
-             patch(
-                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
-                 status_mock,
-             ), \
-             patch(
-                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
-                 workflow_mock,
-             ):
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
             mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 60
             mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
             mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
@@ -809,36 +804,37 @@ class TestCacheWarmingNonBlocking(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)  # yield to event loop
                 probe_ticks[0] += 1
 
-        status_mock = AsyncMock(return_value=MagicMock())
-        workflow_mock = AsyncMock(return_value=MagicMock())
+        patches = TestCacheWarmingJobRuns._all_service_patches()
 
-        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
-             patch(
-                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
-                 status_mock,
-             ), \
-             patch(
-                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
-                 workflow_mock,
-             ):
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
             mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 1
             mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
             mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
 
-            warming_task = adapter._start_cache_warming_task()
-            assert warming_task is not None
-            probe_task = asyncio.ensure_future(_probe())
+            active_patches = []
+            for target, mock_obj in patches.items():
+                p = patch(target, mock_obj)
+                p.start()
+                active_patches.append(p)
 
-            # Run for slightly more than one interval
-            await asyncio.sleep(1.3)
+            try:
+                warming_task = adapter._start_cache_warming_task()
+                assert warming_task is not None
+                probe_task = asyncio.ensure_future(_probe())
 
-            probe_task.cancel()
-            warming_task.cancel()
-            for t in (probe_task, warming_task):
-                try:
-                    await t
-                except asyncio.CancelledError:
-                    pass
+                # Run for slightly more than one interval
+                await asyncio.sleep(1.3)
+
+                probe_task.cancel()
+                warming_task.cancel()
+                for t in (probe_task, warming_task):
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+            finally:
+                for p in active_patches:
+                    p.stop()
 
         # The probe should have received the event loop many times; a blocking
         # warming loop would leave probe_ticks[0] at 0 or 1.
@@ -924,39 +920,146 @@ class TestCacheWarmAfterRun(unittest.IsolatedAsyncioTestCase):
 
         call_log: list[str] = []
 
-        async def _record_status(self, context, ports):
+        async def _record_status(self, context, ports, **_kwargs):
             call_log.append("status")
             return MagicMock()
 
-        async def _record_workflow(self, context, ports):
+        async def _record_workflow(self, context, ports, **_kwargs):
             call_log.append("workflow")
             return MagicMock()
 
-        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
-             patch(
-                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
-                 _record_status,
-             ), \
-             patch(
-                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
-                 _record_workflow,
-             ):
+        patches = TestCacheWarmingJobRuns._all_service_patches()
+        # Override status and workflow to use our recording functions.
+        patches[
+            "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status"
+        ] = _record_status
+        patches[
+            "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics"
+        ] = _record_workflow
+
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
             mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 1
             mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
             mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
 
-            task = adapter._start_cache_warming_task()
-            assert task is not None
+            active_patches = []
+            for target, mock_obj in patches.items():
+                p = patch(target, mock_obj)
+                p.start()
+                active_patches.append(p)
 
-            await asyncio.sleep(1.4)
-            task.cancel()
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
+                task = adapter._start_cache_warming_task()
+                assert task is not None
+
+                await asyncio.sleep(1.4)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            finally:
+                for p in active_patches:
+                    p.stop()
 
         self.assertIn("status", call_log, "project_status must be called by the warming job")
         self.assertIn("workflow", call_log, "workflow_diagnostics must be called by the warming job")
+
+
+# ---------------------------------------------------------------------------
+# P2-014: warmer must invoke the full expanded endpoint set (10 of 13 memoized)
+# ---------------------------------------------------------------------------
+
+class TestCacheWarmingExpandedEndpoints(unittest.IsolatedAsyncioTestCase):
+    """P2-014: Verify that _start_cache_warming_task warms all 10 endpoints that
+    do not require per-feature arguments.  The per-feature endpoints
+    (feature_forensics, feature-evidence-summary, aar_report) must NOT be called.
+    """
+
+    async def test_warmer_invokes_all_expanded_endpoint_services(self):
+        """All 10 endpoint services must be called at least once per cycle."""
+        project = _make_project()
+        adapter = _make_adapter(project)
+
+        call_log: list[str] = []
+
+        def _make_recorder(name: str) -> AsyncMock:
+            async def _record(self_svc, context, ports, **_kwargs):
+                call_log.append(name)
+                return MagicMock()
+            return _record
+
+        target_map = {
+            "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status": "project_status",
+            "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics": "workflow_diagnostics",
+            "backend.application.services.agent_queries.planning.PlanningQueryService.get_project_planning_summary": "planning_project_summary",
+            "backend.application.services.agent_queries.planning.PlanningQueryService.get_project_planning_graph": "planning_project_graph",
+            "backend.application.services.agent_queries.multi_project_planning_command_center.MultiProjectPlanningCommandCenterQueryService.get_multi_project_command_center": "mpcc_command_center",
+            "backend.application.services.agent_queries.multi_project_planning_sessions.MultiProjectActiveSessionBoardQueryService.get_multi_project_session_board": "mpss_session_board",
+            "backend.application.services.agent_queries.system_metrics.SystemMetricsQueryService.get_system_active_count": "system_active_count",
+            "backend.application.services.agent_queries.live_metrics.LiveMetricsQueryService.get_active_count": "live_active_count",
+            "backend.application.services.agent_queries.analytics_bundle.AnalyticsBundleQueryService.get_analytics_overview_bundle": "analytics_overview_bundle",
+            "backend.application.services.agent_queries.dashboard.DashboardQueryService.get_dashboard_bundle": "dashboard_bundle",
+        }
+
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
+            mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 1
+            mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
+            mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
+
+            active_patches = []
+            for target, label in target_map.items():
+                p = patch(target, _make_recorder(label))
+                p.start()
+                active_patches.append(p)
+
+            try:
+                task = adapter._start_cache_warming_task()
+                assert task is not None
+
+                await asyncio.sleep(1.4)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            finally:
+                for p in active_patches:
+                    p.stop()
+
+        for label in target_map.values():
+            self.assertIn(
+                label,
+                call_log,
+                f"cache warmer must invoke {label} (P2-014)",
+            )
+
+    async def test_per_feature_endpoints_are_not_in_warm_targets(self):
+        """feature_forensics, feature-evidence-summary, and aar_report must NOT appear
+        in _CACHE_WARM_TARGETS since they require per-feature arguments."""
+        excluded = {"feature_forensics", "feature-evidence-summary", "aar_report"}
+        for endpoint in excluded:
+            self.assertNotIn(
+                endpoint,
+                RuntimeJobAdapter._CACHE_WARM_TARGETS,
+                f"{endpoint} must be excluded from cache warming (requires feature_id)",
+            )
+
+    def test_warm_targets_constant_covers_expected_set(self):
+        """_CACHE_WARM_TARGETS must contain exactly the 10 expected endpoint keys."""
+        expected = {
+            "project_status",
+            "workflow_diagnostics",
+            "planning_project_summary",
+            "planning_project_graph",
+            "mpcc_command_center",
+            "mpss_session_board",
+            "system_active_count",
+            "live_active_count",
+            "analytics_overview_bundle",
+            "dashboard_bundle",
+        }
+        self.assertEqual(set(RuntimeJobAdapter._CACHE_WARM_TARGETS), expected)
 
 
 if __name__ == "__main__":

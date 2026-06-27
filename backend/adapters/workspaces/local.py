@@ -1,19 +1,37 @@
 """Workspace registry backed by the existing project manager."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Union
+
 from backend.application.context import ProjectScope, WorkspaceScope
 from backend.application.ports.core import ProjectBinding
 from backend.models import Project
 from backend.project_manager import ProjectManager
 from backend.services.project_paths.models import ResolvedProjectPaths
 
+if TYPE_CHECKING:
+    from backend.project_manager import DbProjectManager
+
 
 class ProjectManagerWorkspaceRegistry:
-    def __init__(self, manager: ProjectManager):
+    # T1-004 / ADR-006: accepts both the legacy ProjectManager (test wiring)
+    # and the DB-backed DbProjectManager (all production call sites).
+    def __init__(self, manager: "Union[ProjectManager, DbProjectManager]"):
         self._manager = manager
 
     def list_projects(self) -> list[Project]:
         return self._manager.list_projects()
+
+    def reload_projects(self) -> None:
+        """Phase 8 (T8-004): invalidate the underlying manager's snapshot so the
+        next ``list_projects()`` re-reads the DB-authoritative registry (ADR-006).
+
+        Only the DB-backed manager exposes ``reload``; the call is guarded so
+        legacy / mock managers without it are a silent no-op.
+        """
+        _reload = getattr(self._manager, "reload", None)
+        if callable(_reload):
+            _reload()
 
     def get_project(self, project_id: str) -> Project | None:
         return self._manager.get_project(project_id)

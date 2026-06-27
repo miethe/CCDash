@@ -9,7 +9,7 @@ import type {
   PlanningBoardGroupingMode,
   SessionActivityMarker,
 } from '@/types';
-import { getFeatureSessionBoard } from '@/services/planning';
+import { usePlanningFeatureSessionBoardQuery } from '@/services/queries/planning';
 import { planningRouteFeatureModalHref } from '@/services/planningRoutes';
 import { useData } from '@/contexts/DataContext';
 import { usePlanningRoute } from './PlanningRouteLayout';
@@ -603,12 +603,6 @@ function LaneSkeleton() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-type LaneFetchState =
-  | { phase: 'idle' }
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'ready'; board: PlanningAgentSessionBoard };
-
 export interface PlanningFeatureAgentLaneProps {
   featureId: string;
   className?: string;
@@ -620,74 +614,33 @@ export interface PlanningFeatureAgentLaneProps {
  * Designed to sit within the feature detail drawer (PlanningNodeDetail).
  */
 export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatureAgentLaneProps) {
-  const { activeProject, sessions } = useData();
+  const { activeProject } = useData();
   const { density } = usePlanningRoute();
   const compact = density === 'compact';
 
   const [groupByMode, setGroupByMode] = useState<'phase' | 'state'>('phase');
-  const [fetchState, setFetchState] = useState<LaneFetchState>({ phase: 'idle' });
   const [refreshing, setRefreshing] = useState(false);
 
-  const prevSessionsRef = useRef(sessions);
-
-  const load = useCallback(
-    async (opts: { forceRefresh?: boolean } = {}) => {
-      if (!featureId) {
-        setFetchState({ phase: 'idle' });
-        return;
-      }
-
-      const isBackground = fetchState.phase === 'ready';
-      if (isBackground) {
-        setRefreshing(true);
-      } else {
-        setFetchState({ phase: 'loading' });
-      }
-
-      try {
-        const board = await getFeatureSessionBoard(
-          featureId,
-          activeProject?.id,
-          groupByMode as PlanningBoardGroupingMode,
-          opts,
-        );
-        setFetchState({ phase: 'ready', board });
-      } catch (err) {
-        if (isBackground) {
-          console.warn('[PlanningFeatureAgentLane] Background refresh failed:', err);
-        } else {
-          setFetchState({
-            phase: 'error',
-            message: err instanceof Error ? err.message : 'Failed to load sessions for this feature.',
-          });
-        }
-      } finally {
-        setRefreshing(false);
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [featureId, activeProject?.id, groupByMode],
-  );
-
-  // Initial load and featureId/groupByMode change.
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Follow upstream poll ticks from AppRuntimeContext.
-  useEffect(() => {
-    if (prevSessionsRef.current === sessions) return;
-    prevSessionsRef.current = sessions;
-    void load();
-  }, [sessions, load]);
+  // TQ-backed feature session board query (T3-002).
+  // AC-SSE-TOPOLOGY: polling is required because with a separate-process SQLite topology
+  // the API process cannot push cache invalidations.  Server-side @memoized_query ttl=30
+  // plus this 15s client interval bounds worst-case staleness at ≤45s.
+  const boardQuery = usePlanningFeatureSessionBoardQuery({
+    projectId: activeProject?.id,
+    featureId,
+    grouping: groupByMode as PlanningBoardGroupingMode,
+    refetchInterval: 15_000,
+    enabled: !!activeProject?.id && !!featureId,
+  });
+  const board = boardQuery.data ?? null;
 
   const handleRefresh = useCallback(() => {
-    void load({ forceRefresh: true });
-  }, [load]);
+    setRefreshing(true);
+    void boardQuery.refetch().finally(() => setRefreshing(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardQuery.refetch]);
 
   // ── Derived counts ──────────────────────────────────────────────────────────
-
-  const board = fetchState.phase === 'ready' ? fetchState.board : null;
   const totalCount = board?.totalCardCount ?? 0;
   const activeCount = board?.activeCount ?? 0;
 
@@ -725,7 +678,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
       ? `/planning?groupBy=phase&highlight=${encodeURIComponent(featureId)}`
       : `/planning?groupBy=feature&highlight=${encodeURIComponent(featureId)}`;
 
-  const isLoading = fetchState.phase === 'loading' || fetchState.phase === 'idle';
+  const isLoading = boardQuery.isPending;
 
   // ── Empty-state check — depends on mode ────────────────────────────────────
 
@@ -737,7 +690,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
   // ── Header label ────────────────────────────────────────────────────────────
 
   const headerLabel =
-    fetchState.phase === 'ready'
+    board != null
       ? activeCount > 0
         ? `Agent Sessions (${activeCount} active)`
         : totalCount > 0
@@ -788,7 +741,7 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
         />
 
         {/* Stale/refresh */}
-        {fetchState.phase === 'ready' && (
+        {board != null && (
           <span className="planning-mono text-[9px] text-[color:var(--ink-4)]" aria-live="polite">
             {refreshing ? 'refreshing…' : null}
           </span>
@@ -838,12 +791,14 @@ export function PlanningFeatureAgentLane({ featureId, className }: PlanningFeatu
       <div className={cn('overflow-x-auto', compact ? 'p-2' : 'p-3')}>
         {isLoading ? (
           <LaneSkeleton />
-        ) : fetchState.phase === 'error' ? (
+        ) : boardQuery.isError ? (
           <div className="flex items-center gap-2.5 py-3">
-            <span className="text-[11px] text-[color:var(--err)]">{fetchState.message}</span>
+            <span className="text-[11px] text-[color:var(--err)]">
+              {boardQuery.error instanceof Error ? boardQuery.error.message : 'Failed to load sessions for this feature.'}
+            </span>
             <button
               type="button"
-              onClick={() => void load({ forceRefresh: true })}
+              onClick={() => void boardQuery.refetch()}
               className={cn(
                 'planning-mono inline-flex items-center gap-1 rounded border border-[color:var(--line-2)]',
                 'bg-[color:var(--bg-2)] px-2 py-1 text-[10px] text-[color:var(--ink-1)]',

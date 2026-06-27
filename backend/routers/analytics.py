@@ -13,7 +13,12 @@ from pydantic import BaseModel
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
+from backend.application.services.agent_queries import (
+    AnalyticsBundleQueryService,
+    AnalyticsOverviewBundleDTO,
+)
 from backend.application.services.analytics import AnalyticsOverviewService
+from backend.observability import otel
 from backend.application.services.common import resolve_project
 from backend.application.services.session_intelligence import (
     SessionIntelligenceReadService,
@@ -60,6 +65,8 @@ from backend.services.workflow_registry import get_workflow_registry_detail, lis
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 analytics_overview_service = AnalyticsOverviewService()
+# P5a: analytics overview bundle service singleton (T5-004)
+_analytics_bundle_query_service = AnalyticsBundleQueryService()
 transcript_search_service = TranscriptSearchService()
 session_intelligence_read_service = SessionIntelligenceReadService()
 artifact_ranking_service = ArtifactRankingService()
@@ -248,14 +255,31 @@ def _session_cost_metrics(row: dict[str, Any]) -> dict[str, Any]:
     if cost_mismatch_pct is None and reported_cost_usd is not None and recalculated_cost_usd is not None:
         baseline = max(abs(reported_cost_usd), abs(recalculated_cost_usd), 1e-9)
         cost_mismatch_pct = round(abs(reported_cost_usd - recalculated_cost_usd) / baseline, 4)
+    pricing_model_source = str(row.get("pricing_model_source") or row.get("pricingModelSource") or "")
+    cost_provenance = str(row.get("cost_provenance") or row.get("costProvenance") or "unknown")
+    # Phase 6: derive costPricingStatus for FE consumption (AC-6.2 propagation_contract).
+    # An empty pricing_model_source means the model was not found via exact/family catalog
+    # lookup (fell through to platform-default or absent entirely).  cost_provenance=="unpriced"
+    # is set by pricing_catalog.py for the same condition.
+    # "unpriced" is a contract state — FE must render an explicit indicator, never crash.
+    explicit_pricing_status = str(row.get("cost_pricing_status") or row.get("costPricingStatus") or "")
+    if explicit_pricing_status in {"unpriced", "priced"}:
+        cost_pricing_status = explicit_pricing_status
+    elif not pricing_model_source or cost_provenance == "unpriced":
+        cost_pricing_status = "unpriced"
+    else:
+        cost_pricing_status = "priced"
     return {
         "reportedCostUsd": reported_cost_usd,
         "recalculatedCostUsd": recalculated_cost_usd,
         "displayCostUsd": display_cost_usd,
-        "costProvenance": str(row.get("cost_provenance") or row.get("costProvenance") or "unknown"),
+        "costProvenance": cost_provenance,
         "costConfidence": cost_confidence,
         "costMismatchPct": cost_mismatch_pct,
-        "pricingModelSource": str(row.get("pricing_model_source") or row.get("pricingModelSource") or ""),
+        "pricingModelSource": pricing_model_source,
+        # costPricingStatus: "priced" | "unpriced" — explicit contract state for the FE unpriced badge.
+        # Missing model in catalog → "unpriced"; FE renders badge/indicator, never NaN/$null/crash.
+        "costPricingStatus": cost_pricing_status,
     }
 
 
@@ -1337,6 +1361,33 @@ class AlertConfigPatch(BaseModel):
     scope: str | None = None
 
 
+@analytics_router.get("/overview-bundle", response_model=AnalyticsOverviewBundleDTO)
+async def get_analytics_overview_bundle(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AnalyticsOverviewBundleDTO:
+    """Return the Analytics above-fold fat-read bundle (T5-004).
+
+    Composes KPIs and top model usage into a single above-fold response.
+    Detailed tab breakdowns (workflow effectiveness, session intelligence, etc.)
+    remain as separate lazy endpoints and are not included here.
+    """
+    await _require_analytics_authorization(request_context, core_ports, "analytics:read")
+    with otel.start_span(
+        "ccdash.analytics.overview.bundle",
+        {"project_id": project_id or ""},
+    ):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await _analytics_bundle_query_service.get_analytics_overview_bundle(
+            app_request.context,
+            app_request.ports,
+            project_id_override=project_id,
+            bypass_cache=bypass_cache,
+        )
+
+
 @analytics_router.get("/metrics", response_model=list[AnalyticsMetric])
 async def get_metrics(
     request_context: RequestContext = Depends(get_request_context),
@@ -1391,6 +1442,7 @@ async def get_series(
     end: str | None = None,
     group_by: str | None = None,
     session_id: str | None = None,
+    feature_id: str | None = None,
     offset: int = 0,
     limit: int = 500,
     request_context: RequestContext = Depends(get_request_context),
@@ -1514,7 +1566,9 @@ async def get_series(
         total = len(items)
         return {"items": items[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
 
-    raw_points = await analytics_repo.get_trends(project.id, metric, period="point", start=start, end=end)
+    _scope = "feature" if feature_id else "project"
+    _scope_id = feature_id if feature_id else None
+    raw_points = await analytics_repo.get_trends(project.id, metric, period="point", start=start, end=end, scope=_scope, scope_id=_scope_id)
     if period == "point" and not group_by:
         total = len(raw_points)
         return {"items": raw_points[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
@@ -2546,6 +2600,7 @@ async def get_trends(
     period: str = "daily",
     start: str | None = None,
     end: str | None = None,
+    feature_id: str | None = None,
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
@@ -2558,6 +2613,7 @@ async def get_trends(
         end=end,
         group_by=None,
         session_id=None,
+        feature_id=feature_id,
         offset=0,
         limit=500,
         request_context=request_context,
