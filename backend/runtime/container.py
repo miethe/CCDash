@@ -626,15 +626,36 @@ class RuntimeContainer:
                 if isinstance(entry, dict)
             }
             if per_project_states:
-                # pass: all running; warn: any degraded/stopped but not required;
-                # fail: any not-running and profile requires watcher.
-                all_running = all(s == "running" for s in per_project_states.values())
-                any_not_running = any(s != "running" for s in per_project_states.values())
-                if all_running:
-                    watcher_check_status = "pass"
-                elif any_not_running and watcher_runtime_required:
-                    watcher_check_status = "fail"
+                # pass: all watchable projects running; warn: any degraded/stopped
+                # but not required; fail: any watchable project not-running and the
+                # profile requires the watcher.
+                #
+                # T3-fix: a registered project whose on-disk paths do not exist
+                # resolves to ``configured_no_paths`` — there is genuinely nothing
+                # to watch (e.g. the seed example project, or a project whose repo
+                # was removed).  Such projects are benign and MUST NOT poison worker
+                # readiness while sibling watchers run (resilience-by-default).
+                # Only projects that *should* be watchable (paths exist) gate
+                # readiness; otherwise a single pathless registry entry permanently
+                # 503s a fan-out worker that is correctly watching every real path.
+                watchable_states = {
+                    pid: s
+                    for pid, s in per_project_states.items()
+                    if s != "configured_no_paths"
+                }
+                if watchable_states:
+                    all_running = all(s == "running" for s in watchable_states.values())
+                    any_not_running = any(s != "running" for s in watchable_states.values())
+                    if all_running:
+                        watcher_check_status = "pass"
+                    elif any_not_running and watcher_runtime_required:
+                        watcher_check_status = "fail"
+                    else:
+                        watcher_check_status = "warn"
                 else:
+                    # Every registered project resolves to non-existent paths —
+                    # nothing to watch yet (fresh registry, or only the seed
+                    # example).  Degraded, not a hard failure.
                     watcher_check_status = "warn"
             elif watcher_state == "running":
                 watcher_check_status = "pass"
