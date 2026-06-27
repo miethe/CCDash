@@ -194,7 +194,10 @@ class PostgresAnalyticsRepository(AnalyticsRepository):
         """
         import datetime as _dt
 
-        cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+        # captured_at / occurred_at are TEXT (ISO-8601) columns; asyncpg will not
+        # coerce a datetime to text for a $1 bind, so normalize to an ISO string to
+        # match the stored format (see insert_entry: captured_at stored via .isoformat()).
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
         total_deleted = 0
 
         while True:
@@ -238,7 +241,10 @@ class PostgresAnalyticsRepository(AnalyticsRepository):
         """
         import datetime as _dt
 
-        cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+        # captured_at / occurred_at are TEXT (ISO-8601) columns; asyncpg will not
+        # coerce a datetime to text for a $1 bind, so normalize to an ISO string to
+        # match the stored format (see insert_entry: captured_at stored via .isoformat()).
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
         total_deleted = 0
 
         while True:
