@@ -135,12 +135,21 @@ async def run_daemon(
 
 
 class _Counters:
-    __slots__ = ("accepted_total", "rejected_total", "deadlettered_total", "last_error")
+    __slots__ = (
+        "accepted_total",
+        "rejected_total",
+        "deadlettered_total",
+        "retry_total",
+        "abandoned_total",
+        "last_error",
+    )
 
     def __init__(self) -> None:
         self.accepted_total: int = 0
         self.rejected_total: int = 0
         self.deadlettered_total: int = 0
+        self.retry_total: int = 0
+        self.abandoned_total: int = 0
         self.last_error: str | None = None
 
 
@@ -372,6 +381,7 @@ async def _post_batch(
                 exc,
             )
             if attempt < config.max_retries:
+                counters.retry_total += 1
                 backoff = min(60.0, 0.1 * (2 ** attempt))
                 await asyncio.sleep(backoff)
             continue
@@ -449,6 +459,7 @@ async def _post_batch(
             )
             await asyncio.sleep(retry_after)
             last_error = f"429 rate limited (Retry-After={retry_after}s)"
+            counters.retry_total += 1
             continue
 
         if status >= 500:
@@ -460,6 +471,7 @@ async def _post_batch(
                 config.max_retries + 1,
             )
             if attempt < config.max_retries:
+                counters.retry_total += 1
                 backoff = min(60.0, 0.1 * (2 ** attempt))
                 await asyncio.sleep(backoff)
             continue
@@ -478,6 +490,7 @@ async def _post_batch(
         config.max_retries,
         len(events),
     )
+    counters.abandoned_total += 1
     counters.last_error = last_error
 
 
@@ -516,6 +529,8 @@ async def _write_status(
         "accepted_total": counters.accepted_total,
         "rejected_total": counters.rejected_total,
         "deadlettered_total": counters.deadlettered_total,
+        "retry_total": counters.retry_total,
+        "abandoned_total": counters.abandoned_total,
         "buffer_depth": depth,
         "last_error": last_error,
     }

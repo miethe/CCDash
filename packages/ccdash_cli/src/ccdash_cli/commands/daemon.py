@@ -108,6 +108,8 @@ def daemon_status(
     accepted = data.get("accepted_total", 0)
     rejected = data.get("rejected_total", 0)
     deadlettered = data.get("deadlettered_total", 0)
+    retry_total = data.get("retry_total", 0)
+    abandoned_total = data.get("abandoned_total", 0)
     buffer_depth = data.get("buffer_depth", 0)
     last_error = data.get("last_error")
 
@@ -115,11 +117,174 @@ def daemon_status(
     typer.echo(f"Accepted total:    {accepted}")
     typer.echo(f"Rejected total:    {rejected}")
     typer.echo(f"Dead-lettered:     {deadlettered}")
+    typer.echo(f"Retry attempts:    {retry_total}")
+    typer.echo(f"Abandoned batches: {abandoned_total}")
     typer.echo(f"Buffer depth:      {buffer_depth} event(s) pending")
     if last_error:
         typer.echo(f"Last error:        {last_error}")
     else:
         typer.echo("Last error:        none")
+
+
+# ---------------------------------------------------------------------------
+# replay
+# ---------------------------------------------------------------------------
+
+_DEFAULT_DEADLETTER_ROOT = Path.home() / ".local" / "state" / "ccdash" / "deadletter"
+_REPLAYED_SUBDIR = "replayed"
+
+
+@daemon_app.command("replay")
+def daemon_replay(
+    dir: Annotated[
+        Optional[Path],
+        typer.Option("--dir", help="Dead-letter directory to replay (default: daemon default)."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="List files that would be replayed without POSTing."),
+    ] = False,
+    purge: Annotated[
+        bool,
+        typer.Option("--purge", help="Delete replayed files instead of moving to replayed/."),
+    ] = False,
+    config_path: Annotated[
+        Optional[Path],
+        typer.Option("--config", help="Path to daemon.toml config file."),
+    ] = None,
+) -> None:
+    """Replay dead-lettered NDJSON batches to the ingest endpoint.
+
+    Reads ``*.ndjson`` files from the dead-letter directory, re-POSTs each
+    batch using the same auth and retry logic as the running daemon.
+
+    On success each file is moved to a ``replayed/`` subdirectory (or deleted
+    if ``--purge`` is set).  Files that still fail are left in place and
+    reported in the summary.
+
+    Exit code 0 if all files were replayed successfully (or there was nothing
+    to replay).  Exit code 1 if any file failed permanently.
+    """
+    from ccdash_cli.daemon.config import DaemonConfigError, load_config
+
+    try:
+        config = load_config(config_path)
+    except DaemonConfigError as exc:
+        typer.echo(f"Configuration error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    deadletter_dir = dir or config.deadletter_root
+
+    if not deadletter_dir.exists():
+        typer.echo("Nothing to replay — dead-letter directory does not exist.")
+        return
+
+    ndjson_files = sorted(deadletter_dir.glob("*.ndjson"))
+    if not ndjson_files:
+        typer.echo("Nothing to replay — no .ndjson files found.")
+        return
+
+    typer.echo(f"Found {len(ndjson_files)} dead-letter file(s) in {deadletter_dir}")
+
+    if dry_run:
+        for f in ndjson_files:
+            typer.echo(f"  [dry-run] would replay: {f.name}")
+        typer.echo(f"\nDry-run complete. {len(ndjson_files)} file(s) would be replayed.")
+        return
+
+    import asyncio as _asyncio
+
+    succeeded: list[Path] = []
+    failed: list[Path] = []
+
+    async def _run_replay() -> None:
+        import tempfile
+
+        from ccdash_cli.daemon.runner import _Counters, _build_http_client, _post_batch
+        from ccdash_cli.daemon.wal import WalBuffer
+
+        async with _build_http_client(config) as http_client:
+            for dl_file in ndjson_files:
+                events = _parse_ndjson(dl_file)
+                if not events:
+                    typer.echo(f"  skip (empty): {dl_file.name}")
+                    continue
+
+                typer.echo(f"  replaying {len(events)} event(s) from {dl_file.name} …")
+
+                # Use a temp WAL dir per file so ack/partial-ack state is isolated.
+                with tempfile.TemporaryDirectory(prefix="ccdash-replay-") as tmp_dir:
+                    wal = WalBuffer(Path(tmp_dir))
+                    for ev in events:
+                        wal.append(ev)
+                    segs = wal.pending_segments()
+                    if not segs:
+                        typer.echo(f"  skip (WAL empty after write): {dl_file.name}", err=True)
+                        continue
+                    seg = segs[0]
+                    counters = _Counters()
+
+                    await _post_batch(
+                        events=events,
+                        segment_path=seg,
+                        wal=wal,
+                        config=config,
+                        http_client=http_client,
+                        counters=counters,
+                    )
+
+                    # Success ↔ no pending segments remain.
+                    if not wal.pending_segments():
+                        succeeded.append(dl_file)
+                    else:
+                        failed.append(dl_file)
+
+    _asyncio.run(_run_replay())
+
+    # Move or delete successful files.
+    if purge:
+        for f in succeeded:
+            try:
+                f.unlink(missing_ok=True)
+            except OSError as exc:
+                typer.echo(f"  warning: could not delete {f.name}: {exc}", err=True)
+    else:
+        replayed_dir = deadletter_dir / _REPLAYED_SUBDIR
+        replayed_dir.mkdir(parents=True, exist_ok=True)
+        for f in succeeded:
+            try:
+                f.rename(replayed_dir / f.name)
+            except OSError as exc:
+                typer.echo(f"  warning: could not move {f.name}: {exc}", err=True)
+
+    # Summary.
+    typer.echo(
+        f"\nReplay complete: {len(ndjson_files)} found, "
+        f"{len(succeeded)} accepted, {len(failed)} still-failed."
+    )
+    if failed:
+        typer.echo("Still-failed files (left in place):")
+        for f in failed:
+            typer.echo(f"  {f.name}")
+        raise typer.Exit(code=1)
+
+
+def _parse_ndjson(path: Path) -> list[dict]:
+    """Parse an NDJSON file into a list of dicts, skipping blank/malformed lines."""
+    events: list[dict] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+    return events
 
 
 # ---------------------------------------------------------------------------
