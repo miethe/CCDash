@@ -226,7 +226,7 @@ class AgentSession(BaseModel):
     reportedCostUsd: Optional[float] = None
     recalculatedCostUsd: Optional[float] = None
     displayCostUsd: Optional[float] = None
-    costProvenance: Literal["reported", "recalculated", "estimated", "unknown"] = "unknown"
+    costProvenance: Literal["reported", "recalculated", "estimated", "unknown", "unpriced"] = "unknown"
     costConfidence: float = 0.0
     costMismatchPct: Optional[float] = None
     pricingModelSource: str = ""

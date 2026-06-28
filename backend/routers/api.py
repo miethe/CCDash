@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
@@ -785,7 +785,8 @@ async def list_sessions(
             if isinstance(event, dict)
         ]
 
-        results.append(AgentSession(
+        try:
+          results.append(AgentSession(
             id=s["id"],
             title=session_title,
             taskId=s["task_id"] or "",
@@ -859,7 +860,13 @@ async def list_sessions(
             sessionForensics=_safe_json(s.get("session_forensics_json")),
             dates=_session_dates_payload(s),
             timeline=[event for event in _safe_json_list(s.get("timeline_json")) if isinstance(event, dict)],
-        ))
+          ))
+        except ValidationError as exc:
+            logger.warning(
+                "list_sessions: skipping session_id=%r due to validation error: %s",
+                s.get("id"),
+                exc,
+            )
 
     return PaginatedResponse(
         items=results,

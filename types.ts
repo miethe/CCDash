@@ -460,7 +460,7 @@ export interface AgentSession {
   reportedCostUsd?: number | null;
   recalculatedCostUsd?: number | null;
   displayCostUsd?: number | null;
-  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown' | 'unpriced';
   costConfidence?: number;
   costMismatchPct?: number | null;
   pricingModelSource?: string;
@@ -1243,7 +1243,7 @@ export interface AnalyticsCorrelationItem {
   reportedCostUsd?: number | null;
   recalculatedCostUsd?: number | null;
   displayCostUsd?: number | null;
-  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown' | 'unpriced';
   costConfidence?: number;
   costMismatchPct?: number | null;
   pricingModelSource?: string;
@@ -2655,7 +2655,7 @@ export interface FeatureExecutionSessionLink {
   reportedCostUsd?: number | null;
   recalculatedCostUsd?: number | null;
   displayCostUsd?: number | null;
-  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown' | 'unpriced';
   costConfidence?: number;
   costMismatchPct?: number | null;
   pricingModelSource?: string;
