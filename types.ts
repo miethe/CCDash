@@ -499,6 +499,8 @@ export interface AgentSession {
   phaseHints?: string[];
   taskHints?: string[];
   transcriptTruncated?: { droppedCount: number; firstRetainedTimestamp?: string };
+  // Phase 6: session source discriminator (derived from source_ref prefix; additive/optional)
+  source?: 'filesystem' | 'remote' | 'entire' | 'unknown';
 }
 
 export type SessionUsageTokenFamily =

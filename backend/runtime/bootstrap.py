@@ -537,6 +537,94 @@ def _build_retention_detail(runtime_status: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_ingest_sources_detail() -> list[dict[str, Any]]:
+    """Return per-source ingest health status from ``ingest_cursors``.
+
+    Opens a dedicated synchronous SQLite connection (consistent with the
+    ``_build_db_detail()`` pattern) so this helper can remain a plain
+    ``def`` like the other health sub-builders.
+
+    For PostgreSQL deployments the shared DB is async-only; we return ``[]``
+    gracefully — the caller treats missing rows as a contract state, not an
+    error, and the FE falls back to "ingest health unavailable".
+
+    Resilience: any exception → returns ``[]`` (never raises).
+    """
+    backend: str = str(getattr(config, "DB_BACKEND", "sqlite")).lower() or "sqlite"
+    if backend != "sqlite":
+        # PostgreSQL detail is not available from a synchronous context here.
+        # The transport-neutral get_ingest_sources_health() async function can
+        # be called from async endpoints / CLI / MCP directly.
+        return []
+    try:
+        db_path = config.DB_PATH
+        conn = sqlite3.connect(str(db_path), timeout=5, check_same_thread=False)
+        try:
+            conn.execute("PRAGMA busy_timeout = 30000")
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT source_id, project_id, workspace_id, last_cursor, last_ingest_at"
+                " FROM ingest_cursors"  # noqa: S608
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        # Table absent (pre-v36 DB), locked, or missing file — return empty
+        logger.debug("_build_ingest_sources_detail: query failed", exc_info=True)
+        return []
+
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    fresh_s = float(getattr(config, "CCDASH_INGEST_SOURCE_FRESH_SECONDS", 300))
+    stale_s = float(getattr(config, "CCDASH_INGEST_SOURCE_STALE_SECONDS", 900))
+
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            raw_ts = row["last_ingest_at"]
+            lag_seconds: float | None = None
+            if raw_ts:
+                raw_str = str(raw_ts).strip().rstrip("Z")
+                for fmt in (
+                    "%Y-%m-%dT%H:%M:%S.%f",
+                    "%Y-%m-%dT%H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S.%f",
+                    "%Y-%m-%d %H:%M:%S",
+                ):
+                    try:
+                        dt = datetime.strptime(raw_str, fmt).replace(tzinfo=timezone.utc)
+                        lag_seconds = (now - dt).total_seconds()
+                        break
+                    except ValueError:
+                        continue
+
+            if lag_seconds is None:
+                state = "idle"
+            elif lag_seconds < fresh_s:
+                state = "connected"
+            elif lag_seconds < stale_s:
+                state = "backed_up"
+            else:
+                state = "disconnected"
+
+            results.append({
+                "source_id": str(row["source_id"]),
+                "project_id": str(row["project_id"]),
+                "workspace_id": str(row["workspace_id"]),
+                "last_cursor": row["last_cursor"],
+                "last_ingest_at": raw_ts,
+                "lag_seconds": round(lag_seconds, 3) if lag_seconds is not None else None,
+                "state": state,
+            })
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "_build_ingest_sources_detail: failed to parse row; skipping",
+                exc_info=True,
+            )
+    return results
+
+
 def _build_live_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:
     probe_contract = _require_probe_contract(runtime_status)
     live = _probe_contract_section(probe_contract, "live")
@@ -617,6 +705,8 @@ def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any
         "registry": _build_registry_detail(),
         "db": _build_db_detail(),
         "retention": _build_retention_detail(runtime_status),
+        # Phase 6: ingest-source health rollup (additive, resilient — never raises)
+        "ingest_sources": _build_ingest_sources_detail(),
     }
 
 

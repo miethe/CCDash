@@ -50,6 +50,21 @@ export interface RuntimeHealthResponse {
   canonicalSessionStore?: string;
   /** Feature-surface v2 data path rollout toggle. Defaults to true when absent. */
   featureSurfaceV2Enabled?: boolean;
+  /** Phase 6: per-source ingest health rollup (additive; absent on pre-v36 backends). */
+  ingestSources?: IngestSourceHealth[];
+}
+
+/** Phase 6: per-source ingest health status dict returned in /api/health/detail. */
+export interface IngestSourceHealth {
+  source_id: string;
+  project_id: string;
+  workspace_id: string;
+  last_cursor: string | null;
+  last_ingest_at: string | null;
+  /** Seconds since last ingest. null when the source has never ingested (idle). */
+  lag_seconds: number | null;
+  /** Derived state: "idle" | "connected" | "backed_up" | "disconnected" */
+  state: 'idle' | 'connected' | 'backed_up' | 'disconnected';
 }
 
 export interface RuntimeProbeReasonResponse {

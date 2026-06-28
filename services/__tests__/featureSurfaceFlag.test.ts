@@ -88,6 +88,7 @@ function makeRuntimeStatus(overrides: Partial<RuntimeStatus> = {}): RuntimeStatu
     storageSchema: 'n/a',
     canonicalSessionStore: 'filesystem_cache',
     featureSurfaceV2Enabled: true,
+    ingestSources: [],
     ...overrides,
   };
 }

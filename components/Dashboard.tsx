@@ -12,6 +12,7 @@ import { Surface, AlertSurface } from './ui/surface';
 import { cn } from '../lib/utils';
 import { useFeatureSurface } from '../services/useFeatureSurface';
 import { SystemMetricsChip } from './SystemMetricsChip';
+import { IngestHealthBadge } from './IngestHealthBadge';
 
 const STAT_TONE_STYLES: Record<string, string> = {
   primary: 'border-primary-border bg-primary/10 text-primary-foreground',
@@ -94,7 +95,7 @@ const FeatureSummaryChip = ({
 );
 
 export const Dashboard: React.FC = () => {
-  const { activeProject, tasks } = useData();
+  const { activeProject, tasks, runtimeStatus } = useData();
 
   // T5-005 / T5-006: Replace separate useSessionsQuery + useTasksQuery with
   // a single fat-read bundle.  Cold Dashboard load now issues ONE GET /api/v1/dashboard.
@@ -272,6 +273,11 @@ export const Dashboard: React.FC = () => {
       {/* System-wide live agent count — polls /api/agent/system/active-count every 30 s.
           Placed between Feature Portfolio and KPI cards per OQ-EXP-1. */}
       <SystemMetricsChip />
+
+      {/* Phase 6: ingest/daemon health rollup — sourced from the existing 30 s health
+          poll (AppRuntimeContext → useHealthQuery). No new fetch. Absent on pre-v36
+          backends → renders neutral "Local only" state, never an error. */}
+      <IngestHealthBadge ingestSources={runtimeStatus?.ingestSources} />
 
       {/* KPI Cards — TQ-managed (T5-007). Shows loading placeholders while fetching,
           error affordance on failure, never renders literal 0 for unavailable data. */}

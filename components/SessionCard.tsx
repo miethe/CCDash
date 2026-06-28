@@ -2,6 +2,7 @@ import React from 'react';
 import { Calendar, ChevronDown, ChevronRight, Terminal } from 'lucide-react';
 import { Badge, ModelBadge, StableBadge } from './ui/badge';
 import { formatModelDisplayName } from '../lib/modelIdentity';
+import { SessionSourceChip } from './SessionSourceChip';
 
 export interface SessionCardMetadata {
   sessionTypeLabel?: string;
@@ -99,6 +100,8 @@ interface SessionCardProps {
   agentBadges?: string[];
   skillBadges?: string[];
   detailSections?: SessionCardDetailSection[];
+  /** Phase 6: session source discriminator. Undefined → chip not rendered. */
+  source?: 'filesystem' | 'remote' | 'entire' | 'unknown';
   headerRight?: React.ReactNode;
   infoBadges?: React.ReactNode;
   threadToggle?: {
@@ -126,6 +129,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   agentBadges = [],
   skillBadges = [],
   detailSections = [],
+  source,
   headerRight,
   infoBadges,
   threadToggle,
@@ -259,6 +263,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
                     {modelDisplay}
                   </span>
                 )}
+                <SessionSourceChip source={source} compact />
               </div>
             </div>
           </div>
