@@ -1,0 +1,37 @@
+Task: You are an implementation-planner. Expand the Opus decisions block into a full Tier 2 implementation plan for Branch-Aware Planning Intelligence v2 (Phase 2). The decisions block is the architectural authority — follow its phase boundaries, routing, risks, estimates, and OQ resolutions EXACTLY. Do not invent new phases or re-tier.
+
+READ THESE (paths, not asking you to summarize):
+- DECISIONS BLOCK (authority — phases P0–P6, agent routing, risk hotspots, estimation anchors, dependency map, model routing, OQ resolutions): .claude/worknotes/branch-aware-planning-intelligence/decisions-block-v2.md
+- PRD v2: docs/project_plans/PRDs/enhancements/branch-aware-planning-intelligence-v2.md
+- Design spec (implementation detail — migration v34, BranchWatcherRegistry Option A, S2 correlation code shape, cache param_extractor): docs/project_plans/design-specs/branch-aware-phase2-multi-branch-watcher.md
+- R-01 brief (cost drivers, preconditions): docs/project_plans/exploration/branch-aware-planning-intelligence/spikes/r01-branch-watcher/r01-branch-watcher-brief.md
+- Phase 1 plan (style anchor + what shipped — reconcile P4 frontend against it): docs/project_plans/implementation_plans/enhancements/branch-aware-planning-intelligence-v1.md
+- TEMPLATE (follow structure): .claude/skills/planning/templates/implementation-plan-template.md
+- AC schema reference (structured ACs): .claude/skills/planning/references/ac-schema.md
+- Subagent assignments reference: .claude/skills/planning/references/subagent-assignments.md
+- Frontmatter field reference: .claude/skills/artifact-tracking/schemas/field-reference.md
+
+PRIMARY OUTPUT: docs/project_plans/implementation_plans/enhancements/branch-aware-planning-intelligence-v2.md
+
+PLAN REQUIREMENTS:
+- 7 phases (P0–P6) exactly as the decisions block §1 table defines. Each phase: overview, task table (ID Txx-nnn, name, description, acceptance criteria, estimate, assigned_to, model, effort), exit gate, quality gate.
+- Task IDs: T0-### for P0, T1-### for P1, ... T6-### for P6.
+- Populate the mandatory **Phase Summary table** (Implementation Strategy section) with every phase, point estimate, target subagents, model. Totals must reconcile to 26 pts (decisions block §4).
+- Mandatory **Estimation Sanity Check** output goes to the HUMAN BRIEF (see secondary output), NOT the plan body. In the plan, add a one-line "Human Brief" pointer near the top.
+- Use the STRUCTURED AC schema (target_surfaces / propagation_contract / resilience / visual_evidence_required / verified_by) for: the documents.branch field resilience AC (R-P2 — FE handles empty/missing branch), the BranchWatcherRegistry↔planning-service seam AC, and the P4 frontend AC.
+- R-P3: P2 and P4 touch ≥2 owner specialties with overlapping files → declare an `integration_owner` and at least one seam task each.
+- R-P4: P4 touches *.tsx → include a runtime-smoke task in P5 verification referencing the PlanningTopBar/CommandCenter target_surfaces.
+- Bake in the FOUR R-01 preconditions as concrete P0/P1 tasks: (1) ADR-007 retrofit of SqliteDocumentRepository.upsert with direct-count + lock-injection tests + Postgres parity; (2) draft+ACCEPT proposed ADR-008 (use pm:create-adr pattern) recording the OQ-1 direct-call decision per decisions block §7; (3) startup-sync serialization task in P2; (4) Codex null-branch disclosure AC in P3.
+- OQ resolutions from decisions block §7 must be reflected: OQ-2 → new backend/db/branch_watcher.py; OQ-3 → startup coroutine after _run_all_projects_sync_job; OQ-4 → log+skip, no unilateral planning-state mutation; OQ-5 → P5 profiling task at N=3–5; OQ-6 → deferred tuning note in P6; OQ-7 → P6 operator docs.
+- Deferred Items section: triage table listing command-center-detail-panel-consolidation (design spec exists) and OQ-6 tuning; add a DOC-006 design-spec authoring/refresh task in P6.
+- Reviewer gates: task-completion-validator per phase; karen milestones at P0, P2, P5, and feature end (per decisions block).
+
+FRONTMATTER (schema v2): doc_type implementation_plan, title "Implementation Plan: Branch-Aware Planning Intelligence v2", feature_slug branch-aware-planning-intelligence, feature_version v2, status draft, created '2026-06-11', updated '2026-06-11', prd_ref docs/project_plans/PRDs/enhancements/branch-aware-planning-intelligence-v2.md, plan_ref null, spike_ref the R-01 brief, charter_ref the charter, adr_refs [adr-006, adr-007, proposed adr-008], deferred_items_spec_refs [docs/project_plans/design-specs/command-center-detail-panel-consolidation.md], findings_doc_ref null, changelog_required true, plan_structure unified, progress_init auto, priority high, risk_level medium, effort_estimate "~26 pts", category enhancements. Include a wave_plan block with phases P0–P6 carrying model/effort defaults from decisions block §6, and a human_brief pointer field.
+- If the plan body exceeds 800 lines, break phases into files under docs/project_plans/implementation_plans/enhancements/branch-aware-planning-intelligence-v2/phase-N-*.md and keep the parent as summary + links. Otherwise keep it unified.
+
+SECONDARY OUTPUT (Human Brief — feature qualifies at 26 pts / 7 phases): docs/project_plans/human-briefs/branch-aware-planning-intelligence.md
+- Template: .claude/skills/planning/templates/human-brief-template.md
+- Frontmatter: schema_name ccdash_document, schema_version 2, doc_type human_brief, audience [humans], feature_slug branch-aware-planning-intelligence, category human-briefs, status draft, created '2026-06-11', prd_ref + plan_ref set, owner null, priority high.
+- Populate: §1 Context Pointers (PRD/plan/design-spec/charter/R-01 brief); §2 Estimation Sanity Check (copy H3/H5/H6 reasoning + the 26-pt phase breakdown from decisions block §4); §4 Open Questions Ledger (OQ-1..OQ-7 with the decisions block §7 resolutions); §6 Risk Narrative (from decisions block §3); §8 Expected Success Behaviors (human-verifiable outcomes from PRD §12 ACs). Leave §3/§5/§7/§9 as scaffolded headers.
+
+Deliverable: both files written. End by printing both file paths, the plan's total line count, whether you broke out phase files, and a 8-line phase summary with per-phase points. Complete in a focused pass.

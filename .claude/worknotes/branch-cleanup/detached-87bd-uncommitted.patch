@@ -1,0 +1,716 @@
+diff --git a/components/Planning/CommandCenter/CommandCenterBoardView.tsx b/components/Planning/CommandCenter/CommandCenterBoardView.tsx
+index 67364c9..4ceef7a 100644
+--- a/components/Planning/CommandCenter/CommandCenterBoardView.tsx
++++ b/components/Planning/CommandCenter/CommandCenterBoardView.tsx
+@@ -1,15 +1,30 @@
++import { useCallback, useState } from 'react';
++import { ChevronLeft, ChevronRight } from 'lucide-react';
++
+ import type { PlanningCommandCenterItem } from '@/types';
+ import {
+   bucketCommandCenterItem,
+   COMMAND_CENTER_BOARD_BUCKETS,
++  type CommandCenterBoardBucketId,
+   commandCenterItemKey,
+ } from './commandCenterUtils';
+ import { CommandCenterFeatureCard } from './CommandCenterFeatureCard';
+ import { Chip } from '../primitives';
++import { cn } from '@/lib/utils';
++import {
++  Tooltip,
++  TooltipContent,
++  TooltipProvider,
++  TooltipTrigger,
++} from '@/components/ui/tooltip';
++
++const OPEN_COLUMN_TRACK = 'minmax(0, 1fr)';
++const COLLAPSED_COLUMN_TRACK = '56px';
+ 
+ interface CommandCenterBoardViewProps {
+   items: PlanningCommandCenterItem[];
+   commandOverrides: Record<string, string>;
++  defaultCollapsedBucketIds?: CommandCenterBoardBucketId[];
+   onCopyCommand?: (command: string) => void;
+   onOpenLaunch?: (featureId: string) => void;
+   onOpenExecution?: (featureId: string) => void;
+@@ -21,6 +36,7 @@ interface CommandCenterBoardViewProps {
+ export function CommandCenterBoardView({
+   items,
+   commandOverrides,
++  defaultCollapsedBucketIds = [],
+   onCopyCommand,
+   onOpenLaunch,
+   onOpenExecution,
+@@ -28,6 +44,22 @@ export function CommandCenterBoardView({
+   onOpenDetail,
+   onOpenPullRequest,
+ }: CommandCenterBoardViewProps) {
++  const [collapsedBucketIds, setCollapsedBucketIds] = useState<Set<CommandCenterBoardBucketId>>(
++    () => new Set(defaultCollapsedBucketIds),
++  );
++
++  const toggleBucketCollapsed = useCallback((bucketId: CommandCenterBoardBucketId) => {
++    setCollapsedBucketIds((current) => {
++      const next = new Set(current);
++      if (next.has(bucketId)) {
++        next.delete(bucketId);
++      } else {
++        next.add(bucketId);
++      }
++      return next;
++    });
++  }, []);
++
+   const itemsByBucket = COMMAND_CENTER_BOARD_BUCKETS.reduce<Record<string, PlanningCommandCenterItem[]>>(
+     (acc, bucket) => {
+       acc[bucket.id] = [];
+@@ -39,49 +71,111 @@ export function CommandCenterBoardView({
+     itemsByBucket[bucketCommandCenterItem(item)].push(item);
+   });
+ 
++  const gridTemplateColumns = COMMAND_CENTER_BOARD_BUCKETS.map((bucket) =>
++    collapsedBucketIds.has(bucket.id) ? COLLAPSED_COLUMN_TRACK : OPEN_COLUMN_TRACK,
++  ).join(' ');
++
+   return (
+-    // Fluid 5-column grid: allow horizontal scroll only below ~900px so columns
+-    // never fully collapse. The parent container controls the overall max-width.
+-    <div className="overflow-x-auto pb-2" data-testid="command-center-board-view">
+-      <div className="grid min-w-[900px] grid-cols-5 gap-3">
+-        {COMMAND_CENTER_BOARD_BUCKETS.map((bucket) => (
+-          <section
+-            key={bucket.id}
+-            className="min-h-[320px] rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-0)] p-3"
+-          >
+-            <div className="mb-3 flex items-start justify-between gap-2">
+-              <div>
+-                <h3 className="text-[13px] font-semibold text-[color:var(--ink-0)]">{bucket.label}</h3>
+-                <p className="mt-0.5 text-[10.5px] leading-snug text-[color:var(--ink-4)]">{bucket.description}</p>
+-              </div>
+-              <Chip className="planning-mono shrink-0 text-[10px]">{itemsByBucket[bucket.id].length}</Chip>
+-            </div>
+-            <div className="space-y-3">
+-              {itemsByBucket[bucket.id].map((item) => {
+-                const key = commandCenterItemKey(item);
+-                return (
+-                  <CommandCenterFeatureCard
+-                    key={key}
+-                    item={item}
+-                    commandValue={commandOverrides[key] ?? item.command?.command ?? ''}
+-                    onCopyCommand={onCopyCommand}
+-                    onOpenLaunch={onOpenLaunch}
+-                    onOpenExecution={onOpenExecution}
+-                    onOpenPlan={onOpenPlan}
+-                    onOpenDetail={onOpenDetail}
+-                    onOpenPullRequest={onOpenPullRequest}
+-                  />
+-                );
+-              })}
+-              {itemsByBucket[bucket.id].length === 0 ? (
+-                <div className="rounded-[var(--radius-sm)] border border-dashed border-[color:var(--line-1)] px-3 py-6 text-center text-[11px] text-[color:var(--ink-4)]">
+-                  No items
+-                </div>
+-              ) : null}
+-            </div>
+-          </section>
+-        ))}
++    <TooltipProvider>
++      <div className="min-w-0 overflow-x-auto pb-2" data-testid="command-center-board-view">
++        <div
++          className="grid min-w-0 w-full gap-3"
++          style={{ gridTemplateColumns }}
++          data-testid="command-center-board-grid"
++        >
++          {COMMAND_CENTER_BOARD_BUCKETS.map((bucket) => {
++            const bucketItems = itemsByBucket[bucket.id];
++            const itemCount = bucketItems.length;
++            const isCollapsed = collapsedBucketIds.has(bucket.id);
++            return (
++              <section
++                key={bucket.id}
++                className={cn(
++                  'min-h-[320px] min-w-0 rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-0)]',
++                  isCollapsed ? 'flex p-2' : 'p-3',
++                )}
++                data-testid="command-center-board-column"
++                data-bucket={bucket.id}
++                data-state={isCollapsed ? 'collapsed' : 'expanded'}
++              >
++                {isCollapsed ? (
++                  <Tooltip>
++                    <TooltipTrigger asChild>
++                      <button
++                        type="button"
++                        aria-label={`Expand ${bucket.label} column`}
++                        aria-expanded="false"
++                        onClick={() => toggleBucketCollapsed(bucket.id)}
++                        className="flex min-h-[300px] min-w-0 w-full flex-col items-center gap-2 rounded-[var(--radius-sm)] border border-transparent px-1 py-2 text-[color:var(--ink-3)] transition-colors hover:border-[color:var(--line-1)] hover:bg-[color:var(--bg-1)] hover:text-[color:var(--ink-0)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand)]"
++                        data-testid="command-center-column-toggle"
++                      >
++                        <ChevronRight size={13} aria-hidden />
++                        <span className="max-h-[180px] [writing-mode:vertical-rl] rotate-180 text-center text-[11px] font-semibold leading-none">
++                          {bucket.label}
++                        </span>
++                        <Chip className="planning-mono px-1 text-[10px]">{itemCount}</Chip>
++                      </button>
++                    </TooltipTrigger>
++                    <TooltipContent side="right">Expand {bucket.label}</TooltipContent>
++                  </Tooltip>
++                ) : (
++                  <>
++                    <div className="mb-3 flex min-w-0 items-start justify-between gap-2">
++                      <div className="min-w-0 flex-1">
++                        <h3 className="text-[13px] font-semibold text-[color:var(--ink-0)]">{bucket.label}</h3>
++                        <p className="mt-0.5 text-[10.5px] leading-snug text-[color:var(--ink-4)]">
++                          {bucket.description}
++                        </p>
++                      </div>
++                      <div className="flex shrink-0 items-center gap-1.5">
++                        <Chip className="planning-mono text-[10px]">{itemCount}</Chip>
++                        <Tooltip>
++                          <TooltipTrigger asChild>
++                            <button
++                              type="button"
++                              aria-label={`Collapse ${bucket.label} column`}
++                              aria-expanded="true"
++                              onClick={() => toggleBucketCollapsed(bucket.id)}
++                              className="inline-flex h-6 w-6 items-center justify-center rounded-[var(--radius-sm)] border border-transparent text-[color:var(--ink-4)] transition-colors hover:border-[color:var(--line-1)] hover:bg-[color:var(--bg-1)] hover:text-[color:var(--ink-0)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand)]"
++                              data-testid="command-center-column-toggle"
++                            >
++                              <ChevronLeft size={13} aria-hidden />
++                            </button>
++                          </TooltipTrigger>
++                          <TooltipContent>Collapse {bucket.label}</TooltipContent>
++                        </Tooltip>
++                      </div>
++                    </div>
++                    <div className="min-w-0 space-y-3">
++                      {bucketItems.map((item) => {
++                        const key = commandCenterItemKey(item);
++                        return (
++                          <CommandCenterFeatureCard
++                            key={key}
++                            item={item}
++                            commandValue={commandOverrides[key] ?? item.command?.command ?? ''}
++                            onCopyCommand={onCopyCommand}
++                            onOpenLaunch={onOpenLaunch}
++                            onOpenExecution={onOpenExecution}
++                            onOpenPlan={onOpenPlan}
++                            onOpenDetail={onOpenDetail}
++                            onOpenPullRequest={onOpenPullRequest}
++                          />
++                        );
++                      })}
++                      {itemCount === 0 ? (
++                        <div className="rounded-[var(--radius-sm)] border border-dashed border-[color:var(--line-1)] px-3 py-6 text-center text-[11px] text-[color:var(--ink-4)]">
++                          No items
++                        </div>
++                      ) : null}
++                    </div>
++                  </>
++                )}
++              </section>
++            );
++          })}
++        </div>
+       </div>
+-    </div>
++    </TooltipProvider>
+   );
+ }
+diff --git a/components/Planning/CommandCenter/CommandCenterFeatureCard.tsx b/components/Planning/CommandCenter/CommandCenterFeatureCard.tsx
+index 2603a26..1dc11fa 100644
+--- a/components/Planning/CommandCenter/CommandCenterFeatureCard.tsx
++++ b/components/Planning/CommandCenter/CommandCenterFeatureCard.tsx
+@@ -1,5 +1,16 @@
+ import { useCallback, useState } from 'react';
+-import { Check, Copy, ExternalLink, GitBranch, GitPullRequest, PanelRightOpen, Play, Terminal } from 'lucide-react';
++import {
++  Check,
++  ChevronDown,
++  ChevronUp,
++  Copy,
++  ExternalLink,
++  GitBranch,
++  GitPullRequest,
++  PanelRightOpen,
++  Play,
++  Terminal,
++} from 'lucide-react';
+ 
+ import type { PlanningCommandCenterItem } from '@/types';
+ import {
+@@ -17,10 +28,12 @@ import {
+   TooltipProvider,
+   TooltipTrigger,
+ } from '@/components/ui/tooltip';
++import { cn } from '@/lib/utils';
+ 
+ interface CommandCenterFeatureCardProps {
+   item: PlanningCommandCenterItem;
+   commandValue: string;
++  defaultCollapsed?: boolean;
+   onCopyCommand?: (command: string) => void;
+   onOpenLaunch?: (featureId: string) => void;
+   onOpenExecution?: (featureId: string) => void;
+@@ -32,6 +45,7 @@ interface CommandCenterFeatureCardProps {
+ export function CommandCenterFeatureCard({
+   item,
+   commandValue,
++  defaultCollapsed = false,
+   onCopyCommand,
+   onOpenLaunch,
+   onOpenExecution,
+@@ -40,9 +54,19 @@ export function CommandCenterFeatureCard({
+   onOpenPullRequest,
+ }: CommandCenterFeatureCardProps) {
+   const featureId = item.feature.featureId;
++  const displayName = commandCenterDisplayName(item);
+   const planPath = commandCenterPlanPath(item);
+   const doneLabel = commandCenterDoneLabel(item);
+   const canLaunch = canLaunchCommandCenterItem(item);
++  const detailsId = `command-center-card-details-${(featureId || item.feature.featureSlug || displayName).replace(
++    /[^a-zA-Z0-9_-]/g,
++    '-',
++  )}`;
++
++  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
++  const handleToggleCollapsed = useCallback(() => {
++    setIsCollapsed((current) => !current);
++  }, []);
+ 
+   // Local copied affordance for the command copy button
+   const [cmdCopied, setCmdCopied] = useState(false);
+@@ -69,23 +93,42 @@ export function CommandCenterFeatureCard({
+   return (
+     <TooltipProvider>
+       <article
+-        className="relative flex min-h-[270px] flex-col rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-1)] p-4"
++        className={cn(
++          'relative flex min-w-0 flex-col rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-1)] p-4',
++          isCollapsed ? 'min-h-[140px]' : 'min-h-[270px]',
++        )}
+         data-testid="command-center-feature-card"
++        data-state={isCollapsed ? 'collapsed' : 'expanded'}
+       >
+-        {/* Status pill — absolute top-right, smaller */}
++        <Tooltip>
++          <TooltipTrigger asChild>
++            <button
++              type="button"
++              aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${displayName} card`}
++              aria-expanded={!isCollapsed}
++              aria-controls={detailsId}
++              onClick={handleToggleCollapsed}
++              className="absolute top-2 left-2 inline-flex h-6 w-6 items-center justify-center rounded-[var(--radius-sm)] border border-transparent text-[color:var(--ink-4)] transition-colors hover:border-[color:var(--line-1)] hover:bg-[color:var(--bg-0)] hover:text-[color:var(--ink-0)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand)]"
++              data-testid="command-center-card-collapse-btn"
++            >
++              {isCollapsed ? <ChevronDown size={13} aria-hidden /> : <ChevronUp size={13} aria-hidden />}
++            </button>
++          </TooltipTrigger>
++          <TooltipContent>{isCollapsed ? 'Expand card' : 'Collapse card'}</TooltipContent>
++        </Tooltip>
++
+         <StatusPill
+           status={item.status.effectiveStatus || item.status.rawStatus || 'unknown'}
+           className="absolute top-2 right-2"
+           style={{ fontSize: '9.5px', padding: '1px 5px' }}
+         />
+ 
+-        {/* Title + slug — full-width zone, right-padded to avoid pill overlap */}
+-        <div className="min-w-0 pr-20">
++        <div className="mt-6 min-w-0 w-full" data-testid="command-center-card-title-block">
+           <h3
+-            className="truncate text-[14px] font-semibold text-[color:var(--ink-0)]"
+-            title={commandCenterDisplayName(item)}
++            className="line-clamp-2 text-[14px] font-semibold leading-snug text-[color:var(--ink-0)]"
++            title={displayName}
+           >
+-            {commandCenterDisplayName(item)}
++            {displayName}
+           </h3>
+           <p
+             className="planning-mono mt-0.5 truncate text-[10.5px] text-[color:var(--ink-4)]"
+@@ -95,10 +138,12 @@ export function CommandCenterFeatureCard({
+           </p>
+         </div>
+ 
+-        <p className="mt-3 line-clamp-2 min-h-[34px] text-[11.5px] leading-relaxed text-[color:var(--ink-3)]">
+-          {item.feature.summary || 'No feature summary recorded.'}
+-        </p>
+-        <div className="mt-3 grid grid-cols-3 gap-2">
++        {!isCollapsed ? (
++          <p className="mt-3 line-clamp-2 min-h-[34px] text-[11.5px] leading-relaxed text-[color:var(--ink-3)]">
++            {item.feature.summary || 'No feature summary recorded.'}
++          </p>
++        ) : null}
++        <div className="mt-3 grid min-w-0 grid-cols-3 gap-2">
+           <Chip className="planning-mono justify-center text-[10px]">
+             P{item.phase.currentPhase ?? '-'} / {item.phase.totalPhases || '-'}
+           </Chip>
+@@ -108,125 +153,129 @@ export function CommandCenterFeatureCard({
+           <Chip className="planning-mono justify-center text-[10px]">{commandCenterLaunchReadiness(item)}</Chip>
+         </div>
+ 
+-        {/* Next command box — tooltip wraps the whole box; copy button inside */}
+-        <Tooltip>
+-          <TooltipTrigger asChild>
+-            <div
+-              className="mt-3 cursor-default space-y-2 rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-0)] p-3"
+-              data-testid="command-center-next-command-box"
+-            >
+-              <div className="flex items-center justify-between gap-2">
+-                <div className="planning-caps text-[9.5px] text-[color:var(--ink-4)]">next command</div>
+-                <button
+-                  type="button"
+-                  aria-label="Copy command"
+-                  disabled={!commandValue}
+-                  onClick={(e) => {
+-                    e.stopPropagation();
+-                    handleCopyCommand();
+-                  }}
+-                  className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--ink-0)] disabled:pointer-events-none disabled:opacity-40"
+-                  data-testid="command-center-copy-command-btn"
++        {isCollapsed ? (
++          <div id={detailsId} hidden data-testid="command-center-card-details" />
++        ) : (
++          <div id={detailsId} data-testid="command-center-card-details" className="flex min-w-0 flex-1 flex-col">
++            <Tooltip>
++              <TooltipTrigger asChild>
++                <div
++                  className="mt-3 min-w-0 cursor-default space-y-2 rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-0)] p-3"
++                  data-testid="command-center-next-command-box"
+                 >
+-                  {cmdCopied ? (
+-                    <Check size={11} aria-hidden style={{ color: 'var(--ok)' }} />
+-                  ) : (
+-                    <Copy size={11} aria-hidden />
+-                  )}
+-                </button>
++                  <div className="flex items-center justify-between gap-2">
++                    <div className="planning-caps text-[9.5px] text-[color:var(--ink-4)]">next command</div>
++                    <button
++                      type="button"
++                      aria-label="Copy command"
++                      disabled={!commandValue}
++                      onClick={(e) => {
++                        e.stopPropagation();
++                        handleCopyCommand();
++                      }}
++                      className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--ink-0)] disabled:pointer-events-none disabled:opacity-40"
++                      data-testid="command-center-copy-command-btn"
++                    >
++                      {cmdCopied ? (
++                        <Check size={11} aria-hidden style={{ color: 'var(--ok)' }} />
++                      ) : (
++                        <Copy size={11} aria-hidden />
++                      )}
++                    </button>
++                  </div>
++                  <p
++                    className="planning-mono line-clamp-2 min-w-0 break-words text-[10.5px] leading-relaxed text-[color:var(--ink-1)]"
++                    title={commandValue}
++                  >
++                    {commandValue || 'No next command resolved'}
++                  </p>
++                </div>
++              </TooltipTrigger>
++              {commandValue ? (
++                <TooltipContent
++                  side="bottom"
++                  className="max-w-[520px] whitespace-pre-wrap break-words rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-0)] px-3 py-2 text-[10.5px] text-[color:var(--ink-1)] shadow-lg planning-mono"
++                  data-testid="command-center-command-tooltip"
++                >
++                  {commandValue}
++                </TooltipContent>
++              ) : null}
++            </Tooltip>
++
++            <div className="mt-3 space-y-2">
++              <div className="flex min-w-0 items-center gap-2 text-[10.5px] text-[color:var(--ink-3)]">
++                <GitBranch size={12} className="shrink-0" aria-hidden />
++                {item.worktree?.branch ? (
++                  <button
++                    type="button"
++                    aria-label="Copy branch name"
++                    onClick={handleCopyBranch}
++                    className="planning-mono min-w-0 truncate cursor-pointer rounded-[var(--radius-sm)] px-0.5 text-left text-[10.5px] text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--ink-0)]"
++                    title={item.worktree.branch}
++                    data-testid="command-center-branch-copy-btn"
++                  >
++                    {branchCopied ? (
++                      <span className="text-[color:var(--ok)]">copied!</span>
++                    ) : (
++                      item.worktree.branch
++                    )}
++                  </button>
++                ) : (
++                  <span className="planning-mono truncate" title="">
++                    branch TBD
++                  </span>
++                )}
++                <span className="planning-mono shrink-0">{item.gitState?.head || 'commit TBD'}</span>
+               </div>
+-              <p
+-                className="planning-mono line-clamp-2 text-[10.5px] leading-relaxed text-[color:var(--ink-1)]"
+-                title={commandValue}
++              <div
++                className="planning-mono truncate text-[10.5px] text-[color:var(--ink-4)]"
++                title={planPath}
+               >
+-                {commandValue || 'No next command resolved'}
+-              </p>
++                {planPath ? compactPath(planPath, 74) : 'target plan TBD'}
++              </div>
+             </div>
+-          </TooltipTrigger>
+-          {commandValue ? (
+-            <TooltipContent
+-              side="bottom"
+-              className="max-w-[520px] whitespace-pre-wrap break-words rounded-[var(--radius-sm)] border border-[color:var(--line-1)] bg-[color:var(--bg-0)] px-3 py-2 text-[10.5px] text-[color:var(--ink-1)] shadow-lg planning-mono"
+-              data-testid="command-center-command-tooltip"
+-            >
+-              {commandValue}
+-            </TooltipContent>
+-          ) : null}
+-        </Tooltip>
+ 
+-        {/* Branch row — click to copy branch name */}
+-        <div className="mt-3 space-y-2">
+-          <div className="flex min-w-0 items-center gap-2 text-[10.5px] text-[color:var(--ink-3)]">
+-            <GitBranch size={12} className="shrink-0" aria-hidden />
+-            {item.worktree?.branch ? (
+-              <button
+-                type="button"
+-                aria-label="Copy branch name"
+-                onClick={handleCopyBranch}
+-                className="planning-mono min-w-0 truncate cursor-pointer rounded-[var(--radius-sm)] px-0.5 text-left text-[10.5px] text-[color:var(--ink-3)] transition-colors hover:text-[color:var(--ink-0)]"
+-                title={item.worktree.branch}
+-                data-testid="command-center-branch-copy-btn"
++            <div className="mt-3 flex flex-wrap gap-1.5">
++              {item.artifacts.slice(0, 5).map((artifact) => (
++                <ArtifactChip
++                  key={`${artifact.docType}:${artifact.path}`}
++                  kind={artifact.docType}
++                  label={artifact.docType === 'implementation_plan' ? 'plan' : artifact.docType || 'doc'}
++                  active={artifact.path === planPath}
++                />
++              ))}
++            </div>
++            {doneLabel ? (
++              <Chip className="planning-mono mt-3 w-fit text-[10px]">{doneLabel}</Chip>
++            ) : null}
++            <div className="mt-auto flex flex-wrap items-center gap-2 pt-4">
++              <BtnPrimary size="sm" disabled={!canLaunch} onClick={() => onOpenLaunch?.(featureId)}>
++                <Play size={13} aria-hidden />
++                launch
++              </BtnPrimary>
++              <BtnGhost size="sm" onClick={() => onOpenExecution?.(featureId)}>
++                <Terminal size={13} aria-hidden />
++                workbench
++              </BtnGhost>
++              <BtnGhost size="sm" disabled={!planPath} onClick={() => onOpenPlan?.(planPath)}>
++                <ExternalLink size={13} aria-hidden />
++                plan
++              </BtnGhost>
++              <BtnGhost
++                size="sm"
++                disabled={!item.pullRequest?.url}
++                onClick={() => item.pullRequest?.url && onOpenPullRequest?.(item.pullRequest.url)}
+               >
+-                {branchCopied ? (
+-                  <span className="text-[color:var(--ok)]">copied!</span>
+-                ) : (
+-                  item.worktree.branch
+-                )}
+-              </button>
+-            ) : (
+-              <span className="planning-mono truncate" title="">
+-                branch TBD
+-              </span>
+-            )}
+-            <span className="planning-mono shrink-0">{item.gitState?.head || 'commit TBD'}</span>
+-          </div>
+-          <div
+-            className="planning-mono truncate text-[10.5px] text-[color:var(--ink-4)]"
+-            title={planPath}
+-          >
+-            {planPath ? compactPath(planPath, 74) : 'target plan TBD'}
++                <GitPullRequest size={13} aria-hidden />
++                PR
++              </BtnGhost>
++              <BtnGhost size="sm" onClick={() => onOpenDetail?.(featureId)}>
++                <PanelRightOpen size={13} aria-hidden />
++                details
++              </BtnGhost>
++            </div>
+           </div>
+-        </div>
+-
+-        <div className="mt-3 flex flex-wrap gap-1.5">
+-          {item.artifacts.slice(0, 5).map((artifact) => (
+-            <ArtifactChip
+-              key={`${artifact.docType}:${artifact.path}`}
+-              kind={artifact.docType}
+-              label={artifact.docType === 'implementation_plan' ? 'plan' : artifact.docType || 'doc'}
+-              active={artifact.path === planPath}
+-            />
+-          ))}
+-        </div>
+-        {doneLabel ? (
+-          <Chip className="planning-mono mt-3 w-fit text-[10px]">{doneLabel}</Chip>
+-        ) : null}
+-        <div className="mt-auto flex flex-wrap items-center gap-2 pt-4">
+-          <BtnPrimary size="sm" disabled={!canLaunch} onClick={() => onOpenLaunch?.(featureId)}>
+-            <Play size={13} aria-hidden />
+-            launch
+-          </BtnPrimary>
+-          <BtnGhost size="sm" onClick={() => onOpenExecution?.(featureId)}>
+-            <Terminal size={13} aria-hidden />
+-            workbench
+-          </BtnGhost>
+-          <BtnGhost size="sm" disabled={!planPath} onClick={() => onOpenPlan?.(planPath)}>
+-            <ExternalLink size={13} aria-hidden />
+-            plan
+-          </BtnGhost>
+-          <BtnGhost
+-            size="sm"
+-            disabled={!item.pullRequest?.url}
+-            onClick={() => item.pullRequest?.url && onOpenPullRequest?.(item.pullRequest.url)}
+-          >
+-            <GitPullRequest size={13} aria-hidden />
+-            PR
+-          </BtnGhost>
+-          <BtnGhost size="sm" onClick={() => onOpenDetail?.(featureId)}>
+-            <PanelRightOpen size={13} aria-hidden />
+-            details
+-          </BtnGhost>
+-        </div>
++        )}
+       </article>
+     </TooltipProvider>
+   );
+diff --git a/components/Planning/__tests__/planningCommandCenter.test.tsx b/components/Planning/__tests__/planningCommandCenter.test.tsx
+index dc94d9d..02d5ef9 100644
+--- a/components/Planning/__tests__/planningCommandCenter.test.tsx
++++ b/components/Planning/__tests__/planningCommandCenter.test.tsx
+@@ -265,6 +265,11 @@ describe('Planning Command Center list view', () => {
+     // Title and slug rendered without sharing a row with the pill
+     expect(html).toContain('Feature A');
+     expect(html).toContain('feature-a'); // slug
++    const titleBlock = html.match(/<div class="([^"]*)" data-testid="command-center-card-title-block">/)?.[1] ?? '';
++    expect(titleBlock).toContain('mt-6');
++    expect(titleBlock).toContain('w-full');
++    expect(titleBlock).not.toContain('pr-20');
++    expect(html).not.toContain('pr-20');
+ 
+     // Next command box: testid present and command text shown
+     expect(html).toContain('data-testid="command-center-next-command-box"');
+@@ -280,6 +285,49 @@ describe('Planning Command Center list view', () => {
+     expect(html).toContain('codex/feature-a');
+   });
+ 
++  it('feature card exposes an accessible collapse control for its details region', () => {
++    const html = renderToStaticMarkup(
++      <CommandCenterFeatureCard
++        item={ITEM}
++        commandValue={ITEM.command?.command ?? ''}
++        onCopyCommand={vi.fn()}
++        onOpenExecution={vi.fn()}
++        onOpenPlan={vi.fn()}
++        onOpenDetail={vi.fn()}
++      />,
++    );
++
++    const collapseButton = html.match(/<button[^>]*aria-label="Collapse Feature A card"[^>]*>/)?.[0] ?? '';
++    expect(collapseButton).toContain('data-testid="command-center-card-collapse-btn"');
++    expect(collapseButton).toContain('aria-expanded="true"');
++    expect(collapseButton).toContain('aria-controls="command-center-card-details-feature-a"');
++    expect(html).toContain('id="command-center-card-details-feature-a"');
++  });
++
++  it('defaultCollapsed feature cards hide dense details and next command content', () => {
++    const html = renderToStaticMarkup(
++      <CommandCenterFeatureCard
++        item={ITEM}
++        commandValue={ITEM.command?.command ?? ''}
++        defaultCollapsed
++        onCopyCommand={vi.fn()}
++        onOpenExecution={vi.fn()}
++        onOpenPlan={vi.fn()}
++        onOpenDetail={vi.fn()}
++      />,
++    );
++
++    const expandButton = html.match(/<button[^>]*aria-label="Expand Feature A card"[^>]*>/)?.[0] ?? '';
++    expect(expandButton).toContain('data-testid="command-center-card-collapse-btn"');
++    expect(expandButton).toContain('aria-expanded="false"');
++    expect(expandButton).toContain('aria-controls="command-center-card-details-feature-a"');
++    expect(html).toContain('data-state="collapsed"');
++    expect(html).toContain('data-testid="command-center-card-details"');
++    expect(html).not.toContain('data-testid="command-center-next-command-box"');
++    expect(html).not.toContain('/dev:execute-phase feature-a --phase 2');
++    expect(html).not.toContain('data-testid="command-center-branch-copy-btn"');
++  });
++
+   it('feature card copy button is disabled when commandValue is empty', () => {
+     const html = renderToStaticMarkup(
+       <CommandCenterFeatureCard
+@@ -335,7 +383,43 @@ describe('Planning Command Center list view', () => {
+     expect(html).toContain('data-testid="command-center-branch-copy-btn"');
+   });
+ 
+-  it('board view uses fluid min-width (not fixed 1380px)', () => {
++  it('board view renders column collapse toggles for each bucket', () => {
++    const html = renderToStaticMarkup(
++      <CommandCenterBoardView
++        items={[ITEM]}
++        commandOverrides={{}}
++        onOpenExecution={vi.fn()}
++        onOpenPlan={vi.fn()}
++        onOpenDetail={vi.fn()}
++      />,
++    );
++
++    const toggles: string[] = html.match(/<button[^>]*data-testid="command-center-column-toggle"[^>]*>/g) ?? [];
++    expect(toggles).toHaveLength(5);
++    expect(toggles[0]).toContain('aria-label="Collapse Needs Plan column"');
++    expect(toggles.every((toggle) => toggle.includes('aria-expanded="true"'))).toBe(true);
++  });
++
++  it('defaultCollapsedBucketIds renders a collapsed board rail', () => {
++    const html = renderToStaticMarkup(
++      <CommandCenterBoardView
++        items={[ITEM]}
++        commandOverrides={{}}
++        defaultCollapsedBucketIds={['done']}
++        onOpenExecution={vi.fn()}
++        onOpenPlan={vi.fn()}
++        onOpenDetail={vi.fn()}
++      />,
++    );
++
++    const expandButton = html.match(/<button[^>]*aria-label="Expand Review\/Done column"[^>]*>/)?.[0] ?? '';
++    expect(expandButton).toContain('data-testid="command-center-column-toggle"');
++    expect(expandButton).toContain('aria-expanded="false"');
++    expect(html).toContain('data-state="collapsed"');
++    expect(html).toContain('56px');
++  });
++
++  it('board view uses shrinkable open tracks instead of fixed five-column minimums', () => {
+     const html = renderToStaticMarkup(
+       <CommandCenterBoardView
+         items={[ITEM]}
+@@ -346,9 +430,9 @@ describe('Planning Command Center list view', () => {
+       />,
+     );
+ 
+-    // The old fixed min-w-[1380px] should no longer appear
++    expect(html).toContain('minmax(0, 1fr)');
+     expect(html).not.toContain('min-w-[1380px]');
+-    // The new smaller min-width should be present
+-    expect(html).toContain('min-w-[900px]');
++    expect(html).not.toContain('min-w-[900px]');
++    expect(html).not.toContain('grid-cols-5');
+   });
+ });

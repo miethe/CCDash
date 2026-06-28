@@ -1,0 +1,31 @@
+Task: Create progress-tracking artifacts for the Branch-Aware Planning Intelligence v2 implementation plan, following the CCDash artifact-tracking conventions. You are creating NEW files (not updating).
+
+READ THESE:
+- Implementation plan (SOURCE — extract phases, task IDs, assigned_to, models, dependencies, and the wave_plan/waves block): docs/project_plans/implementation_plans/enhancements/branch-aware-planning-intelligence-v2.md
+- Progress format spec: .claude/skills/artifact-tracking/format-specification.md
+- Creating-artifacts guide: .claude/skills/artifact-tracking/creating-artifacts.md
+- Progress template(s): .claude/skills/artifact-tracking/templates/  (use the progress template; if a context template exists, use it)
+- Progress schema: .claude/skills/artifact-tracking/schemas/progress.schema.yaml
+- Context schema: .claude/skills/artifact-tracking/schemas/context.schema.yaml
+
+CREATE — ONE progress file PER PHASE (7 files), at:
+  .claude/progress/branch-aware-planning-intelligence/phase-0-progress.md
+  .claude/progress/branch-aware-planning-intelligence/phase-1-progress.md
+  ... through phase-6-progress.md
+
+Each progress file MUST (schema_version 2):
+- Frontmatter: type progress, schema_version 2, doc_type progress, prd "branch-aware-planning-intelligence", feature_slug "branch-aware-planning-intelligence", phase N, status pending, created '2026-06-11', updated '2026-06-11', prd_ref docs/project_plans/PRDs/enhancements/branch-aware-planning-intelligence-v2.md, plan_ref docs/project_plans/implementation_plans/enhancements/branch-aware-planning-intelligence-v2.md, commit_refs [], pr_refs [], owners [] (use the phase's primary agent from the plan), contributors [].
+- A `tasks:` list mirroring EXACTLY that phase's task IDs from the plan (T{N}-### ids), each with: id, status "pending", assigned_to (from the plan's assigned_to column), dependencies (from the plan).
+- A `parallelization:` block reflecting the plan's batch/wave grouping for that phase (batch_1, batch_2, ...).
+- A short Markdown body: phase goal (from the plan's phase overview), exit gate, and a Quick Reference section listing the tasks.
+- Carry per-task `model`/`effort` into task notes if the plan specifies them.
+- All task statuses start `pending`. Do NOT mark anything completed.
+
+CREATE — ONE context file at:
+  .claude/worknotes/branch-aware-planning-intelligence/context.md
+  Frontmatter: type context, schema_version 2, doc_type context, prd/feature_slug "branch-aware-planning-intelligence", status in_progress, created/updated '2026-06-11', prd_ref + plan_ref set.
+  Body: 1-paragraph feature summary, the 7-phase overview (P0–P6 with point estimates), key architectural decisions (BranchWatcherRegistry Option A, new backend/db/branch_watcher.py, ADR-008 direct-call seam, migration v34), the 4 R-01 preconditions, links to PRD/plan/decisions-block/human-brief/charter/R-01 brief, and the delegation note (this repo uses ICA --bare delegation due to CLAUDE.md overflow).
+
+NOTE: a worknotes file already exists at .claude/worknotes/branch-aware-planning-intelligence/decisions-block-v2.md — do not overwrite it; the context.md is a separate new file.
+
+Deliverable: 8 files written (7 progress + 1 context). End by printing the list of created file paths and, for each progress file, the count of tasks it contains. Complete in a focused pass.
