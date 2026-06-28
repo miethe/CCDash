@@ -186,7 +186,7 @@ class PostgresFeatureRepository:
     def __init__(self, db: asyncpg.Connection):
         self.db = db
 
-    async def upsert(self, feature_data: dict, project_id: str) -> None:
+    async def upsert(self, feature_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = feature_data.get("createdAt", "") or now
         updated_at = feature_data.get("updatedAt", "") or now
@@ -195,12 +195,12 @@ class PostgresFeatureRepository:
 
         query = """
             INSERT INTO features (
-                id, project_id, name, status, category,
+                id, project_id, workspace_id, name, status, category,
                 tags_json, owners_json, linked_docs_json,
                 deferred_tasks, planned_at, started_at,
                 total_tasks, completed_tasks, parent_feature_id,
                 created_at, updated_at, completed_at, data_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             ON CONFLICT(id) DO UPDATE SET
                 name=EXCLUDED.name, status=EXCLUDED.status,
                 category=EXCLUDED.category,
@@ -221,6 +221,7 @@ class PostgresFeatureRepository:
         await self.db.execute(
             query,
             feature_data["id"], project_id,
+            workspace_id,
             feature_data.get("name", ""),
             feature_data.get("status", "backlog"),
             feature_data.get("category", ""),

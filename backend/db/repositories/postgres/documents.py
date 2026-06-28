@@ -229,7 +229,7 @@ class PostgresDocumentRepository:
 
         return " AND ".join(clauses), params
 
-    async def upsert(self, doc_data: dict, project_id: str) -> None:
+    async def upsert(self, doc_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = doc_data.get("createdAt", "") or now
         updated_at = doc_data.get("updatedAt", "") or doc_data.get("lastModified", "") or now
@@ -257,7 +257,7 @@ class PostgresDocumentRepository:
 
         query = """
             INSERT INTO documents (
-                id, project_id, title, file_path, canonical_path, root_kind, doc_subtype,
+                id, project_id, workspace_id, title, file_path, canonical_path, root_kind, doc_subtype,
                 file_name, file_stem, file_dir, has_frontmatter, frontmatter_type,
                 status, status_normalized, author, content, doc_type, category,
                 feature_slug_hint, feature_slug_canonical, prd_ref,
@@ -266,14 +266,14 @@ class PostgresDocumentRepository:
                 metadata_json, parent_doc_id, created_at, updated_at, last_modified,
                 frontmatter_json, source_file
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11, $12,
-                $13, $14, $15, $16, $17, $18,
-                $19, $20, $21,
-                $22, $23, $24,
-                $25, $26, $27, $28,
-                $29, $30, $31, $32, $33,
-                $34, $35
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12, $13,
+                $14, $15, $16, $17, $18, $19,
+                $20, $21, $22,
+                $23, $24, $25,
+                $26, $27, $28, $29,
+                $30, $31, $32, $33, $34,
+                $35, $36
             )
             ON CONFLICT(id) DO UPDATE SET
                 title=EXCLUDED.title,
@@ -313,6 +313,7 @@ class PostgresDocumentRepository:
             query,
             doc_data["id"],
             project_id,
+            workspace_id,
             doc_data.get("title", ""),
             file_path,
             canonical_path,

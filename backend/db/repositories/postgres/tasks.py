@@ -13,20 +13,20 @@ class PostgresTaskRepository:
     def __init__(self, db: asyncpg.Connection):
         self.db = db
 
-    async def upsert(self, task_data: dict, project_id: str) -> None:
+    async def upsert(self, task_data: dict, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None:
         now = datetime.now(timezone.utc).isoformat()
         data_json = json.dumps(task_data)
 
         query = """
             INSERT INTO tasks (
-                id, project_id, title, description, status, priority,
+                id, project_id, workspace_id, title, description, status, priority,
                 owner, last_agent, cost,
                 task_type, project_type, project_level,
                 parent_task_id, feature_id, phase_id,
                 session_id, commit_hash,
                 created_at, updated_at, completed_at,
                 source_file, data_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             ON CONFLICT(id) DO UPDATE SET
                 title=EXCLUDED.title, description=EXCLUDED.description,
                 status=EXCLUDED.status, priority=EXCLUDED.priority,
@@ -44,6 +44,7 @@ class PostgresTaskRepository:
         await self.db.execute(
             query,
             task_data["id"], project_id,
+            workspace_id,
             task_data.get("title", ""),
             task_data.get("description", ""),
             task_data.get("status", "backlog"),
