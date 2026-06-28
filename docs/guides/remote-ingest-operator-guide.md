@@ -7,7 +7,7 @@ tags: [remote-ingest, daemon, ndjson, dead-letter, health-monitoring, adrs]
 created: 2026-06-28
 updated: 2026-06-28
 status: stable
-related: ["docs/project_plans/adrs/adr-009-ingest-source-routing-schema-and-cursors.md", "docs/project_plans/adrs/adr-014-ndjson-as-transport-encoding.md", "docs/project_plans/adrs/adr-015-local-daemon-ccdash-cli-subcommand-group.md"]
+related: ["docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md", "docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md", "docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md"]
 ---
 
 # Remote Ingest Operator Guide

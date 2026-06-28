@@ -47,3 +47,13 @@ files; `auth_mode` already in `/api/health`. Remaining gaps closed here:
 
 **Deferred**: server-side dead-letter persistence + query API (client-side dead-letter +
 replay satisfies the "dead-letter OR observability" exit criterion). 12 replay tests pass.
+
+**Chaos-test exit criterion** (`runtime_smoke: skipped` analogue): the plan's "failure scenario
+chaos test executed; results documented" criterion is **deferred** — a live end-to-end chaos run
+(daemon ↔ unreachable server, network blip, forced restart) requires a running server + daemon
+pair not available in this worktree. The failure modes are instead covered by (a) deterministic
+unit tests of the retry/backoff + dead-letter + replay paths (`test_daemon_replay.py`, 12 passing,
+plus the pre-existing daemon retry tests), and (b) the documented procedures + interpretation
+tables in `docs/guides/remote-ingest-operator-guide.md` (Failure Scenarios, Rollback). A live
+chaos exercise is recommended as a post-merge staging activity per the plan's Post-Implementation
+"Rollback procedure exercised at least once in staging" success metric.

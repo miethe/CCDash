@@ -13,6 +13,7 @@ commit_refs:
 - b94e633
 - 6710b92
 - 1b8acad
+- b084f20
 files_affected:
 - backend/application/services/agent_queries/ingest_sources.py
 - backend/application/services/agent_queries/session_detail.py

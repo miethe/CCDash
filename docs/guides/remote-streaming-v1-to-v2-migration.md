@@ -7,7 +7,7 @@ tags: [migration, remote-ingest, workspace-auth, schema-upgrade, multi-project]
 created: 2026-06-28
 updated: 2026-06-28
 status: stable
-related: ["docs/guides/auth-modes.md", "docs/guides/remote-ingest-operator-guide.md", "docs/guides/external-api-lan-deployment.md", "docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md", "docs/project_plans/adrs/adr-009-ingest-source-routing-schema-and-cursors.md"]
+related: ["docs/guides/auth-modes.md", "docs/guides/remote-ingest-operator-guide.md", "docs/guides/external-api-lan-deployment.md", "docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md", "docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md"]
 ---
 
 # Remote Streaming v1→v2 Migration Guide
