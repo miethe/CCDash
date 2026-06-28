@@ -1118,13 +1118,13 @@ async def load_feature_execution_derived_state(
     feature_repo = get_feature_repository(db)
     doc_repo = get_document_repository(db)
 
-    feature_rows = await feature_repo.list_all(project_id)
+    feature_rows = await feature_repo.list_all(project_id, workspace_id="default-local")  # TODO(workspace-routing)
     family_features = [_feature_from_row(row) for row in feature_rows]
     feature_index: dict[str, Feature] = {}
     for item in family_features:
         feature_index[_feature_key(item.id)] = item
 
-    doc_rows = await doc_repo.list_all(project_id)
+    doc_rows = await doc_repo.list_all(project_id, workspace_id="default-local")  # TODO(workspace-routing)
     dependency_state = _feature_dependency_state(feature, doc_rows, feature_index)
     family_summary, family_position, recommended_family_item = _family_summary(feature, family_features, doc_rows, feature_index)
     current_doc_rows = [
@@ -1153,10 +1153,10 @@ async def load_feature_execution_derived_states(
     feature_repo = get_feature_repository(db)
     doc_repo = get_document_repository(db)
 
-    feature_rows = await feature_repo.list_all(project_id)
+    feature_rows = await feature_repo.list_all(project_id, workspace_id="default-local")  # TODO(workspace-routing)
     family_features = [_feature_from_row(row) for row in feature_rows]
     feature_index: dict[str, Feature] = {_feature_key(item.id): item for item in family_features}
-    doc_rows = await doc_repo.list_all(project_id)
+    doc_rows = await doc_repo.list_all(project_id, workspace_id="default-local")  # TODO(workspace-routing)
 
     derived: dict[str, FeatureExecutionDerivedState] = {}
     for feature in features:
@@ -1645,6 +1645,7 @@ async def load_execution_documents(
             "feature": feature_id,
             "include_progress": True,
         },
+        workspace_id="default-local",  # TODO(workspace-routing)
     )
     docs = [_document_to_linked(row) for row in rows]
 

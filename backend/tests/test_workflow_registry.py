@@ -197,6 +197,7 @@ class WorkflowRegistryServiceTests(unittest.IsolatedAsyncioTestCase):
                 "sessionForensics": {"queuePressure": {"operationCounts": {"enqueue": 1}}},
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.session_repo.upsert_logs(
             session_id,

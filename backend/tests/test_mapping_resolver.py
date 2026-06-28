@@ -45,9 +45,9 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
         config.CCDASH_PROJECT_ROOT = self._prev_root
 
     async def _seed_features(self) -> None:
-        await self.feature_repo.upsert({"id": "login", "name": "Login"}, project_id="project-1")
-        await self.feature_repo.upsert({"id": "feature-auth-login", "name": "Auth Login"}, project_id="project-1")
-        await self.feature_repo.upsert({"id": "checkout", "name": "Checkout"}, project_id="project-1")
+        await self.feature_repo.upsert({"id": "login", "name": "Login"}, project_id="project-1", workspace_id="default-local")
+        await self.feature_repo.upsert({"id": "feature-auth-login", "name": "Auth Login"}, project_id="project-1", workspace_id="default-local")
+        await self.feature_repo.upsert({"id": "checkout", "name": "Checkout"}, project_id="project-1", workspace_id="default-local")
 
     async def test_providers_implement_protocol(self) -> None:
         self.assertIsInstance(RepoHeuristicsProvider(self.db), MappingProvider)

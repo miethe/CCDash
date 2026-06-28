@@ -169,6 +169,7 @@ async def get_session_mappings_diagnostics(
         "started_at",
         "desc",
         {"include_subagents": True},
+        workspace_id="default-local",  # TODO(workspace-routing)
     )
 
     for session_row in page:

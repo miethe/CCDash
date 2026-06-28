@@ -1,35 +1,73 @@
 ---
 schema_version: 2
 doc_type: implementation_plan
-title: "Remote CCDash Streaming + Entire.io Integration — Implementation Plan"
-description: "Skeleton implementation plan. Status: draft. Phase 1 is SPIKE execution; Phases 2–7 are sketched and re-baseline after SPIKE findings."
-status: draft
+title: "Remote CCDash Streaming + Entire.io Integration \u2014 Implementation Plan"
+description: "Remote CCDash session streaming v1 \u2014 COMPLETE. Phases 1-4 (ingest\
+  \ port, endpoint+daemon, workspace auth, multi-project routing) + Phases 6-8 (FE\
+  \ source attribution + ingest health, daemon hardening + migration guides, docs)\
+  \ shipped. Phase 5 (Entire.io) extracted to entire-io-checkpoint-ingest-v1."
+status: completed
 created: 2026-04-19
-updated: 2026-04-19
+updated: '2026-06-28'
+commit_refs:
+- b94e633
+- 6710b92
+- 1b8acad
+- b084f20
+files_affected:
+- backend/application/services/agent_queries/ingest_sources.py
+- backend/application/services/agent_queries/session_detail.py
+- backend/runtime/bootstrap.py
+- backend/config.py
+- packages/ccdash_cli/src/ccdash_cli/daemon/runner.py
+- packages/ccdash_cli/src/ccdash_cli/commands/daemon.py
+- components/SessionSourceChip.tsx
+- components/IngestHealthBadge.tsx
+- types.ts
+- services/apiClient.ts
+- services/runtimeProfile.ts
+- docs/guides/remote-ingest-operator-guide.md
+- docs/guides/remote-streaming-v1-to-v2-migration.md
 feature_slug: remote-ccdash-streaming
 priority: high
 risk_level: high
 prd_ref: null
 plan_ref: null
-scope: "Transport-neutral session ingest, local daemon, workspace-scoped auth, multi-project routing, Entire branch parser, UI source attribution + daemon health, migration docs."
-effort_estimate: "8–12 weeks engineering (estimate firms after SPIKEs)"
+scope: Transport-neutral session ingest, local daemon, workspace-scoped auth, multi-project
+  routing, Entire branch parser, UI source attribution + daemon health, migration
+  docs.
+effort_estimate: "8\u201312 weeks engineering (estimate firms after SPIKEs)"
 spike_refs:
-  - docs/project_plans/SPIKEs/remote-ccdash-streaming-charter.md
-  - docs/project_plans/SPIKEs/entire-io-integration-charter.md
+- docs/project_plans/spikes/remote-ccdash-streaming-charter.md
+- docs/project_plans/spikes/remote-ccdash-streaming.md
+- docs/project_plans/spikes/entire-io-integration-charter.md
+- docs/project_plans/spikes/entire-io-integration.md
 related_documents:
-  - docs/project_plans/design-specs/remote-ccdash-streaming.md
-  - .claude/findings/remote-ccdash-grounding-brief.md
+- docs/project_plans/design-specs/remote-ccdash-streaming.md
+- docs/project_plans/designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md
+- docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md
+- docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md
+- docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md
+- docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
+- docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md
+- .claude/findings/remote-ccdash-grounding-brief.md
+- docs/project_plans/implementation_plans/features/entire-io-checkpoint-ingest-v1.md
 deferred_items_spec_refs: []
 findings_doc_ref: null
 changelog_required: true
-architecture_summary: null
+architecture_summary: Chunked NDJSON over HTTPS POST to /api/v1/ingest/sessions (ADR-006).
+  Daemon as ccdash CLI subcommand supervised by host OS (ADR-007). Workspace-scoped
+  bearer tokens with explicit-predicate scoping (ADR-008). SessionIngestSource Protocol
+  + ingest_cursors watermark table absorbs filesystem and remote sources without forking
+  the engine (ADR-009). Single-process api runtime with request-scoped project binding
+  via AuthContext.project_id (ADR-010).
 owner: null
 contributors: []
 ---
 
 # Remote CCDash Streaming + Entire.io Integration — Implementation Plan
 
-⚠️ **DRAFT SKELETON** — This plan front-loads SPIKE execution as Phase 1. Phases 2–7 are sketched at a high level only; detailed task breakdowns will expand after SPIKE-A and SPIKE-B findings land. The effort estimate is a wide band (8–12 weeks); the final scope and timeline will firm up post-SPIKE.
+⚠️ **DRAFT SKELETON (SPIKE-A resolved 2026-05-10)** — SPIKE-A (remote-ccdash-streaming) findings are now landed. The five gating ADRs (006–010) are accepted; see `architecture_summary` and the [findings summary](../../SPIKEs/remote-ccdash-streaming.md). SPIKE-B (Entire.io integration) remains in-flight; Phase 5 is gated on its findings. Phases 2–8 task breakdowns expand against the ADRs in the next planning revision; the effort band (8–12 weeks) holds.
 
 ---
 
@@ -42,7 +80,7 @@ This implementation plan orchestrates the buildout of remote CCDash operation an
 - Week 3–4: Design meeting to resolve OQ-3, OQ-4, OQ-7; ADRs finalized
 - Week 5–6: Sync engine abstraction + cursor table (Phase 2)
 - Week 7–9: Ingest endpoint + daemon (Phase 3) in parallel
-- Week 10–11: Auth + multi-project routing; Entire source (Phases 4–5) in parallel
+- Week 10–11: Auth + multi-project routing (Phase 4) — Phase 5 (Entire source) extracted to `entire-io-checkpoint-ingest-v1`; not on v1 critical path
 - Week 12+: Frontend, hardening, docs
 
 ---
@@ -57,20 +95,20 @@ Following CCDash's layered architecture, phases are ordered to minimize coupling
 2. **Phase 2** — Refactor `SyncEngine` to accept abstract `SessionIngestSource` port; preserve filesystem behavior; introduce cursor table
 3. **Phase 3** — Build ingest endpoint + local daemon (parallel tracks: backend endpoint + daemon client)
 4. **Phase 4** — Implement workspace-scoped auth; multi-project routing; RLS or explicit workspace filtering
-5. **Phase 5** — Entire checkpoint branch parser; integrate as concrete `EntireCheckpointSource`
+5. **Phase 5** — *(EXTRACTED)* Entire checkpoint branch parser + `EntireCheckpointSource` — see [`entire-io-checkpoint-ingest-v1.md`](entire-io-checkpoint-ingest-v1.md); not part of v1 completion
 6. **Phase 6** — Frontend: session source attribution chip, daemon health badge, live-update cadence decisions
 7. **Phase 7** — Hardening: retry/backoff, dead-letter handling, health endpoint extension, migration guides
 8. **Phase 8** — Documentation finalization: CHANGELOG, README updates, context files, deferred-item design specs
 
 ### Critical Path
 
-The critical path runs: SPIKE findings → sync engine abstraction → ingest endpoint → auth/multi-project → Entire source → frontend → docs. All downstream phases are hard-gated on SPIKE-A and SPIKE-B completion. A design meeting post-SPIKE resolves architecture questions before Phase 2 kicks off.
+The v1 critical path runs: SPIKE findings → sync engine abstraction → ingest endpoint → auth/multi-project → frontend → docs. All downstream phases are hard-gated on SPIKE-A and SPIKE-B completion. A design meeting post-SPIKE resolves architecture questions before Phase 2 kicks off. Phase 5 (Entire source) is extracted to a separate plan (`entire-io-checkpoint-ingest-v1.md`) and is not on the v1 critical path; v1 executable phases are 1–4 (done) + 6, 7, 8.
 
 ### Parallel Work Opportunities
 
 - **SPIKE-A + SPIKE-B run in parallel** (week 1–2). Three tracks within SPIKE-A (transport/ingest, auth, project routing) can be assigned to 2–3 engineers.
 - **Phase 3 (daemon)** can split: backend ingest endpoint (Python) and daemon client (Go or Python, TBD by SPIKE-A) in parallel.
-- **Phase 4–5** can start once Phase 2 is sealed, with auth and Entire parser on separate engineers.
+- **Phase 4** can start once Phase 2 is sealed. Phase 5 (Entire parser) is extracted to a separate plan and is no longer part of this v1 scope.
 - **Phase 6 (frontend)** can begin design earlier (week 6, no blocking on Phase 5 API completion).
 
 ---
@@ -85,11 +123,11 @@ Mandatory at-a-glance index of all phases with point estimates, target subagents
 | 2 | Sync Engine Port Abstraction | 12–16 pts | data-layer-expert, python-backend-engineer | sonnet | Phase 1 complete; ADRs locked | Introduce `SessionIngestSource` port; `FilesystemSource` wrapper; cursor table schema; zero test changes |
 | 3 | Ingest Endpoint + Local Daemon | 18–24 pts | python-backend-engineer, (Go/Python daemon owner TBD) | sonnet | Phase 2 complete | POST `/api/v1/ingest/sessions` NDJSON endpoint; daemon tail + batch POST; idempotency keys; E1/E2 validation |
 | 4 | Workspace Auth + Multi-Project Routing | 15–20 pts | backend-architect, data-layer-expert | sonnet | Phase 2 complete; Phase 3 working | Per-workspace token table; request-scoped project resolution; RLS enforcement; migration from single bearer |
-| 5 | Entire Branch Parser + Source | 12–16 pts | python-backend-engineer, data-layer-expert | sonnet | Phase 2 complete; Phase 4 working | `EntireCheckpointSource` implementation; git plumbing + branch parser; checkpoint schema validation; E1/E4 validation |
+| 5 | Entire Branch Parser + Source *(EXTRACTED — out of scope for v1)* | — | — | — | *Not part of v1 completion* | Extracted to [`entire-io-checkpoint-ingest-v1.md`](entire-io-checkpoint-ingest-v1.md) |
 | 6 | Frontend Source Attribution + Daemon Health | 9–12 pts | frontend-architect, ui-engineer-enhanced | sonnet (+ gemini-3.1-pro for design) | All backend phases complete | Session source chip; daemon health badge; live-update cadence; health endpoint contract |
 | 7 | Hardening, Migration Guides, Telemetry | 12–16 pts | senior-code-reviewer, devops-architect, documentation-writer | sonnet/haiku | All implementation phases complete | Retry/backoff policy; dead-letter handling; failure-mode observability; v1→v2 migration guide |
 | 8 | Documentation Finalization | 6–9 pts | documentation-writer, changelog-generator, ai-artifacts-engineer | haiku (sonnet for skill SPECs) | All phases complete | CHANGELOG `[Unreleased]` entry; README; context files; deferred-item design specs (DOC-006) |
-| **Total** | — | **132–173 pts** | — | — | — | 8–12 weeks @3 FTE avg |
+| **Total** | — | **120–157 pts** (excl. Phase 5) | — | — | — | Phases 1–4 (done) + 6, 7, 8; Phase 5 extracted to `entire-io-checkpoint-ingest-v1` |
 
 ---
 
@@ -101,6 +139,21 @@ Mandatory at-a-glance index of all phases with point estimates, target subagents
 **Owners:** backend-typescript-architect, data-layer-expert, backend-architect, frontend-architect
 **Model(s):** sonnet/opus mix
 **Gate:** Hard gate on SPIKE-A + SPIKE-B deliverables; ADRs finalized; design meeting locked before Phase 2 begins
+**Status (2026-05-11):** **Complete.** SPIKE-A (`remote-ccdash-streaming`) and SPIKE-B (`entire-io-integration`) both completed; ADRs 006–013 landed.
+
+SPIKE-A outputs (authoritative, 2026-05-10):
+- Findings: [`docs/project_plans/spikes/remote-ccdash-streaming.md`](../../spikes/remote-ccdash-streaming.md)
+- ADR-006 (transport NDJSON/HTTP), ADR-007 (daemon as CLI subcommand), ADR-008 (workspace bearer), ADR-009 (`SessionIngestSource` port + cursor table), ADR-010 (single-process multi-project routing)
+
+SPIKE-B outputs (2026-05-11):
+- Findings: [`docs/project_plans/spikes/entire-io-integration.md`](../../spikes/entire-io-integration.md)
+- Checkpoint schema: [`docs/project_plans/spikes/entire-io-integration/checkpoint-schema.md`](../../spikes/entire-io-integration/checkpoint-schema.md)
+- ADR-011 (Entire ingest path: branch-parse primary, CLI-wrap fallback)
+- ADR-012 (Entire session identity: reuse ADR-009 `source_ref` with `entire:` scheme; supersedes charter draft `source_type` enum)
+- ADR-013 (Entire live-update: fs-watch primary, git-fetch poll fallback)
+- Supporting memos: coexistence, privacy/redaction, upstream-feedback, commit-linkage design
+
+**Phase 1 closes.** Phase 5 (`EntireCheckpointSource`) inputs are locked: read findings + ADRs 011–013 + checkpoint-schema as the input package. Estimated effort (12–16 pts) is unchanged by SPIKE-B; zero new port additions required (E4 conformance walk passed).
 
 #### Goals
 
@@ -284,47 +337,10 @@ Mandatory at-a-glance index of all phases with point estimates, target subagents
 
 ### Phase 5: Entire Branch Parser + Source
 
-**Duration:** 2 weeks
-**Owners:** python-backend-engineer, data-layer-expert
-**Model(s):** sonnet
-**Gate:** Phase 2 complete; Phase 4 preferred (auth unblocks production auth for Entire fetch)
-
-#### Goals
-
-- Implement `EntireCheckpointSource` consuming `entire/checkpoints/v1` branch JSON
-- Git plumbing parser (libgit2 or dulwich) validated against E1 prototype
-- Session identity unification: `source_ref` scheme for Entire checkpoint IDs
-- Checkpoint schema validation; graceful handling of unknown fields
-- Historical + periodic incremental fetch (per E2 findings)
-
-#### Entry Criteria
-
-- SPIKE-B checkpoint schema + ingest-path ADRs finalized
-- Phase 2 `SessionIngestSource` port ready for subclass
-- Git plumbing library choice locked
-
-#### Exit Criteria
-
-- `EntireCheckpointSource` implementation complete, passing E4 integration test
-- Cold-parse for 1k checkpoints <15s (per E1 go/no-go)
-- Session identity unification (source_ref scheme) working; ON CONFLICT upsert validated
-- Schema-validation test covering ≥3 agent types
-- Zero sessions lost on daemon restart or git fetch interruption
-
-#### Key Risks
-
-- **Upstream schema drift** — `entire/checkpoints/v1` is not publicly versioned. Risk: minor release reorganizes sharding or adds required fields. Mitigation: schema validation + skip-on-unknown-field pattern; file upstream issue if breaking change detected.
-- **Large checkpoint growth** — `entire/checkpoints/v1` has no documented retention policy. Unbounded growth on long-lived repos. Mitigation: add retention / pagination policy to operator guide (Phase 7).
-
-#### Subagent Assignments
-
-- **Branch parser + schema validation**: data-layer-expert, python-backend-engineer
-- **Identity unification + migration**: data-layer-expert
-- **Integration testing**: python-backend-engineer
-
-#### Model + Effort
-
-- Effort: adaptive (schema validation is straightforward; identity unification needs careful design)
+**EXTRACTED.** Phase 5 (Entire.io checkpoint ingest) has been extracted to its own standalone
+plan: [`docs/project_plans/implementation_plans/features/entire-io-checkpoint-ingest-v1.md`](entire-io-checkpoint-ingest-v1.md).
+It is not part of `remote-ccdash-streaming-v1` completion. The v1 plan's executable phases are
+1–4 (done) + 6, 7, 8.
 
 ---
 
@@ -333,7 +349,7 @@ Mandatory at-a-glance index of all phases with point estimates, target subagents
 **Duration:** 1.5 weeks
 **Owners:** frontend-architect, ui-engineer-enhanced
 **Model(s):** sonnet (+ gemini-3.1-pro for design)
-**Gate:** All backend phases complete preferred; can start design concurrently with Phase 5
+**Gate:** Phases 3–4 complete preferred; can start design concurrently with Phase 4 completion (Phase 5 is extracted to a separate plan and is not a v1 gate)
 
 #### Goals
 
@@ -357,7 +373,7 @@ Mandatory at-a-glance index of all phases with point estimates, target subagents
 
 #### Key Risks
 
-- **Late API changes** — If Phase 4–5 introduces unexpected auth or source fields, UI may need re-work. Mitigate: frequent integration checks during Phase 5.
+- **Late API changes** — If Phase 4 introduces unexpected auth or source fields, UI may need re-work. Mitigate: frequent integration checks during Phase 4.
 - **Polling cadence tuning** — If live updates are insufficiently frequent, users perceive stale sessions. Tune via SPIKE findings + user feedback loop.
 
 #### Subagent Assignments
@@ -607,6 +623,6 @@ Findings doc is **not pre-created**. On the first load-bearing finding discovere
 
 ---
 
-**Implementation Plan Version:** 1.0 (Draft)  
-**Last Updated:** 2026-04-19  
-**Status:** Draft — awaiting SPIKE completion
+**Implementation Plan Version:** 1.1 (In-Progress)  
+**Last Updated:** 2026-05-10  
+**Status:** In-Progress — Phase 1 partially complete (SPIKE-A landed 2026-05-10; SPIKE-B Entire.io still in `draft`; post-SPIKE design meeting on OQ-3/4/7 pending). Phase 2 remains gated until SPIKE-B closes and ADRs 006–010 are reviewed alongside Entire findings.

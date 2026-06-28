@@ -132,7 +132,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
         await run_migrations(self.db)
         self.repo = SqliteFeatureRepository(self.db)
         for f in _SEED_FEATURES:
-            await self.repo.upsert(f, "proj-1")
+            await self.repo.upsert(f, "proj-1", workspace_id="default-local")
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
@@ -178,7 +178,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_filter_returns_all(self) -> None:
         q = FeatureListQuery(limit=200, offset=0)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         self.assertEqual(page.total, 20)
         self.assertEqual(len(page.rows), 20)
         self.assertFalse(page.has_more)
@@ -187,7 +187,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
 
     async def test_status_filter_single(self) -> None:
         q = FeatureListQuery(status=["done"], limit=200)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         self.assertEqual(page.total, 5)
         self.assertEqual(len(page.rows), 5)
         for row in page.rows:
@@ -195,7 +195,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
 
     async def test_status_filter_multi(self) -> None:
         q = FeatureListQuery(status=["in-progress", "done"], limit=200)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         self.assertEqual(page.total, 13)  # 8 in-progress + 5 done
 
     # ── REGRESSION: total must reflect filter, not full table ────────────────
@@ -203,7 +203,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
     async def test_total_reflects_filter_not_full_table(self) -> None:
         """Regression: filtered total must NOT equal the full 20-row table count."""
         q = FeatureListQuery(status=["backlog"], limit=200)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         self.assertNotEqual(page.total, 20, "total must NOT be the unfiltered count")
         self.assertEqual(page.total, 7)  # 4 cat-A + 3 cat-B backlog
 
@@ -212,13 +212,13 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
     async def test_status_filter_pagination_page2(self) -> None:
         """Page 2 with status filter: total must be correct and rows must be offset."""
         q_page1 = FeatureListQuery(status=["in-progress"], limit=5, offset=0)
-        page1 = await self.repo.list_feature_cards("proj-1", q_page1)
+        page1 = await self.repo.list_feature_cards("proj-1", q_page1, workspace_id="default-local")
         self.assertEqual(page1.total, 8)
         self.assertEqual(len(page1.rows), 5)
         self.assertTrue(page1.has_more)
 
         q_page2 = FeatureListQuery(status=["in-progress"], limit=5, offset=5)
-        page2 = await self.repo.list_feature_cards("proj-1", q_page2)
+        page2 = await self.repo.list_feature_cards("proj-1", q_page2, workspace_id="default-local")
         self.assertEqual(page2.total, 8)  # total is stable across pages
         self.assertEqual(len(page2.rows), 3)
         self.assertFalse(page2.has_more)
@@ -238,7 +238,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
             updated=DateRange(from_date="2024-04-01T00:00:00Z"),
             limit=200,
         )
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         # F-005 (2024-04-01), F-006 (2024-04-15), F-007 (2024-05-01), F-008 (2024-05-10)
         self.assertEqual(page.total, 4)
         self.assertNotEqual(page.total, 20, "combined filter must narrow total below 20")
@@ -260,8 +260,8 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
             sort_direction=SortDirection.DESC,
             limit=200,
         )
-        page1 = await self.repo.list_feature_cards("proj-1", q1)
-        page2 = await self.repo.list_feature_cards("proj-1", q2)
+        page1 = await self.repo.list_feature_cards("proj-1", q1, workspace_id="default-local")
+        page2 = await self.repo.list_feature_cards("proj-1", q2, workspace_id="default-local")
         ids1 = [r["id"] for r in page1.rows]
         ids2 = [r["id"] for r in page2.rows]
         self.assertEqual(ids1, ids2, "sort must be deterministic across identical queries")
@@ -295,7 +295,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
         )
 
         q = FeatureListQuery(sort_by=FeatureSortKey.LATEST_ACTIVITY, limit=5)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
 
         self.assertEqual(page.rows[0]["id"], "F-001")
         self.assertNotEqual(
@@ -325,7 +325,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
         )
 
         q = FeatureListQuery(sort_by=FeatureSortKey.SESSION_COUNT, limit=5)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
 
         self.assertEqual(page.rows[0]["id"], "F-002")
         self.assertNotEqual(
@@ -339,14 +339,14 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
     async def test_q_matches_feature_id(self) -> None:
         # "F-020" should match on id
         q = FeatureListQuery(q="F-020", limit=200)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         self.assertEqual(page.total, 1)
         self.assertEqual(page.rows[0]["id"], "F-020")
 
     async def test_q_matches_name(self) -> None:
         # "Search" appears in "Beta Search" (F-002) and "Omicron Search" (F-015)
         q = FeatureListQuery(q="Search", limit=200)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         ids = {r["id"] for r in page.rows}
         self.assertIn("F-002", ids)
         self.assertIn("F-015", ids)
@@ -356,8 +356,8 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
 
     async def test_count_feature_cards_parity(self) -> None:
         q = FeatureListQuery(status=["done"], category=["cat-b"], limit=200)
-        count = await self.repo.count_feature_cards("proj-1", q)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        count = await self.repo.count_feature_cards("proj-1", q, workspace_id="default-local")
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         self.assertEqual(count, page.total)
 
     # ── has_deferred filter ──────────────────────────────────────────────────
@@ -365,7 +365,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
     async def test_has_deferred_true(self) -> None:
         # Only F-020 has deferredTasks > 0
         q = FeatureListQuery(has_deferred=True, limit=200)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         self.assertEqual(page.total, 1)
         self.assertEqual(page.rows[0]["id"], "F-020")
 
@@ -403,7 +403,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
             ),
             limit=200,
         )
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         self.assertEqual(page.total, 1)
         self.assertEqual(page.rows[0]["id"], "F-020")
 
@@ -460,7 +460,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
             ),
             limit=200,
         )
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         ids = {r["id"] for r in page.rows}
         # F-009 completed 2024-05-20, F-018 completed 2024-05-15 (out), F-019 2024-05-25
         self.assertIn("F-009", ids)
@@ -471,7 +471,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_count_range(self) -> None:
         q = FeatureListQuery(task_count_min=10, task_count_max=12, limit=200)
-        page = await self.repo.list_feature_cards("proj-1", q)
+        page = await self.repo.list_feature_cards("proj-1", q, workspace_id="default-local")
         for row in page.rows:
             self.assertGreaterEqual(row["total_tasks"], 10)
             self.assertLessEqual(row["total_tasks"], 12)
@@ -481,8 +481,8 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
     async def test_category_case_insensitive(self) -> None:
         q_lower = FeatureListQuery(category=["cat-a"], limit=200)
         q_upper = FeatureListQuery(category=["CAT-A"], limit=200)
-        page_lower = await self.repo.list_feature_cards("proj-1", q_lower)
-        page_upper = await self.repo.list_feature_cards("proj-1", q_upper)
+        page_lower = await self.repo.list_feature_cards("proj-1", q_lower, workspace_id="default-local")
+        page_upper = await self.repo.list_feature_cards("proj-1", q_upper, workspace_id="default-local")
         self.assertEqual(page_lower.total, page_upper.total)
         self.assertEqual(page_lower.total, 10)
 
@@ -490,7 +490,7 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
 
     async def test_different_project_returns_empty(self) -> None:
         q = FeatureListQuery(limit=200)
-        page = await self.repo.list_feature_cards("proj-other", q)
+        page = await self.repo.list_feature_cards("proj-other", q, workspace_id="default-local")
         self.assertEqual(page.total, 0)
         self.assertEqual(len(page.rows), 0)
 

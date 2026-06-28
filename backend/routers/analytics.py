@@ -49,7 +49,6 @@ from backend.models import (
     WorkflowRegistryListResponse,
     WorkflowEffectivenessResponse,
 )
-from backend.db.factory import get_artifact_ranking_repository
 from backend.model_identity import canonical_model_name, derive_model_identity, model_family_name
 from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
@@ -414,7 +413,7 @@ def _operation_kind_label(kind: str) -> str:
 
 
 async def _fetch_artifact_analytics_rows(
-    db: Any,
+    analytics_repo: Any,
     *,
     project_id: str,
     start: str | None,
@@ -429,9 +428,6 @@ async def _fetch_artifact_analytics_rows(
     list[dict[str, Any]],
     list[dict[str, Any]],
 ]:
-    from backend.db.factory import get_analytics_repository
-
-    analytics_repo = get_analytics_repository(db)
     row_groups = await analytics_repo.list_artifact_analytics_rows(
         project_id=project_id,
         start=start,
@@ -1312,7 +1308,7 @@ def _build_artifact_analytics_payload(
 
 
 async def _load_artifact_analytics_payload(
-    db: Any,
+    analytics_repo: Any,
     *,
     project_id: str,
     start: str | None,
@@ -1325,7 +1321,7 @@ async def _load_artifact_analytics_payload(
     detail_limit: int,
 ) -> dict[str, Any]:
     artifact_rows, lifecycle_rows, feature_link_rows, feature_rows, command_rows, agent_rows = await _fetch_artifact_analytics_rows(
-        db,
+        analytics_repo,
         project_id=project_id,
         start=start,
         end=end,
@@ -1411,7 +1407,7 @@ async def get_metrics(
         "task_velocity", "task_completion_pct",
     ]
     latest = await repo.get_latest_entries(project.id, types)
-    session_stats = await session_repo.get_project_stats(project.id)
+    session_stats = await session_repo.get_project_stats(project.id, workspace_id="default-local")  # TODO(workspace-routing)
     return [
         AnalyticsMetric(name="Total Cost", value=round(session_stats.get("cost", latest.get("session_cost", 0.0)), 4), unit="$"),
         AnalyticsMetric(name="Total Tokens", value=int(session_stats.get("tokens", latest.get("session_tokens", 0))), unit="tokens"),
@@ -1494,7 +1490,7 @@ async def get_series(
             filters["start_date"] = start
         if end:
             filters["end_date"] = end
-        sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters)
+        sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters, workspace_id="default-local")  # TODO(workspace-routing)
         if period == "point" and not group_by:
             items: list[dict[str, Any]] = []
             for row in sessions:
@@ -1640,7 +1636,7 @@ async def get_breakdown(
         filters["start_date"] = start
     if end:
         filters["end_date"] = end
-    sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters)
+    sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters, workspace_id="default-local")  # TODO(workspace-routing)
 
     counts: dict[str, dict[str, Any]] = defaultdict(
         lambda: {
@@ -1748,7 +1744,7 @@ async def get_correlation(
     link_repo = core_ports.storage.entity_links()
     feature_repo = core_ports.storage.features()
 
-    sessions = await session_repo.list_paginated(0, 1200, project.id, "started_at", "desc", {"include_subagents": True})
+    sessions = await session_repo.list_paginated(0, 1200, project.id, "started_at", "desc", {"include_subagents": True}, workspace_id="default-local")  # TODO(workspace-routing)
     items: list[dict[str, Any]] = []
     for row in sessions:
         session_id = str(row.get("id") or "")
@@ -1795,7 +1791,7 @@ async def get_correlation(
             continue
         for link in feature_links:
             feature_id = str(link.get("source_id") or "")
-            feature_row = await feature_repo.get_by_id(feature_id)
+            feature_row = await feature_repo.get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
             metadata = _safe_json(link.get("metadata_json"))
             items.append({
                 **base_payload,
@@ -1827,7 +1823,7 @@ async def get_session_cost_calibration(
         filters["start_date"] = start
     if end:
         filters["end_date"] = end
-    sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters)
+    sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters, workspace_id="default-local")  # TODO(workspace-routing)
 
     provenance_counts: dict[str, dict[str, Any]] = defaultdict(lambda: {"count": 0, "displayCostUsd": 0.0})
     mismatch_band_counts: dict[str, int] = defaultdict(int)
@@ -2019,7 +2015,7 @@ async def get_artifact_rankings(
             user_scope=user or "all",
             persist=True,
         )
-    repo = get_artifact_ranking_repository(core_ports.storage.db)
+    repo = core_ports.storage.artifact_rankings()
     payload = await repo.list_rankings(
         project_id=project_id,
         period=period,
@@ -2095,7 +2091,7 @@ async def get_artifact_recommendations(
     project_id = project or (active_project.id if active_project else "")
     if not project_id:
         raise HTTPException(status_code=404, detail="No active project")
-    repo = get_artifact_ranking_repository(core_ports.storage.db)
+    repo = core_ports.storage.artifact_rankings()
     payload = await repo.list_rankings(
         project_id=project_id,
         period=period,
@@ -2253,7 +2249,7 @@ async def get_artifacts(
         }
 
     payload = await _load_artifact_analytics_payload(
-        core_ports.storage.db,
+        core_ports.storage.analytics(),
         project_id=project.id,
         start=start,
         end=end,
@@ -2538,7 +2534,7 @@ async def get_notifications(
         return []
 
     repo = core_ports.storage.sessions()
-    sessions = await repo.list_paginated(0, 5, project.id, sort_by="started_at", sort_order="desc")
+    sessions = await repo.list_paginated(0, 5, project.id, sort_by="started_at", sort_order="desc", workspace_id="default-local")  # TODO(workspace-routing)
 
     notifications: list[Notification] = []
     for s in sessions:
@@ -2738,7 +2734,7 @@ async def export_prometheus(
     artifact_payload: dict[str, Any] = {}
     try:
         artifact_payload = await _load_artifact_analytics_payload(
-            core_ports.storage.db,
+            core_ports.storage.analytics(),
             project_id=project.id,
             start=None,
             end=None,

@@ -4,8 +4,10 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, Request
 
 from backend.adapters.auth import RequestAuthenticationError
+from backend.adapters.auth.context import AuthContext
 from backend.application.context import RequestContext, RequestMetadata
 from backend.application.ports import CorePorts
+from backend.application.ports.core import ProjectBinding
 from backend.observability import otel
 from backend.runtime.container import RuntimeContainer
 
@@ -65,6 +67,28 @@ async def get_request_context(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     request.state.request_context = context
     return context
+
+
+def get_project_binding(
+    auth: AuthContext = Depends(),
+    container: RuntimeContainer = Depends(get_runtime_container),
+) -> ProjectBinding:
+    """Resolve and return the ProjectBinding for the authenticated request's project.
+
+    Uses ``AuthContext.project_id`` (from the workspace token) as the routing key,
+    resolving via the container's LRU binding cache (ADR-010 §Implementation Sketch).
+
+    Callers in the ``api`` profile should use this dependency for all project-scoped
+    work.  The ``local`` and ``worker`` profiles continue to use
+    ``container.project_binding`` for background-job paths; this dependency is
+    primarily a routing surface for request-scoped code.
+
+    NOTE: ``auth`` here would normally come from ``get_auth_context``, but since
+    the dependency wiring requires the WorkspaceTokenAuthBackend (api profile only),
+    callers should inject this dependency only on api-profile endpoints.  For local
+    profile endpoints, use ``container.project_binding`` directly.
+    """
+    return container.resolve_binding(auth.project_id)
 
 
 def _runtime_profile_name(request: Request) -> str:

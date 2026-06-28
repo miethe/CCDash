@@ -22,6 +22,8 @@ from pydantic import TypeAdapter
 from ccdash_contracts import ClientV1Envelope, ClientV1PaginatedEnvelope, FeatureSummaryDTO, InstanceMetaDTO
 
 from backend.adapters.auth import StaticBearerTokenIdentityProvider
+from backend.adapters.auth.context import AuthContext
+from backend.adapters.auth.dependency import get_auth_context
 from backend.application.ports import CorePorts
 from backend.runtime.bootstrap import build_runtime_app
 from backend.runtime.profiles import get_runtime_profile
@@ -52,6 +54,10 @@ class TestClientV1Contract(unittest.TestCase):
 
         cls._app = build_runtime_app("test")
 
+        cls._app.dependency_overrides[get_auth_context] = lambda: AuthContext.synthesize_local(
+            project_id="test-project"
+        )
+
         cls._patches = [
             patch("backend.runtime.container.initialize_observability"),
             patch("backend.runtime.container.shutdown_observability"),
@@ -69,6 +75,7 @@ class TestClientV1Contract(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        cls._app.dependency_overrides.clear()
         cls._tc.__exit__(None, None, None)
         for p in reversed(cls._patches):
             p.stop()

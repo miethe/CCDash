@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Union, Any
 
 import aiosqlite
@@ -29,6 +30,16 @@ DbConnection = Union[aiosqlite.Connection, Any] # Any to support asyncpg.Pool
 _connection: DbConnection | None = None
 
 
+def _resolve_db_path() -> Path:
+    """Resolve the SQLite DB path from the environment on each call.
+
+    Tests use ``patch.dict(os.environ, {"CCDASH_DB_PATH": tmp})`` to isolate
+    their state; that override only matters if we read the env var here rather
+    than at module import time.
+    """
+    return Path(os.getenv("CCDASH_DB_PATH", str(config.DB_PATH)))
+
+
 async def get_connection() -> DbConnection:
     """Return the singleton database connection/pool, creating it if needed."""
     global _connection
@@ -38,13 +49,14 @@ async def get_connection() -> DbConnection:
     if config.DB_BACKEND == "postgres":
         if not asyncpg:
             raise ImportError("asyncpg is required for Postgres backend.")
-        
+
         logger.info(f"Connecting to PostgreSQL: {config.DATABASE_URL}")
         _connection = await asyncpg.create_pool(config.DATABASE_URL)
         return _connection
     else:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = await aiosqlite.connect(str(DB_PATH))
+        db_path = _resolve_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = await aiosqlite.connect(str(db_path))
         conn.row_factory = aiosqlite.Row
         # Enable WAL mode for better concurrent read performance
         await conn.execute("PRAGMA journal_mode=WAL")

@@ -710,8 +710,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_sessions_uses_canonical_logs_for_title_and_badges(self) -> None:
         class _FakeCanonicalListRepo(_FakeRepo):
-            async def list_paginated(self, offset, limit, project_id, sort_by, sort_order, filters):
-                rows = await super().list_paginated(offset, limit, project_id, sort_by, sort_order, filters)
+            async def list_paginated(self, offset, limit, project_id=None, sort_by="started_at", sort_order="desc", filters=None, *, workspace_id: str = "default-local"):
+                rows = await super().list_paginated(offset, limit, project_id, sort_by, sort_order, filters, workspace_id=workspace_id)
                 rows[0]["session_type"] = "subagent"
                 rows[0]["parent_session_id"] = "S-parent"
                 return rows

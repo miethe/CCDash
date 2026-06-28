@@ -309,6 +309,7 @@ async def backfill_session_stack_observations(
         "started_at",
         "desc",
         {"include_subagents": True},
+        workspace_id="default-local",  # TODO(workspace-routing)
     )
 
     for session_row in session_rows:

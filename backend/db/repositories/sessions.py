@@ -7,9 +7,51 @@ from datetime import datetime, timezone
 
 import aiosqlite
 from backend.model_identity import model_filter_tokens
-from backend.db.repositories.base import retry_on_locked
+from backend.db.repositories.base import retry_on_locked, DEFAULT_WORKSPACE_ID
 
 logger = logging.getLogger("ccdash.db.sessions")
+
+logger = logging.getLogger("ccdash.db.sessions")
+
+_FS_SOURCE_ID = "filesystem"
+_REMOTE_SOURCE_ID = "remote_ingest"
+_ENTIRE_SOURCE_ID = "entire"
+
+
+def compute_source_ref(
+    source_id: str,
+    *,
+    source_file: str | None = None,
+    event_id: str | None = None,
+    checkpoint_id: str | None = None,
+) -> str:
+    """Build the canonical source_ref URI for a session row.
+
+    fs:<canonical-rel-path>        — filesystem source
+    remote:<event-id>              — daemon remote ingest (workspace prefix added in Phase 4)
+    entire:<checkpoint-hex>        — Entire.io checkpoint (Phase 5)
+
+    Raises ValueError for an unknown source_id or a missing required field.
+    """
+    if source_id == _FS_SOURCE_ID:
+        if not source_file:
+            raise ValueError(
+                "source_file is required when source_id is 'filesystem'"
+            )
+        return f"fs:{source_file}"
+    if source_id == _REMOTE_SOURCE_ID:
+        if not event_id:
+            raise ValueError(
+                "event_id is required when source_id is 'remote_ingest'"
+            )
+        return f"remote:{event_id}"
+    if source_id == _ENTIRE_SOURCE_ID:
+        if not checkpoint_id:
+            raise ValueError(
+                "checkpoint_id is required when source_id is 'entire'"
+            )
+        return f"entire:{checkpoint_id}"
+    raise ValueError(f"Unknown source_id: {source_id!r}")
 
 
 class SqliteSessionRepository:
@@ -22,13 +64,20 @@ class SqliteSessionRepository:
         """Commit with locked-retry, re-raising on exhaustion (fail-loud)."""
         await retry_on_locked(self.db.commit, repo="sessions")
 
-    async def upsert(self, session_data: dict, project_id: str) -> None:
+    async def upsert(
+        self,
+        session_data: dict,
+        project_id: str,
+        *,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+        source_ref: str | None = None,
+    ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = session_data.get("createdAt", "") or now
         updated_at = session_data.get("updatedAt", "") or now
         await self.db.execute(
             """INSERT INTO sessions (
-                id, project_id, task_id, status, model,
+                id, project_id, workspace_id, task_id, status, model,
                 platform_type, platform_version, platform_versions_json, platform_version_transitions_json,
                 duration_seconds, tokens_in, tokens_out, model_io_tokens,
                 cache_creation_input_tokens, cache_read_input_tokens, cache_input_tokens, observed_tokens,
@@ -45,8 +94,9 @@ class SqliteSessionRepository:
                 command_slug, latest_summary, subagent_type,
                 models_used_json, agents_used_json, skills_used_json,
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
-                launcher, profile, effort_tier, model_variant
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                launcher, profile, effort_tier, model_variant,
+                source_ref
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -111,10 +161,12 @@ class SqliteSessionRepository:
                 launcher=COALESCE(excluded.launcher, sessions.launcher),
                 profile=COALESCE(excluded.profile, sessions.profile),
                 effort_tier=COALESCE(excluded.effort_tier, sessions.effort_tier),
-                model_variant=COALESCE(excluded.model_variant, sessions.model_variant)
+                model_variant=COALESCE(excluded.model_variant, sessions.model_variant),
+                source_ref=COALESCE(excluded.source_ref, sessions.source_ref)
+            WHERE sessions.workspace_id = excluded.workspace_id
             """,
             (
-                session_data["id"], project_id,
+                session_data["id"], project_id, workspace_id,
                 session_data.get("taskId", ""),
                 session_data.get("status", "completed"),
                 session_data.get("model", ""),
@@ -186,6 +238,7 @@ class SqliteSessionRepository:
                 session_data.get("profile"),
                 session_data.get("effortTier"),
                 session_data.get("modelVariant"),
+                source_ref,
             ),
         )
         await self._commit()
@@ -233,22 +286,20 @@ class SqliteSessionRepository:
         )
         await self._commit()
 
-    async def get_by_id(self, session_id: str, project_id: str | None = None) -> dict | None:
-        """Fetch a single session by id.
+    async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
+        """Fetch a single session by id, optionally scoped to project_id and workspace_id.
 
         When ``project_id`` is a non-empty string it is added to the WHERE clause
         as a strict-equality predicate alongside ``id`` (the table's composite PK
-        is ``(project_id, id)``), so callers reading a non-active project never
-        receive another project's row.  When ``project_id`` is ``None`` or ``''``
-        the read is unscoped and falls back to the existing active-project hot-path
-        behaviour (a session id is globally unique in single-project deployments).
+        is ``(project_id, id)``).  ``workspace_id`` scopes the read to a specific
+        workspace (default DEFAULT_WORKSPACE_ID).
         """
         if project_id:
-            query = "SELECT * FROM sessions WHERE project_id = ? AND id = ?"
-            params: tuple = (project_id, session_id)
+            query = "SELECT * FROM sessions WHERE project_id = ? AND id = ? AND workspace_id = ?"
+            params: tuple = (project_id, session_id, workspace_id)
         else:
-            query = "SELECT * FROM sessions WHERE id = ?"
-            params = (session_id,)
+            query = "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?"
+            params = (session_id, workspace_id)
         async with self.db.execute(query, params) as cur:
             row = await cur.fetchone()
             if not row:
@@ -256,33 +307,34 @@ class SqliteSessionRepository:
             return self._row_to_dict(row)
 
     async def get_many_by_ids(
-        self, ids: list[str], project_id: str | None = None
+        self, ids: list[str], project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> dict[str, dict]:
         """Fetch multiple sessions in a single query. Returns a dict keyed by session id.
 
         ``project_id`` follows the same semantics as :meth:`get_by_id`: a non-empty
         value scopes the query to that project (strict equality), while ``None``/``''``
-        leaves the read unscoped (active-project hot path unchanged).
+        leaves the read unscoped.  ``workspace_id`` scopes to a specific workspace.
         """
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
         if project_id:
             query = (
-                f"SELECT * FROM sessions WHERE project_id = ? AND id IN ({placeholders})"
+                f"SELECT * FROM sessions WHERE project_id = ? AND id IN ({placeholders}) AND workspace_id = ?"
             )
-            params: tuple = (project_id, *ids)
+            params: tuple = (project_id, *ids, workspace_id)
         else:
-            query = f"SELECT * FROM sessions WHERE id IN ({placeholders})"
-            params = tuple(ids)
+            query = f"SELECT * FROM sessions WHERE id IN ({placeholders}) AND workspace_id = ?"
+            params = tuple(ids) + (workspace_id,)
         async with self.db.execute(query, params) as cur:
             rows = await cur.fetchall()
         return {row["id"]: self._row_to_dict(row) for row in rows}
 
-    async def list_by_source(self, source_file: str) -> list[dict]:
+    async def list_by_source(self, source_file: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+        """List sessions by source_file, scoped to workspace_id."""
         async with self.db.execute(
-            "SELECT * FROM sessions WHERE source_file = ?",
-            (source_file,),
+            "SELECT * FROM sessions WHERE source_file = ? AND workspace_id = ?",
+            (source_file, workspace_id),
         ) as cur:
             rows = await cur.fetchall()
             return [self._row_to_dict(row) for row in rows]
@@ -295,17 +347,20 @@ class SqliteSessionRepository:
         sort_by: str = "started_at",
         sort_order: str = "desc",
         filters: dict | None = None,
+        *,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         # Whitelist sortable columns
-        
+
         allowed_sort = {"started_at", "total_cost", "duration_seconds", "tokens_in", "created_at"}
         if sort_by not in allowed_sort:
             sort_by = "started_at"
         order = "DESC" if sort_order.lower() == "desc" else "ASC"
 
         query_parts = ["SELECT * FROM sessions"]
-        params = []
-        where_clauses = []
+        params: list = []
+        where_clauses: list[str] = ["workspace_id = ?"]
+        params.append(workspace_id)
         filters = filters or {}
 
         if project_id:
@@ -408,10 +463,11 @@ class SqliteSessionRepository:
             rows = await cur.fetchall()
             return [self._row_to_dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None, filters: dict | None = None) -> int:
+    async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
         query_parts = ["SELECT COUNT(*) FROM sessions"]
-        params = []
-        where_clauses = []
+        params: list = []
+        where_clauses: list[str] = ["workspace_id = ?"]
+        params.append(workspace_id)
         filters = filters or {}
 
         if project_id:
@@ -511,6 +567,7 @@ class SqliteSessionRepository:
         *,
         window_seconds: int = 600,
         include_subagents: bool = False,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> int:
         """Count sessions that are currently active for a project.
 
@@ -547,6 +604,7 @@ class SqliteSessionRepository:
                 ``session_type = 'subagent'`` are excluded, matching the
                 existing ``include_subagents=False`` convention on
                 ``list_paginated`` and ``count``.
+            workspace_id: Scope the count to a specific workspace.
 
         Returns:
             Integer count of currently-active sessions.  Returns 0 when the
@@ -562,8 +620,9 @@ class SqliteSessionRepository:
             "project_id = ?",
             "status = ?",
             "updated_at >= ?",
+            "workspace_id = ?",
         ]
-        params: list = [project_id, "active", threshold]
+        params: list = [project_id, "active", threshold, workspace_id]
 
         if not include_subagents:
             where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
@@ -584,6 +643,7 @@ class SqliteSessionRepository:
         window_seconds: int = 600,
         limit: int | None = None,
         include_subagents: bool = True,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         """List sessions that are currently active for a project.
 
@@ -618,6 +678,7 @@ class SqliteSessionRepository:
                 ``include_subagents=False`` convention on
                 :meth:`list_paginated`, :meth:`count`, and
                 :meth:`count_active`.
+            workspace_id: Scope the list to a specific workspace.
 
         Returns:
             List of session row dicts ordered by ``updated_at DESC``.
@@ -636,8 +697,9 @@ class SqliteSessionRepository:
             "project_id = ?",
             "status = ?",
             "updated_at >= ?",
+            "workspace_id = ?",
         ]
-        params: list = [project_id, "active", threshold]
+        params: list = [project_id, "active", threshold, workspace_id]
 
         if not include_subagents:
             where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
@@ -656,13 +718,14 @@ class SqliteSessionRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
-    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
+    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         query_parts = [
             "SELECT model, COUNT(*) AS count",
             "FROM sessions",
         ]
-        params: list[str] = []
-        where_clauses: list[str] = ["TRIM(COALESCE(model, '')) != ''"]
+        params: list = []
+        where_clauses: list[str] = ["workspace_id = ?", "TRIM(COALESCE(model, '')) != ''"]
+        params.append(workspace_id)
 
         if project_id:
             where_clauses.append("project_id = ?")
@@ -680,13 +743,14 @@ class SqliteSessionRepository:
             rows = await cur.fetchall()
             return [{"model": row[0], "count": int(row[1] or 0)} for row in rows]
 
-    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
+    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         query_parts = [
             "SELECT platform_type, platform_version, platform_versions_json",
             "FROM sessions",
         ]
-        params: list[str] = []
-        where_clauses: list[str] = []
+        params: list = []
+        where_clauses: list[str] = ["workspace_id = ?"]
+        params.append(workspace_id)
 
         if project_id:
             where_clauses.append("project_id = ?")
@@ -1067,7 +1131,7 @@ class SqliteSessionRepository:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def get_project_stats(self, project_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         """Get aggregated session statistics for a project."""
         query = """
             SELECT
@@ -1081,9 +1145,9 @@ class SqliteSessionRepository:
                 ) as tokens,
                 AVG(duration_seconds) as duration
             FROM sessions
-            WHERE project_id = ?
+            WHERE project_id = ? AND workspace_id = ?
         """
-        async with self.db.execute(query, (project_id,)) as cur:
+        async with self.db.execute(query, (project_id, workspace_id)) as cur:
             row = await cur.fetchone()
             if row:
                 return {
@@ -1094,7 +1158,7 @@ class SqliteSessionRepository:
                 }
             return {"count": 0, "cost": 0.0, "tokens": 0, "duration": 0.0}
 
-    async def get_tool_stats(self, project_id: str) -> dict:
+    async def get_tool_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         """Get aggregated tool usage statistics for a project."""
         query = """
             SELECT
@@ -1102,9 +1166,9 @@ class SqliteSessionRepository:
                 AVG(CAST(success_count AS REAL) / NULLIF(call_count, 0) * 100)
             FROM session_tool_usage stu
             JOIN sessions s ON s.id = stu.session_id
-            WHERE s.project_id = ?
+            WHERE s.project_id = ? AND s.workspace_id = ?
         """
-        async with self.db.execute(query, (project_id,)) as cur:
+        async with self.db.execute(query, (project_id, workspace_id)) as cur:
             row = await cur.fetchone()
             if row:
                 return {

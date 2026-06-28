@@ -293,6 +293,7 @@ class TelemetryExportCoordinatorTests(unittest.IsolatedAsyncioTestCase):
                 "sourceFile": f"/tmp/{session_id}.jsonl",
             },
             "project-1",
+            workspace_id="default-local",
         )
         payload = {
             "event_id": str(uuid4()),

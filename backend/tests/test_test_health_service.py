@@ -80,6 +80,7 @@ class TestHealthServiceTests(unittest.IsolatedAsyncioTestCase):
                 "status": "in-progress",
             },
             project_id="project-1",
+            workspace_id="default-local",
         )
 
         session_repo = SqliteSessionRepository(self.db)
@@ -92,6 +93,7 @@ class TestHealthServiceTests(unittest.IsolatedAsyncioTestCase):
                 "sourceFile": "fixtures/session-1.jsonl",
             },
             project_id="project-1",
+            workspace_id="default-local",
         )
 
         await self.db.execute(

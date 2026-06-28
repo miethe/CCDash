@@ -22,6 +22,7 @@ DDL = """
 CREATE TABLE IF NOT EXISTS features (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT 'default-local',
     name TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'backlog',
     category TEXT NOT NULL DEFAULT '',
@@ -114,7 +115,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=all_ids, include_counts=True, include_progress=True
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 
@@ -130,7 +131,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=all_ids, include_counts=True, include_progress=True
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 
@@ -156,7 +157,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=["FEAT-1"], include_counts=False, include_progress=False
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 
@@ -174,7 +175,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=["FEAT-3"], include_counts=True, include_progress=False
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 
@@ -194,7 +195,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=["FEAT-5"], include_counts=True, include_progress=True
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 
@@ -210,7 +211,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=["FEAT-6"], include_counts=True, include_progress=True
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 
@@ -230,7 +231,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=["FEAT-1"], include_counts=True, include_progress=True
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 
@@ -255,7 +256,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=["FEAT-2"], include_counts=True, include_progress=True
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 
@@ -285,7 +286,7 @@ class TestPhaseSummaryBulk(unittest.TestCase):
                 query = PhaseSummaryBulkQuery(
                     feature_ids=["FEAT-4"], include_counts=True, include_progress=True
                 )
-                return await repo.list_phase_summaries_for_features("proj-A", query)
+                return await repo.list_phase_summaries_for_features("proj-A", query, workspace_id="default-local")
             finally:
                 await db.close()
 

@@ -154,14 +154,14 @@ class _FakeSessionRepo:
     async def get_logs(self, session_id):
         return self.logs_by_id.get(session_id, [])
 
-    async def count(self, project_id, filters=None):
+    async def count(self, project_id, filters=None, *, workspace_id=None):
         filters = filters or {}
         root_id = filters.get("root_session_id")
         if root_id:
             return len(self.root_members.get(root_id, []))
         return len(self.rows)
 
-    async def list_paginated(self, offset, limit, project_id=None, sort_by="started_at", sort_order="desc", filters=None):
+    async def list_paginated(self, offset, limit, project_id=None, sort_by="started_at", sort_order="desc", filters=None, *, workspace_id=None):
         filters = filters or {}
         root_id = filters.get("root_session_id")
         if root_id:

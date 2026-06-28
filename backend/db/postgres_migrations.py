@@ -43,7 +43,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 37
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -3251,6 +3251,126 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         await _ensure_column(db, "sessions", "effort_tier", "TEXT")
         await _ensure_column(db, "sessions", "model_variant", "TEXT")
         logger.info("v35 migrations complete: launch-time capture columns added to sessions.")
+
+    # ── v36 migrations (ADR-009: SessionIngestSource port + ingest_cursors) ──
+    # Placed after the v31 composite-PK rebuild so source_ref is not stripped as
+    # an orphan column by that rebuild's column-intersection logic.
+    if current_version < 36:
+        await _ensure_column(db, "sessions", "source_ref", "TEXT")
+        await db.execute(
+            """
+            UPDATE sessions
+            SET source_ref = 'fs:' || source_file
+            WHERE source_ref IS NULL
+              AND source_file IS NOT NULL
+              AND source_file != ''
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS ix_sessions_source_ref ON sessions (project_id, source_ref)"
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ingest_cursors (
+                source_id      TEXT NOT NULL,
+                project_id     TEXT NOT NULL,
+                workspace_id   TEXT NOT NULL DEFAULT 'default',
+                last_cursor    TEXT,
+                last_ingest_at TEXT,
+                error_count    INTEGER NOT NULL DEFAULT 0,
+                last_error     TEXT,
+                last_error_at  TEXT,
+                PRIMARY KEY (source_id, project_id, workspace_id)
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS ix_ingest_cursors_workspace ON ingest_cursors (workspace_id)"
+        )
+        logger.info("v36 migrations complete: source_ref column + ingest_cursors table (ADR-009).")
+
+    # ── v37 migrations (ADR-008: workspace-scoped bearer auth) ──────────────────
+    if current_version < 37:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workspaces (
+                workspace_id TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'active',
+                created_at   TEXT NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workspace_tokens (
+                token_id     TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                project_id   TEXT NOT NULL,
+                hashed_token TEXT NOT NULL UNIQUE,
+                scope        TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                last_used_at TEXT,
+                revoked_at   TEXT,
+                description  TEXT
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS ix_workspace_tokens_workspace"
+            " ON workspace_tokens (workspace_id) WHERE revoked_at IS NULL"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS ix_workspace_tokens_hash"
+            " ON workspace_tokens (hashed_token) WHERE revoked_at IS NULL"
+        )
+        await db.execute(
+            """
+            INSERT INTO workspaces (workspace_id, name, status, created_at)
+            VALUES ('default-local', 'Default Local Workspace', 'active', CURRENT_TIMESTAMP::text)
+            ON CONFLICT (workspace_id) DO NOTHING
+            """
+        )
+        for scoped_table in ("sessions", "documents", "tasks", "features"):
+            await db.execute(
+                f"ALTER TABLE {scoped_table} ADD COLUMN IF NOT EXISTS"
+                " workspace_id TEXT NOT NULL DEFAULT 'default-local'"
+            )
+        await db.execute(
+            "ALTER TABLE entity_links ADD COLUMN IF NOT EXISTS"
+            " workspace_id TEXT NOT NULL DEFAULT 'default-local'"
+        )
+        progress_files_exists = await db.fetchrow(
+            """
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'progress_files' AND table_schema = 'public'
+            LIMIT 1
+            """
+        )
+        if progress_files_exists:
+            await db.execute(
+                "ALTER TABLE progress_files ADD COLUMN IF NOT EXISTS"
+                " workspace_id TEXT NOT NULL DEFAULT 'default-local'"
+            )
+        await db.execute(
+            """
+            DELETE FROM ingest_cursors
+            WHERE workspace_id = 'default'
+              AND EXISTS (
+                SELECT 1 FROM ingest_cursors c2
+                WHERE c2.source_id = ingest_cursors.source_id
+                  AND c2.project_id = ingest_cursors.project_id
+                  AND c2.workspace_id = 'default-local'
+              )
+            """
+        )
+        await db.execute(
+            "UPDATE ingest_cursors SET workspace_id = 'default-local' WHERE workspace_id = 'default'"
+        )
+        await db.execute(
+            "ALTER TABLE ingest_cursors ALTER COLUMN workspace_id SET DEFAULT 'default-local'"
+        )
+        logger.info("v37 migrations complete: workspaces + workspace_tokens + workspace_id columns (ADR-008).")
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
     # Databases that already had schema_version >= SCHEMA_VERSION skip the

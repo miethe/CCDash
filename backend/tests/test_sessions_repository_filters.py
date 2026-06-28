@@ -58,6 +58,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "contextInheritance": "fresh",
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.repo.upsert(
             {
@@ -72,6 +73,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "contextInheritance": "fresh",
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.repo.upsert(
             {
@@ -92,6 +94,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "forkCount": 0,
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.repo.upsert(
             {
@@ -115,6 +118,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "contextInheritance": "fresh",
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.repo.upsert(
             {
@@ -130,13 +134,14 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "contextInheritance": "fresh",
             },
             "project-1",
+            workspace_id="default-local",
         )
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
 
     async def test_default_excludes_subagents(self) -> None:
-        rows = await self.repo.list_paginated(0, 50, "project-1", "started_at", "desc", {})
+        rows = await self.repo.list_paginated(0, 50, "project-1", "started_at", "desc", {}, workspace_id="default-local")
         row_ids = {r["id"] for r in rows}
         self.assertNotIn("S-agent-a1", row_ids)
         self.assertEqual(row_ids, {"S-main", "S-fork-a", "S-opus-45", "S-opus-41"})
@@ -149,6 +154,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             "started_at",
             "desc",
             {"include_subagents": True},
+            workspace_id="default-local",
         )
         self.assertEqual({r["id"] for r in rows}, {"S-main", "S-agent-a1", "S-fork-a", "S-opus-45", "S-opus-41"})
 
@@ -160,12 +166,14 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             "started_at",
             "desc",
             {"include_subagents": True, "root_session_id": "S-main"},
+            workspace_id="default-local",
         )
         self.assertEqual({r["id"] for r in rows}, {"S-main", "S-agent-a1"})
 
         count = await self.repo.count(
             "project-1",
             {"include_subagents": True, "root_session_id": "S-main"},
+            workspace_id="default-local",
         )
         self.assertEqual(count, 2)
 
@@ -177,6 +185,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             "started_at",
             "desc",
             {"thread_kind": "fork", "include_subagents": True},
+            workspace_id="default-local",
         )
         self.assertEqual([row["id"] for row in rows], ["S-fork-a"])
 
@@ -188,11 +197,13 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             "started_at",
             "desc",
             {"conversation_family_id": "S-main", "include_subagents": True},
+            workspace_id="default-local",
         )
         self.assertEqual({row["id"] for row in rows}, {"S-main", "S-agent-a1", "S-fork-a"})
         count = await self.repo.count(
             "project-1",
             {"conversation_family_id": "S-main", "include_subagents": True},
+            workspace_id="default-local",
         )
         self.assertEqual(count, 3)
 
@@ -208,6 +219,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "model_family": "Opus",
                 "model_version": "Opus 4.5",
             },
+            workspace_id="default-local",
         )
         self.assertEqual([r["id"] for r in rows], ["S-opus-45"])
 
@@ -222,6 +234,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "platform_type": "Claude Code",
                 "platform_version": "2.1.51",
             },
+            workspace_id="default-local",
         )
         self.assertEqual([r["id"] for r in rows], ["S-opus-45"])
 

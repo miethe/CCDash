@@ -231,6 +231,30 @@ _ARTIFACT_ENTITY_TYPES: frozenset[str] = frozenset(
 )
 
 
+def _derive_session_source(session_payload: dict[str, Any]) -> str:
+    """Derive a human-friendly ``source`` discriminator from ``source_ref``.
+
+    Mapping:
+      ``entire:<…>``     → ``"entire"``
+      ``remote:<…>``     → ``"remote"``
+      ``fs:<…>`` or null → ``"filesystem"``
+      anything else      → ``"unknown"``
+
+    This is a pure read — no mutations to *session_payload* beyond adding the
+    ``"source"`` key.  The caller must add the result to the payload dict.
+    """
+    raw = str(session_payload.get("source_ref") or "").strip()
+    if not raw:
+        return "filesystem"
+    if raw.startswith("entire:"):
+        return "entire"
+    if raw.startswith("remote:"):
+        return "remote"
+    if raw.startswith("fs:") or raw.startswith("filesystem:"):
+        return "filesystem"
+    return "unknown"
+
+
 def _apply_launch_capture(session_payload: dict[str, Any]) -> None:
     """Surface Phase 11 launch-time capture fields on the session DTO (T11-005).
 
@@ -483,6 +507,8 @@ async def _impl(
     # T11-005: thread launch-time capture fields onto the session DTO with the
     # camelCase contract keys (snake→camel), the same way token telemetry maps.
     _apply_launch_capture(session_payload)
+    # Phase 6: derived source discriminator from source_ref prefix (additive).
+    session_payload["source"] = _derive_session_source(session_payload)
 
     return SessionDetailBundle(
         session_id=session_id,

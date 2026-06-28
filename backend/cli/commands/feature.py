@@ -24,7 +24,7 @@ def report(
     async def _query():
         async def _invoke(context, ports):
             result = await _feature_service.get_forensics(context, ports, feature_id)
-            feature_exists = await ports.storage.features().get_by_id(feature_id)
+            feature_exists = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
             return result, context.project.project_id if context.project else None, bool(feature_exists)
 
         return await runtime.execute_query(_invoke)

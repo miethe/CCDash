@@ -723,6 +723,7 @@ async def _collect_effectiveness_dataset(
         "started_at",
         "desc",
         session_filters,
+        workspace_id="default-local",
     )
     linked_session_ids = await _feature_linked_session_ids(db, feature_id) if feature_id else set()
     observations = await _load_hydrated_observations(intelligence_repo, project_id)

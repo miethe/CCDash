@@ -1133,6 +1133,22 @@ CCDASH_SYSTEM_METRICS_CONCURRENCY = _env_int(
     10,
 )
 
+# Ingest source health thresholds
+# CCDASH_INGEST_SOURCE_FRESH_SECONDS (default: 300)
+# An ingest source is "connected" when lag < this value.  Beyond it but below
+# CCDASH_INGEST_SOURCE_STALE_SECONDS the source is "backed_up" (alive but slow).
+CCDASH_INGEST_SOURCE_FRESH_SECONDS = _env_int(
+    "CCDASH_INGEST_SOURCE_FRESH_SECONDS",
+    300,
+)
+# CCDASH_INGEST_SOURCE_STALE_SECONDS (default: 900)
+# At or beyond this lag a source is "disconnected" — it has not ingested in
+# 15 minutes and operators should investigate.
+CCDASH_INGEST_SOURCE_STALE_SECONDS = _env_int(
+    "CCDASH_INGEST_SOURCE_STALE_SECONDS",
+    900,
+)
+
 # Job queue backend
 # CCDASH_JOB_QUEUE_BACKEND (default: 'memory')
 # Selects the job-queue backend for scheduled background jobs.

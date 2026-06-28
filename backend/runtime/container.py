@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from typing import Any
 from uuid import uuid4
 
@@ -74,6 +75,17 @@ class RuntimeContainer:
         # Empty list → fall back to legacy single-binding path via self.project_binding.
         self.watcher_fan_out_bindings: list[ProjectBinding] = []
         self.migration_status = "not_started"
+        self._remote_ingest_service: Any | None = None
+        # Per-request project binding LRU cache (ADR-010).
+        # The api profile does NOT pre-populate this at startup — bindings are
+        # resolved lazily on the first request for each project_id.
+        # Worker/worker-watch profiles continue to use self.project_binding
+        # (startup-time single-project binding) for background-job access.
+        # maxsize=64: at >64 active projects, the oldest binding is evicted.
+        # Bindings are immutable so eviction is safe — they are reconstructed
+        # on the next request for that project_id.
+        self._binding_lru: OrderedDict[str, ProjectBinding] = OrderedDict()
+        self._binding_lru_maxsize: int = 64
 
     async def startup(self, app: FastAPI) -> None:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
@@ -212,6 +224,114 @@ class RuntimeContainer:
         if self.ports is None:
             raise RuntimeError("Runtime ports are unavailable before startup completes.")
         return self.ports
+
+    def resolve_binding(self, project_id: str) -> ProjectBinding:
+        """Return a ProjectBinding for ``project_id``, resolving lazily and caching.
+
+        This is the per-request multi-project routing entry point for the ``api``
+        profile (ADR-010).  Bindings are immutable and cheaply reconstructible;
+        the LRU is a performance optimisation, not a correctness requirement.
+
+        The ``worker`` profile uses ``self.project_binding`` (startup-time single
+        binding) and does NOT call this method for its background-job paths.
+
+        Parameters
+        ----------
+        project_id:
+            The project identifier from ``AuthContext.project_id``.
+
+        Raises
+        ------
+        RuntimeError
+            If called before ``startup()`` has completed (ports are None).
+        HTTPException(404)
+            Propagated from the workspace registry if ``project_id`` is unknown.
+        """
+        cached = self._binding_lru.get(project_id)
+        if cached is not None:
+            # Move to end (most-recently-used) for LRU eviction ordering.
+            self._binding_lru.move_to_end(project_id)
+            return cached
+
+        ports = self.require_ports()
+        binding = ports.workspace_registry.resolve_project_binding(
+            project_id,
+            allow_active_fallback=False,
+        )
+        if binding is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=404,
+                detail=f"Project '{project_id}' not found in workspace registry.",
+            )
+
+        # Insert into LRU; evict the oldest entry if at capacity.
+        self._binding_lru[project_id] = binding
+        self._binding_lru.move_to_end(project_id)
+        if len(self._binding_lru) > self._binding_lru_maxsize:
+            evicted_id, _ = self._binding_lru.popitem(last=False)
+            logger.debug(
+                "runtime.container: LRU binding evicted (project_id=%s, new_size=%d)",
+                evicted_id,
+                len(self._binding_lru),
+            )
+
+        logger.debug(
+            "runtime.container: resolved project binding (project_id=%s, source=%s)",
+            binding.project.id,
+            binding.source,
+        )
+        return binding
+
+    def evict_binding(self, project_id: str) -> None:
+        """Evict a cached ProjectBinding for ``project_id``.
+
+        Called from admin/rename/delete paths to ensure the next request
+        for this project_id triggers a fresh resolution from the workspace
+        registry.  No-op if the project_id is not currently cached.
+
+        There are no callers yet — this method is exposed for T4-004/T4-005
+        admin paths (project rename/delete).
+        """
+        was_present = self._binding_lru.pop(project_id, None) is not None
+        logger.debug(
+            "runtime.container: evict_binding called (project_id=%s, was_cached=%s)",
+            project_id,
+            was_present,
+        )
+
+    @property
+    def remote_ingest_service(self) -> Any:
+        """Lazy-built, process-wide singleton for the remote session ingest service.
+
+        Built on first access so it is available after ``startup()`` has
+        populated ``self.db``.  The LRU cache inside the service is shared
+        across all requests in the same worker process.
+        """
+        if self._remote_ingest_service is None:
+            if self.db is None:
+                raise RuntimeError(
+                    "RuntimeContainer.db is unavailable; cannot build RemoteSessionIngestService."
+                )
+            from backend.application.services.ingest.session_ingest import RemoteSessionIngestService
+            from backend.db.repositories.sessions import SqliteSessionRepository
+            from backend.db.repositories.ingest_cursors import SqliteIngestCursorRepository
+            import aiosqlite
+            if isinstance(self.db, aiosqlite.Connection):
+                session_repo = SqliteSessionRepository(self.db)
+                cursor_repo = SqliteIngestCursorRepository(self.db)
+            else:
+                # Postgres path — use the factory to get the right implementations.
+                from backend.db.factory import get_session_repository
+                from backend.db.repositories.ingest_cursors import PostgresIngestCursorRepository
+                session_repo = get_session_repository(self.db)
+                cursor_repo = PostgresIngestCursorRepository(self.db)
+            self._remote_ingest_service = RemoteSessionIngestService(
+                session_repo,
+                cursor_repo,
+            )
+        return self._remote_ingest_service
 
     def _build_core_ports(self) -> CorePorts:
         return build_core_ports(

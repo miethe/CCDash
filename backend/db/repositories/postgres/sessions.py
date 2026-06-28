@@ -8,6 +8,7 @@ from typing import Any
 
 import asyncpg
 from backend.model_identity import model_filter_tokens
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.postgres._transactions import postgres_transaction
 
 logger = logging.getLogger("ccdash.db.postgres.sessions")
@@ -18,7 +19,7 @@ class PostgresSessionRepository:
     def __init__(self, db: asyncpg.Connection):
         self.db = db
 
-    async def upsert(self, session_data: dict, project_id: str, _pg_conn: Any = None) -> None:
+    async def upsert(self, session_data: dict, project_id: str, _pg_conn: Any = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID, source_ref: str | None = None) -> None:
         now = datetime.now(timezone.utc).isoformat()
         created_at = session_data.get("createdAt", "") or now
         updated_at = session_data.get("updatedAt", "") or now
@@ -40,8 +41,9 @@ class PostgresSessionRepository:
                 dates_json, timeline_json, impact_history_json,
                 thinking_level, session_forensics_json,
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
-                launcher, profile, effort_tier, model_variant
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61)
+                launcher, profile, effort_tier, model_variant,
+                workspace_id, source_ref
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -100,7 +102,9 @@ class PostgresSessionRepository:
                 launcher=COALESCE(EXCLUDED.launcher, sessions.launcher),
                 profile=COALESCE(EXCLUDED.profile, sessions.profile),
                 effort_tier=COALESCE(EXCLUDED.effort_tier, sessions.effort_tier),
-                model_variant=COALESCE(EXCLUDED.model_variant, sessions.model_variant)
+                model_variant=COALESCE(EXCLUDED.model_variant, sessions.model_variant),
+                source_ref=COALESCE(EXCLUDED.source_ref, sessions.source_ref)
+            WHERE sessions.workspace_id = EXCLUDED.workspace_id
         """
         _conn = _pg_conn if _pg_conn is not None else self.db
         await _conn.execute(
@@ -167,56 +171,67 @@ class PostgresSessionRepository:
             session_data.get("profile"),
             session_data.get("effortTier"),
             session_data.get("modelVariant"),
+            workspace_id,
+            source_ref,
         )
 
-    async def get_by_id(self, session_id: str, project_id: str | None = None) -> dict | None:
-        """Fetch a single session by id.
+    async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
+        """Fetch a single session by id, optionally scoped to project_id and workspace_id.
 
-        Mirrors the SQLite backend (``backend/db/repositories/sessions.py``) with
-        identical predicate semantics: a non-empty ``project_id`` adds a strict
-        equality predicate alongside ``id`` (composite PK ``(project_id, id)``);
-        ``None``/``''`` leaves the read unscoped (active-project hot path unchanged).
+        Mirrors the SQLite backend with identical predicate semantics: a non-empty
+        ``project_id`` adds a strict equality predicate alongside ``id`` (composite
+        PK ``(project_id, id)``); ``None``/``''`` leaves the read unscoped.
+        ``workspace_id`` scopes to a specific workspace.
         """
         if project_id:
             row = await self.db.fetchrow(
-                "SELECT * FROM sessions WHERE project_id = $1 AND id = $2",
+                "SELECT * FROM sessions WHERE project_id = $1 AND id = $2 AND workspace_id = $3",
                 project_id,
                 session_id,
+                workspace_id,
             )
         else:
             row = await self.db.fetchrow(
-                "SELECT * FROM sessions WHERE id = $1", session_id
+                "SELECT * FROM sessions WHERE id = $1 AND workspace_id = $2",
+                session_id,
+                workspace_id,
             )
         if not row:
             return None
         return dict(row)
 
     async def get_many_by_ids(
-        self, ids: list[str], project_id: str | None = None
+        self, ids: list[str], project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID
     ) -> dict[str, dict]:
         """Fetch multiple sessions in a single query. Returns a dict keyed by session id.
 
-        ``project_id`` follows the same semantics as :meth:`get_by_id` and mirrors
-        the SQLite backend predicate exactly (Risk Hotspot: backend drift).
+        ``project_id`` follows the same semantics as :meth:`get_by_id`: a non-empty
+        value scopes the query to that project (strict equality).  ``workspace_id``
+        scopes to a specific workspace (default DEFAULT_WORKSPACE_ID).
         """
         if not ids:
             return {}
         if project_id:
             rows = await self.db.fetch(
-                "SELECT * FROM sessions WHERE project_id = $1 AND id = ANY($2::text[])",
+                "SELECT * FROM sessions WHERE project_id = $1 AND id = ANY($2::text[]) AND workspace_id = $3",
                 project_id,
                 ids,
+                workspace_id,
             )
         else:
             rows = await self.db.fetch(
-                "SELECT * FROM sessions WHERE id = ANY($1::text[])", ids
+                "SELECT * FROM sessions WHERE id = ANY($1::text[]) AND workspace_id = $2",
+                ids,
+                workspace_id,
             )
         return {row["id"]: dict(row) for row in rows}
 
-    async def list_by_source(self, source_file: str) -> list[dict]:
+    async def list_by_source(self, source_file: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+        """List sessions by source_file, scoped to workspace_id."""
         rows = await self.db.fetch(
-            "SELECT * FROM sessions WHERE source_file = $1",
+            "SELECT * FROM sessions WHERE source_file = $1 AND workspace_id = $2",
             source_file,
+            workspace_id,
         )
         return [dict(row) for row in rows]
 
@@ -224,15 +239,17 @@ class PostgresSessionRepository:
         self, offset: int, limit: int, project_id: str | None = None,
         sort_by: str = "started_at", sort_order: str = "desc",
         filters: dict | None = None,
+        *,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         allowed_sort = {"started_at", "total_cost", "duration_seconds", "tokens_in", "created_at"}
         if sort_by not in allowed_sort:
             sort_by = "started_at"
         order = "DESC" if sort_order.lower() == "desc" else "ASC"
 
-        where_parts: list[str] = []
-        params: list[Any] = []
-        idx = 1
+        where_parts: list[str] = [f"workspace_id = $1"]
+        params: list[Any] = [workspace_id]
+        idx = 2
 
         if project_id:
             where_parts.append(f"project_id = ${idx}")
@@ -349,10 +366,10 @@ class PostgresSessionRepository:
         
         return [dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None, filters: dict | None = None) -> int:
-        where_parts: list[str] = []
-        params: list[Any] = []
-        idx = 1
+    async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
+        where_parts: list[str] = [f"workspace_id = $1"]
+        params: list[Any] = [workspace_id]
+        idx = 2
 
         if project_id:
             where_parts.append(f"project_id = ${idx}")
@@ -471,6 +488,7 @@ class PostgresSessionRepository:
         *,
         window_seconds: int = 600,
         include_subagents: bool = False,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> int:
         """Count sessions that are currently active for a project.
 
@@ -485,6 +503,7 @@ class PostgresSessionRepository:
             project_id: The project to scope the count to.
             window_seconds: Freshness window in seconds (default 600 = 10 min).
             include_subagents: If ``False`` (default), excludes subagent rows.
+            workspace_id: Scope the count to a specific workspace.
 
         Returns:
             Integer count of currently-active sessions within the window.
@@ -499,8 +518,9 @@ class PostgresSessionRepository:
             "project_id = $1",
             "status = $2",
             "updated_at >= $3",
+            "workspace_id = $4",
         ]
-        params: list[Any] = [project_id, "active", threshold]
+        params: list[Any] = [project_id, "active", threshold, workspace_id]
 
         if not include_subagents:
             where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
@@ -519,6 +539,7 @@ class PostgresSessionRepository:
         window_seconds: int = 600,
         limit: int | None = None,
         include_subagents: bool = True,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> list[dict]:
         """List sessions that are currently active for a project.
 
@@ -543,6 +564,7 @@ class PostgresSessionRepository:
             include_subagents: If ``True`` (default), rows where
                 ``session_type = 'subagent'`` are included.  Pass ``False``
                 to exclude subagent sessions.
+            workspace_id: Scope the list to a specific workspace.
 
         Returns:
             List of session row dicts ordered by ``updated_at DESC``.
@@ -561,8 +583,9 @@ class PostgresSessionRepository:
             "project_id = $1",
             "status = $2",
             "updated_at >= $3",
+            "workspace_id = $4",
         ]
-        params: list[Any] = [project_id, "active", threshold]
+        params: list[Any] = [project_id, "active", threshold, workspace_id]
 
         if not include_subagents:
             where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
@@ -581,10 +604,10 @@ class PostgresSessionRepository:
         )
         return [dict(row) for row in rows]
 
-    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
-        where_parts: list[str] = ["TRIM(COALESCE(model, '')) != ''"]
-        params: list[Any] = []
-        idx = 1
+    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+        where_parts: list[str] = ["workspace_id = $1", "TRIM(COALESCE(model, '')) != ''"]
+        params: list[Any] = [workspace_id]
+        idx = 2
 
         if project_id:
             where_parts.append(f"project_id = ${idx}")
@@ -609,10 +632,10 @@ class PostgresSessionRepository:
         )
         return [dict(row) for row in rows]
 
-    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
-        where_parts: list[str] = []
-        params: list[Any] = []
-        idx = 1
+    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+        where_parts: list[str] = ["workspace_id = $1"]
+        params: list[Any] = [workspace_id]
+        idx = 2
 
         if project_id:
             where_parts.append(f"project_id = ${idx}")
@@ -1086,7 +1109,7 @@ class PostgresSessionRepository:
         )
         return [dict(r) for r in rows]
 
-    async def get_project_stats(self, project_id: str) -> dict:
+    async def get_project_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         query = """
             SELECT
                 COUNT(*) as count,
@@ -1099,9 +1122,9 @@ class PostgresSessionRepository:
                 ) as tokens,
                 AVG(duration_seconds) as duration
             FROM sessions
-            WHERE project_id = $1
+            WHERE project_id = $1 AND workspace_id = $2
         """
-        row = await self.db.fetchrow(query, project_id)
+        row = await self.db.fetchrow(query, project_id, workspace_id)
         if row:
             return {
                 "count": row["count"] or 0,
@@ -1111,16 +1134,16 @@ class PostgresSessionRepository:
             }
         return {"count": 0, "cost": 0.0, "tokens": 0, "duration": 0.0}
 
-    async def get_tool_stats(self, project_id: str) -> dict:
+    async def get_tool_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
         query = """
             SELECT
                 SUM(call_count) as calls,
                 AVG(CAST(success_count AS DOUBLE PRECISION) / NULLIF(call_count, 0) * 100) as success_rate
             FROM session_tool_usage stu
             JOIN sessions s ON s.id = stu.session_id
-            WHERE s.project_id = $1
+            WHERE s.project_id = $1 AND s.workspace_id = $2
         """
-        row = await self.db.fetchrow(query, project_id)
+        row = await self.db.fetchrow(query, project_id, workspace_id)
         if row:
             return {
                 "calls": row["calls"] or 0,

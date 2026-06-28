@@ -24,9 +24,9 @@ class TaskRepositoryStatsTests(unittest.IsolatedAsyncioTestCase):
             {"id": "T-4", "title": "Four", "status": "in-progress"},
         ]
         for row in rows:
-            await self.repo.upsert(row, "project-1")
+            await self.repo.upsert(row, "project-1", workspace_id="default-local")
 
-        stats = await self.repo.get_project_stats("project-1")
+        stats = await self.repo.get_project_stats("project-1", workspace_id="default-local")
         self.assertEqual(stats["completed"], 3)
         self.assertAlmostEqual(stats["completion_pct"], 75.0)
 

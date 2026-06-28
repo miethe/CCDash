@@ -148,6 +148,7 @@ class IntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "updatedAt": "2026-04-03T00:00:00Z",
             },
             "project-1",
+            workspace_id="default-local",
         )
 
         stored = await self.repo.upsert_session_memory_draft(

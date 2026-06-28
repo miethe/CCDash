@@ -104,6 +104,7 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
             "project-1",
+            workspace_id="default-local",
         )
 
     async def _seed_definitions(self) -> tuple[dict, dict]:

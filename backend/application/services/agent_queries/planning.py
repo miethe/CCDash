@@ -1772,6 +1772,7 @@ class PlanningQueryService:
             ports, project.id, feature_id
         )
 
+
         if feature_row is None and not current_doc_rows:
             return FeaturePlanningContextDTO(
                 status="error",

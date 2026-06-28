@@ -77,8 +77,12 @@ class _FakeWorkspaceRegistry:
 
 
 class _FakeStorage:
-    def __init__(self, db=None) -> None:  # noqa: ANN001
+    def __init__(self, db=None, ranking_repo=None) -> None:  # noqa: ANN001
         self.db = db if db is not None else object()
+        self._ranking_repo = ranking_repo
+
+    def artifact_rankings(self):  # noqa: ANN201
+        return self._ranking_repo
 
 
 class _FakeJobScheduler:
@@ -93,12 +97,12 @@ class _FakeIntegrationClient:
         return {}
 
 
-def _core_ports(project_id: str = "project-1", *, db=None) -> CorePorts:  # noqa: ANN001
+def _core_ports(project_id: str = "project-1", *, db=None, ranking_repo=None) -> CorePorts:  # noqa: ANN001
     return CorePorts(
         identity_provider=_FakeIdentityProvider(),
         authorization_policy=_FakeAuthorizationPolicy(),
         workspace_registry=_FakeWorkspaceRegistry(types.SimpleNamespace(id=project_id, name="Project 1")),
-        storage=_FakeStorage(db=db),
+        storage=_FakeStorage(db=db, ranking_repo=ranking_repo),
         job_scheduler=_FakeJobScheduler(),
         integration_client=_FakeIntegrationClient(),
     )
@@ -439,54 +443,54 @@ class ArtifactIntelligencePhase6ContractTests(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        with patch.object(analytics_router, "get_artifact_ranking_repository", return_value=repo):
-            for filters, expected_total in cases:
-                with self.subTest(filters=filters):
-                    payload = await analytics_router.get_artifact_rankings(
-                        project="project-1",
-                        collection=filters.get("collection"),
-                        user=filters.get("user"),
-                        period="30d",
-                        artifact=filters.get("artifact"),
-                        version=filters.get("version"),
-                        workflow=filters.get("workflow"),
-                        artifact_type=filters.get("artifact_type"),
-                        recommendation_type=filters.get("recommendation_type"),
-                        refresh=False,
-                        offset=0,
-                        limit=50,
-                        cursor=None,
-                        request_context=_request_context(),
-                        core_ports=_core_ports(),
-                    )
-                    self.assertEqual(payload.total, expected_total)
-                    call = repo.calls[-1]
-                    self.assertEqual(call["period"], "30d")
-                    self.assertEqual(call["collection_id"], filters.get("collection"))
-                    self.assertEqual(call["user_scope"], filters.get("user"))
-                    self.assertEqual(call["artifact_uuid"], filters.get("artifact"))
-                    self.assertEqual(call["version_id"], filters.get("version"))
-                    self.assertEqual(call["workflow_id"], filters.get("workflow"))
-                    self.assertEqual(call["artifact_type"], filters.get("artifact_type"))
-                    self.assertEqual(call["recommendation_type"], filters.get("recommendation_type"))
+        ports = _core_ports(ranking_repo=repo)
+        for filters, expected_total in cases:
+            with self.subTest(filters=filters):
+                payload = await analytics_router.get_artifact_rankings(
+                    project="project-1",
+                    collection=filters.get("collection"),
+                    user=filters.get("user"),
+                    period="30d",
+                    artifact=filters.get("artifact"),
+                    version=filters.get("version"),
+                    workflow=filters.get("workflow"),
+                    artifact_type=filters.get("artifact_type"),
+                    recommendation_type=filters.get("recommendation_type"),
+                    refresh=False,
+                    offset=0,
+                    limit=50,
+                    cursor=None,
+                    request_context=_request_context(),
+                    core_ports=ports,
+                )
+                self.assertEqual(payload.total, expected_total)
+                call = repo.calls[-1]
+                self.assertEqual(call["period"], "30d")
+                self.assertEqual(call["collection_id"], filters.get("collection"))
+                self.assertEqual(call["user_scope"], filters.get("user"))
+                self.assertEqual(call["artifact_uuid"], filters.get("artifact"))
+                self.assertEqual(call["version_id"], filters.get("version"))
+                self.assertEqual(call["workflow_id"], filters.get("workflow"))
+                self.assertEqual(call["artifact_type"], filters.get("artifact_type"))
+                self.assertEqual(call["recommendation_type"], filters.get("recommendation_type"))
 
-            payload = await analytics_router.get_artifact_rankings(
-                project="project-1",
-                collection=None,
-                user=None,
-                period="30d",
-                artifact="observed-expensive",
-                version=None,
-                workflow=None,
-                artifact_type=None,
-                recommendation_type=None,
-                refresh=False,
-                offset=0,
-                limit=50,
-                cursor=None,
-                request_context=_request_context(),
-                core_ports=_core_ports(),
-            )
+        payload = await analytics_router.get_artifact_rankings(
+            project="project-1",
+            collection=None,
+            user=None,
+            period="30d",
+            artifact="observed-expensive",
+            version=None,
+            workflow=None,
+            artifact_type=None,
+            recommendation_type=None,
+            refresh=False,
+            offset=0,
+            limit=50,
+            cursor=None,
+            request_context=_request_context(),
+            core_ports=ports,
+        )
 
         self.assertEqual(payload.total, 1)
         self.assertEqual(payload.rows[0].artifact_id, "observed-expensive")
@@ -496,24 +500,24 @@ class ArtifactIntelligencePhase6ContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_recommendation_api_contract_supports_all_seven_advisory_types(self) -> None:
         repo = _FakeArtifactRankingRepo(_recommendation_fixture_rows())
 
-        with patch.object(analytics_router, "get_artifact_ranking_repository", return_value=repo):
-            for recommendation_type in sorted(_ALL_RECOMMENDATION_TYPES):
-                with self.subTest(recommendation_type=recommendation_type):
-                    payload = await analytics_router.get_artifact_recommendations(
-                        project="project-1",
-                        recommendation_type=recommendation_type,
-                        min_confidence=0.65,
-                        period="30d",
-                        collection="collection-a",
-                        user="user-a",
-                        workflow=None,
-                        limit=100,
-                        request_context=_request_context(),
-                        core_ports=_core_ports(),
-                    )
-                    self.assertGreater(payload.total, 0)
-                    self.assertEqual({rec.recommendation_type for rec in payload.recommendations}, {recommendation_type})
-                    self.assertTrue(all(rec.next_action for rec in payload.recommendations))
+        ports = _core_ports(ranking_repo=repo)
+        for recommendation_type in sorted(_ALL_RECOMMENDATION_TYPES):
+            with self.subTest(recommendation_type=recommendation_type):
+                payload = await analytics_router.get_artifact_recommendations(
+                    project="project-1",
+                    recommendation_type=recommendation_type,
+                    min_confidence=0.65,
+                    period="30d",
+                    collection="collection-a",
+                    user="user-a",
+                    workflow=None,
+                    limit=100,
+                    request_context=_request_context(),
+                    core_ports=ports,
+                )
+                self.assertGreater(payload.total, 0)
+                self.assertEqual({rec.recommendation_type for rec in payload.recommendations}, {recommendation_type})
+                self.assertTrue(all(rec.next_action for rec in payload.recommendations))
 
     async def test_existing_artifact_outcome_endpoint_contract_remains_backward_compatible(self) -> None:
         client = _CapturingSAMTelemetryClient(

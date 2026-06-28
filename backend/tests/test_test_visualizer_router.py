@@ -146,6 +146,7 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
                 "status": "in-progress",
             },
             project_id="project-1",
+            workspace_id="default",
         )
 
         session_repo = SqliteSessionRepository(self.db)
@@ -158,6 +159,7 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
                 "sourceFile": "fixtures/session-1.jsonl",
             },
             project_id="project-1",
+            workspace_id="default",
         )
 
         await self.db.execute(

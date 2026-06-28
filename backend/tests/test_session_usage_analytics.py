@@ -48,6 +48,7 @@ class SessionUsageAnalyticsServiceTests(unittest.IsolatedAsyncioTestCase):
                 "sessionType": "session",
             },
             "project-1",
+            workspace_id="default-local",
         )
         await self.usage_repo.replace_session_usage(
             "project-1",

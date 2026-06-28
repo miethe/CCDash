@@ -115,7 +115,7 @@ class ProjectStatusQueryService:
 
         feature_rows: list[dict[str, Any]] = []
         try:
-            feature_rows = await ports.storage.features().list_all(project.id)
+            feature_rows = await ports.storage.features().list_all(project.id, workspace_id="default-local")  # TODO(workspace-routing)
             successful_sources += 1
         except Exception:
             partial = True
@@ -140,6 +140,7 @@ class ProjectStatusQueryService:
                     "started_at",
                     "desc",
                     {"include_subagents": True},
+                    workspace_id="default-local",  # TODO(workspace-routing)
                 )
                 recent_sessions = [_session_summary_from_row(row) for row in rows]
                 successful_sources += 1

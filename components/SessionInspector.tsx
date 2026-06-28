@@ -45,6 +45,7 @@ import { apiFetch } from '../services/apiClient';
 import { isMemoryGuardEnabled } from '../lib/featureFlags';
 import { uiStateKeys } from '../services/queryKeys';
 import { SessionFeaturesView, TranscriptView } from './SessionInspector/TranscriptView';
+import { SessionSourceChip } from './SessionSourceChip';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -5091,6 +5092,8 @@ const SessionDetail = React.memo<{
                                         ↳ subagent
                                     </span>
                                 ) : null}
+                                {/* Phase 6: session source discriminator — absent field → nothing rendered. */}
+                                <SessionSourceChip source={session.source} compact />
                             </div>
                         </div>
                     </div>

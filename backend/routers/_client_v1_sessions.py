@@ -301,6 +301,7 @@ async def get_session_family_v1(
         sort_by="started_at",
         sort_order="asc",
         filters={"root_session_id": root_id},
+        workspace_id="default-local",  # TODO(workspace-routing)
     )
 
     # Step 3: map raw rows to SessionRef DTOs.

@@ -1,4 +1,5 @@
 import type {
+  IngestSourceHealth,
   RuntimeHealthResponse,
   RuntimeProbeActivityResponse,
   RuntimeProbeContractResponse,
@@ -75,6 +76,8 @@ export interface RuntimeStatus {
   canonicalSessionStore: string;
   /** Whether the v2 feature-surface data path is active. True by default. */
   featureSurfaceV2Enabled: boolean;
+  /** Phase 6: per-source ingest health rollup. Empty array on pre-v36 backends. */
+  ingestSources: IngestSourceHealth[];
 }
 
 function normalizeText(value: unknown, fallback: string): string {
@@ -249,5 +252,7 @@ export function normalizeRuntimeStatus(health: RuntimeHealthResponse): RuntimeSt
     featureSurfaceV2Enabled: typeof health.featureSurfaceV2Enabled === 'boolean'
       ? health.featureSurfaceV2Enabled
       : true,
+    // Phase 6: absent on pre-v36 backends → default empty (additive, never error).
+    ingestSources: Array.isArray(health.ingestSources) ? health.ingestSources : [],
   };
 }

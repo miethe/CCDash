@@ -253,6 +253,7 @@ class FeatureModalDetailService:
             0,
             100,
             {"feature": feature_id, "include_progress": True},
+            workspace_id="default-local",  # TODO(workspace-routing)
         )
         normalized = [
             {
@@ -433,7 +434,7 @@ class FeatureModalDetailService:
         )
 
     async def _get_feature_row(self, ports: CorePorts, feature_id: str) -> dict[str, Any] | None:
-        row = await ports.storage.features().get_by_id(feature_id)
+        row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         return _row_or_none(row)
 
     async def _load_phase_rows(
@@ -448,6 +449,7 @@ class FeatureModalDetailService:
             summaries = await feature_repo.list_phase_summaries_for_features(
                 project_id,
                 PhaseSummaryBulkQuery(feature_ids=[feature_id]),
+                workspace_id="default-local",  # TODO(workspace-routing)
             )
             rows = summaries.get(feature_id, [])
             return [_row_or_none(item) or {} for item in rows]
@@ -474,7 +476,7 @@ class FeatureModalDetailService:
         return rows
 
     async def _load_task_rows(self, ports: CorePorts, feature_id: str) -> list[dict[str, Any]]:
-        rows = await ports.storage.tasks().list_by_feature(feature_id)
+        rows = await ports.storage.tasks().list_by_feature(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         return [_row_or_none(item) or {} for item in rows]
 
     def _feature_session_repository(self, storage: Any) -> Any:

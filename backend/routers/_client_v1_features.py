@@ -339,7 +339,7 @@ def _project_id_from_context(context: RequestContext) -> str:
 async def _resolve_feature_alias_id(storage: Any, context: RequestContext, feature_id: str) -> str:
     """Resolve base-slug aliases to the best concrete feature row for v1 modal paths."""
     feature_repo = storage.features()
-    existing = await feature_repo.get_by_id(feature_id)
+    existing = await feature_repo.get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
     if existing is not None:
         return feature_id
 
@@ -348,7 +348,7 @@ async def _resolve_feature_alias_id(storage: Any, context: RequestContext, featu
         return feature_id
 
     base = canonical_slug(feature_id)
-    candidates = await feature_repo.list_all(project_id)
+    candidates = await feature_repo.list_all(project_id, workspace_id="default-local")
     matches = [
         dict(row)
         for row in candidates
@@ -1180,8 +1180,8 @@ async def list_features_v1(
                 logger.debug("Could not resolve project scope for list_features_v1")
 
             keyword = q.strip() if q else None
-            rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit, keyword=keyword)
-            total = await feature_repo.count(project_id, keyword=keyword)
+            rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit, keyword=keyword, workspace_id="default-local")
+            total = await feature_repo.count(project_id, keyword=keyword, workspace_id="default-local")
 
             if status:
                 status_lower = {s.lower() for s in status}
@@ -1591,7 +1591,7 @@ async def get_feature_modal_overview_v1(
         if overview.status == "not_found":
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
 
-        feature_row = await app_request.ports.storage.features().get_by_id(resolved_feature_id)
+        feature_row = await app_request.ports.storage.features().get_by_id(resolved_feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         card = _build_card_dto(dict(feature_row or {}))
 
         rollup = None

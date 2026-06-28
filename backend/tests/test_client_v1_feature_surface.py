@@ -23,6 +23,8 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from backend.adapters.auth.context import AuthContext
+from backend.adapters.auth.dependency import get_auth_context
 from backend.application.context import ProjectScope, WorkspaceScope
 from backend.models import Project
 from backend.runtime.bootstrap import build_runtime_app
@@ -48,6 +50,11 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
         cls._env_patcher.start()
 
         cls._app = build_runtime_app("test")
+
+        cls._app.dependency_overrides[get_auth_context] = lambda: AuthContext.synthesize_local(
+            project_id=cls._PROJECT_ID
+        )
+
         cls._patches = [
             patch("backend.runtime.container.initialize_observability"),
             patch("backend.runtime.container.shutdown_observability"),
@@ -68,6 +75,7 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls._restore_workspace_registry()
+        cls._app.dependency_overrides.clear()
         cls._tc.__exit__(None, None, None)
         for p in reversed(cls._patches):
             p.stop()
@@ -178,6 +186,7 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
                 "primaryDocuments": [{"documentId": "doc-1", "title": "Plan", "docType": "prd"}],
             },
             cls._PROJECT_ID,
+            workspace_id="default-local",
         )
         await storage.features().upsert_phases(
             cls._FEATURE_ID,
@@ -209,6 +218,7 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
                 "sourceFile": "sessions/session-surface-1.jsonl",
             },
             cls._PROJECT_ID,
+            workspace_id="default-local",
         )
         await storage.sessions().upsert_logs(
             cls._SESSION_ID,
@@ -235,7 +245,8 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
                 "link_type": "related",
                 "origin": "test",
                 "confidence": 1.0,
-            }
+            },
+            workspace_id="default-local",
         )
 
     def _openapi_paths(self) -> dict:

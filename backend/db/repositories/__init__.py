@@ -1,5 +1,6 @@
 """Repository package for database access."""
 
+from .base import DEFAULT_WORKSPACE_ID
 from .sessions import SqliteSessionRepository
 from .documents import SqliteDocumentRepository
 from .tasks import SqliteTaskRepository
@@ -18,6 +19,7 @@ from .execution import SqliteExecutionRepository
 from .telemetry_queue import SqliteTelemetryQueueRepository
 
 __all__ = [
+    "DEFAULT_WORKSPACE_ID",
     "SqliteSessionRepository",
     "SqliteDocumentRepository",
     "SqliteTaskRepository",

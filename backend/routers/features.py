@@ -204,7 +204,7 @@ def _feature_row_score(row: dict[str, Any]) -> tuple[int, int, int, str, int]:
 async def _resolve_feature_alias_id(repo, project_id: str, feature_id: str) -> str:
     """Choose the best canonical feature row for a requested id alias."""
     base = canonical_slug(feature_id)
-    candidates = await repo.list_all(project_id)
+    candidates = await repo.list_all(project_id, workspace_id="default-local")
     matches = [
         row for row in candidates
         if canonical_slug(str(row.get("id") or "")) == base
@@ -877,8 +877,8 @@ async def list_features(
     db = await connection.get_connection()
     repo = get_feature_repository(db)
 
-    features_data = await repo.list_paginated(project.id, offset, limit)
-    total = await repo.count(project.id)
+    features_data = await repo.list_paginated(project.id, offset, limit, workspace_id="default-local")
+    total = await repo.count(project.id, workspace_id="default-local")
 
     # ── P2-016: batch-load phases for all feature IDs in ONE query ──────────
     # Replaces the per-feature get_phases() call (N+1 elimination).
@@ -1210,7 +1210,7 @@ async def get_feature(feature_id: str, include_tasks: bool = True):
     db = await connection.get_connection()
     repo = get_feature_repository(db)
     
-    f = await repo.get_by_id(feature_id)
+    f = await repo.get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not f:
         active_project = project_manager.get_active_project()
         if not active_project:
@@ -1229,7 +1229,7 @@ async def get_feature(feature_id: str, include_tasks: bool = True):
     tasks_by_phase: dict[str, list[dict[str, Any]]] = {}
     if include_tasks:
         task_repo = get_task_repository(db)
-        all_tasks_data = await task_repo.list_by_feature(f["id"], None)
+        all_tasks_data = await task_repo.list_by_feature(f["id"], None, workspace_id="default-local")  # TODO(workspace-routing)
         for row in all_tasks_data:
             phase_key = str(row.get("phase_id") or "")
             tasks_by_phase.setdefault(phase_key, []).append(row)
@@ -1362,7 +1362,7 @@ async def get_feature_linked_sessions(feature_id: str):
     active_project = project_manager.get_active_project()
     mappings = await load_session_mappings(db, active_project.id) if active_project else []
     feature_repo = get_feature_repository(db)
-    feature = await feature_repo.get_by_id(feature_id)
+    feature = await feature_repo.get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
     if not feature:
         if not active_project:
             raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
@@ -1386,7 +1386,7 @@ async def get_feature_linked_sessions(feature_id: str):
         if phase_token and phase_token not in available_phase_tokens:
             available_phase_tokens.append(phase_token)
 
-    feature_task_rows = await task_repo.list_by_feature(feature_id, None)
+    feature_task_rows = await task_repo.list_by_feature(feature_id, None, workspace_id="default-local")  # TODO(workspace-routing)
     tasks_by_identifier: dict[str, list[dict[str, str]]] = {}
     tasks_by_title: dict[str, list[dict[str, str]]] = {}
     for task_row in feature_task_rows:
@@ -1769,7 +1769,7 @@ async def get_feature_linked_sessions(feature_id: str):
         if not session_id:
             continue
 
-        session_row = await session_repo.get_by_id(session_id)
+        session_row = await session_repo.get_by_id(session_id, workspace_id="default-local")  # TODO(workspace-routing)
         if not session_row:
             continue
         metadata = _safe_json(link.get("metadata_json"))
@@ -1800,6 +1800,7 @@ async def get_feature_linked_sessions(feature_id: str):
             total = await session_repo.count(
                 active_project.id,
                 {"include_subagents": True, "root_session_id": root_id},
+                workspace_id="default-local",
             )
             if total <= 0:
                 continue
@@ -1813,6 +1814,7 @@ async def get_feature_linked_sessions(feature_id: str):
                     "started_at",
                     "desc",
                     {"include_subagents": True, "root_session_id": root_id},
+                    workspace_id="default-local",
                 )
                 if not page:
                     break

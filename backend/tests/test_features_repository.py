@@ -22,6 +22,7 @@ class FeatureRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "completedTasks": 0,
             },
             "project-1",
+            workspace_id="default-local",
         )
 
     async def asyncTearDown(self) -> None:

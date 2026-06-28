@@ -15,6 +15,7 @@ Docs: [Documentation home](docs/README.md)
 - **Workflow Intelligence**: Discover which workflows succeed, which waste tokens, and which carry risk.
 - **Local Context**: Tightly coupled with your local filesystem, Git history, and Markdown frontmatter.
 - **Multi-Platform**: Native support for Claude Code and Codex with extensible parser routing.
+- **Remote & Multi-Workspace**: Run CCDash as a central server and stream sessions to it from any workstation. A local daemon (`ccdash-cli daemon start`) ships session logs over an authenticated NDJSON endpoint with retry/backoff, dead-letter, and replay; workspace-scoped bearer auth keeps each tenant's data isolated. See the [operator guide](docs/guides/remote-ingest-operator-guide.md) and [LAN deployment guide](docs/guides/external-api-lan-deployment.md).
 
 → [Get Started](#getting-started)
 

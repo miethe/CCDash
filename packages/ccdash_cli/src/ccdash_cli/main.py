@@ -5,6 +5,7 @@ from importlib.metadata import PackageNotFoundError, version as pkg_version
 
 import typer
 
+from ccdash_cli.commands.daemon import daemon_app
 from ccdash_cli.commands.doctor import doctor_app
 from ccdash_cli.commands.feature import feature_app
 from ccdash_cli.commands.project import project_app
@@ -22,6 +23,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+app.add_typer(daemon_app, name="daemon")
 app.add_typer(target_app, name="target")
 app.add_typer(doctor_app, name="doctor")
 app.add_typer(status_app, name="status")

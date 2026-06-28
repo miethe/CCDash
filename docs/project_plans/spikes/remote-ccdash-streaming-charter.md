@@ -2,9 +2,11 @@
 schema_version: 2
 doc_type: spike
 title: "Remote CCDash Operation + Local Daemon Session Streaming"
-status: draft
+status: completed
 created: 2026-04-19
-updated: 2026-04-19
+updated: 2026-05-10
+completed_date: 2026-05-10
+spike_output: docs/project_plans/SPIKEs/remote-ccdash-streaming.md
 feature_slug: remote-ccdash-streaming
 complexity: high
 estimated_research_time: "2 weeks (1 engineer) or 1 week (2 engineers in parallel on transport vs auth)"
@@ -153,15 +155,16 @@ This SPIKE investigates what is required to run CCDash as a remote (non-co-locat
 
 ## 6. Deliverables Checklist
 
-- [ ] ADR-NNNN: Ingest transport decision (NDJSON vs SSE vs WS vs gRPC) — TBD via research
-- [ ] ADR-NNNN: Daemon packaging + lifecycle — TBD via research
-- [ ] ADR-NNNN: Auth model v1 (workspace scoping, migration from single-tenant) — TBD via research
-- [ ] ADR-NNNN: Sync engine port abstraction (`SessionIngestSource`) — TBD via research
-- [ ] ADR-NNNN: Multi-project routing model — TBD via research
-- [ ] Benchmark table for E1 + E5 (throughput, latency, memory) — TBD via research
-- [ ] Failure-mode matrix (RQ-6 answer) — TBD via research
-- [ ] Migration plan memo (RQ-8 answer) — TBD via research
-- [ ] Findings summary: `docs/project_plans/SPIKEs/remote-ccdash-streaming.md`
+- [x] [ADR-006: Ingest transport decision (chunked NDJSON over HTTPS POST)](../adrs/adr-014-remote-session-ingest-transport-ndjson-http.md)
+- [x] [ADR-007: Daemon packaging + lifecycle (subcommand of `ccdash` CLI)](../adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md)
+- [x] [ADR-008: Auth model v1 (workspace-scoped bearer tokens)](../adrs/adr-008-workspace-scoped-bearer-auth-v1.md)
+- [x] [ADR-009: Sync engine port abstraction (`SessionIngestSource` + `ingest_cursors`)](../adrs/adr-009-session-ingest-source-port-and-cursor-table.md)
+- [x] [ADR-010: Multi-project routing (single process + request-scoped binding)](../adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md)
+- [x] [Benchmark targets table for E1 + E5](../SPIKEs/remote-ccdash-streaming.md#benchmark-targets-table-e1-e5)
+- [x] [Failure-mode matrix (RQ-6)](../SPIKEs/remote-ccdash-streaming.md#failure-mode-matrix-rq-6)
+- [x] [Migration plan memo (RQ-8)](../SPIKEs/remote-ccdash-streaming.md#migration-plan-memo-rq-8)
+- [x] [Findings summary](../SPIKEs/remote-ccdash-streaming.md)
+- [x] [Architecture design doc](../designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md)
 
 ## 7. Timeline & Owners
 
@@ -189,3 +192,18 @@ Mid-SPIKE checkpoint at end of week 1: Track A has E1+E2 running end-to-end; Tra
 - Sister SPIKE (Entire.io ingest): `docs/project_plans/SPIKEs/entire-io-integration-charter.md`
 - Downstream PRD (gated on this charter): `docs/project_plans/PRDs/features/remote-ccdash-streaming-v1.md`
 - Downstream implementation plan (gated on PRD): `docs/project_plans/implementation_plans/features/remote-ccdash-streaming-v1.md`
+
+---
+
+## 10. Outcomes (added 2026-05-10)
+
+SPIKE-A is complete. One-line summaries of each gating decision; full rationale in the linked ADRs and the [findings summary](../SPIKEs/remote-ccdash-streaming.md).
+
+- **RQ-1 / Transport** — Chunked NDJSON over HTTPS POST at `/api/v1/ingest/sessions`. Stateless, proxy-friendly, symmetric with the existing outbound telemetry exporter. ([ADR-006](../adrs/adr-014-remote-session-ingest-transport-ndjson-http.md))
+- **RQ-2 / Daemon packaging** — Subcommand of the standalone `ccdash` CLI; supervision delegated to launchd / systemd-user / Task Scheduler. ([ADR-007](../adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md))
+- **RQ-3 / Auth** — Workspace-scoped bearer tokens (argon2id-hashed) with explicit `workspace_id` predicate filtering; OIDC/mTLS deferred to v2; legacy single-bearer preserved in `local` profile. ([ADR-008](../adrs/adr-008-workspace-scoped-bearer-auth-v1.md))
+- **RQ-4 / Sync port** — `SessionIngestSource` Python `Protocol` + new `ingest_cursors` watermark table; `FilesystemSource` wraps existing logic with zero existing-test changes; `RemoteIngestSource` is a parallel implementation. ([ADR-009](../adrs/adr-009-session-ingest-source-port-and-cursor-table.md))
+- **RQ-5 / Multi-project routing** — Single `api` process with per-request `RuntimeContainer.resolve_binding(project_id)` driven by `AuthContext`; LRU-cached bindings; `worker` profile retains startup-time binding. ([ADR-010](../adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md))
+- **RQ-6 / Failure modes** — 12-row failure-mode matrix covering daemon offline, network unreachable, 5xx, 429, partial batch, schema skew (forward + backward), cursor lag, clock skew, token revocation, server DB full, daemon disk full. Each row maps to detection / recovery / operator-visible signal. ([Matrix in findings summary](../SPIKEs/remote-ccdash-streaming.md#failure-mode-matrix-rq-6))
+- **RQ-7 / Frontend** — Three minimum surfaces: source chip, daemon health badge, live/historical pill. Polling at 5s when daemon is connected; no new SSE subscription on the dashboard for ingest. ([Design doc §3 / RQ-7 in findings summary](../SPIKEs/remote-ccdash-streaming.md#rq-7--frontend-requirements))
+- **RQ-8 / Migration** — No-op for `local` profile users. `api`/`worker` deployments run a one-shot auth migration script that creates a `default-local` workspace and backfills `workspace_id`. Dual-source (filesystem + remote) is opt-in for transitions. ([Memo in findings summary](../SPIKEs/remote-ccdash-streaming.md#migration-plan-memo-rq-8))

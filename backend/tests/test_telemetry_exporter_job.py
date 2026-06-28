@@ -208,6 +208,7 @@ class TelemetryExportCoordinatorTests(unittest.IsolatedAsyncioTestCase):
                 "sourceFile": f"/tmp/{session_id}.jsonl",
             },
             "project-1",
+            workspace_id="default-local",
         )
         payload = ExecutionOutcomePayload(
             event_id=uuid4(),
@@ -427,6 +428,7 @@ class SyncEngineTelemetryExportTests(unittest.IsolatedAsyncioTestCase):
                 "sourceFile": f"/tmp/{session_id}.jsonl",
             },
             "project-1",
+            workspace_id="default-local",
         )
 
         await self.engine._maybe_enqueue_telemetry_export(  # noqa: SLF001

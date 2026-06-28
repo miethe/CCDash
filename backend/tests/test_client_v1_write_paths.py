@@ -26,6 +26,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+from backend.adapters.auth.context import AuthContext
+from backend.adapters.auth.dependency import get_auth_context
 from backend.runtime.bootstrap import build_runtime_app
 
 
@@ -68,6 +70,10 @@ class TestPercentEncodedPathParams(unittest.TestCase):
 
         cls._app = build_runtime_app("test")
 
+        cls._app.dependency_overrides[get_auth_context] = lambda: AuthContext.synthesize_local(
+            project_id="test-project"
+        )
+
         cls._std_patches = [
             patch("backend.runtime.container.initialize_observability"),
             patch("backend.runtime.container.shutdown_observability"),
@@ -89,6 +95,7 @@ class TestPercentEncodedPathParams(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        cls._app.dependency_overrides.clear()
         cls._tc.__exit__(None, None, None)
         for p in reversed(cls._std_patches):
             p.stop()

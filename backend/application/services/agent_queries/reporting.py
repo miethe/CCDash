@@ -72,7 +72,7 @@ class ReportingQueryService:
             return AARReportDTO(status="error", feature_id=feature_id, source_refs=[feature_id])
 
         partial = False
-        feature_row = await ports.storage.features().get_by_id(feature_id)
+        feature_row = await ports.storage.features().get_by_id(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         if feature_row is None:
             return AARReportDTO(status="error", feature_id=feature_id, source_refs=[feature_id])
 
@@ -97,13 +97,14 @@ class ReportingQueryService:
                 0,
                 100,
                 {"feature": feature_id, "include_progress": True},
+                workspace_id="default-local",  # TODO(workspace-routing)
             )
         except Exception:
             partial = True
 
         task_rows: list[dict[str, Any]] = []
         try:
-            task_rows = await ports.storage.tasks().list_by_feature(feature_id)
+            task_rows = await ports.storage.tasks().list_by_feature(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
         except Exception:
             partial = True
 

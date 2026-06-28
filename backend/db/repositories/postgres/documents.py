@@ -17,6 +17,8 @@ from backend.document_linking import (
 )
 
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
+
 class PostgresDocumentRepository:
     """Postgres-backed document storage with typed metadata and refs."""
 
@@ -130,10 +132,10 @@ class PostgresDocumentRepository:
             unique[(kind, norm, source_field)] = (kind, raw, norm, source_field)
         return list(unique.values())
 
-    def _build_where_clause(self, project_id: str, filters: dict | None = None) -> tuple[str, list[Any]]:
+    def _build_where_clause(self, project_id: str, filters: dict | None = None, *, workspace_id: str = "default-local") -> tuple[str, list[Any]]:
         filters = filters or {}
-        clauses = ["project_id = $1"]
-        params: list[Any] = [project_id]
+        clauses = ["workspace_id = $1", "project_id = $2"]
+        params: list[Any] = [workspace_id, project_id]
 
         def add_param(value: Any) -> str:
             params.append(value)
@@ -358,29 +360,46 @@ class PostgresDocumentRepository:
                 [(doc_data["id"], project_id, kind, raw, norm, source_field) for kind, raw, norm, source_field in rows],
             )
 
-    async def get_by_id(self, doc_id: str) -> dict | None:
-        row = await self.db.fetchrow("SELECT * FROM documents WHERE id = $1", doc_id)
+    async def get_by_id(self, doc_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
+        """Fetch a single document by PK, scoped to workspace_id.
+
+        Returns None when the document does not exist OR belongs to a different
+        workspace.  Per ADR-008 §Data Isolation, callers surface this as 404.
+        """
+        row = await self.db.fetchrow(
+            "SELECT * FROM documents WHERE id = $1 AND workspace_id = $2",
+            doc_id,
+            workspace_id,
+        )
         return dict(row) if row else None
 
-    async def get_many_by_ids(self, ids: list[str]) -> dict[str, dict]:
-        """Fetch multiple documents in a single query. Returns a dict keyed by document id."""
+    async def get_many_by_ids(self, ids: list[str], *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict[str, dict]:
+        """Fetch multiple documents in a single query, scoped to workspace_id.
+
+        Returns a dict keyed by document id.  Documents belonging to a different
+        workspace are silently excluded.
+        """
         if not ids:
             return {}
         rows = await self.db.fetch(
-            "SELECT * FROM documents WHERE id = ANY($1::text[])", ids
+            "SELECT * FROM documents WHERE id = ANY($1::text[]) AND workspace_id = $2",
+            ids,
+            workspace_id,
         )
         return {row["id"]: dict(row) for row in rows}
 
-    async def get_by_path(self, project_id: str, canonical_path: str) -> dict | None:
+    async def get_by_path(self, project_id: str, canonical_path: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
+        """Fetch a document by project + path, scoped to workspace_id."""
         row = await self.db.fetchrow(
-            "SELECT * FROM documents WHERE project_id = $1 AND canonical_path = $2 LIMIT 1",
+            "SELECT * FROM documents WHERE workspace_id = $1 AND project_id = $2 AND canonical_path = $3 LIMIT 1",
+            workspace_id,
             project_id,
             normalize_ref_path(canonical_path),
         )
         return dict(row) if row else None
 
-    async def list_paginated(self, project_id: str, offset: int, limit: int, filters: dict | None = None) -> list[dict]:
-        where_sql, params = self._build_where_clause(project_id, filters)
+    async def list_paginated(self, project_id: str, offset: int, limit: int, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+        where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         params_with_page = [*params, limit, offset]
         query = f"""
             SELECT * FROM documents
@@ -394,19 +413,24 @@ class PostgresDocumentRepository:
         rows = await self.db.fetch(query, *params_with_page)
         return [dict(row) for row in rows]
 
-    async def count(self, project_id: str, filters: dict | None = None) -> int:
-        where_sql, params = self._build_where_clause(project_id, filters)
+    async def count(self, project_id: str, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
+        where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         row = await self.db.fetchrow(f"SELECT COUNT(*) AS total FROM documents WHERE {where_sql}", *params)
         return int(row["total"] if row else 0)
 
-    async def list_all(self, project_id: str | None = None) -> list[dict]:
+    async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         if project_id:
-            return await self.list_paginated(project_id, 0, 5000, {})
-        rows = await self.db.fetch("SELECT * FROM documents ORDER BY title LIMIT $1", 5000)
+            return await self.list_paginated(project_id, 0, 5000, {}, workspace_id=workspace_id)
+        # WORKSPACE-AUDIT-EXEMPT: cross-project list scoped to a single workspace.
+        rows = await self.db.fetch(
+            "SELECT * FROM documents WHERE workspace_id = $1 ORDER BY title LIMIT $2",
+            workspace_id,
+            5000,
+        )
         return [dict(row) for row in rows]
 
-    async def get_catalog_facets(self, project_id: str, filters: dict | None = None) -> dict:
-        where_sql, params = self._build_where_clause(project_id, filters)
+    async def get_catalog_facets(self, project_id: str, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict:
+        where_sql, params = self._build_where_clause(project_id, filters, workspace_id=workspace_id)
         facets: dict[str, dict[str, int] | int] = {
             "total": 0,
             "root_kind": {},

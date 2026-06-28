@@ -1369,6 +1369,10 @@ class SyncEngine:
     into the SQLite/Postgres cache via repositories.
     """
 
+    # The sync engine always operates in the local profile (no workspace token).
+    # All repository calls from this engine use the default-local workspace sentinel.
+    _WORKSPACE_ID: str = "default-local"
+
     def __init__(self, db: Any): # db is Union[aiosqlite.Connection, asyncpg.Pool]
         self.db = db
         # Per-run rglob memo table.  Populated by _rglob() at the start of
@@ -1788,6 +1792,7 @@ class SyncEngine:
                 0,
                 200,
                 filters={"feature": feature_id, "include_progress": True},
+                workspace_id=self._WORKSPACE_ID,
             )
         scope_drift_facts = build_session_scope_drift_facts(session_payload, linked_docs, file_updates)
 
@@ -2232,6 +2237,7 @@ class SyncEngine:
                 sort_by="started_at",
                 sort_order="desc",
                 filters={"include_subagents": True},
+                workspace_id=self._WORKSPACE_ID,
             )
             if not sessions:
                 break
@@ -2285,6 +2291,7 @@ class SyncEngine:
                 sort_by="started_at",
                 sort_order="desc",
                 filters={"include_subagents": True},
+                workspace_id=self._WORKSPACE_ID,
             )
             if not sessions:
                 break
@@ -2339,6 +2346,7 @@ class SyncEngine:
                 sort_by="started_at",
                 sort_order="desc",
                 filters={"include_subagents": True},
+                workspace_id=self._WORKSPACE_ID,
             )
             if not sessions:
                 break
@@ -2383,6 +2391,7 @@ class SyncEngine:
                 sort_by="started_at",
                 sort_order="desc",
                 filters={"include_subagents": True},
+                workspace_id=self._WORKSPACE_ID,
             )
             if not sessions:
                 break
@@ -2425,6 +2434,7 @@ class SyncEngine:
                 sort_by="started_at",
                 sort_order="desc",
                 filters={"include_subagents": True},
+                workspace_id=self._WORKSPACE_ID,
             )
             if not sessions:
                 break
@@ -4893,7 +4903,7 @@ class SyncEngine:
         if doc:
             doc_dict = doc.model_dump()
             doc_dict["sourceFile"] = file_path
-            await self.document_repo.upsert(doc_dict, project_id)
+            await self.document_repo.upsert(doc_dict, project_id, workspace_id=self._WORKSPACE_ID)
 
             fm = doc_dict.get("frontmatter", {})
             fm_tags = fm.get("tags", []) if isinstance(fm, dict) else []
@@ -4986,7 +4996,7 @@ class SyncEngine:
             task_dict = task.model_dump()
             task_dict["sourceFile"] = canonical_source
             task_dict = _prepare_task_for_storage(task_dict)
-            await self.task_repo.upsert(task_dict, project_id)
+            await self.task_repo.upsert(task_dict, project_id, workspace_id=self._WORKSPACE_ID)
 
             # Auto-tag
             for tag_name in task.tags:
@@ -5066,7 +5076,7 @@ class SyncEngine:
         for feature in features:
             try:
                 f_dict = feature.model_dump()
-                await self.feature_repo.upsert(f_dict, project_id)
+                await self.feature_repo.upsert(f_dict, project_id, workspace_id=self._WORKSPACE_ID)
 
                 # Upsert phases and link tasks
                 phases = []
@@ -5089,7 +5099,7 @@ class SyncEngine:
                         task_dict["featureId"] = feature.id
                         task_dict["phaseId"] = phase_id
                         task_dict = _prepare_task_for_storage(task_dict)
-                        await self.task_repo.upsert(task_dict, project_id)
+                        await self.task_repo.upsert(task_dict, project_id, workspace_id=self._WORKSPACE_ID)
 
                 await self.feature_repo.upsert_phases(feature.id, phases)
 
@@ -5108,7 +5118,7 @@ class SyncEngine:
         scanned_ids = {str(feature.id or "") for feature in features if str(feature.id or "").strip()}
         scanned_bases = {canonical_slug(feature_id) for feature_id in scanned_ids}
         if scanned_bases:
-            existing_rows = await self.feature_repo.list_all(project_id)
+            existing_rows = await self.feature_repo.list_all(project_id, workspace_id=self._WORKSPACE_ID)
             stale_feature_ids = [
                 str(row.get("id") or "")
                 for row in existing_rows
@@ -5117,7 +5127,7 @@ class SyncEngine:
                 and canonical_slug(str(row.get("id") or "")) in scanned_bases
             ]
             for stale_feature_id in stale_feature_ids:
-                stale_tasks = await self.task_repo.list_by_feature(stale_feature_id)
+                stale_tasks = await self.task_repo.list_by_feature(stale_feature_id, workspace_id="default-local")  # TODO(workspace-routing)
                 for task_row in stale_tasks:
                     task_id = str(task_row.get("id") or "")
                     if task_id:
@@ -5471,7 +5481,7 @@ class SyncEngine:
                     payload_json,
                 )
 
-        features = await self.feature_repo.list_all(project_id)
+        features = await self.feature_repo.list_all(project_id, workspace_id=self._WORKSPACE_ID)
         await self._update_operation(
             operation_id,
             phase="links:feature-prep",
@@ -5573,7 +5583,7 @@ class SyncEngine:
                             feature_slug_aliases[feature_id].add(_canonical_slug(token))
 
             # Link feature → tasks
-            tasks = await self.task_repo.list_by_feature(feature_id)
+            tasks = await self.task_repo.list_by_feature(feature_id, workspace_id="default-local")  # TODO(workspace-routing)
             for t in tasks:
                 await self.link_repo.delete_auto_links("task", t["id"])
 
@@ -5583,13 +5593,14 @@ class SyncEngine:
                     feature_slug_aliases[feature_id].update(alias_tokens_from_path(source_file))
 
                 await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                     "source_type": "feature",
                     "source_id": feature_id,
                     "target_type": "task",
                     "target_id": t["id"],
                     "link_type": "child",
                     "origin": "auto",
-                })
+                }, workspace_id=self._WORKSPACE_ID)
                 stats["created"] += 1
 
                 # Link task → session if available
@@ -5601,6 +5612,7 @@ class SyncEngine:
                         "commitHash": t.get("commit_hash") or "",
                     }
                     await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                         "source_type": "feature",
                         "source_id": feature_id,
                         "target_type": "session",
@@ -5609,18 +5621,19 @@ class SyncEngine:
                         "origin": "auto",
                         "confidence": 1.0,
                         "metadata_json": json.dumps(feature_session_metadata),
-                    })
+                    }, workspace_id=self._WORKSPACE_ID)
                     stats["created"] += 1
                     task_bound_feature_sessions.add((feature_id, str(t["session_id"])))
 
                     await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                         "source_type": "task",
                         "source_id": t["id"],
                         "target_type": "session",
                         "target_id": t["session_id"],
                         "link_type": "related",
                         "origin": "auto",
-                    })
+                    }, workspace_id=self._WORKSPACE_ID)
                     stats["created"] += 1
 
             if operation_id and (feature_index == len(features) or feature_index % 20 == 0):
@@ -5639,7 +5652,7 @@ class SyncEngine:
         session_mapping_rules = await load_session_mappings(self.db, project_id)
         workflow_markers = workflow_command_markers(session_mapping_rules)
         command_exclusions = workflow_command_exemptions()
-        total_sessions = await self.session_repo.count(project_id, {"include_subagents": True})
+        total_sessions = await self.session_repo.count(project_id, {"include_subagents": True}, workspace_id="default-local")  # TODO(workspace-routing)
         await self._update_operation(
             operation_id,
             phase="links:session-evidence",
@@ -5656,6 +5669,7 @@ class SyncEngine:
                 "started_at",
                 "desc",
                 {"include_subagents": True},
+                workspace_id="default-local",  # TODO(workspace-routing)
             )
             sessions_data.extend(page)
             if operation_id:
@@ -6002,6 +6016,7 @@ class SyncEngine:
                     "commitCorrelations": commit_correlations[:60],
                 }
                 await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                     "source_type": "feature",
                     "source_id": feature_id,
                     "target_type": "session",
@@ -6010,7 +6025,7 @@ class SyncEngine:
                     "origin": "auto",
                     "confidence": confidence,
                     "metadata_json": json.dumps(metadata),
-                })
+                }, workspace_id=self._WORKSPACE_ID)
                 stats["created"] += 1
 
             if operation_id and (session_index == len(sessions_data) or session_index % 25 == 0):
@@ -6026,14 +6041,14 @@ class SyncEngine:
                 )
 
         # Link documents ↔ features/tasks/sessions/documents from normalized metadata.
-        docs = await self.document_repo.list_all(project_id)
+        docs = await self.document_repo.list_all(project_id, workspace_id=self._WORKSPACE_ID)
         await self._update_operation(
             operation_id,
             phase="links:documents",
             message=f"Linking documents ({len(docs)} total)",
             progress={"documentCount": len(docs)},
         )
-        tasks = await self.task_repo.list_all(project_id)
+        tasks = await self.task_repo.list_all(project_id, workspace_id=self._WORKSPACE_ID)
         sessions_by_id = {str(row.get("id") or ""): row for row in sessions_data}
 
         docs_by_path: dict[str, str] = {}
@@ -6137,6 +6152,7 @@ class SyncEngine:
             for feat_ref in sorted(resolved_feature_ids):
                 doc_feature_links[doc_id].add(str(feat_ref))
                 await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                     "source_type": "document",
                     "source_id": doc_id,
                     "target_type": "feature",
@@ -6148,7 +6164,7 @@ class SyncEngine:
                         "linkStrategy": strategy or "feature_ref",
                         "sourceFields": sorted(fm_dict.keys()),
                     }),
-                })
+                }, workspace_id=self._WORKSPACE_ID)
                 stats["created"] += 1
 
             # Document → Document links from path refs/file refs.
@@ -6170,6 +6186,7 @@ class SyncEngine:
                     continue
                 linked_doc_ids.add(target_doc_id)
                 await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                     "source_type": "document",
                     "source_id": doc_id,
                     "target_type": "document",
@@ -6181,7 +6198,7 @@ class SyncEngine:
                         "linkStrategy": "document_ref_path",
                         "refPath": normalized_ref,
                     }),
-                })
+                }, workspace_id=self._WORKSPACE_ID)
                 stats["created"] += 1
             doc_doc_links[doc_id] = linked_doc_ids
 
@@ -6192,6 +6209,7 @@ class SyncEngine:
                 if not task_id:
                     continue
                 await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                     "source_type": "document",
                     "source_id": doc_id,
                     "target_type": "task",
@@ -6203,12 +6221,13 @@ class SyncEngine:
                         "linkStrategy": "progress_source_task",
                         "sourceFile": doc_source_path,
                     }),
-                })
+                }, workspace_id=self._WORKSPACE_ID)
                 stats["created"] += 1
 
                 session_id = str(task_row.get("session_id") or "")
                 if session_id:
                     await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                         "source_type": "document",
                         "source_id": doc_id,
                         "target_type": "session",
@@ -6220,7 +6239,7 @@ class SyncEngine:
                             "linkStrategy": "task_session_ref",
                             "taskId": task_id,
                         }),
-                    })
+                    }, workspace_id=self._WORKSPACE_ID)
                     stats["created"] += 1
 
             # Explicit document → session refs.
@@ -6240,6 +6259,7 @@ class SyncEngine:
                 if session_ref not in sessions_by_id:
                     continue
                 await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                     "source_type": "document",
                     "source_id": doc_id,
                     "target_type": "session",
@@ -6250,7 +6270,7 @@ class SyncEngine:
                     "metadata_json": json.dumps({
                         "linkStrategy": "explicit_session_ref",
                     }),
-                })
+                }, workspace_id=self._WORKSPACE_ID)
                 stats["created"] += 1
 
             if operation_id and (doc_index == len(docs) or doc_index % 25 == 0):
@@ -6274,6 +6294,7 @@ class SyncEngine:
                 inherited.update(doc_feature_links.get(linked_doc_id, set()))
             for feature_id in sorted(inherited):
                 await self.link_repo.upsert({
+                    "workspace_id": self._WORKSPACE_ID, 
                     "source_type": "document",
                     "source_id": doc_id,
                     "target_type": "feature",
@@ -6284,7 +6305,7 @@ class SyncEngine:
                     "metadata_json": json.dumps({
                         "linkStrategy": "referenced_document_inheritance",
                     }),
-                })
+                }, workspace_id=self._WORKSPACE_ID)
                 stats["created"] += 1
         await self._update_operation(
             operation_id,
