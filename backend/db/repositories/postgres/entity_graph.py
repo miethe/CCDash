@@ -5,20 +5,22 @@ from datetime import datetime, timezone
 
 import asyncpg
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
+
 
 class PostgresEntityLinkRepository:
     def __init__(self, db: asyncpg.Connection):
         self.db = db
 
-    async def upsert(self, link_data: dict) -> int:
+    async def upsert(self, link_data: dict, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
         now = datetime.now(timezone.utc).isoformat()
         return await self.db.fetchval(
             """
             INSERT INTO entity_links (
-                source_type, source_id, target_type, target_id,
+                workspace_id, source_type, source_id, target_type, target_id,
                 link_type, origin, confidence, depth, sort_order,
                 metadata_json, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT(source_type, source_id, target_type, target_id, link_type) DO UPDATE SET
                 origin = EXCLUDED.origin,
                 confidence = EXCLUDED.confidence,
@@ -27,6 +29,7 @@ class PostgresEntityLinkRepository:
                 metadata_json = EXCLUDED.metadata_json
             RETURNING id
             """,
+            workspace_id,
             link_data["source_type"],
             link_data["source_id"],
             link_data["target_type"],

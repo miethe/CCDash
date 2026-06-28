@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS entity_links (
     sort_order    INTEGER DEFAULT 0,
     metadata_json TEXT,
     created_at    TEXT NOT NULL,
-    project_id    TEXT
+    project_id    TEXT,
+    workspace_id  TEXT NOT NULL DEFAULT 'default-local'
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_source ON entity_links(source_type, source_id);
