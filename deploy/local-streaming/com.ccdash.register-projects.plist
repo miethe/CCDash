@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CCDash project auto-registration LaunchAgent (template).
+
+  __TOKENS__ are sed-substituted by ccdash-stream.sh install:
+    __INSTALL_BIN__  → $HOME/.ccdash/bin
+    __HOME__         → $HOME
+
+  Runs once at load and then every 6 hours (StartInterval=21600) to pick up
+  newly-used repos under ~/.claude/projects. Registration is idempotent.
+  No KeepAlive — this is a periodic one-shot, not a long-lived process.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ccdash.register-projects</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__INSTALL_BIN__/ccdash-register.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>21600</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.ccdash/logs/register.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.ccdash/logs/register.err.log</string>
+</dict>
+</plist>

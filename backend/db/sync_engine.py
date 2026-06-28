@@ -15,7 +15,7 @@ import re
 import subprocess
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -4462,7 +4462,7 @@ class SyncEngine:
     # ── Session Sync ────────────────────────────────────────────────
 
     async def _sync_sessions(self, project_id: str, sessions_dir: Path, force: bool) -> dict:
-        stats = {"synced": 0, "skipped": 0}
+        stats = {"synced": 0, "skipped": 0, "parse_errors": 0}
         if not sessions_dir.exists():
             return stats
 
@@ -4509,7 +4509,20 @@ class SyncEngine:
         recent_synced = 0
         recent_skipped = 0
         for jsonl_file in recent_files:
-            synced = await self._sync_single_session(project_id, jsonl_file, force)
+            # Resilience-by-default: a single unparseable/malformed session file
+            # must not abort the whole project sync. Log once with the file path,
+            # record a parser-failure metric, count it, and continue.
+            try:
+                synced = await self._sync_single_session(project_id, jsonl_file, force)
+            except Exception:
+                observability.record_parser_failure("sessions", project_id=project_id)
+                logger.exception(
+                    "Skipping session file that failed to sync",
+                    extra={"project_id": project_id, "file_path": str(jsonl_file)},
+                )
+                stats["parse_errors"] += 1
+                recent_skipped += 1
+                continue
             if synced:
                 recent_synced += 1
             else:
@@ -4530,7 +4543,18 @@ class SyncEngine:
         backfill_synced = 0
         backfill_skipped = 0
         for jsonl_file in backfill_files:
-            synced = await self._sync_single_session(project_id, jsonl_file, force)
+            # Resilience-by-default: same per-file isolation as the recent window.
+            try:
+                synced = await self._sync_single_session(project_id, jsonl_file, force)
+            except Exception:
+                observability.record_parser_failure("sessions", project_id=project_id)
+                logger.exception(
+                    "Skipping session file that failed to sync",
+                    extra={"project_id": project_id, "file_path": str(jsonl_file)},
+                )
+                stats["parse_errors"] += 1
+                backfill_skipped += 1
+                continue
             if synced:
                 backfill_synced += 1
             else:
@@ -6337,14 +6361,22 @@ class SyncEngine:
                 if deleted < batch_size:
                     break
         else:
-            # PostgreSQL: single batched DELETE per call (asyncpg has no rowcount loop needed)
+            # PostgreSQL: single batched DELETE per call (asyncpg has no rowcount loop needed).
+            # occurred_at is a TEXT (ISO-8601) column; comparing it to a timestamptz
+            # expression (NOW() - interval) raises "operator does not exist: text <
+            # timestamp with time zone". Bind an ISO-string cutoff instead so the
+            # comparison is text-to-text — mirrors the SQLite branch above and the
+            # analytics prune convention. Empty/odd occurred_at values sort low and
+            # are pruned, matching SQLite behaviour (a ::timestamptz cast would raise
+            # on '' rows).
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
             while True:
                 deleted = await self.db.fetchval(
                     """
                     WITH batch AS (
                         SELECT id FROM telemetry_events
                         WHERE project_id = $1
-                          AND occurred_at < (NOW() - ($2 || ' days')::interval)
+                          AND occurred_at < $2
                         LIMIT $3
                         FOR UPDATE SKIP LOCKED
                     )
@@ -6352,7 +6384,7 @@ class SyncEngine:
                     WHERE id IN (SELECT id FROM batch)
                     """,
                     project_id,
-                    str(retention_days),
+                    cutoff,
                     batch_size,
                 )
                 deleted = deleted or 0

@@ -3582,7 +3582,13 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             metadata = parent_log.metadata if isinstance(parent_log.metadata, dict) else {}
                             if str(metadata.get("entryUuid") or "").strip() == parent_entry_uuid:
                                 insertion_index = idx + 1
-                    first_fork_log = logs_by_session_id.get(fork_session_id, [None])[0]
+                    # A detected fork can have an empty log list when its entry
+                    # subtree contains only non-message records (agent-setting,
+                    # mode, worktree-state, etc.) that never become SessionLogs.
+                    # The dict is pre-seeded with [] for every fork session id, so
+                    # the .get(..., [None]) default never fires — guard the index.
+                    fork_session_logs = logs_by_session_id.get(fork_session_id) or []
+                    first_fork_log = fork_session_logs[0] if fork_session_logs else None
                     preview_text = ""
                     if isinstance(first_fork_log, SessionLog):
                         preview_text = str(first_fork_log.content or "").strip()[:180]

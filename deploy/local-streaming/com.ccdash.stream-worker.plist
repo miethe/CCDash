@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CCDash local streaming worker LaunchAgent (template).
+
+  __TOKENS__ are sed-substituted by ccdash-stream.sh install:
+    __INSTALL_BIN__  → $HOME/.ccdash/bin
+    __HOME__         → $HOME
+
+  Secrets are NOT here; the wrapper sources ~/.ccdash/stream.env.
+  RunAtLoad + KeepAlive = start on login and restart on crash.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ccdash.stream-worker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__INSTALL_BIN__/ccdash-stream-worker.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.ccdash/logs/stream-worker.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.ccdash/logs/stream-worker.err.log</string>
+</dict>
+</plist>
