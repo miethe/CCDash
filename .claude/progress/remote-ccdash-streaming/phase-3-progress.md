@@ -12,8 +12,8 @@ updated: '2026-05-19'
 prd_ref: docs/project_plans/PRDs/features/remote-ccdash-streaming-v1.md
 plan_ref: docs/project_plans/implementation_plans/features/remote-ccdash-streaming-v1.md
 adr_refs:
-- docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md
-- docs/project_plans/adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md
+- docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md
+- docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md
 - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
 spike_ref: docs/project_plans/spikes/remote-ccdash-streaming.md
 commit_refs: []

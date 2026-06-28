@@ -16,8 +16,8 @@ related_documents:
   - docs/project_plans/designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md
   - .claude/findings/remote-ccdash-grounding-brief.md
 adrs:
-  - docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md
-  - docs/project_plans/adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md
+  - docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md
+  - docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md
   - docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md
   - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
   - docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md
@@ -43,9 +43,9 @@ The recommended implementation order matches the existing [implementation plan s
 
 **Resolution.** Endpoint `POST /api/v1/ingest/sessions` accepting NDJSON (one event per line) with chunked transfer encoding. Statelessness on the server, symmetry with the existing outbound telemetry exporter (`backend/services/integrations/telemetry_exporter.py`), and full proxy/firewall compatibility carry the decision. Idempotency is enforced via per-event `event_id` (UUID v7 recommended) deduplicated server-side.
 
-**Rationale.** SSE is structurally inverted for inbound (server would need to subscribe to daemon-hosted feeds). WebSocket and gRPC trade per-message latency for substantial new infrastructure that the v1 5–30s flush cadence does not justify. The decision matrix in [ADR-006](../adrs/adr-006-remote-session-ingest-transport-ndjson-http.md) scores NDJSON POST 64 vs SSE 47 vs WebSocket 41 vs gRPC 42.
+**Rationale.** SSE is structurally inverted for inbound (server would need to subscribe to daemon-hosted feeds). WebSocket and gRPC trade per-message latency for substantial new infrastructure that the v1 5–30s flush cadence does not justify. The decision matrix in [ADR-006](../adrs/adr-014-remote-session-ingest-transport-ndjson-http.md) scores NDJSON POST 64 vs SSE 47 vs WebSocket 41 vs gRPC 42.
 
-**ADR.** [ADR-006](../adrs/adr-006-remote-session-ingest-transport-ndjson-http.md).
+**ADR.** [ADR-006](../adrs/adr-014-remote-session-ingest-transport-ndjson-http.md).
 
 ---
 
@@ -55,7 +55,7 @@ The recommended implementation order matches the existing [implementation plan s
 
 **Rationale.** Reuses the already-`pipx`-installable CLI distribution channel and the existing HTTP client (auth, retry, version negotiation). One language for the team. Idle resource floor (<50MB RSS, <1% CPU) is well within budget for Python. The Go-binary alternative would force a second build pipeline, code-signing pipeline, and crash-reporter integration — disproportionate cost for the v1 scale target.
 
-**ADR.** [ADR-007](../adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md).
+**ADR.** [ADR-007](../adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md).
 
 ---
 
@@ -222,8 +222,8 @@ These are **targets for downstream load testing**, not measurements taken in thi
 
 All five are **authored as part of this SPIKE** (allocated 006–010, the next free ADR numbers; the directory was empty above 005):
 
-1. [ADR-006](../adrs/adr-006-remote-session-ingest-transport-ndjson-http.md) — Remote session ingest transport: chunked NDJSON over HTTPS POST.
-2. [ADR-007](../adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md) — Local daemon packaging: subcommand of `ccdash` CLI.
+1. [ADR-006](../adrs/adr-014-remote-session-ingest-transport-ndjson-http.md) — Remote session ingest transport: chunked NDJSON over HTTPS POST.
+2. [ADR-007](../adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md) — Local daemon packaging: subcommand of `ccdash` CLI.
 3. [ADR-008](../adrs/adr-008-workspace-scoped-bearer-auth-v1.md) — Workspace-scoped bearer tokens for v1.
 4. [ADR-009](../adrs/adr-009-session-ingest-source-port-and-cursor-table.md) — `SessionIngestSource` port + `ingest_cursors` watermark table.
 5. [ADR-010](../adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md) — Multi-project routing: single process with request-scoped binding.

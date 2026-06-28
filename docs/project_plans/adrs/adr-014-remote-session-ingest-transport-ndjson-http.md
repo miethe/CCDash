@@ -1,5 +1,5 @@
 ---
-title: "ADR-006: Remote Session Ingest Transport — Chunked NDJSON over HTTPS POST"
+title: "ADR-014: Remote Session Ingest Transport — Chunked NDJSON over HTTPS POST"
 type: "adr"
 status: "accepted"
 created: "2026-05-10"
@@ -8,7 +8,7 @@ depends_on_spike: "docs/project_plans/SPIKEs/remote-ccdash-streaming.md"
 tags: ["adr", "transport", "ingest", "ndjson", "remote", "streaming"]
 ---
 
-# ADR-006: Remote Session Ingest Transport — Chunked NDJSON over HTTPS POST
+# ADR-014: Remote Session Ingest Transport — Chunked NDJSON over HTTPS POST
 
 ## Status
 
@@ -20,7 +20,7 @@ CCDash today exposes only request/response REST surfaces for clients (`/api/v1/`
 
 1. Operationally simple (no proxy/firewall surprises, no long-lived connection state on the server).
 2. Cheap on the server when N daemons are idle.
-3. Has a mature client library in both Python and Go (the daemon's two candidate languages — see ADR-007).
+3. Has a mature client library in both Python and Go (the daemon's two candidate languages — see ADR-015).
 4. Symmetric in shape with the **outbound** telemetry exporter pattern that already ships in `backend/services/integrations/telemetry_exporter.py` (worker pushes batches outbound via `SAMTelemetryClient` with up to 10 retries) — inverting that shape (server accepts inbound batches) reuses operational mental model.
 
 Four options were evaluated.
@@ -112,7 +112,7 @@ If E1 implementation misses any target, **revisit this ADR** before unblocking P
 - Design spec: `docs/project_plans/design-specs/remote-ccdash-streaming.md` §4.3
 - SPIKE findings: `docs/project_plans/SPIKEs/remote-ccdash-streaming.md`
 - ADR-001 (outbound SSE for VSCode extension) — establishes that CCDash uses SSE *outbound*; this ADR keeps the **inbound** path on plain HTTP for symmetry with the telemetry exporter
-- ADR-007 (daemon packaging)
+- ADR-015 (daemon packaging)
 - ADR-008 (workspace auth)
 - ADR-009 (sync engine port)
 - Telemetry exporter precedent: `backend/services/integrations/telemetry_exporter.py`, `backend/services/integrations/sam_telemetry_client.py:25`

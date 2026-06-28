@@ -39,7 +39,7 @@ The `x-ccdash-project-id` request header is **deprecated as a routing input**. P
 1. **Operational footprint.** A team of 10 with 1 project each → option (A) needs 10 pods. Option (B) needs 1. v1 targets small/medium teams where the per-pod overhead would dominate the actual ingest cost.
 2. **Auth integration.** `AuthContext.project_id` (ADR-008) already exists; using it as the routing key is one DI dependency, not new infrastructure.
 3. **Cold-start economics.** Option (A) means every new project means scheduling a new pod (10–30s cold start). Option (B) is a sub-millisecond LRU lookup.
-4. **Daemon multi-tenancy at the door.** A single ingest endpoint accepts events for any workspace because the bearer determines scope (ADR-006). Forcing daemons to know which pod hosts their project would push routing complexity into every workstation. Single-process routing keeps the operational story simple: one DNS name, one TLS cert, one ingestion endpoint.
+4. **Daemon multi-tenancy at the door.** A single ingest endpoint accepts events for any workspace because the bearer determines scope (ADR-014). Forcing daemons to know which pod hosts their project would push routing complexity into every workstation. Single-process routing keeps the operational story simple: one DNS name, one TLS cert, one ingestion endpoint.
 
 ## Decision Matrix
 
@@ -137,7 +137,7 @@ If any gate is missed in the actual implementation, the fallback is **option (A)
 
 ## Related
 
-- ADR-006 (transport — single endpoint serves all projects)
+- ADR-014 (transport — single endpoint serves all projects)
 - ADR-008 (auth — provides `AuthContext.project_id`)
 - ADR-009 (sync port — sources are scoped per (project, workspace))
 - Container today: `backend/runtime/container.py:67`

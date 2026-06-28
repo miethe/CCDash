@@ -22,7 +22,7 @@ The current `SyncEngine` (`backend/db/sync_engine.py`) is filesystem-coupled at 
 2. **Change detection** — `file_watcher.py:30` uses `watchfiles` (inotify/fsevents) and `_file_hash()` for incremental decisions.
 3. **Identity** — sessions are keyed by canonical relative `source_file` (`backend/db/repositories/sessions.py:59`).
 
-A remote ingest source has no analogue for any of these. To accept events from the daemon (ADR-006/007) and from Entire.io checkpoints (sister SPIKE) without forking the engine, the sync layer needs a transport-neutral abstraction.
+A remote ingest source has no analogue for any of these. To accept events from the daemon (ADR-014/007) and from Entire.io checkpoints (sister SPIKE) without forking the engine, the sync layer needs a transport-neutral abstraction.
 
 The chosen abstraction must (a) preserve local-mode behavior bit-for-bit (zero existing-test changes — hard gate), (b) make remote ingest a parallel implementation, not a fork, and (c) provide resumable semantics for any source, not just filesystem.
 
@@ -43,7 +43,7 @@ class IngestEvent:
     project_id: str
     workspace_id: str           # added per ADR-008
     payload: dict               # parsed session JSON
-    schema_version: str         # for forward-compat (ADR-006)
+    schema_version: str         # for forward-compat (ADR-014)
     cursor_value: str           # source-specific opaque cursor; monotonic per (source_id, project_id)
     occurred_at: str            # ISO-8601 from the event itself, not server clock
 
@@ -125,7 +125,7 @@ The ON CONFLICT upsert key in `repositories/sessions.py:17-82` becomes `(project
 ## Decision Drivers
 
 1. **Zero-test-change requirement is the hard gate.** Local mode is the hottest path in production. Any test diff is a regression risk.
-2. **Single source of sync truth.** Today the cursor is implicit (mtime in the filesystem). Making it explicit (`ingest_cursors`) for *all* sources — including filesystem — pays a one-time refactor cost and gains operability (cursor lag is now a queryable health signal, see ADR-006).
+2. **Single source of sync truth.** Today the cursor is implicit (mtime in the filesystem). Making it explicit (`ingest_cursors`) for *all* sources — including filesystem — pays a one-time refactor cost and gains operability (cursor lag is now a queryable health signal, see ADR-014).
 3. **Source identity is opaque to the engine.** The engine never asks "is this a filesystem path?"; it asks the source to stream events. This forecloses the failure mode where "remote events accidentally invoke filesystem path logic" (a real risk surfaced in the grounding brief).
 4. **Forward-compat with Entire.** The Entire integration (sister SPIKE) is a third implementation of the same `Protocol`. The port shape was designed with three implementations in mind, not retrofitted to one.
 5. **Cursor model handles backfill.** A daemon that has been offline for a week resumes from the last server-acked cursor automatically; the server has no "what did I last see from this daemon" mystery.
@@ -173,7 +173,7 @@ The ON CONFLICT upsert key in `repositories/sessions.py:17-82` becomes `(project
 
 ## Related
 
-- ADR-006 (transport — produces events for `RemoteIngestSource`)
+- ADR-014 (transport — produces events for `RemoteIngestSource`)
 - ADR-008 (auth — `AuthContext.workspace_id` populates `IngestEvent`)
 - ADR-010 (multi-project routing — sources are per-(project, workspace))
 - Sync engine today: `backend/db/sync_engine.py`, `backend/db/file_watcher.py`

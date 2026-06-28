@@ -2,11 +2,31 @@
 schema_version: 2
 doc_type: implementation_plan
 title: "Remote CCDash Streaming + Entire.io Integration \u2014 Implementation Plan"
-description: "Skeleton implementation plan. Status: draft. Phase 1 is SPIKE execution;\
-  \ Phases 2\u20137 are sketched and re-baseline after SPIKE findings."
-status: in-progress
+description: "Remote CCDash session streaming v1 \u2014 COMPLETE. Phases 1-4 (ingest\
+  \ port, endpoint+daemon, workspace auth, multi-project routing) + Phases 6-8 (FE\
+  \ source attribution + ingest health, daemon hardening + migration guides, docs)\
+  \ shipped. Phase 5 (Entire.io) extracted to entire-io-checkpoint-ingest-v1."
+status: completed
 created: 2026-04-19
-updated: '2026-05-11'
+updated: '2026-06-28'
+commit_refs:
+- b94e633
+- 6710b92
+- 1b8acad
+files_affected:
+- backend/application/services/agent_queries/ingest_sources.py
+- backend/application/services/agent_queries/session_detail.py
+- backend/runtime/bootstrap.py
+- backend/config.py
+- packages/ccdash_cli/src/ccdash_cli/daemon/runner.py
+- packages/ccdash_cli/src/ccdash_cli/commands/daemon.py
+- components/SessionSourceChip.tsx
+- components/IngestHealthBadge.tsx
+- types.ts
+- services/apiClient.ts
+- services/runtimeProfile.ts
+- docs/guides/remote-ingest-operator-guide.md
+- docs/guides/remote-streaming-v1-to-v2-migration.md
 feature_slug: remote-ccdash-streaming
 priority: high
 risk_level: high
@@ -24,8 +44,8 @@ spike_refs:
 related_documents:
 - docs/project_plans/design-specs/remote-ccdash-streaming.md
 - docs/project_plans/designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md
-- docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md
-- docs/project_plans/adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md
+- docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md
+- docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md
 - docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md
 - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
 - docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md

@@ -30,7 +30,7 @@ OIDC, mTLS, and git-identity are deferred to post-v1 (see Non-Goals in design-sp
 
 1. **Smallest viable step from today.** The existing bearer guard is ~50 lines of code. Replacing it with a DB-backed lookup adds ~100 lines and one table. OIDC requires a relying-party flow, JWKS rotation, an IdP dependency — wildly disproportionate for a v1 that just needs multi-workspace isolation.
 2. **No new runtime dependencies.** A token table is plain SQL. OIDC adds `python-jose` or `authlib` and an IdP. mTLS adds cert lifecycle and reverse-proxy mTLS termination. v1 should not pay these costs to ship.
-3. **Aligns with daemon distribution.** The daemon (ADR-007) takes a single token from `daemon.toml`. Static tokens fit that model exactly. OIDC would require interactive flows on a headless daemon — a poor UX.
+3. **Aligns with daemon distribution.** The daemon (ADR-015) takes a single token from `daemon.toml`. Static tokens fit that model exactly. OIDC would require interactive flows on a headless daemon — a poor UX.
 4. **Migration is straightforward.** One row insert + one env-var swap. Existing single-tenant deployments upgrade without downtime.
 5. **Forward path to OIDC is unblocked.** The `AuthContext` shape is identical whether populated by a token lookup or a JWT claim. v2 can swap the resolver without touching repositories.
 
@@ -152,8 +152,8 @@ The migration is reversible: drop the new tables, revert the auth backend swap, 
 
 ## Related
 
-- ADR-006 (transport — uses this auth)
-- ADR-007 (daemon — carries this token in config)
+- ADR-014 (transport — uses this auth)
+- ADR-015 (daemon — carries this token in config)
 - ADR-009 (sync port — `ingest_cursors` table is workspace-scoped)
 - ADR-010 (multi-project routing — depends on `AuthContext.project_id`)
 - Bearer guard today: `backend/adapters/auth/bearer.py:22, 74-109`

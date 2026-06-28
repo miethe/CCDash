@@ -14,7 +14,7 @@ plan_ref: docs/project_plans/implementation_plans/features/remote-ccdash-streami
 adr_refs:
 - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
 - docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md
-- docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md
+- docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md
 commit_refs:
 - 79fca4b
 - ef419d0

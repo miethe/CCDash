@@ -1,5 +1,5 @@
 ---
-title: "ADR-007: Local Daemon Packaging — Subcommand of `ccdash` CLI"
+title: "ADR-015: Local Daemon Packaging — Subcommand of `ccdash` CLI"
 type: "adr"
 status: "accepted"
 created: "2026-05-10"
@@ -8,7 +8,7 @@ depends_on_spike: "docs/project_plans/SPIKEs/remote-ccdash-streaming.md"
 tags: ["adr", "daemon", "packaging", "cli", "lifecycle"]
 ---
 
-# ADR-007: Local Daemon Packaging — Subcommand of `ccdash` CLI
+# ADR-015: Local Daemon Packaging — Subcommand of `ccdash` CLI
 
 ## Status
 
@@ -19,7 +19,7 @@ Accepted (SPIKE-resolved 2026-05-10)
 The remote-CCDash architecture (design-spec `remote-ccdash-streaming.md`) introduces a long-running local process on the developer's workstation that:
 
 1. Tails JSONL session files (uses `FilesystemSource` logic extracted from `SyncEngine` in ADR-009).
-2. POSTs NDJSON batches to the remote server's ingest endpoint (ADR-006).
+2. POSTs NDJSON batches to the remote server's ingest endpoint (ADR-014).
 3. Buffers to local disk on network failure and resumes idempotently.
 4. Reports health to the user via `ccdash daemon status`.
 
@@ -42,7 +42,7 @@ The daemon does **not** become a new `RuntimeProfile` in `backend/runtime/profil
 
 1. **Reuse existing distribution.** Users who care about remote CCDash already use the CLI. Adding a subcommand is one `pipx upgrade` away from being usable.
 2. **Reuse existing HTTP client + auth.** The CLI's `client.py` already handles retry, timeout, and version negotiation. The daemon adds a tail loop + a buffered batcher on top of that, not a new HTTP stack.
-3. **Single-language ops.** A Go binary would force the team to maintain a second build pipeline, second crash-reporting story, second cross-OS test matrix. Python is sufficient for ≥500 events/sec ingest (ADR-006 target) — `aiofiles` + `httpx` async POST handles this on a 2-core laptop.
+3. **Single-language ops.** A Go binary would force the team to maintain a second build pipeline, second crash-reporting story, second cross-OS test matrix. Python is sufficient for ≥500 events/sec ingest (ADR-014 target) — `aiofiles` + `httpx` async POST handles this on a 2-core laptop.
 4. **OS-native supervision wins.** launchd/systemd-user/Task Scheduler are battle-tested. CCDash should not write its own supervisor; it should ship installable plist/unit/scheduled-task templates.
 5. **Smaller resource floor than (C).** Reusing `backend/runtime/` would pull in SQLAlchemy, Alembic, all repositories, OpenTelemetry — none of which the daemon needs. The CLI package is already lean (`httpx` + `typer` + Pydantic models). Target: <50MB RSS at idle; the CLI baseline is ~25MB.
 
@@ -122,7 +122,7 @@ These are hard gates the implementation must hit; not measured in this SPIKE.
 |---|---|---|
 | CPU at idle (no events for 60s) | < 1% on a 2024 M-series Mac | A tight loop is forbidden; daemon must use `inotify`/`fsevents` via `watchfiles`, not poll |
 | RSS at idle (10 minutes after start) | < 50 MB | Validates that we did not pull a giant dependency closure |
-| Duplicate events after forced network blip | 0 | Idempotency via `event_id`; server is the dedup authority (ADR-006) |
+| Duplicate events after forced network blip | 0 | Idempotency via `event_id`; server is the dedup authority (ADR-014) |
 | Lost events after forced daemon restart (kill -9) | 0 | On-disk buffer is a write-ahead log: append-then-fsync-then-ack-flush |
 | Cold start to first POST | < 2s | Acceptable for a supervised process |
 
@@ -152,7 +152,7 @@ These are hard gates the implementation must hit; not measured in this SPIKE.
 
 ## Related
 
-- ADR-006 (transport)
+- ADR-014 (transport)
 - ADR-008 (auth)
 - ADR-009 (sync engine port — daemon reuses the `FilesystemSource` logic)
 - Standalone CLI: `packages/ccdash_cli/`, `packages/ccdash_contracts/`

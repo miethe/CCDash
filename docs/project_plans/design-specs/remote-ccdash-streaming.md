@@ -30,8 +30,8 @@ related_documents:
   - ".claude/findings/remote-ccdash-grounding-brief.md"
   - "docs/project_plans/SPIKEs/remote-ccdash-streaming.md"
   - "docs/project_plans/designs/remote-ccdash-streaming/remote-ccdash-streaming-design.md"
-  - "docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md"
-  - "docs/project_plans/adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md"
+  - "docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md"
+  - "docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md"
   - "docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md"
   - "docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md"
   - "docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md"
@@ -366,8 +366,8 @@ sessions, schema-migration plan for `sessions` table, go/no-go on live hook inge
 
 SPIKE-A (`docs/project_plans/spikes/remote-ccdash-streaming-charter.md`) is complete. SPIKE-B (Entire.io integration) remains in-flight. The remote-track open questions are now resolved:
 
-- **OQ-1 ↔ RQ-1 (transport)** — Resolved: chunked NDJSON over HTTPS POST. ([ADR-006](../adrs/adr-006-remote-session-ingest-transport-ndjson-http.md))
-- **OQ-2 ↔ RQ-2 (daemon model)** — Resolved: subcommand of the `ccdash` CLI; OS-native supervision. ([ADR-007](../adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md))
+- **OQ-1 ↔ RQ-1 (transport)** — Resolved: chunked NDJSON over HTTPS POST. ([ADR-006](../adrs/adr-014-remote-session-ingest-transport-ndjson-http.md))
+- **OQ-2 ↔ RQ-2 (daemon model)** — Resolved: subcommand of the `ccdash` CLI; OS-native supervision. ([ADR-007](../adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md))
 - **OQ-3 ↔ RQ-3 (auth)** — Resolved: workspace-scoped bearer tokens with explicit-predicate scoping; OIDC/mTLS deferred. ([ADR-008](../adrs/adr-008-workspace-scoped-bearer-auth-v1.md))
 - **OQ-4 ↔ RQ-4 (sync engine refactor)** — Resolved: `SessionIngestSource` Protocol + `ingest_cursors` watermark table; zero existing-test-change hard gate on the `FilesystemSource` wrap. ([ADR-009](../adrs/adr-009-session-ingest-source-port-and-cursor-table.md))
 - **OQ-7 ↔ RQ-5 (project binding)** — Resolved: single-process `api` runtime with request-scoped `RuntimeContainer.resolve_binding`; `worker` retains startup-time binding. ([ADR-010](../adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md))

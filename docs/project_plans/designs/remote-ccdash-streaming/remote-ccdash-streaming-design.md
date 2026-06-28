@@ -12,8 +12,8 @@ prd_ref: docs/project_plans/PRDs/features/remote-ccdash-streaming-v1.md
 plan_ref: docs/project_plans/implementation_plans/features/remote-ccdash-streaming-v1.md
 related_documents:
   - docs/project_plans/design-specs/remote-ccdash-streaming.md
-  - docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md
-  - docs/project_plans/adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md
+  - docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md
+  - docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md
   - docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md
   - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
   - docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md
@@ -234,8 +234,8 @@ The `local` profile is unchanged in v1.
 ## 11. References
 
 - SPIKE findings: [`docs/project_plans/SPIKEs/remote-ccdash-streaming.md`](../../SPIKEs/remote-ccdash-streaming.md)
-- ADR-006 transport: [`docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md`](../../adrs/adr-006-remote-session-ingest-transport-ndjson-http.md)
-- ADR-007 daemon packaging: [`docs/project_plans/adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md`](../../adrs/adr-007-local-daemon-packaging-as-ccdash-cli-subcommand.md)
+- ADR-006 transport: [`docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md`](../../adrs/adr-014-remote-session-ingest-transport-ndjson-http.md)
+- ADR-007 daemon packaging: [`docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md`](../../adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md)
 - ADR-008 auth: [`docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md`](../../adrs/adr-008-workspace-scoped-bearer-auth-v1.md)
 - ADR-009 sync port: [`docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md`](../../adrs/adr-009-session-ingest-source-port-and-cursor-table.md)
 - ADR-010 routing: [`docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md`](../../adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md)

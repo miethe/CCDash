@@ -25,7 +25,7 @@ adrs:
 inherits_adrs:
   - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
   - docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md
-  - docs/project_plans/adrs/adr-006-remote-session-ingest-transport-ndjson-http.md
+  - docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md
 ---
 
 # Entire.io OSS CLI Integration — Findings Summary
@@ -182,7 +182,7 @@ All three are authored as part of this SPIKE (allocated 011–013, the next free
 3. [ADR-013](../adrs/adr-013-entire-live-update-mechanism.md) — Live-update mechanism: fs-watch primary, git-fetch poll fallback.
 
 Inherited as authoritative input from SPIKE-A (not authored here):
-- [ADR-006](../adrs/adr-006-remote-session-ingest-transport-ndjson-http.md) — transport (orthogonal to Entire path).
+- [ADR-006](../adrs/adr-014-remote-session-ingest-transport-ndjson-http.md) — transport (orthogonal to Entire path).
 - [ADR-008](../adrs/adr-008-workspace-scoped-bearer-auth-v1.md) — auth surface that Entire ingest respects.
 - [ADR-009](../adrs/adr-009-session-ingest-source-port-and-cursor-table.md) — the port `EntireCheckpointSource` implements.
 
