@@ -499,8 +499,13 @@ export interface AgentSession {
   phaseHints?: string[];
   taskHints?: string[];
   transcriptTruncated?: { droppedCount: number; firstRetainedTimestamp?: string };
+  // Phase 3 (Codex): 'codex' added; explicit null = source determinable but field absent from older payload → fall back to platformType.
   // Phase 6: session source discriminator (derived from source_ref prefix; additive/optional)
-  source?: 'filesystem' | 'remote' | 'entire' | 'unknown';
+  source?: 'codex' | 'filesystem' | 'remote' | 'entire' | 'unknown' | null;
+  /** Phase 3: project attribution sentinel. '' (empty string) = Unattributed bucket (Codex session whose cwd matched no project, D2-b). */
+  projectId?: string | null;
+  /** Phase 3: working directory captured from Codex session; shown for Unattributed sessions so the user knows which repo was unmatched. */
+  cwd?: string | null;
 }
 
 export type SessionUsageTokenFamily =

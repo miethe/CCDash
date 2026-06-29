@@ -506,6 +506,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
     tool_started_at_by_call_id: dict[str, str] = {}
     emitted_subagent_starts: set[tuple[str, str]] = set()
     log_idx = 0
+    # Phase 3 (codex-session-ingestion-v1): first user message text, used as
+    # session title when no /summary event exists (title derivation at parse time).
+    first_user_message_text: str = ""
 
     def append_log(**kwargs: Any) -> int:
         nonlocal log_idx
@@ -794,6 +797,10 @@ def parse_session_file(path: Path) -> AgentSession | None:
             text = _extract_message_text(payload_dict.get("content"))
             if not text:
                 text = str(payload_dict.get("message") or payload_dict.get("text") or "").strip()
+            # Phase 3 (codex-session-ingestion-v1): capture the first user message
+            # as a session-title hint (stored in badgeLatestSummary → latest_summary).
+            if text and speaker == "user" and not first_user_message_text:
+                first_user_message_text = text[:200].strip()
             if text:
                 if isinstance(payload_dict.get("content"), list):
                     for block in payload_dict.get("content", []):
@@ -1274,4 +1281,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
         sessionForensics=session_forensics,
         dates=session_dates,
         timeline=timeline,
+        # Phase 3 (codex-session-ingestion-v1): title derivation from first user
+        # message.  Stored to the ``latest_summary`` DB column via the upsert
+        # ``badgeLatestSummary`` key so _derive_session_title returns it as the
+        # title on the first request (fast path after lazy-backfill).
+        badgeLatestSummary=first_user_message_text or None,
     )

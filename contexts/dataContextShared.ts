@@ -12,6 +12,8 @@ export interface SessionFilters {
   model_version?: string;
   platform_type?: string;
   platform_version?: string;
+  /** Phase 3 (Codex): filter by session origin. 'codex' | 'unattributed' | 'filesystem' | 'remote' | 'entire' | 'unknown'. */
+  source_origin?: string;
   include_subagents?: boolean;
   root_session_id?: string;
   start_date?: string;

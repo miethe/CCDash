@@ -45,7 +45,15 @@ class PostgresProjectRepository:
                     "Install it with: pip install psycopg2-binary"
                 ) from exc
             self._conn = psycopg2.connect(self._dsn)
-            self._conn.autocommit = False
+            # autocommit=True: every statement completes its own implicit
+            # transaction immediately, so the connection never sits "idle in
+            # transaction".  Without this, a SELECT followed by no
+            # commit/rollback leaves the connection holding ACCESS SHARE on
+            # the queried tables indefinitely, which blocks ACCESS EXCLUSIVE
+            # (ALTER TABLE) and creates a lock convoy on startup.
+            # Write methods that need multi-statement atomicity must issue an
+            # explicit BEGIN/COMMIT or use a single atomic SQL statement.
+            self._conn.autocommit = True
         return self._conn
 
     def close(self) -> None:
@@ -158,6 +166,7 @@ class PostgresProjectRepository:
             "skillmeat_json": _jsonify(project_dict.get("skillMeat", {})),
             "display_json": _jsonify(project_dict.get("display")),
             "is_active": bool(project_dict.get("is_active", False)),
+            "repo_path": project_dict.get("repoPath") or None,
             "updated_at": now,
         }
 
@@ -199,14 +208,14 @@ class PostgresProjectRepository:
                     id, name, path, description, repo_url,
                     agent_platforms_json, plan_docs_path, sessions_path, progress_path,
                     path_config_json, test_config_json, skillmeat_json, display_json,
-                    is_active, updated_at
+                    is_active, repo_path, updated_at
                 ) VALUES (
                     %(id)s, %(name)s, %(path)s, %(description)s, %(repo_url)s,
                     %(agent_platforms_json)s::jsonb, %(plan_docs_path)s, %(sessions_path)s,
                     %(progress_path)s,
                     %(path_config_json)s::jsonb, %(test_config_json)s::jsonb,
                     %(skillmeat_json)s::jsonb, %(display_json)s::jsonb,
-                    %(is_active)s, %(updated_at)s
+                    %(is_active)s, %(repo_path)s, %(updated_at)s
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name=EXCLUDED.name,
@@ -222,22 +231,32 @@ class PostgresProjectRepository:
                     skillmeat_json=EXCLUDED.skillmeat_json,
                     display_json=EXCLUDED.display_json,
                     is_active=EXCLUDED.is_active,
+                    repo_path=EXCLUDED.repo_path,
                     updated_at=EXCLUDED.updated_at
                 """,
                 v,
             )
-        conn.commit()
+        # conn.commit() omitted: under autocommit=True each statement is its
+        # own implicit transaction; calling commit() here would be a no-op.
 
     def set_active(self, project_id: str) -> None:
+        """Atomically deactivate all projects and activate *project_id*.
+
+        The original two-UPDATE sequence (first clears all rows, then sets the
+        target) is collapsed into a single SQL statement so it is safe under
+        ``autocommit=True`` without a separate transaction block.
+        """
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
         with conn.cursor() as cur:
-            cur.execute("UPDATE projects SET is_active = FALSE")
             cur.execute(
-                "UPDATE projects SET is_active = TRUE, updated_at = %s WHERE id = %s",
-                (now, project_id),
+                """
+                UPDATE projects
+                SET is_active  = (id = %s),
+                    updated_at = CASE WHEN id = %s THEN %s ELSE updated_at END
+                """,
+                (project_id, project_id, now),
             )
-        conn.commit()
 
     def count(self) -> int:
         conn = self._get_conn()

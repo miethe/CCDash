@@ -384,6 +384,9 @@ def main() -> None:
             "sessionsPath": r["sessions_path"],
             "description": "",
             "repoUrl": "",
+            # repo_path is the canonical repo cwd used for Codex session attribution.
+            # Uses the greedy filesystem-decoded path from decode_repo_path().
+            "repoPath": r["repo_path"],
         }
         ok, msg = http_post(post_url, payload, args.timeout)
         r["action"] = "ok" if ok else msg

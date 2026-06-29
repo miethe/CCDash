@@ -1,0 +1,6 @@
+{"type":"turn_context","timestamp":"2026-06-28T10:00:00Z","payload":{"type":"turn_context","cwd":"/Users/testuser/dev/myproject","model":"gpt-4-codex","cli_version":"0.64.3"}}
+{"type":"response_item","timestamp":"2026-06-28T10:00:01Z","payload":{"type":"user_message","role":"user","content":"implement the feature"}}
+{"type":"response_item","timestamp":"2026-06-28T10:00:02Z","payload":{"type":"agent_message","role":"assistant","content":"I will implement the feature."}}
+{"type":"response_item","timestamp":"2026-06-28T10:00:03Z","payload":{"type":"function_call","name":"write_file","call_id":"call-001","arguments":{"path":"src/feature.py","content":"# feature code\n"}}}
+{"type":"response_item","timestamp":"2026-06-28T10:00:04Z","payload":{"type":"function_call_output","call_id":"call-001","status":"success","output":"wrote file"}}
+{"type":"event_msg","timestamp":"2026-06-28T10:00:05Z","payload":{"type":"task_complete","summary":"Feature implemented."}}

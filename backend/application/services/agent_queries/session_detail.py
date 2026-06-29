@@ -64,6 +64,7 @@ __all__ = [
     "INCLUDE_LINKS",
     "TranscriptPage",
     "SessionDetailBundle",
+    "derive_session_source",
     "get_session_detail",
 ]
 
@@ -231,18 +232,28 @@ _ARTIFACT_ENTITY_TYPES: frozenset[str] = frozenset(
 )
 
 
-def _derive_session_source(session_payload: dict[str, Any]) -> str:
-    """Derive a human-friendly ``source`` discriminator from ``source_ref``.
+def derive_session_source(session_payload: dict[str, Any]) -> str:
+    """Derive a human-friendly ``source`` discriminator from ``platform_type`` and ``source_ref``.
 
-    Mapping:
-      ``entire:<…>``     → ``"entire"``
-      ``remote:<…>``     → ``"remote"``
-      ``fs:<…>`` or null → ``"filesystem"``
-      anything else      → ``"unknown"``
+    Mapping (in priority order):
+      ``platform_type == 'Codex'`` → ``"codex"``
+      ``entire:<…>``               → ``"entire"``
+      ``remote:<…>``               → ``"remote"``
+      ``fs:<…>`` or null           → ``"filesystem"``
+      anything else                → ``"unknown"``
 
-    This is a pure read — no mutations to *session_payload* beyond adding the
-    ``"source"`` key.  The caller must add the result to the payload dict.
+    This is a pure read — no mutations to *session_payload*.  The caller must
+    assign the returned string to the payload dict under the ``"source"`` key.
+
+    Phase 3 (codex-session-ingestion-v1): ``platform_type == 'Codex'`` is checked
+    first so Codex sessions always resolve to ``"codex"`` regardless of source_ref
+    prefix.  All existing branches are unchanged (AC6).
     """
+    # Codex sessions are identified by platform_type (Phase 3 codex-session-ingestion-v1).
+    platform_type = str(session_payload.get("platform_type") or "").strip()
+    if platform_type == "Codex":
+        return "codex"
+
     raw = str(session_payload.get("source_ref") or "").strip()
     if not raw:
         return "filesystem"
@@ -253,6 +264,11 @@ def _derive_session_source(session_payload: dict[str, Any]) -> str:
     if raw.startswith("fs:") or raw.startswith("filesystem:"):
         return "filesystem"
     return "unknown"
+
+
+# Keep the private name as an alias for backward-compat with any callers that
+# imported the private symbol directly.
+_derive_session_source = derive_session_source
 
 
 def _apply_launch_capture(session_payload: dict[str, Any]) -> None:
@@ -507,8 +523,15 @@ async def _impl(
     # T11-005: thread launch-time capture fields onto the session DTO with the
     # camelCase contract keys (snake→camel), the same way token telemetry maps.
     _apply_launch_capture(session_payload)
-    # Phase 6: derived source discriminator from source_ref prefix (additive).
-    session_payload["source"] = _derive_session_source(session_payload)
+    # Phase 3 (codex-session-ingestion-v1): derived source discriminator from
+    # platform_type + source_ref prefix (additive; includes 'codex' branch).
+    session_payload["source"] = derive_session_source(session_payload)
+    # Add camelCase aliases for fields the FE inspector reads in camelCase.
+    # These are ADDITIVE — the snake_case originals remain for backward-compat.
+    session_payload["platformType"] = (
+        str(session_payload.get("platform_type") or "Claude Code").strip() or "Claude Code"
+    )
+    session_payload["projectId"] = str(session_payload.get("project_id") or "")
 
     return SessionDetailBundle(
         session_id=session_id,

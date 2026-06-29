@@ -2,7 +2,7 @@ import React from 'react';
 import { Calendar, ChevronDown, ChevronRight, Terminal } from 'lucide-react';
 import { Badge, ModelBadge, StableBadge } from './ui/badge';
 import { formatModelDisplayName } from '../lib/modelIdentity';
-import { SessionSourceChip } from './SessionSourceChip';
+import { SessionSourceChip, SessionUnattributedBadge } from './SessionSourceChip';
 
 export interface SessionCardMetadata {
   sessionTypeLabel?: string;
@@ -100,8 +100,11 @@ interface SessionCardProps {
   agentBadges?: string[];
   skillBadges?: string[];
   detailSections?: SessionCardDetailSection[];
-  /** Phase 6: session source discriminator. Undefined → chip not rendered. */
-  source?: 'filesystem' | 'remote' | 'entire' | 'unknown';
+  /** Phase 6 / Phase 3 (Codex): session source discriminator. Undefined → chip not rendered. */
+  source?: 'codex' | 'filesystem' | 'remote' | 'entire' | 'unknown' | null;
+  platformType?: string | null;
+  projectId?: string | null;
+  cwd?: string | null;
   headerRight?: React.ReactNode;
   infoBadges?: React.ReactNode;
   threadToggle?: {
@@ -130,6 +133,9 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   skillBadges = [],
   detailSections = [],
   source,
+  platformType,
+  projectId,
+  cwd,
   headerRight,
   infoBadges,
   threadToggle,
@@ -263,7 +269,10 @@ export const SessionCard: React.FC<SessionCardProps> = ({
                     {modelDisplay}
                   </span>
                 )}
-                <SessionSourceChip source={source} compact />
+                <SessionSourceChip source={source} platformType={platformType} compact />
+                {projectId === '' && (
+                  <SessionUnattributedBadge cwd={cwd} compact />
+                )}
               </div>
             </div>
           </div>

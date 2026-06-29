@@ -46,6 +46,7 @@ from backend.services.repo_workspaces.cache import RepoWorkspaceCache
 from backend.services.repo_workspaces.manager import RepoWorkspaceError, RepoWorkspaceManager
 from backend.services.session_usage_analytics import get_session_usage_attribution_details
 from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
+from backend.application.services.agent_queries.session_detail import derive_session_source
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
@@ -576,6 +577,7 @@ async def list_sessions(
     completed_end: str | None = Query(None, description="ISO timestamp for completed-at range end"),
     updated_start: str | None = Query(None, description="ISO timestamp for updated-at range start"),
     updated_end: str | None = Query(None, description="ISO timestamp for updated-at range end"),
+    source_origin: str | None = Query(None, description="Filter by session source origin (codex|unattributed|filesystem|remote|entire|unknown)"),
     min_duration: int | None = Query(None, description="Minimum duration in seconds"),
     max_duration: int | None = Query(None, description="Maximum duration in seconds"),
     request_context: RequestContext = Depends(get_request_context),
@@ -610,6 +612,7 @@ async def list_sessions(
     if completed_end: filters["completed_end"] = completed_end
     if updated_start: filters["updated_start"] = updated_start
     if updated_end: filters["updated_end"] = updated_end
+    if source_origin: filters["source_origin"] = source_origin
     if min_duration is not None: filters["min_duration"] = min_duration
     if max_duration is not None: filters["max_duration"] = max_duration
 
@@ -860,6 +863,9 @@ async def list_sessions(
             sessionForensics=_safe_json(s.get("session_forensics_json")),
             dates=_session_dates_payload(s),
             timeline=[event for event in _safe_json_list(s.get("timeline_json")) if isinstance(event, dict)],
+            # Phase 3 (codex-session-ingestion-v1): origin discriminator + unattributed detection.
+            source=derive_session_source(s),
+            projectId=str(s.get("project_id") or ""),
           ))
         except ValidationError as exc:
             logger.warning(
@@ -1292,6 +1298,9 @@ async def get_session(
                 if s.get("ended_at") else []
             ),
         ],
+        # Phase 3 (codex-session-ingestion-v1): origin discriminator + unattributed detection.
+        source=derive_session_source(s),
+        projectId=str(s.get("project_id") or ""),
     )
 
 

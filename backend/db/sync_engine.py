@@ -84,6 +84,7 @@ from backend.application.live_updates.domain_events import (
     publish_session_snapshot,
 )
 from backend.application.services.agent_queries import aclear_project_cache
+from backend.db.cwd_resolver import resolve_project_for_cwd
 from backend.link_audit import analyze_suspect_links, suspects_as_dicts
 from backend.session_mappings import (
     load_session_mappings,
@@ -113,6 +114,74 @@ logger = logging.getLogger("ccdash.sync")
 _COMMAND_NAME_TAG_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
 _COMMAND_ARGS_TAG_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
 _LINK_STATE_METADATA_KEY = "entity_link_state"
+
+
+def _extract_codex_cwd(path: Path) -> str:
+    """Extract the working directory from a Codex rollout-*.jsonl file.
+
+    Scans the first ``CCDASH_CODEX_CWD_SCAN_LINES`` lines (default 200) for
+    a ``turn_context`` / ``session_meta`` payload entry that carries a ``cwd``
+    field.  Returns the first non-empty cwd found, or empty string if none.
+
+    This lightweight pre-scan avoids a full parse just to learn the cwd for
+    attribution purposes; the full parse happens inside
+    ``_sync_single_codex_session``.
+    """
+    max_lines = 200  # scan only the head of large files
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for i, raw_line in enumerate(fh):
+                if i >= max_lines:
+                    break
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    entry = json.loads(raw_line)
+                except Exception:
+                    continue
+                payload = entry.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                cwd = str(payload.get("cwd") or "").strip()
+                if cwd:
+                    return cwd
+    except Exception:
+        pass
+    return ""
+
+
+def _codex_file_date(path: Path) -> "datetime | None":
+    """Return the UTC date of a Codex rollout file.
+
+    Attempts to extract the date from the path's ``YYYY/MM/DD`` tree structure
+    (the three directory levels immediately containing the file).  Falls back to
+    the file's mtime if the path structure does not contain a recognisable date.
+    Returns ``None`` when both extraction strategies fail.
+
+    Used by ``sync_codex_sessions`` to apply the ``CCDASH_CODEX_BACKFILL_DAYS``
+    window filter on the bounded startup backfill pass.
+    """
+    # Structure: <root>/YYYY/MM/DD/rollout-*.jsonl
+    # parts[-1] = filename, parts[-2] = DD, parts[-3] = MM, parts[-4] = YYYY
+    parts = path.parts
+    if len(parts) >= 4:
+        try:
+            year = int(parts[-4])
+            month = int(parts[-3])
+            day = int(parts[-2])
+            if 2000 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31:
+                return datetime(year, month, day, tzinfo=timezone.utc)
+        except (ValueError, IndexError):
+            pass
+    # Fallback: use the file's mtime.
+    try:
+        mtime = path.stat().st_mtime
+        return datetime.fromtimestamp(mtime, tz=timezone.utc)
+    except Exception:
+        return None
+
+
 _COMMIT_HEAD_METADATA_KEY = "session_commit_head"
 _PULL_REQUEST_RE = re.compile(r"(?:/pull/|/pulls/|#)(\d+)")
 _COMMIT_HASH_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
@@ -4460,6 +4529,284 @@ class SyncEngine:
             raise
 
     # ── Session Sync ────────────────────────────────────────────────
+
+    # ── Codex session ingestion (Phase 2: codex-session-ingestion-v1) ──────────
+
+    async def _load_all_projects_for_attribution(self) -> list[dict]:
+        """Fetch all registered projects from DB for cwd→project attribution.
+
+        Uses a direct async query against the ``projects`` table so we avoid
+        holding the synchronous SqliteProjectRepository connection open across
+        coroutine boundaries.  Returns a list of dicts with at least ``id`` and
+        ``repo_path`` keys, matching the shape expected by
+        ``resolve_project_for_cwd``.
+        """
+        if isinstance(self.db, aiosqlite.Connection):
+            async with self.db.execute(
+                "SELECT id, repo_path FROM projects"
+            ) as cursor:
+                rows = await cursor.fetchall()
+            return [{"id": r[0], "repo_path": r[1]} for r in rows]
+        else:
+            # Postgres path.
+            rows = await self.db.fetch("SELECT id, repo_path FROM projects")
+            return [dict(r) for r in rows]
+
+    async def _sync_single_codex_session(
+        self,
+        path: Path,
+        resolved_project_id: str,
+        cwd: str,
+        force: bool = False,
+    ) -> bool:
+        """Parse and upsert a single Codex session file with cwd-resolved
+        project attribution.
+
+        Mirrors :meth:`_sync_single_session` but:
+        - Uses *resolved_project_id* (derived from ``resolve_project_for_cwd``)
+          instead of path-derived attribution.
+        - Injects *cwd* into session_payload so it is persisted to
+          ``sessions.cwd``.
+        - Uses the absolute file path as the canonical source key (Codex files
+          are outside any project directory; no source-identity transformation
+          is applied).
+
+        Returns True if the file was parsed and upserted, False if skipped
+        (unchanged mtime).
+        """
+        file_path = str(path)
+        # Stable source key: absolute path of the Codex rollout file.
+        sync_file_path = str(path.resolve())
+        mtime = path.stat().st_mtime
+
+        if not force:
+            cached = await self.sync_repo.get_sync_state(sync_file_path)
+            if cached and cached["file_mtime"] == mtime:
+                return False  # unchanged
+
+        overall_t0 = time.monotonic()
+        parse_ms = 0
+        try:
+            with observability.start_span(
+                "ccdash.sync.codex_session.parse",
+                {
+                    "ccdash.project_id": resolved_project_id,
+                    "ccdash.file_path": file_path,
+                },
+            ):
+                t0 = time.monotonic()
+                session = await asyncio.to_thread(parse_session_file, path)
+                parse_ms = int((time.monotonic() - t0) * 1000)
+        except Exception:
+            observability.record_parser_failure("sessions", project_id=resolved_project_id)
+            raise
+
+        # Always clear existing rows for this source file before re-inserting
+        # (idempotency: prevents stale duplicates when re-syncing).
+        await self.session_repo.delete_by_source(sync_file_path)
+        await self.session_repo.delete_relationships_for_source(resolved_project_id, sync_file_path)
+
+        if session:
+            session_payload = session.model_dump()
+            if not str(session_payload.get("id") or "").strip():
+                session_payload = {}
+        else:
+            session_payload = {}
+
+        if session_payload:
+            # Inject cwd so it is persisted to sessions.cwd column.
+            if cwd:
+                session_payload["cwd"] = cwd
+
+            envelope = jsonl_session_to_envelope(
+                session_payload,
+                source_identity=sync_file_path,
+                source_uri=file_path,
+            )
+            if not isinstance(self.db, aiosqlite.Connection):
+                from backend.db.repositories.postgres._transactions import (  # noqa: PLC0415
+                    postgres_transaction as _pg_txn,
+                )
+                async with _pg_txn(self.db) as _pg_conn:
+                    await self._get_session_ingest_service().persist_envelope(
+                        resolved_project_id,
+                        envelope,
+                        observed_source_file=file_path,
+                        telemetry_source="sync",
+                        _pg_conn=_pg_conn,
+                    )
+            else:
+                await self._get_session_ingest_service().persist_envelope(
+                    resolved_project_id,
+                    envelope,
+                    observed_source_file=file_path,
+                    telemetry_source="sync",
+                )
+
+        await self.sync_repo.upsert_sync_state({
+            "file_path": sync_file_path,
+            "file_hash": _file_hash(path),
+            "file_mtime": mtime,
+            "entity_type": "session",
+            "project_id": resolved_project_id,
+            "last_synced": datetime.now(timezone.utc).isoformat(),
+            "parse_ms": parse_ms,
+        })
+
+        observability.record_ingestion(
+            "session",
+            "success" if session else "empty",
+            (time.monotonic() - overall_t0) * 1000.0,
+            project_id=resolved_project_id,
+            source="codex",
+        )
+        return True
+
+    async def sync_codex_sessions(self, force: bool = False, backfill_only: bool = False) -> dict:
+        """Scan ``~/.codex/sessions`` and ingest Codex rollout files.
+
+        Gated by ``CCDASH_CODEX_INGEST_ENABLED`` (default False).  When the
+        flag is off this method returns immediately with empty stats — Claude
+        session behaviour is completely unchanged (AC6).
+
+        Attribution (D1-a):
+            Each parsed Codex session carries a ``cwd`` extracted from
+            ``session_forensics["entryContext"]["workingDirectories"]``.
+            ``resolve_project_for_cwd`` matches this against registered
+            projects' ``repo_path`` columns using exact-then-longest-prefix
+            semantics.
+
+        Unmatched cwds (D2-b):
+            Sessions whose cwd resolves to no registered project are ingested
+            with ``project_id=""`` (the "Unattributed" bucket).  An INFO log
+            summarising count and distinct cwds is emitted once per pass — no
+            per-file spam, no silent drops.
+
+        Backfill window (D3-b):
+            When ``backfill_only=True`` the sweep is bounded by
+            ``CCDASH_CODEX_BACKFILL_DAYS`` (default 7).  Only rollout files
+            whose date (from the ``YYYY/MM/DD`` tree, or file mtime as
+            fallback) falls within ``[now - N days, now]`` are processed.
+            Setting ``CCDASH_CODEX_BACKFILL_DAYS=0`` disables the window
+            (full backfill).
+
+            When ``backfill_only=False`` (the reconcile / live pass) no date
+            window is applied; the mtime-based idempotency in
+            ``_sync_single_codex_session`` ensures re-runs never produce
+            duplicates — only new or changed files are re-parsed.
+
+        Returns a stats dict with keys:
+            synced, skipped, parse_errors, unattributed, unattributed_cwds
+        """
+        stats: dict[str, Any] = {
+            "synced": 0,
+            "skipped": 0,
+            "parse_errors": 0,
+            "unattributed": 0,
+            "unattributed_cwds": [],
+        }
+
+        if not bool(getattr(config, "CCDASH_CODEX_INGEST_ENABLED", False)):
+            return stats
+
+        codex_root = Path(getattr(config, "CCDASH_CODEX_SESSIONS_PATH", "~/.codex/sessions")).expanduser()
+        if not codex_root.exists():
+            logger.info(
+                "sync_codex_sessions: codex_root does not exist — nothing to scan (path=%s)",
+                codex_root,
+            )
+            return stats
+
+        # Load all registered projects once for cwd→project attribution.
+        projects = await self._load_all_projects_for_attribution()
+
+        # Enumerate all rollout-*.jsonl files under the date tree.
+        all_files = sorted(codex_root.rglob("rollout-*.jsonl"))
+
+        # D3-b: apply backfill window when requested.
+        if backfill_only:
+            backfill_days = int(getattr(config, "CCDASH_CODEX_BACKFILL_DAYS", 7))
+            if backfill_days > 0:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=backfill_days)
+                filtered: list[Path] = []
+                for p in all_files:
+                    file_date = _codex_file_date(p)
+                    if file_date is None or file_date >= cutoff:
+                        filtered.append(p)
+                skipped_old = len(all_files) - len(filtered)
+                if skipped_old:
+                    logger.info(
+                        "sync_codex_sessions backfill: date window=%dd cutoff=%s "
+                        "skipped_old=%d files (outside window)",
+                        backfill_days,
+                        cutoff.date().isoformat(),
+                        skipped_old,
+                    )
+                all_files = filtered
+
+        # Accumulate unmatched cwds for a single summary log after the pass.
+        unmatched_cwds: set[str] = set()
+
+        for path in all_files:
+            try:
+                # Quick-parse the file to extract cwd from forensics.
+                # We do a full parse in _sync_single_codex_session anyway, but
+                # we need cwd for attribution BEFORE calling that method.
+                # Optimize: do a lightweight pre-scan.  For simplicity we
+                # extract cwd from the first turn_context entry inline.
+                cwd = _extract_codex_cwd(path)
+                resolved_project_id: str
+                if cwd:
+                    resolved = resolve_project_for_cwd(cwd, projects)
+                    if resolved is not None:
+                        resolved_project_id = resolved
+                    else:
+                        # D2-b: unattributed — ingest with empty string project_id.
+                        resolved_project_id = ""
+                        unmatched_cwds.add(cwd)
+                else:
+                    resolved_project_id = ""
+
+                synced = await self._sync_single_codex_session(
+                    path,
+                    resolved_project_id=resolved_project_id,
+                    cwd=cwd,
+                    force=force,
+                )
+                if synced:
+                    stats["synced"] += 1
+                    if not resolved_project_id:
+                        stats["unattributed"] += 1
+                else:
+                    stats["skipped"] += 1
+            except Exception:
+                observability.record_parser_failure("sessions", project_id="codex")
+                logger.exception(
+                    "sync_codex_sessions: skipping file that failed to sync",
+                    extra={"file_path": str(path)},
+                )
+                stats["parse_errors"] += 1
+
+        # D2-b summary log: one line per sync pass, never per-file spam.
+        if unmatched_cwds:
+            stats["unattributed_cwds"] = sorted(unmatched_cwds)
+            logger.info(
+                "sync_codex_sessions unmatched_cwds: %d session(s) stored as unattributed "
+                "(project_id=''); distinct_cwds=%s — register a project with matching "
+                "repo_path to enable attribution.",
+                len([p for p in all_files if _extract_codex_cwd(p) in unmatched_cwds]),
+                sorted(unmatched_cwds),
+            )
+
+        logger.info(
+            "sync_codex_sessions complete: synced=%d skipped=%d parse_errors=%d "
+            "unattributed=%d",
+            stats["synced"],
+            stats["skipped"],
+            stats["parse_errors"],
+            stats["unattributed"],
+        )
+        return stats
 
     async def _sync_sessions(self, project_id: str, sessions_dir: Path, force: bool) -> dict:
         stats = {"synced": 0, "skipped": 0, "parse_errors": 0}

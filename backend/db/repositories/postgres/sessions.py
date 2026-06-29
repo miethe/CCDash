@@ -42,8 +42,8 @@ class PostgresSessionRepository:
                 thinking_level, session_forensics_json,
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
-                workspace_id, source_ref
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63)
+                workspace_id, source_ref, cwd
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -103,7 +103,11 @@ class PostgresSessionRepository:
                 profile=COALESCE(EXCLUDED.profile, sessions.profile),
                 effort_tier=COALESCE(EXCLUDED.effort_tier, sessions.effort_tier),
                 model_variant=COALESCE(EXCLUDED.model_variant, sessions.model_variant),
-                source_ref=COALESCE(EXCLUDED.source_ref, sessions.source_ref)
+                source_ref=COALESCE(EXCLUDED.source_ref, sessions.source_ref),
+                -- Phase 2 Codex ingestion (codex-session-ingestion-v1). cwd is
+                -- capture-once: a re-ingest with a null value must not clobber a
+                -- previously-captured value.
+                cwd=COALESCE(EXCLUDED.cwd, sessions.cwd)
             WHERE sessions.workspace_id = EXCLUDED.workspace_id
         """
         _conn = _pg_conn if _pg_conn is not None else self.db
@@ -173,6 +177,10 @@ class PostgresSessionRepository:
             session_data.get("modelVariant"),
             workspace_id,
             source_ref,
+            # Phase 2 Codex ingestion (codex-session-ingestion-v1). cwd is
+            # populated from Codex forensics; NULL for Claude Code sessions
+            # (contract state, never defaulted).
+            session_data.get("cwd"),
         )
 
     async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
@@ -251,12 +259,15 @@ class PostgresSessionRepository:
         params: list[Any] = [workspace_id]
         idx = 2
 
-        if project_id:
+        filters = filters or {}
+        _source_origin = (filters.get("source_origin") or "").lower().strip()
+
+        # 'unattributed' uses project_id='' sentinel — skip the regular project scope.
+        if project_id and _source_origin != "unattributed":
             where_parts.append(f"project_id = ${idx}")
             params.append(project_id)
             idx += 1
 
-        filters = filters or {}
         if filters.get("status"):
             where_parts.append(f"status = ${idx}")
             params.append(filters["status"])
@@ -354,6 +365,50 @@ class PostgresSessionRepository:
         if filters.get("max_duration") is not None:
             where_parts.append(f"duration_seconds <= ${idx}")
             params.append(filters["max_duration"])
+            idx += 1
+
+        # source_origin filter — mirrors derive_session_source branch logic exactly.
+        # Mapping: codex → platform_type='Codex'; unattributed → project_id='';
+        # remote/entire/filesystem/unknown → source_ref prefix checks (non-Codex only).
+        if _source_origin == "codex":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) = ${idx}")
+            params.append("Codex")
+            idx += 1
+        elif _source_origin == "unattributed":
+            where_parts.append(f"project_id = ${idx}")
+            params.append("")
+            idx += 1
+        elif _source_origin == "remote":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_parts.append(f"source_ref LIKE ${idx}")
+            params.append("remote:%")
+            idx += 1
+        elif _source_origin == "entire":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_parts.append(f"source_ref LIKE ${idx}")
+            params.append("entire:%")
+            idx += 1
+        elif _source_origin == "filesystem":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_parts.append(
+                f"(COALESCE(TRIM(source_ref), '') = '' OR source_ref LIKE ${idx} OR source_ref LIKE ${idx + 1})"
+            )
+            params.extend(["fs:%", "filesystem:%"])
+            idx += 2
+        elif _source_origin == "unknown":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_parts.append(f"COALESCE(TRIM(source_ref), '') != ''")
+            where_parts.append(f"source_ref NOT LIKE ${idx}")
+            params.append("entire:%")
+            idx += 1
+            where_parts.append(f"source_ref NOT LIKE ${idx}")
+            params.append("remote:%")
+            idx += 1
+            where_parts.append(f"source_ref NOT LIKE ${idx}")
+            params.append("fs:%")
+            idx += 1
+            where_parts.append(f"source_ref NOT LIKE ${idx}")
+            params.append("filesystem:%")
             idx += 1
 
         where = ""
@@ -363,7 +418,7 @@ class PostgresSessionRepository:
         query = f"SELECT * FROM sessions{where} ORDER BY {sort_by} {order} LIMIT ${idx} OFFSET ${idx + 1}"
         params.extend([limit, offset])
         rows = await self.db.fetch(query, *params)
-        
+
         return [dict(r) for r in rows]
 
     async def count(self, project_id: str | None = None, filters: dict | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
@@ -371,12 +426,13 @@ class PostgresSessionRepository:
         params: list[Any] = [workspace_id]
         idx = 2
 
-        if project_id:
+        filters = filters or {}
+        _source_origin = (filters.get("source_origin") or "").lower().strip()
+
+        if project_id and _source_origin != "unattributed":
             where_parts.append(f"project_id = ${idx}")
             params.append(project_id)
             idx += 1
-
-        filters = filters or {}
         if filters.get("status"):
             where_parts.append(f"status = ${idx}")
             params.append(filters["status"])
@@ -474,6 +530,48 @@ class PostgresSessionRepository:
         if filters.get("max_duration") is not None:
             where_parts.append(f"duration_seconds <= ${idx}")
             params.append(filters["max_duration"])
+            idx += 1
+
+        # source_origin filter — mirrors derive_session_source branch logic exactly.
+        if _source_origin == "codex":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) = ${idx}")
+            params.append("Codex")
+            idx += 1
+        elif _source_origin == "unattributed":
+            where_parts.append(f"project_id = ${idx}")
+            params.append("")
+            idx += 1
+        elif _source_origin == "remote":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_parts.append(f"source_ref LIKE ${idx}")
+            params.append("remote:%")
+            idx += 1
+        elif _source_origin == "entire":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_parts.append(f"source_ref LIKE ${idx}")
+            params.append("entire:%")
+            idx += 1
+        elif _source_origin == "filesystem":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_parts.append(
+                f"(COALESCE(TRIM(source_ref), '') = '' OR source_ref LIKE ${idx} OR source_ref LIKE ${idx + 1})"
+            )
+            params.extend(["fs:%", "filesystem:%"])
+            idx += 2
+        elif _source_origin == "unknown":
+            where_parts.append(f"TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_parts.append(f"COALESCE(TRIM(source_ref), '') != ''")
+            where_parts.append(f"source_ref NOT LIKE ${idx}")
+            params.append("entire:%")
+            idx += 1
+            where_parts.append(f"source_ref NOT LIKE ${idx}")
+            params.append("remote:%")
+            idx += 1
+            where_parts.append(f"source_ref NOT LIKE ${idx}")
+            params.append("fs:%")
+            idx += 1
+            where_parts.append(f"source_ref NOT LIKE ${idx}")
+            params.append("filesystem:%")
             idx += 1
 
         where = ""

@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 37
+SCHEMA_VERSION = 39
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -240,6 +240,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     profile            TEXT,
     effort_tier        TEXT,
     model_variant      TEXT,
+    -- Phase 2 Codex ingestion (codex-session-ingestion-v1).  Populated from
+    -- session_forensics["entryContext"]["workingDirectories"][0] for Codex
+    -- sessions; NULL for Claude Code sessions (contract state, not a bug).
+    cwd                TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -1200,6 +1204,7 @@ CREATE TABLE IF NOT EXISTS projects (
     skillmeat_json       TEXT NOT NULL DEFAULT '{}',
     display_json         TEXT,
     is_active            INTEGER NOT NULL DEFAULT 0,
+    repo_path            TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -3859,6 +3864,27 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         )
         await db.commit()
         logger.info("v37 migrations complete: workspaces + workspace_tokens + workspace_id columns (ADR-008).")
+
+    # ── v38 migrations (Codex session ingestion Phase 1: repo_path on projects) ──
+    if current_version < 38:
+        # Add repo_path to projects for deterministic cwd→project attribution.
+        # Nullable TEXT; default NULL — populated at registration time.
+        # Phase 1 of codex-session-ingestion-v1 plan.
+        await _ensure_column(db, "projects", "repo_path", "TEXT")
+        await db.commit()
+        logger.info("v38 migrations complete: repo_path column added to projects table.")
+
+    # ── v39 migrations (Codex session ingestion Phase 2: cwd on sessions) ──────
+    if current_version < 39:
+        # Add cwd to sessions for Codex working-directory attribution.
+        # Nullable TEXT; NULL for Claude Code sessions (contract state).
+        # Populated from session_forensics["entryContext"]["workingDirectories"][0]
+        # during Codex sync.  COALESCE-guarded on upsert so a re-ingest never
+        # clobbers a previously-captured value.
+        # Phase 2 of codex-session-ingestion-v1 plan.
+        await _ensure_column(db, "sessions", "cwd", "TEXT")
+        await db.commit()
+        logger.info("v39 migrations complete: cwd column added to sessions table.")
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────
     # _ensure_index is idempotent; the IF NOT EXISTS guard means this call is

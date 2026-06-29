@@ -105,6 +105,8 @@ class RuntimeJobState:
     reconcile_task: asyncio.Task[None] | None = None
     # T3-004: watcher fan-out reconcile loop task (distinct from the sync reconcile loop).
     watcher_reconcile_task: asyncio.Task[None] | None = None
+    # Phase 4 (codex-session-ingestion-v1): bounded Codex backfill at startup.
+    codex_backfill_task: asyncio.Task[None] | None = None
     _drain_task: asyncio.Task[None] | None = None
     watcher_started: bool = False
     # T3-001: per-project watcher tasks (fan-out mode).  Keyed by project_id.
@@ -194,6 +196,14 @@ class RuntimeJobAdapter:
                     # 6× the default 300s interval — alarm only on a clearly
                     # stalled reconcile loop, not on a single missed tick.
                     stale_threshold_seconds=1800,
+                ),
+                # Phase 4 (codex-session-ingestion-v1): startup bounded backfill.
+                # Stale threshold 24 h — one expected run per worker restart; alarm
+                # only if the backfill has never succeeded or is a day old.
+                "codexBackfill": RuntimeJobObservation(
+                    backlog_count=0,
+                    backlog_unit="files",
+                    stale_threshold_seconds=86400,
                 ),
             }
         )
@@ -352,6 +362,34 @@ class RuntimeJobAdapter:
                     _coro,
                     name=f"ccdash:{self.profile.name}:all-projects-sync",
                 )
+
+        # Phase 4 (codex-session-ingestion-v1): bounded Codex backfill at startup.
+        # Gated absolutely on CCDASH_CODEX_INGEST_ENABLED (default False); when the
+        # flag is off this block is a complete no-op — AC6.  The backfill runs
+        # through the scheduler so start() returns immediately (non-blocking).
+        if bool(getattr(config, "CCDASH_CODEX_INGEST_ENABLED", False)) and self.sync is not None:
+            if bool(getattr(config, "STARTUP_SYNC_ENABLED", True)):
+                _codex_task_name = f"ccdash:{self.profile.name}:codex-backfill"
+                if self.ports.job_scheduler is not None:
+                    self.state.codex_backfill_task = self.ports.job_scheduler.schedule(
+                        self._run_codex_backfill_job(),
+                        name=_codex_task_name,
+                    )
+                else:
+                    self.state.codex_backfill_task = asyncio.create_task(
+                        self._run_codex_backfill_job(),
+                        name=_codex_task_name,
+                    )
+                logger.info(
+                    "Phase 4 codex-session-ingestion: bounded backfill job scheduled (profile=%s)",
+                    self.profile.name,
+                )
+            else:
+                obs = self.state.job_observations.get("codexBackfill")
+                if obs is not None:
+                    obs.state = "disabled"
+                    obs.last_outcome = "disabled"
+                    obs.details["disabledBy"] = "CCDASH_STARTUP_SYNC_ENABLED=false"
 
         if self.profile.capabilities.jobs:
             analytics_task = self._start_analytics_snapshot_task()
@@ -701,6 +739,15 @@ class RuntimeJobAdapter:
             except asyncio.CancelledError:
                 pass
             self.state.reconcile_task = None
+
+        # Phase 4 (codex-session-ingestion-v1): cancel the backfill task if still running.
+        if self.state.codex_backfill_task is not None:
+            self.state.codex_backfill_task.cancel()
+            try:
+                await self.state.codex_backfill_task
+            except asyncio.CancelledError:
+                pass
+            self.state.codex_backfill_task = None
 
         # T3-004: stop watcher fan-out reconcile loop before stopping the watcher tasks.
         if self.state.watcher_reconcile_task is not None:
@@ -1288,6 +1335,45 @@ class RuntimeJobAdapter:
                 },
             )
 
+    async def _run_codex_backfill_job(self) -> None:
+        """Phase 4 (codex-session-ingestion-v1): bounded Codex backfill at startup.
+
+        Calls ``sync_codex_sessions(force=False, backfill_only=True)`` once at
+        worker startup so the first run only ingests rollout files within the
+        ``CCDASH_CODEX_BACKFILL_DAYS`` (default 7) window.  Subsequent new or
+        changed files are picked up by the periodic reconcile pass
+        (``_run_periodic_reconcile``).
+
+        Gated absolutely on ``CCDASH_CODEX_INGEST_ENABLED``; the flag check
+        inside ``sync_codex_sessions`` is authoritative (AC6) so this method
+        merely adds structured job-observation tracking on top.
+
+        Non-blocking: dispatched via the job scheduler from ``start()``.
+        """
+        started = self._mark_job_started("codexBackfill", backlog_count=1)
+        try:
+            stats = await self.sync.sync_codex_sessions(force=False, backfill_only=True)
+        except asyncio.CancelledError:
+            self._mark_job_cancelled("codexBackfill", started, backlog_count=0)
+            raise
+        except Exception as exc:
+            self._mark_job_failure("codexBackfill", started, exc, backlog_count=0)
+            logger.exception("codex-backfill job failed")
+            raise
+        else:
+            self._mark_job_success(
+                "codexBackfill",
+                started,
+                backlog_count=0,
+                details={
+                    "synced": stats.get("synced", 0),
+                    "skipped": stats.get("skipped", 0),
+                    "parseErrors": stats.get("parse_errors", 0),
+                    "unattributed": stats.get("unattributed", 0),
+                    "unattributedCwds": stats.get("unattributed_cwds", []),
+                },
+            )
+
     async def _run_all_projects_sync_job(
         self,
         *,
@@ -1549,16 +1635,46 @@ class RuntimeJobAdapter:
                                 pid,
                             )
 
+                # Phase 4 (codex-session-ingestion-v1): global Codex reconcile scan.
+                # backfill_only=False → no date window; mtime idempotency in
+                # _sync_single_codex_session ensures no dup rows on re-scan.
+                # Runs AFTER all per-project sweeps so per-project failures do not
+                # block the Codex pass.  Gated on CCDASH_CODEX_INGEST_ENABLED.
+                codex_reconcile_failed = False
+                if bool(getattr(config, "CCDASH_CODEX_INGEST_ENABLED", False)):
+                    try:
+                        codex_stats = await self.sync.sync_codex_sessions(
+                            force=False, backfill_only=False
+                        )
+                        logger.info(
+                            "reconcile: codex scan complete: synced=%d skipped=%d "
+                            "parse_errors=%d unattributed=%d",
+                            codex_stats.get("synced", 0),
+                            codex_stats.get("skipped", 0),
+                            codex_stats.get("parse_errors", 0),
+                            codex_stats.get("unattributed", 0),
+                        )
+                    except asyncio.CancelledError:
+                        self._mark_job_cancelled("reconcile", started, backlog_count=0)
+                        raise
+                    except Exception:
+                        codex_reconcile_failed = True
+                        logger.exception(
+                            "reconcile: sync_codex_sessions failed — continuing "
+                            "(per-project reconcile results are unaffected)"
+                        )
+
                 details = {
                     "projectsReconciled": reconciled,
                     "watchersHealed": healed,
                     "failedProjectIds": failed_project_ids,
+                    "codexReconcileFailed": codex_reconcile_failed,
                 }
-                if failed_project_ids:
+                if failed_project_ids or codex_reconcile_failed:
                     self._mark_job_failure(
                         "reconcile",
                         started,
-                        RuntimeError(f"reconcile_failed:{','.join(failed_project_ids)}"),
+                        RuntimeError(f"reconcile_failed:{','.join(failed_project_ids + (['codex'] if codex_reconcile_failed else []))}"),
                         backlog_count=0,
                         details=details,
                     )

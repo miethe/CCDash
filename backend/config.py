@@ -118,6 +118,35 @@ CCDASH_SNAPSHOT_FRESHNESS_INSUFFICIENT_DATA_SECONDS = _env_int(
 )
 CCDASH_IDENTITY_FUZZY_THRESHOLD = _env_float("CCDASH_IDENTITY_FUZZY_THRESHOLD", 0.85)
 CCDASH_LAUNCH_PREP_ENABLED = _env_bool("CCDASH_LAUNCH_PREP_ENABLED", False)
+# CCDASH_CODEX_INGEST_ENABLED (default: false)
+# Gates all Codex session file ingestion (scan root enumeration, cwd→project
+# attribution, NULL-bucket ingest for unmatched sessions).  When False the sync
+# engine behaves identically to today — no Codex files are enumerated (AC6).
+# Phase 2 of codex-session-ingestion-v1.
+CCDASH_CODEX_INGEST_ENABLED = _env_bool("CCDASH_CODEX_INGEST_ENABLED", False)
+# CCDASH_CODEX_SESSIONS_PATH (default: ~/.codex/sessions)
+# Filesystem root under which Codex rollout files are stored in a
+# YYYY/MM/DD/rollout-*.jsonl date tree.  expanduser() is applied at import
+# time so the runtime value is always an absolute path.
+CCDASH_CODEX_SESSIONS_PATH = os.path.expanduser(
+    (os.getenv("CCDASH_CODEX_SESSIONS_PATH") or "").strip()
+    or "~/.codex/sessions"
+)
+# CCDASH_CODEX_BACKFILL_DAYS (default: 7)
+# Bounds the initial/backfill sweep in the persistent worker to the last N
+# calendar days when CCDASH_CODEX_INGEST_ENABLED=1.  Only rollout files whose
+# date (derived from the YYYY/MM/DD path tree, or file mtime as fallback)
+# falls within [now - N days, now] are processed by the bounded backfill pass
+# (sync_codex_sessions with backfill_only=True).
+#
+# The periodic reconcile pass uses backfill_only=False — no date window — so
+# any file modified after the backfill completed is picked up on the next tick.
+# Mtime-based idempotency in _sync_single_codex_session ensures re-runs never
+# produce duplicate rows.
+#
+# Set to 0 for no day bound (full backfill of all historical files).
+# Phase 4 of codex-session-ingestion-v1 (D3-b decision).
+CCDASH_CODEX_BACKFILL_DAYS = _env_int("CCDASH_CODEX_BACKFILL_DAYS", 7)
 CCDASH_PLANNING_CONTROL_PLANE_ENABLED = _env_bool("CCDASH_PLANNING_CONTROL_PLANE_ENABLED", True)
 CCDASH_FEATURE_SURFACE_V2_ENABLED = _env_bool("CCDASH_FEATURE_SURFACE_V2_ENABLED", True)
 CCDASH_NEXT_RUN_PREVIEW_ENABLED = _env_bool("CCDASH_NEXT_RUN_PREVIEW_ENABLED", True)

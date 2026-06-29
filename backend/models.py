@@ -263,6 +263,19 @@ class AgentSession(BaseModel):
     intelligenceSummary: Optional["SessionIntelligenceSessionRollup"] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
+    # ── Phase 3 (codex-session-ingestion-v1) ─────────────────────────────────
+    # Derived session-origin discriminator.  Values: "filesystem", "remote",
+    # "entire", "codex", "unknown".  None == absent/pre-Phase-3 payload;
+    # FE renders a fallback, never crashes.  Optional per the resilience rule.
+    source: Optional[str] = None
+    # The owning project_id surfaced on the card so the FE can detect the
+    # Unattributed bucket (project_id === '').  Optional for resilience.
+    projectId: Optional[str] = None
+    # Ingest-time badge hint: first user message text used as the session title
+    # for Codex sessions (no /summary event exists).  Written by the Codex parser;
+    # stored to the ``latest_summary`` DB column via the sessions upsert
+    # ``badgeLatestSummary`` key.  Not surfaced to the FE — internal only.
+    badgeLatestSummary: Optional[str] = None
 
 
 class ExecutionOutcomePayload(BaseModel):
@@ -1702,6 +1715,10 @@ class Project(BaseModel):
     path: str
     description: str = ""
     repoUrl: str = ""
+    # Canonical repo root path used for cwd→project attribution (Codex ingestion).
+    # Populated at registration time; None on pre-v38 records.
+    # Maps to the `repo_path` column on the projects table (v38 migration).
+    repoPath: Optional[str] = None
     # Populated at read-time by the project manager from the DB is_active flag.
     # Never written back to the DB via the Project model itself (the repository
     # manages the flag directly).

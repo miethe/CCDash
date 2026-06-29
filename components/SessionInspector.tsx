@@ -45,7 +45,7 @@ import { apiFetch } from '../services/apiClient';
 import { isMemoryGuardEnabled } from '../lib/featureFlags';
 import { uiStateKeys } from '../services/queryKeys';
 import { SessionFeaturesView, TranscriptView } from './SessionInspector/TranscriptView';
-import { SessionSourceChip } from './SessionSourceChip';
+import { SessionSourceChip, SessionUnattributedBadge } from './SessionSourceChip';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -3915,7 +3915,8 @@ type StringSessionFilterKey =
     | 'completed_start'
     | 'completed_end'
     | 'updated_start'
-    | 'updated_end';
+    | 'updated_end'
+    | 'source_origin';
 
 const buildSessionFilterPayload = (filters: Partial<SessionFilters>): SessionFilters => {
     const payload: SessionFilters = {
@@ -3941,6 +3942,7 @@ const buildSessionFilterPayload = (filters: Partial<SessionFilters>): SessionFil
         'completed_end',
         'updated_start',
         'updated_end',
+        'source_origin',
     ];
     stringKeys.forEach(key => {
         const rawValue = filters[key];
@@ -4319,6 +4321,7 @@ const SessionFilterBar = React.memo(() => {
         || localFilters.updated_start
         || localFilters.updated_end
         || localFilters.include_subagents === false
+        || localFilters.source_origin
     );
 
     const renderDateRangeControl = (label: string, startKey: keyof SessionFilters, endKey: keyof SessionFilters) => (
@@ -4425,6 +4428,21 @@ const SessionFilterBar = React.memo(() => {
                                     {platformVersionOptions.map(version => (
                                         <option key={version} value={version}>{version}</option>
                                     ))}
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Origin</label>
+                                <select
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none"
+                                    value={localFilters.source_origin || ''}
+                                    onChange={e => handleChange('source_origin', e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    <option value="codex">Codex</option>
+                                    <option value="filesystem">Claude (local)</option>
+                                    <option value="remote">Remote</option>
+                                    <option value="unattributed">Unattributed</option>
                                 </select>
                             </div>
 
@@ -5092,8 +5110,12 @@ const SessionDetail = React.memo<{
                                         ↳ subagent
                                     </span>
                                 ) : null}
-                                {/* Phase 6: session source discriminator — absent field → nothing rendered. */}
-                                <SessionSourceChip source={session.source} compact />
+                                {/* Phase 3 (Codex): origin chip — absent source falls back to platformType. */}
+                                <SessionSourceChip source={session.source} platformType={session.platformType} compact />
+                                {/* Phase 3 (Codex): Unattributed bucket — projectId === '' sentinel (D2-b). */}
+                                {session.projectId === '' && (
+                                    <SessionUnattributedBadge cwd={session.cwd} compact />
+                                )}
                             </div>
                         </div>
                     </div>

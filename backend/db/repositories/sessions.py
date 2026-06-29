@@ -95,8 +95,8 @@ class SqliteSessionRepository:
                 models_used_json, agents_used_json, skills_used_json,
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
-                source_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_ref, cwd
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -162,7 +162,11 @@ class SqliteSessionRepository:
                 profile=COALESCE(excluded.profile, sessions.profile),
                 effort_tier=COALESCE(excluded.effort_tier, sessions.effort_tier),
                 model_variant=COALESCE(excluded.model_variant, sessions.model_variant),
-                source_ref=COALESCE(excluded.source_ref, sessions.source_ref)
+                source_ref=COALESCE(excluded.source_ref, sessions.source_ref),
+                -- Phase 2 Codex ingestion (codex-session-ingestion-v1). cwd is
+                -- capture-once: a re-ingest with a null value must not clobber a
+                -- previously-captured value.
+                cwd=COALESCE(excluded.cwd, sessions.cwd)
             WHERE sessions.workspace_id = excluded.workspace_id
             """,
             (
@@ -239,6 +243,10 @@ class SqliteSessionRepository:
                 session_data.get("effortTier"),
                 session_data.get("modelVariant"),
                 source_ref,
+                # Phase 2 Codex ingestion (codex-session-ingestion-v1). cwd is
+                # populated from Codex forensics; NULL for Claude Code sessions
+                # (contract state, never defaulted).
+                session_data.get("cwd"),
             ),
         )
         await self._commit()
@@ -362,8 +370,10 @@ class SqliteSessionRepository:
         where_clauses: list[str] = ["workspace_id = ?"]
         params.append(workspace_id)
         filters = filters or {}
+        _source_origin = (filters.get("source_origin") or "").lower().strip()
 
-        if project_id:
+        # 'unattributed' uses project_id='' sentinel — skip the regular project scope.
+        if project_id and _source_origin != "unattributed":
             where_clauses.append("project_id = ?")
             params.append(project_id)
 
@@ -449,6 +459,41 @@ class SqliteSessionRepository:
             where_clauses.append("duration_seconds <= ?")
             params.append(filters["max_duration"])
 
+        # source_origin filter — mirrors derive_session_source branch logic exactly.
+        # Mapping: codex → platform_type='Codex'; unattributed → project_id='';
+        # remote/entire/filesystem/unknown → source_ref prefix checks (non-Codex only).
+        if _source_origin == "codex":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) = ?")
+            params.append("Codex")
+        elif _source_origin == "unattributed":
+            where_clauses.append("project_id = ?")
+            params.append("")
+        elif _source_origin == "remote":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_clauses.append("source_ref LIKE ?")
+            params.append("remote:%")
+        elif _source_origin == "entire":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_clauses.append("source_ref LIKE ?")
+            params.append("entire:%")
+        elif _source_origin == "filesystem":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_clauses.append(
+                "(COALESCE(TRIM(source_ref), '') = '' OR source_ref LIKE ? OR source_ref LIKE ?)"
+            )
+            params.extend(["fs:%", "filesystem:%"])
+        elif _source_origin == "unknown":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_clauses.append("COALESCE(TRIM(source_ref), '') != ''")
+            where_clauses.append("source_ref NOT LIKE ?")
+            params.append("entire:%")
+            where_clauses.append("source_ref NOT LIKE ?")
+            params.append("remote:%")
+            where_clauses.append("source_ref NOT LIKE ?")
+            params.append("fs:%")
+            where_clauses.append("source_ref NOT LIKE ?")
+            params.append("filesystem:%")
+
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
 
@@ -469,8 +514,9 @@ class SqliteSessionRepository:
         where_clauses: list[str] = ["workspace_id = ?"]
         params.append(workspace_id)
         filters = filters or {}
+        _source_origin = (filters.get("source_origin") or "").lower().strip()
 
-        if project_id:
+        if project_id and _source_origin != "unattributed":
             where_clauses.append("project_id = ?")
             params.append(project_id)
             
@@ -551,6 +597,39 @@ class SqliteSessionRepository:
         if filters.get("max_duration") is not None:
             where_clauses.append("duration_seconds <= ?")
             params.append(filters["max_duration"])
+
+        # source_origin filter — mirrors derive_session_source branch logic exactly.
+        if _source_origin == "codex":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) = ?")
+            params.append("Codex")
+        elif _source_origin == "unattributed":
+            where_clauses.append("project_id = ?")
+            params.append("")
+        elif _source_origin == "remote":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_clauses.append("source_ref LIKE ?")
+            params.append("remote:%")
+        elif _source_origin == "entire":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_clauses.append("source_ref LIKE ?")
+            params.append("entire:%")
+        elif _source_origin == "filesystem":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_clauses.append(
+                "(COALESCE(TRIM(source_ref), '') = '' OR source_ref LIKE ? OR source_ref LIKE ?)"
+            )
+            params.extend(["fs:%", "filesystem:%"])
+        elif _source_origin == "unknown":
+            where_clauses.append("TRIM(COALESCE(platform_type, '')) != 'Codex'")
+            where_clauses.append("COALESCE(TRIM(source_ref), '') != ''")
+            where_clauses.append("source_ref NOT LIKE ?")
+            params.append("entire:%")
+            where_clauses.append("source_ref NOT LIKE ?")
+            params.append("remote:%")
+            where_clauses.append("source_ref NOT LIKE ?")
+            params.append("fs:%")
+            where_clauses.append("source_ref NOT LIKE ?")
+            params.append("filesystem:%")
 
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))

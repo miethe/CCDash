@@ -1,14 +1,20 @@
 ---
-title: Codex Session Ingestion v1 — implementation plan
+title: "Codex Session Ingestion v1 \u2014 implementation plan"
 doc_type: implementation_plan
 feature_slug: codex-session-ingestion-v1
 category: features
-status: draft
+status: completed
 schema_version: 2
 created: 2026-06-28
-updated: 2026-06-28
-tags: [codex, parser, sync, multi-platform, watcher, attribution]
-prd_ref: ""
+updated: '2026-06-28'
+tags:
+- codex
+- parser
+- sync
+- multi-platform
+- watcher
+- attribution
+prd_ref: ''
 ---
 
 # Codex Session Ingestion v1

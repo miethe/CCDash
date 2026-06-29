@@ -351,6 +351,7 @@ function appendSessionFilters(params: URLSearchParams, filters: SessionFilters):
     'completed_end',
     'updated_start',
     'updated_end',
+    'source_origin',
   ];
 
   scalarKeys.forEach((key) => {

@@ -43,7 +43,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 37
+SCHEMA_VERSION = 39
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -218,6 +218,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     profile            TEXT,
     effort_tier        TEXT,
     model_variant      TEXT,
+    -- Phase 2 Codex ingestion (codex-session-ingestion-v1).  Populated from
+    -- session_forensics["entryContext"]["workingDirectories"][0] for Codex
+    -- sessions; NULL for Claude Code sessions (contract state, not a bug).
+    cwd                TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -1206,6 +1210,7 @@ CREATE TABLE IF NOT EXISTS projects (
     skillmeat_json       JSONB NOT NULL DEFAULT '{}'::jsonb,
     display_json         JSONB,
     is_active            BOOLEAN NOT NULL DEFAULT FALSE,
+    repo_path            TEXT,
     created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -1700,7 +1705,23 @@ async def _column_exists(db: asyncpg.Connection, table: str, column: str) -> boo
 async def _ensure_column(db: asyncpg.Connection, table: str, column: str, definition: str) -> None:
     if await _column_exists(db, table, column):
         return
-    await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    try:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    except asyncpg.exceptions.LockNotAvailableError:
+        logger.error(
+            "ALTER TABLE %s ADD COLUMN %s blocked: lock_timeout exceeded.  "
+            "This is typically caused by long-lived connections sitting 'idle in "
+            "transaction' (e.g. a psycopg2 singleton with autocommit=False that "
+            "issued a SELECT without commit/rollback).  "
+            "Diagnose with: SELECT pid, usename, state, now() - query_start AS age, "
+            "query FROM pg_stat_activity WHERE state = 'idle in transaction' "
+            "ORDER BY age DESC;  "
+            "Terminating those connections (pg_terminate_backend(pid)) will unblock "
+            "this migration.",
+            table,
+            column,
+        )
+        raise
 
 
 async def _ensure_text_timestamp_column(db: asyncpg.Connection, table: str, column: str) -> None:
@@ -2358,13 +2379,34 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     try:
         await _run_migrations_inner(db)
     finally:
+        # Reset lock_timeout before releasing the advisory lock so the
+        # connection is clean for any subsequent use (e.g. health checks).
+        # This is a no-op if _run_migrations_inner raised before setting it,
+        # because SET lock_timeout = 0 is always safe.
+        try:
+            await db.execute("SET lock_timeout = 0")
+        except Exception:
+            pass  # best-effort; do not suppress the original exception
         await db.execute(
             "SELECT pg_advisory_unlock($1)", _PG_MIGRATION_ADVISORY_LOCK_KEY
         )
 
 
 async def _run_migrations_inner(db: asyncpg.Connection) -> None:
-    """Actual migration logic, called under the advisory lock."""
+    """Actual migration logic, called under the advisory lock.
+
+    A bounded ``lock_timeout`` is set for the duration of this function so
+    that schema-altering DDL (``ALTER TABLE ADD COLUMN``, constraint additions,
+    etc.) fails fast with a clear error instead of queuing indefinitely behind
+    ``idle in transaction`` connections.  The timeout is reset to 0 by the
+    caller (``run_migrations``) in its ``finally`` block.
+    """
+    # Defense-in-depth: bounded wait for ACCESS EXCLUSIVE locks needed by DDL.
+    # 5 s is enough for a healthy DB; on a lock convoy the migration will raise
+    # asyncpg.exceptions.LockNotAvailableError with an actionable log message
+    # (see _ensure_column) rather than hanging API startup indefinitely.
+    await db.execute("SET lock_timeout = '5s'")
+
     # Check current schema version
     try:
         row = await db.fetchrow("SELECT MAX(version) FROM schema_version")
@@ -3375,6 +3417,25 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
             "ALTER TABLE ingest_cursors ALTER COLUMN workspace_id SET DEFAULT 'default-local'"
         )
         logger.info("v37 migrations complete: workspaces + workspace_tokens + workspace_id columns (ADR-008).")
+
+    # ── v38 migrations (Codex session ingestion Phase 1: repo_path on projects) ──
+    if current_version < 38:
+        # Add repo_path to projects for deterministic cwd→project attribution.
+        # Nullable TEXT; default NULL — populated at registration time.
+        # Phase 1 of codex-session-ingestion-v1 plan.
+        await _ensure_column(db, "projects", "repo_path", "TEXT")
+        logger.info("v38 migrations complete: repo_path column added to projects table.")
+
+    # ── v39 migrations (Codex session ingestion Phase 2: cwd on sessions) ──────
+    if current_version < 39:
+        # Add cwd to sessions for Codex working-directory attribution.
+        # Nullable TEXT; NULL for Claude Code sessions (contract state).
+        # Populated from session_forensics["entryContext"]["workingDirectories"][0]
+        # during Codex sync.  COALESCE-guarded on upsert so a re-ingest never
+        # clobbers a previously-captured value.
+        # Phase 2 of codex-session-ingestion-v1 plan.
+        await _ensure_column(db, "sessions", "cwd", "TEXT")
+        logger.info("v39 migrations complete: cwd column added to sessions table.")
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
     # Databases that already had schema_version >= SCHEMA_VERSION skip the
