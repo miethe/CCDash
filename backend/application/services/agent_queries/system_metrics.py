@@ -165,9 +165,13 @@ def _system_active_count_params(
     ports: CorePorts,
     **_: Any,
 ) -> dict[str, Any]:
-    # No per-invocation parameters vary the result; use an empty dict so the
-    # cache key scope resolves to "global" via project_id=None.
-    return {}
+    # No per-invocation parameters vary the result.  Explicitly set
+    # project_id="" so the decorator does NOT auto-derive it from
+    # context.project.project_id (which would scope this global query to a
+    # single active project).  compute_cache_key uses `project_id or "global"`
+    # so "" maps to the "global" scope slot, and no active-project ID leaks
+    # into the cache key.
+    return {"project_id": ""}
 
 
 def _system_token_rollup_params(
@@ -280,8 +284,37 @@ class SystemMetricsQueryService:
     ``backend/application/services/agent_queries/project_status.py``.
     """
 
-    @memoized_query("system_active_count", param_extractor=_system_active_count_params)
     async def get_system_active_count(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        **kwargs: Any,
+    ) -> SystemActiveCountDTO:
+        """Public entry point for the system-wide active-count query.
+
+        Delegates to ``_get_system_active_count_impl`` (the memoized inner
+        method) and validates that the result is a :class:`SystemActiveCountDTO`
+        before returning it.  If the cache ever returns a foreign type (cross-
+        contamination), the response is discarded and the query re-executed with
+        ``bypass_cache=True`` so the cache is immediately repaired.
+
+        All keyword arguments (e.g. ``bypass_cache=True``) are forwarded to the
+        inner decorated method so callers retain full control over cache bypass.
+        """
+        result = await self._get_system_active_count_impl(context, ports, **kwargs)
+        if not isinstance(result, SystemActiveCountDTO):
+            logger.warning(
+                "system_active_count: cache returned unexpected type %s; "
+                "bypassing cache to refresh",
+                type(result).__name__,
+            )
+            result = await self._get_system_active_count_impl(
+                context, ports, bypass_cache=True, **kwargs
+            )
+        return result  # type: ignore[return-value]
+
+    @memoized_query("system_active_count", param_extractor=_system_active_count_params)
+    async def _get_system_active_count_impl(
         self,
         context: RequestContext,
         ports: CorePorts,

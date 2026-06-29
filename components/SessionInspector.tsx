@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
-import { useSessionsQuery } from '../services/queries/sessions';
+import { useSessionsQuery, useSessionDetailQuery } from '../services/queries/sessions';
 import { useFeaturesQuery } from '../services/queries/features';
 import { useDocumentsQuery } from '../services/queries/documents';
 import { useModelColors } from '../contexts/ModelColorsContext';
@@ -4612,6 +4612,24 @@ const SessionDetail = React.memo<{
     // Mount useFeaturesQuery so features are fetched on cold load (T4-003).
     // useData().features reads from TQ cache — it does not trigger a fetch itself.
     useFeaturesQuery({ projectId: activeProject?.id });
+
+    // Cross-project detail fix: use the session's own projectId when available so
+    // the backend receives the correct X-CCDash-Project-Id header. The empty-string
+    // sentinel (session.projectId === '') means "Unattributed" — fall back to the
+    // global active project in that case. Missing projectId is a contract state, not
+    // a crash; fall back gracefully so single-project flows continue unchanged.
+    const resolvedProjectId = (session.projectId && session.projectId !== '')
+      ? session.projectId
+      : (activeProject?.id ?? '');
+    const { data: sessionDetail } = useSessionDetailQuery({
+      sessionId: session.id,
+      projectId: resolvedProjectId,
+      enabled: !!resolvedProjectId,
+    });
+    // effectiveSession: full detail from TQ when available, list-entry stub otherwise.
+    // All log-dependent views consume effectiveSession so the transcript is never
+    // empty for cross-project sessions once the fetch resolves.
+    const effectiveSession = sessionDetail ?? session;
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<SessionInspectorTab>(initialTab);
@@ -4673,8 +4691,9 @@ const SessionDetail = React.memo<{
     }, [threadSessionsData]);
 
     useEffect(() => {
-        setThreadSessionDetails(prev => ({ ...prev, [session.id]: session }));
-    }, [session]);
+        // Update the main session slot with the full detail as soon as it arrives.
+        setThreadSessionDetails(prev => ({ ...prev, [session.id]: effectiveSession }));
+    }, [session.id, effectiveSession]);
 
     useEffect(() => {
         let cancelled = false;
@@ -4711,7 +4730,7 @@ const SessionDetail = React.memo<{
         let cancelled = false;
         const load = async () => {
             try {
-                const res = await apiFetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`);
+                const res = await apiFetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`, undefined, resolvedProjectId);
                 if (!res.ok) throw new Error(`Failed to load linked features (${res.status})`);
                 const data = await res.json();
                 if (!cancelled) {
@@ -4823,7 +4842,7 @@ const SessionDetail = React.memo<{
                     featureId,
                     linkRole,
                 }),
-            });
+            }, resolvedProjectId);
             const payload = await res.json().catch(() => null);
             if (!res.ok) {
                 const detail = typeof payload?.detail === 'string' ? payload.detail : `Failed to update feature link (${res.status})`;
@@ -4849,7 +4868,8 @@ const SessionDetail = React.memo<{
         try {
             const res = await apiFetch(
                 `/api/sessions/${encodeURIComponent(session.id)}/linked-features/${encodeURIComponent(normalizedFeatureId)}`,
-                { method: 'DELETE' }
+                { method: 'DELETE' },
+                resolvedProjectId
             );
             const payload = await res.json().catch(() => null);
             if (!res.ok) {
@@ -4874,7 +4894,7 @@ const SessionDetail = React.memo<{
     const subagentNameBySessionId = useMemo(() => {
         const names = new Map<string, string>();
 
-        for (const log of session.logs) {
+        for (const log of effectiveSession.logs) {
             if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name) || !log.linkedSessionId) {
                 continue;
             }
@@ -4884,7 +4904,7 @@ const SessionDetail = React.memo<{
             }
         }
 
-        for (const log of session.logs) {
+        for (const log of effectiveSession.logs) {
             if (log.type !== 'subagent_start' || !log.linkedSessionId || names.has(log.linkedSessionId)) {
                 continue;
             }
@@ -4909,7 +4929,7 @@ const SessionDetail = React.memo<{
         }
 
         return names;
-    }, [session.logs, threadSessions]);
+    }, [effectiveSession.logs, threadSessions]);
 
     const handleSelectAgent = useCallback((agent: string) => {
         setFilterAgent(agent || null); // Empty string resets filter
@@ -4970,7 +4990,7 @@ const SessionDetail = React.memo<{
             }
         };
 
-        (session.linkedArtifacts || []).forEach(artifact => {
+        (effectiveSession.linkedArtifacts || []).forEach(artifact => {
             if ((artifact.type || '').trim().toLowerCase() !== 'task') return;
             const taskId = extractTaskIdFromText(
                 artifact.title,
@@ -4981,7 +5001,7 @@ const SessionDetail = React.memo<{
             addTaskId(taskId);
         });
 
-        session.logs.forEach(log => {
+        effectiveSession.logs.forEach(log => {
             const taskDetails = getTaskToolDetails(log);
             addTaskId(taskDetails?.taskId);
         });
@@ -4989,7 +5009,7 @@ const SessionDetail = React.memo<{
         return Array.from(byNormalizedTaskId.entries())
             .sort((a, b) => a[1].localeCompare(b[1]))
             .map(([normalizedTaskId, taskId]) => ({ normalizedTaskId, taskId }));
-    }, [session.linkedArtifacts, session.logs]);
+    }, [effectiveSession.linkedArtifacts, effectiveSession.logs]);
     const sessionDisplayTitle = useMemo(
         () => deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null),
         [session.id, session.title, session.sessionMetadata]
@@ -5316,7 +5336,7 @@ const SessionDetail = React.memo<{
             <div className="flex-1 min-h-0 min-w-full">
                 {activeTab === 'transcript' && (
                     <TranscriptView
-                        session={session}
+                        session={effectiveSession}
                         selectedLogId={selectedLogId}
                         setSelectedLogId={setSelectedLogId}
                         filterAgent={filterAgent}
@@ -5353,8 +5373,8 @@ const SessionDetail = React.memo<{
                             projectId={activeProject.id}
                             sessionId={session.id}
                             sessionStatus={session.status}
-                            sessionFileUpdates={session.updatedFiles || []}
-                            sessionLogs={session.logs || []}
+                            sessionFileUpdates={effectiveSession.updatedFiles || []}
+                            sessionLogs={effectiveSession.logs || []}
                             onNavigateToTestingPage={() => navigate(`/tests?sessionId=${encodeURIComponent(session.id)}`)}
                         />
                     ) : (
@@ -5366,7 +5386,7 @@ const SessionDetail = React.memo<{
                 {activeTab === 'forensics' && <SessionForensicsView session={session} />}
                 {activeTab === 'activity' && (
                     <ActivityView
-                        session={session}
+                        session={effectiveSession}
                         threadSessions={threadSessions}
                         threadSessionDetails={threadSessionDetails}
                         subagentNameBySessionId={subagentNameBySessionId}
@@ -5378,7 +5398,7 @@ const SessionDetail = React.memo<{
                 )}
                 {activeTab === 'files' && (
                     <FilesView
-                        session={session}
+                        session={effectiveSession}
                         threadSessions={threadSessions}
                         threadSessionDetails={threadSessionDetails}
                         subagentNameBySessionId={subagentNameBySessionId}

@@ -53,7 +53,7 @@ function makeMockClient(opts: {
       Promise.resolve(makePage(sessions.slice(options.offset ?? 0, (options.offset ?? 0) + (options.limit ?? 50)), total, options.offset ?? 0)),
   );
 
-  const getSession = vi.fn((_sessionId: string) => Promise.resolve(sessionDetail));
+  const getSession = vi.fn((_sessionId: string, _projectId?: string) => Promise.resolve(sessionDetail));
 
   return { getSessions, getSession };
 }
@@ -189,6 +189,63 @@ describe('T1-002: useSessionDetailQuery — concurrent calls dedup to one fetch'
     expect(client.getSession).toHaveBeenCalledTimes(1);
 
     qcStale.clear();
+  });
+});
+
+// ── T1-003: useSessionDetailQuery — projectId forwarding ─────────────────────
+
+describe('T1-003: useSessionDetailQuery — projectId forwarding', () => {
+  let qc: QueryClient;
+  let client: ReturnType<typeof makeMockClient>;
+
+  beforeEach(() => {
+    qc = makeQueryClient();
+    client = makeMockClient({ sessionDetail: makeSession('s1') });
+  });
+
+  afterEach(() => {
+    qc.clear();
+  });
+
+  it('passes projectId to getSession when provided', async () => {
+    const sessionId = 's1';
+    const projectId = 'proj-cross';
+    const queryKey = sessionsKeys.detail(projectId, sessionId);
+
+    await qc.fetchQuery({
+      queryKey,
+      queryFn: () => client.getSession(sessionId, projectId),
+    });
+
+    expect(client.getSession).toHaveBeenCalledWith(sessionId, projectId);
+    expect(client.getSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to global scope when projectId is omitted', async () => {
+    const sessionId = 's1';
+    const queryKey = sessionsKeys.detail('', sessionId);
+
+    await qc.fetchQuery({
+      queryKey,
+      queryFn: () => client.getSession(sessionId),
+    });
+
+    // Called with only the sessionId — no projectId arg, global scope is used
+    expect(client.getSession).toHaveBeenCalledWith(sessionId);
+    expect(client.getSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the session-keyed queryKey so cross-project cache entries are isolated', async () => {
+    const sessionId = 's1';
+    const projA = 'proj-a';
+    const projB = 'proj-b';
+
+    // Seed proj-a cache slot
+    qc.setQueryData(sessionsKeys.detail(projA, sessionId), makeSession('s1-from-a'));
+
+    // proj-b should be a cache miss even though proj-a has data
+    const cached = qc.getQueryData(sessionsKeys.detail(projB, sessionId));
+    expect(cached).toBeUndefined();
   });
 });
 

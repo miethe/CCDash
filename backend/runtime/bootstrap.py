@@ -428,17 +428,30 @@ def _build_registry_detail() -> dict[str, Any]:
     """Return { project_count, last_flush_status } from the DB-backed project registry.
 
     last_flush_status derivation:
-    - SqliteProjectRepository.count() is called on the configured DB path.
+    - The appropriate repository (SQLite or Postgres, matching DB_BACKEND) is
+      used to COUNT the projects table.  This mirrors the read path that
+      /api/projects uses successfully so the health check is consistent with
+      the live registry state.
     - If the call succeeds → "ok".
     - If the DB is locked (OperationalError with "locked" in message) → "locked".
     - Any other exception → "failed".
-    - If the DB path is not yet available (file missing + table not yet created) → "unknown".
+    - If the table does not yet exist (migrations not run) → "unknown".
+
+    On a Postgres-backed node the previous SQLite-only implementation raised
+    sqlite3.OperationalError ("unable to open database file") because the
+    SQLite file may not exist, causing a spurious "failed" status even when
+    the Postgres registry is fully healthy.
     """
     project_count: int | None = None
     last_flush_status: str = "unknown"
+    db_backend = str(getattr(config, "DB_BACKEND", "sqlite")).lower() or "sqlite"
     try:
-        from backend.db.repositories.projects import SqliteProjectRepository
-        repo = SqliteProjectRepository(db_path=str(config.DB_PATH))
+        if db_backend == "postgres":
+            from backend.db.repositories.postgres.projects import PostgresProjectRepository  # noqa: PLC0415
+            repo = PostgresProjectRepository(str(getattr(config, "DATABASE_URL", "")))
+        else:
+            from backend.db.repositories.projects import SqliteProjectRepository  # noqa: PLC0415
+            repo = SqliteProjectRepository(db_path=str(config.DB_PATH))
         repo.ensure_table()
         project_count = repo.count()
         last_flush_status = "ok"

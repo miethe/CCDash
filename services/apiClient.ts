@@ -113,7 +113,7 @@ export interface ApiClient {
   logout(): Promise<AuthLogoutResponse>;
   getHealth(): Promise<RuntimeHealthResponse>;
   getSessions(filters: SessionFilters, options?: { offset?: number; limit?: number }): Promise<PaginatedResponse<AgentSession>>;
-  getSession(sessionId: string): Promise<AgentSession>;
+  getSession(sessionId: string, projectId?: string): Promise<AgentSession>;
   getDocuments(offset: number, limit: number): Promise<PaginatedResponse<PlanDocument> | PlanDocument[]>;
   getTasks(): Promise<PaginatedResponse<ProjectTask> | ProjectTask[]>;
   getTasksPaginated(offset: number, limit: number): Promise<PaginatedResponse<ProjectTask> | ProjectTask[]>;
@@ -238,11 +238,16 @@ export function setApiProjectScope(projectId: string | null | undefined): void {
   persistProjectScope(selectedProjectId);
 }
 
-export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+export async function apiFetch(path: string, init?: RequestInit, projectScopeOverride?: string | null): Promise<Response> {
   const url = buildApiUrl(normalizeApiPath(path));
   const headers = new Headers(init?.headers);
-  if (selectedProjectId && !headers.has(PROJECT_SCOPE_HEADER)) {
-    headers.set(PROJECT_SCOPE_HEADER, selectedProjectId);
+  // Use the per-call override when provided (cross-project requests); fall back to the
+  // module-level global scope for all other callers — the existing contract is unchanged.
+  const effectiveProjectId = projectScopeOverride !== undefined
+    ? normalizeProjectScope(projectScopeOverride)
+    : selectedProjectId;
+  if (effectiveProjectId && !headers.has(PROJECT_SCOPE_HEADER)) {
+    headers.set(PROJECT_SCOPE_HEADER, effectiveProjectId);
   }
   const requestInit: RequestInit = {
     ...init,
@@ -261,9 +266,9 @@ export async function createApiErrorFromResponse(res: Response, url: string): Pr
   });
 }
 
-export async function apiRequestJson<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiRequestJson<T>(path: string, init?: RequestInit, projectScopeOverride?: string | null): Promise<T> {
   const url = buildApiUrl(normalizeApiPath(path));
-  const res = await apiFetch(path, init);
+  const res = await apiFetch(path, init, projectScopeOverride);
   if (!res.ok) {
     throw await createApiErrorFromResponse(res, url);
   }
@@ -407,8 +412,11 @@ export function createApiClient(): ApiClient {
       return requestJson<PaginatedResponse<AgentSession>>(`/sessions?${params.toString()}`);
     },
 
-    async getSession(sessionId) {
-      return requestJson<AgentSession>(`/sessions/${sessionId}`);
+    async getSession(sessionId, projectId) {
+      // Forward projectId as a per-call scope override so cross-project sessions
+      // send the correct X-CCDash-Project-Id header. When absent, apiFetch falls
+      // back to the global selectedProjectId — single-project callers are unaffected.
+      return requestJson<AgentSession>(`/sessions/${sessionId}`, undefined, projectId);
     },
 
     async getDocuments(offset, limit) {

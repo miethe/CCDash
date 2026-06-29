@@ -87,7 +87,10 @@ export function useSessionDetailQuery({
     queryKey: sessionsKeys.detail(projectId ?? '', sessionId ?? ''),
     queryFn: () => {
       if (!sessionId) throw new Error('sessionId is required');
-      return client.getSession(sessionId);
+      // Pass the session's own projectId so the backend receives the correct
+      // X-CCDash-Project-Id header for cross-project sessions. Falls back to
+      // global scope when projectId is absent (single-project callers).
+      return client.getSession(sessionId, projectId ?? undefined);
     },
     staleTime: 30_000,
     gcTime: 300_000,

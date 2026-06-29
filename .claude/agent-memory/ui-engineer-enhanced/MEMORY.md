@@ -2,3 +2,4 @@
 - [feedback_mietheui_tests.md](feedback_mietheui_tests.md) — Use @testing-library/react (not renderToStaticMarkup) for @miethe/ui tests; react-dom/server.browser breaks in jsdom
 - [project_ee_phase5_fds.md](project_ee_phase5_fds.md) — EE P5 FeatureDetailShell: FeaturePlanningContext type constraints, Chip/ArtifactChip distinction, pre-existing test failures
 - [project_ee_phase5_wave4.md](project_ee_phase5_wave4.md) — EE P5 Wave 4: CommandPalette (P5-009) + NewSpecModal (P5-010) + createSpec; search endpoints, type gotchas
+- [project_cross_project_session_fix.md](project_cross_project_session_fix.md) — Cross-project session transcript fix: apiFetch projectScopeOverride, useSessionDetailQuery wiring, effectiveSession pattern in SessionDetail

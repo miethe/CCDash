@@ -265,6 +265,86 @@ describe('apiClient — auth/session foundation', () => {
   });
 });
 
+describe('apiClient — getSession cross-project header override', () => {
+  let client: ReturnType<typeof createApiClient>;
+
+  beforeEach(() => {
+    client = createApiClient();
+  });
+
+  afterEach(() => {
+    setApiProjectScope(null);
+    vi.unstubAllGlobals();
+  });
+
+  it('sends session-own projectId header when projectId arg is provided', async () => {
+    stubFetch({ id: 's1', logs: [] });
+    setApiProjectScope('global-project');
+
+    await client.getSession('s1', 'cross-project');
+
+    expect(calledUrl()).toBe('/api/sessions/s1');
+    expect((calledInit().headers as Headers).get('X-CCDash-Project-Id')).toBe('cross-project');
+  });
+
+  it('uses global project scope when projectId arg is omitted', async () => {
+    stubFetch({ id: 's1', logs: [] });
+    setApiProjectScope('global-project');
+
+    await client.getSession('s1');
+
+    expect(calledUrl()).toBe('/api/sessions/s1');
+    expect((calledInit().headers as Headers).get('X-CCDash-Project-Id')).toBe('global-project');
+  });
+
+  it('sends no project scope header when both override and global scope are absent', async () => {
+    stubFetch({ id: 's1', logs: [] });
+    // No setApiProjectScope call — global is null
+
+    await client.getSession('s1');
+
+    const headers = calledInit().headers as Headers | undefined;
+    const scopeHeader = headers?.get?.('X-CCDash-Project-Id');
+    expect(scopeHeader).toBeNull();
+  });
+});
+
+describe('apiClient — apiFetch per-call projectScopeOverride', () => {
+  afterEach(() => {
+    setApiProjectScope(null);
+    vi.unstubAllGlobals();
+  });
+
+  it('override takes precedence over global scope', async () => {
+    stubFetch({ ok: true });
+    setApiProjectScope('global-project');
+
+    await apiFetch('/api/v1/sessions', undefined, 'override-project');
+
+    expect((calledInit().headers as Headers).get('X-CCDash-Project-Id')).toBe('override-project');
+  });
+
+  it('null override suppresses the header even when global scope is set', async () => {
+    stubFetch({ ok: true });
+    setApiProjectScope('global-project');
+
+    await apiFetch('/api/v1/sessions', undefined, null);
+
+    const headers = calledInit().headers as Headers;
+    // null normalizes to empty string → no header
+    expect(headers.get('X-CCDash-Project-Id')).toBeNull();
+  });
+
+  it('omitted override (undefined) falls through to global scope', async () => {
+    stubFetch({ ok: true });
+    setApiProjectScope('global-project');
+
+    await apiFetch('/api/v1/sessions');
+
+    expect((calledInit().headers as Headers).get('X-CCDash-Project-Id')).toBe('global-project');
+  });
+});
+
 describe('apiClient — artifact intelligence diagnostics', () => {
   let client: ReturnType<typeof createApiClient>;
 
