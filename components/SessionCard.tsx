@@ -82,6 +82,61 @@ export const deriveSessionCardTitle = (sessionId: string, explicitTitle?: string
   return sessionId;
 };
 
+export const deriveTranscriptIntelligenceTitle = (
+  sessionId: string,
+  explicitTitle?: string,
+  metadata?: SessionCardMetadata | null,
+  transcriptDisplayTitle?: string | null,
+  enabled = false,
+): string => {
+  const intelligenceTitle = (transcriptDisplayTitle || '').trim();
+  if (enabled && intelligenceTitle) return intelligenceTitle;
+  return deriveSessionCardTitle(sessionId, explicitTitle, metadata);
+};
+
+const formatEffortValue = (value?: string | null): string => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  return normalized
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+};
+
+export const deriveEffortTimelineLabel = (
+  effortTimeline?: Array<{
+    fromEffort?: string | null;
+    toEffort?: string | null;
+    effort?: string | null;
+    effortTier?: string | null;
+    label?: string | null;
+  }> | null,
+  fallbackEffort?: string | null,
+): string => {
+  const entries = Array.isArray(effortTimeline) ? effortTimeline : [];
+
+  for (const entry of entries) {
+    const from = formatEffortValue(entry.fromEffort);
+    const to = formatEffortValue(entry.toEffort);
+    if (from && to && from.toLowerCase() !== to.toLowerCase()) {
+      return `${from} -> ${to}`;
+    }
+  }
+
+  const values = entries
+    .map(entry => formatEffortValue(entry.toEffort || entry.effort || entry.effortTier || entry.label))
+    .filter(Boolean);
+  const uniqueValues = values.filter((value, index) => (
+    values.findIndex(candidate => candidate.toLowerCase() === value.toLowerCase()) === index
+  ));
+
+  if (uniqueValues.length > 1) {
+    return `${uniqueValues[0]} -> ${uniqueValues[uniqueValues.length - 1]}`;
+  }
+  if (uniqueValues.length === 1) return uniqueValues[0];
+  return formatEffortValue(fallbackEffort);
+};
+
 interface SessionCardProps {
   sessionId: string;
   title: string;

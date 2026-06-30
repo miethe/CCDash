@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
-import { Activity, ExternalLink, FileText, GitCommit, Maximize2 } from 'lucide-react';
+import { Activity, ExternalLink, FileText, GitCommit, Maximize2, Zap } from 'lucide-react';
 import { useData } from '../../contexts/DataContext';
 import { AgentSession, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate } from '../../types';
-import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from '../SessionCard';
+import { SessionCard, SessionCardDetailSection, deriveEffortTimelineLabel, deriveTranscriptIntelligenceTitle } from '../SessionCard';
 import { resolveDisplayCost } from '../../lib/sessionSemantics';
+import { isTranscriptIntelligenceEnabled } from '../../lib/featureFlags';
 import {
     collectCommitEvents,
     collectThreadDetailSessions,
@@ -318,9 +319,8 @@ export const ActivityView: React.FC<{
             activeProject?.path,
             activeProject?.repoUrl,
             subagentNameBySessionId,
-            highlightedSourceLogId,
         ),
-        [activeProject?.path, activeProject?.repoUrl, documents, highlightedSourceLogId, session, sessionsForActivity, subagentNameBySessionId]
+        [activeProject?.path, activeProject?.repoUrl, documents, session, sessionsForActivity, subagentNameBySessionId]
     );
 
     const openRowViewer = (row: ActivityRow) => {
@@ -551,9 +551,22 @@ export const SessionSummaryCard: React.FC<{
         label?: string;
     };
 }> = ({ session, onClick, className, statusOverride, threadToggle }) => {
+    const transcriptIntelligenceEnabled = isTranscriptIntelligenceEnabled();
     const displayTitle = useMemo(
-        () => deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null),
-        [session.id, session.sessionMetadata, session.title]
+        () => deriveTranscriptIntelligenceTitle(
+            session.id,
+            session.title,
+            session.sessionMetadata || null,
+            session.transcriptIntelligence?.title?.displayTitle,
+            transcriptIntelligenceEnabled,
+        ),
+        [session.id, session.sessionMetadata, session.title, session.transcriptIntelligence?.title?.displayTitle, transcriptIntelligenceEnabled]
+    );
+    const effortLabel = useMemo(
+        () => transcriptIntelligenceEnabled
+            ? deriveEffortTimelineLabel(session.transcriptIntelligence?.effortTimeline, session.effortTier)
+            : '',
+        [session.effortTier, session.transcriptIntelligence?.effortTimeline, transcriptIntelligenceEnabled]
     );
     const agentNames = useMemo(
         () => Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent'))).slice(0, 3),
@@ -628,6 +641,15 @@ export const SessionSummaryCard: React.FC<{
             )}
             infoBadges={(
                 <div className="flex items-center gap-2">
+                    {effortLabel && (
+                        <span
+                            className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-500/35 text-amber-200 bg-amber-500/10 font-semibold"
+                            title={`Effort timeline: ${effortLabel}`}
+                        >
+                            <Zap size={10} />
+                            Effort {effortLabel}
+                        </span>
+                    )}
                     <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider ${
                         isForkThread(session)
                             ? 'text-cyan-300 border-cyan-500/35 bg-cyan-500/10'

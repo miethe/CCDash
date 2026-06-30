@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
-status: draft
+status: completed
 category: enhancements
 title: "Implementation Plan: Session Transcript Orchestration Intelligence V1"
 description: "Build derived transcript intelligence, inferred titles, minimap navigation, task/workflow registers, effort transitions, plan metadata links, and source-aware token rails for CCDash session transcripts."
@@ -80,7 +80,18 @@ findings_doc_ref: null
 changelog_required: true
 commit_refs: []
 pr_refs: []
-files_affected: []
+files_affected:
+  - backend/application/services/agent_queries/transcript_intelligence.py
+  - backend/application/services/agent_queries/session_detail.py
+  - backend/models.py
+  - backend/routers/api.py
+  - components/SessionCard.tsx
+  - components/SessionInspector/SessionInspectorPanels.tsx
+  - components/SessionInspector/TranscriptView.tsx
+  - lib/featureFlags.ts
+  - types.ts
+  - components/__tests__/transcriptIntelligence.test.tsx
+  - backend/tests/test_transcript_intelligence.py
 wave_plan:
   execution_model: workflow
   phases:
@@ -128,19 +139,19 @@ wave_plan:
 tasks:
   - id: PLAN-T1
     title: "Define inferred-title algorithm and contract"
-    status: not_started
+    status: completed
     phase: P1
     assigned_to: backend-architect
     estimate: 1
   - id: API-T2
     title: "Build transcript intelligence index DTOs and query service"
-    status: not_started
+    status: completed
     phase: P1
     assigned_to: python-backend-engineer
     estimate: 2
   - id: UI-T2
     title: "Implement minimap shell and marker modes"
-    status: not_started
+    status: completed
     phase: P3
     assigned_to: ui-engineer-enhanced
     estimate: 2

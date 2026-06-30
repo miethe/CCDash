@@ -16,6 +16,9 @@ from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.common import resolve_project
 from backend.application.services.documents import DocumentQueryService
+from backend.application.services.agent_queries.transcript_intelligence import (
+    build_transcript_intelligence_index,
+)
 from backend.application.services.session_intelligence import SessionIntelligenceReadService
 from backend.application.services.sessions import SessionFacetService, SessionTranscriptService
 from backend import config
@@ -126,6 +129,30 @@ def _safe_json_list(raw: str | list | None) -> list:
         return parsed if isinstance(parsed, list) else []
     except Exception:
         return []
+
+
+def _command_events_as_logs(command_events: list[dict]) -> list[dict[str, Any]]:
+    logs: list[dict[str, Any]] = []
+    for index, event in enumerate(command_events):
+        name = str(event.get("name") or "").strip()
+        args = str(event.get("args") or "").strip()
+        if not name:
+            continue
+        logs.append({
+            "id": f"command-event-{index}",
+            "timestamp": "",
+            "speaker": "user",
+            "type": "command",
+            "content": name,
+            "metadata": {
+                "args": args,
+                "parsedCommand": event.get("parsedCommand")
+                if isinstance(event.get("parsedCommand"), dict)
+                else {},
+            },
+            "toolCall": None,
+        })
+    return logs
 
 
 def _extract_frontmatter_block(text: str) -> tuple[str, str]:
@@ -773,6 +800,12 @@ async def list_sessions(
             session_type=s.get("session_type") or "",
             subagent_type=subagent_type,
         )
+        transcript_intelligence = build_transcript_intelligence_index(
+            s,
+            _command_events_as_logs(command_events),
+            existing_title=session_title,
+            latest_summary=latest_summary,
+        )
         model_identity = derive_model_identity(s.get("model"))
         platform_version_value = str(s.get("platform_version") or "").strip()
         raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
@@ -861,6 +894,7 @@ async def list_sessions(
             phaseHints=None,
             taskHints=None,
             sessionForensics=_safe_json(s.get("session_forensics_json")),
+            transcriptIntelligence=transcript_intelligence,
             dates=_session_dates_payload(s),
             timeline=[event for event in _safe_json_list(s.get("timeline_json")) if isinstance(event, dict)],
             # Phase 3 (codex-session-ingestion-v1): origin discriminator + unattributed detection.
@@ -1050,6 +1084,7 @@ async def get_session(
             "linkedSessionId": l.get("linkedSessionId"),
             "relatedToolCallId": l.get("relatedToolCallId"),
             "metadata": metadata,
+            "tokenUsage": l.get("tokenUsage"),
             "toolCall": tc,
         })
 
@@ -1116,6 +1151,13 @@ async def get_session(
         request_context,
         core_ports,
         session_id=session_id,
+    )
+    transcript_intelligence = build_transcript_intelligence_index(
+        s,
+        normalized_session_logs,
+        existing_title=session_title,
+        latest_summary=latest_summary,
+        usage_events=usage_attribution_details["usageEvents"],
     )
         
     # Derive linkedFeatureIds from entity-links repo (detail only — too costly for list).
@@ -1268,6 +1310,7 @@ async def get_session(
         usageAttributionSummary=usage_attribution_details["usageAttributionSummary"],
         usageAttributionCalibration=usage_attribution_details["usageAttributionCalibration"],
         intelligenceSummary=intelligence_detail.summary if intelligence_detail else None,
+        transcriptIntelligence=transcript_intelligence,
         dates=_session_dates_payload(s),
         timeline=[
             event for event in _safe_json_list(s.get("timeline_json"))

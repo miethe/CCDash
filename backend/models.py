@@ -61,6 +61,13 @@ class SkillDetails(BaseModel):
     version: str = "1.0"
 
 
+class SessionLogTokenUsage(BaseModel):
+    inputTokens: int = 0
+    outputTokens: int = 0
+    cacheReadInputTokens: int = 0
+    cacheCreationInputTokens: int = 0
+
+
 class SessionLog(BaseModel):
     id: str
     timestamp: str
@@ -71,6 +78,7 @@ class SessionLog(BaseModel):
     linkedSessionId: Optional[str] = None
     relatedToolCallId: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
+    tokenUsage: Optional[SessionLogTokenUsage] = None
     toolCall: Optional[ToolCallInfo] = None
     skillDetails: Optional[SkillDetails] = None
     subagentThread: Optional[list[SessionLog]] = None
@@ -149,6 +157,104 @@ class SessionMetadata(BaseModel):
     relatedPhases: list[str] = Field(default_factory=list)
     relatedFilePath: str = ""
     fields: list[SessionMetadataField] = Field(default_factory=list)
+
+
+class SessionInferredTitle(BaseModel):
+    displayTitle: str
+    rawSessionId: str
+    source: Literal["command", "skill", "workflow", "artifact", "existing_title", "session_id"] = "session_id"
+    confidence: float = 0.0
+    commandName: Optional[str] = None
+    featureSlug: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class SessionEffortTransition(BaseModel):
+    id: str
+    logId: Optional[str] = None
+    timestamp: Optional[str] = None
+    fromEffort: Optional[str] = None
+    toEffort: str
+    providerEffort: Optional[str] = None
+    source: Literal["launch_sidecar", "session_metadata", "command", "stdout", "workflow_message"]
+    confidence: float = 0.0
+
+
+class TranscriptMarker(BaseModel):
+    id: str
+    logId: str = ""
+    sequence: int = 0
+    timestamp: str = ""
+    kind: str
+    label: str
+    detail: str = ""
+    actor: str = ""
+    accent: str = ""
+    confidence: float = 0.0
+    sourceMethod: str = ""
+    links: list[dict[str, Any]] = Field(default_factory=list)
+    tokenDelta: Optional[int] = None
+    cumulativeKnownTokens: Optional[int] = None
+
+
+class TranscriptTaskRegisterItem(BaseModel):
+    id: str
+    title: str
+    status: str = "unknown"
+    kind: str = "task"
+    sourceLogIds: list[str] = Field(default_factory=list)
+    markerIds: list[str] = Field(default_factory=list)
+    linkedSessionId: Optional[str] = None
+    agentName: Optional[str] = None
+    toolName: Optional[str] = None
+    startedAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+    confidence: float = 0.0
+
+
+class TranscriptWorkflowRegisterItem(BaseModel):
+    id: str
+    workflowId: str = ""
+    label: str
+    status: str = "observed"
+    kind: str = "workflow"
+    commandName: Optional[str] = None
+    toolName: Optional[str] = None
+    sourceLogIds: list[str] = Field(default_factory=list)
+    markerIds: list[str] = Field(default_factory=list)
+    startedAt: Optional[str] = None
+    completedAt: Optional[str] = None
+    links: list[dict[str, Any]] = Field(default_factory=list)
+    confidence: float = 0.0
+
+
+class TranscriptPlanLink(BaseModel):
+    id: str
+    path: str
+    label: str
+    linkType: str = "document"
+    featureSlug: Optional[str] = None
+    sourceLogId: Optional[str] = None
+    confidence: float = 0.0
+
+
+class TranscriptTokenCoverage(BaseModel):
+    rowLevelKnownTokens: int = 0
+    aggregateObservedTokens: int = 0
+    coveragePct: float = 0.0
+    sourceGranularity: Literal["message", "usage_event", "aggregate", "none"] = "none"
+    caveats: list[str] = Field(default_factory=list)
+
+
+class TranscriptIntelligenceIndex(BaseModel):
+    sessionId: str
+    title: SessionInferredTitle
+    effortTimeline: list[SessionEffortTransition] = Field(default_factory=list)
+    markers: list[TranscriptMarker] = Field(default_factory=list)
+    taskRegister: list[TranscriptTaskRegisterItem] = Field(default_factory=list)
+    workflowRegister: list[TranscriptWorkflowRegisterItem] = Field(default_factory=list)
+    planLinks: list[TranscriptPlanLink] = Field(default_factory=list)
+    tokenCoverage: TranscriptTokenCoverage = Field(default_factory=TranscriptTokenCoverage)
 
 
 class AgentSession(BaseModel):
@@ -261,6 +367,7 @@ class AgentSession(BaseModel):
     usageAttributionSummary: Optional["SessionUsageAggregateResponse"] = None
     usageAttributionCalibration: Optional["SessionUsageCalibrationSummary"] = None
     intelligenceSummary: Optional["SessionIntelligenceSessionRollup"] = None
+    transcriptIntelligence: Optional["TranscriptIntelligenceIndex"] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
     # ── Phase 3 (codex-session-ingestion-v1) ─────────────────────────────────

@@ -223,6 +223,127 @@ export interface SessionPlatformTransition {
   sourceLogId?: string;
 }
 
+export interface TranscriptIntelligenceTitle {
+  displayTitle?: string | null;
+  rawSessionId?: string | null;
+  rawTitle?: string | null;
+  confidence?: number | null;
+  source?: string | null;
+  commandName?: string | null;
+  featureSlug?: string | null;
+  reason?: string | null;
+}
+
+export interface TranscriptEffortTimelineEntry {
+  id?: string | null;
+  timestamp?: string | null;
+  logId?: string | null;
+  sourceLogId?: string | null;
+  fromEffort?: string | null;
+  toEffort?: string | null;
+  providerEffort?: string | null;
+  effort?: string | null;
+  effortTier?: string | null;
+  label?: string | null;
+  source?: string | null;
+  confidence?: number | null;
+}
+
+export interface TranscriptMarker {
+  id: string;
+  logId?: string | null;
+  sequence?: number | null;
+  title?: string | null;
+  label?: string | null;
+  description?: string | null;
+  detail?: string | null;
+  kind?: string | null;
+  severity?: string | null;
+  timestamp?: string | null;
+  actor?: string | null;
+  accent?: string | null;
+  source?: string | null;
+  sourceMethod?: string | null;
+  links?: Array<Record<string, any>>;
+  tokenDelta?: number | null;
+  cumulativeKnownTokens?: number | null;
+  confidence?: number | null;
+}
+
+export interface TranscriptRegisterEntry {
+  id: string;
+  workflowId?: string | null;
+  title?: string | null;
+  label?: string | null;
+  name?: string | null;
+  status?: string | null;
+  kind?: string | null;
+  summary?: string | null;
+  sourceLogId?: string | null;
+  sourceLogIds?: string[];
+  markerIds?: string[];
+  linkedSessionId?: string | null;
+  agentName?: string | null;
+  toolName?: string | null;
+  commandName?: string | null;
+  startedAt?: string | null;
+  updatedAt?: string | null;
+  completedAt?: string | null;
+  source?: string | null;
+  links?: Array<Record<string, any>>;
+  confidence?: number | null;
+}
+
+export interface TranscriptPlanLink {
+  id: string;
+  title?: string | null;
+  label?: string | null;
+  url?: string | null;
+  path?: string | null;
+  linkType?: string | null;
+  featureSlug?: string | null;
+  sourceLogId?: string | null;
+  source?: string | null;
+  confidence?: number | null;
+}
+
+export interface TranscriptTokenCoverageSource {
+  source: string;
+  totalTokens?: number | null;
+  coveredTokens?: number | null;
+  rowLevelLogCount?: number | null;
+  totalLogCount?: number | null;
+  coveragePct?: number | null;
+  aggregateOnly?: boolean | null;
+}
+
+export interface TranscriptTokenCoverage {
+  source?: string | null;
+  totalTokens?: number | null;
+  coveredTokens?: number | null;
+  rowLevelKnownTokens?: number | null;
+  aggregateObservedTokens?: number | null;
+  rowLevelLogCount?: number | null;
+  totalLogCount?: number | null;
+  coveragePct?: number | null;
+  aggregateOnly?: boolean | null;
+  hasRowLevelUsage?: boolean | null;
+  notice?: string | null;
+  sourceGranularity?: 'message' | 'usage_event' | 'aggregate' | 'none' | string | null;
+  caveats?: string[];
+  sources?: TranscriptTokenCoverageSource[];
+}
+
+export interface TranscriptIntelligence {
+  title?: TranscriptIntelligenceTitle | null;
+  effortTimeline?: TranscriptEffortTimelineEntry[];
+  markers?: TranscriptMarker[];
+  taskRegister?: TranscriptRegisterEntry[];
+  workflowRegister?: TranscriptRegisterEntry[];
+  planLinks?: TranscriptPlanLink[];
+  tokenCoverage?: TranscriptTokenCoverage | null;
+}
+
 export interface SessionFileUpdate {
   filePath: string;
   commits: string[];
@@ -499,6 +620,7 @@ export interface AgentSession {
   phaseHints?: string[];
   taskHints?: string[];
   transcriptTruncated?: { droppedCount: number; firstRetainedTimestamp?: string };
+  transcriptIntelligence?: TranscriptIntelligence | null;
   // Phase 3 (Codex): 'codex' added; explicit null = source determinable but field absent from older payload → fall back to platformType.
   // Phase 6: session source discriminator (derived from source_ref prefix; additive/optional)
   source?: 'codex' | 'filesystem' | 'remote' | 'entire' | 'unknown' | null;

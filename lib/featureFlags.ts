@@ -21,3 +21,10 @@ const readBoolEnv = (raw: string | undefined, fallback: boolean): boolean => {
  */
 export const isMemoryGuardEnabled = (): boolean =>
   readBoolEnv(import.meta.env.VITE_CCDASH_MEMORY_GUARD_ENABLED, true);
+
+/**
+ * Transcript orchestration intelligence surfaces are additive and default off
+ * while backend projections roll out.
+ */
+export const isTranscriptIntelligenceEnabled = (): boolean =>
+  readBoolEnv(import.meta.env.VITE_CCDASH_TRANSCRIPT_INTELLIGENCE_ENABLED, false);

@@ -2,7 +2,22 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Activity, Archive, Bot, Box, Calendar, ChevronDown, ChevronRight, Clock, Code, Cpu, Database, Edit3, ExternalLink, GitBranch, GitCommit, HardDrive, Layers, Maximize2, MessageSquare, MoreHorizontal, PlayCircle, RefreshCw, Scroll, Search, ShieldAlert, Terminal, Users, X, Zap } from 'lucide-react';
-import { AgentSession, Feature, LiveAgentActivity, LiveTranscriptState, ProjectTask, SessionArtifact, SessionLog, SessionTranscriptAppendPayload } from '../../types';
+import {
+    AgentSession,
+    Feature,
+    LiveAgentActivity,
+    LiveTranscriptState,
+    ProjectTask,
+    SessionArtifact,
+    SessionLog,
+    SessionTranscriptAppendPayload,
+    TranscriptIntelligence,
+    TranscriptMarker,
+    TranscriptPlanLink,
+    TranscriptRegisterEntry,
+    TranscriptTokenCoverage,
+    TranscriptTokenCoverageSource,
+} from '../../types';
 import { DocumentModal } from '../DocumentModal';
 import { UnifiedContentViewer } from '../content/UnifiedContentViewer';
 import { ProjectFileViewerModal } from '../content/ProjectFileViewerModal';
@@ -16,7 +31,7 @@ import { formatModelDisplayName } from '../../lib/modelIdentity';
 import { getInlineContentViewerPayload, getTranscriptContentViewerPayload } from '../../lib/sessionContentViewer';
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../../lib/sessionBlockInsights';
-import { isMemoryGuardEnabled } from '../../lib/featureFlags';
+import { isMemoryGuardEnabled, isTranscriptIntelligenceEnabled } from '../../lib/featureFlags';
 import { formatPercent, formatTokenCount, formatTokenCountCompact, resolveTokenMetrics } from '../../lib/tokenMetrics';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { getFeatureLinkedSessionPage, type LinkedFeatureSessionDTO } from '../../services/featureSurface';
@@ -1286,6 +1301,563 @@ const TokenUsageCaption: React.FC<{
     );
 };
 
+const getLogTokenUsageTotal = (tokenUsage?: SessionLog['tokenUsage'] | null): number => {
+    if (!tokenUsage) return 0;
+    return (
+        asNumber(tokenUsage.inputTokens, 0)
+        + asNumber(tokenUsage.outputTokens, 0)
+        + asNumber(tokenUsage.cacheReadInputTokens, 0)
+        + asNumber(tokenUsage.cacheCreationInputTokens, 0)
+    );
+};
+
+const transcriptIntelligenceLabel = (value: unknown, fallback: string): string => {
+    const normalized = takeString(value);
+    return normalized || fallback;
+};
+
+const getMarkerLabel = (marker: TranscriptMarker): string => transcriptIntelligenceLabel(
+    marker.title || marker.label || marker.kind || marker.id,
+    'Marker',
+);
+
+const getMarkerDescription = (marker: TranscriptMarker): string => transcriptIntelligenceLabel(
+    marker.description || marker.detail || marker.sourceMethod,
+    '',
+);
+
+const getRegisterEntryLabel = (entry: TranscriptRegisterEntry): string => transcriptIntelligenceLabel(
+    entry.title || entry.label || entry.name || entry.id,
+    'Untitled item',
+);
+
+const getRegisterEntrySourceLogId = (entry: TranscriptRegisterEntry): string => {
+    const direct = String(entry.sourceLogId || '').trim();
+    if (direct) return direct;
+    const sourceLogIds = Array.isArray(entry.sourceLogIds) ? entry.sourceLogIds : [];
+    return String(sourceLogIds[0] || '').trim();
+};
+
+const getRegisterEntryTokenTotal = (
+    entry: TranscriptRegisterEntry,
+    markersById?: Map<string, TranscriptMarker>,
+): number => {
+    if (!markersById || !Array.isArray(entry.markerIds)) return 0;
+    return entry.markerIds.reduce((total, markerId) => {
+        const marker = markersById.get(markerId);
+        return total + (typeof marker?.tokenDelta === 'number' ? marker.tokenDelta : 0);
+    }, 0);
+};
+
+const getPlanLinkLabel = (entry: TranscriptPlanLink): string => transcriptIntelligenceLabel(
+    entry.title || entry.label || entry.path || entry.url || entry.id,
+    'Plan link',
+);
+
+const formatCoveragePercent = (value?: number | null): string => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+    const pct = value >= 0 && value <= 1 ? value * 100 : value;
+    return `${Math.round(pct)}%`;
+};
+
+const formatCoverageLogCount = (row: TranscriptTokenCoverageSource | TranscriptTokenCoverage): string => {
+    const rowCount = typeof row.rowLevelLogCount === 'number' && Number.isFinite(row.rowLevelLogCount)
+        ? row.rowLevelLogCount
+        : null;
+    const totalCount = typeof row.totalLogCount === 'number' && Number.isFinite(row.totalLogCount)
+        ? row.totalLogCount
+        : null;
+    if (rowCount !== null && totalCount !== null) return `${rowCount}/${totalCount} rows`;
+    if (rowCount !== null) return `${rowCount} rows`;
+    return '';
+};
+
+const getCoverageRows = (coverage?: TranscriptTokenCoverage | null): TranscriptTokenCoverageSource[] => {
+    if (!coverage) return [];
+    const rows = Array.isArray(coverage.sources)
+        ? coverage.sources.filter(row => String(row.source || '').trim())
+        : [];
+    if (rows.length > 0) return rows;
+    const source = String(coverage.sourceGranularity || coverage.source || '').trim();
+    if (!source) return [];
+    const rowLevelKnownTokens = typeof coverage.rowLevelKnownTokens === 'number'
+        ? coverage.rowLevelKnownTokens
+        : coverage.coveredTokens;
+    const aggregateObservedTokens = typeof coverage.aggregateObservedTokens === 'number'
+        ? coverage.aggregateObservedTokens
+        : coverage.totalTokens;
+    return [{
+        source,
+        totalTokens: aggregateObservedTokens,
+        coveredTokens: rowLevelKnownTokens,
+        rowLevelLogCount: coverage.rowLevelLogCount,
+        totalLogCount: coverage.totalLogCount,
+        coveragePct: coverage.coveragePct,
+        aggregateOnly: Boolean(
+            coverage.aggregateOnly
+            || coverage.hasRowLevelUsage === false
+            || coverage.sourceGranularity === 'aggregate'
+            || coverage.sourceGranularity === 'usage_event'
+        ),
+    }];
+};
+
+type TranscriptMinimapMode = 'outline' | 'tasks' | 'workflows' | 'tokens';
+
+const TRANSCRIPT_MINIMAP_MODES: Array<{ id: TranscriptMinimapMode; label: string }> = [
+    { id: 'outline', label: 'All' },
+    { id: 'tasks', label: 'Tasks' },
+    { id: 'workflows', label: 'Flows' },
+    { id: 'tokens', label: 'Tokens' },
+];
+
+const markerMatchesMinimapMode = (marker: TranscriptMarker, mode: TranscriptMinimapMode): boolean => {
+    if (mode === 'outline') return true;
+    const kind = String(marker.kind || '').trim().toLowerCase();
+    if (mode === 'tasks') return kind === 'task' || kind === 'subagent';
+    if (mode === 'workflows') return kind === 'workflow' || kind === 'command';
+    return typeof marker.tokenDelta === 'number' || typeof marker.cumulativeKnownTokens === 'number';
+};
+
+const TranscriptMarkersMinimap: React.FC<{
+    markers: TranscriptMarker[];
+    selectedLogId: string | null;
+    onSelectLog: (id: string) => void;
+}> = ({ markers, selectedLogId, onSelectLog }) => {
+    const [mode, setMode] = useState<TranscriptMinimapMode>('outline');
+    if (markers.length === 0) return null;
+    const visibleMarkers = markers.filter(marker => markerMatchesMinimapMode(marker, mode));
+    const selectedMarker = selectedLogId
+        ? markers.find(marker => String(marker.logId || '').trim() === selectedLogId) || null
+        : null;
+    const viewportIndicator = selectedMarker
+        ? `Selected #${typeof selectedMarker.sequence === 'number' ? selectedMarker.sequence + 1 : selectedMarker.logId}`
+        : 'No row selected';
+
+    return (
+        <nav
+            aria-label="Transcript intelligence markers"
+            className="border-b border-panel-border bg-surface-overlay/40 px-4 py-3"
+        >
+            <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <Scroll size={13} className="text-indigo-300" />
+                    Minimap
+                </div>
+                <span className="font-mono text-[10px] text-muted-foreground">{visibleMarkers.length}/{markers.length} markers</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex rounded-md border border-panel-border bg-panel/60 p-0.5" role="group" aria-label="Transcript minimap mode">
+                    {TRANSCRIPT_MINIMAP_MODES.map(option => (
+                        <button
+                            key={option.id}
+                            type="button"
+                            aria-pressed={mode === option.id}
+                            onClick={() => setMode(option.id)}
+                            className={`rounded px-2 py-1 text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus ${
+                                mode === option.id
+                                    ? 'bg-indigo-500/25 text-indigo-100'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
+                <span className="rounded border border-panel-border bg-panel/60 px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                    {viewportIndicator}
+                </span>
+            </div>
+            <div role="list" className="mt-2 max-h-28 space-y-1 overflow-y-auto pr-1 custom-scrollbar">
+                {visibleMarkers.map(marker => {
+                    const logId = String(marker.logId || '').trim();
+                    const label = getMarkerLabel(marker);
+                    const isActive = Boolean(logId && selectedLogId === logId);
+                    return (
+                        <div key={marker.id || `${label}-${logId}`} role="listitem">
+                            <button
+                                type="button"
+                                disabled={!logId}
+                                aria-current={isActive ? 'true' : undefined}
+                                aria-label={logId ? `Open transcript marker ${label}` : `Transcript marker ${label} has no row anchor`}
+                                onClick={() => {
+                                    if (logId) onSelectLog(logId);
+                                }}
+                                className={`w-full min-w-0 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus ${
+                                    isActive
+                                        ? 'border-indigo-400/60 bg-indigo-500/20 text-indigo-100'
+                                        : logId
+                                            ? 'border-panel-border bg-panel/60 text-foreground hover:border-indigo-400/40 hover:bg-indigo-500/10'
+                                            : 'border-panel-border/70 bg-panel/30 text-muted-foreground cursor-not-allowed'
+                                }`}
+                            >
+                                <div className="flex items-center justify-between gap-2 min-w-0">
+                                    <span className="truncate font-medium">{label}</span>
+                                    {marker.kind && (
+                                        <span className="shrink-0 rounded border border-panel-border px-1 py-0.5 font-mono text-[9px] text-muted-foreground">
+                                            {marker.kind}
+                                        </span>
+                                    )}
+                                </div>
+                                {getMarkerDescription(marker) && (
+                                    <div className="mt-0.5 line-clamp-1 text-[10px] text-muted-foreground">{getMarkerDescription(marker)}</div>
+                                )}
+                            </button>
+                        </div>
+                    );
+                })}
+                {visibleMarkers.length === 0 && (
+                    <div role="listitem" className="rounded border border-panel-border/70 bg-panel/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+                        No markers in this mode.
+                    </div>
+                )}
+            </div>
+        </nav>
+    );
+};
+
+const TranscriptRegisterSection: React.FC<{
+    label: string;
+    icon: React.ReactNode;
+    items?: TranscriptRegisterEntry[];
+    emptyLabel: string;
+    markersById?: Map<string, TranscriptMarker>;
+    onSelectLog: (id: string) => void;
+}> = ({ label, icon, items = [], emptyLabel, markersById, onSelectLog }) => {
+    const visibleItems = items.slice(0, 6);
+    return (
+        <section className="border-t border-panel-border/70 pt-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    {icon}
+                    {label}
+                </h4>
+                <span className="font-mono text-[10px] text-muted-foreground">{items.length}</span>
+            </div>
+            {visibleItems.length > 0 ? (
+                <ul className="space-y-2">
+                    {visibleItems.map(entry => {
+                        const sourceLogId = getRegisterEntrySourceLogId(entry);
+                        const tokenTotal = getRegisterEntryTokenTotal(entry, markersById);
+                        return (
+                            <li key={entry.id || getRegisterEntryLabel(entry)} className="min-w-0 text-xs">
+                                <div className="flex items-start justify-between gap-2 min-w-0">
+                                    <button
+                                        type="button"
+                                        disabled={!sourceLogId}
+                                        onClick={() => {
+                                            if (sourceLogId) onSelectLog(sourceLogId);
+                                        }}
+                                        className={`min-w-0 text-left font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus rounded ${
+                                            sourceLogId
+                                                ? 'text-foreground hover:text-indigo-200'
+                                                : 'text-foreground cursor-default'
+                                        }`}
+                                    >
+                                        <span className="line-clamp-2 break-words">{getRegisterEntryLabel(entry)}</span>
+                                    </button>
+                                    {entry.status && (
+                                        <span className="shrink-0 rounded border border-panel-border px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                                            {entry.status}
+                                        </span>
+                                    )}
+                                </div>
+                                {entry.summary && (
+                                    <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{entry.summary}</p>
+                                )}
+                                {entry.source && (
+                                    <div className="mt-1 font-mono text-[10px] text-muted-foreground">source: {entry.source}</div>
+                                )}
+                                {tokenTotal > 0 && (
+                                    <div className="mt-1 font-mono text-[10px] text-cyan-200">
+                                        {formatTokenCountCompact(tokenTotal)} known row tokens
+                                    </div>
+                                )}
+                            </li>
+                        );
+                    })}
+                </ul>
+            ) : (
+                <p className="text-xs text-muted-foreground">{emptyLabel}</p>
+            )}
+        </section>
+    );
+};
+
+const TranscriptPlanLinksSection: React.FC<{
+    links?: TranscriptPlanLink[];
+    onSelectLog: (id: string) => void;
+}> = ({ links = [], onSelectLog }) => {
+    const visibleLinks = links.slice(0, 6);
+    return (
+        <section className="border-t border-panel-border/70 pt-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <ExternalLink size={12} className="text-indigo-300" />
+                    Plan Links
+                </h4>
+                <span className="font-mono text-[10px] text-muted-foreground">{links.length}</span>
+            </div>
+            {visibleLinks.length > 0 ? (
+                <ul className="space-y-2">
+                    {visibleLinks.map(link => {
+                        const href = String(link.url || '').trim();
+                        const sourceLogId = String(link.sourceLogId || '').trim();
+                        const label = getPlanLinkLabel(link);
+                        return (
+                            <li key={link.id || label} className="min-w-0 text-xs">
+                                {href ? (
+                                    <a
+                                        href={href}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex max-w-full items-center gap-1 rounded text-indigo-200 hover:text-indigo-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
+                                    >
+                                        <span className="truncate">{label}</span>
+                                        <ExternalLink size={10} className="shrink-0" />
+                                    </a>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        disabled={!sourceLogId}
+                                        onClick={() => {
+                                            if (sourceLogId) onSelectLog(sourceLogId);
+                                        }}
+                                        className={`max-w-full rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus ${
+                                            sourceLogId ? 'text-indigo-200 hover:text-indigo-100' : 'text-foreground cursor-default'
+                                        }`}
+                                    >
+                                        <span className="line-clamp-2 break-words">{label}</span>
+                                    </button>
+                                )}
+                                {link.path && <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{link.path}</div>}
+                                {link.source && <div className="mt-1 font-mono text-[10px] text-muted-foreground">source: {link.source}</div>}
+                            </li>
+                        );
+                    })}
+                </ul>
+            ) : (
+                <p className="text-xs text-muted-foreground">No plan links derived from this transcript.</p>
+            )}
+        </section>
+    );
+};
+
+const TranscriptTokenCoverageSection: React.FC<{
+    coverage?: TranscriptTokenCoverage | null;
+    hasRowLevelTokenUsage: boolean;
+}> = ({ coverage, hasRowLevelTokenUsage }) => {
+    const rows = getCoverageRows(coverage);
+    const aggregateOnly = Boolean(
+        coverage?.aggregateOnly
+        || coverage?.hasRowLevelUsage === false
+        || coverage?.sourceGranularity === 'aggregate'
+        || coverage?.sourceGranularity === 'usage_event'
+        || (coverage && !hasRowLevelTokenUsage)
+    );
+    const coverageNotice = coverage?.notice || coverage?.caveats?.[0] || 'Aggregate token coverage available; row token rail is hidden until row-level tokenUsage is present.';
+    if (!coverage && rows.length === 0) return null;
+
+    return (
+        <section className="border-t border-panel-border/70 pt-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <Database size={12} className="text-cyan-300" />
+                    Token Coverage
+                </h4>
+                {coverage?.coveragePct !== undefined && coverage?.coveragePct !== null && (
+                    <span className="font-mono text-[10px] text-cyan-200">{formatCoveragePercent(coverage.coveragePct)}</span>
+                )}
+            </div>
+            {aggregateOnly && (
+                <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200">
+                    {coverageNotice}
+                </div>
+            )}
+            {rows.length > 0 ? (
+                <ul className="space-y-1.5">
+                    {rows.map(row => {
+                        const pct = formatCoveragePercent(row.coveragePct);
+                        const rowCount = formatCoverageLogCount(row);
+                        return (
+                            <li key={row.source} className="flex items-start justify-between gap-2 text-xs">
+                                <div className="min-w-0">
+                                    <div className="truncate font-medium text-foreground">{row.source}</div>
+                                    <div className="font-mono text-[10px] text-muted-foreground">
+                                        {row.coveredTokens !== undefined && row.coveredTokens !== null
+                                            ? `${formatTokenCountCompact(row.coveredTokens)} covered`
+                                            : 'coverage source'}
+                                        {row.totalTokens !== undefined && row.totalTokens !== null
+                                            ? ` / ${formatTokenCountCompact(row.totalTokens)} total`
+                                            : ''}
+                                    </div>
+                                </div>
+                                <div className="shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+                                    {pct && <div className="text-cyan-200">{pct}</div>}
+                                    {rowCount && <div>{rowCount}</div>}
+                                    {row.aggregateOnly && <div className="text-amber-200">aggregate</div>}
+                                </div>
+                            </li>
+                        );
+                    })}
+                </ul>
+            ) : (
+                <p className="text-xs text-muted-foreground">No source-level token coverage reported.</p>
+            )}
+        </section>
+    );
+};
+
+const TranscriptIntelligencePanel: React.FC<{
+    intelligence: TranscriptIntelligence;
+    hasRowLevelTokenUsage: boolean;
+    onSelectLog: (id: string) => void;
+}> = ({ intelligence, hasRowLevelTokenUsage, onSelectLog }) => {
+    const markersById = useMemo(
+        () => new Map((intelligence.markers || []).map(marker => [marker.id, marker])),
+        [intelligence.markers],
+    );
+    const hasContent = Boolean(
+        (intelligence.taskRegister && intelligence.taskRegister.length > 0)
+        || (intelligence.workflowRegister && intelligence.workflowRegister.length > 0)
+        || (intelligence.planLinks && intelligence.planLinks.length > 0)
+        || intelligence.tokenCoverage
+    );
+    if (!hasContent) return null;
+
+    return (
+        <div className="bg-panel border border-indigo-500/25 rounded-2xl p-5 shadow-sm space-y-3">
+            <div>
+                <h3 className="text-xs font-bold text-indigo-200 uppercase tracking-widest">Transcript Intelligence</h3>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                    Derived transcript registers and source coverage.
+                </p>
+            </div>
+            <TranscriptRegisterSection
+                label="Task Register"
+                icon={<Box size={12} className="text-emerald-300" />}
+                items={intelligence.taskRegister}
+                emptyLabel="No task register entries derived."
+                markersById={markersById}
+                onSelectLog={onSelectLog}
+            />
+            <TranscriptRegisterSection
+                label="Workflow Register"
+                icon={<GitBranch size={12} className="text-fuchsia-300" />}
+                items={intelligence.workflowRegister}
+                emptyLabel="No workflow register entries derived."
+                markersById={markersById}
+                onSelectLog={onSelectLog}
+            />
+            <TranscriptPlanLinksSection links={intelligence.planLinks} onSelectLog={onSelectLog} />
+            <TranscriptTokenCoverageSection
+                coverage={intelligence.tokenCoverage}
+                hasRowLevelTokenUsage={hasRowLevelTokenUsage}
+            />
+        </div>
+    );
+};
+
+type TranscriptDisplayItem =
+    | { type: 'log'; id: string; log: SessionLog }
+    | { type: 'taskMutationGroup'; id: string; logs: SessionLog[] };
+
+const isTaskMutationLog = (log: SessionLog): boolean => (
+    log.type === 'tool' && isTaskMutationToolCallName(log.toolCall?.name)
+);
+
+const buildTranscriptDisplayItems = (logs: SessionLog[]): TranscriptDisplayItem[] => {
+    const items: TranscriptDisplayItem[] = [];
+    let index = 0;
+    while (index < logs.length) {
+        const log = logs[index];
+        if (!isTaskMutationLog(log)) {
+            items.push({ type: 'log', id: log.id, log });
+            index += 1;
+            continue;
+        }
+
+        const group: SessionLog[] = [log];
+        let cursor = index + 1;
+        while (cursor < logs.length && isTaskMutationLog(logs[cursor])) {
+            group.push(logs[cursor]);
+            cursor += 1;
+        }
+
+        if (group.length > 1) {
+            items.push({
+                type: 'taskMutationGroup',
+                id: `task-mutation-group-${group[0].id}-${group[group.length - 1].id}`,
+                logs: group,
+            });
+        } else {
+            items.push({ type: 'log', id: log.id, log });
+        }
+        index = cursor;
+    }
+    return items;
+};
+
+const TaskMutationGroupRow: React.FC<{
+    logs: SessionLog[];
+    expanded: boolean;
+    isSelected: boolean;
+    onToggle: () => void;
+    renderLog: (log: SessionLog) => React.ReactNode;
+}> = ({ logs, expanded, isSelected, onToggle, renderLog }) => {
+    const details = logs
+        .map(log => getTaskMutationToolDetails(log))
+        .filter((detail): detail is TaskMutationToolDetails => Boolean(detail));
+    const taskIds = Array.from(new Set(details.map(detail => detail.taskId).filter(Boolean) as string[])).slice(0, 4);
+    const statuses = Array.from(new Set(details.map(detail => detail.status).filter(Boolean) as string[])).slice(0, 3);
+    const title = `${logs.length} TaskCreate/TaskUpdate events`;
+
+    return (
+        <div className={`mb-3 rounded-xl border transition-colors ${
+            isSelected
+                ? 'border-indigo-400/50 bg-indigo-500/10'
+                : 'border-amber-500/25 bg-amber-500/5 hover:border-amber-400/40'
+        }`}>
+            <button
+                type="button"
+                aria-expanded={expanded}
+                onClick={onToggle}
+                className="flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
+            >
+                <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-bold text-amber-200">{title}</span>
+                        {taskIds.map(taskId => (
+                            <span key={taskId} className="rounded border border-amber-500/30 px-1.5 py-0.5 font-mono text-[10px] text-amber-100">
+                                {taskId}
+                            </span>
+                        ))}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                        {statuses.length > 0 ? statuses.map(status => (
+                            <span key={status} className="rounded border border-panel-border bg-panel/60 px-1.5 py-0.5">
+                                {status}
+                            </span>
+                        )) : <span>Grouped adjacent task mutation rows</span>}
+                    </div>
+                </div>
+                {expanded ? <ChevronDown size={14} className="mt-0.5 shrink-0 text-amber-200" /> : <ChevronRight size={14} className="mt-0.5 shrink-0 text-muted-foreground" />}
+            </button>
+            {expanded && (
+                <div className="border-t border-amber-500/20 px-3 py-3">
+                    <div className="space-y-2">
+                        {logs.map(log => (
+                            <div key={log.id}>
+                                {renderLog(log)}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 const LogItemBlurb: React.FC<{
     log: SessionLog;
     formattedMessage?: TranscriptFormattedMessage;
@@ -2428,6 +3000,7 @@ export const VirtualizedTranscriptList: React.FC<{
     onShowLinked: (tab: 'activity' | 'artifacts', sourceLogId: string) => void;
     messagePreset: ReturnType<typeof import('../animations').getMotionPreset>;
     transcriptTruncated?: { droppedCount: number; firstRetainedTimestamp?: string };
+    showTokenRail?: boolean;
 }> = ({
     containerRef,
     logs,
@@ -2444,9 +3017,23 @@ export const VirtualizedTranscriptList: React.FC<{
     onShowLinked,
     messagePreset,
     transcriptTruncated,
+    showTokenRail = false,
 }) => {
+    const [expandedTaskGroups, setExpandedTaskGroups] = useState<Set<string>>(() => new Set());
+    const displayItems = useMemo(() => buildTranscriptDisplayItems(logs), [logs]);
+    const toggleTaskGroup = useCallback((groupId: string) => {
+        setExpandedTaskGroups(previous => {
+            const next = new Set(previous);
+            if (next.has(groupId)) {
+                next.delete(groupId);
+            } else {
+                next.add(groupId);
+            }
+            return next;
+        });
+    }, []);
     const rowVirtualizer = useVirtualizer({
-        count: logs.length,
+        count: displayItems.length,
         getScrollElement: () => containerRef.current,
         estimateSize: () => 68,
         overscan: 8,
@@ -2474,11 +3061,11 @@ export const VirtualizedTranscriptList: React.FC<{
                 </div>
             )}
 
-            {logs.length === 0 && (
+            {displayItems.length === 0 && (
                 <div className="p-8 text-center text-muted-foreground italic">No logs found for this view.</div>
             )}
 
-            {logs.length > 0 && (
+            {displayItems.length > 0 && (
                 <div
                     style={{
                         height: totalSize + 32, // 16px top + 16px bottom padding
@@ -2488,11 +3075,50 @@ export const VirtualizedTranscriptList: React.FC<{
                 >
                     <AnimatePresence initial={false}>
                         {virtualItems.map(virtualRow => {
-                            const log = logs[virtualRow.index];
-                            const shouldAnimateIn = isLive && insertedIds.has(log.id);
+                            const item = displayItems[virtualRow.index];
+                            const representativeLog = item.type === 'log' ? item.log : item.logs[0];
+                            const shouldAnimateIn = item.type === 'log'
+                                ? isLive && insertedIds.has(item.log.id)
+                                : item.logs.some(log => isLive && insertedIds.has(log.id));
+                            const rowHasTokenUsage = item.type === 'log' && Boolean(showTokenRail && item.log.tokenUsage);
+                            const rowTokenTotal = item.type === 'log' ? getLogTokenUsageTotal(item.log.tokenUsage) : 0;
+                            const renderLog = (log: SessionLog) => (
+                                <LogItemBlurb
+                                    log={log}
+                                    formattedMessage={formattedMessagesByLogId.get(log.id)}
+                                    isSelected={selectedLogId === log.id}
+                                    onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
+                                    fileCount={filesByLogId.get(log.id) || 0}
+                                    artifactCount={(artifactsByLogId.get(log.id) || []).length}
+                                    onShowFiles={() => onShowLinked('activity', log.id)}
+                                    onShowArtifacts={() => onShowLinked('artifacts', log.id)}
+                                    threadSessionDetails={threadSessionDetails}
+                                    subagentNameBySessionId={subagentNameBySessionId}
+                                    onOpenThread={onOpenThread}
+                                />
+                            );
+                            const renderGroupedLog = (log: SessionLog) => {
+                                const nestedHasTokenUsage = Boolean(showTokenRail && log.tokenUsage);
+                                const nestedTokenTotal = getLogTokenUsageTotal(log.tokenUsage);
+                                return (
+                                    <div className="relative">
+                                        {nestedHasTokenUsage && (
+                                            <div
+                                                aria-hidden="true"
+                                                data-token-rail="row-level"
+                                                className="absolute left-0 top-1 bottom-5 w-1 rounded-full bg-cyan-400/70 shadow-[0_0_10px_rgba(34,211,238,0.25)]"
+                                                title={`Row token usage ${formatTokenCountCompact(nestedTokenTotal)}`}
+                                            />
+                                        )}
+                                        <div className={nestedHasTokenUsage ? 'pl-2' : ''}>
+                                            {renderLog(log)}
+                                        </div>
+                                    </div>
+                                );
+                            };
                             return (
                                 <motion.div
-                                    key={log.id}
+                                    key={item.id}
                                     data-index={virtualRow.index}
                                     ref={rowVirtualizer.measureElement}
                                     style={{
@@ -2509,19 +3135,27 @@ export const VirtualizedTranscriptList: React.FC<{
                                     exit={messagePreset.exit}
                                     transition={messagePreset.transition}
                                 >
-                                    <LogItemBlurb
-                                        log={log}
-                                        formattedMessage={formattedMessagesByLogId.get(log.id)}
-                                        isSelected={selectedLogId === log.id}
-                                        onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
-                                        fileCount={filesByLogId.get(log.id) || 0}
-                                        artifactCount={(artifactsByLogId.get(log.id) || []).length}
-                                        onShowFiles={() => onShowLinked('activity', log.id)}
-                                        onShowArtifacts={() => onShowLinked('artifacts', log.id)}
-                                        threadSessionDetails={threadSessionDetails}
-                                        subagentNameBySessionId={subagentNameBySessionId}
-                                        onOpenThread={onOpenThread}
-                                    />
+                                    <div className="relative">
+                                        {rowHasTokenUsage && (
+                                            <div
+                                                aria-hidden="true"
+                                                data-token-rail="row-level"
+                                                className="absolute left-0 top-1 bottom-5 w-1 rounded-full bg-cyan-400/70 shadow-[0_0_10px_rgba(34,211,238,0.25)]"
+                                                title={`Row token usage ${formatTokenCountCompact(rowTokenTotal)}`}
+                                            />
+                                        )}
+                                        <div className={rowHasTokenUsage ? 'pl-2' : ''}>
+                                            {item.type === 'taskMutationGroup' ? (
+                                                <TaskMutationGroupRow
+                                                    logs={item.logs}
+                                                    expanded={expandedTaskGroups.has(item.id)}
+                                                    isSelected={item.logs.some(log => selectedLogId === log.id)}
+                                                    onToggle={() => toggleTaskGroup(item.id)}
+                                                    renderLog={renderGroupedLog}
+                                                />
+                                            ) : renderLog(representativeLog)}
+                                        </div>
+                                    </div>
                                 </motion.div>
                             );
                         })}
@@ -2693,6 +3327,21 @@ export const TranscriptView: React.FC<{
         return map;
     }, [session.linkedArtifacts]);
 
+    const transcriptIntelligenceEnabled = isTranscriptIntelligenceEnabled();
+    const transcriptIntelligence = transcriptIntelligenceEnabled
+        ? (session.transcriptIntelligence || null)
+        : null;
+    const transcriptMarkers = useMemo(
+        () => (transcriptIntelligence?.markers || []).filter(marker => marker && getMarkerLabel(marker)),
+        [transcriptIntelligence?.markers],
+    );
+    const rowLevelTokenUsageCount = useMemo(
+        () => logs.filter(log => Boolean(log.tokenUsage)).length,
+        [logs],
+    );
+    const hasRowLevelTokenUsage = rowLevelTokenUsageCount > 0;
+    const showTokenRail = Boolean(transcriptIntelligence && hasRowLevelTokenUsage);
+
     const selectedCommandArtifacts = useMemo(() => {
         if (!selectedLog) {
             return [];
@@ -2802,6 +3451,13 @@ export const TranscriptView: React.FC<{
                     </h3>
                     <div className="text-[10px] text-muted-foreground font-mono">{animatedLogs.items.length} Steps</div>
                 </div>
+                {transcriptIntelligence && transcriptMarkers.length > 0 && (
+                    <TranscriptMarkersMinimap
+                        markers={transcriptMarkers}
+                        selectedLogId={selectedLogId}
+                        onSelectLog={setSelectedLogId}
+                    />
+                )}
                 <VirtualizedTranscriptList
                     containerRef={smartScroll.containerRef}
                     logs={animatedLogs.items}
@@ -2818,6 +3474,7 @@ export const TranscriptView: React.FC<{
                     onShowLinked={onShowLinked}
                     messagePreset={messagePreset}
                     transcriptTruncated={session.transcriptTruncated}
+                    showTokenRail={showTokenRail}
                 />
                 {liveTranscriptState.isLive && (
                     <div className="border-t border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
@@ -2894,6 +3551,13 @@ export const TranscriptView: React.FC<{
 
             {/* Pane 3: Metadata Details (Far Right) - Smaller fixed-ish width */}
             <div className="w-[260px] min-w-[220px] max-w-[300px] flex flex-col gap-5 overflow-y-auto pb-4 shrink-0">
+                {transcriptIntelligence && (
+                    <TranscriptIntelligencePanel
+                        intelligence={transcriptIntelligence}
+                        hasRowLevelTokenUsage={hasRowLevelTokenUsage}
+                        onSelectLog={setSelectedLogId}
+                    />
+                )}
                 {/* Key Metadata */}
                 {(primaryFeatureLink || session.sessionMetadata) && (
                     <div className="bg-panel border border-emerald-500/30 rounded-2xl p-5 shadow-sm space-y-3">

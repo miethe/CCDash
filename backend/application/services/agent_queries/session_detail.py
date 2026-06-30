@@ -52,6 +52,7 @@ from backend.application.services.sessions import SessionTranscriptService
 from backend.observability import otel
 
 from .redaction import redact_entries
+from .transcript_intelligence import build_transcript_intelligence_index
 
 __all__ = [
     "DEFAULT_TRANSCRIPT_LIMIT",
@@ -532,6 +533,16 @@ async def _impl(
         str(session_payload.get("platform_type") or "Claude Code").strip() or "Claude Code"
     )
     session_payload["projectId"] = str(session_payload.get("project_id") or "")
+    transcript_logs_for_intelligence = transcript_page.items if transcript_page is not None else []
+    transcript_intelligence = build_transcript_intelligence_index(
+        session_payload,
+        transcript_logs_for_intelligence,
+        latest_summary=str(session_payload.get("latest_summary") or "").strip() or None,
+    )
+    session_payload["transcriptIntelligence"] = transcript_intelligence.model_dump(
+        mode="json",
+        exclude_none=True,
+    )
 
     return SessionDetailBundle(
         session_id=session_id,
