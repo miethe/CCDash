@@ -368,6 +368,7 @@ class AgentSession(BaseModel):
     usageAttributionCalibration: Optional["SessionUsageCalibrationSummary"] = None
     intelligenceSummary: Optional["SessionIntelligenceSessionRollup"] = None
     transcriptIntelligence: Optional["TranscriptIntelligenceIndex"] = None
+    aosCorrelation: Optional[dict[str, Any]] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
     # ── Phase 3 (codex-session-ingestion-v1) ─────────────────────────────────

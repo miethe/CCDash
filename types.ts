@@ -511,6 +511,62 @@ export interface SessionForkSummary {
   contextInheritance?: string;
 }
 
+export type AOSCorrelationEntityKind =
+  | 'feature'
+  | 'work'
+  | 'run'
+  | 'session'
+  | 'turn'
+  | 'artifact'
+  | 'app'
+  | 'service'
+  | 'trace'
+  | string;
+
+export type AOSCorrelationScalar = string | number | boolean | null | undefined;
+export type AOSCorrelationValue = AOSCorrelationScalar | AOSCorrelationScalar[];
+
+export interface AOSCorrelationEntity {
+  kind?: AOSCorrelationEntityKind | null;
+  uuid?: string | null;
+  urn?: string | null;
+  id?: string | null;
+  label?: string | null;
+  nativeId?: string | null;
+  featureId?: string | null;
+  runId?: string | null;
+  artifactId?: string | null;
+  artifactType?: string | null;
+  path?: string | null;
+  href?: string | null;
+  route?: string | null;
+  aliases?: Record<string, AOSCorrelationValue> | null;
+  native?: Record<string, AOSCorrelationValue> | null;
+}
+
+export interface AOSCorrelation {
+  status?: 'resolved' | 'unresolved' | 'partial' | string | null;
+  footer?: string | null;
+  turnUrn?: string | null;
+  turnUuid?: string | null;
+  sessionUrn?: string | null;
+  sessionUuid?: string | null;
+  traceUrn?: string | null;
+  traceUuid?: string | null;
+  turn?: AOSCorrelationEntity | null;
+  run?: AOSCorrelationEntity | null;
+  feature?: AOSCorrelationEntity | null;
+  artifact?: AOSCorrelationEntity | null;
+  parentRun?: AOSCorrelationEntity | null;
+  parentFeature?: AOSCorrelationEntity | null;
+  parentArtifact?: AOSCorrelationEntity | null;
+  parents?: AOSCorrelationEntity[];
+  linkedParents?: AOSCorrelationEntity[];
+  aliases?: Record<string, AOSCorrelationValue> | null;
+  native?: Record<string, AOSCorrelationValue> | null;
+  diagnostics?: string[];
+}
+
 export interface AgentSession {
   id: string;
   title?: string;
@@ -621,6 +677,7 @@ export interface AgentSession {
   taskHints?: string[];
   transcriptTruncated?: { droppedCount: number; firstRetainedTimestamp?: string };
   transcriptIntelligence?: TranscriptIntelligence | null;
+  aosCorrelation?: AOSCorrelation | null;
   // Phase 3 (Codex): 'codex' added; explicit null = source determinable but field absent from older payload → fall back to platformType.
   // Phase 6: session source discriminator (derived from source_ref prefix; additive/optional)
   source?: 'codex' | 'filesystem' | 'remote' | 'entire' | 'unknown' | null;

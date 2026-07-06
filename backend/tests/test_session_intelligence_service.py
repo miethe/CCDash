@@ -275,6 +275,42 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].sourceLogIds, ["log-1"])
         self.assertIn("semantic", response.items[0].matchedTerms)
 
+    async def test_bare_uuid_search_resolves_aos_urn_transcript_rows(self) -> None:
+        turn_uuid = "11111111-1111-4111-8111-111111111111"
+        await self.storage.session_messages().replace_session_messages(
+            "S-1",
+            [
+                {
+                    "messageIndex": 1,
+                    "sourceLogId": "log-aos",
+                    "messageId": "msg-aos",
+                    "role": "assistant",
+                    "messageType": "message",
+                    "content": f"complete\nAOS-ID: urn:aos:turn:{turn_uuid}",
+                    "timestamp": "2026-04-02T10:00:09Z",
+                    "rootSessionId": "S-root",
+                    "conversationFamilyId": "family-1",
+                    "threadSessionId": "S-1",
+                    "sourceProvenance": "sync",
+                }
+            ],
+            "project-1",
+        )
+
+        response = await self.search_service.search(
+            self.context,
+            self.ports,
+            query=turn_uuid,
+            feature_id="feature-a",
+            conversation_family_id="family-1",
+            limit=5,
+        )
+
+        self.assertEqual(response.capability.searchMode, "aos_correlation")
+        self.assertEqual(response.total, 1)
+        self.assertEqual(response.items[0].sessionId, "S-1")
+        self.assertEqual(response.items[0].sourceLogIds, ["log-aos"])
+
     async def test_list_sessions_builds_rollups(self) -> None:
         response = await self.read_service.list_sessions(
             self.context,

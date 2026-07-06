@@ -45,6 +45,7 @@ from backend.document_linking import (
 from backend.date_utils import make_date_value
 from backend.services.agentic_intelligence_flags import usage_attribution_enabled
 from backend.services.integrations.github_settings_store import GitHubSettingsStore
+from backend.services.aos_correlation import derive_aos_correlation
 from backend.services.repo_workspaces.cache import RepoWorkspaceCache
 from backend.services.repo_workspaces.manager import RepoWorkspaceError, RepoWorkspaceManager
 from backend.services.session_usage_analytics import get_session_usage_attribution_details
@@ -74,6 +75,37 @@ session_facet_service = SessionFacetService()
 session_transcript_service = SessionTranscriptService()
 document_query_service = DocumentQueryService()
 session_intelligence_read_service = SessionIntelligenceReadService()
+
+
+async def _derive_session_aos_correlation(
+    session_row: dict[str, Any],
+    core_ports: CorePorts,
+    *,
+    project_id: str,
+    logs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    session_id = str(session_row.get("id") or "").strip()
+    if logs is None:
+        try:
+            logs = await session_transcript_service.list_session_logs(
+                session_row,
+                core_ports,
+                limit=1000,
+                offset=0,
+            )
+        except Exception:
+            logger.warning(
+                "aos_correlation: failed to read transcript rows for session_id=%r",
+                session_id,
+                exc_info=True,
+            )
+            logs = []
+    return derive_aos_correlation(
+        session_id=session_id,
+        project_id=project_id,
+        session_row=session_row,
+        logs=logs,
+    )
 
 
 async def _resolve_app_request(
@@ -806,6 +838,12 @@ async def list_sessions(
             existing_title=session_title,
             latest_summary=latest_summary,
         )
+        aos_correlation = await _derive_session_aos_correlation(
+            s,
+            core_ports,
+            project_id=str(s.get("project_id") or project.id or ""),
+            logs=session_logs,
+        )
         model_identity = derive_model_identity(s.get("model"))
         platform_version_value = str(s.get("platform_version") or "").strip()
         raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
@@ -895,6 +933,7 @@ async def list_sessions(
             taskHints=None,
             sessionForensics=_safe_json(s.get("session_forensics_json")),
             transcriptIntelligence=transcript_intelligence,
+            aosCorrelation=aos_correlation or None,
             dates=_session_dates_payload(s),
             timeline=[event for event in _safe_json_list(s.get("timeline_json")) if isinstance(event, dict)],
             # Phase 3 (codex-session-ingestion-v1): origin discriminator + unattributed detection.
@@ -1159,6 +1198,12 @@ async def get_session(
         latest_summary=latest_summary,
         usage_events=usage_attribution_details["usageEvents"],
     )
+    aos_correlation = await _derive_session_aos_correlation(
+        s,
+        core_ports,
+        project_id=project_id_for_relationships,
+        logs=normalized_session_logs,
+    )
         
     # Derive linkedFeatureIds from entity-links repo (detail only — too costly for list).
     linked_feature_ids: list[str] | None = None
@@ -1311,6 +1356,7 @@ async def get_session(
         usageAttributionCalibration=usage_attribution_details["usageAttributionCalibration"],
         intelligenceSummary=intelligence_detail.summary if intelligence_detail else None,
         transcriptIntelligence=transcript_intelligence,
+        aosCorrelation=aos_correlation or None,
         dates=_session_dates_payload(s),
         timeline=[
             event for event in _safe_json_list(s.get("timeline_json"))

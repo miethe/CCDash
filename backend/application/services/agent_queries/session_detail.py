@@ -50,6 +50,7 @@ from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services.sessions import SessionTranscriptService
 from backend.observability import otel
+from backend.services.aos_correlation import derive_aos_correlation
 
 from .redaction import redact_entries
 from .transcript_intelligence import build_transcript_intelligence_index
@@ -543,6 +544,29 @@ async def _impl(
         mode="json",
         exclude_none=True,
     )
+    logs_for_aos = transcript_logs_for_intelligence
+    if not logs_for_aos:
+        try:
+            logs_for_aos = await _transcript_service.list_session_logs(
+                session_row,
+                ports,
+                limit=1000,
+                offset=0,
+            )
+        except Exception:
+            logger.warning(
+                "session_detail: failed to derive AOS correlation for session %r project %r",
+                session_id,
+                project_id,
+                exc_info=True,
+            )
+            logs_for_aos = []
+    session_payload["aosCorrelation"] = derive_aos_correlation(
+        session_id=session_id,
+        project_id=project_id,
+        session_row=session_row,
+        logs=logs_for_aos,
+    ) or None
 
     return SessionDetailBundle(
         session_id=session_id,

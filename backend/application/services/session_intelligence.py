@@ -36,6 +36,7 @@ from backend.services.session_churn_facts import build_session_code_churn_facts
 from backend.services.session_scope_drift import build_session_scope_drift_facts
 from backend.services.session_sentiment_facts import build_session_sentiment_facts
 from backend.services.session_transcript_projection import project_session_messages
+from backend.services.aos_correlation import aos_query_terms, derive_aos_correlation, is_aos_query
 
 
 SESSION_INTELLIGENCE_BACKFILL_CHECKPOINT_KEY = "session_intelligence_historical_backfill_v1"
@@ -91,6 +92,27 @@ class SessionIntelligenceQueryService:
                 capability=capability,
                 items=[],
             )
+
+        aos_response = await _aos_search_response(
+            ports,
+            project.id,
+            query=query,
+            feature_id=feature_id,
+            conversation_family_id=conversation_family_id,
+            root_session_id=root_session_id,
+            session_id=session_id,
+            offset=offset,
+            limit=limit,
+            capability=SessionIntelligenceCapability(
+                supported=True,
+                authoritative=False,
+                storageProfile=str(getattr(ports.storage.session_embeddings().describe_capability(), "storage_profile", "")),
+                searchMode="aos_correlation",
+                detail="AOS UUID/URN query resolved through transcript rows and local sidecar aliases.",
+            ),
+        )
+        if aos_response is not None:
+            return aos_response
 
         rows = await ports.storage.session_messages().search_messages(
             project.id,
@@ -489,6 +511,124 @@ class SessionIntelligenceQueryService:
             )
             for row in rows
         ]
+
+
+async def _aos_search_response(
+    ports: CorePorts,
+    project_id: str,
+    *,
+    query: str,
+    feature_id: str | None = None,
+    conversation_family_id: str | None = None,
+    root_session_id: str | None = None,
+    session_id: str | None = None,
+    offset: int = 0,
+    limit: int = 25,
+    capability: SessionIntelligenceCapability,
+) -> SessionSemanticSearchResponse | None:
+    if not is_aos_query(query):
+        return None
+
+    matches: list[SessionSemanticSearchMatch] = []
+    seen: set[tuple[str, str, int]] = set()
+
+    rows = []
+    row_keys: set[tuple[str, str, int]] = set()
+    for term in aos_query_terms(query):
+        try:
+            term_rows = await ports.storage.session_messages().search_messages(
+                project_id,
+                term,
+                feature_id=feature_id,
+                conversation_family_id=conversation_family_id,
+                session_id=session_id,
+                limit=max(limit + offset, limit, 50),
+            )
+        except Exception:
+            term_rows = []
+        for row in term_rows:
+            key = (
+                str(row.get("session_id") or ""),
+                str(row.get("source_log_id") or ""),
+                int(row.get("message_index") or 0),
+            )
+            if key in row_keys:
+                continue
+            row_keys.add(key)
+            rows.append(row)
+    if root_session_id:
+        rows = [row for row in rows if str(row.get("root_session_id") or "") == root_session_id]
+    for row in rows:
+        match = _search_match_from_row(row, query)
+        match.blockKind = "aos_correlation"
+        match.score = max(float(match.score), 25.0)
+        key = (match.sessionId, ",".join(match.sourceLogIds), match.blockIndex)
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(match)
+
+    sidecar_correlation = derive_aos_correlation(query=query)
+    for resolved_session_id in sidecar_correlation.get("sessionIds", []):
+        resolved_session_id = str(resolved_session_id or "").strip()
+        if not resolved_session_id or (session_id and resolved_session_id != session_id):
+            continue
+        row = await ports.storage.sessions().get_by_id(resolved_session_id, project_id=project_id)
+        if not row:
+            continue
+        if feature_id and _feature_id(row) != feature_id:
+            continue
+        if root_session_id and str(row.get("root_session_id") or row.get("id") or "") != root_session_id:
+            continue
+        if conversation_family_id:
+            family_id = str(row.get("conversation_family_id") or row.get("root_session_id") or row.get("id") or "")
+            if family_id != conversation_family_id:
+                continue
+
+        match = SessionSemanticSearchMatch(
+            sessionId=resolved_session_id,
+            featureId=_feature_id(row),
+            rootSessionId=str(row.get("root_session_id") or resolved_session_id),
+            threadSessionId=resolved_session_id,
+            blockKind="aos_correlation",
+            blockIndex=0,
+            eventTimestamp=str(row.get("started_at") or row.get("updated_at") or ""),
+            score=30.0,
+            matchedTerms=[str(query).strip()],
+            messageIds=[],
+            sourceLogIds=[],
+            content="",
+            snippet=_aos_search_snippet(sidecar_correlation),
+        )
+        key = (match.sessionId, "sidecar", 0)
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(match)
+
+    if not matches:
+        return None
+
+    matches.sort(key=lambda item: (-item.score, item.sessionId, item.blockIndex))
+    paged = matches[offset : offset + limit]
+    return SessionSemanticSearchResponse(
+        query=query,
+        total=len(matches),
+        offset=offset,
+        limit=limit,
+        capability=capability,
+        items=paged,
+    )
+
+
+def _aos_search_snippet(correlation: dict[str, Any]) -> str:
+    ids = correlation.get("urns") if isinstance(correlation, dict) else {}
+    if isinstance(ids, dict):
+        for kind in ("turn", "session", "run", "feature", "artifact", "app", "service", "trace"):
+            values = ids.get(kind)
+            if isinstance(values, list) and values:
+                return f"AOS {kind} alias resolved to this session."
+    return "AOS alias resolved to this session."
 
 
 async def _load_facts(
@@ -1100,6 +1240,26 @@ class TranscriptSearchService:
                     detail="Canonical transcript search is unavailable.",
                 ),
             )
+
+        aos_response = await _aos_search_response(
+            ports,
+            project.id,
+            query=query,
+            feature_id=feature_id,
+            root_session_id=root_session_id,
+            session_id=session_id,
+            offset=offset,
+            limit=limit,
+            capability=SessionIntelligenceCapability(
+                supported=True,
+                authoritative=False,
+                storageProfile=str(getattr(ports.storage.session_embeddings().describe_capability(), "storage_profile", "")),
+                searchMode="aos_correlation",
+                detail="AOS UUID/URN query resolved through transcript rows and local sidecar aliases.",
+            ),
+        )
+        if aos_response is not None:
+            return aos_response
 
         rows = await ports.storage.session_messages().search_messages(
             project.id,

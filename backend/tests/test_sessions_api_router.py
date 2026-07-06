@@ -224,7 +224,7 @@ class _FakeSessionDetailRepo:
 
 
 class _FakeFullSessionRepo:
-    async def get_by_id(self, session_id):
+    async def get_by_id(self, session_id, **_kwargs):
         if session_id == "S-main":
             return {
                 "id": "S-main",
@@ -344,6 +344,33 @@ class _FakeCanonicalSessionMessageRepo:
                 "parent_entry_uuid": "",
                 "source_provenance": "canonical_table",
                 "metadata_json": "{\"custom\":true}",
+            }
+        ]
+
+
+class _FakeAosSessionMessageRepo:
+    async def list_by_session(self, session_id, limit=5000, offset=0):
+        _ = limit, offset
+        if session_id != "S-main":
+            return []
+        return [
+            {
+                "message_index": 0,
+                "source_log_id": "log-aos",
+                "message_id": "message-aos",
+                "role": "assistant",
+                "message_type": "message",
+                "content": "complete\nAOS-ID: urn:aos:turn:11111111-1111-4111-8111-111111111111",
+                "event_timestamp": "2026-02-16T00:00:00Z",
+                "agent_name": "Planner",
+                "tool_name": None,
+                "tool_call_id": None,
+                "related_tool_call_id": "",
+                "linked_session_id": "",
+                "entry_uuid": "entry-aos",
+                "parent_entry_uuid": "",
+                "source_provenance": "canonical_table",
+                "metadata_json": "{}",
             }
         ]
 
@@ -1038,6 +1065,37 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.logs[0].metadata.get("sourceProvenance"), "canonical_table")
         self.assertEqual(response.logs[0].metadata.get("entryUuid"), "entry-1")
         self.assertAlmostEqual(response.outputShare, 0.5)
+
+    async def test_get_session_includes_aos_correlation_for_legacy_detail_payload(self) -> None:
+        repo = _FakeFullSessionRepo()
+        project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(
+            project=project,
+            session_repo=repo,
+            session_message_repo=_FakeAosSessionMessageRepo(),
+        )
+
+        with patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(
+            api_router,
+            "usage_attribution_enabled",
+            return_value=False,
+        ), patch.object(
+            api_router.session_intelligence_read_service,
+            "get_session_detail",
+            return_value=None,
+        ):
+            response = await api_router.get_session(
+                "S-main",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
+            )
+
+        assert response.aosCorrelation is not None
+        self.assertEqual(
+            response.aosCorrelation["footer"],
+            "AOS-ID: urn:aos:turn:11111111-1111-4111-8111-111111111111",
+        )
+        self.assertEqual(response.aosCorrelation["turnUuid"], "11111111-1111-4111-8111-111111111111")
 
     async def test_get_session_uses_canonical_logs_for_title_and_badges(self) -> None:
         class _FakeCanonicalFullSessionRepo(_FakeFullSessionRepo):

@@ -199,6 +199,41 @@ class TestGetSessionDetail(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bundle.session_id, SESSION_A1)
         self.assertEqual(bundle.project_id, PROJ_A)
 
+    async def test_session_payload_includes_aos_correlation_from_transcript_urns(self) -> None:
+        turn_uuid = "11111111-1111-4111-8111-111111111111"
+        run_uuid = "22222222-2222-4222-8222-222222222222"
+        feature_uuid = "33333333-3333-4333-8333-333333333333"
+        artifact_uuid = "44444444-4444-4444-8444-444444444444"
+        logs = [
+            _make_fake_log(
+                1,
+                "\n".join(
+                    [
+                        f"parent run urn:aos:run:{run_uuid}",
+                        f"feature urn:aos:feature:{feature_uuid}",
+                        f"artifact urn:aos:artifact:{artifact_uuid}",
+                        f"AOS-ID: urn:aos:turn:{turn_uuid}",
+                    ]
+                ),
+            )
+        ]
+        with patch(
+            "backend.application.services.agent_queries.session_detail"
+            "._transcript_service.list_session_logs",
+            new=AsyncMock(return_value=logs),
+        ):
+            bundle = await get_session_detail(PROJ_A, SESSION_A1, self.ports)
+
+        self.assertIsNotNone(bundle)
+        assert bundle is not None
+        aos = bundle.session["aosCorrelation"]
+        self.assertEqual(aos["footer"], f"AOS-ID: urn:aos:turn:{turn_uuid}")
+        self.assertEqual(aos["turnUrn"], f"urn:aos:turn:{turn_uuid}")
+        self.assertEqual(aos["turnUuid"], turn_uuid)
+        self.assertEqual(aos["parentRun"]["urn"], f"urn:aos:run:{run_uuid}")
+        self.assertEqual(aos["parentFeature"]["urn"], f"urn:aos:feature:{feature_uuid}")
+        self.assertEqual(aos["parentArtifact"]["urn"], f"urn:aos:artifact:{artifact_uuid}")
+
     async def test_returns_none_for_absent_session(self) -> None:
         bundle = await get_session_detail(PROJ_A, ABSENT_ID, self.ports)
         self.assertIsNone(bundle)

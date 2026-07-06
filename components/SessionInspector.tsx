@@ -9,7 +9,7 @@ import { useFeaturesQuery } from '../services/queries/features';
 import { useDocumentsQuery } from '../services/queries/documents';
 import { useModelColors } from '../contexts/ModelColorsContext';
 import { AgentSession, SessionLog, SessionArtifact, PlanDocument, Feature, ProjectTask, SessionTranscriptAppendPayload } from '../types';
-import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
+import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2, Copy, Check } from 'lucide-react';
 import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { ProjectFileViewerModal } from './content/ProjectFileViewerModal';
@@ -46,6 +46,7 @@ import { isMemoryGuardEnabled } from '../lib/featureFlags';
 import { uiStateKeys } from '../services/queryKeys';
 import { SessionFeaturesView, TranscriptView } from './SessionInspector/TranscriptView';
 import { SessionSourceChip, SessionUnattributedBadge } from './SessionSourceChip';
+import { buildAOSCorrelationView, type AOSCorrelationView, type AOSParentLinkKind } from '../lib/aosCorrelation';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -4601,6 +4602,142 @@ const SessionFilterBar = React.memo(() => {
     );
 });
 
+const AOS_PARENT_LABELS: Record<AOSParentLinkKind, string> = {
+    run: 'Parent Run',
+    feature: 'Parent Feature',
+    artifact: 'Parent Artifact',
+};
+
+const AOS_PARENT_BADGES: Record<AOSParentLinkKind, string> = {
+    run: 'bg-amber-500/10 text-amber-200 border-amber-500/30',
+    feature: 'bg-indigo-500/10 text-indigo-100 border-indigo-500/35',
+    artifact: 'bg-emerald-500/10 text-emerald-100 border-emerald-500/30',
+};
+
+const AOSCorrelationPanel = React.memo<{
+    correlation: AgentSession['aosCorrelation'];
+    onNavigate: (href: string) => void;
+}>(({ correlation, onNavigate }) => {
+    const aosView: AOSCorrelationView | null = useMemo(
+        () => buildAOSCorrelationView(correlation),
+        [correlation],
+    );
+    const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+
+    useEffect(() => {
+        setCopyState('idle');
+    }, [aosView?.footer]);
+
+    const handleCopyAOSFooter = useCallback(async () => {
+        if (!aosView?.footer) return;
+        try {
+            await navigator.clipboard.writeText(aosView.footer);
+            setCopyState('copied');
+        } catch {
+            setCopyState('error');
+        }
+    }, [aosView?.footer]);
+
+    if (!aosView) return null;
+
+    return (
+        <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-2.5 py-2 space-y-2" data-testid="aos-correlation-panel">
+            <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">AOS Correlation</div>
+                <span className={`text-[9px] uppercase tracking-wide rounded border px-1.5 py-0.5 ${aosView.footer
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                    : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                    }`}>
+                    {aosView.footer ? 'resolved' : aosView.status || 'unresolved'}
+                </span>
+            </div>
+
+            {aosView.footer ? (
+                <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 rounded-md border border-panel-border bg-panel/80 px-2 py-1.5 text-[11px] font-mono text-panel-foreground break-all">
+                        {aosView.footer}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={handleCopyAOSFooter}
+                        data-copy-value={aosView.footer}
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-panel-border bg-panel/75 text-foreground hover:border-emerald-500/40 hover:text-emerald-200 transition-colors"
+                        title="Copy leaf AOS-ID footer"
+                        aria-label="Copy leaf AOS-ID footer"
+                    >
+                        {copyState === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+                    </button>
+                </div>
+            ) : (
+                <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-100">
+                    AOS turn footer unresolved.
+                </div>
+            )}
+
+            {copyState === 'error' && (
+                <div className="text-[10px] text-rose-300">
+                    Clipboard unavailable.
+                </div>
+            )}
+
+            {aosView.parents.length > 0 && (
+                <div className="space-y-1.5">
+                    {aosView.parents.map(parent => (
+                        <div key={`${parent.kind}:${parent.urn || parent.nativeId || parent.uuid || parent.label}`} className="rounded-md border border-panel-border bg-panel/65 px-2 py-1.5">
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                    <div className={`inline-flex rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wide ${AOS_PARENT_BADGES[parent.kind]}`}>
+                                        {AOS_PARENT_LABELS[parent.kind]}
+                                    </div>
+                                    <div className="mt-1 text-[11px] font-mono text-panel-foreground break-all">
+                                        {parent.label}
+                                    </div>
+                                </div>
+                                {parent.href && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onNavigate(parent.href!)}
+                                        className="inline-flex items-center gap-1 rounded-md border border-panel-border bg-surface-muted px-2 py-1 text-[10px] text-foreground hover:border-indigo-500/40 hover:text-indigo-200 transition-colors"
+                                        title={`Open ${parent.label}`}
+                                    >
+                                        <ExternalLink size={11} />
+                                        <span>Open</span>
+                                    </button>
+                                )}
+                            </div>
+                            {(parent.urn || parent.uuid || parent.nativeId) && (
+                                <div className="mt-1 grid gap-1 text-[10px] text-muted-foreground">
+                                    {parent.urn && <span className="font-mono break-all">URN: {parent.urn}</span>}
+                                    {parent.uuid && <span className="font-mono break-all">UUID: {parent.uuid}</span>}
+                                    {parent.nativeId && <span className="font-mono break-all">Native: {parent.nativeId}</span>}
+                                </div>
+                            )}
+                            {parent.aliases.length > 0 && (
+                                <div className="mt-1.5 border-t border-panel-border/70 pt-1.5">
+                                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Parent Aliases</div>
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                        {parent.aliases.map(alias => (
+                                            <span
+                                                key={`${parent.kind}:${alias.key}:${alias.value}`}
+                                                className="rounded border border-panel-border bg-surface-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                                title={`${alias.key}: ${alias.value}`}
+                                            >
+                                                <span className="font-medium text-panel-foreground">{alias.key}</span>
+                                                <span className="mx-1">=</span>
+                                                <span className="font-mono">{alias.value}</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+});
+
 const SessionDetail = React.memo<{
     session: AgentSession;
     onBack: () => void;
@@ -5074,6 +5211,11 @@ const SessionDetail = React.memo<{
         navigate(`/board?feature=${encodeURIComponent(featureId)}`);
     }, [navigate]);
 
+    const handleOpenAOSParent = useCallback((href: string) => {
+        if (!href) return;
+        navigate(href);
+    }, [navigate]);
+
     return (
         <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
             {/* Header */}
@@ -5258,6 +5400,10 @@ const SessionDetail = React.memo<{
                                     )}
                                 </div>
                             )}
+                            <AOSCorrelationPanel
+                                correlation={effectiveSession.aosCorrelation}
+                                onNavigate={handleOpenAOSParent}
+                            />
                             <div className="flex items-center justify-between gap-3 rounded-lg border border-panel-border bg-surface-overlay/70 px-2.5 py-1.5">
                                 <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
                                     <Cpu size={12} />
