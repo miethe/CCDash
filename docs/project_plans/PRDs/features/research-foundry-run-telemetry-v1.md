@@ -1,34 +1,36 @@
 ---
-title: "PRD: Research Foundry Run Telemetry in CCDash"
+title: 'PRD: Research Foundry Run Telemetry in CCDash'
 schema_version: 2
 doc_type: prd
 it_schema: 1
-description: "Ingest, persist, correlate, and visualize Research Foundry (RF) search-run telemetry as a first-class CCDash run entity, linked to sessions, so the operator can close RF's evidence-driven provider-selection loop."
+description: Ingest, persist, correlate, and visualize Research Foundry (RF) search-run
+  telemetry as a first-class CCDash run entity, linked to sessions, so the operator
+  can close RF's evidence-driven provider-selection loop.
 status: draft
-created: 2026-07-21
-updated: 2026-07-21
+created: '2026-07-21'
+updated: '2026-07-21'
 feature_slug: research-foundry-run-telemetry
-feature_version: "v1"
+feature_version: v1
 tier: 3
-effort_estimate: "26 points (P1: 8, P2: 9, P3: 6, P4: 3)"
+effort_estimate: '26 points (P1: 8, P2: 9, P3: 6, P4: 3)'
 changelog_required: true
 prd_ref: null
-plan_ref: null
+plan_ref: docs/project_plans/implementation_plans/features/research-foundry-run-telemetry-v1.md
 related_documents:
-  - ../../../../docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-feasibility-brief.md
-  - ../../../../docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-charter.md
-  - ../../../../../research-foundry/docs/project_plans/design-specs/research_foundry_search_router_spec.md
+- ../../../../docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-feasibility-brief.md
+- ../../../../docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-charter.md
+- ../../../../../research-foundry/docs/project_plans/design-specs/research_foundry_search_router_spec.md
 references:
   user_docs:
-    - docs/guides/remote-ingest-operator-guide.md
+  - docs/guides/remote-ingest-operator-guide.md
   context:
-    - CLAUDE.md
+  - CLAUDE.md
   specs:
-    - docs/project_plans/design-specs/f-w6-001-correlation-overcounting.md
+  - docs/project_plans/design-specs/f-w6-001-correlation-overcounting.md
   related_prds: []
 spike_ref: null
 adr_refs:
-  - docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-proposed-adr.md
+- docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-proposed-adr.md
 charter_ref: docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-charter.md
 changelog_ref: null
 test_plan_ref: null
@@ -36,41 +38,79 @@ owner: null
 contributors: []
 priority: medium
 risk_level: medium
-category: "product-planning"
-tags: [prd, planning, feature, research-foundry, telemetry, ingest, analytics]
+category: product-planning
+tags:
+- prd
+- planning
+- feature
+- research-foundry
+- telemetry
+- ingest
+- analytics
 milestone: null
 commit_refs: []
 pr_refs: []
 files_affected:
-  - backend/routers/ingest.py
-  - backend/application/models/ingest.py
-  - backend/application/services/ingest/rf_events_ingest.py
-  - backend/db/sqlite_migrations.py
-  - backend/db/postgres_migrations.py
-  - backend/db/repositories/entity_graph.py
-  - backend/application/services/agent_queries/run_intelligence.py
-  - backend/application/services/agent_queries/ingest_sources.py
-  - backend/routers/agent.py
-  - backend/routers/client_v1.py
-  - components/Analytics/AnalyticsDashboard.tsx
-  - services/queryKeys.ts
-  - types.ts
+- backend/routers/ingest.py
+- backend/application/models/ingest.py
+- backend/application/services/ingest/rf_events_ingest.py
+- backend/db/sqlite_migrations.py
+- backend/db/postgres_migrations.py
+- backend/db/repositories/entity_graph.py
+- backend/application/services/agent_queries/run_intelligence.py
+- backend/application/services/agent_queries/ingest_sources.py
+- backend/routers/agent.py
+- backend/routers/client_v1.py
+- components/Analytics/AnalyticsDashboard.tsx
+- services/queryKeys.ts
+- types.ts
 open_questions:
-  - "OQ-5: Should run_id resolve intent_id against the IntentTree API, or stay opaque display-only for v1? Resolved for this PRD: opaque display-only; IntentTree resolution is a named deferred item."
+- 'OQ-5: Should run_id resolve intent_id against the IntentTree API, or stay opaque
+  display-only for v1? Resolved for this PRD: opaque display-only; IntentTree resolution
+  is a named deferred item.'
 decisions:
-  - {decision: "D1: Transport = new POST /api/v1/ingest/rf-events + rf_events table, reusing NDJSON/ingest_cursors/dead-letter (ADR-008/009/014/015)", rationale: "RF's emit_ccdash_event writes YAML only inside RF's own workspace; reusing /ingest/sessions would pollute the sessions table.", status: locked}
-  - {decision: "D2: Correlate run<->session via links.py entity-link rows (kind=research_run) keyed by a genuine UUID run_id; RF ids are display-only attributes; no aos_correlation.py extension", rationale: "RF ids are non-UUID semantic slugs that fail UUID_RE/AOS_URN_RE.", status: locked}
-  - {decision: "D3: Dual SQLite+Postgres DDL, retry_on_locked, direct-count test, parity-allowlist entry (ADR-007)", rationale: "Non-negotiable DB write-path rule; ingest_cursors v36 precedent.", status: locked}
-  - {decision: "D4: 4-panel tab inside AnalyticsDashboard.tsx, not a new top-level route", rationale: "Existing visual language is a 1:1 fit; reversible; YAGNI for solo-LAN volume.", status: locked}
-  - {decision: "D5: D-001 dedup discipline on any run<->session rollup from day one + regression test", rationale: "run<->session is the same one-to-many shape as the deferred D-001 over-count.", status: locked}
-  - {decision: "D6: Split persistence into rf_events (raw append-only log) + research_runs (derived rollup)", rationale: "Ingest stays append-only/idempotent; rollup is recomputable from the raw log.", status: locked}
-  - {decision: "D7: Defer per-provider cost/quality splits (no source_cards join in v1)", rationale: "The §16 execution_event carries only a provider LIST, not per-provider splits; joining source_cards is out of scope for v1.", status: locked}
+- decision: 'D1: Transport = new POST /api/v1/ingest/rf-events + rf_events table,
+    reusing NDJSON/ingest_cursors/dead-letter (ADR-008/009/014/015)'
+  rationale: RF's emit_ccdash_event writes YAML only inside RF's own workspace; reusing
+    /ingest/sessions would pollute the sessions table.
+  status: locked
+- decision: 'D2: Correlate run<->session via links.py entity-link rows (kind=research_run)
+    keyed by a genuine UUID run_id; RF ids are display-only attributes; no aos_correlation.py
+    extension'
+  rationale: RF ids are non-UUID semantic slugs that fail UUID_RE/AOS_URN_RE.
+  status: locked
+- decision: 'D3: Dual SQLite+Postgres DDL, retry_on_locked, direct-count test, parity-allowlist
+    entry (ADR-007)'
+  rationale: Non-negotiable DB write-path rule; ingest_cursors v36 precedent.
+  status: locked
+- decision: 'D4: 4-panel tab inside AnalyticsDashboard.tsx, not a new top-level route'
+  rationale: Existing visual language is a 1:1 fit; reversible; YAGNI for solo-LAN
+    volume.
+  status: locked
+- decision: 'D5: D-001 dedup discipline on any run<->session rollup from day one +
+    regression test'
+  rationale: run<->session is the same one-to-many shape as the deferred D-001 over-count.
+  status: locked
+- decision: 'D6: Split persistence into rf_events (raw append-only log) + research_runs
+    (derived rollup)'
+  rationale: Ingest stays append-only/idempotent; rollup is recomputable from the
+    raw log.
+  status: locked
+- decision: 'D7: Defer per-provider cost/quality splits (no source_cards join in v1)'
+  rationale: "The \xA716 execution_event carries only a provider LIST, not per-provider\
+    \ splits; joining source_cards is out of scope for v1."
+  status: locked
 success_metrics:
-  - "100% of POSTed RF events persist idempotently (no duplicate rf_events rows on re-POST of the same event_id)."
-  - "research_runs rollup is queryable via REST/MCP/CLI with zero cross-run cost double-counting (D-001 regression test green)."
-  - "Provider Economics tab renders KPI strip + 3 panels from live or seeded data and degrades to explicit empty state with zero events (no 0/NaN)."
-agent_title: "RF run telemetry ingest + entity + analytics tab"
-agent_summary: "Add a new ingest endpoint + rf_events/research_runs tables + run_intelligence query service + a 4-panel analytics tab so RF search-run telemetry becomes a queryable, session-correlated CCDash entity."
+- 100% of POSTed RF events persist idempotently (no duplicate rf_events rows on re-POST
+  of the same event_id).
+- research_runs rollup is queryable via REST/MCP/CLI with zero cross-run cost double-counting
+  (D-001 regression test green).
+- Provider Economics tab renders KPI strip + 3 panels from live or seeded data and
+  degrades to explicit empty state with zero events (no 0/NaN).
+agent_title: RF run telemetry ingest + entity + analytics tab
+agent_summary: Add a new ingest endpoint + rf_events/research_runs tables + run_intelligence
+  query service + a 4-panel analytics tab so RF search-run telemetry becomes a queryable,
+  session-correlated CCDash entity.
 ---
 
 # Feature Brief & Metadata
