@@ -259,6 +259,44 @@ class MigrationGovernanceTests(unittest.TestCase):
                 msg=f"Phase 11: sessions.{col} should be parity-clean, not allowlisted",
             )
 
+    def test_research_runs_columns_are_parity_clean_not_allowlisted(self) -> None:
+        """research_runs (T2-001/T2-002) is parity-clean in both static DDLs.
+
+        research_runs (research-foundry-run-telemetry v1, Phase 2, v41) is the
+        derived rollup table folded from rf_events. This is the ADR-007 exit
+        gate named explicitly by T2-002: every column the repository writes
+        (``RESEARCH_RUNS_COLUMNS``) must exist, identically typed, in BOTH the
+        SQLite and Postgres CREATE TABLE DDL, and none of them may appear in
+        COLUMN_PARITY_DRIFT_ALLOWLIST — research_runs has zero drift by
+        construction, mirroring the rf_events precedent (T1-001/T1-002) rather
+        than the sessions-table allowlisted-drift pattern. See also the
+        dedicated end-to-end coverage in
+        backend/tests/test_research_runs_migration_governance.py.
+        """
+        from backend.db.migration_governance import _backend_table_blocks, _parse_table_columns
+        from backend.db import sqlite_migrations, postgres_migrations
+        from backend.db.repositories.research_runs import RESEARCH_RUNS_COLUMNS
+
+        self.assertIn("research_runs", get_sqlite_migration_tables())
+        self.assertIn("research_runs", get_postgres_migration_tables())
+
+        sqlite_blocks = _backend_table_blocks(sqlite_migrations)
+        pg_blocks = _backend_table_blocks(postgres_migrations)
+        sqlite_cols = set(_parse_table_columns(sqlite_blocks["research_runs"]))
+        pg_cols = set(_parse_table_columns(pg_blocks["research_runs"]))
+
+        for col in RESEARCH_RUNS_COLUMNS:
+            self.assertIn(col, sqlite_cols, msg=f"T2-002: research_runs.{col} absent from SQLite DDL")
+            self.assertIn(col, pg_cols, msg=f"T2-002: research_runs.{col} absent from Postgres DDL")
+            self.assertNotIn(
+                ("research_runs", col),
+                COLUMN_PARITY_DRIFT_ALLOWLIST,
+                msg=f"T2-002: research_runs.{col} should be parity-clean, not allowlisted",
+            )
+
+        diff = column_parity_diff("research_runs")
+        self.assertEqual(diff, {}, msg=f"T2-002: research_runs must be column-parity-clean; found drift: {diff}")
+
     def test_allowlist_entries_are_all_documented(self) -> None:
         """Every allowlist entry must correspond to a DRIFT-NNN entry in the module docstring.
 

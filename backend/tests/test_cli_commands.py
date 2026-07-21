@@ -277,6 +277,117 @@ class CliCommandsTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIn("No recommendations available", result.output)
 
+    def test_research_run_list_renders_json_output(self) -> None:
+        from backend.application.services.agent_queries.run_intelligence import (
+            ResearchRunListResponseDTO,
+            ResearchRunSummaryDTO,
+        )
+
+        payload = ResearchRunListResponseDTO(
+            status="ok",
+            project_id="project-1",
+            items=[
+                ResearchRunSummaryDTO(
+                    run_id="run-uuid-0001",
+                    rf_run_id="rf-slug-alpha",
+                    project_id="project-1",
+                    event_count=3,
+                    linked_session_ids=["sess-0001"],
+                    linked_session_id="sess-0001",
+                )
+            ],
+            cursor="",
+            limit=50,
+            next_cursor=None,
+            source_refs=["project-1"],
+        )
+
+        with patch(
+            "backend.cli.commands.research_run.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(
+                app, ["research-run", "list", "--project", "project-1", "--json"]
+            )
+
+        self.assertEqual(result.exit_code, 0)
+        output = json.loads(result.output)
+        self.assertEqual(output["project_id"], "project-1")
+        self.assertEqual(output["items"][0]["run_id"], "run-uuid-0001")
+        self.assertEqual(output["items"][0]["linked_session_ids"], ["sess-0001"])
+
+    def test_research_run_list_errors_when_project_unresolved(self) -> None:
+        from backend.application.services.agent_queries.run_intelligence import (
+            ResearchRunListResponseDTO,
+        )
+
+        payload = ResearchRunListResponseDTO(status="error", project_id="missing-project")
+
+        with patch(
+            "backend.cli.commands.research_run.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(
+                app, ["--project", "missing-project", "research-run", "list"]
+            )
+
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("Project 'missing-project' was not found.", result.output)
+
+    def test_research_run_get_renders_human_output(self) -> None:
+        from backend.application.services.agent_queries.run_intelligence import (
+            ResearchRunDetailDTO,
+            ResearchRunDetailResponseDTO,
+        )
+
+        detail = ResearchRunDetailDTO(
+            run_id="run-uuid-0001",
+            rf_run_id="rf-slug-alpha",
+            project_id="project-1",
+            event_count=3,
+            linked_session_ids=["sess-0001"],
+            linked_session_id="sess-0001",
+        )
+        payload = ResearchRunDetailResponseDTO(
+            status="ok",
+            project_id="project-1",
+            run_id="run-uuid-0001",
+            found=True,
+            run=detail,
+            source_refs=["project-1", "run-uuid-0001"],
+        )
+
+        with patch(
+            "backend.cli.commands.research_run.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(app, ["research-run", "get", "run-uuid-0001"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("Research run run-uuid-0001", result.output)
+        self.assertIn("run-uuid-0001", result.output)
+
+    def test_research_run_get_errors_when_not_found(self) -> None:
+        from backend.application.services.agent_queries.run_intelligence import (
+            ResearchRunDetailResponseDTO,
+        )
+
+        payload = ResearchRunDetailResponseDTO(
+            status="ok",
+            project_id="project-1",
+            run_id="missing-run",
+            found=False,
+        )
+
+        with patch(
+            "backend.cli.commands.research_run.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(app, ["research-run", "get", "missing-run"])
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("Research run 'missing-run' was not found", result.output)
+
 
 class _ForensicsPayload(_CliPayload):
     """FeatureForensicsDTO stand-in that carries sessions_note."""

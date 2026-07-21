@@ -47,6 +47,13 @@ from backend.application.services.agent_queries.multi_project_planning_sessions 
     MultiProjectActiveSessionBoardQueryService,
 )
 from backend.application.services.agent_queries.planning_next_work import NextWorkQueryService
+from backend.application.services.agent_queries.run_intelligence import (
+    DEFAULT_LIMIT as RESEARCH_RUNS_DEFAULT_LIMIT,
+    MAX_LIMIT as RESEARCH_RUNS_MAX_LIMIT,
+    ResearchRunDetailResponseDTO,
+    ResearchRunListResponseDTO,
+    RunIntelligenceQueryService,
+)
 from backend.models import (
     AggregateWorkItem,
     MultiProjectCommandCenterResponse,
@@ -123,6 +130,8 @@ multi_project_command_center_query_service = MultiProjectPlanningCommandCenterQu
 multi_project_session_board_query_service = MultiProjectActiveSessionBoardQueryService()
 # P5-004: next-work ranked queue service.
 next_work_query_service = NextWorkQueryService()
+# T2-004 (research-foundry-run-telemetry-v1): research_runs rollup query surface.
+run_intelligence_query_service = RunIntelligenceQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -1219,3 +1228,119 @@ async def post_planning_spec_create(
             path=result["path"],
             status=result["status"],
         )
+
+
+# ── T2-004: Research Foundry research-runs rollup (research-foundry-run-telemetry-v1) ──
+# Thin REST wrapper over run_intelligence.py (T2-003) — transport-neutral service, no
+# business logic here. The service itself degrades to an empty/"not found" ok-shaped
+# response when CCDASH_RF_TELEMETRY_ENABLED is off, so no separate feature-flag gate is
+# needed at this layer; ``status="error"`` from the service (unresolved project scope)
+# maps to a 404 ErrorResponse envelope per this router's existing convention.
+
+
+@agent_router.get("/research-runs", response_model=ResearchRunListResponseDTO)
+async def get_research_runs(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    cursor: str | None = Query(
+        default=None,
+        description=(
+            "Opaque pagination cursor returned as next_cursor in a prior response. "
+            "Omit to fetch the first page."
+        ),
+    ),
+    limit: int = Query(
+        default=RESEARCH_RUNS_DEFAULT_LIMIT,
+        ge=1,
+        le=RESEARCH_RUNS_MAX_LIMIT,
+        description="Maximum number of research run rollups per page.",
+    ),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ResearchRunListResponseDTO:
+    """Return a cursor-paginated page of Research Foundry ``research_runs`` rollups.
+
+    Newest-first (``last_event_at DESC``); each item carries summed run metrics
+    plus a ``linked_session_ids`` correlation summary (AC-3). Optional metric
+    fields the source event never populated are ``null``, never a fabricated
+    ``0``/``""``/``[]`` (AC-2-Field).
+    """
+    with otel.start_span(
+        "run_intelligence.list_runs_route",
+        {"project_id": project_id or "", "limit": limit},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await run_intelligence_query_service.list_runs(
+            app_request.context,
+            app_request.ports,
+            project_id_override=project_id,
+            cursor=cursor,
+            limit=limit,
+            bypass_cache=bypass_cache,
+        )
+        if result.status == "error":
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "project_scope_not_resolved",
+                    "message": "Project scope could not be resolved for the research-runs list.",
+                    "hint": "Pass a valid project_id or ensure an active project is configured.",
+                },
+            )
+        return result
+
+
+@agent_router.get("/research-runs/{run_id}", response_model=ResearchRunDetailResponseDTO)
+async def get_research_run_detail(
+    run_id: str = Path(..., description="Research run id (CCDash UUID) to inspect."),
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ResearchRunDetailResponseDTO:
+    """Return a single Research Foundry run rollup plus its linked-session summary.
+
+    A run that does not exist in this project (or at all) is a normal 404
+    ``research_run_not_found`` ErrorResponse envelope, matching this router's
+    existing not-found convention for other single-entity detail endpoints —
+    never a 500.
+    """
+    with otel.start_span(
+        "run_intelligence.get_run_detail_route",
+        {"run_id": run_id, "project_id": project_id or ""},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await run_intelligence_query_service.get_run_detail(
+            app_request.context,
+            app_request.ports,
+            run_id,
+            project_id_override=project_id,
+            bypass_cache=bypass_cache,
+        )
+        if result.status == "error":
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "project_scope_not_resolved",
+                    "message": f"Could not resolve project scope for research run '{run_id}'.",
+                    "hint": "Pass a valid project_id or ensure an active project is configured.",
+                },
+            )
+        if not result.found:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "research_run_not_found",
+                    "message": f"Research run '{run_id}' was not found.",
+                    "hint": "Check the run_id and project_id are correct.",
+                },
+            )
+        return result

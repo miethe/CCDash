@@ -310,3 +310,52 @@ def redact_entries(
         )
 
     return redacted, total
+
+
+def redact_json_payload_layer1(
+    value: Any,
+    *,
+    patterns_enabled: bool | None = None,
+) -> tuple[Any, int]:
+    """Recursively apply the Layer 1 known-secret pattern scan to any JSON value.
+
+    Unlike :func:`redact_log_entry` / :func:`redact_entries` (which target the
+    session-log entry shape — ``content`` / ``toolCall`` — specifically), this
+    walks an arbitrary JSON-serialisable structure (dict/list/str/scalar) and
+    pattern-scans every string leaf. Intended for free-form ingest payloads
+    whose shape is not a session log entry but still deserves defensive
+    secret-pattern coverage (e.g. Research Foundry ``ccdash_event`` bodies —
+    FR-14 of the research-foundry-run-telemetry-v1 PRD).
+
+    Does not mutate *value*; returns a new structure.
+
+    Args:
+        value:             Any JSON-serialisable value (dict, list, str, or scalar).
+        patterns_enabled:  Override for Layer 1. ``None`` → read env var
+                            (fail-closed default: enabled).
+
+    Returns:
+        (redacted_value, total_redacted_match_count)
+    """
+    if patterns_enabled is None:
+        patterns_enabled = _redaction_env_bool("CCDASH_REDACTION_PATTERNS_ENABLED", True)
+
+    if not patterns_enabled:
+        return value, 0
+
+    total = 0
+
+    def _walk(node: Any) -> Any:
+        nonlocal total
+        if isinstance(node, str):
+            new_node, c = _redact_string_layer1(node)
+            total += c
+            return new_node
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+        return node
+
+    redacted = _walk(value)
+    return redacted, total

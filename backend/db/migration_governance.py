@@ -479,6 +479,30 @@ COLUMN_PARITY_DRIFT_ALLOWLIST: frozenset[tuple[str, str]] = frozenset({
     # same nullability, same default). They are therefore PARITY-CLEAN by
     # construction and intentionally NOT allowlisted — any drift here is a real
     # regression the parity test must catch.
+    #
+    # rf_events (T1-001/T1-002, research-foundry-run-telemetry v1, v40): every
+    # column is declared identically across both DDL files — same name, same
+    # normalized type (INTEGER/BOOLEAN, TEXT/JSONB, REAL/DOUBLE PRECISION all
+    # collapse to the same canonical type; TEXT NOT NULL DEFAULT (datetime('now'))
+    # vs TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP for created_at is the
+    # already-suppressed timestamp-default nullability case), same nullability,
+    # same default. `column_parity_diff("rf_events")` is `{}` by construction.
+    # rf_events is therefore intentionally NOT allowlisted here — see
+    # backend/tests/test_rf_events_migration_governance.py, which pins this and
+    # would fail if a future edit introduced real drift.
+    #
+    # research_runs (T2-001/T2-002, research-foundry-run-telemetry v1, Phase 2,
+    # v41): the derived rollup table folded from rf_events. Every column is
+    # declared identically across both DDL files using the same
+    # canonical-type/normalized-default conventions established for rf_events
+    # above (INTEGER/BOOLEAN, TEXT/JSONB, REAL/DOUBLE PRECISION, and the
+    # timestamp-default nullability case for created_at/updated_at all
+    # collapse to the same canonical form). `column_parity_diff("research_runs")`
+    # is `{}` by construction. research_runs is therefore intentionally NOT
+    # allowlisted here — see backend/tests/test_research_runs_migration_governance.py
+    # and the `test_research_runs_columns_are_parity_clean_not_allowlisted` case
+    # in backend/tests/test_migration_governance.py (ADR-007 exit gate, T2-002),
+    # either of which would fail if a future edit introduced real drift.
 })
 
 # Regex for splitting a column line into (name, type-and-rest)

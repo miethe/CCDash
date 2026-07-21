@@ -4259,3 +4259,142 @@ export interface MultiProjectSessionBoardResponse {
   generatedAt?: string;
   dataFreshness?: string;
 }
+
+// ─── Research Foundry Run Telemetry (research-foundry-run-telemetry v1, Phase 3) ────
+// Public (camelCase) types for the Analytics "Research" tab. The backend wire
+// payload is snake_case — ResearchRunSummaryDTO/ResearchRunDetailDTO/
+// AgentQueryEnvelope (backend/application/services/agent_queries/run_intelligence.py
+// + models.py) declare no `model_config`/`alias_generator`, so FastAPI serializes
+// by field name. Snake_case → camelCase adaptation happens client-side in the
+// query-hook module (services/queries/researchRuns.ts, T3-002) via an internal
+// WireResearchRun/WireResearchRunDetail shape — the same pattern as
+// WirePlanningViewBundle in services/queries/planning.ts. types.ts exports only
+// the adapted camelCase contract below; never the raw wire DTO.
+//
+// Structural note (T3-000 seam finding, see
+// .claude/worknotes/research-foundry-run-telemetry/p3-contract-mapping.md):
+// the backend has NO nested `metrics` sub-object — every metric field
+// (eventCount..driftScore) is flat and top-level on the run DTO. ResearchRun
+// below mirrors that flat wire shape (option (a) from the mapping note);
+// ResearchRunMetrics is a client-side-only derived/subset type for panel
+// props that want a metrics-only shape — it is never sent over the wire.
+
+/**
+ * A single research run — flat shape mirroring ResearchRunSummaryDTO
+ * (`run_intelligence.py:194-264`). All optional backend fields serialize as
+ * JSON `null` (never a fabricated 0/""/[]) per AC-2-Field; FE resilience
+ * rendering must treat `null` as "unknown/not yet computed", not zero.
+ */
+export interface ResearchRun {
+  runId: string;
+  rfRunId: string | null;
+  projectId: string;
+  workspaceId: string;
+  intentId: string | null;
+  taskNodeId: string | null;
+  rfProject: string | null;
+  eventCount: number;
+  firstEventAt: string | null;
+  lastEventAt: string | null;
+  queriesExecuted: number | null;
+  urlsExtracted: number | null;
+  usefulSourceCount: number | null;
+  tokensEstimated: number | null;
+  claimsTotal: number | null;
+  claimsSupported: number | null;
+  claimsMixed: number | null;
+  claimsContradicted: number | null;
+  unsupportedClaims: number | null;
+  estimatedCostUsd: number | null;
+  latencyMs: number | null;
+  citationCoverage: number | null;
+  duplicateRate: number | null;
+  extractionFailureRate: number | null;
+  qualityScore: string | null;
+  driftScore: number | null;
+  /** Always null today — no rollup column yet on the backend (see run_intelligence.py module docstring). */
+  mode: string | null;
+  /** Always null today — same backend gap as `mode`. */
+  selectedProviders: string[] | null;
+  governanceSensitivity: string | null;
+  governancePolicyPassed: boolean | null;
+  humanReviewRequired: boolean | null;
+  humanReviewStatus: string | null;
+  humanReviewReviewer: string | null;
+  reuseMeatywikiWritebackCandidate: boolean | null;
+  reuseSkillbomCandidate: boolean | null;
+  reuseReusableSourcePackCandidate: boolean | null;
+  /** First of `linkedSessionIds`; null if that array is empty. */
+  linkedSessionId: string | null;
+  /** Defaults to `[]` on the backend — never null. */
+  linkedSessionIds: string[];
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+/**
+ * Run detail — additive-only fields on top of ResearchRun
+ * (`run_intelligence.py:266-277`). These 5 fields are list-only-omitted:
+ * they never appear on `ResearchRunListResponse.items[]` rows, only on
+ * `GET /api/agent/research-runs/{run_id}`'s `run` object.
+ */
+export interface ResearchRunDetail extends ResearchRun {
+  agentPostures: string[] | null;
+  skillbomIds: string[] | null;
+  tools: string[] | null;
+  inputArtifacts: string[] | null;
+  outputArtifacts: string[] | null;
+}
+
+/**
+ * Client-side-only derived subset of ResearchRun's metric fields, for panel
+ * props (cost/quality/trend panels) that only need metrics, not identity/
+ * governance/reuse fields. NOT a wire shape — the backend never sends a
+ * nested `metrics` object (T3-000 finding, see p3-contract-mapping.md §2).
+ */
+export type ResearchRunMetrics = Pick<
+  ResearchRun,
+  | 'eventCount'
+  | 'queriesExecuted'
+  | 'urlsExtracted'
+  | 'usefulSourceCount'
+  | 'tokensEstimated'
+  | 'claimsTotal'
+  | 'claimsSupported'
+  | 'claimsMixed'
+  | 'claimsContradicted'
+  | 'unsupportedClaims'
+  | 'estimatedCostUsd'
+  | 'latencyMs'
+  | 'citationCoverage'
+  | 'duplicateRate'
+  | 'extractionFailureRate'
+  | 'qualityScore'
+  | 'driftScore'
+>;
+
+/**
+ * GET /api/agent/research-runs list response envelope
+ * (ResearchRunListResponseDTO). Cursor pagination: fetch until `nextCursor`
+ * is `null` (same shape as session_detail.py's transcript cursor).
+ */
+export interface ResearchRunListResponse extends AgentQueryEnvelope {
+  projectId: string;
+  items: ResearchRun[];
+  cursor: string;
+  limit: number;
+  nextCursor: string | null;
+}
+
+/**
+ * GET /api/agent/research-runs/{run_id} detail response envelope
+ * (ResearchRunDetailResponseDTO). `found: false, run: null` is the
+ * documented normal "no such run" shape — branch on `found`, not HTTP
+ * status, for the empty state (a genuinely-missing run_id is `status: "ok"`).
+ */
+export interface ResearchRunDetailResponse extends AgentQueryEnvelope {
+  projectId: string;
+  runId: string;
+  found: boolean;
+  run: ResearchRunDetail | null;
+}

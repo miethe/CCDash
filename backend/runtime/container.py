@@ -76,6 +76,7 @@ class RuntimeContainer:
         self.watcher_fan_out_bindings: list[ProjectBinding] = []
         self.migration_status = "not_started"
         self._remote_ingest_service: Any | None = None
+        self._rf_events_ingest_service: Any | None = None
         # Per-request project binding LRU cache (ADR-010).
         # The api profile does NOT pre-populate this at startup — bindings are
         # resolved lazily on the first request for each project_id.
@@ -332,6 +333,53 @@ class RuntimeContainer:
                 cursor_repo,
             )
         return self._remote_ingest_service
+
+    @property
+    def rf_events_ingest_service(self) -> Any:
+        """Lazy-built, process-wide singleton for the RF event ingest service.
+
+        Mirrors ``remote_ingest_service`` above (T1-003, research-foundry-run-
+        telemetry-v1 Phase 1). Built on first access so it is available after
+        ``startup()`` has populated ``self.db``. As of T1-004, also wires a
+        ``source_id='rf'`` ``ingest_cursors`` repository (mirroring
+        ``remote_ingest_service``'s cursor_repo wiring) for idempotent
+        watermark bookkeeping. As of Phase 2, also wires the
+        ``research_runs`` derived-rollup repository and the ``entity_links``
+        repository so every live POST also derives/upserts a ``research_runs``
+        row and runs run<->session correlation (see
+        ``RfEventsIngestService`` module docstring "Derived-rollup +
+        correlation wiring").
+        """
+        if self._rf_events_ingest_service is None:
+            if self.db is None:
+                raise RuntimeError(
+                    "RuntimeContainer.db is unavailable; cannot build RfEventsIngestService."
+                )
+            from backend.application.services.ingest.rf_events_ingest import RfEventsIngestService
+            from backend.db.factory import get_entity_link_repository
+            from backend.db.repositories.rf_events import SqliteRfEventsRepository
+            from backend.db.repositories.ingest_cursors import SqliteIngestCursorRepository
+            from backend.db.repositories.research_runs import SqliteResearchRunsRepository
+            import aiosqlite
+            if isinstance(self.db, aiosqlite.Connection):
+                rf_events_repo = SqliteRfEventsRepository(self.db)
+                cursor_repo = SqliteIngestCursorRepository(self.db)
+                research_runs_repo = SqliteResearchRunsRepository(self.db)
+            else:
+                from backend.db.repositories.rf_events import PostgresRfEventsRepository
+                from backend.db.repositories.ingest_cursors import PostgresIngestCursorRepository
+                from backend.db.repositories.research_runs import PostgresResearchRunsRepository
+                rf_events_repo = PostgresRfEventsRepository(self.db)
+                cursor_repo = PostgresIngestCursorRepository(self.db)
+                research_runs_repo = PostgresResearchRunsRepository(self.db)
+            entity_link_repo = get_entity_link_repository(self.db)
+            self._rf_events_ingest_service = RfEventsIngestService(
+                rf_events_repo,
+                cursor_repo,
+                research_runs_repo=research_runs_repo,
+                entity_link_repo=entity_link_repo,
+            )
+        return self._rf_events_ingest_service
 
     def _build_core_ports(self) -> CorePorts:
         return build_core_ports(

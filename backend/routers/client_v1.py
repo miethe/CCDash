@@ -145,6 +145,9 @@ async def get_instance_metadata() -> ClientV1Envelope[InstanceMetaDTO]:
 _V1_CAPABILITIES: list[str] = [
     "sessions:cross-project",  # detail+transcript accept explicit project_id (required, 400 if missing)
     "sessions:detail",         # full transcript-bearing bundle at /sessions/{id}/detail
+    "research-runs:*",        # Research Foundry run telemetry ingest (T1-007) — POST
+                               # /api/v1/ingest/rf-events + rf_events persistence; wildcard
+                               # placeholder for the eventual query surface (Phase 3+).
 ]
 
 

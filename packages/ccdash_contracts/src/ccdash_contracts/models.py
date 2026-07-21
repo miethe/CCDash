@@ -422,6 +422,9 @@ class CapabilityV1(BaseModel):
       missing).
     - ``sessions:detail``         — full transcript-bearing detail bundle
       available at ``/sessions/{id}/detail``.
+    - ``research-runs:*``         — Research Foundry run telemetry ingest
+      (``POST /api/v1/ingest/rf-events``); wildcard placeholder pending
+      the Phase 3+ query surface.
     """
 
     api_version: str = "1"

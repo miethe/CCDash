@@ -17,6 +17,7 @@ import {
     useAnalyticsUsageCalibrationQuery,
     useAnalyticsUsageDrilldownQuery,
 } from '../../services/queries/analytics';
+import { useResearchRuns } from '../../services/queries/researchRuns';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     BarChart3,
@@ -27,6 +28,7 @@ import {
     RefreshCcw,
     Sparkles,
     Shapes,
+    Telescope,
     Trophy,
     Wrench,
 } from 'lucide-react';
@@ -51,7 +53,7 @@ import { costProvenanceLabel } from '../../lib/sessionSemantics';
 import { chartTheme, getChartSeriesColor } from '../../lib/chartTheme';
 import { cn } from '../../lib/utils';
 
-type AnalyticsTab = 'overview' | 'attribution' | 'artifact_rankings' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
+type AnalyticsTab = 'overview' | 'attribution' | 'artifact_rankings' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence' | 'research';
 
 const TAB_LABELS: Array<{ id: AnalyticsTab; label: string; icon: any }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -62,6 +64,8 @@ const TAB_LABELS: Array<{ id: AnalyticsTab; label: string; icon: any }> = [
     { id: 'models_tools', label: 'Models + Tools', icon: Network },
     { id: 'features', label: 'Features', icon: Layers3 },
     { id: 'correlation', label: 'Correlation', icon: Wrench },
+    // research-foundry-run-telemetry-v1, Phase 3: "Provider Economics" panel set.
+    { id: 'research', label: 'Research', icon: Telescope },
 ];
 
 const TAB_IDS = new Set<AnalyticsTab>(TAB_LABELS.map(tab => tab.id));
@@ -145,6 +149,12 @@ export const AnalyticsDashboard: React.FC = () => {
         entityType: selectedUsageEntity?.entityType ?? null,
         entityId: selectedUsageEntity?.entityId ?? null,
     });
+
+    // T3-002/T3-003 (research-foundry-run-telemetry-v1, Phase 3): "Research" tab
+    // (Provider Economics panel set). Page 1 only for the KPI strip / T3-004
+    // panels — deeper pagination is out of scope for this phase.
+    const { data: researchRunsData, isLoading: researchRunsLoading } =
+        useResearchRuns({ projectId });
 
     // Derive a lightweight aggregate loading flag for the skeleton gate (overview tab only).
     // Other tabs render progressively as their queries settle.
@@ -283,6 +293,144 @@ export const AnalyticsDashboard: React.FC = () => {
     const attributionRows = useMemo(
         () => (usageAttribution?.rows || []).slice(0, 12),
         [usageAttribution]
+    );
+    const researchRunItems = useMemo(
+        () => researchRunsData?.items || [],
+        [researchRunsData]
+    );
+    // AC-4-Fields: aggregate only over rows where the optional field is present —
+    // never coerce a missing estimatedCostUsd/citationCoverage/latencyMs to 0.
+    const researchKpis = useMemo(() => {
+        const items = researchRunItems;
+        const costedRuns = items.filter(run => run.estimatedCostUsd != null);
+        const coverageRuns = items.filter(run => run.citationCoverage != null);
+        const latencyRuns = items.filter(run => run.latencyMs != null);
+        return {
+            totalRuns: items.length,
+            linkedRuns: items.filter(run => Boolean(run.linkedSessionId)).length,
+            totalCostUsd: costedRuns.reduce((sum, run) => sum + Number(run.estimatedCostUsd || 0), 0),
+            costedRunCount: costedRuns.length,
+            avgCitationCoverage: coverageRuns.length > 0
+                ? coverageRuns.reduce((sum, run) => sum + Number(run.citationCoverage || 0), 0) / coverageRuns.length
+                : null,
+            coverageRunCount: coverageRuns.length,
+            avgLatencyMs: latencyRuns.length > 0
+                ? latencyRuns.reduce((sum, run) => sum + Number(run.latencyMs || 0), 0) / latencyRuns.length
+                : null,
+            latencyRunCount: latencyRuns.length,
+        };
+    }, [researchRunItems]);
+
+    // T3-004: "Cost & quality by mode" panel — grain is per-mode (honest v1
+    // MVP; per-provider breakdown is PRD §7 Out of Scope since selectedProviders
+    // is not a rollup dimension yet). `mode` is always null on today's backend
+    // (see ResearchRun docstring in types.ts), so every run currently lands in
+    // a single "Unspecified" bucket — the panel still renders correctly once
+    // the backend starts populating `mode`. Averages are computed only over
+    // rows where the optional field is present (never coerce missing to 0).
+    const researchModeChart = useMemo(() => {
+        const buckets = new Map<string, {
+            mode: string;
+            runCount: number;
+            costTotal: number;
+            costedCount: number;
+            coverageTotal: number;
+            coverageCount: number;
+        }>();
+        researchRunItems.forEach(run => {
+            const key = run.mode || 'Unspecified';
+            const bucket = buckets.get(key) || {
+                mode: key,
+                runCount: 0,
+                costTotal: 0,
+                costedCount: 0,
+                coverageTotal: 0,
+                coverageCount: 0,
+            };
+            bucket.runCount += 1;
+            if (run.estimatedCostUsd != null) {
+                bucket.costTotal += Number(run.estimatedCostUsd);
+                bucket.costedCount += 1;
+            }
+            if (run.citationCoverage != null) {
+                bucket.coverageTotal += Number(run.citationCoverage);
+                bucket.coverageCount += 1;
+            }
+            buckets.set(key, bucket);
+        });
+        return Array.from(buckets.values())
+            .map(bucket => ({
+                mode: bucket.mode,
+                runCount: bucket.runCount,
+                avgCostUsd: bucket.costedCount > 0 ? bucket.costTotal / bucket.costedCount : null,
+                costedCount: bucket.costedCount,
+                avgCitationCoverage: bucket.coverageCount > 0 ? bucket.coverageTotal / bucket.coverageCount : null,
+                coverageCount: bucket.coverageCount,
+            }))
+            .sort((a, b) => b.runCount - a.runCount);
+    }, [researchRunItems]);
+
+    // T3-004: "Spend/volume trend" panel — client-derived daily buckets from
+    // the page-1 research_runs rollup (no backend trend-metric endpoint exists
+    // for research runs yet, so this does not go through TrendChart's
+    // analyticsService.getTrends() fetch path; it mirrors that component's
+    // visual/aggregation style using the same recharts primitives already
+    // imported in this file). A bucket's costUsd/tokensEstimated is left
+    // `null` (never coerced to a fabricated 0) when none of that day's runs
+    // reported the field, so recharts renders no bar for that day rather than
+    // implying zero spend/volume.
+    const researchVolumeTrend = useMemo(() => {
+        const buckets = new Map<string, {
+            dateKey: string;
+            dateLabel: string;
+            runCount: number;
+            costUsd: number;
+            costedCount: number;
+            tokensEstimated: number;
+            tokenCount: number;
+        }>();
+        researchRunItems.forEach(run => {
+            const ts = run.lastEventAt || run.firstEventAt || run.createdAt;
+            if (!ts) return;
+            const date = new Date(ts);
+            if (Number.isNaN(date.getTime())) return;
+            const dateKey = date.toISOString().slice(0, 10);
+            const bucket = buckets.get(dateKey) || {
+                dateKey,
+                dateLabel: date.toLocaleDateString(),
+                runCount: 0,
+                costUsd: 0,
+                costedCount: 0,
+                tokensEstimated: 0,
+                tokenCount: 0,
+            };
+            bucket.runCount += 1;
+            if (run.estimatedCostUsd != null) {
+                bucket.costUsd += Number(run.estimatedCostUsd);
+                bucket.costedCount += 1;
+            }
+            if (run.tokensEstimated != null) {
+                bucket.tokensEstimated += Number(run.tokensEstimated);
+                bucket.tokenCount += 1;
+            }
+            buckets.set(dateKey, bucket);
+        });
+        return Array.from(buckets.values())
+            .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+            .map(bucket => ({
+                dateLabel: bucket.dateLabel,
+                runCount: bucket.runCount,
+                costUsd: bucket.costedCount > 0 ? bucket.costUsd : null,
+                tokensEstimated: bucket.tokenCount > 0 ? bucket.tokensEstimated : null,
+            }));
+    }, [researchRunItems]);
+
+    // T3-004: run-level drill table rows — page 1 only (matches T3-002/T3-003
+    // scope note); newest-first order is already guaranteed by the backend
+    // (last_event_at DESC), so this only caps the row count for a dense table.
+    const researchRunRows = useMemo(
+        () => researchRunItems.slice(0, 25),
+        [researchRunItems]
     );
 
     return (
@@ -1237,6 +1385,187 @@ export const AnalyticsDashboard: React.FC = () => {
                             </table>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {!loading && !error && activeTab === 'research' && (
+                <div className="space-y-6">
+                    {researchRunsLoading && <div className="text-muted-foreground">Loading research run data...</div>}
+                    {researchRunItems.length === 0 ? (
+                        <Surface tone="panel" padding="lg">
+                            <p className="text-sm text-muted-foreground">No research runs recorded yet.</p>
+                        </Surface>
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                                <MetricCard
+                                    label="Research Runs"
+                                    value={formatNumber(researchKpis.totalRuns)}
+                                    subtitle={`${formatNumber(researchKpis.linkedRuns)} linked to sessions`}
+                                />
+                                <MetricCard
+                                    label="Estimated Spend"
+                                    value={researchKpis.costedRunCount > 0 ? formatCurrency(researchKpis.totalCostUsd) : '—'}
+                                    subtitle={researchKpis.costedRunCount > 0
+                                        ? `${formatNumber(researchKpis.costedRunCount)} runs priced`
+                                        : 'no cost data yet'}
+                                />
+                                <MetricCard
+                                    label="Citation Coverage"
+                                    value={researchKpis.avgCitationCoverage != null ? formatPercent(researchKpis.avgCitationCoverage) : '—'}
+                                    subtitle={researchKpis.coverageRunCount > 0
+                                        ? `${formatNumber(researchKpis.coverageRunCount)} runs measured`
+                                        : 'no coverage data yet'}
+                                />
+                                <MetricCard
+                                    label="Avg Latency"
+                                    value={researchKpis.avgLatencyMs != null ? formatDurationSeconds(researchKpis.avgLatencyMs / 1000) : '—'}
+                                    subtitle={researchKpis.latencyRunCount > 0
+                                        ? `${formatNumber(researchKpis.latencyRunCount)} runs timed`
+                                        : 'no latency data yet'}
+                                />
+                            </div>
+
+                            {/* T3-004: Cost & quality by mode — grain is per-mode (honest v1 MVP,
+                                not per-provider; see PRD §7 Out of Scope). Dense table, not a chart,
+                                so a mode with zero costed/measured runs shows an explicit "—" per
+                                cell instead of an implied-zero bar. */}
+                            <div className="bg-panel border border-panel-border rounded-xl p-5">
+                                <h3 className="text-panel-foreground font-semibold mb-4">Cost &amp; Quality by Mode</h3>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="text-muted-foreground border-b border-panel-border">
+                                                <th className="text-left py-2 pr-3">Mode</th>
+                                                <th className="text-right py-2 pr-3">Runs</th>
+                                                <th className="text-right py-2 pr-3">Avg Cost</th>
+                                                <th className="text-right py-2 pr-3">Priced</th>
+                                                <th className="text-right py-2 pr-3">Avg Citation Coverage</th>
+                                                <th className="text-right py-2">Measured</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {researchModeChart.map((row, idx) => (
+                                                <tr key={`${row.mode}-${idx}`} className="border-b border-panel-border/80 text-foreground">
+                                                    <td className="py-2 pr-3 capitalize">{row.mode}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.runCount)}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{row.avgCostUsd != null ? formatCurrency(row.avgCostUsd) : '—'}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono text-xs text-muted-foreground">{formatNumber(row.costedCount)}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{row.avgCitationCoverage != null ? formatPercent(row.avgCitationCoverage) : '—'}</td>
+                                                    <td className="py-2 text-right font-mono text-xs text-muted-foreground">{formatNumber(row.coverageCount)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            {/* T3-004: Spend/volume trend — client-derived daily buckets from the
+                                page-1 rollup (no backend trend-metric endpoint exists for research
+                                runs; visual style mirrors TrendChart using the recharts primitives
+                                already imported in this file). */}
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                <div className="bg-panel border border-panel-border rounded-xl p-5">
+                                    <h3 className="text-panel-foreground font-semibold mb-4">Daily Research Spend</h3>
+                                    <div className="h-72 w-full">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <BarChart data={researchVolumeTrend}>
+                                                <CartesianGrid {...chartTheme.grid} vertical={false} />
+                                                <XAxis dataKey="dateLabel" {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
+                                                <YAxis {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} tickFormatter={(v) => formatCurrency(v)} />
+                                                <Tooltip
+                                                    contentStyle={chartTheme.tooltip.contentStyle}
+                                                    itemStyle={chartTheme.tooltip.itemStyle}
+                                                    labelStyle={chartTheme.tooltip.labelStyle}
+                                                    cursor={chartTheme.tooltip.cursor}
+                                                    formatter={(value: number | null) => [value == null ? 'no cost data' : formatCurrency(value), 'Spend']}
+                                                />
+                                                <Bar dataKey="costUsd" fill={getChartSeriesColor('danger')} radius={[4, 4, 0, 0]} />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                <div className="bg-panel border border-panel-border rounded-xl p-5">
+                                    <h3 className="text-panel-foreground font-semibold mb-4">Daily Research Volume</h3>
+                                    <div className="h-72 w-full">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <BarChart data={researchVolumeTrend}>
+                                                <CartesianGrid {...chartTheme.grid} vertical={false} />
+                                                <XAxis dataKey="dateLabel" {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
+                                                <YAxis {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
+                                                <Tooltip
+                                                    contentStyle={chartTheme.tooltip.contentStyle}
+                                                    itemStyle={chartTheme.tooltip.itemStyle}
+                                                    labelStyle={chartTheme.tooltip.labelStyle}
+                                                    cursor={chartTheme.tooltip.cursor}
+                                                    formatter={(value: number | null, name: string) => {
+                                                        if (name === 'tokensEstimated') return [value == null ? 'no token estimate' : formatNumber(value), 'Estimated Tokens'];
+                                                        return [formatNumber(value || 0), 'Runs'];
+                                                    }}
+                                                />
+                                                <Bar dataKey="tokensEstimated" fill={getChartSeriesColor('info')} radius={[4, 4, 0, 0]} />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* T3-004: Run-level drill table — enumerates all AC-4-Fields optional
+                                fields per-cell; linkedSessionId opens the correlated session via
+                                EntityLinkButton when present, "no linked session" text when absent;
+                                intentId/taskNodeId render as opaque display strings only (DF-007 —
+                                IntentTree resolution deferred), never as clickable links. */}
+                            <div className="bg-panel border border-panel-border rounded-xl p-5">
+                                <div className="flex items-center justify-between gap-3 mb-4">
+                                    <h3 className="text-panel-foreground font-semibold">Research Runs</h3>
+                                    {researchRunsLoading && <span className="text-xs text-muted-foreground">Refreshing…</span>}
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="text-muted-foreground border-b border-panel-border">
+                                                <th className="text-left py-2 pr-3">RF Run</th>
+                                                <th className="text-left py-2 pr-3">Mode</th>
+                                                <th className="text-left py-2 pr-3">Providers</th>
+                                                <th className="text-right py-2 pr-3">Cost</th>
+                                                <th className="text-right py-2 pr-3">Citation Coverage</th>
+                                                <th className="text-right py-2 pr-3">Latency</th>
+                                                <th className="text-left py-2 pr-3">Session</th>
+                                                <th className="text-left py-2 pr-3">Intent</th>
+                                                <th className="text-left py-2">Task Node</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {researchRunRows.map(run => (
+                                                <tr key={run.runId} className="border-b border-panel-border/80 text-foreground">
+                                                    <td className="py-2 pr-3 font-mono text-xs" title={run.runId}>{run.rfRunId || '—'}</td>
+                                                    <td className="py-2 pr-3 capitalize">{run.mode || '—'}</td>
+                                                    <td className="py-2 pr-3 text-xs">
+                                                        {run.selectedProviders && run.selectedProviders.length > 0
+                                                            ? run.selectedProviders.join(', ')
+                                                            : '—'}
+                                                    </td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{run.estimatedCostUsd != null ? formatCurrency(run.estimatedCostUsd) : '—'}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{run.citationCoverage != null ? formatPercent(run.citationCoverage) : '—'}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{run.latencyMs != null ? formatDurationSeconds(run.latencyMs / 1000) : '—'}</td>
+                                                    <td className="py-2 pr-3">
+                                                        {run.linkedSessionId ? (
+                                                            <EntityLinkButton label={run.linkedSessionId} onClick={() => openSession(run.linkedSessionId!)} mono />
+                                                        ) : (
+                                                            <span className="text-xs text-muted-foreground">no linked session</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="py-2 pr-3 font-mono text-xs text-muted-foreground">{run.intentId || '—'}</td>
+                                                    <td className="py-2 font-mono text-xs text-muted-foreground">{run.taskNodeId || '—'}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
         </div>

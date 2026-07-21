@@ -167,6 +167,13 @@ INCREMENTAL_LINK_REBUILD_ENABLED = _env_bool("CCDASH_INCREMENTAL_LINK_REBUILD_EN
 # Behaviorally additive: no match leaves context_window null (AC-5.1 resilience).
 # Set to false/0 to skip the join entirely.
 SIDECAR_CONTEXT_JOIN_ENABLED = _env_bool("CCDASH_SIDECAR_CONTEXT_JOIN_ENABLED", True)
+# CCDASH_RF_TELEMETRY_ENABLED (default: true, fail-open)
+# Gates POST /api/v1/ingest/rf-events (Research Foundry run telemetry ingest, T1-003).
+# When False, the route responds 404 with zero effect on any other ingest source,
+# router, or surface — sessions ingest, health/detail, and capabilities are unaffected.
+# Phase 1 (T1-006) of research-foundry-run-telemetry-v1
+# (docs/project_plans/implementation_plans/features/research-foundry-run-telemetry-v1/phase-1-ingest.md).
+CCDASH_RF_TELEMETRY_ENABLED = _env_bool("CCDASH_RF_TELEMETRY_ENABLED", True)
 CCDASH_PROJECT_ROOT = os.getenv("CCDASH_PROJECT_ROOT", str(PROJECT_ROOT)).strip() or str(PROJECT_ROOT)
 TEST_RESULTS_DIR = os.getenv("CCDASH_TEST_RESULTS_DIR", "").strip()
 INTEGRATIONS_SETTINGS_FILE = Path(

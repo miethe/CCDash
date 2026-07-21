@@ -1,20 +1,22 @@
 ---
 title: "Remote Ingest Operator Guide"
-description: "Operate the remote session ingest endpoint, daemon, and failure recovery workflows"
+description: "Operate remote session ingest (daemon) and Research Foundry telemetry ingest endpoints"
 audience: operators, platform engineers
 category: Operations
-tags: [remote-ingest, daemon, ndjson, dead-letter, health-monitoring, adrs]
+tags: [remote-ingest, daemon, ndjson, dead-letter, health-monitoring, research-foundry, adrs]
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-21
 status: stable
 related: ["docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md", "docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md", "docs/project_plans/adrs/adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md"]
 ---
 
 # Remote Ingest Operator Guide
 
-This guide covers operating the remote session ingest endpoint, the local daemon, and
-troubleshooting failure scenarios. For architecture and design rationale, see the ADRs linked
-in the frontmatter.
+This guide covers operating two ingest surfaces:
+1. **Session remote ingest** — HTTP daemon for forwarding AI agent session logs (idempotent, dead-letter recovery)
+2. **Research Foundry telemetry ingest** — Direct RF run telemetry POSTs with the same retry/recovery stack
+
+For architecture and design rationale, see the ADRs linked in the frontmatter.
 
 ---
 
@@ -37,6 +39,84 @@ with local daemon retry/dead-letter recovery and workspace-scoped auth.
 
 **Idempotency**: By `event_id`. Duplicate POSTs with the same `event_id` are deduplicated server-side;
 the response envelope always includes `accepted`, `rejected[]`, and `dead_lettered[]` counts.
+
+---
+
+## Research Foundry Telemetry Ingest
+
+Research Foundry (RF) emits schema-validated per-run telemetry (`ccdash_event`) that can be POSTed to CCDash
+for cost/quality analytics and session correlation. The RF ingest surface reuses the same idempotent
+cursor/dead-letter stack as session ingest.
+
+### Enabling RF Telemetry Ingest
+
+**Feature flag**: `CCDASH_RF_TELEMETRY_ENABLED` (default: `true` — fail-open)
+
+```bash
+# Enable RF telemetry ingest (default)
+export CCDASH_RF_TELEMETRY_ENABLED=true
+
+# Disable RF telemetry ingest (returns 405 Method Not Allowed)
+export CCDASH_RF_TELEMETRY_ENABLED=false
+```
+
+When disabled, `POST /api/v1/ingest/rf-events` returns a 405 error with hint to enable the flag.
+
+### Ingest Endpoint
+
+```
+POST /api/v1/ingest/rf-events
+Content-Type: application/json
+Authorization: Bearer <token>
+
+<rf-ccdash-event-json>
+```
+
+**Authentication**: Bearer token (workspace-scoped, same as session ingest).
+
+**Idempotency**: By `event_id` field on the RF event payload.
+
+**Response**: Same envelope as session ingest — `accepted`, `rejected`, `dead_lettered`, `cursor_advanced_to`.
+
+### Health Monitoring
+
+RF ingest is tracked as a distinct `source_id="rf"` in the ingest-sources health rollup:
+
+```bash
+curl http://localhost:8000/api/health/detail | jq '.ingest_sources[] | select(.source_id == "rf")'
+
+# Output:
+# {
+#   "source_id": "rf",
+#   "project_id": "main",
+#   "workspace_id": "default-local",
+#   "last_cursor": "550e8400-e29b-41d4-a716-446655440000",
+#   "last_ingest_at": "2026-07-21T15:42:03Z",
+#   "lag_seconds": 30,
+#   "state": "connected"
+# }
+```
+
+**State meanings** (same as session ingest):
+
+| State | Meaning | Action |
+|-------|---------|--------|
+| `idle` | No RF events ingested yet | Monitor; expected until RF emits first event |
+| `connected` | Recent activity; lag <300s | Nominal operation |
+| `backed_up` | Lag 300–900s | RF ingest is slow; monitor server load |
+| `disconnected` | No activity for >900s AND recent POST failures | Server/network issue; investigate server health |
+
+### Capability Advertised
+
+The server advertises RF telemetry capability via the capabilities endpoint:
+
+```bash
+curl http://localhost:8000/api/v1/capabilities | jq '.capabilities[]' | grep research
+# "research-runs:*"
+```
+
+This capability string signals to agents (e.g., IntentTree) that the server supports RF run telemetry queries
+and ingest. See `docs/guides/external-api-lan-deployment.md` for the full capability discovery contract.
 
 ---
 
@@ -184,8 +264,11 @@ curl -v \
 
 **Debugging**:
 ```bash
-# Check ingest source state
+# Check ingest source state (all sources)
 curl http://localhost:8000/api/health/detail | jq '.ingest_sources'
+
+# Check RF ingest source specifically
+curl http://localhost:8000/api/health/detail | jq '.ingest_sources[] | select(.source_id == "rf")'
 
 # Expected response:
 # [
@@ -196,6 +279,15 @@ curl http://localhost:8000/api/health/detail | jq '.ingest_sources'
 #     "last_cursor": "2026-06-28T15:40:00Z",
 #     "last_ingest_at": "2026-06-28T15:41:30Z",
 #     "lag_seconds": 30,
+#     "state": "connected"
+#   },
+#   {
+#     "source_id": "rf",
+#     "project_id": "main",
+#     "workspace_id": "default-local",
+#     "last_cursor": "550e8400-e29b-41d4-a716-446655440000",
+#     "last_ingest_at": "2026-07-21T15:42:03Z",
+#     "lag_seconds": 10,
 #     "state": "connected"
 #   }
 # ]
@@ -219,6 +311,49 @@ curl http://localhost:8000/api/health/detail | jq '.ingest_sources'
 - Reduce batch frequency (increase poll interval on sender)
 - Increase database connection pool (`CCDASH_DB_POOL_SIZE` for Postgres)
 - Scale to Postgres if using SQLite (local SQLite is not designed for sustained high concurrency)
+
+### RF Telemetry Feature Flag Disabled
+
+**Symptom**: `POST /api/v1/ingest/rf-events` returns 405 Method Not Allowed.
+
+**Meaning**: `CCDASH_RF_TELEMETRY_ENABLED` is set to `false`.
+
+**Resolution**:
+```bash
+# Enable RF telemetry ingest
+export CCDASH_RF_TELEMETRY_ENABLED=true
+# Restart backend
+npm run dev:backend
+```
+
+Once enabled, RF events can flow normally. Cursor state is preserved across restarts.
+
+### RF Events Not Visible in Analytics Tab
+
+**Symptom**: RF run telemetry ingest endpoint accepts events (202 responses), but the Provider Economics
+analytics tab shows no data.
+
+**Meaning**:
+- Ingest is working but queries may be lagging (query cache TTL)
+- Or RF events haven't been correlated to sessions yet (Phase 2 correlation logic)
+
+**Debugging**:
+```bash
+# Verify RF events are stored (raw rf_events table)
+sqlite3 data/ccdash_cache.db "SELECT COUNT(*) as rf_event_count FROM rf_events;"
+
+# Verify research_runs rollup is computed (derived table)
+sqlite3 data/ccdash_cache.db "SELECT COUNT(*) as research_run_count FROM research_runs;"
+
+# Bypass client-side cache and force fresh fetch
+curl http://localhost:8000/api/agent/research-runs?bypass_cache=true | jq '.runs | length'
+
+# Check if RF telemetry is enabled
+curl http://localhost:8000/api/health/detail | jq '.ingest_sources[] | select(.source_id == "rf")'
+```
+
+If `rf_events` count is 0, verify RF is POSTing events. If `research_runs` count is 0 but `rf_events` > 0,
+the rollup derivation may be stale — check server logs for correlation errors.
 
 ---
 
@@ -295,9 +430,9 @@ If remote ingest fails catastrophically, disable ingest and revert to local file
 
 ---
 
-## Reference: Ingest Endpoint
+## Reference: Ingest Endpoints
 
-### Request
+### Session Remote Ingest
 
 ```
 POST /api/v1/ingest/sessions
@@ -311,29 +446,70 @@ Authorization: Bearer <token>
 
 Each line is a JSON object with `event_id` (required, must be unique).
 
+### Research Foundry Telemetry Ingest
+
+```
+POST /api/v1/ingest/rf-events
+Content-Type: application/json
+Authorization: Bearer <token>
+
+<rf-ccdash-event-json>
+```
+
+Single JSON object (not NDJSON) with `event_id` (required, must be unique). Gated by `CCDASH_RF_TELEMETRY_ENABLED`.
+
 ### Response Codes
 
-| Code | Meaning |
-|------|---------|
-| 202 | Batch accepted; response body includes counts |
-| 400 | Bad NDJSON format or missing required field |
-| 401 | Invalid or missing bearer token |
-| 413 | Batch exceeds size limit (daemon will split and retry) |
-| 5xx | Server error (daemon will retry with backoff) |
+| Code | Meaning | Applies To |
+|------|---------|-----------|
+| 200 | Single RF event accepted; response body includes counts | `/api/v1/ingest/rf-events` |
+| 202 | Batch accepted; response body includes counts | `/api/v1/ingest/sessions` |
+| 400 | Bad JSON/NDJSON format or missing required field | Both |
+| 401 | Invalid or missing bearer token | Both |
+| 405 | Feature disabled (RF telemetry disabled via `CCDASH_RF_TELEMETRY_ENABLED=false`) | `/api/v1/ingest/rf-events` |
+| 413 | Batch exceeds size limit (daemon will split and retry on sessions ingest) | `/api/v1/ingest/sessions` |
+| 5xx | Server error (daemon will retry with backoff) | Both |
 
-### Response Body (202, 400)
+### Response Body (Success / 200 / 202)
 
 ```json
 {
-  "accepted": 100,
+  "accepted": 1,
   "rejected": [],
   "dead_lettered": [],
-  "cursor_advanced_to": "2026-06-28T15:42:03Z"
+  "cursor_advanced_to": "2026-07-21T15:42:03.123Z"
 }
 ```
 
-- `accepted` - Number of idempotent records stored
+- `accepted` - Number of idempotent records stored (1 for RF events, N for session batches)
 - `rejected` - List of record indices + errors for records that failed validation
 - `dead_lettered` - Records deemed permanently unrecoverable (e.g., foreign-key constraint)
-- `cursor_advanced_to` - Highest timestamp ingested (for source to track progress)
+- `cursor_advanced_to` - Highest event ID or timestamp ingested (for source to track progress)
+
+### Response Body (Error / 405 / 400)
+
+```json
+{
+  "error": {
+    "code": "RF_TELEMETRY_DISABLED",
+    "message": "RF telemetry ingest is disabled.",
+    "hint": "Set CCDASH_RF_TELEMETRY_ENABLED=true to enable."
+  }
+}
+```
+
+Or for validation errors:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Missing required field: event_id",
+    "details": {
+      "field": "event_id",
+      "constraint": "required"
+    }
+  }
+}
+```
 

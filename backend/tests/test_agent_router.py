@@ -13,6 +13,10 @@ from backend.application.services.agent_queries import (
     SnapshotDiagnosticsDTO,
     WorkflowDiagnosticsDTO,
 )
+from backend.application.services.agent_queries.run_intelligence import (
+    ResearchRunDetailResponseDTO,
+    ResearchRunListResponseDTO,
+)
 from backend.routers import agent as agent_router
 from backend.runtime.bootstrap import build_runtime_app
 
@@ -29,11 +33,15 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/api/agent/artifact-intelligence/rankings", paths)
         self.assertIn("/api/agent/artifact-intelligence/recommendations", paths)
         self.assertIn("/api/agent/reports/aar", paths)
+        self.assertIn("/api/agent/research-runs", paths)
+        self.assertIn("/api/agent/research-runs/{run_id}", paths)
         self.assertIn("get", paths["/api/agent/project-status"])
         self.assertIn("get", paths["/api/agent/feature-forensics/{feature_id}"])
         self.assertIn("get", paths["/api/agent/workflow-diagnostics"])
         self.assertIn("get", paths["/api/agent/artifact-intelligence/snapshot-diagnostics"])
         self.assertIn("get", paths["/api/agent/artifact-intelligence/rankings"])
+        self.assertIn("get", paths["/api/agent/research-runs"])
+        self.assertIn("get", paths["/api/agent/research-runs/{run_id}"])
         self.assertIn("get", paths["/api/agent/artifact-intelligence/recommendations"])
         self.assertIn("post", paths["/api/agent/reports/aar"])
 
@@ -273,6 +281,141 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
         service_mock.assert_awaited_once_with(
             app_request.context, app_request.ports, "feature-3", bypass_cache=False
         )
+
+    async def test_get_research_runs_delegates_once_and_returns_dto_unchanged(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = ResearchRunListResponseDTO(project_id="project-1", items=[], cursor="", limit=50)
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)) as resolve_mock:
+            with patch.object(
+                agent_router.run_intelligence_query_service,
+                "list_runs",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_research_runs(
+                    project_id="project-1",
+                    cursor="cur-1",
+                    limit=50,
+                    bypass_cache=False,
+                    request_context=request_context,
+                    core_ports=core_ports,
+                )
+
+        self.assertIs(result, dto)
+        resolve_mock.assert_awaited_once_with(request_context, core_ports, requested_project_id="project-1")
+        service_mock.assert_awaited_once_with(
+            app_request.context,
+            app_request.ports,
+            project_id_override="project-1",
+            cursor="cur-1",
+            limit=50,
+            bypass_cache=False,
+        )
+
+    async def test_get_research_runs_raises_404_when_scope_not_resolved(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = ResearchRunListResponseDTO(status="error", project_id="", cursor="", limit=50)
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)):
+            with patch.object(
+                agent_router.run_intelligence_query_service,
+                "list_runs",
+                new=AsyncMock(return_value=dto),
+            ):
+                with self.assertRaises(HTTPException) as ctx:
+                    await agent_router.get_research_runs(
+                        project_id=None,
+                        cursor=None,
+                        limit=50,
+                        bypass_cache=False,
+                        request_context=request_context,
+                        core_ports=core_ports,
+                    )
+
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.detail["error"], "project_scope_not_resolved")
+
+    async def test_get_research_run_detail_delegates_once_and_returns_dto_unchanged(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = ResearchRunDetailResponseDTO(project_id="project-1", run_id="run-1", found=True)
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)) as resolve_mock:
+            with patch.object(
+                agent_router.run_intelligence_query_service,
+                "get_run_detail",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_research_run_detail(
+                    run_id="run-1",
+                    project_id="project-1",
+                    bypass_cache=False,
+                    request_context=request_context,
+                    core_ports=core_ports,
+                )
+
+        self.assertIs(result, dto)
+        resolve_mock.assert_awaited_once_with(request_context, core_ports, requested_project_id="project-1")
+        service_mock.assert_awaited_once_with(
+            app_request.context,
+            app_request.ports,
+            "run-1",
+            project_id_override="project-1",
+            bypass_cache=False,
+        )
+
+    async def test_get_research_run_detail_raises_404_when_not_found(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = ResearchRunDetailResponseDTO(project_id="project-1", run_id="run-missing", found=False)
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)):
+            with patch.object(
+                agent_router.run_intelligence_query_service,
+                "get_run_detail",
+                new=AsyncMock(return_value=dto),
+            ):
+                with self.assertRaises(HTTPException) as ctx:
+                    await agent_router.get_research_run_detail(
+                        run_id="run-missing",
+                        project_id="project-1",
+                        bypass_cache=False,
+                        request_context=request_context,
+                        core_ports=core_ports,
+                    )
+
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.detail["error"], "research_run_not_found")
+
+    async def test_get_research_run_detail_raises_404_when_scope_not_resolved(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = ResearchRunDetailResponseDTO(status="error", project_id="", run_id="run-1", found=False)
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)):
+            with patch.object(
+                agent_router.run_intelligence_query_service,
+                "get_run_detail",
+                new=AsyncMock(return_value=dto),
+            ):
+                with self.assertRaises(HTTPException) as ctx:
+                    await agent_router.get_research_run_detail(
+                        run_id="run-1",
+                        project_id=None,
+                        bypass_cache=False,
+                        request_context=request_context,
+                        core_ports=core_ports,
+                    )
+
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.detail["error"], "project_scope_not_resolved")
 
     async def test_http_exception_from_request_resolution_is_propagated(self) -> None:
         request_context = object()

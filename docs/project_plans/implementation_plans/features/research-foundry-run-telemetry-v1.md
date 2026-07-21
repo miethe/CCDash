@@ -3,9 +3,9 @@ title: "Implementation Plan: Research Foundry Run Telemetry in CCDash"
 schema_version: 2
 doc_type: implementation_plan
 it_schema: 1
-status: draft
+status: completed
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-07-21T19:25:00Z
 feature_slug: "research-foundry-run-telemetry"
 feature_version: "v1"
 tier: 3
@@ -31,10 +31,17 @@ references:
 spike_ref: null
 adr_refs:
   - docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-proposed-adr.md
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+  - docs/project_plans/design-specs/rf-per-provider-cost-quality-splits.md
+  - docs/project_plans/design-specs/rf-useful-source-rate-by-domain.md
+  - docs/project_plans/design-specs/rf-extraction-failure-rate-by-extractor.md
+  - docs/project_plans/design-specs/rf-search-to-report-latency.md
+  - docs/project_plans/design-specs/rf-claim-ledger-panel.md
+  - docs/project_plans/design-specs/rf-skillmeat-promotion-panel.md
+  - docs/project_plans/design-specs/rf-intenttree-intent-id-resolution.md
 findings_doc_ref: null
 charter_ref: docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-charter.md
-changelog_ref: null
+changelog_ref: CHANGELOG.md
 changelog_required: true
 test_plan_ref: null
 plan_structure: unified
@@ -46,7 +53,32 @@ risk_level: medium
 category: "product-planning"
 tags: [implementation, planning, phases, tasks, research-foundry, telemetry, ingest, analytics]
 milestone: null
-commit_refs: []
+commit_refs:
+  - 575ccba  # P1-T1-002: rf_events migration governance + ADR-007 direct-count gate
+  - 3628b12  # P1-T1-003: POST /api/v1/ingest/rf-events endpoint
+  - 2abe6ee  # P1-T1-004: idempotent rf cursor enqueue + dead-letter reuse
+  - f2e7166  # P1-T1-007: capability advert + rf ingest_sources health entry
+  - 2e9fce7  # P2-T2-001: research_runs dual-DDL rollup + UUID minting
+  - 37ffa1d  # P2-T2-006: run<->session correlation via entity_graph.py
+  - af51436  # P2-T2-003: run_intelligence.py query service
+  - a2846a0  # P2-T2-004: GET /api/agent/research-runs REST route
+  - 24a582d  # P2-T2-005: MCP/CLI thin wrappers for run_intelligence.py
+  - 2072b01  # P2-T2-007: D-001-shape dedup regression test
+  - 21db6bc  # P3-T3-001: ResearchRun/ResearchRunMetrics types + researchRunsKeys registry
+  - dc7797b  # P3-T3-002: useResearchRuns/useResearchRunDetail TQ hooks
+  - eb89161  # P3-T3-003: Research tab shell + KPI strip
+  - 188ac2cb # P3-T3-004: Provider Economics cost/quality/trend/drill panels
+  - c08e2f8  # P3-T3-005: lock in AC-4-Fields resilience for the Research tab
+  - 30c8ef1  # P3-T3-006/T3-000: close tracker gaps + seeded-fixture evidence
+  - 21a8c2e  # P4-T4-009: CHANGELOG [Unreleased] entry
+  - 369992a  # P4-T4-008: operator guide + RF telemetry ingest documentation
+  - c31e16a  # P4-T4-001: DF-001 per-provider cost/quality splits spec
+  - c0d5c71  # P4-T4-002: DF-002 useful-source-rate-by-domain spec
+  - cc55e42  # P4-T4-003: DF-003 extraction failure rate by extractor spec
+  - c4ff5f6  # P4-T4-004: DF-004 search-to-report latency spec
+  - 776525d  # P4-T4-005: DF-005 claim-ledger panel spec
+  - a70f9fd  # P4-T4-006/T4-007: DF-006/DF-007 specs + findings close-out
+  - f55a621  # P4-T4-008: progress marking
 pr_refs: []
 files_affected:
   - backend/routers/ingest.py
@@ -66,7 +98,14 @@ files_affected:
   - types.ts
   - docs/guides/remote-ingest-operator-guide.md
   - CHANGELOG.md
-planning_maturity: in_progress
+  - docs/project_plans/design-specs/rf-per-provider-cost-quality-splits.md
+  - docs/project_plans/design-specs/rf-useful-source-rate-by-domain.md
+  - docs/project_plans/design-specs/rf-extraction-failure-rate-by-extractor.md
+  - docs/project_plans/design-specs/rf-search-to-report-latency.md
+  - docs/project_plans/design-specs/rf-claim-ledger-panel.md
+  - docs/project_plans/design-specs/rf-skillmeat-promotion-panel.md
+  - docs/project_plans/design-specs/rf-intenttree-intent-id-resolution.md
+planning_maturity: completed
 open_questions:
   - "OQ-5: Should run_id resolve intent_id against the IntentTree API, or stay opaque display-only for v1? Resolved for this plan: opaque display-only; IntentTree resolution is deferred item DF-007 (Phase 4, T4-007)."
 decisions:
@@ -75,11 +114,11 @@ decisions:
   - {decision: "D3: Dual SQLite+Postgres DDL, retry_on_locked, direct-count test, parity-allowlist entry (ADR-007)", rationale: "Non-negotiable DB write-path rule; ingest_cursors v36 precedent.", status: locked}
   - {decision: "D4: 4-panel tab inside AnalyticsDashboard.tsx, not a new top-level route", rationale: "Existing visual language is a 1:1 fit; reversible; YAGNI for solo-LAN volume.", status: locked}
   - {decision: "D5: D-001 dedup discipline on any run<->session rollup from day one + regression test", rationale: "run<->session is the same one-to-many shape as the deferred D-001 over-count.", status: locked}
-  - {decision: "D6: Split persistence into rf_events (raw append-only log) + research_runs (derived rollup)", rationale: "Ingest stays append-only/idempotent; rollup is recomputable from the raw log.", status: pending}
-  - {decision: "D7: Defer per-provider cost/quality splits (no source_cards join in v1)", rationale: "The RF §16 execution_event carries only a provider LIST, not per-provider splits; joining source_cards is out of scope for v1.", status: pending}
+  - {decision: "D6: Split persistence into rf_events (raw append-only log) + research_runs (derived rollup)", rationale: "Ingest stays append-only/idempotent; rollup is recomputable from the raw log.", status: locked}
+  - {decision: "D7: Defer per-provider cost/quality splits (no source_cards join in v1)", rationale: "The RF §16 execution_event carries only a provider LIST, not per-provider splits; joining source_cards is out of scope for v1.", status: locked}
 decision_gates:
-  - {gate: "D6 confirmed at P1 kickoff — rf_events (raw) and research_runs (rollup) ship as two distinct tables, not one", status: pending}
-  - {gate: "D7 confirmed at P4 — per-provider join deferred to DOC-006 spec DF-001, not built in v1", status: pending}
+  - {gate: "D6 confirmed at P1 kickoff — rf_events (raw) and research_runs (rollup) ship as two distinct tables, not one", status: confirmed}
+  - {gate: "D7 confirmed at P4 — per-provider join deferred to DOC-006 spec DF-001, not built in v1", status: confirmed}
 success_metrics:
   - "100% of POSTed RF events persist idempotently (no duplicate rf_events rows on re-POST of the same event_id)."
   - "research_runs rollup is queryable via REST/MCP/CLI with zero cross-run cost double-counting (D-001 regression test green)."

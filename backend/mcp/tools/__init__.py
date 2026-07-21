@@ -55,6 +55,7 @@ def register_tools(mcp: Any) -> None:
     from backend.mcp.tools.live import register_live_tools
     from backend.mcp.tools.project import register_project_tools
     from backend.mcp.tools.reports import register_report_tools
+    from backend.mcp.tools.research_runs import register_research_run_tools
     from backend.mcp.tools.sessions import register_session_tools
     from backend.mcp.tools.system import register_system_tools
     from backend.mcp.tools.workflows import register_workflow_tools
@@ -67,6 +68,7 @@ def register_tools(mcp: Any) -> None:
     register_live_tools(mcp)
     register_system_tools(mcp)
     register_session_tools(mcp)
+    register_research_run_tools(mcp)
 
 
 __all__ = ["build_envelope", "register_tools"]

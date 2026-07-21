@@ -272,6 +272,24 @@ export const analyticsKeys = {
     [projectId, 'analytics', 'artifact-rankings'] as const,
 };
 
+// ─── Research Runs (research-foundry-run-telemetry v1, Phase 3) ──────────────
+// Analytics "Research" tab. GET /api/agent/research-runs (+ /{run_id} detail).
+// Cursor-paginated list — cursor + limit folded into the key so each page
+// gets its own cache slot (same pattern as dashboardKeys.analytics's range
+// param and featureSurfaceKeys.list's query object).
+
+export const researchRunsKeys = {
+  all: (projectId: string) => [projectId, 'researchRuns'] as const,
+  /**
+   * List-tier key. cursor is the opaque backend pagination token (null for
+   * page 1); limit defaults server-side to 50 when omitted.
+   */
+  list: (projectId: string, cursor?: string | null, limit?: number) =>
+    [projectId, 'researchRuns', 'list', { cursor: cursor ?? null, limit: limit ?? null }] as const,
+  detail: (projectId: string, runId: string) =>
+    [projectId, 'researchRuns', 'detail', runId] as const,
+};
+
 // ─── Capabilities (global, not project-scoped) ────────────────────────────────
 // Runtime capability flags from GET /api/execution/launch/capabilities.
 // Global (no projectId) — invalidated by the sentinel 'capabilities' namespace.

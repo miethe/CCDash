@@ -138,6 +138,17 @@ class TestCapabilityContract(unittest.TestCase):
         data = self.client.get("/api/v1/capabilities").json()["data"]
         self.assertIn("sessions:detail", data["capabilities"])
 
+    def test_capabilities_includes_research_runs(self) -> None:
+        """T1-007: research-runs:* advertises the RF telemetry ingest source.
+
+        Existing consumers predating this feature MUST NOT hard-fail on the
+        new string (AC-5 resilience) — asserted separately below via the
+        contract-type validation test, which still passes with the new entry
+        present.
+        """
+        data = self.client.get("/api/v1/capabilities").json()["data"]
+        self.assertIn("research-runs:*", data["capabilities"])
+
     def test_capabilities_validates_against_contract_type(self) -> None:
         """TypeAdapter must accept the response under CapabilityV1 without error."""
         body = self.client.get("/api/v1/capabilities").json()

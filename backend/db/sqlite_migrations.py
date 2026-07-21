@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 41
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1263,6 +1263,167 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_status_available_priority
     ON job_queue(status, available_at, priority);
 CREATE INDEX IF NOT EXISTS idx_job_queue_project
     ON job_queue(project_id);
+
+-- ── RF Run Telemetry (Research Foundry ccdash_event ingest, T1-001) ──────
+-- Raw, append-only mirror of RF's schema-validated `ccdash_event` payload
+-- (research-foundry/schemas/ccdash_event.schema.yaml, additionalProperties:
+-- true). Every RF-sourced column below is nullable and never defaulted —
+-- unknown == null, never a fabricated default (same convention as the
+-- Phase 11 launch-time-capture / detection columns on `sessions`). Only the
+-- ingest-pipeline bookkeeping columns (workspace_id/project_id/created_at)
+-- and the raw_payload_json forward-compat safety net carry defaults.
+-- Populated by POST /api/v1/ingest/rf-events (T1-003/T1-004); the derived
+-- `research_runs` rollup lands in Phase 2 (D6). Correlation to sessions is
+-- via entity_graph link rows keyed by a UUID run_id (D2) — run_id/intent_id/
+-- task_node_id here are RF's raw, opaque display strings only, never join
+-- keys against aos_correlation.py.
+CREATE TABLE IF NOT EXISTS rf_events (
+    -- Ingest-pipeline bookkeeping (never sourced from the RF payload) ─────
+    event_id                            TEXT PRIMARY KEY,
+    workspace_id                        TEXT NOT NULL DEFAULT 'default-local',
+    project_id                          TEXT NOT NULL,
+    created_at                          TEXT NOT NULL DEFAULT (datetime('now')),
+
+    -- RF payload — required top-level fields (event_id/timestamp/project) ──
+    event_timestamp                     TEXT NOT NULL,
+    rf_project                          TEXT NOT NULL,
+
+    -- RF payload — optional raw correlation ids (opaque display strings) ──
+    run_id                              TEXT,
+    intent_id                           TEXT,
+    task_node_id                        TEXT,
+
+    -- RF payload — optional top-level array fields (JSON-encoded) ─────────
+    agent_postures_json                 TEXT,
+    skillbom_ids_json                   TEXT,
+    tools_json                          TEXT,
+    input_artifacts_json                TEXT,
+    output_artifacts_json               TEXT,
+
+    -- RF payload — metrics.* (schema §metrics + search-router additions) ──
+    metric_source_cards_created         INTEGER,
+    metric_claims_total                 INTEGER,
+    metric_claims_supported             INTEGER,
+    metric_claims_mixed                 INTEGER,
+    metric_claims_contradicted          INTEGER,
+    metric_claims_inference             INTEGER,
+    metric_claims_speculation           INTEGER,
+    metric_unsupported_claims           INTEGER,
+    metric_verification_passed          INTEGER,
+    metric_tokens_estimated             INTEGER,
+    metric_cost_estimated_usd           REAL,
+    metric_latency_minutes              REAL,
+    metric_rework_count                 INTEGER,
+    metric_drift_score                  REAL,
+    metric_quality_score                TEXT,
+    metric_queries_executed             INTEGER,
+    metric_urls_extracted               INTEGER,
+    metric_useful_source_count          INTEGER,
+    metric_duplicate_rate               REAL,
+    metric_extraction_failure_rate      REAL,
+    metric_citation_coverage            REAL,
+    metric_estimated_cost_usd           REAL,
+    metric_latency_ms                   REAL,
+
+    -- RF payload — governance.* ────────────────────────────────────────────
+    governance_sensitivity              TEXT,
+    governance_key_profile_used         TEXT,
+    governance_key_fingerprint          TEXT,
+    governance_policy_passed            INTEGER,
+    governance_violations_json          TEXT,
+
+    -- RF payload — reuse.* ─────────────────────────────────────────────────
+    reuse_meatywiki_writeback_candidate     INTEGER,
+    reuse_skillbom_candidate                INTEGER,
+    reuse_reusable_source_pack_candidate    INTEGER,
+
+    -- RF payload — human_review.* ──────────────────────────────────────────
+    human_review_required               INTEGER,
+    human_review_status                 TEXT,
+    human_review_reviewer               TEXT,
+
+    -- Forward-compat safety net: verbatim payload
+    -- (schema declares additionalProperties: true) ───────────────────────
+    raw_payload_json                    TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_rf_events_run_id ON rf_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_rf_events_project_created ON rf_events(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_rf_events_workspace ON rf_events(workspace_id);
+
+-- ── RF Run Telemetry: research_runs derived rollup (T2-001) ──────────────
+-- One row per Research Foundry run, derived/upserted from rf_events (D6 —
+-- persistence is deliberately split into a raw log + a derived rollup, never
+-- merged). run_id is CCDash's canonical, genuine-UUID primary/join key (D2,
+-- FR-6): when RF's own raw run_id string does not parse as a UUID4, CCDash
+-- deterministically mints one (backend/db/repositories/research_runs.py::
+-- resolve_run_id) and stores RF's raw value in the separate rf_run_id
+-- display column below. rf_run_id/intent_id/task_node_id are opaque display
+-- strings only, exactly like their rf_events counterparts -- never join keys
+-- against aos_correlation.py (D2 hard boundary; zero changes to that file).
+-- See backend/db/repositories/research_runs.py module docstring for the full
+-- per-column aggregation contract (summed vs. latest-wins vs. OR'd).
+CREATE TABLE IF NOT EXISTS research_runs (
+    -- Canonical identity (D2) ──────────────────────────────────────────────
+    run_id                                  TEXT PRIMARY KEY,
+    workspace_id                            TEXT NOT NULL DEFAULT 'default-local',
+    project_id                              TEXT NOT NULL,
+    created_at                              TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                              TEXT NOT NULL DEFAULT (datetime('now')),
+
+    -- RF display-only correlation attributes (D2 -- NEVER join keys) ───────
+    rf_run_id                               TEXT,
+    intent_id                               TEXT,
+    task_node_id                            TEXT,
+    rf_project                              TEXT,
+
+    -- Rollup bookkeeping ────────────────────────────────────────────────────
+    event_count                             INTEGER NOT NULL DEFAULT 0,
+    first_event_at                          TEXT,
+    last_event_at                           TEXT,
+
+    -- Aggregated metrics -- SUMMED across every folded-in rf_events row ────
+    total_queries_executed                  INTEGER,
+    total_urls_extracted                    INTEGER,
+    total_useful_source_count               INTEGER,
+    total_tokens_estimated                  INTEGER,
+    total_claims_total                      INTEGER,
+    total_claims_supported                  INTEGER,
+    total_claims_mixed                      INTEGER,
+    total_claims_contradicted               INTEGER,
+    total_unsupported_claims                INTEGER,
+    total_estimated_cost_usd                REAL,
+    total_latency_ms                        REAL,
+
+    -- Latest-non-null snapshot metrics (rate/score-shaped) ─────────────────
+    citation_coverage                       REAL,
+    duplicate_rate                          REAL,
+    extraction_failure_rate                 REAL,
+    quality_score                           TEXT,
+    drift_score                             REAL,
+
+    -- Governance / reuse / human-review rollups ─────────────────────────────
+    governance_sensitivity                  TEXT,
+    governance_policy_passed                INTEGER,
+    human_review_required                   INTEGER,
+    human_review_status                     TEXT,
+    human_review_reviewer                   TEXT,
+    reuse_meatywiki_writeback_candidate      INTEGER,
+    reuse_skillbom_candidate                 INTEGER,
+    reuse_reusable_source_pack_candidate     INTEGER,
+
+    -- Latest snapshot of array-shaped fields (JSON-encoded) ─────────────────
+    agent_postures_json                     TEXT,
+    skillbom_ids_json                       TEXT,
+    tools_json                              TEXT,
+    input_artifacts_json                    TEXT,
+    output_artifacts_json                   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_runs_project ON research_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_research_runs_workspace ON research_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_research_runs_rf_run_id ON research_runs(rf_run_id);
+CREATE INDEX IF NOT EXISTS idx_research_runs_project_last_event ON research_runs(project_id, last_event_at);
 """
 
 _PLANNING_WORKTREE_CONTEXTS_DDL = """
@@ -3885,6 +4046,166 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         await _ensure_column(db, "sessions", "cwd", "TEXT")
         await db.commit()
         logger.info("v39 migrations complete: cwd column added to sessions table.")
+
+    # ── v40 migrations (T1-001: research-foundry-run-telemetry rf_events) ─────
+    # rf_events is also declared in _TABLES (above) so get_sqlite_migration_
+    # tables() discovers it for the dual-DDL parity/direct-count exit gate
+    # (T1-002). This version-gated CREATE TABLE guarantees the table also
+    # appears on databases that were already at/above the pre-bump
+    # SCHEMA_VERSION and would otherwise skip the executescript(_TABLES)
+    # path entirely (ingest_cursors v36 precedent, exactly).
+    if current_version < 40:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rf_events (
+                event_id                             TEXT PRIMARY KEY,
+                workspace_id                         TEXT NOT NULL DEFAULT 'default-local',
+                project_id                            TEXT NOT NULL,
+                created_at                            TEXT NOT NULL DEFAULT (datetime('now')),
+                event_timestamp                       TEXT NOT NULL,
+                rf_project                             TEXT NOT NULL,
+                run_id                                 TEXT,
+                intent_id                              TEXT,
+                task_node_id                           TEXT,
+                agent_postures_json                    TEXT,
+                skillbom_ids_json                      TEXT,
+                tools_json                             TEXT,
+                input_artifacts_json                   TEXT,
+                output_artifacts_json                  TEXT,
+                metric_source_cards_created            INTEGER,
+                metric_claims_total                    INTEGER,
+                metric_claims_supported                INTEGER,
+                metric_claims_mixed                    INTEGER,
+                metric_claims_contradicted             INTEGER,
+                metric_claims_inference                INTEGER,
+                metric_claims_speculation               INTEGER,
+                metric_unsupported_claims              INTEGER,
+                metric_verification_passed             INTEGER,
+                metric_tokens_estimated                INTEGER,
+                metric_cost_estimated_usd              REAL,
+                metric_latency_minutes                 REAL,
+                metric_rework_count                    INTEGER,
+                metric_drift_score                     REAL,
+                metric_quality_score                   TEXT,
+                metric_queries_executed                INTEGER,
+                metric_urls_extracted                  INTEGER,
+                metric_useful_source_count             INTEGER,
+                metric_duplicate_rate                  REAL,
+                metric_extraction_failure_rate         REAL,
+                metric_citation_coverage               REAL,
+                metric_estimated_cost_usd              REAL,
+                metric_latency_ms                      REAL,
+                governance_sensitivity                 TEXT,
+                governance_key_profile_used            TEXT,
+                governance_key_fingerprint             TEXT,
+                governance_policy_passed               INTEGER,
+                governance_violations_json             TEXT,
+                reuse_meatywiki_writeback_candidate     INTEGER,
+                reuse_skillbom_candidate                INTEGER,
+                reuse_reusable_source_pack_candidate    INTEGER,
+                human_review_required                  INTEGER,
+                human_review_status                    TEXT,
+                human_review_reviewer                  TEXT,
+                raw_payload_json                       TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_rf_events_run_id ON rf_events(run_id)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_rf_events_project_created"
+            " ON rf_events(project_id, created_at)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_rf_events_workspace ON rf_events(workspace_id)",
+        )
+        await db.commit()
+        logger.info(
+            "v40 migrations complete: rf_events table added "
+            "(research-foundry-run-telemetry-v1, T1-001)."
+        )
+
+    # ── v41 migrations (T2-001: research-foundry-run-telemetry research_runs) ──
+    # research_runs is also declared in _TABLES (above) so
+    # get_sqlite_migration_tables() discovers it for the dual-DDL
+    # parity/direct-count exit gate (T2-002). This version-gated CREATE TABLE
+    # guarantees the table also appears on databases that were already at/
+    # above the pre-bump SCHEMA_VERSION and would otherwise skip the
+    # executescript(_TABLES) path entirely (rf_events v40 precedent, exactly).
+    if current_version < 41:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_runs (
+                run_id                                   TEXT PRIMARY KEY,
+                workspace_id                             TEXT NOT NULL DEFAULT 'default-local',
+                project_id                                TEXT NOT NULL,
+                created_at                                TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at                                TEXT NOT NULL DEFAULT (datetime('now')),
+                rf_run_id                                 TEXT,
+                intent_id                                 TEXT,
+                task_node_id                              TEXT,
+                rf_project                                TEXT,
+                event_count                               INTEGER NOT NULL DEFAULT 0,
+                first_event_at                            TEXT,
+                last_event_at                             TEXT,
+                total_queries_executed                    INTEGER,
+                total_urls_extracted                      INTEGER,
+                total_useful_source_count                 INTEGER,
+                total_tokens_estimated                    INTEGER,
+                total_claims_total                        INTEGER,
+                total_claims_supported                    INTEGER,
+                total_claims_mixed                        INTEGER,
+                total_claims_contradicted                 INTEGER,
+                total_unsupported_claims                  INTEGER,
+                total_estimated_cost_usd                  REAL,
+                total_latency_ms                          REAL,
+                citation_coverage                         REAL,
+                duplicate_rate                            REAL,
+                extraction_failure_rate                   REAL,
+                quality_score                             TEXT,
+                drift_score                               REAL,
+                governance_sensitivity                    TEXT,
+                governance_policy_passed                  INTEGER,
+                human_review_required                     INTEGER,
+                human_review_status                       TEXT,
+                human_review_reviewer                     TEXT,
+                reuse_meatywiki_writeback_candidate        INTEGER,
+                reuse_skillbom_candidate                   INTEGER,
+                reuse_reusable_source_pack_candidate       INTEGER,
+                agent_postures_json                       TEXT,
+                skillbom_ids_json                         TEXT,
+                tools_json                                TEXT,
+                input_artifacts_json                      TEXT,
+                output_artifacts_json                     TEXT
+            )
+            """
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_research_runs_project ON research_runs(project_id)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_research_runs_workspace ON research_runs(workspace_id)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_research_runs_rf_run_id ON research_runs(rf_run_id)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_research_runs_project_last_event"
+            " ON research_runs(project_id, last_event_at)",
+        )
+        await db.commit()
+        logger.info(
+            "v41 migrations complete: research_runs table added "
+            "(research-foundry-run-telemetry-v1, T2-001)."
+        )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────
     # _ensure_index is idempotent; the IF NOT EXISTS guard means this call is

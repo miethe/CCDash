@@ -27,7 +27,7 @@ endpoints.  The server returns a `CapabilityV1` payload:
   "status": "ok",
   "data": {
     "api_version": "1",
-    "capabilities": ["sessions:cross-project", "sessions:detail"],
+    "capabilities": ["sessions:cross-project", "sessions:detail", "research-runs:*"],
     "instance_id": "ccdash-local",
     "server_time": "2026-06-11T12:00:00Z"
   },
@@ -39,6 +39,7 @@ endpoints.  The server returns a `CapabilityV1` payload:
 |---|---|
 | `sessions:cross-project` | List/search/detail/transcript accept an explicit `project_id`; detail + transcript REQUIRE it (HTTP 400 if absent — no active-project fallback). |
 | `sessions:detail` | Full transcript-bearing bundle available at `/sessions/{id}/detail`. |
+| `research-runs:*` | Research Foundry run telemetry ingest (`POST /api/v1/ingest/rf-events`); wildcard placeholder — the eventual query surface lands in a later phase. |
 
 **Consumer rule**: treat an unknown capability string as a future addition — do
 NOT error on strings you don't recognise.  `api_version` is a string; a mismatch

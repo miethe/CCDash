@@ -236,6 +236,100 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
 
                     import backend.mcp.tools.sessions as _sessions_tool_mod
                     _sessions_tool_mod.get_session_detail = _mock_get_session_detail
+
+                    # ── Research run tool mocks (Phase 2 / T2-005) ────────────────────────
+                    # Patch RunIntelligenceQueryService so research-run tools work without
+                    # a seeded rf_events/research_runs DB. "missing-run" and the sentinel
+                    # project "no-such-project-001" exercise the not-found / error paths.
+
+                    from backend.application.services.agent_queries.run_intelligence import (
+                        ResearchRunDetailDTO,
+                        ResearchRunDetailResponseDTO,
+                        ResearchRunListResponseDTO,
+                        ResearchRunSummaryDTO,
+                        RunIntelligenceQueryService,
+                    )
+
+                    async def _mock_list_runs(
+                        self,
+                        context,
+                        ports,
+                        *,
+                        project_id_override=None,
+                        cursor=None,
+                        limit=50,
+                        bypass_cache=False,
+                    ):
+                        project_id = project_id_override or "test-project"
+                        if project_id == "no-such-project-001":
+                            return ResearchRunListResponseDTO(
+                                status="error",
+                                project_id=project_id,
+                                cursor=cursor or "",
+                                limit=limit,
+                            )
+                        item = ResearchRunSummaryDTO(
+                            run_id="run-uuid-0001",
+                            rf_run_id="rf-slug-alpha",
+                            project_id=project_id,
+                            event_count=3,
+                            linked_session_ids=["sess-0001"],
+                            linked_session_id="sess-0001",
+                        )
+                        return ResearchRunListResponseDTO(
+                            status="ok",
+                            project_id=project_id,
+                            items=[item],
+                            cursor=cursor or "",
+                            limit=limit,
+                            next_cursor=None,
+                            source_refs=[project_id],
+                        )
+
+                    async def _mock_get_run_detail(
+                        self,
+                        context,
+                        ports,
+                        run_id,
+                        *,
+                        project_id_override=None,
+                        bypass_cache=False,
+                    ):
+                        project_id = project_id_override or "test-project"
+                        if project_id == "no-such-project-001":
+                            return ResearchRunDetailResponseDTO(
+                                status="error",
+                                project_id=project_id,
+                                run_id=run_id,
+                                found=False,
+                            )
+                        if run_id == "missing-run":
+                            return ResearchRunDetailResponseDTO(
+                                status="ok",
+                                project_id=project_id,
+                                run_id=run_id,
+                                found=False,
+                                source_refs=[project_id, run_id],
+                            )
+                        detail = ResearchRunDetailDTO(
+                            run_id=run_id,
+                            rf_run_id="rf-slug-alpha",
+                            project_id=project_id,
+                            event_count=3,
+                            linked_session_ids=["sess-0001"],
+                            linked_session_id="sess-0001",
+                        )
+                        return ResearchRunDetailResponseDTO(
+                            status="ok",
+                            project_id=project_id,
+                            run_id=run_id,
+                            found=True,
+                            run=detail,
+                            source_refs=[project_id, run_id, "sess-0001"],
+                        )
+
+                    RunIntelligenceQueryService.list_runs = _mock_list_runs
+                    RunIntelligenceQueryService.get_run_detail = _mock_get_run_detail
                 """
             ).strip()
             + "\n",
@@ -309,6 +403,9 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 "ccdash_session_search",
                 "ccdash_session_detail",
                 "ccdash_session_transcript",
+                # research run intelligence (Phase 2 / T2-005)
+                "ccdash_research_runs_list",
+                "ccdash_research_run_detail",
             },
         )
 
@@ -490,6 +587,58 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
         cursor = payload["data"].get("cursor")
         self.assertIsInstance(cursor, str)
         self.assertTrue(cursor, "cursor must be non-empty")
+
+    # ── Research run tool tests (Phase 2 / T2-005) ────────────────────────────
+
+    async def test_research_runs_list_returns_ok_envelope_with_items(self) -> None:
+        payload = await self._call_tool(
+            "ccdash_research_runs_list",
+            {"project_id": "test-project"},
+        )
+        self.assertEqual(payload["status"], "ok")
+        items = payload["data"]["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["run_id"], "run-uuid-0001")
+        self.assertEqual(items[0]["rf_run_id"], "rf-slug-alpha")
+        self.assertEqual(items[0]["linked_session_ids"], ["sess-0001"])
+        self.assertEqual(payload["meta"]["project_id"], "test-project")
+
+    async def test_research_runs_list_surfaces_error_envelope(self) -> None:
+        payload = await self._call_tool(
+            "ccdash_research_runs_list",
+            {"project_id": "no-such-project-001"},
+        )
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["meta"]["project_id"], "no-such-project-001")
+
+    async def test_research_run_detail_returns_found_run(self) -> None:
+        payload = await self._call_tool(
+            "ccdash_research_run_detail",
+            {"run_id": "run-uuid-0001", "project_id": "test-project"},
+        )
+        self.assertEqual(payload["status"], "ok")
+        self.assertTrue(payload["data"]["found"])
+        self.assertEqual(payload["data"]["run"]["run_id"], "run-uuid-0001")
+        self.assertEqual(payload["meta"]["run_id"], "run-uuid-0001")
+        self.assertEqual(payload["meta"]["project_id"], "test-project")
+
+    async def test_research_run_detail_unknown_run_returns_ok_not_found(self) -> None:
+        """"No such run" is a normal status='ok'/found=False response, never an error."""
+        payload = await self._call_tool(
+            "ccdash_research_run_detail",
+            {"run_id": "missing-run", "project_id": "test-project"},
+        )
+        self.assertEqual(payload["status"], "ok")
+        self.assertFalse(payload["data"]["found"])
+        self.assertIsNone(payload["data"].get("run"))
+
+    async def test_research_run_detail_surfaces_error_envelope(self) -> None:
+        payload = await self._call_tool(
+            "ccdash_research_run_detail",
+            {"run_id": "run-uuid-0001", "project_id": "no-such-project-001"},
+        )
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["meta"]["project_id"], "no-such-project-001")
 
 
 if __name__ == "__main__":
