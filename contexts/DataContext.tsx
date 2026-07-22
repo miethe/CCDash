@@ -22,7 +22,7 @@ import type { Project, TaskStatus } from '../types';
 import { AppRuntimeProvider, useAppRuntime } from './AppRuntimeContext';
 import { AppSessionProvider, useAppSession } from './AppSessionContext';
 import { AuthSessionProvider, useAuthSession } from './AuthSessionContext';
-import { DataClientProvider } from './DataClientContext';
+import { DataClientProvider, useDataClient } from './DataClientContext';
 import type { SessionFetchOptions, SessionFilters } from './dataContextShared';
 import { projectsKeys, sessionsKeys, tasksKeys, featuresKeys } from '../services/queryKeys';
 import type { RuntimeStatus } from '../services/runtimeProfile';
@@ -48,8 +48,8 @@ export { hasSessionDetail, mergeSessionDetail } from './dataContextShared';
 interface AppDataProviderGateState {
   loading: boolean;
   authenticated: boolean;
-  session?: { localMode?: boolean; authMode?: string | null; provider?: string | null } | null;
-  metadata?: { localMode?: boolean; authMode?: string | null; provider?: string | null } | null;
+  session?: { localMode?: boolean; authMode?: string | null; provider?: unknown } | null;
+  metadata?: { localMode?: boolean; authMode?: string | null; provider?: unknown } | null;
 }
 
 export function shouldMountAppDataProviders(auth: AppDataProviderGateState): boolean {
@@ -60,7 +60,9 @@ export function shouldMountAppDataProviders(auth: AppDataProviderGateState): boo
     || auth.session?.authMode === 'local'
     || auth.metadata?.authMode === 'local',
   );
-  const staticBearerMode = auth.session?.provider === 'static_bearer' || auth.metadata?.provider === 'static_bearer';
+  const sessionProvider = typeof auth.session?.provider === 'string' ? auth.session.provider : null;
+  const metadataProvider = typeof auth.metadata?.provider === 'string' ? auth.metadata.provider : null;
+  const staticBearerMode = sessionProvider === 'static_bearer' || metadataProvider === 'static_bearer';
   return localMode || staticBearerMode || auth.authenticated;
 }
 
@@ -127,6 +129,7 @@ interface DataContextValue {
 export function useData(): DataContextValue {
   const session = useAppSession();
   const runtime = useAppRuntime();
+  const client = useDataClient();
   const queryClient = useQueryClient();
   const projectId = session.activeProject?.id ?? '';
 
@@ -259,14 +262,24 @@ export function useData(): DataContextValue {
   }, [updateTaskStatusMutation, projectId]);
 
   // ── getSessionById (direct fetch shim) ─────────────────────────────────────
-  const getSessionById = useCallback(async (sessionId: string): Promise<AgentSession | null> => {
-    const cached = queryClient.getQueryData<AgentSession>(
-      sessionsKeys.detail(projectId, sessionId),
-    );
-    if (cached) return cached;
-    // Trigger a TQ fetch and wait; the component-level useSessionDetailQuery is preferred.
-    return null;
-  }, [queryClient, projectId]);
+  const getSessionById = useCallback(async (sessionId: string, options?: SessionFetchOptions): Promise<AgentSession | null> => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId || !projectId) return null;
+
+    const queryKey = sessionsKeys.detail(projectId, normalizedSessionId);
+    if (!options?.force) {
+      const cached = queryClient.getQueryData<AgentSession>(queryKey);
+      if (cached) return cached;
+    }
+
+    try {
+      const fetched = await client.getSession(normalizedSessionId, projectId);
+      queryClient.setQueryData(queryKey, fetched);
+      return fetched;
+    } catch {
+      return null;
+    }
+  }, [client, queryClient, projectId]);
 
   // ── Session filters (client-state) ─────────────────────────────────────────
   // Session filters are client-state; keep a stable empty default for shim.

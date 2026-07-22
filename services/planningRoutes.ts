@@ -102,6 +102,7 @@ export const FEATURE_DETAIL_TABS = [
   'plan',
   'tasks',
   'sessions',
+  'analytics',
   'artifacts',
   'research',
   'council',

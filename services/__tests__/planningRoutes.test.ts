@@ -21,13 +21,16 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  FEATURE_DETAIL_TABS,
   planningArtifactsHref,
   planningFeatureDetailHref,
   planningFeatureModalHref,
   planningRouteFeatureModalHref,
   removePlanningRouteFeatureModalSearch,
+  resolveFeatureDetailTab,
   resolvePlanningRouteFeatureModalState,
   setPlanningRouteFeatureModalSearch,
+  type FeatureDetailTab,
   type PlanningFeatureModalTab,
 } from '../planningRoutes';
 
@@ -162,6 +165,16 @@ describe('planningFeatureDetailHref', () => {
     expect(planningFeatureDetailHref('feat-1')).toBe('/planning/feature/feat-1');
   });
 
+  it('omits the tab query for overview', () => {
+    expect(planningFeatureDetailHref('feat-1', 'overview')).toBe('/planning/feature/feat-1');
+  });
+
+  it('includes the analytics tab query', () => {
+    expect(planningFeatureDetailHref('feat-1', 'analytics')).toBe(
+      '/planning/feature/feat-1?tab=analytics',
+    );
+  });
+
   it('URL-encodes featureId with spaces', () => {
     expect(planningFeatureDetailHref('my feature')).toBe(
       '/planning/feature/my%20feature',
@@ -178,6 +191,24 @@ describe('planningFeatureDetailHref', () => {
     expect(planningFeatureDetailHref('feat#1&x=2')).toBe(
       '/planning/feature/feat%231%26x%3D2',
     );
+  });
+});
+
+describe('resolveFeatureDetailTab', () => {
+  it('recognizes analytics as a full-page feature detail tab', () => {
+    expect(FEATURE_DETAIL_TABS).toContain('analytics');
+    expect(resolveFeatureDetailTab(new URLSearchParams('tab=analytics'))).toBe('analytics');
+  });
+
+  it('defaults invalid or missing feature detail tabs to overview', () => {
+    expect(resolveFeatureDetailTab(new URLSearchParams('tab=bogus'))).toBe('overview');
+    expect(resolveFeatureDetailTab(new URLSearchParams())).toBe('overview');
+  });
+
+  it('resolves every supported full-page feature detail tab', () => {
+    for (const tab of FEATURE_DETAIL_TABS) {
+      expect(resolveFeatureDetailTab(new URLSearchParams(`tab=${tab}`))).toBe(tab as FeatureDetailTab);
+    }
   });
 });
 

@@ -13,6 +13,7 @@ import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLe
 import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { ProjectFileViewerModal } from './content/ProjectFileViewerModal';
+import { SessionAnalyticsModal } from './SessionAnalyticsModal';
 import { TranscriptFormattedMessage, TranscriptFormattingMappingRule, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionArtifactsView } from './SessionArtifactsView';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
@@ -1833,6 +1834,18 @@ const AnalyticsDetailsModal: React.FC<{
 };
 
 const tokenDeltaForLog = (log: SessionLog): number => {
+    const usage = log.tokenUsage;
+    if (usage) {
+        const usageDelta = Math.max(
+            0,
+            Number(usage.inputTokens || 0)
+            + Number(usage.outputTokens || 0)
+            + Number(usage.cacheReadInputTokens || 0)
+            + Number(usage.cacheCreationInputTokens || 0),
+        );
+        if (usageDelta > 0) return usageDelta;
+    }
+
     const metadata = (log.metadata || {}) as Record<string, any>;
     const inputTokens = Number(metadata.inputTokens || 0);
     const outputTokens = Number(metadata.outputTokens || 0);
@@ -5419,8 +5432,8 @@ const SessionDetail = React.memo<{
                     <div className="flex items-center gap-6 shrink-0">
                         <div className="text-right">
                             <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">Session Cost</div>
-                            <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(resolveDisplayCost(session), 2)}</div>
-                            <div className="text-[10px] text-muted-foreground mt-1">{costSummaryLabel(session)}</div>
+                            <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(resolveDisplayCost(effectiveSession), 2)}</div>
+                            <div className="text-[10px] text-muted-foreground mt-1">{costSummaryLabel(effectiveSession)}</div>
                         </div>
                     </div>
                 </div>
@@ -5498,7 +5511,7 @@ const SessionDetail = React.memo<{
                 )}
                 {activeTab === 'features' && (
                     <SessionFeaturesView
-                        currentSessionId={session.id}
+                        currentSessionId={effectiveSession.id}
                         linkedFeatures={linkedFeatureLinks}
                         linkedFeatureDetailsById={linkedFeatureDetailsById}
                         availableFeatures={availableFeatures}
@@ -5517,11 +5530,11 @@ const SessionDetail = React.memo<{
                     activeProject?.id ? (
                         <SessionTestStatusView
                             projectId={activeProject.id}
-                            sessionId={session.id}
-                            sessionStatus={session.status}
+                            sessionId={effectiveSession.id}
+                            sessionStatus={effectiveSession.status}
                             sessionFileUpdates={effectiveSession.updatedFiles || []}
                             sessionLogs={effectiveSession.logs || []}
-                            onNavigateToTestingPage={() => navigate(`/tests?sessionId=${encodeURIComponent(session.id)}`)}
+                            onNavigateToTestingPage={() => navigate(`/tests?sessionId=${encodeURIComponent(effectiveSession.id)}`)}
                         />
                     ) : (
                         <div className="rounded-lg border border-panel-border bg-panel/50 p-4 text-sm text-muted-foreground">
@@ -5529,7 +5542,7 @@ const SessionDetail = React.memo<{
                         </div>
                     )
                 )}
-                {activeTab === 'forensics' && <SessionForensicsView session={session} />}
+                {activeTab === 'forensics' && <SessionForensicsView session={effectiveSession} />}
                 {activeTab === 'activity' && (
                     <ActivityView
                         session={effectiveSession}
@@ -5555,7 +5568,7 @@ const SessionDetail = React.memo<{
                 )}
                 {activeTab === 'artifacts' && (
                     <SessionArtifactsView
-                        session={session}
+                        session={effectiveSession}
                         threadSessions={threadSessions}
                         subagentNameBySessionId={subagentNameBySessionId}
                         onOpenThread={onOpenSession}
@@ -5564,7 +5577,7 @@ const SessionDetail = React.memo<{
                 )}
                 {activeTab === 'analytics' && (
                     <AnalyticsView
-                        session={session}
+                        session={effectiveSession}
                         threadSessions={threadSessions}
                         threadSessionDetails={threadSessionDetails}
                         goToTranscript={handleJumpToTranscript}
@@ -5576,14 +5589,14 @@ const SessionDetail = React.memo<{
                 )}
                 {activeTab === 'agents' && (
                     <AgentsView
-                        session={session}
+                        session={effectiveSession}
                         onSelectAgent={handleSelectAgent}
                         threadSessions={threadSessions}
                         subagentNameBySessionId={subagentNameBySessionId}
                         onOpenThread={onOpenSession}
                     />
                 )}
-                {activeTab === 'impact' && <ImpactView session={session} linkedFeatureLinks={linkedFeatureLinks} />}
+                {activeTab === 'impact' && <ImpactView session={effectiveSession} linkedFeatureLinks={linkedFeatureLinks} />}
             </div>
 
             {viewingDoc && <DocumentModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}
@@ -5625,8 +5638,13 @@ export const SessionInspector: React.FC = () => {
     const [activeSessionTab, setActiveSessionTab] = useState<SessionInspectorTab>('transcript');
     const [sessionOpenLoading, setSessionOpenLoading] = useState(false);
     const [sessionOpenError, setSessionOpenError] = useState<string | null>(null);
+    const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
+    const [analyticsModalSession, setAnalyticsModalSession] = useState<AgentSession | null>(null);
+    const [analyticsModalLoading, setAnalyticsModalLoading] = useState(false);
+    const [analyticsModalError, setAnalyticsModalError] = useState<string | null>(null);
     const [selectedSessionLiveStatus, setSelectedSessionLiveStatus] = useState<LiveConnectionStatus>('idle');
     const openSessionRequestRef = useRef(0);
+    const analyticsModalRequestRef = useRef(0);
     const sessionLiveEnabled = isSessionLiveUpdatesEnabled();
     const selectedSessionId = selectedSession?.id ?? null;
     const selectedSessionStatus = selectedSession?.status ?? null;
@@ -5998,6 +6016,47 @@ export const SessionInspector: React.FC = () => {
         });
     }, [openSession]);
 
+    const closeSessionAnalyticsModal = useCallback(() => {
+        analyticsModalRequestRef.current += 1;
+        setAnalyticsModalOpen(false);
+        setAnalyticsModalLoading(false);
+        setAnalyticsModalError(null);
+        setAnalyticsModalSession(null);
+    }, []);
+
+    const openSessionAnalyticsModal = useCallback((session: AgentSession) => {
+        const normalizedSessionId = session.id.trim();
+        if (!normalizedSessionId) return;
+
+        setAnalyticsModalOpen(true);
+        setAnalyticsModalSession(session);
+        setAnalyticsModalLoading(true);
+        setAnalyticsModalError(null);
+
+        const requestId = analyticsModalRequestRef.current + 1;
+        analyticsModalRequestRef.current = requestId;
+
+        void getSessionById(normalizedSessionId, { force: true })
+            .then(full => {
+                if (analyticsModalRequestRef.current !== requestId) return;
+                if (full) {
+                    setAnalyticsModalSession(full);
+                    return;
+                }
+                setAnalyticsModalError(`Unable to load full session detail for ${normalizedSessionId}. Showing indexed card fields.`);
+            })
+            .catch(error => {
+                if (analyticsModalRequestRef.current !== requestId) return;
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                setAnalyticsModalError(`Unable to load full session detail for ${normalizedSessionId}: ${message}`);
+            })
+            .finally(() => {
+                if (analyticsModalRequestRef.current === requestId) {
+                    setAnalyticsModalLoading(false);
+                }
+            });
+    }, [getSessionById]);
+
     const handleSessionTabChange = useCallback((tab: SessionInspectorTab) => {
         setActiveSessionTab(tab);
         if (!selectedSession) return;
@@ -6038,6 +6097,7 @@ export const SessionInspector: React.FC = () => {
                         onToggle: () => toggleThreadChildren(node.session.id),
                         label: threadToggleLabelForChildren(node.children),
                     } : undefined}
+                    onOpenAnalytics={openSessionAnalyticsModal}
                     onClick={() => openSessionFromList(node.session)}
                 />
 
@@ -6053,7 +6113,7 @@ export const SessionInspector: React.FC = () => {
                 )}
             </div>
         );
-    }, [expandedThreadSessionIds, liveNowMs, openSessionFromList, toggleThreadChildren]);
+    }, [expandedThreadSessionIds, liveNowMs, openSessionAnalyticsModal, openSessionFromList, toggleThreadChildren]);
 
     if (selectedSession) {
         return (
@@ -6100,6 +6160,7 @@ export const SessionInspector: React.FC = () => {
     }
 
     return (
+        <>
         <div className="h-full flex flex-col gap-8 animate-in fade-in duration-500 overflow-y-auto pb-8">
             <div>
                 <h2 className="text-3xl font-bold text-panel-foreground mb-2 font-mono tracking-tighter">Session Forensics</h2>
@@ -6154,6 +6215,7 @@ export const SessionInspector: React.FC = () => {
                                     key={session.id}
                                     session={session}
                                     statusOverride="active"
+                                    onOpenAnalytics={openSessionAnalyticsModal}
                                     onClick={() => openSessionFromList(session)}
                                 />
                             ))}
@@ -6250,6 +6312,7 @@ export const SessionInspector: React.FC = () => {
                                                 key={session.id}
                                                 session={session}
                                                 statusOverride="completed"
+                                                onOpenAnalytics={openSessionAnalyticsModal}
                                                 onClick={() => openSessionFromList(session)}
                                             />
                                         ))}
@@ -6284,6 +6347,7 @@ export const SessionInspector: React.FC = () => {
                                                     <SessionSummaryCard
                                                         session={session}
                                                         statusOverride="completed"
+                                                        onOpenAnalytics={openSessionAnalyticsModal}
                                                         onClick={() => openSessionFromList(session)}
                                                     />
                                                 </div>
@@ -6310,5 +6374,13 @@ export const SessionInspector: React.FC = () => {
                 </div>
             </div>
         </div>
+        <SessionAnalyticsModal
+            isOpen={analyticsModalOpen}
+            session={analyticsModalSession}
+            loading={analyticsModalLoading}
+            error={analyticsModalError}
+            onClose={closeSessionAnalyticsModal}
+        />
+        </>
     );
 };

@@ -26,6 +26,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
+  BarChart3,
   BookOpen,
   Bot,
   ChevronRight,
@@ -63,6 +64,8 @@ import type {
 } from '../../types';
 import { apiRequestJson } from '../../services/apiClient';
 
+const FeatureAnalyticsPanel = React.lazy(() => import('./FeatureAnalyticsPanel'));
+
 // ── Tab metadata ──────────────────────────────────────────────────────────────
 
 interface TabMeta {
@@ -78,6 +81,7 @@ const TAB_META: TabMeta[] = [
   { id: 'plan',       label: 'Plan',       icon: GitBranch,   lazy: false },
   { id: 'tasks',      label: 'Tasks',      icon: List,        lazy: false },
   { id: 'sessions',   label: 'Sessions',   icon: Bot,         lazy: true  },
+  { id: 'analytics',  label: 'Analytics',  icon: BarChart3,   lazy: true  },
   { id: 'artifacts',  label: 'Artifacts',  icon: Layers,      lazy: true  },
   { id: 'research',   label: 'Research',   icon: Telescope,   lazy: true  },
   { id: 'council',    label: 'Council',    icon: Shield,      lazy: true  },
@@ -104,6 +108,15 @@ function EmptyState({ icon: Icon, title, body }: {
       <Icon size={32} className="text-muted-foreground/40" aria-hidden="true" />
       <p className="text-sm font-medium text-muted-foreground">{title}</p>
       {body && <p className="max-w-xs text-xs text-muted-foreground/70">{body}</p>}
+    </div>
+  );
+}
+
+function LazyTabFallback({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground" role="status">
+      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+      <span className="text-xs">Loading {label}...</span>
     </div>
   );
 }
@@ -730,6 +743,7 @@ function TabBar({
         return (
           <button
             key={id}
+            id={`tab-${id}`}
             role="tab"
             aria-selected={isActive}
             aria-controls={`tab-panel-${id}`}
@@ -922,6 +936,20 @@ export function FeatureDetailShell() {
             hidden={activeTab !== 'sessions'}
           >
             <SessionsTab featureId={featureId} />
+          </div>
+        )}
+
+        {/* Analytics: feature-scoped session usage + planned/observed attribution */}
+        {activatedTabs.has('analytics') && (
+          <div
+            role="tabpanel"
+            id="tab-panel-analytics"
+            aria-labelledby="tab-analytics"
+            hidden={activeTab !== 'analytics'}
+          >
+            <React.Suspense fallback={<LazyTabFallback label="analytics" />}>
+              <FeatureAnalyticsPanel projectId={projectId} featureId={featureId} featureContext={ctx ?? null} />
+            </React.Suspense>
           </div>
         )}
 

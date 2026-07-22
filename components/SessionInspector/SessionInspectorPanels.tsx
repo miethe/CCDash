@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Activity, ExternalLink, FileText, GitCommit, Maximize2, Zap } from 'lucide-react';
+import { Activity, BarChart2, ExternalLink, FileText, GitCommit, Maximize2, Zap } from 'lucide-react';
 import { useData } from '../../contexts/DataContext';
 import { AgentSession, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate } from '../../types';
 import { SessionCard, SessionCardDetailSection, deriveEffortTimelineLabel, deriveTranscriptIntelligenceTitle } from '../SessionCard';
@@ -542,6 +542,7 @@ export const FilesView: React.FC<{
 export const SessionSummaryCard: React.FC<{
     session: AgentSession;
     onClick: () => void;
+    onOpenAnalytics?: (session: AgentSession) => void;
     className?: string;
     statusOverride?: AgentSession['status'];
     threadToggle?: {
@@ -550,7 +551,7 @@ export const SessionSummaryCard: React.FC<{
         onToggle: () => void;
         label?: string;
     };
-}> = ({ session, onClick, className, statusOverride, threadToggle }) => {
+}> = ({ session, onClick, onOpenAnalytics, className, statusOverride, threadToggle }) => {
     const transcriptIntelligenceEnabled = isTranscriptIntelligenceEnabled();
     const displayTitle = useMemo(
         () => deriveTranscriptIntelligenceTitle(
@@ -635,8 +636,26 @@ export const SessionSummaryCard: React.FC<{
             onClick={onClick}
             className={`group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden ${className || ''}`}
             headerRight={(
-                <div className="text-right">
-                    <div className="text-emerald-400 font-mono font-bold text-sm">${formatUsd(resolveDisplayCost(session), 2)}</div>
+                <div className="flex items-center gap-2">
+                    {onOpenAnalytics ? (
+                        <button
+                            type="button"
+                            onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                onOpenAnalytics(session);
+                            }}
+                            onKeyDown={event => event.stopPropagation()}
+                            className="rounded-md border border-panel-border bg-surface-muted/70 p-1.5 text-muted-foreground transition-colors hover:border-indigo-500/50 hover:bg-indigo-500/10 hover:text-indigo-200"
+                            title="Open session analytics"
+                            aria-label={`Open analytics for session ${session.id}`}
+                        >
+                            <BarChart2 size={14} />
+                        </button>
+                    ) : null}
+                    <div className="text-right">
+                        <div className="text-emerald-400 font-mono font-bold text-sm">${formatUsd(resolveDisplayCost(session), 2)}</div>
+                    </div>
                 </div>
             )}
             infoBadges={(
