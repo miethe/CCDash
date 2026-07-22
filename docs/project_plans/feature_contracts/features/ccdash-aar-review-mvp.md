@@ -65,7 +65,8 @@ related_documents:
 spike_ref: null
 prd_ref: docs/project_plans/PRDs/features/ccdash-automated-aar-review-v1.md
 plan_ref: null
-commit_refs: []
+commit_refs:
+- e4c38cde76ecfb4985f4bc628334369eb9c2ddc3
 pr_refs: []
 files_affected:
 - backend/application/services/agent_queries/aar_review.py
