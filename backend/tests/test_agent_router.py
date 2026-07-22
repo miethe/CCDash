@@ -2,10 +2,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 from backend.application.services.agent_queries import (
     AARReportDTO,
+    AARReviewDTO,
     ArtifactRankingsDTO,
     ArtifactRecommendationsDTO,
     FeatureForensicsDTO,
@@ -33,6 +34,7 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/api/agent/artifact-intelligence/rankings", paths)
         self.assertIn("/api/agent/artifact-intelligence/recommendations", paths)
         self.assertIn("/api/agent/reports/aar", paths)
+        self.assertIn("/api/agent/aar-review/{document_id}", paths)
         self.assertIn("/api/agent/research-runs", paths)
         self.assertIn("/api/agent/research-runs/{run_id}", paths)
         self.assertIn("get", paths["/api/agent/project-status"])
@@ -44,6 +46,7 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("get", paths["/api/agent/research-runs/{run_id}"])
         self.assertIn("get", paths["/api/agent/artifact-intelligence/recommendations"])
         self.assertIn("post", paths["/api/agent/reports/aar"])
+        self.assertIn("get", paths["/api/agent/aar-review/{document_id}"])
 
     async def test_get_project_status_delegates_once_and_returns_dto_unchanged(self) -> None:
         request_context = object()
@@ -281,6 +284,56 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
         service_mock.assert_awaited_once_with(
             app_request.context, app_request.ports, "feature-3", bypass_cache=False
         )
+
+    async def test_get_aar_review_delegates_once_and_sets_cache_control(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = AARReviewDTO(status="ok", document_id="doc-1", source_refs=["doc-1"])
+        response = Response()
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)) as resolve_mock:
+            with patch.object(
+                agent_router.aar_review_query_service,
+                "get_review",
+                new=AsyncMock(return_value=dto),
+            ) as service_mock:
+                result = await agent_router.get_aar_review(
+                    response=response,
+                    document_id="doc-1",
+                    bypass_cache=False,
+                    request_context=request_context,
+                    core_ports=core_ports,
+                )
+
+        self.assertIs(result, dto)
+        resolve_mock.assert_awaited_once_with(request_context, core_ports)
+        service_mock.assert_awaited_once_with(
+            app_request.context, app_request.ports, "doc-1", bypass_cache=False
+        )
+        self.assertIn("Cache-Control", response.headers)
+
+    async def test_get_aar_review_surfaces_error_status_without_raising(self) -> None:
+        request_context = object()
+        core_ports = object()
+        app_request = SimpleNamespace(context=object(), ports=object())
+        dto = AARReviewDTO(status="error", document_id="missing-doc", reasons=["document not found"], source_refs=["missing-doc"])
+        response = Response()
+
+        with patch.object(agent_router, "_resolve_app_request", new=AsyncMock(return_value=app_request)):
+            with patch.object(
+                agent_router.aar_review_query_service, "get_review", new=AsyncMock(return_value=dto)
+            ):
+                result = await agent_router.get_aar_review(
+                    response=response,
+                    document_id="missing-doc",
+                    bypass_cache=False,
+                    request_context=request_context,
+                    core_ports=core_ports,
+                )
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.document_id, "missing-doc")
 
     async def test_get_research_runs_delegates_once_and_returns_dto_unchanged(self) -> None:
         request_context = object()

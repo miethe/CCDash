@@ -1177,6 +1177,32 @@ def log_auth_event(event: str, **fields: Any) -> None:
     logger.info("auth observability event", extra=extra)
 
 
+def log_aar_review_candidate(
+    document_id: str,
+    session_refs: list[str] | None,
+    verdict: str | None,
+    triggered_flags: list[str] | None,
+) -> None:
+    """Emit a structured, model-free ``aar_review_candidate`` observability event.
+
+    This is a **log event only** -- never a DB row, never an outbound HTTP
+    push/queue.  See the ccdash-aar-review-mvp feature contract §8 Architecture
+    Constraints / frontmatter Decisions for the deliberate scope boundary: a
+    future increment (PRD Phase 3+) may promote this to a real queued/pushed
+    transport, but this function must not grow one itself. Carries only ids
+    and flag names -- no session-transcript content, consistent with the
+    redaction posture applied elsewhere in this module.
+    """
+    extra = {
+        "event": "aar_review_candidate",
+        "document_id": document_id or "",
+        "session_refs": list(session_refs or []),
+        "verdict": verdict or "",
+        "triggered_flags": list(triggered_flags or []),
+    }
+    logger.info("aar review candidate observability event", extra=extra)
+
+
 def record_auth_login_failure(
     *,
     provider: str,

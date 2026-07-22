@@ -42,10 +42,14 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 if os.environ.get("CCDASH_MCP_TEST_MODE") == "1":
                     from backend.application.services.agent_queries import (
                         AARReportDTO,
+                        AARReviewDTO,
                         ArtifactRecommendationsDTO,
                         FeatureForensicsDTO,
                         ProjectStatusDTO,
                         WorkflowDiagnosticsDTO,
+                    )
+                    from backend.application.services.agent_queries.aar_review import (
+                        AARReviewQueryService,
                     )
                     from backend.application.services.agent_queries.artifact_intelligence import (
                         ArtifactIntelligenceQueryService,
@@ -98,6 +102,14 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                             source_refs=[feature_id],
                         )
 
+                    async def aar_review(self, context, ports, document_id):
+                        status = "error" if document_id == "missing-document" else "ok"
+                        return AARReviewDTO(
+                            status=status,
+                            document_id=document_id,
+                            source_refs=[document_id],
+                        )
+
                     async def artifact_recommendations(
                         self,
                         context,
@@ -134,6 +146,7 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                     FeatureForensicsQueryService.get_forensics = feature_forensics
                     WorkflowDiagnosticsQueryService.get_diagnostics = workflow_diagnostics
                     ReportingQueryService.generate_aar = generate_aar
+                    AARReviewQueryService.get_review = aar_review
                     ArtifactIntelligenceQueryService.get_recommendations = artifact_recommendations
 
                     # ── Session tool mocks (Phase 3 / T3-007) ─────────────────────────────
@@ -394,6 +407,7 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                 "ccdash_feature_forensics",
                 "ccdash_workflow_failure_patterns",
                 "ccdash_generate_aar",
+                "ccdash_aar_review",
                 "artifact_recommendations",
                 # live-agents-count-v1
                 "ccdash_live_active_count",
@@ -449,6 +463,24 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["data"]["feature_id"], "missing-feature")
         self.assertEqual(payload["meta"]["feature_id"], "missing-feature")
+
+    async def test_aar_review_tool_surfaces_error_envelope(self) -> None:
+        payload = await self._call_tool(
+            "ccdash_aar_review",
+            {"document_id": "missing-document"},
+        )
+
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["data"]["document_id"], "missing-document")
+
+    async def test_aar_review_tool_is_callable(self) -> None:
+        payload = await self._call_tool(
+            "ccdash_aar_review",
+            {"document_id": "doc-1"},
+        )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["document_id"], "doc-1")
 
     async def test_artifact_recommendations_tool_returns_markdown_summary(self) -> None:
         payload = await self._call_tool_text(

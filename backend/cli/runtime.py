@@ -131,3 +131,9 @@ def feature_not_found_error_message(feature_id: str, project_id: str | None = No
         return f"Feature '{feature_id}' was not found in project '{project_id}'."
     return f"Feature '{feature_id}' was not found."
 
+
+def document_not_found_error_message(document_id: str, project_id: str | None = None) -> str:
+    if project_id:
+        return f"Document '{document_id}' was not found in project '{project_id}'."
+    return f"Document '{document_id}' was not found."
+

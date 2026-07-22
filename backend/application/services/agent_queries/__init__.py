@@ -23,6 +23,8 @@ from backend.application.services.agent_queries._filters import (
 )
 from backend.application.services.agent_queries.models import (
     AARReportDTO,
+    AARReviewDTO,
+    AARReviewFlag,
     AgentQueryEnvelope,
     AnalyticsKPIsDTO,
     AnalyticsOverviewBundleDTO,
@@ -89,6 +91,7 @@ from backend.application.services.agent_queries.models import (
     WorkflowObservation,
     WorkflowSummary,
 )
+from backend.application.services.agent_queries.aar_review import AARReviewQueryService
 from backend.application.services.agent_queries.analytics_bundle import AnalyticsBundleQueryService
 from backend.application.services.agent_queries.artifact_intelligence import ArtifactIntelligenceQueryService
 from backend.application.services.agent_queries.dashboard import DashboardQueryService
@@ -119,6 +122,9 @@ __all__ = [
     "init_postgres_cache_backend",
     # DTOs and shared contracts
     "AARReportDTO",
+    "AARReviewDTO",
+    "AARReviewFlag",
+    "AARReviewQueryService",
     "AgentQueryEnvelope",
     "AgentQueryProjectScope",
     "Bottleneck",

@@ -1,14 +1,16 @@
 ---
-title: "Feature Contract: CCDash AAR Review MVP — Deterministic AAR↔Session Triage"
+title: "Feature Contract: CCDash AAR Review MVP \u2014 Deterministic AAR\u2194Session\
+  \ Triage"
 schema_version: 2
 doc_type: feature_contract
 it_schema: 1
-description: "Pair an agent-written AAR document back to the session(s) it describes and emit a deterministic, model-free triage verdict via REST/CLI/MCP."
-status: draft
-created: 2026-07-21
-updated: 2026-07-21
+description: Pair an agent-written AAR document back to the session(s) it describes
+  and emit a deterministic, model-free triage verdict via REST/CLI/MCP.
+status: completed
+created: '2026-07-21'
+updated: '2026-07-22'
 feature_slug: ccdash-aar-review-mvp
-category: "features"
+category: features
 estimated_points: 12
 tier: 1
 owner: nick
@@ -17,36 +19,69 @@ risk_level: medium
 changelog_required: true
 node_type: work_package
 acceptance_criteria: []
-definition_of_done: "AARReviewQueryService resolves an AAR document to its session(s), computes the 4 deterministic surface flags plus the triage verdict DTO from data already in the DB, and is reachable read-only via REST, CLI, and MCP — with no model call anywhere on the compute path and no new persisted table."
+definition_of_done: "AARReviewQueryService resolves an AAR document to its session(s),\
+  \ computes the 4 deterministic surface flags plus the triage verdict DTO from data\
+  \ already in the DB, and is reachable read-only via REST, CLI, and MCP \u2014 with\
+  \ no model call anywhere on the compute path and no new persisted table."
 execution_mode: autonomous
-agent_title: "Implement AAR Review MVP (deterministic triage service + 3-transport wiring)"
-agent_summary: "New transport-neutral aar_review.py service: correlate AAR doc → session(s) via existing entity_links/session_correlation, compute 4 deterministic flags, emit a triage verdict DTO, wire to REST+CLI+MCP, log a model-free aar_review_candidate observability event."
-agent_context: "This is the Tier 1 MVP slice of the CCDash Automated AAR Review Loop (see prd_ref once authored). Producer/consumer boundary is fixed by the accepted ADR: CCDash computes deterministic evidence only; op/ARC own all model-driven synthesis, swarm dispatch, and writeback. No LLM call is permitted anywhere in this contract's code path."
+agent_title: Implement AAR Review MVP (deterministic triage service + 3-transport
+  wiring)
+agent_summary: "New transport-neutral aar_review.py service: correlate AAR doc \u2192\
+  \ session(s) via existing entity_links/session_correlation, compute 4 deterministic\
+  \ flags, emit a triage verdict DTO, wire to REST+CLI+MCP, log a model-free aar_review_candidate\
+  \ observability event."
+agent_context: 'This is the Tier 1 MVP slice of the CCDash Automated AAR Review Loop
+  (see prd_ref once authored). Producer/consumer boundary is fixed by the accepted
+  ADR: CCDash computes deterministic evidence only; op/ARC own all model-driven synthesis,
+  swarm dispatch, and writeback. No LLM call is permitted anywhere in this contract''s
+  code path.'
 open_questions:
-  - q: "Do agent-written AARs from op story reliably carry a session/feature frontmatter ref in practice, or does the MVP lean entirely on the two-hop doc→feature→session fallback?"
-    owner: implementer
-    status: open
-  - q: "Should the context-ballooning and generic-agent-fit thresholds be hardcoded constants or CCDASH_* env vars in the MVP?"
-    owner: implementer
-    status: open
+- q: "Do agent-written AARs from op story reliably carry a session/feature frontmatter\
+    \ ref in practice, or does the MVP lean entirely on the two-hop doc\u2192feature\u2192\
+    session fallback?"
+  owner: implementer
+  status: open
+- q: Should the context-ballooning and generic-agent-fit thresholds be hardcoded constants
+    or CCDASH_* env vars in the MVP?
+  owner: implementer
+  status: open
 decisions:
-  - decision: "No new DB table, no new ingest pipeline, no new correlation key for the MVP."
-    rationale: "Tech leg confirmed entity_links already materializes document→session correlation; reuse is total."
-    status: accepted
-  - decision: "aar_review_candidate event is emitted as a structured observability log event (backend/observability/otel.py style, mirroring log_auth_event), not a DB row and not a push to any external system."
-    rationale: "Avoids a new ADR-007 write path and an unbuilt push transport for op in this slice; REST/CLI/MCP remain the actual v1 pull-based data path for op/ARC."
-    status: accepted
+- decision: No new DB table, no new ingest pipeline, no new correlation key for the
+    MVP.
+  rationale: "Tech leg confirmed entity_links already materializes document\u2192\
+    session correlation; reuse is total."
+  status: accepted
+- decision: aar_review_candidate event is emitted as a structured observability log
+    event (backend/observability/otel.py style, mirroring log_auth_event), not a DB
+    row and not a push to any external system.
+  rationale: Avoids a new ADR-007 write path and an unbuilt push transport for op
+    in this slice; REST/CLI/MCP remain the actual v1 pull-based data path for op/ARC.
+  status: accepted
 scores: {}
 related_documents:
-  - docs/project_plans/exploration/ccdash-automated-aar-review/ccdash-automated-aar-review-feasibility-brief.md
-  - docs/project_plans/exploration/ccdash-automated-aar-review/ccdash-automated-aar-review-proposed-adr.md
-  - docs/project_plans/exploration/ccdash-automated-aar-review/spikes/tech-findings.md
+- docs/project_plans/exploration/ccdash-automated-aar-review/ccdash-automated-aar-review-feasibility-brief.md
+- docs/project_plans/exploration/ccdash-automated-aar-review/ccdash-automated-aar-review-proposed-adr.md
+- docs/project_plans/exploration/ccdash-automated-aar-review/spikes/tech-findings.md
 spike_ref: null
 prd_ref: docs/project_plans/PRDs/features/ccdash-automated-aar-review-v1.md
 plan_ref: null
 commit_refs: []
 pr_refs: []
-files_affected: []
+files_affected:
+- backend/application/services/agent_queries/aar_review.py
+- backend/application/services/agent_queries/models.py
+- backend/application/services/agent_queries/__init__.py
+- backend/config.py
+- backend/observability/otel.py
+- backend/routers/agent.py
+- backend/cli/commands/report.py
+- backend/cli/runtime.py
+- backend/mcp/tools/reports.py
+- backend/tests/test_agent_queries_aar_review.py
+- backend/tests/test_agent_router.py
+- backend/tests/test_cli_commands.py
+- backend/tests/test_mcp_server.py
+- CHANGELOG.md
 ---
 
 # Feature Contract: CCDash AAR Review MVP — Deterministic AAR↔Session Triage
@@ -543,3 +578,200 @@ validation. If you find:
 
 Stay within scope. No 5th flag, no persisted table, no FE, no op-side consumer, no writeback, no
 scheduling. The reviewer will check for scope drift against §4 Out of Scope specifically.
+
+---
+
+## Completion Report
+
+### Summary
+
+Implemented `AARReviewQueryService` (`backend/application/services/agent_queries/aar_review.py`) —
+a transport-neutral, read-only service that resolves an AAR document to its correlated session(s)
+via existing `entity_links` rows (falling back to raw frontmatter only when a doc has not yet been
+synced), computes four deterministic surface flags, and combines them with correlation confidence
+into a `surface_only` / `deep_review_recommended` verdict. Wired to all three standing transports
+(REST `GET /agent/aar-review/{document_id}`, CLI `ccdash report aar-review --document <id>`, MCP
+`ccdash_aar_review`) and to a model-free `aar_review_candidate` observability log event. No LLM/model
+call is imported or invoked anywhere on the compute path; no new table, column, or write path was
+added.
+
+### Files Changed
+
+- `backend/application/services/agent_queries/aar_review.py` — new: `AARReviewQueryService`,
+  correlation helpers (`resolve_direct_session_links`, `resolve_feature_link`,
+  `resolve_feature_session_ids`), the four flag evaluators, and `compute_verdict`.
+- `backend/application/services/agent_queries/models.py` — new `AARReviewFlag` / `AARReviewDTO`
+  DTOs (added next to `AARReportDTO`; intentionally not `AgentQueryEnvelope` subclasses per the
+  contract's frozen shape).
+- `backend/application/services/agent_queries/__init__.py` — export the two new DTOs and
+  `AARReviewQueryService`.
+- `backend/config.py` — new `CCDASH_AAR_REVIEW_MIN_CONFIDENCE` (default `0.64`) and
+  `CCDASH_AAR_REVIEW_CONTEXT_BALLOON_PCT` (default `85.0`).
+- `backend/observability/otel.py` — new `log_aar_review_candidate(...)` helper, structured log event
+  only (mirrors `log_auth_event`'s shape), no DB write, no outbound push.
+- `backend/routers/agent.py` — new `GET /agent/aar-review/{document_id}` endpoint + service
+  instantiation; sets `Cache-Control` header consistent with the `system/active-count` precedent.
+- `backend/cli/commands/report.py` — new `report aar-review` Typer subcommand.
+- `backend/cli/runtime.py` — new `document_not_found_error_message(...)` helper (mirrors
+  `feature_not_found_error_message`).
+- `backend/mcp/tools/reports.py` — new `ccdash_aar_review` MCP tool, registered alongside
+  `ccdash_generate_aar`.
+- `backend/tests/test_agent_queries_aar_review.py` — new: unit tests for correlation, all four
+  flags, the verdict combinator, and the observability event.
+- `backend/tests/test_agent_router.py` — new REST delegation/error-path tests; path-registration
+  assertion extended to include the new route.
+- `backend/tests/test_cli_commands.py` — new CLI human-output/error-path tests.
+- `backend/tests/test_mcp_server.py` — sitecustomize monkeypatch + expected-tool-surface set +
+  callable/error-envelope tests extended for `ccdash_aar_review`.
+- `CHANGELOG.md` — `[Unreleased]` entry for the new capability.
+
+### Acceptance Criteria Status
+
+- [x] AC-1: explicit `session:`/`session_id:`/`linked_sessions:` frontmatter ref resolves via
+  `explicit_session_ref`, `correlation_confidence: 1.0` — covered both via a materialized
+  `entity_links` row and via the raw-frontmatter fallback (doc not yet synced).
+- [x] AC-2: no direct session ref but a resolvable `feature` ref with ≥1 linked session falls back
+  to the two-hop strategy, confidence in `[0.64, 1.0]` (verified against real local DB data:
+  `agent-context-entities-v1` → confidence `0.98`).
+- [x] AC-3: no resolvable session/feature ref → `session_refs: []`, `correlation_confidence: 0.0`,
+  `verdict: "surface_only"`, reason states no correlated sessions found; never raises.
+- [x] AC-4 (`context_ballooning`): threshold-crossing, below-threshold, and missing-data (window
+  size `0`) cases all covered.
+- [x] AC-5 (`missing_artifacts`): claimed-vs-produced coverage, full-coverage, and no-claim cases
+  covered.
+- [x] AC-6 (`generic_agent_vs_specialist`): generic-agent-vs-known-specialist-domain match and
+  no-agent-data cases covered via the static extension→specialist lookup table.
+- [x] AC-7 (`stack_ineffectiveness`): matched-stack-with-failure-hit, matched-stack-no-hit, and
+  unmapped-stack cases covered; **descoped extension** — "no feature scope available" is also
+  resolved to `triggered: false` (not an error) when the two-hop strategy did not resolve a feature,
+  since `detect_failure_patterns` requires a feature scope to stay read-only-safe (see Deviations).
+- [x] AC-8: verdict combinator covers all four quadrants (high-confidence+flags,
+  high-confidence+no-flags, low-confidence+flags forced to `surface_only`, no-evidence).
+- [x] AC-9 (REST): `GET /agent/aar-review/{document_id}` registered and returns the DTO;
+  error path returns a structured `status: "error"` body, never a raw 500 (verified via router
+  delegation test + manual reasoning about the service's own try/except-guarded fetches).
+- [x] AC-10 (CLI): `ccdash report aar-review --document <id>` — human/table, `--json`, and `--md`
+  output modes all verified against real local DB data (see Validation Run).
+- [x] AC-11 (MCP): `ccdash_aar_review` registered in `backend/mcp/tools/reports.py`, returns the
+  same DTO shape (as a dict) as REST/CLI; verified in the MCP regression suite.
+- [x] AC-12: exactly one `aar_review_candidate` log event emitted per successful (`status: "ok"`)
+  verdict computation, asserted via a mocked-call unit test.
+- [x] AC-13: `aar_review.py` and its test file import no LLM/agent-invocation client — confirmed by
+  inspection (only stdlib, pydantic-adjacent DTOs, and existing CCDash `document_linking` /
+  `workflow_effectiveness` / `otel` modules are imported); final grep-level confirmation is the
+  mandatory `task-completion-validator` reviewer step per this AC's own `verified_by`.
+
+### Validation Run
+
+| Command | Result | Notes |
+|---|---|---|
+| `ruff check` (project's available linter; `flake8` is not installed in `backend/.venv`) | Pass | Ran against every changed/new file; the only findings (`F401` on `cache_get`/`cache_set` in `agent_queries/__init__.py`) are pre-existing and untouched by this diff. |
+| `backend/.venv/bin/python -c "import backend.main"` | Pass | Clean import, no exceptions. |
+| `pytest backend/tests/test_agent_queries_aar_review.py -v` | Pass | 24/24 — correlation, all 4 flags, verdict combinator, observability event. |
+| `pytest backend/tests/test_agent_queries_reporting.py -v` | Pass | 3/3 — regression check on the sibling service `aar_review.py` mirrors. |
+| `pytest backend/tests/test_agent_router.py -v` | Pass | 16/16 — includes 2 new REST delegation/error tests + extended path-registration assertion. |
+| `pytest backend/tests/test_cli_commands.py -v` | Pass | 22/22 — includes 2 new CLI tests. |
+| `pytest backend/tests/test_session_correlation.py backend/tests/test_document_linking.py -v` | Pass | Regression check — confirms `session_correlation.py` and `document_linking.py` were not modified (read-only reuse). |
+| `pytest backend/tests/ -k "aar_review" -v` (exact command from §10) | **Not run as specified** | Collecting the full `backend/tests/` directory segfaults during collection on this machine — a known, pre-existing, repo-documented hazard unrelated to this change (see project memory: "CCDash pytest collection hangs — run named test files only"). Ran the equivalent scoped form instead: `pytest backend/tests/test_agent_queries_aar_review.py backend/tests/test_agent_router.py backend/tests/test_cli_commands.py -k "aar_review" -v` → 28/28 pass. |
+| `python -m unittest backend.tests.test_mcp_server -v` | Pass | 23/23, including 2 new `ccdash_aar_review` tests and the extended tool-surface-set assertion. |
+| Runtime smoke — CLI | Pass | Ran against the real local dev DB (`data/ccdash_cache.db`, not a fixture): (1) unresolvable id → structured error, exit code 2, no stack trace; (2) resolvable doc with zero correlated sessions → well-formed `surface_only`/`no correlated sessions found`; (3) resolvable doc via the two-hop path (`DOC-.claude-progress-agent-context-entities-phase-1-progress` → feature `agent-context-entities-v1` → session `S-acc99a0b-...`, confidence `0.98`) → well-formed `AARReviewDTO` with all 4 flags evaluated against real session data (context 35.5%, no agent-usage data, no failure-pattern hit). All three CLI output modes (human/table, `--json`, `--md`) rendered correctly. |
+| Runtime smoke — MCP | Pass | Covered by the `backend.tests.test_mcp_server` regression run above (stdio client, real tool registration + call round-trip); no separate manual client session was additionally run. |
+| Docs updated | Pass | `CHANGELOG.md` `[Unreleased]` entry added. |
+| No unrelated changes | Pass | `git status` diff is limited to the files listed above; the two pre-existing `ruff` findings are untouched lines from before this sprint. |
+
+### Deviations From Contract
+
+1. **Correlation implementation reuses `entity_links` confidence values directly rather than
+   `session_correlation.correlate_session`.** The contract's §4/§8 text names both
+   `session_correlation.correlate_session` and `entity_links().get_links_for(...)` as the intended
+   correlation primitives with the exact numeric tiers `1.0` / `0.96` / `0.64–1.0`. On inspection,
+   `session_correlation.correlate_session` correlates a *session* to a *feature* (the opposite
+   direction) and reports confidence as a **qualitative** `"high"/"medium"/"low"/"unknown"` string —
+   it has no relationship to the numeric tiers. Those exact numeric tiers (`explicit_session_ref` =
+   `1.0`, `task_session_ref` = `0.96`, and the doc→feature strategies in the `0.64–1.0` band) live
+   directly on the `entity_links` rows themselves, written by `sync_engine.py`'s link-rebuild pass.
+   The implemented correlation helper therefore reads `entity_links` rows directly (via
+   `get_links_for`, same call shape as `reporting.py`) and does not import
+   `session_correlation.correlate_session` at all. This is a **more faithful** realization of the
+   contract's own stated intent ("must reuse these values, not invent new ones") than importing a
+   helper whose confidence semantics don't match. `document_linking.extract_frontmatter_references`
+   is used as designed — as the fallback for a not-yet-synced document.
+2. **`missing_artifacts`'s "produced" side uses `session_file_updates.file_path` (via
+   `sessions().get_file_updates`), not `output_artifacts_json`.** The contract's §6 citation of
+   `output_artifacts_json` (`sqlite_migrations.py:1301`/`:1420`, `types.ts:653-654`) turned out on
+   inspection to be the Research Foundry `rf_events`/`research_runs` column, not a per-session
+   sessions-table column — those line numbers/field name do not correspond to a session-scoped
+   produced-files list. `session_file_updates.file_path` (already exposed via
+   `SessionRepository.get_file_updates`) is the actual per-session produced-file source and is used
+   instead; `linkedArtifacts`/`session_artifacts` (title/type/source, no file path) was evaluated and
+   is not file-path-bearing, so it is not used for this comparison.
+3. **`stack_ineffectiveness` calls `detect_failure_patterns` only, never
+   `get_workflow_effectiveness`, and only when a feature scope was resolved via the two-hop
+   strategy.** `get_workflow_effectiveness` has a write path (`upsert_effectiveness_rollup` /
+   `purge_effectiveness_rollups`) gated by `not feature_id and not start and not end` — calling it
+   without a feature scope risks a write, which would violate §6's "no row is ever written by this
+   contract's code" invariant. `detect_failure_patterns` has no write path at all, so it is called
+   read-only, scoped by `feature_id`, only when the two-hop correlation resolved one. When no feature
+   scope is available (direct-session-ref correlation, which carries no feature association), the
+   flag resolves to `triggered: false` with rationale `"no feature scope available for
+   failure-pattern lookup"` — never a guess, per the Hard Invariant.
+4. **The two extension→specialist/stack lookup tables are unified into one static dict**
+   (`_EXTENSION_STACK_LOOKUP`) mapping file extension → `(stack label, specialist agent)`, reusing
+   this repo's own documented Agent Assignment Quick Reference (`dev-execution` skill: React/UI work
+   → `ui-engineer-enhanced`, general backend work → `backend-typescript-architect`) rather than
+   inventing a new taxonomy. This keeps both `generic_agent_vs_specialist` and
+   `stack_ineffectiveness` deterministic and checked-in as plain data, per the Risk Areas mitigation.
+5. No flag was descoped for drifting toward semantic judgment — all four remained implementable as
+   threshold/lookup checks over already-fetched rows.
+
+### Risks / Limitations
+
+- **Fixture/real-data coverage for the confidence-tier matrix is asymmetric.** The local dev DB had
+  no `document`↔`session` direct links at all (only two-hop `document→feature→session` chains), so
+  the `explicit_session_ref`/`task_session_ref` direct-link paths and the frontmatter fallback path
+  were validated with fixtures (unit tests) but not against real local data; the two-hop path was
+  validated against both fixtures and real data. This matches the contract's own OQ-1 concern about
+  how often AARs carry a direct session/session_id frontmatter ref in practice.
+- **`generic_agent_vs_specialist` and `stack_ineffectiveness`'s static lookup tables are a first cut**
+  (a handful of common extensions) — they will under-trigger (never falsely trigger) for stacks/
+  extensions not yet in the table, which is the safe failure direction per the Hard Invariant, but
+  narrows real-world recall until the table is extended with production observations.
+- **AC-9's "not a raw 500" claim rests on the service's own defensive `try`/`except` around every
+  sub-fetch** (documents/sessions/file_updates/entity_links/detect_failure_patterns), not on a
+  FastAPI-level exception handler test with a live broken DB connection; the router delegation test
+  confirms the DTO passes through unchanged, but does not simulate a genuinely corrupt document row.
+
+### Follow-Up Recommendations
+
+- **PRD Phase 2 scoping input**: in the one real two-hop example exercised during runtime smoke, the
+  AAR-shaped progress document had **zero** direct session/session_id frontmatter and reached its
+  session purely through the `document→feature→session` two-hop path. This is a single data point,
+  not a statistically meaningful sample, but it is a live signal in favor of the OQ-1 conservative
+  default already assumed in this contract (lean on the two-hop fallback, don't assume explicit
+  session refs are common).
+- Once real `aar_review_candidate` log volume exists, consider whether
+  `generic_agent_vs_specialist`'s and `stack_ineffectiveness`'s static lookup tables need expansion
+  before Phase 2's 5th flag work begins.
+- The Phase 2 persisted-rollup table (deferred here per §4 Out of Scope) would be a natural place to
+  record which correlation strategy actually fired per document, to build the real-world tier
+  distribution referenced in OQ-1 without re-deriving it from logs.
+
+### Memory Candidates Captured
+
+- **Gotcha (candidate, confidence 0.8)**: "In CCDash's `entity_links`, the numeric correlation
+  confidence tiers (`explicit_session_ref`=1.0, `task_session_ref`=0.96, doc→feature
+  strategies=0.64–1.0) live on the materialized link rows themselves (`sync_engine.py`'s link-rebuild
+  pass), not on `session_correlation.correlate_session` (which reports a separate, qualitative
+  high/medium/low confidence for the different session→feature correlation direction). A new
+  deterministic doc↔session correlation feature should read `entity_links` rows directly rather than
+  importing `correlate_session`." — anchor:
+  `backend/application/services/agent_queries/session_correlation.py:317`,
+  `backend/db/sync_engine.py:6600`.
+- **Gotcha (candidate, confidence 0.75)**: "`get_workflow_effectiveness` has a hidden write path
+  (`upsert_effectiveness_rollup`/`purge_effectiveness_rollups`) gated by
+  `not feature_id and not start and not end`; a read-only query service that wants failure-pattern
+  data without risking a write should call `detect_failure_patterns` (no write path) and always pass
+  a `feature_id`, or skip the call entirely when no feature scope is known." — anchor:
+  `backend/services/workflow_effectiveness.py:1151`, `:1271`.
+- Not yet promoted to the memory store (no CLI/API call made this sprint) — recommend Opus or a
+  follow-up pass files these via the memory CLI/API per `.claude/rules/memory.md`.

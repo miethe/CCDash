@@ -193,6 +193,35 @@ class CliCommandsTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 2)
         self.assertIn("Feature 'missing-feature' was not found in project 'project-1'.", result.output)
 
+    def test_report_aar_review_renders_human_output(self) -> None:
+        payload = _CliPayload(
+            status="ok",
+            project_id="project-1",
+            summary="surface_only",
+            source_refs=["doc-1"],
+        )
+
+        with patch(
+            "backend.cli.commands.report.runtime.execute_query",
+            new=AsyncMock(return_value=(payload, "project-1")),
+        ):
+            result = self.runner.invoke(app, ["report", "aar-review", "--document", "doc-1"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("AAR Review: doc-1", result.output)
+
+    def test_report_aar_review_errors_when_document_missing(self) -> None:
+        payload = _CliPayload(status="error", project_id="project-1")
+
+        with patch(
+            "backend.cli.commands.report.runtime.execute_query",
+            new=AsyncMock(return_value=(payload, "project-1")),
+        ):
+            result = self.runner.invoke(app, ["report", "aar-review", "--document", "missing-doc"])
+
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("Document 'missing-doc' was not found in project 'project-1'.", result.output)
+
     def test_artifact_rankings_renders_json_output(self) -> None:
         payload = _ArtifactRankingsPayload(
             status="ok",

@@ -305,6 +305,42 @@ class AARReportDTO(AgentQueryEnvelope):
     evidence_links: list[str] = Field(default_factory=list)
 
 
+class AARReviewFlag(BaseModel):
+    """One deterministic surface-issue signal computed for an AAR review.
+
+    Each flag is a threshold/lookup/regex check over already-materialized DB
+    rows -- never a model/semantic judgment (ccdash-aar-review-mvp §8 Hard
+    Invariant).
+    """
+
+    flag_id: str
+    triggered: bool = False
+    severity: Literal["low", "medium", "high"] = "low"
+    evidence_refs: list[str] = Field(default_factory=list)
+    rationale: str = ""
+
+
+class AARReviewDTO(BaseModel):
+    """Deterministic AAR-document-to-session triage verdict (Tier 1 MVP).
+
+    Intentionally **not** an ``AgentQueryEnvelope`` subclass -- this shape is
+    frozen verbatim by the ccdash-aar-review-mvp feature contract's §6 Data
+    Requirements (``generated_at`` is a plain ISO-8601 string here, not a
+    ``datetime``, and there is no ``data_freshness`` field).
+    """
+
+    status: Literal["ok", "error"] = "ok"
+    document_id: str
+    session_refs: list[str] = Field(default_factory=list)
+    correlation_confidence: float = 0.0
+    correlation_strategy: str | None = None
+    flags: list[AARReviewFlag] = Field(default_factory=list)
+    verdict: Literal["surface_only", "deep_review_recommended"] | None = None
+    reasons: list[str] = Field(default_factory=list)
+    generated_at: str = ""
+    source_refs: list[str] = Field(default_factory=list)
+
+
 # ── Planning query DTOs (PCP-201) ────────────────────────────────────────────
 # These DTOs wrap the backend/models.py planning primitives (PlanningNode,
 # PlanningEdge, PlanningGraph, PlanningEffectiveStatus, PlanningPhaseBatch)

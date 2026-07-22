@@ -10,6 +10,8 @@ from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.agent_queries import (
     AARReportDTO,
+    AARReviewDTO,
+    AARReviewQueryService,
     ArtifactRankingsDTO,
     ArtifactRecommendationsDTO,
     ArtifactIntelligenceQueryService,
@@ -113,6 +115,7 @@ feature_forensics_query_service = FeatureForensicsQueryService()
 feature_evidence_summary_service = FeatureEvidenceSummaryService()
 workflow_diagnostics_query_service = WorkflowDiagnosticsQueryService()
 reporting_query_service = ReportingQueryService()
+aar_review_query_service = AARReviewQueryService()
 artifact_intelligence_query_service = ArtifactIntelligenceQueryService()
 # PCP-202: planning query surface — one singleton for the whole process lifetime.
 planning_query_service = PlanningQueryService()
@@ -266,6 +269,31 @@ async def get_feature_forensics(
         feature_id,
         bypass_cache=bypass_cache,
     )
+
+
+@agent_router.get("/aar-review/{document_id}", response_model=AARReviewDTO)
+async def get_aar_review(
+    response: Response,
+    document_id: str = Path(..., description="AAR document id or path to triage."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AARReviewDTO:
+    """Deterministic, model-free AAR-document-to-session triage review.
+
+    Resolves an agent-written AAR document to the session(s) it describes,
+    computes four deterministic surface flags, and returns a triage verdict.
+    No LLM call is made anywhere on this endpoint's compute path.
+    """
+    app_request = await _resolve_app_request(request_context, core_ports)
+    result = await aar_review_query_service.get_review(
+        app_request.context,
+        app_request.ports,
+        document_id,
+        bypass_cache=bypass_cache,
+    )
+    response.headers["Cache-Control"] = f"max-age={config.CCDASH_QUERY_CACHE_TTL_SECONDS}"
+    return result
 
 
 @agent_router.get("/feature-evidence-summary/{feature_id}", response_model=FeatureEvidenceSummary)
