@@ -69,6 +69,9 @@ commit_refs:
 - a1205aa
 - de69cda
 - 92ed576
+- 11accbd
+merge_commit: 7d96c3e
+merge_branch: main
 pr_refs: []
 files_affected:
 - backend/application/services/agent_queries/aar_review.py
