@@ -30,6 +30,7 @@ import {
   BookOpen,
   Bot,
   ChevronRight,
+  ClipboardCheck,
   FileSearch,
   GitBranch,
   Layers,
@@ -65,6 +66,7 @@ import type {
 import { apiRequestJson } from '../../services/apiClient';
 
 const FeatureAnalyticsPanel = React.lazy(() => import('./FeatureAnalyticsPanel'));
+const FeatureAARReviewPanel = React.lazy(() => import('./FeatureAARReviewPanel'));
 
 // ── Tab metadata ──────────────────────────────────────────────────────────────
 
@@ -83,6 +85,7 @@ const TAB_META: TabMeta[] = [
   { id: 'sessions',   label: 'Sessions',   icon: Bot,         lazy: true  },
   { id: 'analytics',  label: 'Analytics',  icon: BarChart3,   lazy: true  },
   { id: 'artifacts',  label: 'Artifacts',  icon: Layers,      lazy: true  },
+  { id: 'aar-review', label: 'AAR Review', icon: ClipboardCheck, lazy: true  },
   { id: 'research',   label: 'Research',   icon: Telescope,   lazy: true  },
   { id: 'council',    label: 'Council',    icon: Shield,      lazy: true  },
   { id: 'logs',       label: 'Logs',       icon: ScrollText,  lazy: true  },
@@ -978,6 +981,20 @@ export function FeatureDetailShell() {
             ) : (
               <EmptyState icon={Layers} title="No active project" body="Select a project to view artifacts." />
             )}
+          </div>
+        )}
+
+        {/* AAR Review: feature-scoped filter over the project-wide aar_reviews rollup */}
+        {activatedTabs.has('aar-review') && (
+          <div
+            role="tabpanel"
+            id="tab-panel-aar-review"
+            aria-labelledby="tab-aar-review"
+            hidden={activeTab !== 'aar-review'}
+          >
+            <React.Suspense fallback={<LazyTabFallback label="AAR review" />}>
+              <FeatureAARReviewPanel projectId={projectId} featureId={featureId} />
+            </React.Suspense>
           </div>
         )}
 

@@ -153,22 +153,33 @@ export function adaptAarReviewEntry(wire: AarReviewWireDTO): AarReviewEntry {
 
 export interface UseAarReviewRollupQueryOptions {
   projectId: string | null | undefined;
+  /**
+   * Optional feature-scoping filter. When set, the returned `data` is
+   * narrowed to entries whose `correlation.featureId` matches — applied
+   * client-side via TanStack Query's `select` so the underlying
+   * project-wide fetch and cache entry are unaffected (no new endpoint,
+   * no extra request). Absent/null → project-wide behavior (unchanged).
+   */
+  featureId?: string | null;
   /** Set false to suppress the query (e.g. project not yet loaded). */
   enabled?: boolean;
 }
 
 /**
- * Fetches the persisted `aar_reviews` rollup for a project.
+ * Fetches the persisted `aar_reviews` rollup for a project, optionally
+ * narrowed to one feature.
  *
  * Returns the standard TQ query result (`data`, `isLoading`, `isError`, ...);
  * `data` is always a fully-adapted `AarReviewEntry[]` (never the raw wire
- * shape) — `[]` when the project has no AAR reviews yet, not an error.
+ * shape) — `[]` when the project (or feature, when `featureId` is set) has
+ * no AAR reviews yet, not an error.
  */
 export function useAarReviewRollupQuery({
   projectId,
+  featureId,
   enabled = true,
 }: UseAarReviewRollupQueryOptions) {
-  return useQuery<AarReviewEntry[]>({
+  return useQuery<AarReviewEntry[], Error, AarReviewEntry[]>({
     queryKey: aarReviewKeys.list(projectId ?? ''),
     queryFn: async (): Promise<AarReviewEntry[]> => {
       if (!projectId) throw new Error('projectId is required');
@@ -176,6 +187,8 @@ export function useAarReviewRollupQuery({
       const payload = await apiRequestJson<unknown>(`/api/v1/project/aar-review?${params.toString()}`);
       return extractAarReviewWireItems(payload).map(adaptAarReviewEntry);
     },
+    select: (entries) =>
+      featureId ? entries.filter((entry) => entry.correlation.featureId === featureId) : entries,
     staleTime: 30_000,
     gcTime: 300_000,
     enabled: !!projectId && enabled,

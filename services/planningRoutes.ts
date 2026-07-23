@@ -104,6 +104,7 @@ export const FEATURE_DETAIL_TABS = [
   'sessions',
   'analytics',
   'artifacts',
+  'aar-review',
   'research',
   'council',
   'logs',

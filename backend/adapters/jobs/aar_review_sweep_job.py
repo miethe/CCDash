@@ -4,7 +4,12 @@
 ``AARReviewQueryService.get_review`` read path (``backend/application/
 services/agent_queries/aar_review.py``) and the one-time
 ``backfill_aar_reviews_for_project`` script
-(``backend/scripts/aar_reviews_backfill.py``). Each periodic tick:
+(``backend/scripts/aar_reviews_backfill.py``). Each periodic tick sweeps
+EVERY registered project (``_resolve_projects_to_sweep`` --
+``ports.workspace_registry.list_projects()``, ADR-006; the same
+registry-driven enumeration the watcher fan-out and periodic
+analytics-snapshot/cache-warming tasks already use), never just the single
+project the worker's sync engine happens to be bound to. For each project:
 
   1. Discovers candidate AAR documents already synced into the ``documents``
      table (the same filename heuristic the backfill script uses --
@@ -71,6 +76,7 @@ from backend.db.repositories.aar_reviews import (
     SqliteAarReviewsRepository,
     build_aar_review_row,
 )
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 
 from .aar_review_sweep_guards import (
     build_triaged_pair_ledger,
@@ -81,7 +87,12 @@ from .aar_review_sweep_guards import (
 
 logger = logging.getLogger("ccdash.jobs.aar_review_sweep")
 
-__all__ = ["AARReviewSweepJob", "AARReviewSweepRunResult", "looks_like_aar_document"]
+__all__ = [
+    "AARReviewSweepJob",
+    "AARReviewSweepRunResult",
+    "looks_like_aar_document",
+    "resolve_session_workspace_id",
+]
 
 
 # ── AAR-document discovery heuristic ─────────────────────────────────────────
@@ -117,6 +128,39 @@ def looks_like_aar_document(doc_row: dict[str, Any]) -> bool:
         or stem.endswith(_AAR_STEM_SUFFIX)
         or stem.startswith(_AAR_STEM_PREFIX)
     )
+
+
+def resolve_session_workspace_id(project: Any | None) -> str:
+    """Resolve the ``workspace_id`` to use for a project's Guard-1 session fetch.
+
+    Multi-project correctness follow-up (this sweep previously hardcoded the
+    literal ``"default-local"`` at the Guard 1 ``sessions_repo.get_by_id`` call
+    site -- see the module history). ``workspace_id`` is a strict-equality
+    predicate on the ``sessions`` table (``SqliteSessionRepository.get_by_id``),
+    so this MUST resolve to the exact value the session row was written under,
+    or the fetch returns ``None`` and Guard 1 fail-closed-excludes the session
+    unconditionally.
+
+    Every write path that populates the rows this sweep reads -- filesystem
+    sync (``sync_engine.py``'s ``_WORKSPACE_ID``) AND the deterministic triage
+    service that computes the very ``session_ids`` Guard 1 filters
+    (``aar_review.py``'s own document/session/link lookups) -- is, as of this
+    writing, hardcoded to the shared ``DEFAULT_WORKSPACE_ID`` constant
+    regardless of project. There is no per-project workspace materialized
+    anywhere in the registry/session context today (``Project`` carries no
+    ``workspace_id`` field; grepped for a project_id->workspace_id resolver --
+    none exists). Resolving to anything else here would silently break Guard 1
+    for every project, not just fail to route multi-tenant workspaces.
+
+    This function is the single, named, per-project resolution point (never a
+    bare string literal at the call site): it prefers a materialized
+    ``project.workspace_id`` when one is ever added to the ``Project`` model,
+    and otherwise falls back to ``DEFAULT_WORKSPACE_ID`` -- so a future real
+    per-project workspace can be threaded through without another change to
+    the call site.
+    """
+    materialized = str(getattr(project, "workspace_id", "") or "").strip() if project is not None else ""
+    return materialized or DEFAULT_WORKSPACE_ID
 
 
 def _aar_reviews_repo(db: Any) -> "SqliteAarReviewsRepository | PostgresAarReviewsRepository":
@@ -175,11 +219,9 @@ class AARReviewSweepJob:
     async def execute(self, *, trigger: str = "scheduled") -> AARReviewSweepRunResult:
         if not bool(getattr(config, "CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED", False)):
             return AARReviewSweepRunResult(success=True, outcome="disabled")
-        project = self.project
-        if project is None:
-            return AARReviewSweepRunResult(success=True, outcome="no_project")
-        project_id = str(getattr(project, "id", "") or "")
-        if not project_id:
+
+        projects = self._resolve_projects_to_sweep()
+        if not projects:
             return AARReviewSweepRunResult(success=True, outcome="no_project")
 
         # ── (project_id, trigger) coalescing guard ──────────────────────────
@@ -187,26 +229,77 @@ class AARReviewSweepJob:
         # guard (CCDASH_SYNC_COALESCING_ENABLED): the set-membership check and
         # the add are both synchronous (no await between them), so the
         # check-then-add is atomic in asyncio's cooperative single-threaded
-        # event loop. A second concurrent dispatch for the same key coalesces
-        # rather than running a duplicate sweep.
+        # event loop. A second concurrent dispatch for the same (project_id,
+        # trigger) key coalesces rather than running a duplicate sweep for
+        # THAT project -- keyed per-project so one project's in-flight sweep
+        # never blocks another project's tick.
         coalescing_enabled = self.coalescing_enabled and bool(
             getattr(config, "SYNC_COALESCING_ENABLED", True)
         )
-        coal_key = (project_id, trigger or "scheduled")
-        if coalescing_enabled:
-            if coal_key in self._in_flight:
-                logger.info(
-                    "aar_review_sweep coalesced key=%s — in-flight sweep detected; "
-                    "returning deduplicated result (no silent drop)",
-                    coal_key,
-                )
-                return AARReviewSweepRunResult(success=True, outcome="coalesced")
-            self._in_flight.add(coal_key)
-        try:
-            return await self._execute_inner(project, project_id)
-        finally:
+
+        project_results: dict[str, AARReviewSweepRunResult] = {}
+        for project in projects:
+            project_id = str(getattr(project, "id", "") or "")
+            if not project_id:
+                continue
+
+            coal_key = (project_id, trigger or "scheduled")
             if coalescing_enabled:
-                self._in_flight.discard(coal_key)
+                if coal_key in self._in_flight:
+                    logger.info(
+                        "aar_review_sweep coalesced key=%s — in-flight sweep detected; "
+                        "returning deduplicated result (no silent drop)",
+                        coal_key,
+                    )
+                    project_results[project_id] = AARReviewSweepRunResult(success=True, outcome="coalesced")
+                    continue
+                self._in_flight.add(coal_key)
+            try:
+                project_results[project_id] = await self._execute_inner(project, project_id)
+            finally:
+                if coalescing_enabled:
+                    self._in_flight.discard(coal_key)
+
+        return _aggregate_sweep_results(project_results)
+
+    def _resolve_projects_to_sweep(self) -> list[Any]:
+        """Resolve the set of projects this tick should sweep.
+
+        Multi-project correctness fix: when constructed with an explicit
+        ``project`` (a single-project pin -- used by existing unit tests and
+        any future explicit scoping), sweep JUST that project, preserving
+        prior single-project behavior byte-for-byte. Otherwise enumerate
+        EVERY registered project via ``ports.workspace_registry.list_projects()``
+        -- the SAME DB-authoritative, registry-driven enumeration helper the
+        watcher fan-out and the periodic analytics-snapshot/cache-warming
+        tasks already use (``backend/adapters/jobs/runtime.py``), reused here
+        rather than re-derived (ADR-006: the registry is the single source of
+        truth for "which projects exist"). This sweep is a project-scoped
+        READ over already-synced rows, not a filesystem-scanning job, so --
+        unlike the sync/watcher jobs -- it does not need to respect the
+        worker's single-project sync-scope binding; it should always cover
+        every registered project regardless of that binding.
+
+        ``getattr(..., "list_projects", None)`` mirrors the exact defensive
+        pattern already used at every ``list_projects()`` call site in
+        ``runtime.py`` (e.g. around its cache-warming/analytics-snapshot
+        tasks) -- tolerates a test/mock registry that does not implement the
+        method, degrading to "no projects" rather than raising.
+        """
+        if self.project is not None:
+            return [self.project]
+        workspace_registry = getattr(self.ports, "workspace_registry", None)
+        if workspace_registry is None:
+            return []
+        list_projects = getattr(workspace_registry, "list_projects", None)
+        if list_projects is None:
+            return []
+        try:
+            projects = list(list_projects())
+        except Exception:
+            logger.exception("aar_review_sweep: workspace_registry.list_projects() failed")
+            return []
+        return [p for p in projects if str(getattr(p, "id", "") or "")]
 
     async def _execute_inner(self, project: Any, project_id: str) -> AARReviewSweepRunResult:
         # Local imports: backend.application.services.{common,agent_queries}
@@ -266,6 +359,11 @@ class AARReviewSweepJob:
 
         review_service = AARReviewQueryService()
         sessions_repo = ports.storage.sessions()
+        # ── Per-project workspace_id resolution (Guard 1) ────────────────────
+        # Resolved once per project (not per session) -- see
+        # ``resolve_session_workspace_id``'s docstring for why this must match
+        # the exact value the session row was written under.
+        session_workspace_id = resolve_session_workspace_id(project)
 
         documents_processed = 0
         pairs_written = 0
@@ -295,7 +393,7 @@ class AARReviewSweepJob:
             for session_id in dto.correlation.session_ids:
                 try:
                     row = await sessions_repo.get_by_id(
-                        session_id, project_id, workspace_id="default-local"  # TODO(workspace-routing)
+                        session_id, project_id, workspace_id=session_workspace_id
                     )
                 except Exception:
                     row = None
@@ -374,3 +472,61 @@ class AARReviewSweepJob:
                 "watermark": newest_stamp,
             },
         )
+
+
+def _aggregate_sweep_results(
+    project_results: dict[str, AARReviewSweepRunResult],
+) -> AARReviewSweepRunResult:
+    """Fold N per-project ``AARReviewSweepRunResult`` rows into one tick-level result.
+
+    Count fields sum across every swept project. ``outcome``/``success``
+    collapse per the following precedence, chosen to preserve the exact
+    single-project outcome values pre-multi-project (``"disabled"``,
+    ``"no_project"``, ``"coalesced"``, ``"success"``, ``"error"``) when there
+    is only one project in ``project_results``:
+
+    - No projects at all -> ``"no_project"`` (mirrors the pre-fan-out no-op).
+    - Every project coalesced -> ``"coalesced"`` (mirrors the single-project
+      coalescing-guard test exactly when there is one project).
+    - Any project failed structurally (``success=False``) -> overall
+      ``success=False``; ``outcome="error"`` only when EVERY project failed,
+      ``"partial_error"`` when some succeeded and some failed -- one
+      project's structural failure (e.g. a transient DB error resolving its
+      application request) must never mask another project's successful
+      sweep, and must never be silently swallowed either.
+    - Otherwise -> ``"success"``.
+    """
+    if not project_results:
+        return AARReviewSweepRunResult(success=True, outcome="no_project")
+
+    results = list(project_results.values())
+    outcomes = {r.outcome for r in results}
+    if outcomes == {"coalesced"}:
+        return AARReviewSweepRunResult(success=True, outcome="coalesced")
+
+    successes = [r for r in results if r.success]
+    failures = [r for r in results if not r.success]
+    if failures and not successes:
+        outcome = "error"
+    elif failures:
+        outcome = "partial_error"
+    else:
+        outcome = "success"
+
+    errors = {pid: r.error for pid, r in project_results.items() if r.error}
+
+    return AARReviewSweepRunResult(
+        success=not failures,
+        outcome=outcome,
+        documents_scanned=sum(r.documents_scanned for r in results),
+        documents_processed=sum(r.documents_processed for r in results),
+        pairs_written=sum(r.pairs_written for r in results),
+        pairs_already_triaged=sum(r.pairs_already_triaged for r in results),
+        sessions_excluded_self_referential=sum(r.sessions_excluded_self_referential for r in results),
+        error="; ".join(f"{pid}: {err}" for pid, err in sorted(errors.items())) or None,
+        details={
+            "projectCount": len(project_results),
+            "projectIds": sorted(project_results.keys()),
+            "perProject": {pid: r.details for pid, r in project_results.items()},
+        },
+    )

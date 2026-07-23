@@ -2646,7 +2646,6 @@ class RuntimeJobAdapter:
     def _start_aar_review_sweep_task(self) -> asyncio.Task[None] | None:
         """Phase 6 (T6-006): default-off AAR-review autonomous sweep worker.
 
-        Mirrors ``_start_artifact_rollup_export_task`` exactly: single-project
         ``worker``-profile-only, gated on both the injected job object being
         present (container.py only constructs it when
         ``CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED`` is true AND the
@@ -2656,6 +2655,14 @@ class RuntimeJobAdapter:
         re-checks the flag (defense in depth, matching
         ``ArtifactRollupExportJob.execute()``'s own internal
         ``CCDASH_ARTIFACT_INTELLIGENCE_ENABLED`` check).
+
+        Unlike the single-project telemetry/rollup/analytics jobs, the AAR
+        review sweep is ALWAYS multi-project: ``container.py`` constructs
+        ``AARReviewSweepJob`` with ``project=None`` unconditionally, so every
+        tick enumerates and sweeps every registered project via
+        ``ports.workspace_registry.list_projects()`` (see
+        ``AARReviewSweepJob._resolve_projects_to_sweep``), independent of
+        whatever single project this worker's sync engine is bound to.
         """
         if self.profile.name != "worker" or self.aar_review_sweep_job is None:
             return None
@@ -2682,7 +2689,8 @@ class RuntimeJobAdapter:
                             "sessionsExcludedSelfReferential": int(
                                 getattr(result, "sessions_excluded_self_referential", 0) or 0
                             ),
-                            "projectId": self.project_binding.project.id if self.project_binding is not None else None,
+                            "projectIds": list((getattr(result, "details", None) or {}).get("projectIds", [])),
+                            "projectCount": int((getattr(result, "details", None) or {}).get("projectCount", 0) or 0),
                         },
                     )
                 except asyncio.CancelledError:

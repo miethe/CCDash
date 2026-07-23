@@ -26,6 +26,7 @@ from __future__ import annotations
 import types
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
@@ -41,10 +42,15 @@ from backend.adapters.jobs.aar_review_sweep_guards import (
     is_self_referential_session_row,
     select_incremental_documents,
 )
-from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob, looks_like_aar_document
+from backend.adapters.jobs.aar_review_sweep_job import (
+    AARReviewSweepJob,
+    looks_like_aar_document,
+    resolve_session_workspace_id,
+)
 from backend.application.context import Principal, ProjectScope
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.db.repositories.aar_reviews import SqliteAarReviewsRepository
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.sqlite_migrations import run_migrations
 from backend.scripts.aar_reviews_backfill import looks_like_aar_document as _script_looks_like_aar_document
 
@@ -216,6 +222,29 @@ class LooksLikeAarDocumentParityTests(unittest.TestCase):
             )
 
 
+# ── 4b. resolve_session_workspace_id (multi-project workspace-routing fix) ──
+
+
+class ResolveSessionWorkspaceIdTests(unittest.TestCase):
+    """Guard 1's session fetch must never use a bare string literal -- it must
+    call this named, per-project resolution function instead."""
+
+    def test_falls_back_to_shared_constant_when_project_is_none(self) -> None:
+        self.assertEqual(resolve_session_workspace_id(None), DEFAULT_WORKSPACE_ID)
+
+    def test_falls_back_to_shared_constant_when_project_has_no_workspace_id(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        self.assertEqual(resolve_session_workspace_id(project), DEFAULT_WORKSPACE_ID)
+
+    def test_falls_back_to_shared_constant_when_workspace_id_is_blank(self) -> None:
+        project = types.SimpleNamespace(id="project-1", workspace_id="   ")
+        self.assertEqual(resolve_session_workspace_id(project), DEFAULT_WORKSPACE_ID)
+
+    def test_prefers_a_materialized_per_project_workspace_id(self) -> None:
+        project = types.SimpleNamespace(id="project-1", workspace_id="workspace-xyz")
+        self.assertEqual(resolve_session_workspace_id(project), "workspace-xyz")
+
+
 # ── 5. AARReviewSweepJob integration fixtures ───────────────────────────────
 
 
@@ -254,6 +283,38 @@ class _WorkspaceRegistry:
             sessions_dir=Path("/tmp/project/sessions"),
             docs_dir=Path("/tmp/project/docs"),
             progress_dir=Path("/tmp/project/progress"),
+        )
+
+
+class _MultiWorkspaceRegistry:
+    """Multi-project variant of ``_WorkspaceRegistry`` -- backs
+    ``ports.workspace_registry.list_projects()`` with a real, non-empty list
+    so ``AARReviewSweepJob._resolve_projects_to_sweep`` fans out across all of
+    them (task: sweep multiple registered projects in one tick)."""
+
+    def __init__(self, projects: list[Any]):
+        self._by_id = {str(getattr(p, "id", "") or ""): p for p in projects}
+
+    def list_projects(self) -> list[Any]:
+        return list(self._by_id.values())
+
+    def get_project(self, project_id):
+        return self._by_id.get(project_id)
+
+    def get_active_project(self):
+        return next(iter(self._by_id.values()), None)
+
+    def resolve_scope(self, project_id=None):
+        project = self._by_id.get(project_id) if project_id else self.get_active_project()
+        if project is None:
+            return None, None
+        return None, ProjectScope(
+            project_id=project.id,
+            project_name=project.name,
+            root_path=Path(f"/tmp/{project.id}"),
+            sessions_dir=Path(f"/tmp/{project.id}/sessions"),
+            docs_dir=Path(f"/tmp/{project.id}/docs"),
+            progress_dir=Path(f"/tmp/{project.id}/progress"),
         )
 
 
@@ -310,8 +371,17 @@ def _direct_session_link(doc_id: str, session_id: str) -> dict:
     }
 
 
-def _build_ports(db, *, doc_rows: list[dict], links_by_doc: dict[str, list[dict]], session_rows_by_id: dict[str, dict]) -> CorePorts:
+def _build_ports(
+    db,
+    *,
+    doc_rows: list[dict],
+    links_by_doc: dict[str, list[dict]],
+    session_rows_by_id: dict[str, dict],
+    project_workspace_id: str | None = None,
+) -> CorePorts:
     project = types.SimpleNamespace(id="project-1", name="Project 1")
+    if project_workspace_id is not None:
+        project.workspace_id = project_workspace_id
 
     async def _get_by_id(document_id, **_kw):
         for row in doc_rows:
@@ -340,6 +410,58 @@ def _build_ports(db, *, doc_rows: list[dict], links_by_doc: dict[str, list[dict]
         identity_provider=_IdentityProvider(),
         authorization_policy=_AuthorizationPolicy(),
         workspace_registry=_WorkspaceRegistry(project),
+        storage=_Storage(documents_repo=documents_repo, sessions_repo=sessions_repo, links_repo=links_repo, db=db),
+        job_scheduler=types.SimpleNamespace(schedule=lambda job, **_: job),
+        integration_client=types.SimpleNamespace(invoke=AsyncMock(return_value={})),
+    )
+
+
+def _build_multi_project_ports(
+    db,
+    *,
+    projects: list[Any],
+    doc_rows_by_project: dict[str, list[dict]],
+    links_by_doc: dict[str, list[dict]],
+    session_rows_by_id: dict[str, dict],
+) -> CorePorts:
+    """Multi-project counterpart of ``_build_ports`` -- backs
+    ``workspace_registry.list_projects()`` with every project passed in, and
+    scopes ``documents_repo.list_all(project_id)`` to just that project's
+    rows (mirroring the real repository's project_id-filtered query)."""
+    all_doc_rows = [row for rows in doc_rows_by_project.values() for row in rows]
+
+    async def _get_by_id(document_id, **_kw):
+        for row in all_doc_rows:
+            if row["id"] == document_id:
+                return row
+        return None
+
+    async def _list_all(project_id=None, **_kw):
+        if project_id is None:
+            return list(all_doc_rows)
+        return list(doc_rows_by_project.get(project_id, []))
+
+    async def _get_links_for(entity_type, entity_id, link_type=None, **_kw):
+        _ = entity_type, link_type
+        return links_by_doc.get(entity_id, [])
+
+    async def _sessions_get_by_id(session_id, _project_id=None, **_kw):
+        return session_rows_by_id.get(session_id)
+
+    documents_repo = types.SimpleNamespace(
+        list_all=AsyncMock(side_effect=_list_all),
+        get_by_id=AsyncMock(side_effect=_get_by_id),
+    )
+    sessions_repo = types.SimpleNamespace(
+        get_by_id=AsyncMock(side_effect=_sessions_get_by_id),
+        get_file_updates=AsyncMock(return_value=[]),
+    )
+    links_repo = types.SimpleNamespace(get_links_for=AsyncMock(side_effect=_get_links_for))
+
+    return CorePorts(
+        identity_provider=_IdentityProvider(),
+        authorization_policy=_AuthorizationPolicy(),
+        workspace_registry=_MultiWorkspaceRegistry(projects),
         storage=_Storage(documents_repo=documents_repo, sessions_repo=sessions_repo, links_repo=links_repo, db=db),
         job_scheduler=types.SimpleNamespace(schedule=lambda job, **_: job),
         integration_client=types.SimpleNamespace(invoke=AsyncMock(return_value={})),
@@ -591,6 +713,163 @@ class AARReviewSweepJobTests(unittest.IsolatedAsyncioTestCase):
             second_result = await job_second.execute()
             self.assertEqual(second_result.pairs_written, 0)
             mock_clear_second.assert_not_awaited()
+
+    async def test_guard1_fetch_uses_the_resolved_per_project_workspace_id(self) -> None:
+        """The Guard 1 fetch must thread the resolved per-project workspace_id
+        through -- never the old bare ``"default-local"`` literal -- so a
+        project with a materialized ``workspace_id`` is honored end-to-end."""
+        aar_doc = _aar_doc_row()
+        ports = _build_ports(
+            self.db,
+            doc_rows=[aar_doc],
+            links_by_doc={aar_doc["id"]: [_direct_session_link(aar_doc["id"], "session-1")]},
+            session_rows_by_id={"session-1": _session_row("session-1")},
+            project_workspace_id="workspace-xyz",
+        )
+        job = AARReviewSweepJob(ports=ports, project=ports.workspace_registry.get_active_project())
+
+        result = await job.execute()
+
+        self.assertEqual(result.pairs_written, 1)
+        sessions_repo = ports.storage.sessions()
+        # AARReviewQueryService.get_review() itself also calls sessions().get_by_id
+        # (its own, out-of-scope, still-hardcoded "default-local" lookup that
+        # PRODUCES the session_ids Guard 1 filters) plus session_detail's
+        # enrichment lookup -- Guard 1's OWN fetch is always the LAST call in
+        # AARReviewSweepJob._execute_inner's per-session loop, after
+        # get_review() has already returned.
+        self.assertGreaterEqual(sessions_repo.get_by_id.await_count, 1)
+        last_call = sessions_repo.get_by_id.await_args_list[-1]
+        self.assertEqual(last_call.kwargs.get("workspace_id"), "workspace-xyz")
+
+    async def test_guard1_fetch_falls_back_to_shared_constant_without_a_materialized_workspace(self) -> None:
+        aar_doc = _aar_doc_row()
+        ports = _build_ports(
+            self.db,
+            doc_rows=[aar_doc],
+            links_by_doc={aar_doc["id"]: [_direct_session_link(aar_doc["id"], "session-1")]},
+            session_rows_by_id={"session-1": _session_row("session-1")},
+        )
+        job = AARReviewSweepJob(ports=ports, project=ports.workspace_registry.get_active_project())
+
+        result = await job.execute()
+
+        self.assertEqual(result.pairs_written, 1)
+        sessions_repo = ports.storage.sessions()
+        self.assertGreaterEqual(sessions_repo.get_by_id.await_count, 1)
+        last_call = sessions_repo.get_by_id.await_args_list[-1]
+        self.assertEqual(last_call.kwargs.get("workspace_id"), DEFAULT_WORKSPACE_ID)
+
+
+# ── 6. Multi-project sweep (fan-out correctness) ────────────────────────────
+
+
+class MultiProjectAARReviewSweepTests(unittest.IsolatedAsyncioTestCase):
+    """T?-0xx: AARReviewSweepJob constructed with ``project=None`` must
+    enumerate and sweep EVERY registered project via
+    ``ports.workspace_registry.list_projects()`` in a single tick -- not just
+    whichever single project the worker's sync engine happens to be bound
+    to."""
+
+    async def asyncSetUp(self) -> None:
+        self.db = await aiosqlite.connect(":memory:")
+        self.db.row_factory = aiosqlite.Row
+        await self.db.execute("PRAGMA busy_timeout = 30000")
+        await run_migrations(self.db)
+        self._flag_patch = patch.object(config, "CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED", True)
+        self._flag_patch.start()
+
+    async def asyncTearDown(self) -> None:
+        self._flag_patch.stop()
+        await self.db.close()
+
+    async def _count(self) -> int:
+        cursor = await self.db.execute("SELECT COUNT(*) FROM aar_reviews")
+        (count,) = await cursor.fetchone()
+        return int(count)
+
+    async def test_sweeps_multiple_registered_projects_in_one_tick(self) -> None:
+        project_a = types.SimpleNamespace(id="project-a", name="Project A")
+        project_b = types.SimpleNamespace(id="project-b", name="Project B")
+        doc_a = _aar_doc_row(doc_id="aar-doc-a", project_id="project-a")
+        doc_b = _aar_doc_row(doc_id="aar-doc-b", project_id="project-b")
+        ports = _build_multi_project_ports(
+            self.db,
+            projects=[project_a, project_b],
+            doc_rows_by_project={"project-a": [doc_a], "project-b": [doc_b]},
+            links_by_doc={
+                doc_a["id"]: [_direct_session_link(doc_a["id"], "session-a")],
+                doc_b["id"]: [_direct_session_link(doc_b["id"], "session-b")],
+            },
+            session_rows_by_id={
+                "session-a": _session_row("session-a"),
+                "session-b": _session_row("session-b"),
+            },
+        )
+        # project=None -> the job must enumerate ALL registered projects via
+        # the registry rather than being scoped to a single bound project.
+        job = AARReviewSweepJob(ports=ports, project=None)
+
+        with patch(
+            "backend.application.services.agent_queries.aclear_project_cache", new=AsyncMock(),
+        ) as mock_clear:
+            result = await job.execute()
+
+        self.assertEqual(result.outcome, "success")
+        self.assertTrue(result.success)
+        self.assertEqual(result.pairs_written, 2)
+        self.assertEqual(result.documents_scanned, 2)
+        self.assertEqual(sorted(result.details.get("projectIds", [])), ["project-a", "project-b"])
+        self.assertEqual(result.details.get("projectCount"), 2)
+        self.assertEqual(await self._count(), 2)
+
+        stored_a = await SqliteAarReviewsRepository(self.db).get_one(doc_a["id"], "session-a")
+        stored_b = await SqliteAarReviewsRepository(self.db).get_one(doc_b["id"], "session-b")
+        self.assertIsNotNone(stored_a)
+        self.assertIsNotNone(stored_b)
+
+        # Cache invalidation fires once per project that actually wrote a row.
+        self.assertEqual(mock_clear.await_count, 2)
+        mock_clear.assert_any_await("project-a")
+        mock_clear.assert_any_await("project-b")
+
+        # Watermarks are tracked independently, per project.
+        self.assertIn("project-a", job._watermarks)
+        self.assertIn("project-b", job._watermarks)
+
+    async def test_guard2_dedup_ledger_is_scoped_independently_per_project(self) -> None:
+        """A pair already triaged in project A must never suppress a
+        DIFFERENT pair in project B on the same tick (or vice versa)."""
+        project_a = types.SimpleNamespace(id="project-a", name="Project A")
+        project_b = types.SimpleNamespace(id="project-b", name="Project B")
+        doc_a = _aar_doc_row(doc_id="aar-doc-a", project_id="project-a")
+        doc_b = _aar_doc_row(doc_id="aar-doc-b", project_id="project-b")
+        ports = _build_multi_project_ports(
+            self.db,
+            projects=[project_a, project_b],
+            doc_rows_by_project={"project-a": [doc_a], "project-b": [doc_b]},
+            links_by_doc={
+                doc_a["id"]: [_direct_session_link(doc_a["id"], "session-a")],
+                doc_b["id"]: [_direct_session_link(doc_b["id"], "session-b")],
+            },
+            session_rows_by_id={
+                "session-a": _session_row("session-a"),
+                "session-b": _session_row("session-b"),
+            },
+        )
+
+        job_before_restart = AARReviewSweepJob(ports=ports, project=None)
+        first_result = await job_before_restart.execute()
+        self.assertEqual(first_result.pairs_written, 2)
+
+        # Simulate a worker restart: a brand-new job instance sharing no
+        # in-process state, reading the SAME persisted ledger.
+        job_after_restart = AARReviewSweepJob(ports=ports, project=None)
+        second_result = await job_after_restart.execute()
+
+        self.assertEqual(second_result.pairs_written, 0, "both pairs were already triaged before the restart")
+        self.assertEqual(second_result.pairs_already_triaged, 2)
+        self.assertEqual(await self._count(), 2, "row count must stay stable across the restart boundary")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,9 @@
  *   6. Loading state renders the loading affordance.
  *   7. Error state renders the error affordance (never throws).
  *   8. No active project renders the "no active project" fallback.
+ *   9. featureId scoping: with a featureId, only entries whose
+ *      correlation.featureId matches render; without one, all project
+ *      entries render (existing project-wide behavior, unchanged).
  *
  * Strategy: mock `useAarReviewRollupQuery` directly and render via
  * `renderToStaticMarkup` — same approach as the rest of the Planning test
@@ -64,7 +67,11 @@ function makeEntry(overrides: Partial<AarReviewEntry> = {}): AarReviewEntry {
   };
 }
 
-function render(entries: AarReviewEntry[] | undefined, opts: Partial<typeof mocks.queryResult> = {}): string {
+function render(
+  entries: AarReviewEntry[] | undefined,
+  opts: Partial<typeof mocks.queryResult> = {},
+  featureId?: string | null,
+): string {
   mocks.queryResult = {
     data: entries,
     isLoading: false,
@@ -72,7 +79,7 @@ function render(entries: AarReviewEntry[] | undefined, opts: Partial<typeof mock
     error: null,
     ...opts,
   };
-  return renderToStaticMarkup(<FeatureAARReviewPanel projectId="proj-1" />);
+  return renderToStaticMarkup(<FeatureAARReviewPanel projectId="proj-1" featureId={featureId} />);
 }
 
 // ── Verdict states (all 3 must render distinctly) ────────────────────────────
@@ -242,6 +249,44 @@ describe('FeatureAARReviewPanel — resilience to null/absent optional fields', 
     expect(() => render([entry])).not.toThrow();
     const html = render([entry]);
     expect(html).toContain('unknown document');
+  });
+});
+
+// ── featureId scoping ─────────────────────────────────────────────────────────
+
+describe('FeatureAARReviewPanel — featureId scoping', () => {
+  it('with a featureId, only entries whose correlation.featureId matches render', () => {
+    const html = render(
+      [
+        makeEntry({ documentId: 'a.md', correlation: { strategy: 'x', confidence: 1, sessionIds: ['s1'], featureId: 'FEAT-1' } }),
+        makeEntry({ documentId: 'b.md', correlation: { strategy: 'x', confidence: 1, sessionIds: ['s2'], featureId: 'FEAT-2' } }),
+        makeEntry({ documentId: 'c.md', correlation: { strategy: 'x', confidence: 1, sessionIds: ['s3'], featureId: 'FEAT-1' } }),
+      ],
+      {},
+      'FEAT-1',
+    );
+    expect(html).toContain('a.md');
+    expect(html).toContain('c.md');
+    expect(html).not.toContain('b.md');
+  });
+
+  it('without a featureId, all project entries render (existing project-wide behavior)', () => {
+    const html = render([
+      makeEntry({ documentId: 'a.md', correlation: { strategy: 'x', confidence: 1, sessionIds: ['s1'], featureId: 'FEAT-1' } }),
+      makeEntry({ documentId: 'b.md', correlation: { strategy: 'x', confidence: 1, sessionIds: ['s2'], featureId: 'FEAT-2' } }),
+    ]);
+    expect(html).toContain('a.md');
+    expect(html).toContain('b.md');
+  });
+
+  it('a featureId that matches nothing renders the same empty state, never an error', () => {
+    const html = render(
+      [makeEntry({ documentId: 'a.md', correlation: { strategy: 'x', confidence: 1, sessionIds: ['s1'], featureId: 'FEAT-1' } })],
+      {},
+      'FEAT-999',
+    );
+    expect(html).toContain('data-testid="aar-review-empty-state"');
+    expect(html).not.toContain('a.md');
   });
 });
 

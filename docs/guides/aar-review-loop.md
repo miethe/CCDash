@@ -3,7 +3,7 @@ title: "Automated AAR Review Loop Operator Guide"
 description: "Configure and operate the CCDash AAR review loop: read endpoint, capability discovery, autonomous worker flags, and self-recursion guards"
 category: guides
 tags: [api, aar-review, operator, autonomous-worker, guards, scalability]
-updated: 2026-07-22
+updated: 2026-07-23
 ---
 
 # Automated AAR Review Loop Operator Guide
@@ -27,10 +27,13 @@ The AAR Review Loop consists of two layers:
    flags. No LLM involved. Verdicts and evidence are available immediately via the v1
    endpoint and persisted in the `aar_reviews` table.
 
-2. **Autonomous Worker** (opt-in, off by default): A background job that periodically
-   reviews AAR candidates against quota-gated escalation limits. The worker observes
-   deterministic triaged candidates and emits observability logs. No model calls. No
-   writeback without an op-approved run.
+2. **Autonomous Worker** (enabled by default; worker-profile-gated): A background sweep job
+   that periodically reviews AAR candidates across **every registered project** and persists
+   verdicts to the `aar_reviews` table under quota-gated escalation limits. It runs only under
+   the `worker` runtime profile (the dedicated `ccdash_worker` container in the compose stack),
+   never under `api`/`local`/`test`. No model calls. No writeback without an op-approved run
+   (that seam is staged but unwired). Set `CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=false`
+   to disable.
 
 ---
 
@@ -151,16 +154,21 @@ many reviews, implement client-side filtering and caching.
 
 ## Autonomous Worker: Flags and Guards
 
-### Enabling the Worker
+### Enabling / Disabling the Worker
 
-By default, the autonomous worker is **disabled**. To enable it, set:
+The autonomous worker is **enabled by default** (`CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=true`).
+To disable it, set:
 
 ```bash
-export CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=true
+export CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=false
 ```
 
-The worker runs as a background job in the `local` and `worker` runtime profiles only;
-the `api` profile (hosted) does not run background jobs.
+The periodic sweep is scheduled **only** under the `worker` runtime profile (the dedicated
+`ccdash_worker` container in the compose stack). It is constructed under `worker`/`worker-watch`
+but scheduled under `worker` alone, so the `worker-watch` container never double-runs it; the
+`api`, `local`, and `test` profiles never construct it. Each tick sweeps **every registered
+project** (`AARReviewSweepJob._resolve_projects_to_sweep` → `workspace_registry.list_projects()`),
+independent of whichever single project the worker's sync engine is bound to.
 
 ### Escalation Quota and Window
 
@@ -194,7 +202,7 @@ Two flags gate escalation for newly-observed skills/workflows:
 | Variable | Default | Notes |
 |---|---|---|
 | `CCDASH_AAR_NEW_SKILL_THRESHOLD` | 3 | Minimum observations of a skill before automating its AAR reviews. |
-| `CCDASH_AAR_LOOKBACK_DAYS` | 30 | Window for counting skill observations (rolling days). |
+| `CCDASH_AAR_NEW_SKILL_LOOKBACK_DAYS` | 30 | Window for counting skill observations (rolling days). |
 
 **Interpretation**: A skill must have been observed at least 3 times in the past 30 days
 before the worker will escalate its AAR reviews. This prevents automation on untested workflows.
@@ -206,7 +214,7 @@ before the worker will escalate its AAR reviews. This prevents automation on unt
 export CCDASH_AAR_NEW_SKILL_THRESHOLD=1
 
 # More conservative: wait 14 days of data
-export CCDASH_AAR_LOOKBACK_DAYS=14
+export CCDASH_AAR_NEW_SKILL_LOOKBACK_DAYS=14
 ```
 
 ---
@@ -224,23 +232,25 @@ that authored the AAR. If both match known AAR review tooling, the candidate is 
 
 **Result**: If rejected, `triage_verdict` stays `surface_only` and escalation does not occur.
 
-**Important caveat for LAN deployments**: This guard depends on real session data being
-ingested and attached to the AAR document. On a multi-workspace deployment where
-`workspace_id` resolution is not yet finalized (currently hardcoded to `default-local`),
-a broken fetch fails CLOSED — the worker triages nothing rather than lose the guard.
-Once workspace_id resolution is implemented (P7 deferred item), this will be resolved.
+**How workspace scoping works**: The Guard-1 session fetch resolves `workspace_id` per project
+via `resolve_session_workspace_id(project)` — it prefers a materialized `project.workspace_id`
+and otherwise falls back to `DEFAULT_WORKSPACE_ID` (`default-local`). A missing/unfetchable
+session row still fails CLOSED (the session is excluded — a self-recursion guard must fail
+closed). See "Multi-Workspace Deployments (residual)" below for the one remaining limitation.
 
 ### Guard 2: Dedup Ledger
 
-**What it does**: Maintains a deterministic ledger of already-triaged `(aar_document_id, feature_id, session_id)` tuples.
+**What it does**: Skips `(aar_document_id, session_id)` pairs that were already triaged — the
+same composite primary key as the `aar_reviews` table.
 
-**How**: Before escalating, the worker hashes these three fields and checks the dedup ledger.
-If the tuple has been escalated before, the new candidate is rejected.
+**How**: Each tick seeds an in-memory ledger from the persisted `aar_reviews` rows and skips any
+pair already present. The composite PK + `ON CONFLICT DO UPDATE` on `upsert` is the correctness
+backstop (idempotent across worker restarts); the in-memory ledger is a within-tick optimization.
 
-**Result**: If rejected, escalation does not occur. The candidate is logged but not emitted.
+**Result**: If a pair is already triaged, it is skipped — no duplicate row, no duplicate work.
 
-**Persistence**: Dedup entries are stored in the `aar_review_escalation_ledger` table
-and never purged; they serve as a durable record of all escalations.
+**Persistence**: There is **no separate ledger table** — the dedup state *is* the persisted
+`aar_reviews` rows, re-read each tick.
 
 ### Guard 3: Per-Project Escalation Quota
 
@@ -260,11 +270,13 @@ rejects new candidates if the quota is exhausted.
 
 ### When the Worker Runs
 
-The worker is a scheduled background job that runs:
+The worker is a scheduled background job on the `worker`-profile container that runs on a fixed
+interval:
 
-- **On startup**: Light pass over new/changed AAR documents.
-- **On schedule**: Every 5 minutes (tunable via `CCDASH_AAR_REVIEW_CHECK_INTERVAL_SECONDS`).
-- **On watch trigger**: When new AAR documents are detected by the filesystem watcher.
+- **On schedule**: every `CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS` seconds (default `1800` = 30
+  minutes; floored at 60s). The first tick runs shortly after the worker container starts.
+- **Incremental + multi-project**: each tick processes new/changed AAR documents since the last
+  per-project watermark, across every registered project.
 
 ### What the Worker Emits
 
@@ -294,8 +306,9 @@ To integrate the autonomous worker into op's dispatch loop, op must:
 3. Filter verdicts client-side: `human_triage_required` → human only, `deep_review_recommended` → optional light review.
 4. For candidates to escalate, op submits an approved run to its own system; CCDash never initiates.
 
-The operator may choose to leave `CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=false` indefinitely;
-v1 is fully functional with PULL-only, human-driven integration.
+The worker is on by default; an operator may set `CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=false`
+to run PULL-only, human-driven integration instead. Either way the writeback seam stays dormant —
+CCDash never initiates an escalation to op/ARC.
 
 ---
 
@@ -323,10 +336,11 @@ and artifact_intelligence services; zero new storage or network interfaces.
 **Symptom**: `CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=true` but no escalation logs.
 
 **Checklist**:
-- Confirm runtime profile is `local` or `worker`, not `api`.
-- Check startup logs for `[aar-review-worker] registered` message.
-- Verify `CCDASH_AAR_ESCALATION_QUOTA > 0` and window is set.
-- Confirm at least one AAR document exists (`GET /api/v1/project/aar-review`).
+- Confirm the process is the `worker`-profile container (the sweep does NOT schedule under
+  `api`, `local`, `test`, or even `worker-watch`).
+- Check startup logs for `Started periodic AAR review sweep job (profile=worker interval=…s)`.
+- Verify `CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED` is not set to a falsy value (default true).
+- Confirm at least one AAR document exists for some registered project (`GET /api/v1/project/aar-review`).
 
 ### No Reviews in Endpoint Response
 
@@ -350,14 +364,17 @@ and artifact_intelligence services; zero new storage or network interfaces.
   export CCDASH_AAR_ESCALATION_WINDOW_HOURS=6
   ```
 
-### Multi-Workspace Deployment Warning
+### Multi-Workspace Deployments (residual)
 
-**Current Limitation**: On a multi-workspace/LAN deployment where workspace_id resolution
-is not yet finalized, Guard 1 (provenance self-exclusion) depends on correct workspace
-scoping of session fetches. If workspace_id is hardcoded to `default-local`, the guard
-may fail CLOSED on a different workspace. Before enabling the worker in multi-workspace
-production, **ensure workspace_id resolution is complete** (see P7 deferred items in the
-implementation plan).
+The sweep now fans out over **every registered project** and resolves `workspace_id` per project
+(`resolve_session_workspace_id`). This is correct for the common **single-workspace, multi-project**
+node (all projects on `default-local`) — e.g. the LAN node's `ccdash_worker` container.
+
+**Residual**: the triage service `aar_review.py` still uses the `default-local` workspace for the
+session lookups that *produce* the correlated `session_ids`, so a genuinely multi-*workspace* node
+(projects on non-default workspaces) is not yet fully supported end-to-end. Guard 1 stays
+fail-closed either way, so the worst case is "triages nothing for that project," never a wrong
+write. Finish end-to-end multi-workspace support before placing projects on non-default workspaces.
 
 ---
 
@@ -422,7 +439,7 @@ Commit the updated file alongside your code change.
 2. **Discover capability**: Call `GET /api/v1/capabilities` and confirm `aar-review` is present.
 3. **Query reviews** (PULL): Call `GET /api/v1/project/aar-review?project_id=<id>` to fetch verdicts.
 4. **Optionally backfill**: Run the backfill script if no reviews appear.
-5. **(Optional) Enable autonomous worker**: Set `CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=true` and tune quota flags if automated escalation is desired.
+5. **Autonomous worker (on by default)**: The `worker`-profile container sweeps all registered projects on an interval and persists verdicts; tune quota flags as needed, or set `CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED=false` to disable.
 6. **(Optional) Integrate with op**: Set up op polling + client-side filtering of verdicts; op approves escalations, never CCDash.
 
 ---

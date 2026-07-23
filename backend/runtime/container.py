@@ -197,10 +197,19 @@ class RuntimeContainer:
             # here; the flag itself is re-checked inside the job's own
             # execute() for defense in depth) -- constructed only when the
             # flag is on, so the runtime pays zero cost when it is off.
+            # Multi-project correctness fix: ALWAYS construct with project=None
+            # (never self.project_binding.project) so the job enumerates EVERY
+            # registered project via ports.workspace_registry.list_projects()
+            # (see AARReviewSweepJob._resolve_projects_to_sweep) instead of
+            # being scoped to whichever single project the worker's sync
+            # engine happens to be bound to -- the AAR review sweep is a
+            # cross-project read-only rollup and must cover the whole
+            # DB-authoritative registry (ADR-006), not the sync/watcher
+            # single-project binding.
             aar_review_sweep_job=(
                 AARReviewSweepJob(
                     ports=self.require_ports(),
-                    project=self.project_binding.project if self.project_binding is not None else None,
+                    project=None,
                 )
                 if self.profile.name in _export_profiles
                 and bool(getattr(config, "CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED", False))

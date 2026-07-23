@@ -294,11 +294,25 @@ function VerdictSummaryStrip({ entries }: { entries: AarReviewEntry[] }) {
 
 export interface FeatureAARReviewPanelProps {
   projectId: string | null | undefined;
+  /**
+   * Optional feature scope. When present, only rollup entries whose
+   * `correlation.featureId` matches are rendered (see
+   * `useAarReviewRollupQuery`'s `select` filter); absent/null keeps the
+   * original project-wide behavior. An empty filtered list falls through
+   * to the same empty state as "no reviews yet" — never an error.
+   */
+  featureId?: string | null;
 }
 
-export function FeatureAARReviewPanel({ projectId }: FeatureAARReviewPanelProps) {
-  const query = useAarReviewRollupQuery({ projectId, enabled: !!projectId });
-  const entries = query.data ?? [];
+export function FeatureAARReviewPanel({ projectId, featureId }: FeatureAARReviewPanelProps) {
+  const query = useAarReviewRollupQuery({ projectId, featureId, enabled: !!projectId });
+  const allEntries = query.data ?? [];
+  // Belt-and-suspenders: the hook already narrows via its `select` filter,
+  // but this component-level filter is idempotent and keeps the panel
+  // correct even when the hook is mocked out directly (see test suite).
+  const entries = featureId
+    ? allEntries.filter((entry) => entry.correlation.featureId === featureId)
+    : allEntries;
 
   if (!projectId) {
     return (

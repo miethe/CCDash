@@ -48,11 +48,28 @@ karen: **COMPLETE-WITH-CAVEATS — SAFE TO MERGE: YES — hard pre-merge blocker
 
 ## Honest caveats (not blockers)
 
-1. **FE panel not yet mounted** into a user-reachable route — built + unit-tested, staged. The read
-   loop is proven via the live endpoint; the CHANGELOG advertises only REST/CLI/MCP read surfaces.
-2. **Live persistence** in prod requires the default-off P6 sweep worker or the backfill script;
-   read surfaces are empty until one runs.
-3. **Writeback seam is dormant** (no production caller) — safest state.
+1. ~~FE panel not yet mounted~~ **RESOLVED (2026-07-23 follow-up)**: `FeatureAARReviewPanel` is now
+   mounted as a feature-scoped "AAR Review" lazy tab in `FeatureDetailShell` (filters to the
+   feature's `correlation.feature_id`); 23/23 vitest.
+2. ~~Live persistence requires the default-off worker~~ **RESOLVED (2026-07-23 follow-up)**: the
+   sweep worker is now **default-on** (worker-profile-gated) and fans out over **every registered
+   project** per tick (`_resolve_projects_to_sweep` → `workspace_registry.list_projects()`), with
+   per-project `workspace_id` resolution replacing the `default-local` hardcode. Verified: the LAN
+   node runs a dedicated `ccdash_worker` (profile `worker`) container that schedules the sweep;
+   `worker-watch` correctly does not (no double-run). Delivered to the nuc via `/redeploy` (pure
+   code — config default + FE build; no env edits). task-completion-validator: **APPROVED**.
+3. **Writeback seam is dormant** (no production caller) — safest state. Unchanged.
+
+### Residuals after the 2026-07-23 follow-up
+- **Multi-*workspace* (not multi-project)**: `aar_review.py`'s own session lookups still use the
+  `default-local` workspace, so projects on a non-default workspace aren't fully supported
+  end-to-end. Guard 1 stays fail-closed → worst case "triages nothing," never a wrong write. The
+  common single-workspace/multi-project node (the nuc) is correct.
+- **PG operability smoke not run in this environment** (no Docker here). No new DDL was added (the
+  `aar_reviews` table shipped at v42 in P1) and the multi-project fan-out reuses the already-
+  PG-proven `workspace_registry.list_projects()` helper, so risk is low — but verify the
+  `ccdash_worker` container's sweep logs on the nuc after `/redeploy`, or run
+  `npm run docker:hosted:smoke:seeded-pg` on a Docker host.
 
 ## Pre-production checklist (before flipping `CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED`)
 

@@ -99,17 +99,23 @@ CCDASH_AAR_REVIEW_CONTEXT_BALLOON_PCT = _env_float("CCDASH_AAR_REVIEW_CONTEXT_BA
 CCDASH_AAR_NEW_SKILL_THRESHOLD = _env_int("CCDASH_AAR_NEW_SKILL_THRESHOLD", 3)
 CCDASH_AAR_NEW_SKILL_LOOKBACK_DAYS = _env_int("CCDASH_AAR_NEW_SKILL_LOOKBACK_DAYS", 30)
 # ccdash-automated-aar-review Phase 6 (T6-006): AARReviewSweepJob -- the
-# default-off autonomous background worker that periodically triages
-# new/changed AAR documents and PERSISTS aar_reviews rows without any
-# human/agent trigger. Default-off: when False the worker is not
-# registered/constructed at all (backend/runtime/container.py) -- every
-# existing AAR-review read/write path (get_review, the T1-008 backfill
+# autonomous background worker that periodically triages new/changed AAR
+# documents and PERSISTS aar_reviews rows without any human/agent trigger.
+# Default-ON as of the multi-project-correctness fix (worker now enumerates
+# every registered project via the DB-authoritative registry, ADR-006, and
+# resolves Guard 1's session fetch per project rather than hardcoding a
+# single workspace_id literal) -- worker/worker-watch-profile-gated
+# (backend/runtime/container.py's `_export_profiles`) and re-checked at
+# execute() time (defense in depth), so `local`/`test` profiles never
+# construct or run it regardless of this flag. Set to False to fully
+# disable: when False the worker is not registered/constructed at all --
+# every existing AAR-review read/write path (get_review, the T1-008 backfill
 # script, the /aar-review v1 endpoint) is completely unaffected. This flag
 # does NOT gate any escalation/handoff behavior -- the sweep worker only
 # ever computes (reusing aar_review.py verbatim) and upserts rows via the
 # aar_reviews repository; it never dispatches ARC/swarm and never mutates
 # SkillMeat/skills/agents (Hard Invariant #2, unchanged).
-CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED = _env_bool("CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED", False)
+CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED = _env_bool("CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED", True)
 # CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS (default: 1800 = 30 min)
 # Interval between AARReviewSweepJob ticks when the worker above is enabled.
 # Clamped to a 60s floor in runtime/runtime.py (mirrors
