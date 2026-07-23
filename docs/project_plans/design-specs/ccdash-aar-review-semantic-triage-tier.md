@@ -1,23 +1,32 @@
 ---
 schema_version: 2
 doc_type: design_spec
-maturity: idea
-title: "CCDash AAR Review — Autonomous Semantic-Triage Tier (v2)"
+maturity: shelved
+title: "CCDash AAR Review \u2014 Autonomous Semantic-Triage Tier (v2)"
 status: draft
 created: 2026-07-22
-updated: 2026-07-22
+updated: '2026-07-23'
 feature_slug: ccdash-aar-review-semantic-triage-tier
-problem_statement: "v1's AAR↔session triage service is deliberately deterministic-only (Hard Invariant #1: no LLM on CCDash's read/recall/compute path), so signals that require semantic judgment — a claimed outcome not matching what the transcript actually did, a subtly-wrong-but-'successful' agent/skill choice, a recommendation only visible from reading the full evidence — are lost at the CCDash layer unless op happens to look."
+problem_statement: "v1's AAR\u2194session triage service is deliberately deterministic-only\
+  \ (Hard Invariant #1: no LLM on CCDash's read/recall/compute path), so signals that\
+  \ require semantic judgment \u2014 a claimed outcome not matching what the transcript\
+  \ actually did, a subtly-wrong-but-'successful' agent/skill choice, a recommendation\
+  \ only visible from reading the full evidence \u2014 are lost at the CCDash layer\
+  \ unless op happens to look."
 open_questions:
-- "OQ-A: CCDash vs op ownership of the semantic-triage tier (the deal-killer)."
-- "OQ-B: How to keep the model lane provably OFF the read path (process/deployment separation)?"
-- "OQ-C: Cost/quota governance + interaction with v1's 3 self-recursion guards."
-- "OQ-D: Which semantic signals are worth a model pass (value vs. token cost)?"
-- "OQ-E: Does this reuse ARC (op council) rather than a bespoke capable-model call — i.e., is the 'capable model' rung just the existing ARC pipeline?"
+- 'OQ-A: CCDash vs op ownership of the semantic-triage tier (the deal-killer).'
+- 'OQ-B: How to keep the model lane provably OFF the read path (process/deployment
+  separation)?'
+- 'OQ-C: Cost/quota governance + interaction with v1''s 3 self-recursion guards.'
+- 'OQ-D: Which semantic signals are worth a model pass (value vs. token cost)?'
+- "OQ-E: Does this reuse ARC (op council) rather than a bespoke capable-model call\
+  \ \u2014 i.e., is the 'capable model' rung just the existing ARC pipeline?"
 explored_alternatives:
-- "A) Keep v1 as-is; op owns 100% of model work (status quo — the seam-purity option)."
-- "B) CCDash-hosted semantic-triage job lane (this spec)."
-- "C) CCDash-adjacent but separate service/worker that reads CCDash over the API (middle ground; preserves recall-path purity without embedding models in CCDash's process)."
+- "A) Keep v1 as-is; op owns 100% of model work (status quo \u2014 the seam-purity\
+  \ option)."
+- B) CCDash-hosted semantic-triage job lane (this spec).
+- C) CCDash-adjacent but separate service/worker that reads CCDash over the API (middle
+  ground; preserves recall-path purity without embedding models in CCDash's process).
 related_documents:
 - docs/project_plans/PRDs/features/ccdash-automated-aar-review-v1.md
 - docs/project_plans/implementation_plans/features/ccdash-automated-aar-review-v1.md
