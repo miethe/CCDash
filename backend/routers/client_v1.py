@@ -45,6 +45,7 @@ from ccdash_contracts import CapabilityV1, SessionDetailV1, SessionTranscriptPag
 from backend.request_scope import get_core_ports, get_request_context
 from backend.routers._client_v1_auth import require_v1_auth
 from backend.routers.client_v1_models import (
+    AARReviewListDTO,
     ClientV1Envelope,
     ClientV1PaginatedEnvelope,
     FeatureDocumentsDTO,
@@ -55,6 +56,7 @@ from backend.routers.client_v1_models import (
     SessionFamilyDTO,
     build_client_v1_meta,
 )
+from backend.routers._client_v1_aar_review import get_aar_review_v1
 from backend.routers._client_v1_project import (
     get_project_status_v1,
     get_workflow_failures_v1,
@@ -148,6 +150,8 @@ _V1_CAPABILITIES: list[str] = [
     "research-runs:*",        # Research Foundry run telemetry ingest (T1-007) — POST
                                # /api/v1/ingest/rf-events + rf_events persistence; wildcard
                                # placeholder for the eventual query surface (Phase 3+).
+    "aar-review",              # Persisted AAR-document-to-session triage rollup (T4-002) —
+                               # GET /api/v1/project/aar-review reads the aar_reviews table.
 ]
 
 
@@ -194,6 +198,24 @@ async def project_status(
 ) -> ClientV1Envelope[ProjectStatusDTO]:
     """Return the project status snapshot."""
     return await get_project_status_v1(project_id, request_context, core_ports, bypass_cache=bypass_cache)
+
+
+@client_v1_router.get("/project/aar-review")
+async def project_aar_review(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[AARReviewListDTO]:
+    """Return the persisted AAR-document-to-session triage rollup for a project.
+
+    Serves the ``aar_reviews`` table (computed offline by
+    :class:`~backend.application.services.agent_queries.aar_review.AARReviewQueryService`)
+    deduplicated to one §7.2 ``AARReviewDTO`` per document. An empty
+    ``reviews`` list is a normal contract state (no persisted rows yet),
+    never an HTTP error.
+    """
+    return await get_aar_review_v1(project_id, request_context, core_ports, bypass_cache=bypass_cache)
 
 
 # ---------------------------------------------------------------------------

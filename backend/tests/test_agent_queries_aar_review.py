@@ -224,7 +224,10 @@ class CorrelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(result.correlation_confidence, 0.64)
         self.assertEqual(result.session_refs, ["session-2"])
 
-    async def test_no_correlation_returns_surface_only_without_error(self) -> None:
+    async def test_no_correlation_returns_human_triage_required_without_error(self) -> None:
+        # Per the OQ-2 hard rule (T1-003): correlation failing entirely means a
+        # null confidence, which routes to human_triage_required -- never the
+        # old Tier-1-MVP "surface_only" behavior.
         documents_repo = types.SimpleNamespace(get_by_id=AsyncMock(return_value=_doc_row()))
         ports = _ports(documents=documents_repo)
 
@@ -232,9 +235,11 @@ class CorrelationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.session_refs, [])
-        self.assertEqual(result.correlation_confidence, 0.0)
-        self.assertEqual(result.verdict, "surface_only")
-        self.assertIn("no correlated sessions found", result.reasons)
+        self.assertIsNone(result.correlation_confidence)
+        self.assertIsNone(result.correlation.confidence)
+        self.assertEqual(result.triage_verdict, "human_triage_required")
+        self.assertEqual(result.verdict, "human_triage_required")
+        self.assertTrue(any("missing/null" in reason for reason in result.reasons))
 
     async def test_document_not_found_returns_error_status(self) -> None:
         documents_repo = types.SimpleNamespace(
@@ -401,30 +406,43 @@ class FlagTests(unittest.TestCase):
 
 
 class VerdictCombinatorTests(unittest.TestCase):
-    """AC-8: all four quadrants."""
+    """Verdict decision table (OQ-2 resolution, T1-003): confidence null / floor /
+    two-hop ambiguity / flag-signal mapping, each independently exercised."""
 
     def test_high_confidence_with_flags_recommends_deep_review(self) -> None:
         flags = [evaluate_context_ballooning([{"id": "s1", "context_window_size": 200000, "context_utilization_pct": 95.0}], 85.0)]
-        verdict, reasons = compute_verdict(0.9, True, flags, 0.64)
+        verdict, reasons = compute_verdict(0.9, ["s1"], "explicit_session_ref", flags, 0.64)
         self.assertEqual(verdict, "deep_review_recommended")
         self.assertTrue(reasons)
 
     def test_high_confidence_no_flags_is_surface_only(self) -> None:
         flags = [evaluate_context_ballooning([{"id": "s1", "context_window_size": 200000, "context_utilization_pct": 10.0}], 85.0)]
-        verdict, reasons = compute_verdict(0.9, True, flags, 0.64)
+        verdict, reasons = compute_verdict(0.9, ["s1"], "explicit_session_ref", flags, 0.64)
         self.assertEqual(verdict, "surface_only")
         self.assertIn("no flags triggered", reasons)
 
-    def test_low_confidence_with_flags_is_forced_surface_only(self) -> None:
+    def test_low_confidence_with_flags_requires_human_triage(self) -> None:
         flags = [evaluate_context_ballooning([{"id": "s1", "context_window_size": 200000, "context_utilization_pct": 95.0}], 85.0)]
-        verdict, reasons = compute_verdict(0.5, True, flags, 0.64)
-        self.assertEqual(verdict, "surface_only")
+        verdict, reasons = compute_verdict(0.5, ["s1"], "task_session_ref", flags, 0.64)
+        self.assertEqual(verdict, "human_triage_required")
         self.assertTrue(any("below the floor" in reason for reason in reasons))
 
-    def test_no_evidence_is_surface_only(self) -> None:
-        verdict, reasons = compute_verdict(0.0, False, [], 0.64)
+    def test_null_confidence_requires_human_triage(self) -> None:
+        verdict, reasons = compute_verdict(None, [], None, [], 0.64)
+        self.assertEqual(verdict, "human_triage_required")
+        self.assertTrue(any("missing/null" in reason for reason in reasons))
+
+    def test_two_hop_ambiguous_tie_requires_human_triage(self) -> None:
+        verdict, reasons = compute_verdict(0.9, ["s1", "s2"], "two_hop_doc_feature_session", [], 0.64)
+        self.assertEqual(verdict, "human_triage_required")
+        self.assertTrue(any("ambiguous" in reason for reason in reasons))
+
+    def test_strategy_alone_never_forces_human_triage(self) -> None:
+        # A direct-link strategy resolving multiple tied sessions is untouched
+        # by the two-hop ambiguity rule -- strategy alone must never force
+        # human_triage_required (Rationale, T1-003).
+        verdict, _reasons = compute_verdict(0.9, ["s1", "s2"], "explicit_session_ref", [], 0.64)
         self.assertEqual(verdict, "surface_only")
-        self.assertIn("no correlated sessions found", reasons)
 
 
 if __name__ == "__main__":

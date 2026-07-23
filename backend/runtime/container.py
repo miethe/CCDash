@@ -16,7 +16,13 @@ from backend.adapters.live_updates import (
     PostgresNotifyLiveEventPublisher,
 )
 from backend.adapters.live_updates.postgres_listener import PostgresLiveNotificationListener
-from backend.adapters.jobs import ArtifactRollupExportJob, RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
+from backend.adapters.jobs import (
+    AARReviewSweepJob,
+    ArtifactRollupExportJob,
+    RuntimeJobAdapter,
+    RuntimeJobState,
+    TelemetryExporterJob,
+)
 from backend.application.context import (
     EnterpriseScope,
     RequestContext,
@@ -186,6 +192,20 @@ class RuntimeContainer:
                 if self.profile.name in _export_profiles and self.telemetry_exporter is not None
                 else None
             ),
+            # Phase 6 (T6-006): default-off AAR-review autonomous sweep worker.
+            # Mirrors the telemetry/rollup export gating exactly (profile-gated
+            # here; the flag itself is re-checked inside the job's own
+            # execute() for defense in depth) -- constructed only when the
+            # flag is on, so the runtime pays zero cost when it is off.
+            aar_review_sweep_job=(
+                AARReviewSweepJob(
+                    ports=self.require_ports(),
+                    project=self.project_binding.project if self.project_binding is not None else None,
+                )
+                if self.profile.name in _export_profiles
+                and bool(getattr(config, "CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED", False))
+                else None
+            ),
         )
         self.lifecycle = await self.job_adapter.start()
         app.state.runtime_jobs = self.job_adapter
@@ -198,6 +218,8 @@ class RuntimeContainer:
             app.state.telemetry_export_task = self.lifecycle.telemetry_export_task
         if self.lifecycle.artifact_rollup_export_task is not None:
             app.state.artifact_rollup_export_task = self.lifecycle.artifact_rollup_export_task
+        if self.lifecycle.aar_review_sweep_task is not None:
+            app.state.aar_review_sweep_task = self.lifecycle.aar_review_sweep_task
 
     async def shutdown(self, app: FastAPI) -> None:
         logger.info("CCDash backend shutting down (profile=%s)", self.profile.name)

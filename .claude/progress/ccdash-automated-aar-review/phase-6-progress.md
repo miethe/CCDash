@@ -8,191 +8,285 @@ prd_ref: docs/project_plans/PRDs/features/ccdash-automated-aar-review-v1.md
 plan_ref: docs/project_plans/implementation_plans/features/ccdash-automated-aar-review-v1.md
 execution_model: batch-parallel
 phase: 6
-title: "Gated Writeback Seam + Autonomous Worker + Guards"
-status: pending
-created: 2026-07-22
-updated: 2026-07-22
+title: Gated Writeback Seam + Autonomous Worker + Guards
+status: completed
+created: '2026-07-22'
+updated: '2026-07-22'
 started: null
 completed: null
 commit_refs: []
 pr_refs: []
-
-overall_progress: 0
-completion_estimate: on-track
-
+overall_progress: 100
+completion_estimate: complete
 total_tasks: 10
-completed_tasks: 0
+completed_tasks: 10
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
 owners:
 - backend-architect
 - python-backend-engineer
 contributors: []
-
 model_usage:
   primary: sonnet
   external: []
-
 tasks:
 - id: T6-001
-  description: "Design the 3 self-recursion guards (as executable logic, not just
-    data): the provenance self-exclusion filter, the idempotent dedup ledger check,
-    and the escalation-quota check — each a pure, deterministic gate evaluated
-    before any handoff."
-  status: pending
-  assigned_to: [backend-architect]
-  dependencies: ["Phase 5 sealed"]
-  estimated_effort: "1.5 pt"
+  description: "Design the 3 self-recursion guards (as executable logic, not just\
+    \ data): the provenance self-exclusion filter, the idempotent dedup ledger check,\
+    \ and the escalation-quota check \u2014 each a pure, deterministic gate evaluated\
+    \ before any handoff."
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies:
+  - Phase 5 sealed
+  estimated_effort: 1.5 pt
   assigned_model: sonnet
   model_effort: extended
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - design: backend/adapters/jobs/aar_review_sweep_guards.py
+  verified_by:
+  - task-completion-validator
 - id: T6-002
-  description: "Resolve OQ-4 (escalation-quota default): decide the escalation-quota
-    default (count/time-window) and whether it is per-project or global; must be
-    env-configured per PRD §8.1 guard 3."
-  status: pending
-  assigned_to: [backend-architect]
-  dependencies: [T6-001]
-  estimated_effort: "1 pt"
+  description: "Resolve OQ-4 (escalation-quota default): decide the escalation-quota\
+    \ default (count/time-window) and whether it is per-project or global; must be\
+    \ env-configured per PRD \xA78.1 guard 3."
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies:
+  - T6-001
+  estimated_effort: 1 pt
   assigned_model: sonnet
   model_effort: extended
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - decision: OQ-4-per-project-quota-5-per-24h-config.py
+  verified_by:
+  - task-completion-validator
 - id: T6-003
-  description: "Implement provenance self-exclusion filter: exclude any session
-    tagged skill_name == \"aar-review\" (or a reserved workflow_id prefix) from the
-    triage input set unconditionally — never content-sniffed."
-  status: pending
-  assigned_to: [python-backend-engineer]
-  dependencies: [T6-001]
-  estimated_effort: "1 pt"
+  description: "Implement provenance self-exclusion filter: exclude any session tagged\
+    \ skill_name == \"aar-review\" (or a reserved workflow_id prefix) from the triage\
+    \ input set unconditionally \u2014 never content-sniffed."
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T6-001
+  estimated_effort: 1 pt
   assigned_model: sonnet
   model_effort: adaptive
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - test: backend/tests/test_aar_review_worker_guards.py
+  verified_by:
+  - task-completion-validator
 - id: T6-004
-  description: "Implement idempotent dedup ledger: (aar_document_id, session_id) ->
+  description: 'Implement idempotent dedup ledger: (aar_document_id, session_id) ->
     triaged_at on aar_reviews (columns already present from Phase 1); ensure re-runs
     of the sync/watcher cycle do not re-enqueue the same pair; retry_on_locked wraps
-    every write (ADR-007)."
-  status: pending
-  assigned_to: [python-backend-engineer]
-  dependencies: [T6-001]
-  estimated_effort: "1.5 pt"
+    every write (ADR-007).'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T6-001
+  estimated_effort: 1.5 pt
   assigned_model: sonnet
   model_effort: adaptive
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - test: backend/tests/test_aar_review_worker_guards.py
+  verified_by:
+  - task-completion-validator
 - id: T6-005
-  description: "Implement escalation-quota check: hard, env-configured escalation
-    quota (T6-002's resolved default), checked before any handoff to op/ARC. CCDash
-    never calls the swarm directly — it hands off a triage verdict + evidence bundle
-    through the existing CLI/event contract."
-  status: pending
-  assigned_to: [python-backend-engineer]
-  dependencies: [T6-002]
-  estimated_effort: "1.5 pt"
+  description: "Implement escalation-quota check: hard, env-configured escalation\
+    \ quota (T6-002's resolved default), checked before any handoff to op/ARC. CCDash\
+    \ never calls the swarm directly \u2014 it hands off a triage verdict + evidence\
+    \ bundle through the existing CLI/event contract."
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T6-002
+  estimated_effort: 1.5 pt
   assigned_model: sonnet
   model_effort: adaptive
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - test: backend/tests/test_aar_review_writeback_gate.py
+  verified_by:
+  - task-completion-validator
 - id: T6-006
-  description: "AARReviewSweepJob worker: incremental worker (changed/new AAR docs
+  description: 'AARReviewSweepJob worker: incremental worker (changed/new AAR docs
     only, mirroring CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED) reusing the existing
-    (project_id, trigger) coalescing guard; follow the
-    telemetry_exporter.py/ArtifactRollupExportJob registration pattern in
-    runtime/container.py; default-off via
-    CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED."
-  status: pending
-  assigned_to: [python-backend-engineer]
-  dependencies: [T6-003, T6-004, T6-005]
-  estimated_effort: "2 pts"
+    (project_id, trigger) coalescing guard; follow the telemetry_exporter.py/ArtifactRollupExportJob
+    registration pattern in runtime/container.py; default-off via CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T6-003
+  - T6-004
+  - T6-005
+  estimated_effort: 2 pts
   assigned_model: sonnet
   model_effort: adaptive
-  ac_refs: [AC-P6.2]
+  ac_refs:
+  - AC-P6.2
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - test: backend/tests/test_aar_review_worker_guards.py
+  verified_by:
+  - task-completion-validator
 - id: T6-007
-  description: "Gated writeback seam: wire the writeback call site so it is reachable
+  description: 'Gated writeback seam: wire the writeback call site so it is reachable
     only when a run record has status approved (via op approve); no code path allows
-    a pending/rejected run to trigger writeback."
-  status: pending
-  assigned_to: [backend-architect]
-  dependencies: [T6-005]
-  estimated_effort: "1.5 pt"
+    a pending/rejected run to trigger writeback.'
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies:
+  - T6-005
+  estimated_effort: 1.5 pt
   assigned_model: sonnet
   model_effort: extended
-  ac_refs: [AC-P6.1]
+  ac_refs:
+  - AC-P6.1
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - test: backend/tests/test_aar_review_writeback_gate.py
+  verified_by:
+  - task-completion-validator
 - id: T6-008
-  description: "Integration test — rejected/pending run never writes: assert a
-    rejected or pending run record never reaches the writeback call site, across
-    every code path that could theoretically invoke it. Covers both rejected and
-    pending states explicitly."
-  status: pending
-  assigned_to: [python-backend-engineer]
-  dependencies: [T6-007]
-  estimated_effort: "1 pt"
+  description: "Integration test \u2014 rejected/pending run never writes: assert\
+    \ a rejected or pending run record never reaches the writeback call site, across\
+    \ every code path that could theoretically invoke it. Covers both rejected and\
+    \ pending states explicitly."
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T6-007
+  estimated_effort: 1 pt
   assigned_model: sonnet
   model_effort: adaptive
-  ac_refs: [AC-P6.1, AC-P6.3]
+  ac_refs:
+  - AC-P6.1
+  - AC-P6.3
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - test: backend/tests/test_aar_review_writeback_gate.py-rejected/pending/missing-never-writes
+  verified_by:
+  - task-completion-validator
 - id: T6-009
-  description: "Synthetic self-referential test (guard 1): construct a synthetic test
-    case — an AAR-review-originated session (tagged skill_name == \"aar-review\") is
-    fed into the triage input set; assert it is excluded, unconditionally,
-    independent of session content."
-  status: pending
-  assigned_to: [python-backend-engineer]
-  dependencies: [T6-003]
-  estimated_effort: "0.5 pt"
+  description: "Synthetic self-referential test (guard 1): construct a synthetic test\
+    \ case \u2014 an AAR-review-originated session (tagged skill_name == \"aar-review\"\
+    ) is fed into the triage input set; assert it is excluded, unconditionally, independent\
+    \ of session content."
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T6-003
+  estimated_effort: 0.5 pt
   assigned_model: sonnet
   model_effort: adaptive
-  ac_refs: [AC-P6.3]
+  ac_refs:
+  - AC-P6.3
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - test: backend/tests/test_aar_review_worker_guards.py-self-referential
+  verified_by:
+  - task-completion-validator
 - id: T6-010
-  description: "Simulated worker-restart idempotency test (guard 2): simulate a
-    worker restart mid-sweep and assert the dedup ledger prevents re-enqueueing
-    already-triaged (aar_document_id, session_id) pairs across a restart boundary."
-  status: pending
-  assigned_to: [python-backend-engineer]
-  dependencies: [T6-004]
-  estimated_effort: "0.5 pt"
+  description: 'Simulated worker-restart idempotency test (guard 2): simulate a worker
+    restart mid-sweep and assert the dedup ledger prevents re-enqueueing already-triaged
+    (aar_document_id, session_id) pairs across a restart boundary.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T6-004
+  estimated_effort: 0.5 pt
   assigned_model: sonnet
   model_effort: adaptive
-  ac_refs: [AC-P6.3]
-
+  ac_refs:
+  - AC-P6.3
+  started: '2026-07-22T17:00:00Z'
+  completed: '2026-07-23T00:30:00Z'
+  evidence:
+  - test: backend/tests/test_aar_review_worker_guards.py-restart-idempotency
+  verified_by:
+  - task-completion-validator
 parallelization:
-  batch_1: [T6-001]
-  batch_2: [T6-002, T6-003, T6-004]
-  batch_3: [T6-005, T6-009, T6-010]
-  batch_4: [T6-006, T6-007]
-  batch_5: [T6-008]
-  critical_path: [T6-001, T6-002, T6-005, T6-007, T6-008]
-  estimated_total_time: "6-9 pts (5 sequential batches)"
-
-blockers: []
-
+  batch_1:
+  - T6-001
+  batch_2:
+  - T6-002
+  - T6-003
+  - T6-004
+  batch_3:
+  - T6-005
+  - T6-009
+  - T6-010
+  batch_4:
+  - T6-006
+  - T6-007
+  batch_5:
+  - T6-008
+  critical_path:
+  - T6-001
+  - T6-002
+  - T6-005
+  - T6-007
+  - T6-008
+  estimated_total_time: 6-9 pts (5 sequential batches)
+blockers:
+- CARRY-FORWARD from P4/karen: memoized_query fingerprint does not track aar_reviews;
+    when the P6 worker wires live writes, add an explicit AC + implementation tying
+    live-write to cache invalidation (see _client_v1_aar_review.py:26-33) or reads
+    go stale up to TTL.
 success_criteria:
 - id: SC-1
-  description: "All 3 guards tested (T6-008, T6-009, T6-010) and green."
-  status: pending
+  description: All 3 guards tested (T6-008, T6-009, T6-010) and green.
+  status: met
 - id: SC-2
-  description: "Worker is incremental, coalescing-guarded, and default-off."
-  status: pending
+  description: Worker is incremental, coalescing-guarded, and default-off.
+  status: met
 - id: SC-3
-  description: "Writeback seam requires an approved-run reference on every call
-    path."
-  status: pending
+  description: Writeback seam requires an approved-run reference on every call path.
+  status: met
 - id: SC-4
-  description: "task-completion-validator review passes."
-  status: pending
+  description: task-completion-validator review passes.
+  status: met
 - id: SC-5
-  description: "karen end-of-P4 milestone review passes."
-  status: pending
-
+  description: karen end-of-P4 milestone review passes.
+  status: met
 files_modified:
 - backend/adapters/jobs/aar_review_sweep.py
 - backend/runtime/container.py
 - backend/db/repositories/aar_reviews.py
-
-notes: >
-  Entry criteria: Phase 5 sealed (transport decision recorded; contract spec + smoke
-  evidence complete). Highest-blast-radius phase, deliberately last on the critical
-  path. Guard data inputs (provenance columns, dedup key) were made first-class in
-  Phase 1 specifically so this phase does not need a schema migration to add them.
-  This is the end-of-P4 (PRD roadmap tier) milestone — requires a karen review in
-  addition to task-completion-validator before Phase 7 documentation closes the
-  feature. Escalate Phase 6 guard-logic debugging to gpt-5.3-codex only after 2+
-  failed local Claude debug cycles.
+notes: "Entry criteria: Phase 5 sealed (transport decision recorded; contract spec\
+  \ + smoke evidence complete). Highest-blast-radius phase, deliberately last on the\
+  \ critical path. Guard data inputs (provenance columns, dedup key) were made first-class\
+  \ in Phase 1 specifically so this phase does not need a schema migration to add\
+  \ them. This is the end-of-P4 (PRD roadmap tier) milestone \u2014 requires a karen\
+  \ review in addition to task-completion-validator before Phase 7 documentation closes\
+  \ the feature. Escalate Phase 6 guard-logic debugging to gpt-5.3-codex only after\
+  \ 2+ failed local Claude debug cycles."
+progress: 100
 ---
 
 # ccdash-automated-aar-review - Phase 6: Gated Writeback Seam + Autonomous Worker + Guards

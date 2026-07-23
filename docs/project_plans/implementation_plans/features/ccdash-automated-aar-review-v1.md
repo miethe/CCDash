@@ -3,9 +3,9 @@ title: "Implementation Plan: CCDash Automated AAR Review Loop — Remaining Effo
 schema_version: 2
 doc_type: implementation_plan
 it_schema: 1
-status: draft
+status: completed
 created: 2026-07-22
-updated: 2026-07-22
+updated: 2026-07-23
 feature_slug: ccdash-automated-aar-review
 feature_version: v1
 tier: 3
@@ -44,7 +44,10 @@ references:
 spike_ref: null
 adr_refs:
 - docs/project_plans/exploration/ccdash-automated-aar-review/ccdash-automated-aar-review-proposed-adr.md
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+- docs/project_plans/design-specs/op-story-session-ref-frontmatter-contract.md
+- docs/project_plans/design-specs/aar-review-escalation-quota-tuning.md
+- docs/project_plans/design-specs/aar-review-event-transport-promotion.md
 findings_doc_ref: null
 charter_ref: docs/project_plans/exploration/ccdash-automated-aar-review/ccdash-automated-aar-review-charter.md
 changelog_ref: null
@@ -59,23 +62,41 @@ risk_level: medium
 category: "product-planning"
 tags: [implementation, planning, phases, tasks, aar, forensics, op-integration, tier-3]
 milestone: null
-commit_refs: []
+commit_refs:
+- 604054f
+- abf1a43
+- 63e2aba
+- a1205aa
+- de69cda
+- 92ed576
 pr_refs: []
 files_affected:
 - backend/application/services/agent_queries/aar_review.py
+- backend/application/services/agent_queries/aar_review_enrichment.py
+- backend/application/services/agent_queries/aar_review_writeback.py
 - backend/application/services/agent_queries/models.py
-- backend/application/services/agent_queries/artifact_intelligence.py
-- backend/routers/agent.py
-- backend/routers/client_v1.py
-- backend/cli/commands/report.py
-- backend/mcp/tools/reports.py
+- backend/db/repositories/aar_reviews.py
 - backend/db/sqlite_migrations.py
 - backend/db/postgres_migrations.py
-- backend/db/repositories/aar_reviews.py
-- backend/adapters/jobs/aar_review_sweep.py
+- backend/scripts/aar_reviews_backfill.py
+- backend/scripts/aar_review_consumer_smoke.py
+- backend/adapters/jobs/aar_review_sweep_job.py
+- backend/adapters/jobs/aar_review_sweep_guards.py
+- backend/adapters/jobs/runtime.py
 - backend/runtime/container.py
 - backend/config.py
+- backend/routers/client_v1.py
+- backend/routers/client_v1_models.py
+- backend/routers/_client_v1_aar_review.py
 - components/Planning/FeatureAARReviewPanel.tsx
+- services/queries/aarReview.ts
+- services/queryKeys.ts
+- types.ts
+- docs/guides/aar-review-loop.md
+- docs/project_plans/design-specs/ccdash-aar-review-consumer-contract-v1.md
+- docs/project_plans/design-specs/op-story-session-ref-frontmatter-contract.md
+- docs/project_plans/design-specs/aar-review-escalation-quota-tuning.md
+- docs/project_plans/design-specs/aar-review-event-transport-promotion.md
 planning_maturity: scoped
 open_questions:
 - q: Do real op story AAR docs carry session/feature frontmatter today, or does triage lean entirely

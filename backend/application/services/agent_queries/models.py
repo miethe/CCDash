@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -320,25 +320,71 @@ class AARReviewFlag(BaseModel):
     rationale: str = ""
 
 
-class AARReviewDTO(BaseModel):
-    """Deterministic AAR-document-to-session triage verdict (Tier 1 MVP).
+class AARReviewCorrelation(BaseModel):
+    """Nested document->session correlation result (PRD §7.2).
 
-    Intentionally **not** an ``AgentQueryEnvelope`` subclass -- this shape is
-    frozen verbatim by the ccdash-aar-review-mvp feature contract's §6 Data
-    Requirements (``generated_at`` is a plain ISO-8601 string here, not a
-    ``datetime``, and there is no ``data_freshness`` field).
+    ``confidence`` is ``None`` when correlation fails entirely (i.e.
+    ``session_ids`` is empty) -- per the OQ-2 verdict decision, a null
+    confidence always routes ``AARReviewDTO.triage_verdict`` to
+    ``human_triage_required``, never ``surface_only``. The correlation
+    ``strategy`` string is whatever ``aar_review.py`` resolves it to
+    (``explicit_session_ref``, a link's ``linkStrategy`` metadata value, or
+    ``two_hop_doc_feature_session``) -- see that module for the exact set.
     """
 
+    strategy: str | None = None
+    confidence: float | None = None
+    session_ids: list[str] = Field(default_factory=list)
+    feature_id: str | None = None
+
+
+class AARReviewDTO(BaseModel):
+    """Deterministic AAR-document-to-session triage verdict.
+
+    Canonical shape per the ``ccdash-automated-aar-review-v1`` PRD §7.2
+    (``schema_version`` 2): a nested ``correlation`` object plus a 3-value
+    ``triage_verdict`` enum (``surface_only`` | ``deep_review_recommended`` |
+    ``human_triage_required``).
+
+    DEPRECATED ALIASES: ``session_refs``, ``correlation_confidence``,
+    ``correlation_strategy``, and ``verdict`` are the pre-§7.2 Tier-1-MVP
+    flat fields. They are kept -- auto-synced from the nested values by
+    ``_sync_deprecated_aliases`` below -- for one release window so existing
+    consumers do not break. Do not read them in new code; do not remove them
+    before the next major ``schema_version`` bump (>= 3).
+
+    Intentionally **not** an ``AgentQueryEnvelope`` subclass -- this shape is
+    frozen by the feature contract's §6/§7.2 Data Requirements
+    (``generated_at`` is a plain ISO-8601 string here, not a ``datetime``,
+    and there is no ``data_freshness`` field).
+    """
+
+    schema_version: int = 2
     status: Literal["ok", "error"] = "ok"
     document_id: str
-    session_refs: list[str] = Field(default_factory=list)
-    correlation_confidence: float = 0.0
-    correlation_strategy: str | None = None
+    correlation: AARReviewCorrelation = Field(default_factory=AARReviewCorrelation)
     flags: list[AARReviewFlag] = Field(default_factory=list)
-    verdict: Literal["surface_only", "deep_review_recommended"] | None = None
+    triage_verdict: Literal["surface_only", "deep_review_recommended", "human_triage_required"] | None = None
     reasons: list[str] = Field(default_factory=list)
     generated_at: str = ""
     source_refs: list[str] = Field(default_factory=list)
+
+    # ── Deprecated flat aliases (Tier-1 MVP shape) ───────────────────────────
+    # Removal window: not before schema_version >= 3. Populated verbatim from
+    # the nested `correlation`/`triage_verdict` fields by the validator below
+    # -- callers should set `correlation=` and `triage_verdict=` only.
+    session_refs: list[str] = Field(default_factory=list)
+    correlation_confidence: float | None = None
+    correlation_strategy: str | None = None
+    verdict: Literal["surface_only", "deep_review_recommended", "human_triage_required"] | None = None
+
+    @model_validator(mode="after")
+    def _sync_deprecated_aliases(self) -> "AARReviewDTO":
+        self.session_refs = list(self.correlation.session_ids)
+        self.correlation_confidence = self.correlation.confidence
+        self.correlation_strategy = self.correlation.strategy
+        self.verdict = self.triage_verdict
+        return self
 
 
 # ── Planning query DTOs (PCP-201) ────────────────────────────────────────────

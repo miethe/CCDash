@@ -290,6 +290,16 @@ export const researchRunsKeys = {
     [projectId, 'researchRuns', 'detail', runId] as const,
 };
 
+// ─── AAR Review (ccdash-automated-aar-review-v1, T4-001) ─────────────────────
+// GET /api/v1/aar-review?project_id=<projectId> — persisted aar_reviews rollup
+// for a project. staleTime: 30_000 in the hook (matches other planning-adjacent
+// read surfaces); no polling — this is a read-only, on-demand review surface.
+
+export const aarReviewKeys = {
+  all: (projectId: string) => [projectId, 'aarReview'] as const,
+  list: (projectId: string) => [projectId, 'aarReview', 'list'] as const,
+};
+
 // ─── Capabilities (global, not project-scoped) ────────────────────────────────
 // Runtime capability flags from GET /api/execution/launch/capabilities.
 // Global (no projectId) — invalidated by the sentinel 'capabilities' namespace.

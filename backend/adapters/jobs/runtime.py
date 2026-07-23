@@ -15,6 +15,7 @@ from backend.application.ports.core import ProjectBinding
 from backend.db.file_watcher import file_watcher, file_watcher_registry
 from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
+from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob
 from backend.adapters.jobs.artifact_rollup_export_job import ArtifactRollupExportJob
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
@@ -100,6 +101,7 @@ class RuntimeJobState:
     analytics_snapshot_task: asyncio.Task[None] | None = None
     telemetry_export_task: asyncio.Task[None] | None = None
     artifact_rollup_export_task: asyncio.Task[None] | None = None
+    aar_review_sweep_task: asyncio.Task[None] | None = None
     cache_warming_task: asyncio.Task[None] | None = None
     retention_prune_task: asyncio.Task[None] | None = None
     reconcile_task: asyncio.Task[None] | None = None
@@ -134,6 +136,8 @@ class RuntimeJobAdapter:
         watcher_fan_out_bindings: list[ProjectBinding] | None = None,
         telemetry_exporter_job: TelemetryExporterJob | None = None,
         artifact_rollup_export_job: ArtifactRollupExportJob | None = None,
+        # Phase 6 (T6-006): default-off AAR-review autonomous sweep worker.
+        aar_review_sweep_job: AARReviewSweepJob | None = None,
         # P3-005 / P3-010: additive param — safe default keeps container.py unchanged
         workspace_registry: Any | None = None,
     ) -> None:
@@ -145,6 +149,7 @@ class RuntimeJobAdapter:
         self._watcher_fan_out_bindings: list[ProjectBinding] = watcher_fan_out_bindings or []
         self.telemetry_exporter_job = telemetry_exporter_job
         self.artifact_rollup_export_job = artifact_rollup_export_job
+        self.aar_review_sweep_job = aar_review_sweep_job
         # P3-005: workspace_registry kwarg allows injecting a custom registry in
         # tests; falls back to ports.workspace_registry at runtime.
         self._workspace_registry_override = workspace_registry
@@ -179,6 +184,14 @@ class RuntimeJobAdapter:
                     backlog_count=0,
                     backlog_unit="rollups",
                     stale_threshold_seconds=86400,
+                ),
+                # Phase 6 (T6-006): default-off AAR-review autonomous sweep.
+                # Stale threshold is 4x the default 1800s interval — alarm only
+                # on a clearly stalled sweep, never on a single missed tick.
+                "aarReviewSweep": RuntimeJobObservation(
+                    backlog_count=0,
+                    backlog_unit="pairs",
+                    stale_threshold_seconds=7200,
                 ),
                 "cacheWarming": RuntimeJobObservation(
                     backlog_count=0,
@@ -401,6 +414,9 @@ class RuntimeJobAdapter:
             artifact_rollup_task = self._start_artifact_rollup_export_task()
             if artifact_rollup_task is not None:
                 self.state.artifact_rollup_export_task = artifact_rollup_task
+            aar_review_sweep_task = self._start_aar_review_sweep_task()
+            if aar_review_sweep_task is not None:
+                self.state.aar_review_sweep_task = aar_review_sweep_task
             cache_warming_task = self._start_cache_warming_task()
             if cache_warming_task is not None:
                 self.state.cache_warming_task = cache_warming_task
@@ -723,6 +739,14 @@ class RuntimeJobAdapter:
             except asyncio.CancelledError:
                 pass
             self.state.artifact_rollup_export_task = None
+
+        if self.state.aar_review_sweep_task is not None:
+            self.state.aar_review_sweep_task.cancel()
+            try:
+                await self.state.aar_review_sweep_task
+            except asyncio.CancelledError:
+                pass
+            self.state.aar_review_sweep_task = None
 
         if self.state.cache_warming_task is not None:
             self.state.cache_warming_task.cancel()
@@ -1185,6 +1209,9 @@ class RuntimeJobAdapter:
             else "idle",
             "artifactRollupExports": "running"
             if self.state.artifact_rollup_export_task is not None and not self.state.artifact_rollup_export_task.done()
+            else "idle",
+            "aarReviewSweep": "running"
+            if self.state.aar_review_sweep_task is not None and not self.state.aar_review_sweep_task.done()
             else "idle",
             "cacheWarming": "running"
             if self.state.cache_warming_task is not None and not self.state.cache_warming_task.done()
@@ -1829,6 +1856,7 @@ class RuntimeJobAdapter:
             "analyticsSnapshots": self.state.analytics_snapshot_task,
             "telemetryExports": self.state.telemetry_export_task,
             "artifactRollupExports": self.state.artifact_rollup_export_task,
+            "aarReviewSweep": self.state.aar_review_sweep_task,
             "cacheWarming": self.state.cache_warming_task,
         }
         jobs: dict[str, Any] = {}
@@ -1920,7 +1948,13 @@ class RuntimeJobAdapter:
         (parity with telemetry export queueDepth), plus stale flags.
         """
         depth_map: dict[str, Any] = {}
-        for job_name in ("analyticsSnapshots", "cacheWarming", "telemetryExports", "artifactRollupExports"):
+        for job_name in (
+            "analyticsSnapshots",
+            "cacheWarming",
+            "telemetryExports",
+            "artifactRollupExports",
+            "aarReviewSweep",
+        ):
             payload = jobs.get(job_name, {})
             depth_map[job_name] = {
                 "depth": payload.get("backlogCount", 0),
@@ -2607,4 +2641,68 @@ class RuntimeJobAdapter:
         return self.ports.job_scheduler.schedule(
             _run_periodic_artifact_rollup_exports(),
             name=f"ccdash:{self.profile.name}:artifact-rollup-export",
+        )
+
+    def _start_aar_review_sweep_task(self) -> asyncio.Task[None] | None:
+        """Phase 6 (T6-006): default-off AAR-review autonomous sweep worker.
+
+        Mirrors ``_start_artifact_rollup_export_task`` exactly: single-project
+        ``worker``-profile-only, gated on both the injected job object being
+        present (container.py only constructs it when
+        ``CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED`` is true AND the
+        profile is in the telemetry/rollup export profile set) and this
+        method's own presence check -- so an accidental double-gate never
+        silently no-ops a config flip; the job's own ``execute()`` ALSO
+        re-checks the flag (defense in depth, matching
+        ``ArtifactRollupExportJob.execute()``'s own internal
+        ``CCDASH_ARTIFACT_INTELLIGENCE_ENABLED`` check).
+        """
+        if self.profile.name != "worker" or self.aar_review_sweep_job is None:
+            return None
+        interval_seconds = max(
+            60, int(getattr(config, "CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS", 1800))
+        )
+        self.state.job_observations["aarReviewSweep"].interval_seconds = interval_seconds
+
+        async def _run_periodic_aar_review_sweeps() -> None:
+            while True:
+                started = self._mark_job_started("aarReviewSweep")
+                try:
+                    result = await self.aar_review_sweep_job.execute(trigger="scheduled")
+                    self._mark_job_success(
+                        "aarReviewSweep",
+                        started,
+                        outcome=str(getattr(result, "outcome", "success") or "success"),
+                        backlog_count=int(getattr(result, "pairs_already_triaged", 0) or 0),
+                        details={
+                            "documentsScanned": int(getattr(result, "documents_scanned", 0) or 0),
+                            "documentsProcessed": int(getattr(result, "documents_processed", 0) or 0),
+                            "pairsWritten": int(getattr(result, "pairs_written", 0) or 0),
+                            "pairsAlreadyTriaged": int(getattr(result, "pairs_already_triaged", 0) or 0),
+                            "sessionsExcludedSelfReferential": int(
+                                getattr(result, "sessions_excluded_self_referential", 0) or 0
+                            ),
+                            "projectId": self.project_binding.project.id if self.project_binding is not None else None,
+                        },
+                    )
+                except asyncio.CancelledError:
+                    self._mark_job_cancelled("aarReviewSweep", started)
+                    raise
+                except Exception:
+                    self._mark_job_failure(
+                        "aarReviewSweep",
+                        started,
+                        RuntimeError("aar_review_sweep_failed"),
+                    )
+                    logger.exception("Periodic AAR review sweep failed")
+                await asyncio.sleep(interval_seconds)
+
+        logger.info(
+            "Started periodic AAR review sweep job (profile=%s interval=%ss)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_aar_review_sweeps(),
+            name=f"ccdash:{self.profile.name}:aar-review-sweep",
         )

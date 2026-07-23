@@ -92,6 +92,42 @@ CCDASH_RECOMMENDATION_MIN_CONFIDENCE = _env_float("CCDASH_RECOMMENDATION_MIN_CON
 # plain read-time thresholds -- no model call is involved anywhere on this path.
 CCDASH_AAR_REVIEW_MIN_CONFIDENCE = _env_float("CCDASH_AAR_REVIEW_MIN_CONFIDENCE", 0.64)
 CCDASH_AAR_REVIEW_CONTEXT_BALLOON_PCT = _env_float("CCDASH_AAR_REVIEW_CONTEXT_BALLOON_PCT", 85.0)
+# ccdash-automated-aar-review Phase 3 (T3-002): 5th flag `new_skill_or_agent_need`
+# aggregation knobs. Both are plain read-time threshold/window values over
+# already-PERSISTED `aar_reviews` rows -- no model call is involved anywhere
+# on this path (Hard Invariant #1, unchanged).
+CCDASH_AAR_NEW_SKILL_THRESHOLD = _env_int("CCDASH_AAR_NEW_SKILL_THRESHOLD", 3)
+CCDASH_AAR_NEW_SKILL_LOOKBACK_DAYS = _env_int("CCDASH_AAR_NEW_SKILL_LOOKBACK_DAYS", 30)
+# ccdash-automated-aar-review Phase 6 (T6-006): AARReviewSweepJob -- the
+# default-off autonomous background worker that periodically triages
+# new/changed AAR documents and PERSISTS aar_reviews rows without any
+# human/agent trigger. Default-off: when False the worker is not
+# registered/constructed at all (backend/runtime/container.py) -- every
+# existing AAR-review read/write path (get_review, the T1-008 backfill
+# script, the /aar-review v1 endpoint) is completely unaffected. This flag
+# does NOT gate any escalation/handoff behavior -- the sweep worker only
+# ever computes (reusing aar_review.py verbatim) and upserts rows via the
+# aar_reviews repository; it never dispatches ARC/swarm and never mutates
+# SkillMeat/skills/agents (Hard Invariant #2, unchanged).
+CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED = _env_bool("CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED", False)
+# CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS (default: 1800 = 30 min)
+# Interval between AARReviewSweepJob ticks when the worker above is enabled.
+# Clamped to a 60s floor in runtime/runtime.py (mirrors
+# CCDASH_ARTIFACT_ROLLUP_EXPORT_INTERVAL_SECONDS's own floor).
+CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS = _env_int("CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS", 1800)
+# ccdash-automated-aar-review Phase 6-B (T6-005, OQ-4/T6-002 locked decision):
+# Guard 3 -- the escalation-quota gate on
+# backend/application/services/agent_queries/aar_review_writeback.py's gated
+# handoff seam. PER-PROJECT (never global), count-based, rolling-window: at
+# most CCDASH_AAR_ESCALATION_QUOTA approved escalations per project within
+# the last CCDASH_AAR_ESCALATION_WINDOW_HOURS hours. Per-project so one noisy
+# project can never starve another's quota. Conservative defaults deliberately
+# cap handoff volume before production volume ships. Neither flag gates any
+# LLM/model call (there is none on this path, Hard Invariant #1 unchanged) --
+# both are plain int/threshold comparisons over an already-fetched escalation
+# history the caller supplies.
+CCDASH_AAR_ESCALATION_QUOTA = _env_int("CCDASH_AAR_ESCALATION_QUOTA", 5)
+CCDASH_AAR_ESCALATION_WINDOW_HOURS = _env_int("CCDASH_AAR_ESCALATION_WINDOW_HOURS", 24)
 CCDASH_SNAPSHOT_FRESHNESS_DISABLE_CANDIDATE_SECONDS = _env_int(
     "CCDASH_SNAPSHOT_FRESHNESS_DISABLE_CANDIDATE_SECONDS",
     7 * 24 * 60 * 60,

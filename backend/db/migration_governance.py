@@ -503,6 +503,19 @@ COLUMN_PARITY_DRIFT_ALLOWLIST: frozenset[tuple[str, str]] = frozenset({
     # and the `test_research_runs_columns_are_parity_clean_not_allowlisted` case
     # in backend/tests/test_migration_governance.py (ADR-007 exit gate, T2-002),
     # either of which would fail if a future edit introduced real drift.
+    #
+    # aar_reviews (T1-005/T1-007, ccdash-automated-aar-review-v1 Phase 1, v42):
+    # the AAR-document<->session triage rollup persisted by
+    # backend/db/repositories/aar_reviews.py. Every column is declared
+    # identically across both DDL files using the same canonical-type/
+    # normalized-default conventions established above for rf_events/
+    # research_runs (TEXT/JSONB for the JSON-encoded correlation/flags/
+    # triage_reasons/evidence_refs columns, and the timestamp-default
+    # nullability case for created_at/updated_at). `column_parity_diff(
+    # "aar_reviews")` is `{}` by construction. aar_reviews is therefore
+    # intentionally NOT allowlisted here — see
+    # backend/tests/test_aar_reviews_repo.py, which pins this and would fail
+    # if a future edit introduced real drift.
 })
 
 # Regex for splitting a column line into (name, type-and-rest)

@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 41
+SCHEMA_VERSION = 42
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1424,6 +1424,45 @@ CREATE INDEX IF NOT EXISTS idx_research_runs_project ON research_runs(project_id
 CREATE INDEX IF NOT EXISTS idx_research_runs_workspace ON research_runs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_research_runs_rf_run_id ON research_runs(rf_run_id);
 CREATE INDEX IF NOT EXISTS idx_research_runs_project_last_event ON research_runs(project_id, last_event_at);
+
+-- ── AAR Review Persistence: aar_reviews rollup (T1-005, ccdash-automated-aar- --
+-- review-v1 Phase 1) ──────────────────────────────────────────────────────
+-- One row per (aar_document_id, session_id) pairing computed by the
+-- deterministic AAR-document-to-session triage service
+-- (backend/application/services/agent_queries/aar_review.py::AARReviewQueryService).
+-- A single AAR document that correlates to N sessions fans out into N rows,
+-- each carrying the SAME correlation/flags/triage_verdict snapshot but a
+-- distinct session_id -- this is deliberate: the composite PRIMARY KEY below
+-- is both the natural (aar_document_id, session_id) dedup key AND the upsert
+-- conflict target (backend/db/repositories/aar_reviews.py), so re-computing
+-- the same document never duplicates a pairing already on file.
+-- `correlation`/`flags`/`triage_reasons`/`evidence_refs` are JSON-encoded
+-- verbatim snapshots of the AARReviewDTO fields of the same/analogous name
+-- (`triage_reasons` <- DTO.reasons, `evidence_refs` <- DTO.source_refs) --
+-- never re-derived here. `provenance_skill_name`/`provenance_workflow_id`
+-- are guard-input columns (D4): accepted and stored verbatim but NOT
+-- enforced until Phase 6's writeback-guard worker.
+CREATE TABLE IF NOT EXISTS aar_reviews (
+    aar_document_id         TEXT NOT NULL,
+    session_id               TEXT NOT NULL,
+    project_id                TEXT NOT NULL,
+    aar_document_path        TEXT DEFAULT '',
+    correlation               TEXT,
+    flags                     TEXT,
+    triage_verdict            TEXT,
+    triage_reasons            TEXT,
+    evidence_refs             TEXT,
+    generated_at              TEXT,
+    provenance_skill_name     TEXT,
+    provenance_workflow_id    TEXT,
+    created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (aar_document_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_aar_reviews_project ON aar_reviews(project_id);
+CREATE INDEX IF NOT EXISTS idx_aar_reviews_document ON aar_reviews(aar_document_id);
+CREATE INDEX IF NOT EXISTS idx_aar_reviews_verdict ON aar_reviews(triage_verdict);
 """
 
 _PLANNING_WORKTREE_CONTEXTS_DDL = """
@@ -4205,6 +4244,54 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v41 migrations complete: research_runs table added "
             "(research-foundry-run-telemetry-v1, T2-001)."
+        )
+
+    # ── v42 migrations (T1-005: ccdash-automated-aar-review-v1 aar_reviews) ────
+    # aar_reviews is also declared in _TABLES (above) so
+    # get_sqlite_migration_tables() discovers it for the dual-DDL
+    # parity/direct-count exit gate (T1-007). This version-gated CREATE TABLE
+    # guarantees the table also appears on databases that were already at/
+    # above the pre-bump SCHEMA_VERSION and would otherwise skip the
+    # executescript(_TABLES) path entirely (rf_events v40 / research_runs v41
+    # precedent, exactly).
+    if current_version < 42:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS aar_reviews (
+                aar_document_id          TEXT NOT NULL,
+                session_id                TEXT NOT NULL,
+                project_id                 TEXT NOT NULL,
+                aar_document_path         TEXT DEFAULT '',
+                correlation                TEXT,
+                flags                      TEXT,
+                triage_verdict             TEXT,
+                triage_reasons             TEXT,
+                evidence_refs              TEXT,
+                generated_at               TEXT,
+                provenance_skill_name      TEXT,
+                provenance_workflow_id     TEXT,
+                created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (aar_document_id, session_id)
+            )
+            """
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_aar_reviews_project ON aar_reviews(project_id)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_aar_reviews_document ON aar_reviews(aar_document_id)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_aar_reviews_verdict ON aar_reviews(triage_verdict)",
+        )
+        await db.commit()
+        logger.info(
+            "v42 migrations complete: aar_reviews table added "
+            "(ccdash-automated-aar-review-v1, T1-005)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

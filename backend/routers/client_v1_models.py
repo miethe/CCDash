@@ -41,7 +41,7 @@ from ccdash_contracts import (
     LinkedSessionEnrichmentDTO,
 )
 
-from backend.application.services.agent_queries.models import DocumentRef, SessionRef
+from backend.application.services.agent_queries.models import AARReviewDTO, DocumentRef, SessionRef
 
 
 def build_client_v1_meta(*, instance_id: str = "") -> ClientV1Meta:
@@ -106,7 +106,26 @@ class SessionFamilyDTO(BaseModel):
     members: list[SessionRef] = Field(default_factory=list)
 
 
+class AARReviewListDTO(BaseModel):
+    """Project-scoped list of persisted ``aar_reviews`` rollup rows (T4-002).
+
+    One entry per distinct ``aar_document_id`` (the ``aar_reviews`` table fans
+    a single document out into N ``(document, session)`` pairing rows -- see
+    ``backend/db/repositories/aar_reviews.py`` -- this DTO deduplicates back
+    to one ``AARReviewDTO`` per document, reusing that DTO's §7.2 shape
+    verbatim: nested ``correlation``, 3-value ``triage_verdict``, ``flags[]``,
+    ``reasons``, and the deprecated flat aliases). Empty ``reviews`` is a
+    normal, non-error contract state for a project with no persisted rows
+    yet (backfill/P6 sweep worker pending) -- never an error response.
+    """
+
+    project_id: str = ""
+    total: int = 0
+    reviews: list[AARReviewDTO] = Field(default_factory=list)
+
+
 __all__ = [
+    "AARReviewListDTO",
     "ClientV1Envelope",
     "ClientV1ErrorDetail",
     "ClientV1ErrorEnvelope",

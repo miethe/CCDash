@@ -274,6 +274,7 @@ The same operator queries are available through REST, CLI, and MCP:
 | Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash report feature <feature_id>` | `ccdash_feature_forensics` |
 | Workflow diagnostics | `GET /api/agent/workflow-diagnostics` | `ccdash workflow failures` | `ccdash_workflow_failure_patterns` |
 | After-action report | `POST /api/agent/reports/aar` | `ccdash report aar --feature <feature_id>` | `ccdash_generate_aar` |
+| AAR review verdicts | `GET /api/v1/project/aar-review` | `ccdash report aar-review --document <id>` | `ccdash_aar_review` |
 
 See [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md), [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md), and [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md).
 

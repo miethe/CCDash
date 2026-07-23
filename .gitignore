@@ -57,3 +57,6 @@ deploy/local-streaming/stream.env
 # Claude Code worktrees (live git worktrees, never commit as files)
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+
+# execute-plan wave rollback checkpoints (local orchestration state)
+.claude/progress/*/.wave-*-checkpoint

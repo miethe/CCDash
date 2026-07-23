@@ -4398,3 +4398,60 @@ export interface ResearchRunDetailResponse extends AgentQueryEnvelope {
   found: boolean;
   run: ResearchRunDetail | null;
 }
+
+// ─── AAR Review (ccdash-automated-aar-review-v1, PRD §7.2, T4-001) ───────────
+//
+// Deterministic AAR-document-to-session triage read surface. Mirrors the
+// backend `AARReviewDTO` (backend/application/services/agent_queries/models.py)
+// verbatim, field-for-field, minus the DEPRECATED flat aliases
+// (session_refs/correlation_confidence/correlation_strategy/verdict) which
+// new code must never read. `schema_version` 2 is the frozen PRD §7.2 shape.
+//
+// Resilience contract (hard AC, T4-001): every field below is optional/null-
+// tolerant on the FE side even where the backend Pydantic model declares a
+// default — the panel must render a sensible fallback for every one of them,
+// never crash. See FeatureAARReviewPanel.tsx for the exact fallback text.
+
+/** One deterministic surface-issue signal computed for an AAR review. */
+export interface AarReviewFlag {
+  flagId: string;
+  triggered: boolean;
+  /** Absent/null is a valid "not evaluated" state, not an error. */
+  severity: 'low' | 'medium' | 'high' | null;
+  evidenceRefs: string[];
+  rationale: string | null;
+}
+
+/**
+ * Nested document→session correlation result.
+ *
+ * `confidence` is `null` exactly when correlation failed entirely (empty
+ * `sessionIds`) — per the PRD §7.2 verdict decision table this always
+ * routes `triageVerdict` to `human_triage_required`, never a crash and
+ * never a silently-omitted row.
+ */
+export interface AarReviewCorrelation {
+  strategy: string | null;
+  confidence: number | null;
+  sessionIds: string[];
+  featureId: string | null;
+}
+
+export type AarReviewTriageVerdict =
+  | 'surface_only'
+  | 'deep_review_recommended'
+  | 'human_triage_required';
+
+/** One `aar_reviews` rollup row (one AAR document × one resolved session). */
+export interface AarReviewEntry {
+  schemaVersion: number | null;
+  status: 'ok' | 'error' | null;
+  documentId: string;
+  correlation: AarReviewCorrelation;
+  flags: AarReviewFlag[];
+  /** `null` is a valid "not yet computed" state — never treat as an error. */
+  triageVerdict: AarReviewTriageVerdict | null;
+  reasons: string[];
+  generatedAt: string | null;
+  sourceRefs: string[];
+}

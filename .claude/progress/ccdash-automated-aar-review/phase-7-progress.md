@@ -8,179 +8,252 @@ prd_ref: docs/project_plans/PRDs/features/ccdash-automated-aar-review-v1.md
 plan_ref: docs/project_plans/implementation_plans/features/ccdash-automated-aar-review-v1.md
 execution_model: batch-parallel
 phase: 7
-title: "Documentation Finalization + Deferred-Items Design Specs"
-status: pending
-created: 2026-07-22
-updated: 2026-07-22
-started: null
-completed: null
+title: Documentation Finalization + Deferred-Items Design Specs
+status: completed
+created: '2026-07-22'
+updated: '2026-07-23'
+started: '2026-07-23T00:30:00Z'
+completed: '2026-07-23T02:30:00Z'
 commit_refs: []
 pr_refs: []
-
-overall_progress: 0
+overall_progress: 100
 completion_estimate: on-track
-
 total_tasks: 8
-completed_tasks: 0
+completed_tasks: 8
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
 owners:
 - documentation-writer
 - changelog-generator
 contributors:
 - ai-artifacts-engineer
-
 model_usage:
   primary: haiku
   external: []
-
 tasks:
 - id: DOC-001
-  description: "Update CHANGELOG: add a [Unreleased] entry covering DTO
-    reconciliation (schema_version bump), the new aar_reviews persisted rollup, the
-    5th flag, the FE review panel, the v1 LAN endpoint + aar-review capability, and
-    the gated autonomous worker (flag-gated, default-off). Categorization rules in
-    .claude/specs/changelog-spec.md."
-  status: pending
-  assigned_to: [changelog-generator]
-  dependencies: ["Phase 6 sealed"]
-  estimated_effort: "0.25 pt"
+  description: 'Update CHANGELOG: add a [Unreleased] entry covering DTO reconciliation
+    (schema_version bump), the new aar_reviews persisted rollup, the 5th flag, the
+    FE review panel, the v1 LAN endpoint + aar-review capability, and the gated autonomous
+    worker (flag-gated, default-off). Categorization rules in .claude/specs/changelog-spec.md.'
+  status: completed
+  assigned_to:
+  - changelog-generator
+  dependencies:
+  - Phase 6 sealed
+  estimated_effort: 0.25 pt
   assigned_model: haiku
   model_effort: adaptive
+  started: '2026-07-23T00:30:00Z'
+  completed: '2026-07-23T02:00:00Z'
+  evidence:
+  - doc: CHANGELOG.md
+  verified_by:
+  - task-completion-validator
 - id: DOC-002
-  description: "Update README (if applicable): rebuild README if CLI commands,
-    endpoints, or screenshots changed for this feature; confirm N/A otherwise."
-  status: pending
-  assigned_to: [documentation-writer]
-  dependencies: ["Phase 6 sealed"]
-  estimated_effort: "0.25 pt"
+  description: 'Update README (if applicable): rebuild README if CLI commands, endpoints,
+    or screenshots changed for this feature; confirm N/A otherwise.'
+  status: completed
+  assigned_to:
+  - documentation-writer
+  dependencies:
+  - Phase 6 sealed
+  estimated_effort: 0.25 pt
   assigned_model: haiku
   model_effort: adaptive
+  started: '2026-07-23T00:30:00Z'
+  completed: '2026-07-23T02:00:00Z'
+  evidence:
+  - doc: README.md#capability-table-row
+  verified_by:
+  - task-completion-validator
 - id: DOC-003
-  description: "Author operator/capability doc covering the v1 LAN aar-review
-    endpoint, the aar-review capability string, and the
-    CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED flag (default-off) — mirroring
-    docs/guides/external-api-lan-deployment.md's existing pattern."
-  status: pending
-  assigned_to: [documentation-writer]
-  dependencies: ["Phase 6 sealed"]
-  estimated_effort: "0.5 pt"
+  description: Author operator/capability doc covering the v1 LAN aar-review endpoint,
+    the aar-review capability string, and the CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED
+    flag (default-off) — mirroring docs/guides/external-api-lan-deployment.md's existing
+    pattern.
+  status: completed
+  assigned_to:
+  - documentation-writer
+  dependencies:
+  - Phase 6 sealed
+  estimated_effort: 0.5 pt
   assigned_model: haiku
   model_effort: adaptive
+  started: '2026-07-23T00:30:00Z'
+  completed: '2026-07-23T02:00:00Z'
+  evidence:
+  - doc: docs/guides/aar-review-loop.md
+  verified_by:
+  - task-completion-validator
 - id: DOC-004
-  description: "Update CLAUDE.md pointer + context files: add a <=3-line CLAUDE.md
+  description: 'Update CLAUDE.md pointer + context files: add a <=3-line CLAUDE.md
     pointer for the AAR review loop (persisted rollup, flags, guards, worker flag)
-    following progressive disclosure; update any affected key-context files."
-  status: pending
-  assigned_to: [documentation-writer]
-  dependencies: ["Phase 6 sealed"]
-  estimated_effort: "0.5 pt"
+    following progressive disclosure; update any affected key-context files.'
+  status: completed
+  assigned_to:
+  - documentation-writer
+  dependencies:
+  - Phase 6 sealed
+  estimated_effort: 0.5 pt
   assigned_model: haiku
   model_effort: adaptive
+  started: '2026-07-23T00:30:00Z'
+  completed: '2026-07-23T02:00:00Z'
+  evidence:
+  - doc: CLAUDE.md#aar-review-loop-pointer
+  verified_by:
+  - task-completion-validator
 - id: DOC-005
-  description: "Update plan frontmatter: set status: completed, populate
-    commit_refs, files_affected, updated; set deferred_items_spec_refs from
-    DOC-006's output."
-  status: pending
-  assigned_to: [documentation-writer]
-  dependencies: [DOC-001, DOC-002, DOC-003, DOC-004]
-  estimated_effort: "0.25 pt"
+  description: 'Update plan frontmatter: set status: completed, populate commit_refs,
+    files_affected, updated; set deferred_items_spec_refs from DOC-006''s output.'
+  status: completed
+  assigned_to:
+  - documentation-writer
+  dependencies:
+  - DOC-001
+  - DOC-002
+  - DOC-003
+  - DOC-004
+  estimated_effort: 0.25 pt
   assigned_model: haiku
   model_effort: adaptive
+  started: '2026-07-23T00:30:00Z'
+  completed: '2026-07-23T02:00:00Z'
+  evidence:
+  - frontmatter: plan-deferred_items_spec_refs+status-completed
+  verified_by:
+  - task-completion-validator
 - id: DOC-006
-  description: "Author design specs for deferred items: for each row in the parent
-    plan's Deferred Items Triage Table (OQ-3, OQ-4, and OQ-6-if-unresolved-per-
-    Phase-5's T5-002), author a design_spec at the row's Target Spec Path with
-    maturity: shaping (or idea), prd_ref set to the parent PRD, and append the
-    resulting path to deferred_items_spec_refs. Mark N/A with rationale if Phase 5
-    fully resolved a row."
-  status: pending
-  assigned_to: [documentation-writer]
-  dependencies: ["Phase 6 sealed"]
-  estimated_effort: "1 pt"
+  description: 'Author design specs for deferred items: for each row in the parent
+    plan''s Deferred Items Triage Table (OQ-3, OQ-4, and OQ-6-if-unresolved-per- Phase-5''s
+    T5-002), author a design_spec at the row''s Target Spec Path with maturity: shaping
+    (or idea), prd_ref set to the parent PRD, and append the resulting path to deferred_items_spec_refs.
+    Mark N/A with rationale if Phase 5 fully resolved a row.'
+  status: completed
+  assigned_to:
+  - documentation-writer
+  dependencies:
+  - Phase 6 sealed
+  estimated_effort: 1 pt
   assigned_model: sonnet
   model_effort: adaptive
+  started: '2026-07-23T00:30:00Z'
+  completed: '2026-07-23T02:00:00Z'
+  evidence:
+  - doc: docs/project_plans/design-specs/op-story-session-ref-frontmatter-contract.md+quota-tuning+transport-promotion
+  verified_by:
+  - task-completion-validator
 - id: DOC-007
-  description: "Finalize findings doc (if populated): if findings_doc_ref was
-    populated during any phase, ensure all findings are captured, advance status
-    draft -> accepted, populate promoted_to. Skip with \"N/A — no findings captured\"
-    if findings_doc_ref is null."
-  status: pending
-  assigned_to: [documentation-writer]
-  dependencies: [DOC-006]
-  estimated_effort: "0.25 pt"
+  description: 'Finalize findings doc (if populated): if findings_doc_ref was populated
+    during any phase, ensure all findings are captured, advance status draft -> accepted,
+    populate promoted_to. Skip with "N/A — no findings captured" if findings_doc_ref
+    is null.'
+  status: completed
+  assigned_to:
+  - documentation-writer
+  dependencies:
+  - DOC-006
+  estimated_effort: 0.25 pt
   assigned_model: haiku
   model_effort: adaptive
+  started: '2026-07-23T00:30:00Z'
+  completed: '2026-07-23T02:00:00Z'
+  evidence:
+  - na: findings_doc_ref-null-no-findings-captured
+  verified_by:
+  - task-completion-validator
 - id: DOC-008
-  description: "Update affected project-level skills: check .claude/specs/
-    skills-index.md for any custom skill whose domain this feature touches (e.g., a
-    future aar-review operator skill). Update SPEC.md if applicable. Skip with
-    \"N/A — no project-level skill domains affected\" if none apply."
-  status: pending
-  assigned_to: [ai-artifacts-engineer, documentation-writer]
-  dependencies: ["Phase 6 sealed"]
-  estimated_effort: "0.5 pt"
+  description: 'Update affected project-level skills: check .claude/specs/ skills-index.md
+    for any custom skill whose domain this feature touches (e.g., a future aar-review
+    operator skill). Update SPEC.md if applicable. Skip with "N/A — no project-level
+    skill domains affected" if none apply.'
+  status: completed
+  assigned_to:
+  - ai-artifacts-engineer
+  - documentation-writer
+  dependencies:
+  - Phase 6 sealed
+  estimated_effort: 0.5 pt
   assigned_model: sonnet
   model_effort: adaptive
-
+  started: '2026-07-23T00:30:00Z'
+  completed: '2026-07-23T02:00:00Z'
+  evidence:
+  - na: no-project-level-skill-domains-affected
+  verified_by:
+  - task-completion-validator
 parallelization:
-  batch_1: [DOC-001, DOC-002, DOC-003, DOC-004, DOC-006, DOC-008]
-  batch_2: [DOC-005, DOC-007]
-  critical_path: [DOC-006, DOC-007]
-  estimated_total_time: "2-3 pts (2 sequential batches)"
-
-blockers: []
-
+  batch_1:
+  - DOC-001
+  - DOC-002
+  - DOC-003
+  - DOC-004
+  - DOC-006
+  - DOC-008
+  batch_2:
+  - DOC-005
+  - DOC-007
+  critical_path:
+  - DOC-006
+  - DOC-007
+  estimated_total_time: 2-3 pts (2 sequential batches)
+blockers:
+- DEFERRED-ITEMS (from P6/karen milestone) for P7 design-specs + feature pre-production list: (1)
+    resolve worker workspace_id='default-local' hardcode before flipping CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED
+    on multi-workspace/LAN (Guard 1 dependency); (2) when the dormant writeback seam
+    is wired, the caller MUST build ApprovedRunReference only from a real op-approve
+    run AND always assemble real escalation_history (add a test that empty history
+    is rejected so Guard 3 can't silently no-op); (3) add a runtime/integration test
+    that aclear_project_cache actually evicts the aar_review_list memoized entry after
+    a live sweep; (4) seeded-PG smoke with the worker flag ON in staging before any
+    production flip (SQLite-green != PG-operable); (5) decide coalescing-guard posture
+    (document per-instance vs share).
 success_criteria:
 - id: SC-1
-  description: "CHANGELOG [Unreleased] section contains an entry matching this
-    feature."
-  status: pending
+  description: CHANGELOG [Unreleased] section contains an entry matching this feature.
+  status: met
 - id: SC-2
-  description: "Operator/capability doc authored (DOC-003)."
-  status: pending
+  description: Operator/capability doc authored (DOC-003).
+  status: met
 - id: SC-3
-  description: "CLAUDE.md pointer + context files updated (DOC-004)."
-  status: pending
+  description: CLAUDE.md pointer + context files updated (DOC-004).
+  status: met
 - id: SC-4
-  description: "Plan frontmatter complete (DOC-005)."
-  status: pending
+  description: Plan frontmatter complete (DOC-005).
+  status: met
 - id: SC-5
-  description: "Design specs authored for all 3 deferred items (or documented N/A) —
-    deferred_items_spec_refs populated (DOC-006)."
-  status: pending
+  description: Design specs authored for all 3 deferred items (or documented N/A)
+    — deferred_items_spec_refs populated (DOC-006).
+  status: met
 - id: SC-6
-  description: "Findings doc finalized if any findings were captured (DOC-007)."
-  status: pending
+  description: Findings doc finalized if any findings were captured (DOC-007).
+  status: met
 - id: SC-7
-  description: "Project-level custom skills updated (or N/A) (DOC-008)."
-  status: pending
+  description: Project-level custom skills updated (or N/A) (DOC-008).
+  status: met
 - id: SC-8
-  description: "ac-coverage-report.py and validate-phase-completion.py run clean
-    across all 7 phases."
-  status: pending
+  description: ac-coverage-report.py and validate-phase-completion.py run clean across
+    all 7 phases.
+  status: met
 - id: SC-9
-  description: "task-completion-validator review passes."
-  status: pending
+  description: task-completion-validator review passes.
+  status: met
 - id: SC-10
-  description: "karen end-of-feature review passes."
-  status: pending
-
+  description: karen end-of-feature review passes.
+  status: met
 files_modified:
 - CHANGELOG.md
 - docs/project_plans/design-specs/
-
-notes: >
-  Entry criteria: Phase 6 sealed and its karen end-of-P4 milestone review passed. This
-  is the end-of-feature milestone — requires a karen review in addition to
-  task-completion-validator. DOC-006's deferred items: OQ-3 (op story session-ref
-  frontmatter contract), OQ-4 (escalation-quota tuning), OQ-6 (event transport
-  promotion) — each needs a design_spec at
-  docs/project_plans/design-specs/ or an explicit N/A rationale. The Wrap-Up
-  (Feature Guide + PR) step in the parent plan proceeds only after this phase's karen
-  end-of-feature review passes.
+notes: 'Entry criteria: Phase 6 sealed and its karen end-of-P4 milestone review passed.
+  This is the end-of-feature milestone — requires a karen review in addition to task-completion-validator.
+  DOC-006''s deferred items: OQ-3 (op story session-ref frontmatter contract), OQ-4
+  (escalation-quota tuning), OQ-6 (event transport promotion) — each needs a design_spec
+  at docs/project_plans/design-specs/ or an explicit N/A rationale. The Wrap-Up (Feature
+  Guide + PR) step in the parent plan proceeds only after this phase''s karen end-of-feature
+  review passes.'
+progress: 100
 ---
 
 # ccdash-automated-aar-review - Phase 7: Documentation Finalization + Deferred-Items Design Specs
