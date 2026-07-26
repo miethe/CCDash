@@ -3,11 +3,11 @@ schema_version: 2
 doc_type: design_spec
 title: "Proof → Routing Feedback Loop"
 status: draft
-maturity: shaping
+maturity: ready
 feature_slug: proof-to-routing-loop
 prd_ref: null
 created: 2026-07-22
-updated: 2026-07-22
+updated: 2026-07-26
 category: cross-repo-integration
 audience: developers
 tags:
@@ -23,13 +23,14 @@ problem_statement: >
   LOOKS AT — not a signal that changes future routing. A route that repeatedly fails, costs
   5x, or regresses keeps getting selected until an agent notices and re-learns the lesson by
   hand. This spec shapes an offline, deterministic rollup CCDash emits per
-  (task_class × model × provider × profile) that the delegation-router (MeatySkills repo) can
+  (task_class × model) that the delegation-router (MeatySkills repo) can
   ingest as a routing prior — closing the backward pass without ever putting a model on the
   decision path (AOS Constraint 4).
 related_documents:
   - agentic_meta_dev/docs/project_plans/meta-plans/aos-backward-pass-initiative.md   # launchpad meta-plan (workstream #6 of "closing the backward pass"); note-form path — lives in the agentic_meta_dev repo, not here
   - docs/project_plans/design-specs/ccdash-aar-review-consumer-contract-v1.md         # sibling PULL/no-LLM consumer-contract pattern this reuses
   - docs/project_plans/design-specs/system-metrics-background-rollup.md               # prior rollup-table + config-flag precedent
+  - agentic_meta_dev/docs/agentic-operator/contracts/routing-feedback.md              # cross-project T1 contract; canonical path lives in agentic_meta_dev
   # CROSS-REPO CONSUMERS (not specified here — named only):
   #   - delegation-router (MeatySkills repo, branch `ibm-main`) — produces immutable RoutingRecords; would ingest this rollup as a prior
   #   - ~/.claude/config/model-registry.yaml (`scores:` per model) — the §1.5 manual scorecard this feeds as an empirical layer
@@ -62,7 +63,7 @@ The lesson exists in CCDash's data. It just never changes a decision.
 
 Make the outcome signal flow **back** into routing, automatically and deterministically:
 
-> A `(task_class × model × provider × profile)` combination that empirically fails / costs more /
+> A `(task_class × model)` combination that empirically fails / costs more /
 > regresses should mechanically DOWNWEIGHT that route as a **prior** the delegation-router reads —
 > with no agent re-learning the lesson and no model call at routing time.
 
@@ -76,7 +77,7 @@ compute path; CCDash never pushes or dispatches.
 
 ### 3a. The outcome signal CCDash aggregates
 
-A new rollup keyed on the tuple `(task_class, model, provider, profile)`. Per key, over a
+A new rollup keyed on the coarsened tuple `(task_class, model)`. Per key, over a
 rolling window, derive **only from already-ingested session/feature/AAR rows** (deterministic
 aggregation — SQL, thresholds, counts; no inference):
 
@@ -88,8 +89,10 @@ aggregation — SQL, thresholds, counts; no inference):
 | `regression_rate` | AAR regression flags / re-open / rework signals | fraction that regressed |
 | `window` / `last_computed_at` | rollup job clock | freshness + decay basis |
 
-The tuple reuses fields CCDash *already captures* on `AgentSession`; only `task_class` is new
-(see Open Questions). Computation lives in the transport-neutral
+`task_class` is derived only through the pinned mapping from `sessions.skill_name`; it is not a
+raw copy or an inferred fallback. `provider` may be derived for display but is not an independent
+key dimension, and the captured `profile`/`effort_tier`/`model_variant` columns are write-path-dead
+in the explored corpus. Computation lives in the transport-neutral
 `backend/application/services/agent_queries/` layer, primed by the existing worker
 (`backend/worker.py`) — the same shape as `system_metrics.py` rollups and the persisted
 `aar_reviews` table, behind a config flag (`CCDASH_ROUTING_ROLLUP_ENABLED`, default `false`)
@@ -102,7 +105,11 @@ already uses (REST / MCP / CLI):
 
 ```
 GET /api/v1/routing/rollup?project_id={id}&task_class={optional}
-→ { generated_at, window, keys: [ { task_class, model, provider, profile,
+→ { generated_at, window, contract_id, contract_version,
+     taxonomy_id, taxonomy_version, taxonomy_digest,
+     mapping_id, mapping_version, mapping_digest,
+     mapped_count, unclassified_count,
+     keys: [ { source_skill_name, task_class, model,
       sample_count, success_rate, cost_index, regression_rate, confidence } ] }
 ```
 
@@ -144,7 +151,9 @@ Constraint 4 (no LLM on the render/navigation/decision path) holds by constructi
 | Concern | Owner |
 |---|---|
 | Session/feature/AAR telemetry ingest | **CCDash** (existing) |
-| `(task_class × model × provider × profile)` rollup computation | **CCDash** worker + `agent_queries/` |
+| `(task_class × model)` rollup computation | **CCDash** worker + `agent_queries/` |
+| `skill_name → task_class` source mapping and seam decision | **agentic_meta_dev**, versioned contract |
+| Canonical task-class vocabulary and join validation | **delegation-router** (MeatySkills, `ibm-main`) |
 | Rollup PULL surface (REST/MCP/CLI + capability gate) | **CCDash** |
 | Routing decision, RoutingRecord, prior-merge math | **delegation-router** (MeatySkills, `ibm-main`) |
 | Manual scorecard baseline (`scores:`) | `~/.claude/config/model-registry.yaml` |
@@ -163,16 +172,41 @@ be worse than the status quo. Minimum defenses:
 - **Decay / recency weighting** — old outcomes decay so a route that has recovered is not
   penalized forever, and a rolling window bounds memory.
 - **Bounded adjustment** — the rollup can nudge, not veto; it cannot drive a route's effective
-  score below a floor (prevents starvation, §6).
+  score below a floor (prevents starvation, §7).
 - **Human-visible + reversible** — every downweight is legible on a CCDash surface *and* stamped
   into the RoutingRecord provenance, never silent. A human override in the registry always wins,
   and disabling the flag reverts instantly to pure-scorecard behavior.
 
-## 6. Open Questions
+## 6. T1 Resolution — Versioned Task-Class Join
 
-1. **`task_class` definition** — CCDash does not yet have a first-class `task_class`. Derive it
-   from `skillName` / command / feature tier? Adopt the router's own task_class taxonomy so the
-   join is exact? A shared vocabulary is the crux of the seam and is unresolved.
+The 2026-07-26 cross-project decision resolves the blocking vocabulary question without claiming
+that the feedback loop is implemented:
+
+- `sessions.skill_name` and router `task_class` are separate namespaces. The live snapshot had
+  17 nonblank skill names, 12 router policy keys, and zero exact overlaps.
+- MeatySkills owns `aos.routing.task_class` v1.0.0 in
+  `meaty-agentic-ops/skills/delegation-router/task-class-vocabulary.v1.json`.
+- agentic_meta_dev owns the exact v1 CCDash mapping and seam contract at
+  `docs/agentic-operator/contracts/routing-feedback-task-map.v1.json` and
+  `docs/agentic-operator/contracts/routing-feedback.md`.
+- CCDash preserves `source_skill_name`, maps only exact reviewed names, and emits
+  `_unclassified` plus coverage for null/unlisted/executor-identity values. `_unclassified` never
+  routes.
+- The router validates the contract, taxonomy, and mapping IDs/versions/digests before considering
+  an evidence key. Unknown, alias, mismatched, `_unclassified`, and MUST-stay inputs produce no
+  empirical adjustment.
+- The router owns the bounded-adjustment cap and effective-score floor, human-override precedence,
+  minimum-sample defense in depth, protected-class immunity, feature disable, and RoutingRecord
+  provenance. CCDash remains the deterministic evidence/PULL owner.
+- Live consumption remains disabled until those router actuation controls and the CCDash rollup
+  are implemented.
+
+This clears T1 for `/plan:plan-feature --tier=2`. It does not ship or enable the loop.
+
+## 7. Open Questions
+
+1. **`task_class` definition — RESOLVED by T1.** Use the pinned exact
+   `skill_name → aos.routing.task_class` v1 mapping; raw names, aliases, and inference are invalid.
 2. **Rollup storage** — a new `routing_rollup` table (separation of concern, like `aar_reviews`),
    or a read-time aggregation over existing session rows? Freshness vs. compute cost, same
    trade-off `system-metrics-background-rollup` weighs.
@@ -189,7 +223,7 @@ be worse than the status quo. Minimum defenses:
    multi-session feature) are not. How is a shared outcome attributed across the tuples that
    contributed? (Echoes the RF per-provider-split attribution problem, DF-001.)
 
-## 7. Explored Alternatives
+## 8. Explored Alternatives
 
 - **Manual scorecard tuning (status quo)** — a human periodically edits `model-registry.yaml`
   `scores:` after noticing a bad route. This is exactly the backward-pass gap: it depends on a
@@ -200,9 +234,9 @@ be worse than the status quo. Minimum defenses:
   a routing decision must be a deterministic lookup. The offline-aggregation design gives the
   same adaptivity without a model in the hot path.
 
-## 8. Success Signal
+## 9. Success Signal
 
-A `(task_class × model × provider × profile)` route that repeatedly fails / overspends / regresses
+A `(task_class × model)` route that repeatedly fails / overspends / regresses
 is **automatically downweighted** in the next routing decision — no human edit and no agent
 re-learning the lesson — and that downweight is **visible** (on a CCDash surface and in the
 RoutingRecord provenance) and **reversible** (human override in the registry wins; the config flag
