@@ -46,6 +46,28 @@ implementation_plan_ref: null
 
 # PRD: IntentTree Session Correlation API v1
 
+> **⚠️ Status note (2026-07-26) — remains `draft`; do not plan or promote without re-reading this.**
+> A focused spike evaluated reviving this PRD as the per-level session-attribution vehicle for the
+> `plan-execution-session-correlation` exploration. **Verdict: not now** —
+> `docs/project_plans/exploration/plan-execution-session-correlation/spikes/intenttree-import-path/intenttree-import-path-findings.md`.
+>
+> The PRD is **not wrong — it is premature**, and its handshake-token binding design is sound and
+> worth preserving. Three findings gate it; do not re-derive them:
+> 1. **It does not solve per-level attribution.** `metadata.node_id` is stored opaquely in
+>    `metadata_json` with no column, no schema, and no read path. Resolving node_id → (hierarchy
+>    level, feature) is the same problem class as `rf-intenttree-intent-id-resolution` (DF-007,
+>    deferred), and needs an IntentTree HTTP client CCDash does not have.
+> 2. **It cannot reach subagents.** `AgentRun.ccdash_session_id` is a single scalar column,
+>    `AgentRun` has no `parent_run_id`, and nothing registers a `Task()`-spawned child. An
+>    orchestrator fanning out to 5 subagents links **1** session, not 6 — the same orchestrator-only
+>    ceiling the correlation-crux leg found for slash-command tags.
+> 3. **There is no operational substrate.** As of 2026-07-26 IntentTree has 59 runs total, **0**
+>    bound to any `aos-ccdash` node, **0** with `harness: claude_code`, and 0 external-link rows.
+>    It has never dispatched a real Claude Code run.
+>
+> **Revisit when** IntentTree actually dispatches (non-zero `claude_code` runs bound to ccdash nodes)
+> and a trace-id propagation mechanism (`aos_trace_uuid`) reaches subagent invocations.
+
 ## Executive Summary
 
 IntentTree v1 introduces a dispatch harness that synthesizes an agent task prompt and lets the user run it in Claude Code or another external harness. Post-dispatch, IntentTree wants to pull CCDash session metrics (tokens, cost, tool calls, duration, outcome) to attach to the agent run record — providing mission-control-level observability. Today this requires the user to paste a sessionId into IntentTree by hand, because CCDash sessions are keyed by the platform-generated `sessionId` that only exists after the transcript file appears on disk.

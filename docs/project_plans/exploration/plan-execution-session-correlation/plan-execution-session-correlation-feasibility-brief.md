@@ -214,6 +214,52 @@ No structural change to the sync architecture itself — it reuses the `feature_
 `session_usage_attribution.py` (new plan-level attribution producer), new derivation/aggregation
 helpers, and a config-driven reviewer-agent taxonomy (mirroring `session_mappings.py`).
 
+**Decision 3 — IntentTree as the import path (RESOLVED 2026-07-26): NO.** The
+`hierarchy-ingestion` leg dismissed IntentTree `sync_import` reuse in one line; that dismissal was
+re-investigated as a focused follow-on spike. Full evidence:
+`spikes/intenttree-import-path/intenttree-import-path-findings.md` (verdict **no-go**, confidence
+0.85). **This does not change the verdict or the plan below** — Slice 1 stays file-based and GO,
+Slice 2 stays DEFER. Summary of what was settled, so it is not re-explored:
+
+- **CCDash must NOT consume IntentTree's node tree for Slice 1** — *not* because the importer is
+  weak. `sync_import` is genuinely capable: it unions `tasks[]` with `wave_plan.phases[].tasks`,
+  emits `depends_on`/`blocks` edges, captures validation commands and doc refs, and can even project
+  ACs as `step` nodes under `--ac-as-steps`. The rejection rests on the *deployed reality* and the
+  architecture: the live `aos-ccdash` tree is 271 nodes from **3** plans (vs 132 implementation plans
+  on disk), frozen since **2026-06-24** with no automatic refresh, using 2 of 18 node types. There is
+  no `wave`/`gate` node type — gate criteria survive only as unqueryable `meta` keys. Its
+  `acceptance_criteria` is not per-node: 246 nodes share **4 distinct lists** because DI-152 container
+  inheritance (on by default) copies phase/feature AC onto every task lacking its own, so a consumer
+  **cannot distinguish authored from inherited AC** and any per-task AC join would be silently wrong.
+  Container-level bindings carry `source_fingerprint: null`, so phase-set drift is undetectable — the
+  import dropped `ccdash-core-remediation` Phase 1 and Phase 4 and never flagged it. Consuming this
+  would be derived-reading-derived (AOS constraint #2), adding a runtime dependency on a LAN service,
+  for a hierarchy CCDash already parses from the same files.
+- **`intenttree-session-correlation-v1` must NOT be revived as the Slice-2 vehicle.** Its
+  load-bearing premise — that a dispatcher's `node_id` dissolves the subagent-attribution gap — is
+  **false**. IntentTree links **one** session per run: `AgentRun.ccdash_session_id` is a single
+  scalar column, `AgentRun` has no `parent_run_id`, and no code path registers a `Task()`-spawned
+  child. An orchestrator fanning out to 5 subagents yields **1** linked session, not 6 — the *same*
+  orchestrator-only ceiling as slash-command-tag derivation (`correlation-crux-findings.md:44-52`,
+  gap-analysis G-2). The seam also has zero operational substrate (0 runs bound to any ccdash node,
+  0 `claude_code`-harness runs, 0 external-link rows) and would cover **0%** of the ~9,700-session
+  historical corpus. Leave the PRD at `status: draft`; it is not wrong, it is premature.
+- **`node_id` resolution is unsolved and constraint-bound.** The PRD stores `node_id` in an opaque
+  `metadata_json` blob with no column, no schema, and no read path. Resolving it is the same problem
+  class as `rf-intenttree-intent-id-resolution` (DF-007, deferred), whose unblock condition — an
+  IntentTree HTTP client plus a resilience contract in `backend/config.py` — CCDash still lacks. That
+  spec's **D2 boundary** (these ids must never become an `entity_graph`/`aos_correlation` join key)
+  directly collides with what Slice-2 per-level attribution would require.
+- **Carried forward — the one reusable primitive.** `aos_trace_uuid` (IntentTree migration `0036`,
+  documented as spanning "multi-hop work", intentionally non-unique) is the correctly-shaped
+  mechanism for grouping an orchestrator with its children. **Nothing populates it** — every write
+  site is caller-supplied pass-through. Closing Slice 2's subagent gap therefore needs a *dispatcher
+  that mints one trace id and threads it into every child invocation*. That is harness/run-loop work
+  (Claude Code launcher or Hermes) owned by the AOS launchpad — **not CCDash work and not IntentTree
+  work** — and it depends on CCDash's launch-capture sidecar path, which is currently dead (0
+  `*.capture.json` on disk). This is the highest-leverage unlock for Slice 2 and should be routed
+  via `op` rather than absorbed into a CCDash plan.
+
 ---
 
 ## 7. Verdict

@@ -3,10 +3,13 @@ schema_version: 2
 doc_type: report
 report_category: handoff
 title: "IntentTree-as-Import-Path — New-Session Handoff"
-status: draft
+status: complete
 created: 2026-07-26
+completed: 2026-07-26
+outcome: no-go
 feature_slug: plan-execution-session-correlation
 related_documents:
+  - docs/project_plans/exploration/plan-execution-session-correlation/spikes/intenttree-import-path/intenttree-import-path-findings.md
   - docs/project_plans/exploration/plan-execution-session-correlation/plan-execution-session-correlation-feasibility-brief.md
   - docs/project_plans/PRDs/integrations/intenttree-session-correlation-v1.md
   - docs/project_plans/design-specs/rf-intenttree-intent-id-resolution.md
@@ -14,6 +17,24 @@ related_documents:
 ---
 
 # IntentTree-as-Import-Path — New-Session Handoff
+
+> **✅ RESOLVED 2026-07-26 — this handoff is closed. Read the findings, not this brief.**
+> → `spikes/intenttree-import-path/intenttree-import-path-findings.md` (verdict **no-go**, conf 0.85)
+>
+> **Outcome: neither "instead" nor "additionally".** All six OQs resolved. The headline this handoff
+> established — F-2, that a dispatcher's `node_id` dissolves the Slice-2 subagent gap — is
+> **empirically false**: IntentTree links 1 session per run, has no `parent_run_id`, and registers no
+> `Task()`-spawned children (5 subagents → 1 linked session). F-4/F-5 were materially overstated: the
+> `aos-ccdash` tree is 3 plans of 132, frozen since 2026-06-24, and its `acceptance_criteria` is
+> default container inheritance, not per-task authorship. The seam has zero substrate (0 runs bound to
+> ccdash nodes, 0 `claude_code` harness runs, 0 external-links).
+>
+> **The parent exploration's plan is unchanged**: Slice 1 file-based GO, Slice 2 DEFER.
+> One primitive carried forward: `aos_trace_uuid` is the correctly-shaped mechanism for the subagent
+> problem, but nothing populates it — that is harness/run-loop work owned by the AOS launchpad.
+>
+> The sections below are preserved **as-authored** for provenance; §2's F-1…F-6 are adjudicated in
+> §1 of the findings doc — several did not survive.
 
 > **You are picking up a scoped follow-on to the `plan-execution-session-correlation` exploration
 > (verdict: CONDITIONAL, main `69b4cab`).** The parent exploration asked whether CCDash can ingest the
