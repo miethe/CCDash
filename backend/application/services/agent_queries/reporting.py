@@ -26,6 +26,16 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
+def _representative_session_ids(item: dict[str, Any]) -> list[str]:
+    evidence_summary = item.get("evidenceSummary")
+    if not isinstance(evidence_summary, dict):
+        return []
+    raw_ids = evidence_summary.get("representativeSessionIds")
+    if not isinstance(raw_ids, list):
+        return []
+    return [str(session_id) for session_id in raw_ids[:3]]
+
+
 def _timeline_data(session_rows: list[dict[str, Any]]) -> TimelineData:
     started = [
         str(row.get("started_at") or row.get("startedAt") or "")
@@ -183,7 +193,7 @@ class ReportingQueryService:
                 frequency=int(item.get("sampleSize") or 0),
                 effectiveness_score=_safe_float(item.get("successScore")),
                 notes=f"Observed {int(item.get('sampleSize') or 0)} sessions with success score {_safe_float(item.get('successScore')):.2f}.",
-                evidence_refs=[],
+                evidence_refs=_representative_session_ids(item),
             )
             for item in effectiveness_payload.get("items", [])
             if str(item.get("scopeType") or "") in {"workflow", "effective_workflow"}

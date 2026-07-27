@@ -141,7 +141,10 @@ class ProjectStatusQueryServiceTests(unittest.IsolatedAsyncioTestCase):
                             "id": "workflow:phase-execution",
                             "identity": {"displayLabel": "Phase Execution", "registryId": "workflow:phase-execution"},
                             "sampleSize": 4,
-                            "effectiveness": {"successScore": 0.75},
+                            "effectiveness": {
+                                "successScore": 0.75,
+                                "evidenceSummary": {"representativeSessionIds": ["s-1", "s-2"]},
+                            },
                             "lastObservedAt": "2026-04-11T10:03:00+00:00",
                         }
                     ]
@@ -156,7 +159,44 @@ class ProjectStatusQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.blocked_features, ["feature-1"])
         self.assertEqual(result.recent_sessions[0].session_id, "session-1")
         self.assertEqual(result.top_workflows[0].workflow_name, "Phase Execution")
+        self.assertEqual(result.top_workflows[0].representative_session_ids, ["s-1", "s-2"])
         self.assertIn("project-1", result.source_refs)
+
+    async def test_get_status_workflow_summary_defaults_representative_session_ids_when_missing(self) -> None:
+        features_repo = types.SimpleNamespace(list_all=AsyncMock(return_value=[]))
+        sessions_repo = types.SimpleNamespace(
+            list_paginated=AsyncMock(return_value=[]),
+            get_project_stats=AsyncMock(return_value={"count": 0, "cost": 0.0, "tokens": 0, "duration": 0.0}),
+        )
+        sync_repo = types.SimpleNamespace(list_all=AsyncMock(return_value=[]))
+        ports = _ports(features=features_repo, sessions=sessions_repo, sync=sync_repo)
+        response = types.SimpleNamespace(items=[])
+
+        with patch(
+            "backend.application.services.agent_queries.project_status.SessionIntelligenceReadService.list_sessions",
+            new=AsyncMock(return_value=response),
+        ), patch(
+            "backend.application.services.agent_queries.project_status.AnalyticsOverviewService.get_overview",
+            new=AsyncMock(return_value={"kpis": {}, "generatedAt": "2026-04-11T10:04:00+00:00"}),
+        ), patch(
+            "backend.application.services.agent_queries.project_status.list_workflow_registry",
+            new=AsyncMock(
+                return_value={
+                    "items": [
+                        {
+                            "id": "workflow:no-evidence",
+                            "identity": {"displayLabel": "No Evidence", "registryId": "workflow:no-evidence"},
+                            "sampleSize": 1,
+                            "effectiveness": {"successScore": 0.5},
+                            "lastObservedAt": "2026-04-11T10:03:00+00:00",
+                        }
+                    ]
+                }
+            ),
+        ):
+            result = await ProjectStatusQueryService().get_status(_context(), ports)
+
+        self.assertEqual(result.top_workflows[0].representative_session_ids, [])
 
     async def test_get_status_returns_partial_when_supporting_source_fails(self) -> None:
         features_repo = types.SimpleNamespace(list_all=AsyncMock(return_value=[{"id": "feature-1", "status": "todo"}]))

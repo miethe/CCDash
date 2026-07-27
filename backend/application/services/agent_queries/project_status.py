@@ -53,6 +53,18 @@ def _session_summary_from_row(row: dict[str, Any]) -> SessionSummary:
     )
 
 
+def _representative_session_ids(effectiveness: Any) -> list[str]:
+    if not isinstance(effectiveness, dict):
+        return []
+    evidence_summary = effectiveness.get("evidenceSummary")
+    if not isinstance(evidence_summary, dict):
+        return []
+    raw_ids = evidence_summary.get("representativeSessionIds")
+    if not isinstance(raw_ids, list):
+        return []
+    return [str(session_id) for session_id in raw_ids[:3]]
+
+
 def _workflow_summary_from_row(row: dict[str, Any]) -> WorkflowSummary:
     identity = row.get("identity") if isinstance(row.get("identity"), dict) else {}
     registry_id = str(
@@ -61,6 +73,7 @@ def _workflow_summary_from_row(row: dict[str, Any]) -> WorkflowSummary:
         or identity.get("registryId")
         or ""
     )
+    effectiveness = row.get("effectiveness")
     return WorkflowSummary(
         workflow_id=registry_id,
         workflow_name=str(
@@ -71,12 +84,12 @@ def _workflow_summary_from_row(row: dict[str, Any]) -> WorkflowSummary:
         ),
         session_count=_safe_int(row.get("sampleSize") or row.get("sessionCount")),
         success_rate=_safe_float(
-            (row.get("effectiveness") or {}).get("successScore")
-            if isinstance(row.get("effectiveness"), dict)
+            effectiveness.get("successScore")
+            if isinstance(effectiveness, dict)
             else row.get("successScore")
         ),
         last_observed_at=str(row.get("lastObservedAt") or row.get("generatedAt") or ""),
-        representative_session_ids=[],
+        representative_session_ids=_representative_session_ids(effectiveness),
     )
 
 

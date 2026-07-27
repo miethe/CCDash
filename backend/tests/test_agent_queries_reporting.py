@@ -139,7 +139,21 @@ class ReportingQueryServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "backend.application.services.agent_queries.reporting.get_workflow_effectiveness",
-            new=AsyncMock(return_value={"items": [{"scopeType": "workflow", "scopeId": "wf-1", "scopeLabel": "Phase Execution", "sampleSize": 1, "successScore": 0.9}], "generatedAt": "2026-04-11T10:01:00+00:00"}),
+            new=AsyncMock(
+                return_value={
+                    "items": [
+                        {
+                            "scopeType": "workflow",
+                            "scopeId": "wf-1",
+                            "scopeLabel": "Phase Execution",
+                            "sampleSize": 1,
+                            "successScore": 0.9,
+                            "evidenceSummary": {"representativeSessionIds": ["session-1", "session-2"]},
+                        }
+                    ],
+                    "generatedAt": "2026-04-11T10:01:00+00:00",
+                }
+            ),
         ), patch(
             "backend.application.services.agent_queries.reporting.detect_failure_patterns",
             new=AsyncMock(return_value={"items": [{"title": "Retry Loop", "averageRiskScore": 0.7, "sessionIds": ["session-1"]}], "generatedAt": "2026-04-11T10:02:00+00:00"}),
@@ -151,6 +165,41 @@ class ReportingQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.timeline.started_at, "2026-04-11T09:00:00+00:00")
         self.assertTrue(result.turning_points)
         self.assertIn("session-1", result.evidence_links)
+        self.assertEqual(result.workflow_observations[0].evidence_refs, ["session-1", "session-2"])
+
+    async def test_generate_aar_defaults_evidence_refs_when_evidence_summary_missing(self) -> None:
+        features_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(return_value={"id": "feature-1", "name": "Feature 1", "updated_at": "2026-04-11T10:00:00+00:00"})
+        )
+        sessions_repo = types.SimpleNamespace(get_by_id=AsyncMock(return_value=None), get_many_by_ids=AsyncMock(return_value={}))
+        documents_repo = types.SimpleNamespace(list_paginated=AsyncMock(return_value=[]))
+        tasks_repo = types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[]))
+        links_repo = types.SimpleNamespace(get_links_for=AsyncMock(return_value=[]))
+        ports = _ports(features=features_repo, sessions=sessions_repo, documents=documents_repo, tasks=tasks_repo, links=links_repo)
+
+        with patch(
+            "backend.application.services.agent_queries.reporting.get_workflow_effectiveness",
+            new=AsyncMock(
+                return_value={
+                    "items": [
+                        {
+                            "scopeType": "workflow",
+                            "scopeId": "wf-1",
+                            "scopeLabel": "Phase Execution",
+                            "sampleSize": 1,
+                            "successScore": 0.9,
+                        }
+                    ],
+                    "generatedAt": "2026-04-11T10:01:00+00:00",
+                }
+            ),
+        ), patch(
+            "backend.application.services.agent_queries.reporting.detect_failure_patterns",
+            new=AsyncMock(return_value={"items": [], "generatedAt": "2026-04-11T10:02:00+00:00"}),
+        ):
+            result = await ReportingQueryService().generate_aar(_context(), ports, "feature-1")
+
+        self.assertEqual(result.workflow_observations[0].evidence_refs, [])
 
     async def test_generate_aar_returns_partial_when_supporting_source_fails(self) -> None:
         features_repo = types.SimpleNamespace(get_by_id=AsyncMock(return_value={"id": "feature-1", "name": "Feature 1"}))
