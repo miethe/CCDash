@@ -51,22 +51,32 @@ implementation_plan_ref: null
 > `plan-execution-session-correlation` exploration. **Verdict: not now** —
 > `docs/project_plans/exploration/plan-execution-session-correlation/spikes/intenttree-import-path/intenttree-import-path-findings.md`.
 >
-> The PRD is **not wrong — it is premature**, and its handshake-token binding design is sound and
-> worth preserving. Three findings gate it; do not re-derive them:
-> 1. **It does not solve per-level attribution.** `metadata.node_id` is stored opaquely in
->    `metadata_json` with no column, no schema, and no read path. Resolving node_id → (hierarchy
->    level, feature) is the same problem class as `rf-intenttree-intent-id-resolution` (DF-007,
->    deferred), and needs an IntentTree HTTP client CCDash does not have.
-> 2. **It cannot reach subagents.** `AgentRun.ccdash_session_id` is a single scalar column,
->    `AgentRun` has no `parent_run_id`, and nothing registers a `Task()`-spawned child. An
->    orchestrator fanning out to 5 subagents links **1** session, not 6 — the same orchestrator-only
->    ceiling the correlation-crux leg found for slash-command tags.
-> 3. **There is no operational substrate.** As of 2026-07-26 IntentTree has 59 runs total, **0**
->    bound to any `aos-ccdash` node, **0** with `harness: claude_code`, and 0 external-link rows.
->    It has never dispatched a real Claude Code run.
+> The PRD is **not wrong — it is premature**, and its handshake-token binding design is sound. The
+> spike's verdict on this PRD was revised 2026-07-28 from *reject* to **conditional**. Do not
+> re-derive the following:
+> 1. **The subagent objection is RETRACTED — this PRD's mechanism does work.** IntentTree links only
+>    1 session per run (`ccdash_session_id` is a scalar column, no `parent_run_id`, no child
+>    registration). But CCDash already derives the orchestrator→subagent family graph from log fields
+>    (`parser.py:4491-4502`), and it is fully populated: `workflow_id` on **16,658/16,658** sessions,
+>    `subagent_parent_id` on **3,956/3,956** subagent sessions, 100% family coherence. One `node_id`
+>    on the orchestrator propagates across the family and reaches every subagent. **IntentTree never
+>    needed to enumerate the children.**
+> 2. **`node_id` resolution is still unbuilt.** `metadata.node_id` is stored opaquely in
+>    `metadata_json` with no column, no schema, and no read path. Resolving it → (hierarchy level,
+>    feature) needs an IntentTree HTTP client CCDash lacks — exactly DF-007's unblock condition
+>    (`rf-intenttree-intent-id-resolution`). Small build, but it also requires **deliberately
+>    overturning that spec's D2 "never a join key" boundary**.
+> 3. **There is no operational substrate — this is the real blocker.** As of 2026-07-26 IntentTree
+>    has 59 runs total, **0** bound to any `aos-ccdash` node, **0** with `harness: claude_code`, and
+>    0 external-link rows. It has never dispatched a real Claude Code run.
+> 4. **New hard design question**: family-level propagation over-attributes when one orchestrator
+>    session spans multiple nodes (same class as deferred D-001 over-count). A run-boundary
+>    attribution rule is required before this ships.
 >
-> **Revisit when** IntentTree actually dispatches (non-zero `claude_code` runs bound to ccdash nodes)
-> and a trace-id propagation mechanism (`aos_trace_uuid`) reaches subagent invocations.
+> **Revisit when** IntentTree actually dispatches (non-zero `claude_code` runs bound to ccdash
+> nodes). That is the dominant gate; the rest is a small, already-designed build. Note this PRD can
+> only ever cover *dispatched* runs — the 16,658-session historical corpus still needs the
+> file-based Slice-1 path.
 
 ## Executive Summary
 

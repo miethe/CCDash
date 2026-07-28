@@ -6,8 +6,10 @@ title: "IntentTree-as-Import-Path — Spike Findings"
 status: complete
 created: 2026-07-26
 feature_slug: plan-execution-session-correlation
-verdict: no-go
-confidence: 0.85
+updated: 2026-07-28
+verdict: conditional
+superseded_verdict: no-go
+confidence: 0.8
 related_documents:
   - docs/project_plans/exploration/plan-execution-session-correlation/intenttree-import-handoff.md
   - docs/project_plans/exploration/plan-execution-session-correlation/plan-execution-session-correlation-feasibility-brief.md
@@ -18,27 +20,37 @@ related_documents:
 
 # IntentTree-as-Import-Path — Spike Findings
 
-> **Verdict: NO-GO on both directions.** IntentTree should not become CCDash's plan-hierarchy import
-> path (architecture A), and the `intenttree-session-correlation-v1` PRD should not be revived as the
-> Slice-2 attribution vehicle (architecture B). The parent exploration's plan is **unchanged**:
-> Slice 1 stays file-based and GO; Slice 2 stays DEFER behind gap-analysis Themes 1–2.
+> ### ⚠️ VERDICT REVISED 2026-07-28 — was `no-go`, now **`conditional`**. Read §0 and §8 first.
 >
-> **The re-investigation was still worth doing.** The original leg's one-line dismissal reached the
-> right conclusion for a narrow and largely wrong reason. The real reasons are now evidenced below,
-> and one genuinely reusable primitive (`aos_trace_uuid`) surfaced that neither the handoff nor the
-> parent exploration identified.
+> **Architecture A (consume the tree instead of parsing files): still NO** — §4 stands unchanged.
+>
+> **Architecture B (IntentTree pushes correlation): CONDITIONAL, not rejected.** The original
+> write-up established that IntentTree links 1 session per run and concluded that this killed B as
+> the Slice-2 attribution vehicle. **That inference was wrong.** CCDash already owns the
+> orchestrator→subagent fan-out, so one linked orchestrator session is *sufficient* — see §8.
+> B's real blocker is **adoption** (IntentTree has never dispatched), not missing capability.
+>
+> Parent plan is still unchanged in shape: Slice 1 stays file-based/GO (needed for the 16,658-session
+> historical corpus regardless); Slice 2's *mechanism* is now credible and its precondition is named.
 
 ## 0. Headline
 
 The handoff's centerpiece argument — **F-2**, "an IntentTree dispatcher knows which node it
-dispatched to, so `node_id` dissolves the Slice-2 subagent-attribution gap" — is **empirically
-false**. IntentTree links **one** session per run. An orchestrator that fans out to five subagents
-produces **1** linked session, not 6. `AgentRun` has no `parent_run_id`, `ccdash_session_id` is a
-single scalar column, and no code path anywhere registers a `Task()`-spawned child.
+dispatched to, so `node_id` dissolves the Slice-2 subagent-attribution gap" — is **half right**, and
+the correction matters more than the original finding.
 
-IntentTree-dispatched runs therefore inherit **exactly the same orchestrator-only limitation** the
-`correlation-crux` leg found for slash-command-tag derivation. The mechanism differs; the blind spot
-is identical.
+**Measured fact (unchanged):** IntentTree links **one** session per run. An orchestrator that fans
+out to five subagents produces **1** linked session, not 6. `AgentRun` has no `parent_run_id`,
+`ccdash_session_id` is a single scalar column, and no code path registers a `Task()`-spawned child.
+
+**Correct inference (revised, §8):** that does **not** matter, because CCDash already derives the
+full family graph from log fields alone — `workflow_id` is populated on **16,658/16,658** sessions
+and `subagent_parent_id` on **3,956/3,956** subagent sessions, with 100% family coherence. A single
+`node_id` landed on the orchestrator propagates across its whole `workflow_id` family and reaches
+all six sessions. **The fan-out is CCDash's job and CCDash already does it.**
+
+So F-2's conclusion survives — via a different mechanism than the handoff proposed, and one that
+requires no IntentTree change at all.
 
 Separately, the `aos-ccdash` node tree is far thinner than F-4/F-5 implied: **3 plans of 132**, last
 synced **2026-06-24**, using 2 of 18 node types, with no `wave` or `gate` node type and AC that is
@@ -243,9 +255,13 @@ that, so architecture B collides with an existing architectural constraint.
 /`rf_events` do carry `task_node_id`/`intent_id`, but those are Research Foundry's own display-only
 strings, explicitly never-a-join-key, and not wired to `sessions`.
 
-### OQ-5 — Does B close the subagent gap? ❌ **NO — this is the decisive finding**
+### OQ-5 — Does B close the subagent gap? ⚠️ **REVISED 2026-07-28 — YES, via CCDash-side fan-out**
 
-**Answer: 1 session linked, not 6.**
+> **The measurements in this subsection are correct; the conclusion originally drawn from them was
+> not.** IntentTree does link only 1 session per run — but CCDash propagates it to the family. See
+> §8. Retained below for the evidence trail.
+
+**Answer (IntentTree side): 1 session linked, not 6.**
 
 1. `AgentRun.ccdash_session_id` is a single nullable `String(200)` scalar (migration
    `0004_agent_run_ccdash.py`) with no unique index. One run row holds exactly one session;
@@ -303,12 +319,15 @@ correlation feature it would serve.
 | # | Shape | Decision | Governing reason |
 |---|-------|----------|------------------|
 | **A** | CCDash consumes the IntentTree tree *instead of* parsing files | ❌ **REJECT** | Not because the importer is weak — it is capable (OQ-2). Because: **2.3% coverage, frozen since 2026-06-24** with no automatic refresh; no `wave`/`gate` node type and gate criteria unqueryable in `meta`; AC silently blends authored + inherited, so per-task AC joins would be wrong; container-level drift is undetectable (`source_fingerprint: null`), and the import demonstrably dropped two phases without flagging it; it inverts AOS constraint #2 (derived-reading-derived); and it requires an IntentTree HTTP client + resilience contract CCDash deliberately deferred (DF-007). CCDash already parses the same 132 plans + 56 PRDs + 305 progress files itself |
-| **B** | Revive `intenttree-session-correlation-v1` as the Slice-2 vehicle | ❌ **REJECT** | Its load-bearing premise is false (OQ-5: 1 session, not 6 — same orchestrator-only ceiling); zero operational substrate (0 ccdash-bound runs, 0 `claude_code` harness, 0 external-links); 0% historical coverage; `node_id`→level resolution unsolved *and* collides with the D2 never-a-join-key boundary |
-| **C** | Hybrid: file-based Slice 1 + IntentTree enriches Slice 2 | ⚠️ **Survives only in degenerate form** | The Slice-1 half is simply the parent exploration's existing plan. The Slice-2 half is B, which fails. C therefore reduces to "the current plan" — it adds nothing |
+| **B** | Revive `intenttree-session-correlation-v1` as the Slice-2 vehicle | ⚠️ **CONDITIONAL** *(revised 2026-07-28; was REJECT)* | The attribution mechanism **works** — one orchestrator `node_id` fans out across CCDash's already-populated `workflow_id` family (§8). Blockers are adoption + small build, not capability: IntentTree has never dispatched (0 ccdash-bound runs, 0 `claude_code` harness, 0 external-links); `node_id` resolution needs an IntentTree HTTP client CCDash lacks; the D2 never-a-join-key boundary must be deliberately revisited; and over-attribution needs a rule when one session spans multiple nodes |
+| **C** | Hybrid: file-based Slice 1 + IntentTree enriches Slice 2 | ✅ **RECOMMENDED** *(revised)* | With B viable, C is the real answer the handoff was reaching for. Slice 1 must stay file-based regardless — it is the only path that covers the 16,658-session historical corpus, which B can never reach. Slice 2 gains a credible per-level mechanism for *future* IntentTree-dispatched work |
 
-**Net effect on the parent exploration: no change.** Slice 1 remains file-based and GO; Slice 2
-remains DEFER behind gap-analysis Themes 1–2. The "instead vs additionally" question the handoff
-posed is answered **neither**.
+**Net effect on the parent exploration:** Slice 1 unchanged (file-based, GO). **Slice 2's mechanism
+is now identified and credible** — it was previously "the plumbing does not exist." Slice 2 stays
+deferred, but its gate changes from "unknown attribution mechanism" to a **named, buildable
+precondition**: IntentTree dispatching for real + the small CCDash-side wiring in §8.
+
+The "instead vs additionally" question is answered: **additionally, not instead.**
 
 ### Why the original one-line dismissal was right for the wrong reason
 
@@ -323,7 +342,12 @@ instinct to re-investigate was correct — the conclusion is now evidenced rathe
 
 ## 5. What is worth salvaging
 
-1. **`aos_trace_uuid` is the right primitive for the subagent problem — record it and move on.**
+> **⚠️ Item 1 below is RETRACTED by §8.** CCDash's already-populated `workflow_id`/`subagent_parent_id`
+> lineage solves the subagent-grouping problem without any trace-id work. `aos_trace_uuid` retains
+> value only for cross-harness multi-hop work (e.g. Codex↔Claude handoffs), not for this. Item 1 is
+> preserved below for the reasoning trail; **do not action it as written.**
+
+1. ~~**`aos_trace_uuid` is the right primitive for the subagent problem — record it and move on.**~~
    Per-level subagent attribution needs a *trace id propagated into subagent invocations*, not a
    `node_id` pulled from a dispatcher. IntentTree already has correctly-shaped, duplicate-tolerant
    columns for this on both `nodes` and `agent_runs`; the missing piece is a dispatcher that mints and
@@ -426,5 +450,87 @@ Residual uncertainty:
   branch could in principle contradict the `main`-tree findings.
 
 **What would overturn this verdict:** IntentTree becoming a real dispatcher (non-zero
-`harness: claude_code` runs bound to ccdash nodes) **and** a trace-id propagation mechanism that
-reaches subagent invocations. Both are prerequisites, not consequences, of the correlation work.
+`harness: claude_code` runs bound to ccdash nodes). This is a prerequisite, not a consequence, of
+the correlation work. *(The original text also required trace-id propagation to subagents; §8
+retracts that — CCDash's existing lineage makes it unnecessary.)*
+
+---
+
+## 8. Correction (2026-07-28) — the subagent gap is already closed on the CCDash side
+
+**What prompted this**: the operator pushed back that IntentTree "should be enabled in all these
+capabilities," and asked whether enhancements could reach a GO. Re-checking against the operative
+database showed the original synthesis made a wrong inference from a right measurement.
+
+### The error
+
+§3 OQ-5 correctly established that IntentTree links **1** session per run. From that I concluded B
+could not deliver per-level subagent attribution. **That does not follow.** It assumes IntentTree
+must enumerate the children — but IntentTree never needed to. CCDash already has the family graph.
+
+### The evidence
+
+CCDash derives subagent lineage **purely from log fields**, explicitly sidecar-independent
+(`backend/parsers/platforms/claude_code/parser.py:4491-4502`): `workflowId` = family root,
+`subagentParentId`, `conversationFamilyId`, `threadKind`.
+
+Measured on the operative DB (node Postgres `10.42.10.76:5440`, container `ccdash_postgres_1`,
+2026-07-28):
+
+| Metric | Value |
+|---|---|
+| Total sessions | **16,658** |
+| `workflow_id` populated | **16,658 / 16,658 (100%)** |
+| `thread_kind = 'subagent'` | 3,956 |
+| `subagent_parent_id` populated on those | **3,956 / 3,956 (100%)** |
+| Distinct workflow families | 10,457 |
+| Child→parent joins sharing the parent's `workflow_id` | **4,079 / 4,079 (100% coherent)** |
+| Multi-session families | ~770 (277×2, 83×3, 61×4, 55×5, 50×6, 39×7, 32×8, …) |
+
+The lineage graph is live, fully populated, and internally coherent. **A `node_id` landed on an
+orchestrator session propagates across its `workflow_id` family and reaches every subagent.**
+
+### Consequences
+
+1. **`aos_trace_uuid` is demoted from "the key unlock" to "optional."** §5 item 1 over-elevated it.
+   It would be the right primitive if CCDash had no lineage — but CCDash does, derived from logs it
+   already parses, with no dispatcher cooperation required. Do not build trace-id propagation to
+   solve *this* problem. (It retains independent value for cross-harness/multi-hop work that is not
+   a single Claude Code session family — e.g. Codex↔Claude handoffs.)
+2. **Architecture B is capability-viable today.** Its blockers are adoption and a small build.
+3. **Slice 1 still must be file-based.** B only ever covers IntentTree-dispatched runs; the 16,658
+   historical sessions and all ad-hoc work need the file path. This is unchanged and is why C, not
+   B alone, is the recommendation.
+
+### The enhancement path, sized
+
+**IntentTree side — mostly adoption, not new capability:**
+
+| # | Change | Size | Necessary? |
+|---|---|---|---|
+| I-1 | Actually dispatch with `harness: claude_code` and call `link_session` / `start_run(ccdash_session_id=…)` | wiring only — the API already exists | **Yes — the real blocker** |
+| I-2 | Schedule `sync import` so the tree is not frozen; fix container-binding `source_fingerprint: null` so drift is detectable | small | Only for architecture A, which stays rejected |
+| I-3 | `parent_run_id` / 1:N run→sessions | small schema change | **No** — CCDash-side fan-out makes it redundant. Build only if IntentTree's own UI wants per-subagent rows |
+| I-4 | `wave` / `gate` node types | small | **No** — CCDash has 0 structured gates and `wave_plan` is a scheduling overlay, not a containment level |
+
+**CCDash side — the actual build:**
+
+| # | Change | Size | Notes |
+|---|---|---|---|
+| C-1 | `session_correlations` table + `POST /api/correlations/register` | as designed | This is the PRD's Phase 1, already specced |
+| C-2 | IntentTree HTTP client + config + resilience contract | small | A bearer-token GET; this is exactly DF-007's unblock condition |
+| C-3 | Propagate bound `node_id` across the `workflow_id` family | small | Reuses live lineage — this is the piece that dissolves the subagent gap |
+| C-4 | Revisit the D2 "never a join key" boundary | decision, not code | `rf-intenttree-intent-id-resolution` §3.3 forbids exactly this join; it must be *deliberately* overturned, not quietly violated |
+
+**Genuine remaining risk — over-attribution.** Family-level propagation assigns the whole family's
+tokens/cost to one node. If a single orchestrator session works across multiple nodes, that
+over-counts — the same class as the deferred **D-001 correlation over-count**. Needs an explicit
+rule (attribute at run boundaries, or require one dispatched run per node) before this ships. This,
+not the subagent graph, is now the hard design question for Slice 2.
+
+### Revised bottom line
+
+The operator's instinct was correct: **IntentTree does not need major enhancement.** The dominant
+gap is that nothing dispatches through it yet (I-1), and the rest of the work is a small, already-
+designed build on the CCDash side. The honest verdict is **conditional**, not no-go — gated on
+adoption plus an over-attribution rule, not on missing capability in either system.

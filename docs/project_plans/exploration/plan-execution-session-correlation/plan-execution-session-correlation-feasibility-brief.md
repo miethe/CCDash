@@ -235,30 +235,37 @@ Slice 2 stays DEFER. Summary of what was settled, so it is not re-explored:
   import dropped `ccdash-core-remediation` Phase 1 and Phase 4 and never flagged it. Consuming this
   would be derived-reading-derived (AOS constraint #2), adding a runtime dependency on a LAN service,
   for a hierarchy CCDash already parses from the same files.
-- **`intenttree-session-correlation-v1` must NOT be revived as the Slice-2 vehicle.** Its
-  load-bearing premise — that a dispatcher's `node_id` dissolves the subagent-attribution gap — is
-  **false**. IntentTree links **one** session per run: `AgentRun.ccdash_session_id` is a single
-  scalar column, `AgentRun` has no `parent_run_id`, and no code path registers a `Task()`-spawned
-  child. An orchestrator fanning out to 5 subagents yields **1** linked session, not 6 — the *same*
-  orchestrator-only ceiling as slash-command-tag derivation (`correlation-crux-findings.md:44-52`,
-  gap-analysis G-2). The seam also has zero operational substrate (0 runs bound to any ccdash node,
-  0 `claude_code`-harness runs, 0 external-link rows) and would cover **0%** of the ~9,700-session
-  historical corpus. Leave the PRD at `status: draft`; it is not wrong, it is premature.
+- **`intenttree-session-correlation-v1` is CONDITIONAL, not rejected** *(revised 2026-07-28; an
+  earlier revision of this entry said "must NOT be revived" — that was wrong, see the findings §8).*
+  IntentTree does link only **one** session per run (`AgentRun.ccdash_session_id` is a single scalar
+  column, no `parent_run_id`, no child registration). **But that does not block per-level
+  attribution**, because CCDash already derives the orchestrator→subagent family graph from log
+  fields alone (`parser.py:4491-4502`) and it is fully populated: `workflow_id` on **16,658/16,658**
+  sessions, `subagent_parent_id` on **3,956/3,956** subagent sessions, 100% family coherence across
+  ~770 multi-session families. One `node_id` on the orchestrator propagates across the family and
+  reaches every subagent. The mechanism works; the blockers are **adoption + a small build**:
+  IntentTree has never dispatched (0 ccdash-bound runs, 0 `claude_code`-harness runs, 0 external-link
+  rows), CCDash needs an IntentTree HTTP client (DF-007's unblock condition), and the D2
+  never-a-join-key boundary must be deliberately overturned. Leave the PRD at `status: draft` — it is
+  premature, not wrong. **New hard design question**: family-level propagation over-attributes when
+  one session spans multiple nodes (same class as deferred D-001 over-count); a run-boundary
+  attribution rule is required before this ships.
 - **`node_id` resolution is unsolved and constraint-bound.** The PRD stores `node_id` in an opaque
   `metadata_json` blob with no column, no schema, and no read path. Resolving it is the same problem
   class as `rf-intenttree-intent-id-resolution` (DF-007, deferred), whose unblock condition — an
   IntentTree HTTP client plus a resilience contract in `backend/config.py` — CCDash still lacks. That
   spec's **D2 boundary** (these ids must never become an `entity_graph`/`aos_correlation` join key)
   directly collides with what Slice-2 per-level attribution would require.
-- **Carried forward — the one reusable primitive.** `aos_trace_uuid` (IntentTree migration `0036`,
-  documented as spanning "multi-hop work", intentionally non-unique) is the correctly-shaped
-  mechanism for grouping an orchestrator with its children. **Nothing populates it** — every write
-  site is caller-supplied pass-through. Closing Slice 2's subagent gap therefore needs a *dispatcher
-  that mints one trace id and threads it into every child invocation*. That is harness/run-loop work
-  (Claude Code launcher or Hermes) owned by the AOS launchpad — **not CCDash work and not IntentTree
-  work** — and it depends on CCDash's launch-capture sidecar path, which is currently dead (0
-  `*.capture.json` on disk). This is the highest-leverage unlock for Slice 2 and should be routed
-  via `op` rather than absorbed into a CCDash plan.
+- **~~Carried forward — `aos_trace_uuid`~~ RETRACTED 2026-07-28.** An earlier revision named
+  `aos_trace_uuid` (IntentTree migration `0036`) as the key unlock for subagent grouping and routed
+  it to the AOS launchpad. **That is unnecessary** — CCDash's log-derived `workflow_id` /
+  `subagent_parent_id` lineage already solves grouping with no dispatcher cooperation, and it is
+  100% populated today. `aos_trace_uuid` retains value only for *cross-harness* multi-hop work
+  (e.g. Codex↔Claude handoffs spanning separate session families), which is out of scope here.
+- **Slice 1 stays file-based regardless.** Architecture B only ever covers IntentTree-*dispatched*
+  runs; the 16,658-session historical corpus and all ad-hoc work require the file path. The
+  recommended end-state is therefore the **hybrid**: file-based Slice 1 as canonical, IntentTree
+  correlation as additive enrichment for future dispatched work.
 
 ---
 

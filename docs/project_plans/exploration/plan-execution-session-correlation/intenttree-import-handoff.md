@@ -6,7 +6,7 @@ title: "IntentTree-as-Import-Path — New-Session Handoff"
 status: complete
 created: 2026-07-26
 completed: 2026-07-26
-outcome: no-go
+outcome: conditional
 feature_slug: plan-execution-session-correlation
 related_documents:
   - docs/project_plans/exploration/plan-execution-session-correlation/spikes/intenttree-import-path/intenttree-import-path-findings.md
@@ -18,20 +18,26 @@ related_documents:
 
 # IntentTree-as-Import-Path — New-Session Handoff
 
-> **✅ RESOLVED 2026-07-26 — this handoff is closed. Read the findings, not this brief.**
-> → `spikes/intenttree-import-path/intenttree-import-path-findings.md` (verdict **no-go**, conf 0.85)
+> **✅ RESOLVED 2026-07-26; verdict REVISED 2026-07-28 to `conditional`. Read the findings §0 + §8.**
+> → `spikes/intenttree-import-path/intenttree-import-path-findings.md` (verdict **conditional**, 0.8)
 >
-> **Outcome: neither "instead" nor "additionally".** All six OQs resolved. The headline this handoff
-> established — F-2, that a dispatcher's `node_id` dissolves the Slice-2 subagent gap — is
-> **empirically false**: IntentTree links 1 session per run, has no `parent_run_id`, and registers no
-> `Task()`-spawned children (5 subagents → 1 linked session). F-4/F-5 were materially overstated: the
-> `aos-ccdash` tree is 3 plans of 132, frozen since 2026-06-24, and its `acceptance_criteria` is
-> default container inheritance, not per-task authorship. The seam has zero substrate (0 runs bound to
-> ccdash nodes, 0 `claude_code` harness runs, 0 external-links).
+> **Outcome: "additionally", not "instead".**
+> - **Architecture A (consume the tree instead of parsing files): NO.** The `aos-ccdash` tree is
+>   3 plans of 132, frozen since 2026-06-24, no `wave`/`gate` node type, and its
+>   `acceptance_criteria` is default container inheritance rather than per-task authorship — F-4/F-5
+>   were materially overstated. (The importer itself is capable; the problem is freshness, coverage,
+>   and AOS constraint #2.)
+> - **Architecture B (IntentTree pushes correlation): CONDITIONAL — F-2's conclusion survives.**
+>   IntentTree does link only 1 session per run, but that turned out not to matter: CCDash already
+>   derives the orchestrator→subagent family graph from logs, populated on **16,658/16,658** sessions
+>   with 100% coherence, so one `node_id` fans out to every subagent. The blocker is **adoption**
+>   (IntentTree has never dispatched: 0 ccdash-bound runs, 0 `claude_code` harness) plus a small
+>   CCDash-side build — not missing capability.
 >
-> **The parent exploration's plan is unchanged**: Slice 1 file-based GO, Slice 2 DEFER.
-> One primitive carried forward: `aos_trace_uuid` is the correctly-shaped mechanism for the subagent
-> problem, but nothing populates it — that is harness/run-loop work owned by the AOS launchpad.
+> **Parent plan**: Slice 1 stays file-based/GO (only path covering the historical corpus); Slice 2
+> stays deferred but now has a named, buildable mechanism instead of an unknown one.
+> **Retracted**: an earlier revision routed `aos_trace_uuid` propagation to the AOS launchpad as the
+> key unlock — unnecessary, CCDash's existing lineage already solves it.
 >
 > The sections below are preserved **as-authored** for provenance; §2's F-1…F-6 are adjudicated in
 > §1 of the findings doc — several did not survive.
