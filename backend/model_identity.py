@@ -112,6 +112,154 @@ def model_family_name(raw_model: str | None) -> str:
     return _title_case(parts[0]) or "Unknown"
 
 
+_PROVIDER_VENDOR_TOKENS: dict[str, str] = {
+    "claude": "Anthropic",
+    "gpt": "OpenAI",
+    "openai": "OpenAI",
+    "gemini": "Google",
+}
+
+_PROVIDER_SURFACE_LABELS: dict[str, str] = {
+    "claude code": "Claude Code",
+    "codex": "Codex",
+}
+
+_PROVIDER_CHANNEL_LABEL_SUFFIX: dict[str, str] = {
+    "ica": "ICA",
+    "api": "API",
+}
+
+_ICA_MODEL_VARIANT_PATTERN = re.compile(r"(?:^|[\[\-_])1m(?:$|[\]\-_])")
+
+
+def _provider_vendor(raw_model: str | None) -> str:
+    """Derive the model vendor (Anthropic/OpenAI/Google/Unknown) from a raw model slug.
+
+    Deliberately independent of ``_provider_label`` above: that helper returns
+    "Claude"/"OpenAI"/"Gemini" display labels for session badges and must not change.
+    This returns the underlying company name and only recognizes the three vendors
+    CCDash currently observes (Claude Code + Codex sessions); anything else — including
+    unrecognized/synthetic model slugs — is "Unknown", never a title-cased guess.
+    """
+    raw = (raw_model or "").strip().lower()
+    if not raw:
+        return "Unknown"
+    parts = [part for part in re.split(r"[-_\s]+", raw) if part]
+    token = parts[0] if parts else ""
+    return _PROVIDER_VENDOR_TOKENS.get(token, "Unknown")
+
+
+def _provider_surface(platform_type: str | None) -> str:
+    """Normalize a session's ``platform_type`` into a provider surface label."""
+    raw = (platform_type or "").strip()
+    if not raw:
+        return "Unknown"
+    return _PROVIDER_SURFACE_LABELS.get(raw.lower(), raw)
+
+
+def _provider_channel(launcher: str | None, model_variant: str | None) -> str:
+    """Derive the provider channel: subscription | ica | api | unknown.
+
+    ``launcher`` is authoritative when present (Rule 1). It is populated by the
+    launch-time capture hook (``CCDASH_LAUNCHER``) and, as of this writing, is not
+    yet exported by any launcher — so it is empty for essentially all captured
+    sessions today; this function still branches on it first so the channel split
+    lights up automatically the moment capture is activated, with zero further
+    changes needed here.
+
+    Rule 1 — launcher (case-insensitive substring match):
+      - contains "ica"  -> "ica"
+      - contains "api"  -> "api"
+      - any other non-empty value -> "subscription"
+
+    Rule 2 — else, ``model_variant`` carries a ``1m`` / ``[1m]`` marker -> "ica".
+      This is a **documented operator convention**, not an inference: per this
+      operator's model registry (``~/.claude/CLAUDE.md`` "Model routing" section /
+      ``~/.claude/config/model-registry.yaml``), ``[1m]``-suffixed model IDs
+      (e.g. ``claude-sonnet-5[1m]``) denote the long-context pool served through
+      ICA, as distinct from the plain-id (200k) direct-provider variant.
+
+    Rule 3 — else -> "unknown". This is the current state for 100% of captured
+    sessions (see analytics-provider-views grounding finding): ``launcher`` and
+    ``model_variant`` are both unpopulated in the wild today, so this channel is
+    structurally wired but not yet observable — never faked or inferred beyond
+    what Rules 1-2 establish.
+    """
+    launcher_norm = (launcher or "").strip().lower()
+    if launcher_norm:
+        if "ica" in launcher_norm:
+            return "ica"
+        if "api" in launcher_norm:
+            return "api"
+        return "subscription"
+
+    variant_norm = (model_variant or "").strip().lower()
+    if variant_norm and _ICA_MODEL_VARIANT_PATTERN.search(variant_norm):
+        return "ica"
+
+    return "unknown"
+
+
+def _provider_slug(value: str) -> str:
+    lowered = (value or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    return slug or "unknown"
+
+
+def derive_provider_identity(
+    raw_model: str | None,
+    platform_type: str | None = None,
+    launcher: str | None = None,
+    model_variant: str | None = None,
+) -> dict[str, str]:
+    """Derive the additive provider-identity axes for a session.
+
+    This is the single derivation path for provider identity in the backend — do not
+    reimplement this logic elsewhere. It is purely additive: it does NOT touch
+    ``_provider_label``, ``derive_model_identity``, ``canonical_model_name``,
+    ``model_family_name``, or ``model_filter_tokens``, all of which remain the
+    source of truth for the existing "modelProvider" ("Claude"/"OpenAI"/"Gemini")
+    semantics consumed by session badges, ``/api/sessions``, and feature views.
+
+    Provider is modelled as three orthogonal axes, per the analytics-provider-views
+    grounding finding (only the first two are live in captured data today):
+
+    - ``providerVendor``  — Anthropic / OpenAI / Google / Unknown, from the model slug.
+    - ``providerSurface`` — normalized ``platform_type`` ("Claude Code" / "Codex");
+      empty/unrecognized/None -> "Unknown".
+    - ``providerChannel`` — subscription / ica / api / unknown; see ``_provider_channel``
+      docstring for the full launcher/model_variant derivation rules.
+
+    Returns a dict with exactly these keys:
+      - ``providerVendor``
+      - ``providerSurface``
+      - ``providerChannel``
+      - ``providerId``    — stable lowercase machine key: "{vendor}:{surface}:{channel}"
+        (each segment slugified, e.g. "anthropic:claude-code:subscription").
+      - ``providerLabel`` — display string, e.g. "Anthropic · Claude Code"; a
+        " · ICA" / " · API" suffix is appended only when the channel is a known
+        non-subscription value ("ica"/"api") — "subscription" and "unknown" add no suffix.
+    """
+    vendor = _provider_vendor(raw_model)
+    surface = _provider_surface(platform_type)
+    channel = _provider_channel(launcher, model_variant)
+
+    provider_id = f"{_provider_slug(vendor)}:{_provider_slug(surface)}:{_provider_slug(channel)}"
+
+    label = f"{vendor} · {surface}"
+    channel_suffix = _PROVIDER_CHANNEL_LABEL_SUFFIX.get(channel)
+    if channel_suffix:
+        label = f"{label} · {channel_suffix}"
+
+    return {
+        "providerVendor": vendor,
+        "providerSurface": surface,
+        "providerChannel": channel,
+        "providerId": provider_id,
+        "providerLabel": label,
+    }
+
+
 def model_filter_tokens(value: str | None) -> list[str]:
     """Build normalized filter tokens for model string matching.
 

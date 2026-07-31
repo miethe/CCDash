@@ -52,6 +52,13 @@ import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../../lib/
 import { costProvenanceLabel } from '../../lib/sessionSemantics';
 import { chartTheme, getChartSeriesColor } from '../../lib/chartTheme';
 import { cn } from '../../lib/utils';
+import { getProviderTone } from '../../lib/providerIdentity';
+import {
+    InteractiveChartCard,
+    type ChartAxisOption,
+    type ChartTypeOption,
+    type InteractiveChartDatum,
+} from './primitives/InteractiveChartCard';
 
 type AnalyticsTab = 'overview' | 'attribution' | 'artifact_rankings' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence' | 'research';
 
@@ -75,6 +82,33 @@ const isAnalyticsTab = (value: string | null): value is AnalyticsTab => (
 );
 
 const PIE_TONES = ['primary', 'info', 'success', 'warning', 'danger', 'secondary', 'tertiary', 'quaternary'] as const;
+
+// models_tools tab — Token Usage interactive chart (T-005, analytics-provider-views).
+// "provider" is deliberately first/default: it's the new axis this quick feature adds.
+const MODELS_TOOLS_DIMENSIONS: ChartAxisOption[] = [
+    { id: 'provider', label: 'Provider' },
+    { id: 'model', label: 'Model' },
+    { id: 'family', label: 'Model family' },
+];
+const MODELS_TOOLS_METRICS: ChartAxisOption[] = [
+    { id: 'totalTokens', label: 'Total tokens' },
+    { id: 'tokenInput', label: 'Input tokens' },
+    { id: 'tokenOutput', label: 'Output tokens' },
+    { id: 'cost', label: 'Cost' },
+    { id: 'sessions', label: 'Sessions' },
+];
+const MODELS_TOOLS_CHART_TYPES: ChartTypeOption[] = [
+    { id: 'bar', label: 'Bar' },
+    { id: 'horizontalBar', label: 'Horizontal' },
+    { id: 'pie', label: 'Pie' },
+];
+const MODELS_TOOLS_METRIC_LABELS: Record<string, string> = {
+    totalTokens: 'Total tokens',
+    tokenInput: 'Input tokens',
+    tokenOutput: 'Output tokens',
+    cost: 'Cost',
+    sessions: 'Sessions',
+};
 
 const formatNumber = (value: number): string => Number(value || 0).toLocaleString();
 const formatCurrency = (value: number): string => `$${Number(value || 0).toFixed(4)}`;
@@ -119,7 +153,6 @@ export const AnalyticsDashboard: React.FC = () => {
     const [activeTab, setActiveTab] = useState<AnalyticsTab>(() => {
         return isAnalyticsTab(tabParam) ? tabParam : 'overview';
     });
-    const [modelGrouping, setModelGrouping] = useState<'model' | 'family'>('model');
     const [selectedUsageEntity, setSelectedUsageEntity] = useState<{ entityType: string; entityId: string } | null>(null);
     const [correlationLinkedOnly, setCorrelationLinkedOnly] = useState(false);
 
@@ -218,18 +251,56 @@ export const AnalyticsDashboard: React.FC = () => {
         () => (artifacts?.bySource || []).slice(0, 8).map(item => ({ name: item.source, count: item.count })),
         [artifacts]
     );
-    const modelTokenChart = useMemo(
-        () => {
-            if (modelGrouping === 'family') {
-                return (artifacts?.tokenUsage?.byModelFamily || [])
-                    .slice(0, 10)
-                    .map(item => ({ name: item.modelFamily, tokens: item.totalTokens, cost: item.totalCost }));
+    // models_tools "Token Usage" interactive chart (T-005): dimension × metric × chart-type,
+    // URL-persisted under paramPrefix="mt". Reads the current metric back out of the URL
+    // (shared with InteractiveChartCard's own `${paramPrefix}Metric` param) so the card-level
+    // valueFormatter/seriesLabel can stay metric-aware without the primitive needing to know
+    // about tokens vs. cost formatting.
+    const mtMetric = searchParams.get('mtMetric') || 'totalTokens';
+    const modelsToolsValueFormatter = useCallback(
+        (value: number) => (mtMetric === 'cost' ? formatCurrency(value) : formatTokenCount(value)),
+        [mtMetric]
+    );
+    const modelsToolsSeriesLabel = MODELS_TOOLS_METRIC_LABELS[mtMetric] || 'Total tokens';
+    const resolveModelsToolsChartData = useCallback(
+        (dimensionId: string | undefined, metricId: string | undefined): InteractiveChartDatum[] => {
+            const metric = metricId || 'totalTokens';
+            const pickValue = (row: { totalTokens: number; tokenInput: number; tokenOutput: number; totalCost: number; sessions: number }): number => {
+                switch (metric) {
+                    case 'tokenInput': return row.tokenInput;
+                    case 'tokenOutput': return row.tokenOutput;
+                    case 'cost': return row.totalCost;
+                    case 'sessions': return row.sessions;
+                    default: return row.totalTokens;
+                }
+            };
+
+            if (dimensionId === 'family') {
+                return (artifacts?.tokenUsage?.byModelFamily || []).slice(0, 10).map(row => ({
+                    key: row.modelFamily,
+                    label: row.modelFamily,
+                    value: pickValue(row),
+                    colorHint: getColorForModel({ family: row.modelFamily }),
+                }));
             }
-            return (artifacts?.tokenUsage?.byModel || [])
-                .slice(0, 10)
-                .map(item => ({ name: item.model, tokens: item.totalTokens, cost: item.totalCost }));
+            if (dimensionId === 'model') {
+                return (artifacts?.tokenUsage?.byModel || []).slice(0, 10).map(row => ({
+                    key: row.model,
+                    label: row.model,
+                    value: pickValue(row),
+                    colorHint: getColorForModel({ model: row.model }),
+                }));
+            }
+            // provider (default) — additive axis; renders a truthful zero row for
+            // Codex/OpenAI (0 tokens end-to-end) rather than hiding the surface.
+            return (artifacts?.tokenUsage?.byProvider || []).slice(0, 10).map(row => ({
+                key: row.providerId,
+                label: row.provider,
+                value: pickValue(row),
+                colorHint: getChartSeriesColor(getProviderTone(row.providerId)),
+            }));
         },
-        [artifacts, modelGrouping]
+        [artifacts, getColorForModel]
     );
     const featureChart = useMemo(
         () => (artifacts?.byFeature || []).slice(0, 10).map(item => ({ name: item.featureName || item.featureId, count: item.artifactCount })),
@@ -1005,55 +1076,67 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'models_tools' && (
                 <div className="space-y-6">
+                    <InteractiveChartCard
+                        title="Token Usage"
+                        subtitle="Switch dimension, metric, and chart type. OpenAI/Codex sessions report 0 tokens — that renders as a real zero, not a hidden row."
+                        paramPrefix="mt"
+                        // Opt in to URL persistence: this page mirrors its tab into
+                        // useState and only re-syncs from the URL via a guarded effect,
+                        // so a descendant writing search params does not cascade here.
+                        // Verified in-browser. See the persistToUrl doc on the card.
+                        persistToUrl
+                        dimensions={MODELS_TOOLS_DIMENSIONS}
+                        defaultDimensionId="provider"
+                        metrics={MODELS_TOOLS_METRICS}
+                        defaultMetricId="totalTokens"
+                        chartTypes={MODELS_TOOLS_CHART_TYPES}
+                        defaultChartTypeId="bar"
+                        resolveData={resolveModelsToolsChartData}
+                        heightClassName="h-80"
+                        valueFormatter={modelsToolsValueFormatter}
+                        seriesLabel={modelsToolsSeriesLabel}
+                    />
+
                     <div className="bg-panel border border-panel-border rounded-xl p-5">
-                        <div className="flex items-center justify-between mb-4 gap-3">
-                            <h3 className="text-panel-foreground font-semibold">
-                                Token Usage by {modelGrouping === 'model' ? 'Canonical Model' : 'Model Family'}
-                            </h3>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => setModelGrouping('model')}
-                                    className={`px-2.5 py-1.5 rounded-md text-xs border ${modelGrouping === 'model'
-                                        ? 'bg-primary/10 border-primary-border/40 text-primary-foreground'
-                                        : 'bg-surface-muted border-hover text-foreground'}`}
-                                >
-                                    Model
-                                </button>
-                                <button
-                                    onClick={() => setModelGrouping('family')}
-                                    className={`px-2.5 py-1.5 rounded-md text-xs border ${modelGrouping === 'family'
-                                        ? 'bg-primary/10 border-primary-border/40 text-primary-foreground'
-                                        : 'bg-surface-muted border-hover text-foreground'}`}
-                                >
-                                    Family
-                                </button>
-                            </div>
-                        </div>
-                        <div className="h-80 w-full">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={modelTokenChart}>
-                                    <CartesianGrid {...chartTheme.grid} vertical={false} />
-                                    <XAxis dataKey="name" {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
-                                    <YAxis {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
-                                    <Tooltip
-                                        contentStyle={chartTheme.tooltip.contentStyle}
-                                        itemStyle={chartTheme.tooltip.itemStyle}
-                                        labelStyle={chartTheme.tooltip.labelStyle}
-                                        cursor={chartTheme.tooltip.cursor}
-                                        formatter={(value: number, name: string) => [name === 'cost' ? formatCurrency(value) : formatNumber(value), name]}
-                                    />
-                                    <Bar dataKey="tokens" radius={[4, 4, 0, 0]}>
-                                        {modelTokenChart.map((entry, idx) => (
-                                            <Cell
-                                                key={`model-token-${entry.name}-${idx}`}
-                                                fill={modelGrouping === 'family'
-                                                    ? getColorForModel({ family: entry.name })
-                                                    : getColorForModel({ model: entry.name })}
-                                            />
-                                        ))}
-                                    </Bar>
-                                </BarChart>
-                            </ResponsiveContainer>
+                        <h3 className="text-panel-foreground font-semibold mb-4">Provider Summary</h3>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="text-muted-foreground border-b border-panel-border">
+                                        <th className="text-left py-2 pr-3">Provider</th>
+                                        <th className="text-left py-2 pr-3">Vendor</th>
+                                        <th className="text-left py-2 pr-3">Surface</th>
+                                        <th className="text-left py-2 pr-3">Channel</th>
+                                        <th className="text-right py-2 pr-3">Sessions</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
+                                        <th className="text-right py-2">Cost</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(artifacts?.tokenUsage?.byProvider || []).slice(0, 12).map((row, idx) => (
+                                        <tr key={`${row.providerId}-${idx}`} className="border-b border-panel-border/80 text-foreground">
+                                            <td className="py-2 pr-3">{row.provider}</td>
+                                            <td className="py-2 pr-3">{row.providerVendor}</td>
+                                            <td className="py-2 pr-3">{row.providerSurface}</td>
+                                            <td className="py-2 pr-3">
+                                                {row.providerChannel === 'unknown' ? (
+                                                    <span
+                                                        className="text-muted-foreground"
+                                                        title="Launch-time capture (launcher / model variant) is not active yet — channel cannot be determined. Not a subscription default."
+                                                    >
+                                                        Unknown
+                                                    </span>
+                                                ) : (
+                                                    row.providerChannel
+                                                )}
+                                            </td>
+                                            <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.sessions)}</td>
+                                            <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.totalTokens)}</td>
+                                            <td className="py-2 text-right font-mono">{formatCurrency(row.totalCost)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
 

@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { ElementType, ReactNode } from 'react';
 import {
   AlertCircle,
   BarChart3,
   Bot,
+  Building2,
   FileText,
   Gauge,
   Layers,
@@ -14,6 +15,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
+import { deriveProviderIdentity, getChartSeriesColor, getProviderTone } from '../../lib/providerIdentity';
 import { buildFeatureAnalyticsSummary, flattenPlanningSessionCards } from '../../lib/sessionAnalytics';
 import { cn } from '../../lib/utils';
 import {
@@ -26,6 +28,11 @@ import type {
   PlanningAgentSessionCard,
   PlanningCommandCenterItem,
 } from '../../types';
+import {
+  InteractiveChartCard,
+  type ChartAxisOption,
+  type InteractiveChartDatum,
+} from '../Analytics/primitives/InteractiveChartCard';
 
 export interface FeatureAnalyticsPanelProps {
   projectId: string;
@@ -44,6 +51,8 @@ interface DenseRow {
   share?: number | null;
   state?: string | null;
   detail?: string | null;
+  /** Optional tooltip shown on the detail line — used by the provider table to explain an "Unknown" channel. */
+  title?: string | null;
 }
 
 interface ComparisonRow {
@@ -221,6 +230,123 @@ function groupBoardBy(
       share: totalTokens > 0 ? row.tokens / totalTokens : null,
     }))
     .sort((a, b) => (b.tokens ?? 0) - (a.tokens ?? 0));
+}
+
+const PROVIDER_CHART_DIMENSIONS: ChartAxisOption[] = [
+  { id: 'provider', label: 'Provider' },
+  { id: 'model', label: 'Model' },
+  { id: 'vendor', label: 'Vendor' },
+  { id: 'surface', label: 'Surface' },
+];
+
+const PROVIDER_CHART_METRICS: ChartAxisOption[] = [
+  { id: 'tokens', label: 'Tokens' },
+  { id: 'sessions', label: 'Sessions' },
+];
+
+function capitalizeChannel(channel: string): string {
+  if (!channel) return 'Unknown';
+  return channel.charAt(0).toUpperCase() + channel.slice(1);
+}
+
+/**
+ * "Tokens by Provider" dense rows. Provider identity is derived per-card via
+ * `deriveProviderIdentity({ model: card.model, platformType: card.platform })`
+ * — there is no `tokensByProvider`/`providerTokens` key on
+ * `FeatureAnalyticsSummary` to prefer (see grounding note in
+ * `.claude/progress/quick-features/analytics-provider-views.md`), so unlike
+ * the phase/model/agent tables this always derives from board cards.
+ * Codex/OpenAI sessions legitimately report 0 tokens — never filtered out.
+ */
+function providerRowsFromBoard(board: PlanningAgentSessionBoard | null): DenseRow[] {
+  const groups = new Map<string, { label: string; count: number; tokens: number; detail: string; title?: string }>();
+  for (const card of allCards(board)) {
+    const identity = deriveProviderIdentity({ model: card.model, platformType: card.platform });
+    const key = identity.providerId;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      existing.tokens += cardTokenTotal(card);
+      continue;
+    }
+    const channelLabel = capitalizeChannel(identity.providerChannel);
+    groups.set(key, {
+      label: identity.providerLabel,
+      count: 1,
+      tokens: cardTokenTotal(card),
+      detail: `${identity.providerVendor} · ${identity.providerSurface} · ${channelLabel}`,
+      title: identity.providerChannel === 'unknown'
+        ? 'Channel unknown: launch-time capture (launcher/model variant) is not active for this session — never inferred as subscription.'
+        : undefined,
+    });
+  }
+  const totalTokens = Array.from(groups.values()).reduce((sum, row) => sum + row.tokens, 0);
+  return Array.from(groups.entries())
+    .map(([id, row]) => ({
+      id,
+      label: row.label,
+      count: row.count,
+      tokens: row.tokens,
+      share: totalTokens > 0 ? row.tokens / totalTokens : null,
+      detail: row.detail,
+      title: row.title,
+    }))
+    .sort((a, b) => (b.tokens ?? 0) - (a.tokens ?? 0))
+    .slice(0, MAX_ROWS);
+}
+
+function providerChartMetricValue(cards: PlanningAgentSessionCard[], metricId: string | undefined): number {
+  if (metricId === 'sessions') return cards.length;
+  return cards.reduce((sum, card) => sum + cardTokenTotal(card), 0);
+}
+
+/**
+ * Provider chart series for `InteractiveChartCard`. Grouping switches on
+ * `dimensionId` (provider / model / vendor / surface); value switches on
+ * `metricId` (tokens / sessions). Zero-token providers (Codex) still emit a
+ * datum — `InteractiveChartCard` renders them as a real zero-height bar
+ * rather than dropping them, matching the "never hide" requirement.
+ */
+function providerChartData(
+  board: PlanningAgentSessionBoard | null,
+  dimensionId: string | undefined,
+  metricId: string | undefined,
+): InteractiveChartDatum[] {
+  const groups = new Map<string, { label: string; cards: PlanningAgentSessionCard[]; colorHint?: string }>();
+  for (const card of allCards(board)) {
+    const identity = deriveProviderIdentity({ model: card.model, platformType: card.platform });
+    let key: string;
+    let label: string;
+    let colorHint: string | undefined;
+    if (dimensionId === 'vendor') {
+      key = identity.providerVendor;
+      label = identity.providerVendor;
+    } else if (dimensionId === 'surface') {
+      key = identity.providerSurface;
+      label = identity.providerSurface;
+    } else if (dimensionId === 'model') {
+      key = card.model?.trim() || 'Unknown model';
+      label = key;
+    } else {
+      key = identity.providerId;
+      label = identity.providerLabel;
+      colorHint = getChartSeriesColor(getProviderTone(identity.providerId));
+    }
+    const existing = groups.get(key);
+    if (existing) {
+      existing.cards.push(card);
+    } else {
+      groups.set(key, { label, cards: [card], colorHint });
+    }
+  }
+  return Array.from(groups.entries())
+    .map(([key, group]) => ({
+      key,
+      label: group.label,
+      value: providerChartMetricValue(group.cards, metricId),
+      colorHint: group.colorHint,
+    }))
+    .sort((a, b) => b.value - a.value);
 }
 
 function phaseRowsFromBoard(board: PlanningAgentSessionBoard | null): DenseRow[] {
@@ -573,7 +699,11 @@ function TokenTable({ rows, emptyLabel }: { rows: DenseRow[]; emptyLabel: string
             <tr key={row.id}>
               <td className="max-w-[220px] py-2 pr-3">
                 <div className="truncate font-medium">{row.label}</div>
-                {row.detail && <div className="truncate text-[10px] text-muted-foreground/60">{row.detail}</div>}
+                {row.detail && (
+                  <div className="truncate text-[10px] text-muted-foreground/60" title={row.title ?? undefined}>
+                    {row.detail}
+                  </div>
+                )}
               </td>
               <td className="py-2 text-right font-mono tabular-nums text-muted-foreground">
                 {formatInteger(row.count)}
@@ -734,6 +864,11 @@ export function FeatureAnalyticsPanel({ projectId, featureId, featureContext = n
     })) ?? {};
   }, [board, featureContext, featureItem, sessionCards]);
 
+  const resolveProviderChartData = useCallback(
+    (dimensionId: string | undefined, metricId: string | undefined) => providerChartData(board, dimensionId, metricId),
+    [board],
+  );
+
   if (!projectId) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
@@ -796,6 +931,7 @@ export function FeatureAnalyticsPanel({ projectId, featureId, featureContext = n
     groupBoardBy(board, (card) => card.agentName, 'Unknown agent'),
     'Agent',
   );
+  const providerRows = providerRowsFromBoard(board);
 
   const agentComparison = comparisonGroup(summary, 'agents', plannedObservedFallback.agents);
   const skillComparison = comparisonGroup(summary, 'skills', plannedObservedFallback.skills);
@@ -837,6 +973,17 @@ export function FeatureAnalyticsPanel({ projectId, featureId, featureContext = n
         </div>
       </SectionPanel>
 
+      <InteractiveChartCard
+        title="Provider Usage"
+        subtitle="Token and session volume by model provider. Channel (subscription vs ICA) resolves to Unknown until launch-time capture is active — never inferred."
+        paramPrefix="fa"
+        dimensions={PROVIDER_CHART_DIMENSIONS}
+        metrics={PROVIDER_CHART_METRICS}
+        resolveData={resolveProviderChartData}
+        valueFormatter={formatTokens}
+        emptyMessage="No provider usage observed for this feature."
+      />
+
       <div className="grid gap-4 xl:grid-cols-3">
         <SectionPanel icon={BarChart3} title="Tokens by Phase">
           <TokenTable rows={phaseRows} emptyLabel="No phase token rows." />
@@ -846,6 +993,9 @@ export function FeatureAnalyticsPanel({ projectId, featureId, featureContext = n
         </SectionPanel>
         <SectionPanel icon={Bot} title="Tokens by Agent">
           <TokenTable rows={agentRows} emptyLabel="No agent token rows." />
+        </SectionPanel>
+        <SectionPanel icon={Building2} title="Tokens by Provider">
+          <TokenTable rows={providerRows} emptyLabel="No provider token rows." />
         </SectionPanel>
       </div>
 

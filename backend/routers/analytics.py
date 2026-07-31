@@ -49,7 +49,12 @@ from backend.models import (
     WorkflowRegistryListResponse,
     WorkflowEffectivenessResponse,
 )
-from backend.model_identity import canonical_model_name, derive_model_identity, model_family_name
+from backend.model_identity import (
+    canonical_model_name,
+    derive_model_identity,
+    derive_provider_identity,
+    model_family_name,
+)
 from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
 from backend.services.agentic_intelligence_flags import require_usage_attribution_enabled
@@ -399,6 +404,38 @@ def _model_dimensions(raw_model: Any) -> dict[str, str]:
     }
 
 
+_PROVIDER_DIMENSIONS = {"provider", "provider_vendor", "provider_surface", "provider_channel"}
+
+
+def _provider_identity_for_row(row: dict[str, Any]) -> dict[str, str]:
+    """Single provider-identity derivation entry point for analytics rows.
+
+    Delegates to ``derive_provider_identity`` (backend.model_identity) — the sole
+    provider-identity derivation path in the backend. Session rows sourced via
+    ``session_repo.list_paginated`` / ``get_many_by_ids`` carry ``model``,
+    ``platform_type``, ``launcher``, and ``model_variant`` via ``SELECT *``.
+    """
+    return derive_provider_identity(
+        row.get("model"),
+        platform_type=row.get("platform_type"),
+        launcher=row.get("launcher"),
+        model_variant=row.get("model_variant"),
+    )
+
+
+def _provider_dimension_key(dimension: str, row: dict[str, Any]) -> str:
+    """Key a row by the requested provider dimension using the shared identity derivation."""
+    identity = _provider_identity_for_row(row)
+    if dimension == "provider_vendor":
+        return identity["providerVendor"]
+    if dimension == "provider_surface":
+        return identity["providerSurface"]
+    if dimension == "provider_channel":
+        return identity["providerChannel"]
+    # "provider" (combined view) keys by the full human-readable identity.
+    return identity["providerLabel"]
+
+
 def _operation_kind_label(kind: str) -> str:
     normalized = str(kind or "").strip().lower()
     if normalized == "full_sync":
@@ -457,7 +494,9 @@ def _build_artifact_analytics_payload(
     feature_filter: str | None,
     model_filter: str | None,
     model_family_filter: str | None,
+    provider_by_session: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    provider_by_session = provider_by_session or {}
     detail_limit = max(10, min(int(detail_limit or 100), 500))
     feature_filter_norm = str(feature_filter or "").strip()
     model_filter_norm = canonical_model_name(model_filter).strip().lower() if model_filter else ""
@@ -535,6 +574,11 @@ def _build_artifact_analytics_payload(
         if skill:
             unique_skills.add(skill)
 
+        # Provider identity is session-scoped (platform_type/launcher/model_variant live on
+        # the sessions table, not telemetry_events); fall back to a model-only derivation
+        # (providerSurface/Channel -> "Unknown"/"unknown") when the session lookup misses.
+        provider_identity = provider_by_session.get(session_id) or derive_provider_identity(model_dims["raw"])
+
         records.append(
             {
                 "session_id": session_id,
@@ -550,6 +594,11 @@ def _build_artifact_analytics_payload(
                 "occurred_at": str(row.get("occurred_at") or ""),
                 "agent": agent,
                 "skill": skill,
+                "provider_label": provider_identity["providerLabel"],
+                "provider_id": provider_identity["providerId"],
+                "provider_vendor": provider_identity["providerVendor"],
+                "provider_surface": provider_identity["providerSurface"],
+                "provider_channel": provider_identity["providerChannel"],
             }
         )
 
@@ -571,6 +620,7 @@ def _build_artifact_analytics_payload(
     by_tool: dict[str, dict[str, Any]] = {}
     by_model: dict[str, dict[str, Any]] = {}
     by_model_family: dict[str, dict[str, Any]] = {}
+    by_provider: dict[str, dict[str, Any]] = {}
     model_artifact: dict[tuple[str, str], dict[str, Any]] = {}
     artifact_tool: dict[tuple[str, str], dict[str, Any]] = {}
     model_artifact_tool: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -580,6 +630,7 @@ def _build_artifact_analytics_payload(
     type_session_pairs: set[tuple[str, str]] = set()
     model_session_pairs: set[tuple[str, str]] = set()
     model_family_session_pairs: set[tuple[str, str]] = set()
+    provider_session_pairs: set[tuple[str, str]] = set()
     model_artifact_session_pairs: set[tuple[str, str, str]] = set()
     model_artifact_tool_session_pairs: set[tuple[str, str, str, str]] = set()
     feature_session_pairs: set[tuple[str, str]] = set()
@@ -590,6 +641,7 @@ def _build_artifact_analytics_payload(
         model = record["model"] or "unknown"
         model_raw = record.get("model_raw") or model
         model_family = record.get("model_family") or "Unknown"
+        provider_label = record.get("provider_label") or "Unknown · Unknown"
         tool_name = record["tool_name"] or "unknown"
         source = record["source"] or "unknown"
         feature_ids = record["feature_ids"]
@@ -671,6 +723,26 @@ def _build_artifact_analytics_payload(
         model_family_entry["sessionSet"].add(session_id)
         model_family_entry["modelSet"].add(model)
         model_family_entry["artifactTypeSet"].add(artifact_type)
+
+        provider_entry = by_provider.setdefault(
+            provider_label,
+            {
+                "provider": provider_label,
+                "providerId": record.get("provider_id") or "unknown:unknown:unknown",
+                "providerVendor": record.get("provider_vendor") or "Unknown",
+                "providerSurface": record.get("provider_surface") or "Unknown",
+                "providerChannel": record.get("provider_channel") or "unknown",
+                "count": 0,
+                "sessionSet": set(),
+                "artifactTypeSet": set(),
+                "tokenInput": 0,
+                "tokenOutput": 0,
+                "totalCost": 0.0,
+            },
+        )
+        provider_entry["count"] += 1
+        provider_entry["sessionSet"].add(session_id)
+        provider_entry["artifactTypeSet"].add(artifact_type)
 
         model_artifact_entry = model_artifact.setdefault(
             (model, artifact_type),
@@ -783,6 +855,7 @@ def _build_artifact_analytics_payload(
         type_session_pairs.add((session_id, artifact_type))
         model_session_pairs.add((session_id, model))
         model_family_session_pairs.add((session_id, model_family))
+        provider_session_pairs.add((session_id, provider_label))
         model_artifact_session_pairs.add((session_id, model, artifact_type))
         model_artifact_tool_session_pairs.add((session_id, model, artifact_type, tool_name))
 
@@ -807,6 +880,15 @@ def _build_artifact_analytics_payload(
     for session_id, model_family in model_family_session_pairs:
         lifecycle = session_metrics(session_id)
         entry = by_model_family.get(model_family)
+        if not entry:
+            continue
+        entry["tokenInput"] += lifecycle["token_input"]
+        entry["tokenOutput"] += lifecycle["token_output"]
+        entry["totalCost"] += lifecycle["cost_usd"]
+
+    for session_id, provider_label in provider_session_pairs:
+        lifecycle = session_metrics(session_id)
+        entry = by_provider.get(provider_label)
         if not entry:
             continue
         entry["tokenInput"] += lifecycle["token_input"]
@@ -926,6 +1008,28 @@ def _build_artifact_analytics_payload(
             for entry in by_model_family.values()
         ],
         key=lambda row: (int(row["artifactCount"]), str(row["modelFamily"])),
+        reverse=True,
+    )
+
+    provider_items = sorted(
+        [
+            {
+                "provider": entry["provider"],
+                "providerId": entry["providerId"],
+                "providerVendor": entry["providerVendor"],
+                "providerSurface": entry["providerSurface"],
+                "providerChannel": entry["providerChannel"],
+                "artifactCount": entry["count"],
+                "sessions": len(entry["sessionSet"]),
+                "artifactTypes": sorted(str(v) for v in entry["artifactTypeSet"]),
+                "tokenInput": entry["tokenInput"],
+                "tokenOutput": entry["tokenOutput"],
+                "totalTokens": entry["tokenInput"] + entry["tokenOutput"],
+                "totalCost": round(entry["totalCost"], 6),
+            }
+            for entry in by_provider.values()
+        ],
+        key=lambda row: (int(row["artifactCount"]), str(row["provider"])),
         reverse=True,
     )
 
@@ -1302,6 +1406,7 @@ def _build_artifact_analytics_payload(
             "byModel": model_items,
             "byModelArtifact": model_artifact_items,
             "byModelFamily": model_family_items,
+            "byProvider": provider_items,
         },
         "detailLimit": detail_limit,
     }
@@ -1319,6 +1424,7 @@ async def _load_artifact_analytics_payload(
     tool: str | None,
     feature_filter: str | None,
     detail_limit: int,
+    session_repo: Any = None,
 ) -> dict[str, Any]:
     artifact_rows, lifecycle_rows, feature_link_rows, feature_rows, command_rows, agent_rows = await _fetch_artifact_analytics_rows(
         analytics_repo,
@@ -1328,6 +1434,23 @@ async def _load_artifact_analytics_payload(
         artifact_type=artifact_type,
         tool=tool,
     )
+
+    # Provider identity (platform_type/launcher/model_variant) lives on the sessions table,
+    # not telemetry_events — batch-fetch it by session_id for the sessions this view touches.
+    provider_by_session: dict[str, dict[str, str]] = {}
+    if session_repo is not None:
+        session_ids = sorted(
+            {
+                str(row.get("session_id") or "").strip()
+                for row in (*artifact_rows, *lifecycle_rows)
+                if str(row.get("session_id") or "").strip()
+            }
+        )
+        if session_ids:
+            sessions_by_id = await session_repo.get_many_by_ids(session_ids, project_id)
+            for session_id, session_row in sessions_by_id.items():
+                provider_by_session[session_id] = _provider_identity_for_row(session_row)
+
     return _build_artifact_analytics_payload(
         artifact_rows=artifact_rows,
         lifecycle_rows=lifecycle_rows,
@@ -1339,6 +1462,7 @@ async def _load_artifact_analytics_payload(
         feature_filter=feature_filter,
         model_filter=model,
         model_family_filter=model_family,
+        provider_by_session=provider_by_session,
     )
 
 
@@ -1527,6 +1651,8 @@ async def get_series(
                 group_value = model_family_name(str(row.get("model") or "").strip()) or "Unknown"
             elif group_by == "session_type":
                 group_value = str(row.get("session_type") or "session")
+            elif group_by in _PROVIDER_DIMENSIONS:
+                group_value = _provider_dimension_key(group_by, row)
             else:
                 group_value = "all"
             key = (bucket, group_value)
@@ -1615,7 +1741,10 @@ async def get_series(
 
 @analytics_router.get("/breakdown")
 async def get_breakdown(
-    dimension: str = Query("model", pattern="^(model|model_family|session_type|tool|agent|skill|feature)$"),
+    dimension: str = Query(
+        "model",
+        pattern="^(model|model_family|session_type|tool|agent|skill|feature|provider|provider_vendor|provider_surface|provider_channel)$",
+    ),
     start: str | None = None,
     end: str | None = None,
     offset: int = 0,
@@ -1678,6 +1807,11 @@ async def get_breakdown(
                 key = str(row.get("session_type") or "session")
             else:
                 key = model_family_name(str(row.get("model") or "").strip()) or "Unknown"
+            counts[key]["count"] += 1
+            add_usage(key, row)
+    elif dimension in _PROVIDER_DIMENSIONS:
+        for row in sessions:
+            key = _provider_dimension_key(dimension, row)
             counts[key]["count"] += 1
             add_usage(key, row)
     elif dimension == "tool":
@@ -2244,6 +2378,7 @@ async def get_artifacts(
                 "byModel": [],
                 "byModelArtifact": [],
                 "byModelFamily": [],
+                "byProvider": [],
             },
             "detailLimit": limit,
         }
@@ -2259,6 +2394,7 @@ async def get_artifacts(
         tool=tool,
         feature_filter=feature_id,
         detail_limit=limit,
+        session_repo=core_ports.storage.sessions(),
     )
     payload["generatedAt"] = datetime.now(timezone.utc).isoformat()
     payload["range"] = {"start": start or "", "end": end or ""}

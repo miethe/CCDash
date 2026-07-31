@@ -1661,6 +1661,27 @@ export interface AnalyticsArtifactsResponse {
       totalTokens: number;
       totalCost: number;
     }>;
+    /**
+     * Additive provider-identity breakdown (analytics-provider-views T-002).
+     * Optional — a server predating this field omits it entirely; consumers
+     * must default to `[]`, never crash. `providerChannel` resolves to
+     * "unknown" for ~100% of rows until launch-time capture is activated
+     * (see lib/providerIdentity.ts) — never faked or inferred.
+     */
+    byProvider?: Array<{
+      provider: string;
+      providerId: string;
+      providerVendor: string;
+      providerSurface: string;
+      providerChannel: string;
+      artifactCount: number;
+      sessions: number;
+      artifactTypes: string[];
+      tokenInput: number;
+      tokenOutput: number;
+      totalTokens: number;
+      totalCost: number;
+    }>;
     byModel: Array<{
       model: string;
       modelRaw?: string;

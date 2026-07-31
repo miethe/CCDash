@@ -48,6 +48,8 @@ import { uiStateKeys } from '../services/queryKeys';
 import { SessionFeaturesView, TranscriptView } from './SessionInspector/TranscriptView';
 import { SessionSourceChip, SessionUnattributedBadge } from './SessionSourceChip';
 import { buildAOSCorrelationView, type AOSCorrelationView, type AOSParentLinkKind } from '../lib/aosCorrelation';
+import { deriveProviderIdentity, getProviderTone, getChartSeriesColor, type ProviderIdentity } from '../lib/providerIdentity';
+import { InteractiveChartCard, type InteractiveChartDatum } from './Analytics/primitives/InteractiveChartCard';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -2214,22 +2216,101 @@ const AnalyticsView = React.memo<{
         }));
     }, [scopeTotals, session.id, sessionsInScope]);
 
-    const modelData = useMemo(() => {
-        const byModel = new Map<string, { name: string; value: number; tokens: number; toolCount: number; cost: number; type: 'model' }>();
-        sessionsInScope.forEach(scopeSession => {
-            const modelName = String(scopeSession.model || 'unknown').trim() || 'unknown';
-            const current = byModel.get(modelName) || { name: modelName, value: 0, tokens: 0, toolCount: 0, cost: 0, type: 'model' };
-            const sessionTokens = resolveTokenMetrics(scopeSession, {
+    // Provider-identity rows (T-006, analytics-provider-views) — one row per
+    // in-scope session, carrying the orthogonal vendor/surface/channel axes
+    // from `deriveProviderIdentity` plus the same tokens/cost basis used by
+    // `scopeTotals` above. `providerChannel` resolves to 'unknown' for ~100%
+    // of rows today (launch-time capture is not yet active) — that is a
+    // truthful contract state, never hidden or faked.
+    const providerRows = useMemo(
+        () => sessionsInScope.map(scopeSession => {
+            const identity = deriveProviderIdentity({
+                model: scopeSession.model,
+                platformType: scopeSession.platformType,
+                launcher: scopeSession.launcher,
+                modelVariant: scopeSession.modelVariant,
+            });
+            const tokens = resolveTokenMetrics(scopeSession, {
                 hasLinkedSubthreads: sessionHasLinkedSubthreads(scopeSession.id),
             }).workloadTokens;
-            current.value += (scopeSession.logs || []).length;
-            current.tokens += sessionTokens;
-            current.toolCount += (scopeSession.logs || []).filter(log => log.type === 'tool').length;
-            current.cost += Number(scopeSession.totalCost || 0);
-            byModel.set(modelName, current);
+            return {
+                session: scopeSession,
+                identity,
+                tokens,
+                steps: (scopeSession.logs || []).length,
+                cost: resolveDisplayCost(scopeSession),
+            };
+        }),
+        [sessionHasLinkedSubthreads, sessionsInScope]
+    );
+
+    const providerMetricValue = useCallback(
+        (row: (typeof providerRows)[number], metricId: string | undefined): number => {
+            if (metricId === 'cost') return row.cost;
+            if (metricId === 'steps') return row.steps;
+            return row.tokens;
+        },
+        []
+    );
+
+    const resolveProviderChartData = useCallback(
+        (dimensionId: string | undefined, metricId: string | undefined): InteractiveChartDatum[] => {
+            const byKey = new Map<string, InteractiveChartDatum>();
+            providerRows.forEach(row => {
+                let key: string;
+                let label: string;
+                let colorHint: string | undefined;
+                if (dimensionId === 'vendor') {
+                    key = row.identity.providerVendor;
+                    label = row.identity.providerVendor;
+                    colorHint = getChartSeriesColor(getProviderTone(`${row.identity.providerVendor}:unknown:unknown`));
+                } else if (dimensionId === 'surface') {
+                    key = row.identity.providerSurface;
+                    label = row.identity.providerSurface;
+                    colorHint = getChartSeriesColor(getProviderTone(`unknown:${row.identity.providerSurface}:unknown`));
+                } else if (dimensionId === 'model') {
+                    const modelName = String(row.session.model || 'unknown').trim() || 'unknown';
+                    key = modelName;
+                    label = modelName;
+                    colorHint = getColorForModel({ model: modelName });
+                } else {
+                    key = row.identity.providerId;
+                    label = row.identity.providerLabel;
+                    colorHint = getChartSeriesColor(getProviderTone(row.identity.providerId));
+                }
+                const current = byKey.get(key) || { key, label, value: 0, colorHint };
+                current.value += providerMetricValue(row, metricId);
+                byKey.set(key, current);
+            });
+            return Array.from(byKey.values()).sort((a, b) => b.value - a.value);
+        },
+        [getColorForModel, providerMetricValue, providerRows]
+    );
+
+    // Aggregate providerRows by full provider identity (vendor+surface+channel)
+    // for the "Provider Detail" panel — distinct from the chart's dimension
+    // switcher, this always groups by the full identity tuple.
+    const providerDetailRows = useMemo(() => {
+        const byProvider = new Map<string, {
+            identity: ProviderIdentity;
+            sessionCount: number;
+            tokens: number;
+            cost: number;
+        }>();
+        providerRows.forEach(row => {
+            const current = byProvider.get(row.identity.providerId) || {
+                identity: row.identity,
+                sessionCount: 0,
+                tokens: 0,
+                cost: 0,
+            };
+            current.sessionCount += 1;
+            current.tokens += row.tokens;
+            current.cost += row.cost;
+            byProvider.set(row.identity.providerId, current);
         });
-        return Array.from(byModel.values()).sort((a, b) => b.value - a.value);
-    }, [sessionHasLinkedSubthreads, sessionsInScope]);
+        return Array.from(byProvider.values()).sort((a, b) => b.tokens - a.tokens);
+    }, [providerRows]);
 
     return (
         <div className="h-full overflow-y-auto pb-6 relative">
@@ -2312,23 +2393,81 @@ const AnalyticsView = React.memo<{
                     </div>
                 </div>
 
-                {/* 3. MODELS CHART */}
+                {/* 3. MODEL / PROVIDER ALLOCATION (T-006, analytics-provider-views) */}
+                <InteractiveChartCard
+                    title="Model Allocation"
+                    subtitle="Switch dimension to see the same steps/tokens/cost split by provider identity."
+                    paramPrefix="sa"
+                    dimensions={[
+                        { id: 'provider', label: 'Provider' },
+                        { id: 'model', label: 'Model' },
+                        { id: 'vendor', label: 'Vendor' },
+                        { id: 'surface', label: 'Surface' },
+                    ]}
+                    defaultDimensionId="model"
+                    metrics={[
+                        { id: 'steps', label: 'Steps' },
+                        { id: 'tokens', label: 'Tokens' },
+                        { id: 'cost', label: 'Cost' },
+                    ]}
+                    defaultMetricId="steps"
+                    chartTypes={[
+                        { id: 'horizontalBar', label: 'Bars' },
+                        { id: 'pie', label: 'Pie' },
+                    ]}
+                    defaultChartTypeId="horizontalBar"
+                    resolveData={resolveProviderChartData}
+                    heightClassName="h-64"
+                    valueFormatter={(value) => formatTokenCount(value)}
+                    seriesLabel="Value"
+                    emptyMessage="No allocation data available for this view."
+                />
+
+                {/* 3b. PROVIDER DETAIL (T-006, analytics-provider-views) */}
                 <div className="bg-panel border border-panel-border rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-foreground mb-6 flex items-center gap-2"><Cpu size={16} /> Model Allocation</h3>
-                    <div className="h-64 cursor-pointer">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart layout="vertical" data={modelData} onClick={(data: any) => data && data.activePayload && setModalData({ title: 'Model Details', data: data.activePayload[0].payload })}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-                                <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
-                                <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 10 }} width={100} />
-                                <Tooltip cursor={{ fill: '#1e293b' }} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24} name="Steps Executed">
-                                    {modelData.map((entry, index) => (
-                                        <Cell key={`model-bar-${entry.name}-${index}`} fill={getColorForModel({ model: entry.name })} />
-                                    ))}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
+                    <h3 className="text-sm font-bold text-foreground mb-4 flex items-center gap-2"><Layers size={16} /> Provider Detail</h3>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                            <thead>
+                                <tr className="text-left text-muted-foreground uppercase tracking-wide text-[10px] border-b border-panel-border">
+                                    <th className="pb-2 pr-3 font-semibold">Provider</th>
+                                    <th className="pb-2 pr-3 font-semibold">Vendor</th>
+                                    <th className="pb-2 pr-3 font-semibold">Surface</th>
+                                    <th className="pb-2 pr-3 font-semibold">Channel</th>
+                                    <th className="pb-2 pr-3 font-semibold text-right">Sessions</th>
+                                    <th className="pb-2 pr-3 font-semibold text-right">Tokens</th>
+                                    <th className="pb-2 font-semibold text-right">Cost</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {providerDetailRows.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={7} className="py-4 text-center text-muted-foreground">No provider data available for this scope.</td>
+                                    </tr>
+                                ) : providerDetailRows.map(row => (
+                                    <tr key={row.identity.providerId} className="border-b border-panel-border/60 last:border-b-0">
+                                        <td className="py-2 pr-3 text-panel-foreground font-medium">{row.identity.providerLabel}</td>
+                                        <td className="py-2 pr-3 text-muted-foreground">{row.identity.providerVendor}</td>
+                                        <td className="py-2 pr-3 text-muted-foreground">{row.identity.providerSurface}</td>
+                                        <td className="py-2 pr-3">
+                                            {row.identity.providerChannel === 'unknown' ? (
+                                                <span
+                                                    className="text-muted-foreground/70 italic"
+                                                    title="Launch-time capture is not yet active — channel (subscription/ICA/API) cannot be determined for this session."
+                                                >
+                                                    Unknown
+                                                </span>
+                                            ) : (
+                                                <span className="text-panel-foreground capitalize">{row.identity.providerChannel}</span>
+                                            )}
+                                        </td>
+                                        <td className="py-2 pr-3 text-right text-muted-foreground">{row.sessionCount}</td>
+                                        <td className="py-2 pr-3 text-right text-muted-foreground">{formatTokenCount(row.tokens)}</td>
+                                        <td className="py-2 text-right text-muted-foreground">${formatUsd(row.cost, 2)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
 
