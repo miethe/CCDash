@@ -134,6 +134,47 @@ CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS = _env_int("CCDASH_AAR_REVIEW_SWEEP_INT
 # history the caller supplies.
 CCDASH_AAR_ESCALATION_QUOTA = _env_int("CCDASH_AAR_ESCALATION_QUOTA", 5)
 CCDASH_AAR_ESCALATION_WINDOW_HOURS = _env_int("CCDASH_AAR_ESCALATION_WINDOW_HOURS", 24)
+# proof-to-routing-loop Phase 1 (T1-004): Proof -> Routing Feedback Loop producer
+# surface -- a deterministic, opt-in, no-LLM (source_skill_name x model)-grain
+# rollup emitted for the MeatySkills delegation-router to PULL (never actuated
+# by CCDash itself). Deliberately default-OFF (opt-in), the INVERSE polarity of
+# CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED's default-True (opt-out) -- do not
+# copy that flag's default. When False, no route/worker/service constructs any
+# routing_rollup behavior; every existing read/write path is unaffected.
+CCDASH_ROUTING_FEEDBACK_ENABLED = _env_bool("CCDASH_ROUTING_FEEDBACK_ENABLED", False)
+# Minimum sample_count for a (source_skill_name, model) key before the rollup
+# marks it eligible_for_adjustment=true; thin keys below this threshold are
+# still emitted (coverage-only) but flagged ineligible so the router applies
+# its own gate rather than silently under-sampling an adjustment.
+CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE = _env_int("CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE", 5)
+# Rolling window (days) the sweep aggregates over when computing each rollup
+# row. Spike-anchored placeholder (PRD OQ-6), not a locked requirement -- see
+# the Phase 6 deferred-items design spec for the promotion trigger.
+CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS = _env_int("CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS", 30)
+# Gates emission of protected-class / _unclassified coverage-only rows
+# (eligible_for_adjustment hardcoded false for these regardless of this flag).
+# _unclassified rows are always emitted regardless of this flag's value --
+# this flag only controls the additional protected-class rows.
+CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS = _env_bool(
+    "CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS", True
+)
+# proof-to-routing-loop Phase 4 (T4-002): RoutingRollupSweepJob -- the
+# default-off (per CCDASH_ROUTING_FEEDBACK_ENABLED above) background worker
+# that periodically populates `routing_rollup` by calling Phase 3's
+# RoutingRollupQueryService for every registered project. Sibling of
+# CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS (default: 1800 = 30 min); interval
+# between RoutingRollupSweepJob ticks when CCDASH_ROUTING_FEEDBACK_ENABLED is
+# true AND the profile is worker/worker-watch-gated in container.py's
+# `_export_profiles` (construction) and `_start_routing_rollup_sweep_task`'s
+# own `profile.name != "worker"` guard (actual periodic-task start -- mirrors
+# `_start_aar_review_sweep_task`'s guard verbatim, so worker-watch constructs
+# the job object but only the plain `worker` profile ever runs its loop, same
+# as the AAR-review precedent). Clamped to a 60s floor in
+# backend/adapters/jobs/runtime.py (mirrors
+# CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS's own floor).
+CCDASH_ROUTING_FEEDBACK_SWEEP_INTERVAL_SECONDS = _env_int(
+    "CCDASH_ROUTING_FEEDBACK_SWEEP_INTERVAL_SECONDS", 1800
+)
 CCDASH_SNAPSHOT_FRESHNESS_DISABLE_CANDIDATE_SECONDS = _env_int(
     "CCDASH_SNAPSHOT_FRESHNESS_DISABLE_CANDIDATE_SECONDS",
     7 * 24 * 60 * 60,

@@ -10,6 +10,7 @@ from backend.cli.commands.live import live_app
 from backend.cli.commands.persona import persona_app
 from backend.cli.commands.report import report_app
 from backend.cli.commands.research_run import research_run_app
+from backend.cli.commands.routing import routing_app
 from backend.cli.commands.session import session_app
 from backend.cli.commands.status import status_app
 from backend.cli.commands.system import system_app
@@ -69,6 +70,7 @@ app.add_typer(status_app, name="status", help="Show status snapshots.")
 app.add_typer(feature_app, name="feature", help="Feature forensics commands.")
 app.add_typer(workflow_app, name="workflow", help="Workflow diagnostics commands.")
 app.add_typer(report_app, name="report", help="Reporting commands.")
+app.add_typer(routing_app, name="routing", help="Routing feedback commands.")
 app.add_typer(artifact_app, name="artifact", help="Artifact intelligence commands.")
 app.add_typer(live_app, name="live", help="Live agent metrics.")
 app.add_typer(system_app, name="system", help="System-wide metrics across all projects.")

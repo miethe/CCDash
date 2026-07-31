@@ -19,6 +19,7 @@ from backend.adapters.live_updates.postgres_listener import PostgresLiveNotifica
 from backend.adapters.jobs import (
     AARReviewSweepJob,
     ArtifactRollupExportJob,
+    RoutingRollupSweepJob,
     RuntimeJobAdapter,
     RuntimeJobState,
     TelemetryExporterJob,
@@ -215,6 +216,28 @@ class RuntimeContainer:
                 and bool(getattr(config, "CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED", False))
                 else None
             ),
+            # proof-to-routing-loop Phase 4 (T4-002): default-off Proof ->
+            # Routing Feedback Loop sweep worker. Mirrors the AAR-review sweep
+            # job's conditional-construction block verbatim in structure --
+            # same profile-set gate (`_export_profiles`), same flag-gated
+            # construction, same unconditional `project=None` (this is a
+            # cross-project rollup covering the whole DB-authoritative
+            # registry, ADR-006, not scoped to whichever single project the
+            # worker's sync engine happens to be bound to). Runtime.py's own
+            # `_start_routing_rollup_sweep_task` additionally restricts the
+            # actual periodic-loop start to the plain `worker` profile only
+            # (mirrors `_start_aar_review_sweep_task`'s identical asymmetry) --
+            # this constructor still builds the job object for `worker-watch`
+            # so the object is available if that gate is ever loosened.
+            routing_rollup_sweep_job=(
+                RoutingRollupSweepJob(
+                    ports=self.require_ports(),
+                    project=None,
+                )
+                if self.profile.name in _export_profiles
+                and bool(getattr(config, "CCDASH_ROUTING_FEEDBACK_ENABLED", False))
+                else None
+            ),
         )
         self.lifecycle = await self.job_adapter.start()
         app.state.runtime_jobs = self.job_adapter
@@ -229,6 +252,8 @@ class RuntimeContainer:
             app.state.artifact_rollup_export_task = self.lifecycle.artifact_rollup_export_task
         if self.lifecycle.aar_review_sweep_task is not None:
             app.state.aar_review_sweep_task = self.lifecycle.aar_review_sweep_task
+        if self.lifecycle.routing_rollup_sweep_task is not None:
+            app.state.routing_rollup_sweep_task = self.lifecycle.routing_rollup_sweep_task
 
     async def shutdown(self, app: FastAPI) -> None:
         logger.info("CCDash backend shutting down (profile=%s)", self.profile.name)

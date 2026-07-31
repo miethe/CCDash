@@ -387,6 +387,106 @@ class AARReviewDTO(BaseModel):
         return self
 
 
+# ── Proof -> Routing Feedback Loop DTOs (BP-6, T3-004) ───────────────────────
+# `RoutingRollupKeyDTO` / `RoutingRollupResponseDTO` are the terminal shapes
+# produced by `routing_rollup.py::RoutingRollupQueryService` (Phase 3).  They
+# mirror `AARReviewDTO`'s pattern exactly: plain `BaseModel` subclasses, NOT
+# `AgentQueryEnvelope` subclasses -- this shape is frozen by the
+# `aos.routing.feedback` v1.0.0 cross-repo contract's literal envelope (PRD
+# Sec.6.3), which has no `data_freshness` field and renders `generated_at`/
+# `window_start`/`window_end`/`freshness_ts` as plain ISO-8601 strings, not
+# `datetime` objects.
+
+
+class RoutingRollupKeyDTO(BaseModel):
+    """One ``(source_skill_name, model)``-grain routing-feedback rollup row.
+
+    Carries the full 11-field pinned join envelope (``producer`` through
+    ``task_class``, verbatim from the ``aos.routing.feedback`` v1.0.0
+    contract) plus the CCDash-designed D5 metric payload (``model`` through
+    ``freshness_ts``) -- PRD Sec.6.3's literal JSON example, cited there and
+    reproduced field-for-field here, never reinvented.
+
+    Row grain is always ``(source_skill_name, model)`` -- multiple rows may
+    share the same ``task_class``; that merge is the router's job, never
+    performed here (D2/FR-5, PRD Sec.6.3).
+
+    ``eligible_for_adjustment`` is hardcoded ``False`` for every
+    coverage-only row (``task_class == "_unclassified"`` or a protected
+    class) regardless of ``sample_count`` -- see
+    ``routing_rollup.py::MappedRollupRow.is_coverage_only``'s docstring for
+    the hard contract this DTO's producer must honor.
+
+    ``success_rate``/``regression_rate`` are ``None`` in this v1 -- no
+    genuine per-session success/failure/regression signal exists yet in the
+    ``sessions`` table for this module to compute from (``status`` carries
+    only ``'active'``/``'completed'`` values, never an outcome judgment);
+    the ``routing_rollup`` DDL (Phase 2) already declares both columns
+    nullable for exactly this reason. This is a named, documented v1 design
+    gap for D9 socialization, not a bug -- see
+    ``routing_rollup.py::RoutingRollupQueryService.compute_metrics``'s
+    docstring.
+    """
+
+    producer: str
+    contract_id: str
+    contract_version: str
+    taxonomy_id: str
+    taxonomy_version: str
+    taxonomy_digest: str
+    mapping_id: str
+    mapping_version: str
+    mapping_digest: str
+    source_skill_name: str
+    task_class: str
+
+    model: str
+    provider: str
+    sample_count: int
+    success_rate: float | None = None
+    cost_index: float
+    regression_rate: float | None = None
+    confidence: float
+    eligible_for_adjustment: bool
+    window_start: str
+    window_end: str
+    freshness_ts: str
+
+
+class RoutingRollupResponseDTO(BaseModel):
+    """Top-level Proof -> Routing Feedback Loop rollup response envelope.
+
+    Carried once per response (never per key) -- static contract/taxonomy/
+    mapping identity fields, the three FR-7 coverage counters
+    (``mapped_count``, ``unclassified_count``, ``distinct_unmapped_skill_names``),
+    and the ``keys[]`` array of ``RoutingRollupKeyDTO`` rows. PRD Sec.6.3's
+    literal top-level envelope example, reproduced field-for-field.
+
+    ``enabled``/``generated_at`` reflect the ENABLED shape by construction
+    when assembled by
+    ``routing_rollup.py::RoutingRollupQueryService.build_response`` -- the
+    deterministic DISABLED envelope (``CCDASH_ROUTING_FEEDBACK_ENABLED=False``
+    -> ``enabled=False``, ``generated_at=None``, zero counters, empty
+    ``keys``) is a transport/worker-level short-circuit (D6), constructed by
+    a later phase, not by this compute-layer DTO's own defaults.
+    """
+
+    enabled: bool = True
+    generated_at: str | None = None
+    contract_id: str
+    contract_version: str
+    taxonomy_id: str
+    taxonomy_version: str
+    taxonomy_digest: str
+    mapping_id: str
+    mapping_version: str
+    mapping_digest: str
+    mapped_count: int = 0
+    unclassified_count: int = 0
+    distinct_unmapped_skill_names: list[str] = Field(default_factory=list)
+    keys: list[RoutingRollupKeyDTO] = Field(default_factory=list)
+
+
 # ── Planning query DTOs (PCP-201) ────────────────────────────────────────────
 # These DTOs wrap the backend/models.py planning primitives (PlanningNode,
 # PlanningEdge, PlanningGraph, PlanningEffectiveStatus, PlanningPhaseBatch)

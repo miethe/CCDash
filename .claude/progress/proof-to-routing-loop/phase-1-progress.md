@@ -7,92 +7,123 @@ feature_slug: proof-to-routing-loop
 prd_ref: docs/project_plans/PRDs/infrastructure/proof-to-routing-loop-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/proof-to-routing-loop-v1.md
 phase: 1
-title: "Contract & Envelope Foundations"
-status: pending
-created: "2026-07-29"
-updated: "2026-07-29"
+title: Contract & Envelope Foundations
+status: completed
+created: '2026-07-29'
+updated: '2026-07-31'
 started: null
 completed: null
 overall_progress: 0
-completion_estimate: "on-track"
+completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-owners: ["backend-architect", "python-backend-engineer"]
+owners:
+- backend-architect
+- python-backend-engineer
 contributors: []
 commit_refs: []
 pr_refs: []
 execution_model: batch-parallel
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "T1-001"
-    description: "Vendor mapping JSON — copy routing-feedback-task-map.v1.json verbatim (byte-for-byte)"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: []
-    priority: "high"
-    estimated_effort: "0.5h"
-    assigned_model: "sonnet"
-
-  - id: "T1-002"
-    description: "Envelope constants module — create routing_feedback_contract.py with all 9 frozen constants"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: ["T1-001"]
-    priority: "high"
-    estimated_effort: "0.5h"
-    assigned_model: "sonnet"
-
-  - id: "T1-003"
-    description: "Capability string — add routing:feedback to _V1_CAPABILITIES in client_v1.py"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["T1-002"]
-    priority: "high"
-    estimated_effort: "0.25h"
-    assigned_model: "sonnet"
-
-  - id: "T1-004"
-    description: "Config flag + tunables — add CCDASH_ROUTING_FEEDBACK_* env vars to config.py"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    priority: "high"
-    estimated_effort: "0.25h"
-    assigned_model: "sonnet"
-
-  - id: "T1-005"
-    description: "Digest-parity + flag-default test — create test_routing_feedback_contract_parity.py"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: ["T1-001", "T1-002", "T1-004"]
-    priority: "high"
-    estimated_effort: "0.5h"
-    assigned_model: "sonnet"
-
+- id: T1-001
+  description: Vendor mapping JSON — copy routing-feedback-task-map.v1.json verbatim
+    (byte-for-byte)
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies: []
+  priority: high
+  estimated_effort: 0.5h
+  assigned_model: sonnet
+  evidence:
+  - commit: 78361f0
+- id: T1-002
+  description: Envelope constants module — create routing_feedback_contract.py with
+    all 9 frozen constants
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies:
+  - T1-001
+  priority: high
+  estimated_effort: 0.5h
+  assigned_model: sonnet
+  evidence:
+  - commit: a433d22
+- id: T1-003
+  description: Capability string — add routing:feedback to _V1_CAPABILITIES in client_v1.py
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - T1-002
+  priority: high
+  estimated_effort: 0.25h
+  assigned_model: sonnet
+  started: 2026-07-31T00:15Z
+  completed: 2026-07-31T00:25Z
+  evidence:
+  - commit: 9a27615
+- id: T1-004
+  description: Config flag + tunables — add CCDASH_ROUTING_FEEDBACK_* env vars to
+    config.py
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  priority: high
+  estimated_effort: 0.25h
+  assigned_model: sonnet
+  started: 2026-07-31T00:00Z
+  completed: 2026-07-31T00:10Z
+  evidence:
+  - commit: 5d5d9c0
+- id: T1-005
+  description: Digest-parity + flag-default test — create test_routing_feedback_contract_parity.py
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies:
+  - T1-001
+  - T1-002
+  - T1-004
+  priority: high
+  estimated_effort: 0.5h
+  assigned_model: sonnet
+  started: 2026-07-31T00:30Z
+  completed: 2026-07-31T00:45Z
+  evidence:
+  - commit: 95f534e
+  - test: backend/tests/test_routing_feedback_contract_parity.py
 parallelization:
-  batch_1: ["T1-001", "T1-004"]
-  batch_2: ["T1-002", "T1-003"]
-  batch_3: ["T1-005"]
-  critical_path: ["T1-001", "T1-002", "T1-005"]
-  estimated_total_time: "2h"
-
+  batch_1:
+  - T1-001
+  - T1-004
+  batch_2:
+  - T1-002
+  - T1-003
+  batch_3:
+  - T1-005
+  critical_path:
+  - T1-001
+  - T1-002
+  - T1-005
+  estimated_total_time: 2h
 blockers: []
-
 success_criteria: []
-
 files_modified:
-  - "backend/application/services/agent_queries/routing_task_map_v1.json"
-  - "backend/application/services/agent_queries/routing_feedback_contract.py"
-  - "backend/routers/client_v1.py"
-  - "backend/config.py"
-  - "backend/tests/test_routing_feedback_contract_parity.py"
-
+- backend/application/services/agent_queries/routing_task_map_v1.json
+- backend/application/services/agent_queries/routing_feedback_contract.py
+- backend/routers/client_v1.py
+- backend/config.py
+- backend/tests/test_routing_feedback_contract_parity.py
+progress: 100
 ---
 
 # Phase 1: Contract & Envelope Foundations

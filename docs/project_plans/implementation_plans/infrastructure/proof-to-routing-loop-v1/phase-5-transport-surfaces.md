@@ -1,26 +1,26 @@
 ---
-title: "Phase 5: Transport Surfaces"
+title: 'Phase 5: Transport Surfaces'
 schema_version: 2
 doc_type: phase_plan
 status: draft
-created: 2026-07-29
-updated: 2026-07-29
-feature_slug: "proof-to-routing-loop"
-feature_version: "v1"
+created: '2026-07-29'
+updated: '2026-07-31'
+feature_slug: proof-to-routing-loop
+feature_version: v1
 phase: 5
-phase_title: "Transport Surfaces"
+phase_title: Transport Surfaces
 prd_ref: docs/project_plans/PRDs/infrastructure/proof-to-routing-loop-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/proof-to-routing-loop-v1.md
 entry_criteria:
-  - "Phase 3 complete — RoutingRollupQueryService exists"
+- "Phase 3 complete \u2014 RoutingRollupQueryService exists"
 exit_criteria:
-  - "DTO contract-lock test + disabled-state test green across REST/MCP/CLI"
+- DTO contract-lock test + disabled-state test green across REST/MCP/CLI
 related_documents:
-  - docs/project_plans/implementation_plans/infrastructure/proof-to-routing-loop-v1.md
-  - docs/project_plans/PRDs/infrastructure/proof-to-routing-loop-v1.md
-  - docs/guides/aar-review-loop.md
-  - docs/project_plans/PRDs/features/ccdash-automated-aar-review-v1.md
-  - .claude/worknotes/proof-to-routing-loop/decisions-block.md
+- docs/project_plans/implementation_plans/infrastructure/proof-to-routing-loop-v1.md
+- docs/project_plans/PRDs/infrastructure/proof-to-routing-loop-v1.md
+- docs/guides/aar-review-loop.md
+- docs/project_plans/PRDs/features/ccdash-automated-aar-review-v1.md
+- .claude/worknotes/proof-to-routing-loop/decisions-block.md
 spike_ref: null
 adr_refs: []
 charter_ref: docs/project_plans/exploration/proof-to-routing-loop/proof-to-routing-loop-charter.md
@@ -34,19 +34,30 @@ owner: null
 contributors: []
 priority: medium
 risk_level: medium
-category: "product-planning"
-tags: [phase-plan, implementation, infrastructure, routing-feedback, transport]
+category: product-planning
+tags:
+- phase-plan
+- implementation
+- infrastructure
+- routing-feedback
+- transport
 milestone: null
-commit_refs: []
+commit_refs:
+- 5725b75
+- e63f3c0
+- c995b3f
+- ca79e34
+- a81ace6
 pr_refs: []
 files_affected:
-  - backend/routers/_client_v1_routing_rollup.py
-  - backend/routers/client_v1.py
-  - backend/mcp/tools/routing.py
-  - backend/mcp/tools/__init__.py
-  - backend/cli/commands/routing.py
-  - backend/cli/main.py
-  - backend/tests/test_routing_rollup_transports.py
+- backend/routers/_client_v1_routing_rollup.py
+- backend/routers/client_v1.py
+- backend/mcp/tools/routing.py
+- backend/mcp/tools/__init__.py
+- backend/cli/commands/routing.py
+- backend/cli/main.py
+- backend/tests/test_routing_rollup_transports.py
+- backend/tests/test_client_v1_routing_rollup.py
 ---
 
 # Phase 5: Transport Surfaces
@@ -78,12 +89,13 @@ conflict. `integration_owner`/`seam_tasks` are `null` for this phase — Phase 6
 seam verification (no-LLM guard, mapping-digest parity, disabled-state parity across all three
 transports).
 
-**Pending decision gate — D9**: the parent plan's frontmatter carries `decision_gates: [{gate: "D9 —
-socialize D5 metric-payload shape with router owner before Phase 5 (Transport Surfaces) ships",
-status: pending}]`. D9 is a **schedule risk gate, not a blocking dependency** — Phase 5 may proceed on
-its Phase-3-frozen DTO contract regardless of D9's resolution state, but this phase's completion note
-(see **Notes → Learnings** below) MUST document the socialization attempt to the router owner
-(MeatySkills/`ibm-main`) — even if informal (a Slack message, a cross-repo issue, or an email thread
+**Decision gate — D9 (resolved 2026-07-31, attempted)**: the parent plan's frontmatter carries
+`decision_gates: [{gate: "D9 — socialize D5 metric-payload shape with router owner before Phase 5
+(Transport Surfaces) ships", status: attempted}]`. D9 is a **schedule risk gate, not a blocking
+dependency** — Phase 5 may proceed on its Phase-3-frozen DTO contract regardless of D9's resolution
+state, but this phase's completion note (see **Notes → Learnings** below) MUST document the
+socialization attempt to the router owner (MeatySkills/`ibm-main`) — even if informal (a Slack
+message, a cross-repo issue, or an email thread
 is sufficient evidence) — before this phase is marked `completed`. A pending-but-attempted
 socialization is an acceptable completion state; a *never-attempted* socialization is not.
 
@@ -143,10 +155,10 @@ in this phase warrants `extended`.
 **Model**: sonnet
 **Effort**: adaptive
 **Dependencies**: Phase 3 complete (`RoutingRollupQueryService` exists)
-**started**: null
-**completed**: null
+**started**: 2026-07-31
+**completed**: 2026-07-31
 **verified_by**: [T5-004, T6-006]
-**evidence**: []
+**evidence**: ["commit:5725b75"]
 
 **Description**:
 Create `backend/routers/_client_v1_routing_rollup.py`, a byte-for-byte structural clone of
@@ -160,12 +172,12 @@ following the exact `project_aar_review` route pattern (~line 203–218: `Query(
 `project_id` and `bypass_cache`, `Depends(get_request_context)`, `Depends(get_core_ports)`).
 
 **Acceptance Criteria**:
-- [ ] `backend/routers/_client_v1_routing_rollup.py` exists with a `get_routing_rollup_v1(project_id, request_context, core_ports, *, bypass_cache=False)` function returning `ClientV1Envelope[RoutingRollupResponseDTO]`
-- [ ] `GET /api/v1/routing/rollup` is registered on `client_v1_router` in `backend/routers/client_v1.py`, mirroring the `project_aar_review` route's decorator/param shape exactly
-- [ ] `project_id` is handled per the existing v1 convention: optional query param, falling back to context-resolved project scope (via `resolve_project_scope`) when omitted
-- [ ] Route returns the full envelope (real rollup data) when `CCDASH_ROUTING_FEEDBACK_ENABLED=true` and persisted rows exist
-- [ ] Zero live aggregation on the request path — the handler only deserializes/relays rows already computed by Phase 4's worker sweep via Phase 3's query service; no ad-hoc SQL or in-request GROUP BY
-- [ ] The capability string `"routing:feedback"` is present in `_V1_CAPABILITIES` (`backend/routers/client_v1.py` ~line 147–155) — Phase 1 already added it; this task does **not** re-add or duplicate the entry
+- [x] `backend/routers/_client_v1_routing_rollup.py` exists with a `get_routing_rollup_v1(project_id, request_context, core_ports, *, bypass_cache=False)` function returning `ClientV1Envelope[RoutingRollupResponseDTO]`
+- [x] `GET /api/v1/routing/rollup` is registered on `client_v1_router` in `backend/routers/client_v1.py`, mirroring the `project_aar_review` route's decorator/param shape exactly
+- [x] `project_id` is handled per the existing v1 convention: optional query param, falling back to context-resolved project scope (via `resolve_project_scope`) when omitted
+- [x] Route returns the full envelope (real rollup data) when `CCDASH_ROUTING_FEEDBACK_ENABLED=true` and persisted rows exist — verified via manual pytest-harness round trip (seeded rows → correct `mapped_count`/`unclassified_count`/`distinct_unmapped_skill_names`/`keys[]`)
+- [x] Zero live aggregation on the request path — the handler only deserializes/relays rows already computed by Phase 4's worker sweep via Phase 3's query service; no ad-hoc SQL or in-request GROUP BY
+- [x] The capability string `"routing:feedback"` is present in `_V1_CAPABILITIES` (`backend/routers/client_v1.py` ~line 147–155) — Phase 1 already added it; this task does **not** re-add or duplicate the entry (verified, not touched)
 
 **Implementation Notes**:
 - **ICA-offload eligible** (`claude-sonnet-5[1m]`) — this is a mechanical clone of an already-shipped 3-transport pattern; fall back to the primary sonnet if ICA is unavailable. Phase 6 gates must re-run regardless of which execution provider produced the code.
@@ -188,10 +200,10 @@ following the exact `project_aar_review` route pattern (~line 203–218: `Query(
 **Model**: sonnet
 **Effort**: adaptive
 **Dependencies**: T5-001
-**started**: null
-**completed**: null
+**started**: 2026-07-31
+**completed**: 2026-07-31
 **verified_by**: [T5-004, T6-006]
-**evidence**: []
+**evidence**: ["commit:e63f3c0"]
 
 **Description**:
 Create `backend/mcp/tools/routing.py` with a `register_routing_tools(mcp)` function that registers a
@@ -203,11 +215,11 @@ Wire `register_routing_tools` into `backend/mcp/tools/__init__.py::register_tool
 existing `register_report_tools(mcp)` call.
 
 **Acceptance Criteria**:
-- [ ] `backend/mcp/tools/routing.py` defines `register_routing_tools(mcp) -> None` and, inside it, `@mcp.tool(name="ccdash_routing_rollup")` decorating an async tool function
-- [ ] The tool's invocation pattern mirrors `ccdash_aar_review` exactly: an inline `async def _query(context, ports)` closure calling the Phase 3 service, wrapped by `execute_query(_query, tool_name="ccdash_routing_rollup", project_id=project_id)`, with `build_envelope(result)` as the return value
-- [ ] `register_routing_tools(mcp)` is called from `backend/mcp/tools/__init__.py::register_tools`, added alongside the existing `register_report_tools(mcp)` call (~line 57 import block, ~line 66 call site)
-- [ ] Tool is discoverable via the MCP server (validated the same way `ccdash_aar_review` is validated — `backend/tests/test_mcp_server.py`-style tool-listing check, not a live stdio session)
-- [ ] Same auth/context plumbing as `ccdash_aar_review` — no bespoke auth path, no direct DB access bypassing `execute_query`'s context/ports injection
+- [x] `backend/mcp/tools/routing.py` defines `register_routing_tools(mcp) -> None` and, inside it, `@mcp.tool(name="ccdash_routing_rollup")` decorating an async tool function
+- [x] The tool's invocation pattern mirrors `ccdash_aar_review` exactly: an inline `async def _query(context, ports)` closure calling into the read path, wrapped by `execute_query(_query, tool_name="ccdash_routing_rollup", project_id=project_id)`, with `build_envelope(result)` as the return value — see Findings below re: the closure calls `_fetch_routing_rollup`, not `RoutingRollupQueryService`, mirroring T5-001's identical divergence
+- [x] `register_routing_tools(mcp)` is called from `backend/mcp/tools/__init__.py::register_tools`, added alongside the existing `register_report_tools(mcp)` call
+- [x] Tool is discoverable via the MCP server (`backend/tests/test_mcp_server.py::test_list_tools_exposes_expected_mcp_surface` updated to include `ccdash_routing_rollup` in the expected set; verified green — no live-stdio call test added here, that is T5-004's dedicated cross-transport file)
+- [x] Same auth/context plumbing as `ccdash_aar_review` — no bespoke auth path, no direct DB access bypassing `execute_query`'s context/ports injection
 
 **Implementation Notes**:
 - **ICA-offload eligible** (`claude-sonnet-5[1m]`) — mechanical clone; fall back to primary sonnet if ICA is unavailable. Phase 6 gates must re-run regardless of execution provider.
@@ -229,10 +241,10 @@ existing `register_report_tools(mcp)` call.
 **Model**: sonnet
 **Effort**: adaptive
 **Dependencies**: T5-002
-**started**: null
-**completed**: null
+**started**: 2026-07-31
+**completed**: 2026-07-31
 **verified_by**: [T5-004, T6-006]
-**evidence**: []
+**evidence**: ["commit:c995b3f"]
 
 **Description**:
 Create `backend/cli/commands/routing.py` with `routing_app = typer.Typer(help="Routing feedback
@@ -246,12 +258,12 @@ singleton, an inline `_query()` → `runtime.execute_query(_invoke)` async patte
 rollup`.
 
 **Acceptance Criteria**:
-- [ ] `backend/cli/commands/routing.py` defines `routing_app = typer.Typer(help="Routing feedback commands.")` and a `@routing_app.command("rollup")`-decorated function
-- [ ] The command function mirrors `aar_review`'s shape: `runtime.execute_query(_invoke)` closure calling the Phase 3 service, `result.status == "error"` handling with a `typer.Exit(code=2)` path, `resolve_output_mode(output=output, json_output=json_output, markdown_output=markdown_output, default=runtime.OUTPUT_MODE)`, and `typer.echo(get_formatter(mode).render(result, title=...))`
-- [ ] `app.add_typer(routing_app, name="routing", help="Routing feedback commands.")` is registered in `backend/cli/main.py` (~line 71, alongside `app.add_typer(report_app, name="report", ...)`)
-- [ ] `ccdash routing rollup --help` runs without error and shows the auto-generated Typer help text
-- [ ] `ccdash routing rollup` output matches the REST/MCP envelope shape (same `RoutingRollupResponseDTO` field set, rendered through the existing formatter registry — no bespoke CLI-only field renaming)
-- [ ] Command supports the standard `--output`/`--json`/`--md` flags per existing CLI convention
+- [x] `backend/cli/commands/routing.py` defines `routing_app = typer.Typer(help="Routing feedback commands.")` and a `@routing_app.command("rollup")`-decorated function
+- [x] The command function mirrors `aar_review`'s shape as closely as the DTO contract allows: `runtime.execute_query(_invoke)` closure calling the shared `_fetch_routing_rollup` fetch coroutine, `resolve_output_mode(output=output, json_output=json_output, markdown_output=markdown_output, default=runtime.OUTPUT_MODE)`, and `typer.echo(get_formatter(mode).render(result, title=...))` — see Findings below re: no literal `result.status == "error"` branch (the DTO has no `status` field to branch on)
+- [x] `app.add_typer(routing_app, name="routing", help="Routing feedback commands.")` is registered in `backend/cli/main.py`, alongside `app.add_typer(report_app, name="report", ...)`
+- [x] `ccdash routing rollup --help` runs without error and shows the auto-generated Typer help text (verified via both `backend/.venv/bin/ccdash routing rollup --help` and `python -m backend.cli routing rollup --help`)
+- [x] `ccdash routing rollup` output matches the REST/MCP envelope shape (same `RoutingRollupResponseDTO` field set, rendered through the existing formatter registry — no bespoke CLI-only field renaming) — guaranteed by construction since all three transports call the identical `_fetch_routing_rollup` coroutine
+- [x] Command supports the standard `--output`/`--json`/`--md` flags per existing CLI convention
 
 **Implementation Notes**:
 - **ICA-offload eligible** (`claude-sonnet-5[1m]`) — mechanical clone; fall back to primary sonnet if ICA is unavailable. Phase 6 gates must re-run regardless of execution provider.
@@ -273,10 +285,10 @@ rollup`.
 **Model**: sonnet
 **Effort**: adaptive
 **Dependencies**: T5-003
-**started**: null
-**completed**: null
+**started**: 2026-07-31
+**completed**: 2026-07-31
 **verified_by**: [T6-006]
-**evidence**: []
+**evidence**: ["commit:ca79e34"]
 
 **Description**:
 Confirm all three transports built in T5-001–T5-003 serialize the exact same
@@ -289,11 +301,11 @@ all count fields, and — critically for REST — an HTTP 200 response (not a 40
 this phase's primary contribution to AC-4 (finalized in Phase 6).
 
 **Acceptance Criteria**:
-- [ ] All three transport modules (`_client_v1_routing_rollup.py`, `mcp/tools/routing.py`, `cli/commands/routing.py`) construct/return the same `RoutingRollupResponseDTO` type with no per-transport field renaming, subsetting, or bespoke wrapper types
-- [ ] `backend/tests/test_routing_rollup_transports.py` exists and, with `CCDASH_ROUTING_FEEDBACK_ENABLED` set to `false`, asserts: `enabled: false`, `keys == []`, all numeric count fields `== 0`, identically across REST/MCP/CLI
-- [ ] REST's disabled-state response is HTTP 200, not 404 (AC-4 requirement — a disabled feature is a normal contract state, not a missing-route error)
-- [ ] The three transport assertions live in one file so future drift across any transport is caught at test-collection time
-- [ ] Test passes under `backend/.venv/bin/python -m pytest backend/tests/test_routing_rollup_transports.py -v`
+- [x] All three transport modules (`_client_v1_routing_rollup.py`, `mcp/tools/routing.py`, `cli/commands/routing.py`) construct/return the same `RoutingRollupResponseDTO` type with no per-transport field renaming, subsetting, or bespoke wrapper types — confirmed by inspection (all three call the shared `_fetch_routing_rollup` coroutine) and by the test's cross-transport byte-identical assertion below
+- [x] `backend/tests/test_routing_rollup_transports.py` exists and, with `CCDASH_ROUTING_FEEDBACK_ENABLED` set to `false`, asserts: `enabled: false`, `keys == []`, all numeric count fields `== 0`, identically across REST/MCP/CLI
+- [x] REST's disabled-state response is HTTP 200, not 404 (AC-4 requirement — a disabled feature is a normal contract state, not a missing-route error)
+- [x] The three transport assertions live in one file so future drift across any transport is caught at test-collection time
+- [x] Test passes under `backend/.venv/bin/python -m pytest backend/tests/test_routing_rollup_transports.py -v` (4/4 green)
 
 **Implementation Notes**:
 - This task is primarily a verification/consistency gate, not new production code — if T5-001/T5-002/T5-003 faithfully cloned the AAR-review pattern, this test should pass with zero changes required to those three modules. Any required change surfaced here is itself a signal that a prior task under-cloned the pattern.
@@ -315,16 +327,16 @@ this phase's primary contribution to AC-4 (finalized in Phase 6).
 
 This phase is complete when:
 
-- [ ] **Functional**: `GET /api/v1/routing/rollup`, `ccdash_routing_rollup` (MCP), and `ccdash routing rollup` (CLI) all return the live rollup when `CCDASH_ROUTING_FEEDBACK_ENABLED=true`
-- [ ] **Testing**: `backend/tests/test_routing_rollup_transports.py` passes; all three transports produce byte-identical disabled envelopes (AC-4, partial)
-- [ ] **Performance**: N/A — read-only relay of already-computed rows; no aggregation on the request path to benchmark
-- [ ] **Security**: N/A beyond existing `require_v1_auth` gating already applied to `client_v1_router` — no new auth surface introduced
-- [ ] **Documentation**: N/A for this phase — consumer-contract doc and operator guide are Phase 6 deliverables (DOC-006, guide task)
-- [ ] **Code Quality**: no linting/type errors introduced; new modules follow the exact import/structure conventions of their clone anchors
-- [ ] **Architecture**: Router → Service pattern honored — no raw SQL or ad-hoc aggregation added in any of the three transport modules; all three delegate to Phase 3's `RoutingRollupQueryService`
-- [ ] **Seam verification**: N/A — `integration_owner`/`seam_tasks` are `null` for this phase; Phase 6 owns cross-phase seam verification (no-LLM guard, mapping-digest parity, disabled-state parity)
-- [ ] **Runtime smoke**: N/A — `ui_touched: false`, no `.tsx` files in `files_affected` (R-P4 not triggered)
-- [ ] **D9 decision gate**: the socialization attempt of the D5 metric-payload shape to the router owner (MeatySkills/`ibm-main`) is documented in this phase's completion note (**Notes → Learnings**), even if informal — pending-but-attempted is an acceptable completion state; never-attempted is not
+- [x] **Functional**: `GET /api/v1/routing/rollup` returns the live rollup when `CCDASH_ROUTING_FEEDBACK_ENABLED=true` and persisted rows exist — verified by the committed `backend/tests/test_client_v1_routing_rollup.py::TestClientV1RoutingRollupEnabledSeeded` (enabled-empty and enabled-seeded, replacing T5-001's previously-uncommitted manual round trip). `ccdash_routing_rollup` (MCP) and `ccdash routing rollup` (CLI) are **not independently automated-tested at the enabled-seeded state** — flagging as a residual gap, not a blocker: both call the identical `_fetch_routing_rollup` coroutine REST's now-tested path exercises (T5-002/T5-003 Findings — no per-transport reshaping exists), and both were manually verified during T5-002/T5-003 (uncommitted). A follow-up could extend the enabled-seeded coverage to MCP/CLI directly; not required to close this review's fix #2, which scoped to `_client_v1_routing_rollup.py`'s reassembly functions specifically.
+- [x] **Testing**: `backend/tests/test_routing_rollup_transports.py` passes (disabled-envelope parity, AC-4 partial); `backend/tests/test_client_v1_routing_rollup.py` passes (21/21 — enabled-path `_build_response_from_rows`/`_row_to_key_dto` unit coverage + enabled-seeded REST round trip), closing the review gap that flagged zero automated coverage for the enabled/seeded reassembly path.
+- [x] **Performance**: N/A — read-only relay of already-computed rows; no aggregation on the request path to benchmark.
+- [x] **Security**: N/A beyond existing `require_v1_auth` gating already applied to `client_v1_router` — no new auth surface introduced.
+- [x] **Documentation**: N/A for this phase — consumer-contract doc and operator guide are Phase 6 deliverables (DOC-006, guide task).
+- [x] **Code Quality**: `python -m py_compile` clean across all 7 `files_affected`; full pytest collection (42/42 across `test_routing_rollup_transports.py` + `test_client_v1_routing_rollup.py` + `test_routing_rollup_repo.py`) imports every touched module with zero errors; new modules follow the exact import/structure conventions of their clone anchors (per this phase's own Findings). No `ruff`/`mypy` binary is installed in `backend/.venv` to run a static linter/type-checker directly — clean compilation + clean test collection is the available substitute evidence in this environment.
+- [x] **Architecture**: Router → Repository pattern honored (the phase's own Findings document the necessary, deliberate divergence from a literal "delegates to `RoutingRollupQueryService`" reading — that service has no read-back method; all three transports instead share one fetch coroutine, `_fetch_routing_rollup`, which reads `Sqlite/PostgresRoutingRollupRepository.get_by_project` directly). Verified: zero raw SQL/`GROUP BY` in any of the three transport modules (`grep` confirms the only `GROUP BY` string in `_client_v1_routing_rollup.py` is a negative claim in its own docstring); the `"routing:feedback"` capability string appears exactly once in `client_v1.py` (not duplicated).
+- [x] **Seam verification**: N/A — `integration_owner`/`seam_tasks` are `null` for this phase; Phase 6 owns cross-phase seam verification (no-LLM guard, mapping-digest parity, disabled-state parity).
+- [x] **Runtime smoke**: N/A — `ui_touched: false`, no `.tsx` files in `files_affected` (R-P4 not triggered).
+- [x] **D9 decision gate**: the socialization attempt of the D5 metric-payload shape to the router owner (MeatySkills/`ibm-main`) is documented in this phase's completion note (**Notes → Learnings**) — a real, informal, cross-repo GitHub issue (<https://github.com/miethe/MeatySkills/issues/1>, opened 2026-07-31), response pending. Pending-but-attempted is the acceptable completion state this gate requires.
 
 ---
 
@@ -364,6 +376,7 @@ This phase is complete when:
 | `backend/cli/commands/routing.py` | new file | CLI command clone of `report.py`'s `aar_review` | python-backend-engineer |
 | `backend/cli/main.py` | ~11, ~71 | import + `app.add_typer(routing_app, ...)` registration | python-backend-engineer |
 | `backend/tests/test_routing_rollup_transports.py` | new file | REST/MCP/CLI disabled-envelope parity test | python-backend-engineer |
+| `backend/tests/test_client_v1_routing_rollup.py` | new file | Enabled+seeded-rows reassembly test (`_build_response_from_rows`/`_row_to_key_dto` unit coverage + enabled-seeded REST round trip) — review fix, commit `a81ace6` | python-backend-engineer |
 
 ---
 
@@ -436,8 +449,31 @@ provider is not a substitute for the gate.
 
 ### Learnings
 
-*Populate during execution. Must include, at minimum, a record of the D9 socialization attempt
-(informal channel, date, and any router-owner response) before this phase is marked `completed`.*
+**D9 socialization attempt (recorded 2026-07-31)**: D9 is a schedule-risk gate, not a blocking
+dependency (per the decisions block's own D9 rationale) — this phase's completion does not wait on
+a router-owner response. An informal, real, cross-repo attempt was made before this phase was
+marked `completed`:
+
+- **Channel**: GitHub issue (cross-repo, informal — the evidence tier this phase's own header note
+  names as sufficient: "a Slack message, a cross-repo issue, or an email thread").
+- **Target repo**: `github.com/miethe/MeatySkills` (hosts the `delegation-router` skill and the
+  `aos.routing.feedback` v1.0.0 contract that the router consumes, branch `ibm-main`).
+- **URL**: <https://github.com/miethe/MeatySkills/issues/1>
+- **Date**: 2026-07-31
+- **Content**: The full D5 metric-payload shape (`model`/`provider`/`sample_count`/`success_rate`/
+  `cost_index`/`regression_rate`/`confidence`/`eligible_for_adjustment`/`window_start`/`window_end`/
+  `freshness_ts`, verbatim from `RoutingRollupKeyDTO`) plus three concrete questions ahead of DI-1's
+  router-side merge-math work: whether `success_rate`/`regression_rate` always being `None` in v1
+  blocks the router's bounded-adjustment-cap/effective-score-floor guardrails or degrades gracefully;
+  whether `cost_index` needs router-side normalization; and whether `eligible_for_adjustment` is
+  sufficient as the min-sample-gate signal versus the router using raw `sample_count` + its own
+  threshold.
+- **Response**: pending as of this phase's completion — no reply received yet. This is the recorded
+  attempt, not a resolution; a pending-but-attempted socialization is the acceptable completion
+  state this phase's Quality Gates require.
+- Full record (including the risk-hotspot cross-reference) also lives in
+  `.claude/worknotes/proof-to-routing-loop/decisions-block.md` § "D9 Socialization Attempt" and the
+  D9 row of that file's decisions table (`status: attempted (informal)`).
 
 ### Findings Captured This Phase
 
@@ -445,7 +481,119 @@ provider is not a substitute for the gate.
 append them here AND to the plan's findings doc (`findings_doc_ref`). Create the findings doc lazily
 on first finding — do not pre-create.*
 
-- [ ] No new findings this phase (default)
+- [x] **T5-001 finding**: the task description's claim that the REST handler "delegates entirely to
+  Phase 3's `RoutingRollupQueryService`" is imprecise, and the *actual* clone anchor
+  (`_client_v1_aar_review.py`) does not do this either — it reads
+  `Sqlite/PostgresAarReviewsRepository` directly and deserialises rows itself
+  (`_row_to_aar_review_dto`), never calling into `AARReviewQueryService`. `_client_v1_routing_rollup.py`
+  faithfully mirrors that *actual* pattern: it reads `Sqlite/PostgresRoutingRollupRepository.
+  get_by_project` directly and deserialises each row into `RoutingRollupKeyDTO` itself
+  (`_row_to_key_dto`). This is a deliberate, necessary divergence from a byte-literal reading of the
+  task description, not from the clone anchor's real behavior — `RoutingRollupQueryService` has no
+  "read the persisted table back" method (only the live-aggregation pipeline used by Phase 4's
+  worker), and the files_affected list for this task does not include `routing_rollup.py`, so adding
+  one was out of scope here.
+- [x] **T5-001 finding**: the three FR-7 coverage counters (`mapped_count`/`unclassified_count`/
+  `distinct_unmapped_skill_names`) are NOT persisted per-row in `routing_rollup` (they are
+  response-level totals, summed across the whole project) — see `routing_rollup.py`'s DDL /
+  `ROUTING_ROLLUP_COLUMNS`. `_client_v1_routing_rollup.py::_build_response_from_rows` therefore
+  re-sums each already-fetched row's `task_class`/`sample_count` in-memory to reproduce these three
+  counters, mirroring `RoutingRollupQueryService.compute_coverage_counters`'s exact policy but over
+  persisted rows rather than a live aggregate. This is response reassembly, not new SQL aggregation
+  (no `GROUP BY` added against `sessions`) — flagging for T5-002/T5-003 so the MCP/CLI transports
+  replicate the identical summation, and for T5-004 to assert the three counters, not just `keys[]`.
+- [x] **Environment gotcha for T5-002/T5-003/T5-004**: this repo's root `.env` pins
+  `CCDASH_DB_BACKEND=postgres` / `CCDASH_DATABASE_URL` at the node (`backend/env_bootstrap.py`
+  auto-loads it, `override=False`, **only when `pytest` is not already in `sys.modules`**). A
+  throwaway verification script run as `python script.py` (not via `pytest`) will import
+  `backend.config` before any test-local `patch.dict(os.environ, ...)` takes effect, silently
+  connecting to the real remote Postgres node instead of an isolated SQLite temp file — the app
+  still returns plausible-looking 200s (a nonexistent test project id legitimately has zero rows on
+  the real DB too), which can mask the misrouting. Always verify new transport code via
+  `backend/.venv/bin/python -m pytest <file_or_module>`, never a bare `python <script>.py`, and
+  prefer the `test_client_v1_aar_review.py`-style class-based `TestCase` harness (imports at file
+  top are safe under pytest specifically because `dotenv_autoload_enabled()` short-circuits on
+  `"pytest" in sys.modules`).
+- [x] **T5-002 finding**: same divergence as T5-001's first finding, one layer up — `RoutingRollupQueryService`
+  has no "read the persisted table back" method, so the MCP tool's inline `_query(context, ports)` closure
+  cannot literally "delegate to Phase 3's `RoutingRollupQueryService`" as the task description's prose states.
+  `backend/mcp/tools/routing.py::ccdash_routing_rollup` instead imports and calls
+  `backend.routers._client_v1_routing_rollup._fetch_routing_rollup` directly — the same coroutine T5-001's REST
+  handler calls — rather than re-implementing the `Sqlite/PostgresRoutingRollupRepository.get_by_project` read
+  + in-memory FR-7 counter reassembly a second time. This is a deliberate DRY choice: sharing one fetch
+  implementation across REST and MCP is what *guarantees* T5-004's byte-identical-disabled-envelope assertion
+  holds by construction, rather than by two independently-written implementations happening to agree. No
+  other MCP tool module in this repo currently imports a router-private (`_client_v1_*`) helper — flagging as
+  a precedent-setting pattern for Phase 6 review, not a defect.
+- [x] **T5-003 finding**: same `RoutingRollupQueryService` "no read-back method" divergence as T5-001/T5-002,
+  one layer up again — `backend/cli/commands/routing.py`'s `rollup` command's `_invoke(context, ports)` closure
+  calls `backend.routers._client_v1_routing_rollup._fetch_routing_rollup` directly (the identical coroutine the
+  REST handler and the MCP tool both call), rather than re-implementing the repository read + FR-7 counter
+  reassembly a third time. All three transports now share one fetch implementation, which is what makes T5-004's
+  byte-identical-disabled-envelope assertion hold by construction.
+- [x] **T5-003 finding — cannot literally branch on `result.status == "error"`**: the AC/implementation-notes
+  prose for this task (mirroring `aar_review`) calls for `result.status == "error"` handling with a
+  `typer.Exit(code=2)` path. `RoutingRollupResponseDTO` (Phase 3's frozen `models.py` contract) defines no
+  `status` field at all — unlike `AARReviewDTO`/`WorkflowDiagnosticsResult`, which do. Attempting
+  `result.status` on this DTO raises `AttributeError` (plain `pydantic.BaseModel`, no `extra="allow"`), so a
+  literal clone of `aar_review`'s error branch is not just unneeded here, it would crash on every invocation.
+  This is a natural consequence of the same drift already flagged as a Finding in T5-002 (`build_envelope`
+  status drift) — `_fetch_routing_rollup` never raises a transport-level error state by design (D6/FR-10
+  resilience-by-default: disabled/no-project/read-failure all degrade to a normalized empty/disabled payload,
+  never an error), so there is no error branch for this command to take. The `rollup` command therefore always
+  renders the returned envelope, following the same no-error-branch shape as the REST handler
+  (`get_routing_rollup_v1`) and the MCP tool (`ccdash_routing_rollup`), neither of which has an error branch
+  either. Not touched: `RoutingRollupResponseDTO` is Phase 3's frozen contract and is not in this task's
+  `files_affected`.
+- [x] **T5-003 finding — no command-specific `--project` flag added**: per the task's own Implementation Notes
+  ("confirm the exact parameter surface... before adding any command-specific flags"), the `rollup` command
+  takes no `--project` option of its own. The global `--project` override (`backend/cli/main.py`'s
+  `app.callback`) already threads through `runtime.execute_query`'s header-based project resolution
+  (`x-ccdash-project-id`) exactly the way `workflow failures` (also no per-command project flag) relies on it —
+  confirmed via manual invocation and the added `test_routing_rollup_renders_disabled_envelope` test.
+- [x] **T5-002 finding — `build_envelope` status drift**: `backend/mcp/tools/__init__.py::build_envelope` returns
+  `payload.get("status", "error")` as the envelope's top-level `status`. `AARReviewDTO` (used by
+  `ccdash_aar_review`) defines `status: Literal["ok", "error"] = "ok"`, so that tool's envelope correctly
+  reports `"ok"` on success. `RoutingRollupResponseDTO` (Phase 3's `models.py`) defines no `status` field at
+  all, so `ccdash_routing_rollup`'s envelope reports `status: "error"` on *every* call, including a healthy
+  disabled-by-default response with `enabled: false` and no read failure whatsoever — confirmed via a
+  throwaway pytest sanity check against the registered tool function (not committed). This is a real
+  transport-level drift from the `ccdash_aar_review` precedent, not touched from this task per the phase's own
+  guidance ("note as a Finding if observed, do not patch the DTO from this phase") — `RoutingRollupResponseDTO`
+  is Phase 3's frozen contract and is not in T5-002's `files_affected`. T5-004's disabled-envelope test and
+  Phase 6's parity gates should assert on `data.enabled`/`data.keys`/the count fields, not on this tool's
+  top-level `status` string, until a follow-up task (Phase 6 or later) either adds a `status` field to
+  `RoutingRollupResponseDTO` or teaches `build_envelope` a per-DTO default.
+- [x] **T5-004 finding — "byte-identical" is a DTO-level claim, not a raw-JSON-string claim**: the
+  three transports intentionally wrap the shared DTO in different outer envelopes by design (REST:
+  `{status, data, meta}` via `ClientV1Envelope`; MCP: `{status, data, meta}` via `build_envelope`,
+  which moves `generated_at` out of `data` into `meta` per its `META_FIELDS` set (already flagged in
+  T5-002's finding); CLI `--json`: the flat DTO, no wrapper). A literal full-response JSON-string diff
+  across all three would therefore fail on structural grounds that have nothing to do with the DTO
+  contract. `test_routing_rollup_transports.py` normalizes each transport back down to the DTO level
+  (re-merging MCP's `meta.generated_at` into its `data` dict) before comparing — this is what makes
+  the byte-identical assertion meaningful rather than vacuously true or spuriously false. The test
+  deliberately does not assert on MCP's top-level envelope `status` field, per T5-002's finding that
+  it always resolves to `"error"` for this DTO regardless of actual health.
+- [x] **T5-004 finding — event-loop isolation is required to exercise all three transports for real
+  in one process**: `aiosqlite.Connection` is bound to the event loop that created it, and
+  `backend.db.connection.get_connection()` is a process-wide singleton shared by all three
+  bootstraps (FastAPI lifespan, `backend.mcp.bootstrap.bootstrap_mcp`, `backend.cli.runtime
+  .bootstrap_cli`). Running REST (via `TestClient` as a context manager), then MCP (via a single
+  `asyncio.run()` that also calls `shutdown_mcp()` before returning), then CLI (via `CliRunner`,
+  whose underlying `execute_query` already tears down its own container in a `finally`) **strictly
+  in sequence, each fully entering and exiting before the next begins**, was sufficient to avoid any
+  cross-loop reuse — no manual singleton surgery was needed beyond letting each transport's own
+  existing teardown path run to completion. This is why the test does not use a single shared
+  `setUpClass` fixture the way `test_client_v1_aar_review.py` does; each test method calls all three
+  transports fresh via `setUp`/`tearDown`-scoped temp DB files instead.
+- [x] **T5-004 finding — the disabled short-circuit never needs a resolvable project**: `_fetch_
+  routing_rollup`'s `if not enabled: return _disabled_envelope()` check runs before any call to
+  `resolve_project_scope`, so the test needed no seeded `projects` row and no stub
+  `WorkspaceRegistry` at all — only an `AuthContext` override for the REST leg (to avoid a 401) and
+  a migrated-but-empty SQLite file for all three (MCP/CLI's `build_request_context` still calls
+  `resolve_scope`, which returns `(None, None)` cleanly when no project is registered, per
+  `ProjectManagerWorkspaceRegistry.resolve_scope`).
 
 ---
 

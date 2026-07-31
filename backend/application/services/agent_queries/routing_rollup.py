@@ -1,0 +1,772 @@
+"""Deterministic ``(project_id, source_skill_name, model)``-grain rollup
+aggregation for the Proof -> Routing Feedback Loop producer surface (BP-6).
+
+HARD INVARIANT (AOS Constraint 4): this module -- and every module it
+(transitively, statically) imports under ``backend/`` -- MUST NEVER import a
+model/LLM client library (``anthropic``, ``openai``, ``litellm``,
+``langchain``, ``google.generativeai``) and MUST NEVER reference a
+Task/Agent-dispatch helper symbol. Every computation here is pure SQL
+aggregation plus threshold/arithmetic -- a reviewer should be able to grep
+this file (and everything it imports) for any LLM/agent-invocation symbol and
+find none. CI-enforced by
+``backend/tests/test_routing_rollup_no_llm_imports.py`` (T3-005, not yet
+built as of this task).
+
+── T3-001 (this task): raw aggregation skeleton ────────────────────────────
+
+``RoutingRollupQueryService.fetch_raw_rows`` issues exactly ONE pure-SQL
+``GROUP BY project_id, source_skill_name, model`` query against the
+``sessions`` table, bounded by a rolling window
+(``config.CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS``, default 30). It returns
+``RawRollupRow`` objects -- the raw per-key session count -- and deliberately
+stops there: no mapping (``task_class``), no ``provider`` derivation, and no
+D5 metric payload (``success_rate``, ``cost_index``, ``regression_rate``,
+``confidence``, ``eligible_for_adjustment``) live in this task. Those are
+layered on top, strictly bottom-up, by later Phase 3 tasks:
+
+  - T3-002 applies the pinned ``skill_name -> task_class`` mapping and the
+    ``_unclassified``/protected-class emission policy.
+  - T3-003 derives ``provider`` (via ``backend.model_identity.derive_model_identity``)
+    and computes the ``mapped_count``/``unclassified_count``/
+    ``distinct_unmapped_skill_names`` coverage counters.
+  - T3-004 computes the full D5 metric payload and adds
+    ``RoutingRollupKeyDTO``/``RoutingRollupResponseDTO`` to ``models.py``.
+
+See ``docs/project_plans/implementation_plans/infrastructure/proof-to-routing-loop-v1/phase-3-rollup-compute-service.md``
+for the full task breakdown.
+
+Clones the query-shape conventions of two existing worker-primed rollup
+precedents in this directory: ``aar_review.py`` (module-docstring no-LLM
+invariant statement, direct ``aiosqlite`` queries, no ORM) and
+``system_metrics.py::_fetch_model_family_tokens`` (dual SQLite/PostgreSQL
+``GROUP BY`` aggregation, single statement, zero N+1).
+
+── T3-002 (this task): pinned mapping + protected-class policy ────────────
+
+``RoutingRollupQueryService.apply_mapping`` extends every ``RawRollupRow``
+with a write-time-derived ``task_class`` (D3/FR-6 -- never the raw
+``source_skill_name`` string) looked up via the pinned v1
+``skill_name -> task_class`` mapping (``routing_feedback_contract.py`` +
+vendored ``routing_task_map_v1.json``, Phase 1 output; read-only here, never
+re-parsed or re-vendored). Two independent coverage-only emission gates
+apply to the *resolved* ``task_class`` value -- never to whether a mapping
+entry was found:
+
+  - ``_unclassified`` (no entry found, OR an entry exists and explicitly
+    resolves to ``_unclassified`` -- e.g. the executor-identity names
+    ``codex``/``claude-api``/``ica-delegate``) is ALWAYS emitted,
+    unconditionally of ``CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS``
+    (FR-7).
+  - Protected classes (``orchestration``, ``mode_d``) are emitted only when
+    ``CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS`` resolves ``True``.
+
+Both categories are policy-identical in one respect: ``is_coverage_only``
+is set ``True`` on the emitted ``MappedRollupRow``, which T3-004 MUST use to
+hardcode ``eligible_for_adjustment=False`` for these rows, independent of
+its own sample-size threshold logic.
+
+── T3-003 (this task): provider derivation + coverage counters ───────────
+
+``RoutingRollupQueryService.apply_provider`` attaches ``provider`` to every
+``MappedRollupRow`` by calling the EXISTING
+``backend.model_identity.derive_model_identity(model)["modelProvider"]`` --
+never an independently parsed or keyed value. This module never re-derives
+provider identity on its own.
+
+``RoutingRollupQueryService.compute_coverage_counters`` computes the three
+FR-7 response-level coverage counters mandated by the PRD (``mapped_count``,
+``unclassified_count``, ``distinct_unmapped_skill_names``) ONCE per response
+-- session-level totals summed across the whole window, never per-key
+figures (PRD Sec 6.3's ``mapped_count: 767`` / ``unclassified_count: 13632``
+example -- magnitudes far larger than any single key's ``sample_count``).
+Both counters are keyed strictly off the *resolved* ``task_class`` value
+(never off whether a mapping entry was found): a row lands in
+``unclassified_count`` iff ``task_class == UNCLASSIFIED_TASK_CLASS`` --
+covering BOTH "no mapping entry" and "entry exists but resolves to
+``_unclassified``" (the executor-identity case, e.g.
+``codex``/``claude-api``/``ica-delegate``) -- and in ``mapped_count``
+otherwise (this includes protected-class rows, which are still "mapped" for
+counter purposes even though ``is_coverage_only`` gates their
+``eligible_for_adjustment`` value). Every row lands in exactly one bucket,
+so ``mapped_count + unclassified_count`` always equals the summed
+``session_count`` of the input row list exactly.
+
+── T3-004 (this task): D5 metric payload + DTO assembly ───────────────────
+
+``RoutingRollupQueryService.compute_metrics`` is the terminal transform in
+this bottom-up pipeline: it consumes ``ProviderRollupRow`` (T3-003's output)
+and produces ``RoutingRollupKeyDTO`` (``models.py``) -- the full D5 metric
+payload per PRD Sec.6.3's literal JSON example (``sample_count``,
+``success_rate``, ``cost_index``, ``regression_rate``, ``confidence``,
+``eligible_for_adjustment``, ``window_start``/``window_end``,
+``freshness_ts``), plus the pinned join envelope carried verbatim from
+``routing_feedback_contract.py``. ``RoutingRollupQueryService.build_response``
+wraps that per-key list with the top-level ``RoutingRollupResponseDTO``
+envelope (contract/taxonomy/mapping identity + T3-003's coverage counters).
+
+Sub-threshold keys are NEVER suppressed (AC-5) -- every row handed to
+``compute_metrics`` produces exactly one output DTO; only
+``eligible_for_adjustment`` flips to ``False``.
+
+``success_rate``/``regression_rate`` are emitted ``None`` in this v1: no
+genuine per-session success/failure/regression signal exists yet in
+``sessions`` for this module to compute from (``status`` only ever carries
+``'active'``/``'completed'`` in this codebase, never an outcome judgment) --
+fabricating one from a non-signal would be actively misleading to a
+consuming router. ``cost_index`` is the fixed PRD-literal baseline (``1.0``)
+for the same do-not-gold-plate rationale. Both are named, documented v1
+design gaps for D9 socialization, never bugs -- see ``compute_metrics``'s
+docstring for the full rationale.
+"""
+from __future__ import annotations
+
+import functools
+import json
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+import aiosqlite
+
+from backend import config
+from backend.application.context import RequestContext
+from backend.application.ports import CorePorts
+from backend.model_identity import derive_model_identity
+
+from . import routing_feedback_contract
+from ._filters import resolve_time_window
+from .models import RoutingRollupKeyDTO, RoutingRollupResponseDTO
+
+logger = logging.getLogger("ccdash.agent_queries.routing_rollup")
+
+# --- T3-002: pinned mapping + protected-class policy constants -------------
+
+#: Sentinel ``task_class`` emitted for a row whose ``source_skill_name`` has
+#: no mapping entry OR whose mapping entry explicitly resolves to this same
+#: value (executor-identity names -- see module docstring). Never
+#: config-gated: always emitted per FR-7.
+UNCLASSIFIED_TASK_CLASS = "_unclassified"
+
+#: ``task_class`` values the pinned v1 mapping designates as protected
+#: (never addressable as a routing key). Emission of rows resolving to one
+#: of these is gated by ``config.CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS``
+#: -- unlike ``UNCLASSIFIED_TASK_CLASS``, which bypasses that gate entirely.
+PROTECTED_TASK_CLASSES: frozenset[str] = frozenset({"orchestration", "mode_d"})
+
+# --- T3-004: D5 metric payload constants ------------------------------------
+
+#: v1 placeholder baseline for ``cost_index`` -- PRD Sec.6.3 defines ``1.0``
+#: as literally "baseline". This task's own design surface (D5 is
+#: unspecified by the cross-repo contract) deliberately keeps this a fixed
+#: constant rather than deriving a per-key cost-normalization signal from
+#: ``sessions.total_cost``/``reported_cost_usd`` -- that cross-key baseline
+#: derivation is a real design surface of its own, explicitly NOT
+#: gold-plated into this provisional, additive-versioned payload (phase-3
+#: Implementation Notes: "do not gold-plate this into a tunable model").
+_COST_INDEX_BASELINE = 1.0
+
+#: Saturation constant for ``_confidence_for_sample_count``. Fixed and
+#: deliberately independent of ``config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE``
+#: -- confidence's curve shape must not silently reshape itself if an
+#: operator retunes the eligibility threshold; PRD Sec.6.3 lists
+#: ``confidence`` and ``eligible_for_adjustment`` as two separate,
+#: independently-designed fields.
+_CONFIDENCE_SATURATION_K = 5.0
+
+
+def _confidence_for_sample_count(sample_count: int) -> float:
+    """Simple, documented, monotonically-increasing saturating curve.
+
+    ``confidence = sample_count / (sample_count + k)`` -- asymptotically
+    approaches but never reaches/exceeds ``1.0``, and is exactly ``0.0`` at
+    ``sample_count == 0``. This is this task's own design surface (D5 is
+    unspecified by the cross-repo contract); phase-3's Implementation Notes
+    explicitly suggest this exact formula shape as an acceptable v1 choice
+    -- deliberately not gold-plated into a tunable model.
+    """
+    if sample_count <= 0:
+        return 0.0
+    return min(1.0, sample_count / (sample_count + _CONFIDENCE_SATURATION_K))
+
+
+def _now_iso() -> str:
+    """Wall-clock ``freshness_ts``/``generated_at`` source, isolated into its
+    own function so T3-005's determinism test can freeze it via
+    ``unittest.mock.patch`` -- mirrors ``aar_review.py``'s own ``_now_iso()``
+    convention exactly (module-level function, timezone-aware UTC
+    ``.isoformat()``).
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _iso8601(value: datetime) -> str:
+    """Render *value* as a timezone-aware ISO-8601 string for DTO-facing
+    fields (``window_start``/``window_end``).
+
+    Distinct in purpose from this module's ``_iso()`` helper (used inside
+    ``_fetch_raw_aggregate_rows``), which renders the NAIVE
+    ``YYYY-MM-DDTHH:MM:SS`` form used only for ``sessions.updated_at`` SQL
+    string comparisons -- never reuse ``_iso()`` for a DTO-facing field, and
+    never reuse this helper for a SQL parameter.
+    """
+    return value.isoformat()
+
+
+@dataclass(frozen=True, slots=True)
+class RawRollupRow:
+    """One raw aggregated ``(project_id, source_skill_name, model)`` key.
+
+    Frozen at T3-001 -- the read contract Phase 4's ``RoutingRollupSweepJob``
+    and this phase's later tasks (T3-002..T3-004) build on. Carries only the
+    raw session count for the key over the resolved window; ``task_class``,
+    ``provider``, and every D5 metric field are added by later tasks, never
+    here.
+    """
+
+    project_id: str
+    source_skill_name: str
+    model: str
+    session_count: int
+    window_start: datetime
+    window_end: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class MappedRollupRow:
+    """A ``RawRollupRow`` extended with the write-time-derived ``task_class``
+    (T3-002) -- the raw ``source_skill_name`` string is never copied into
+    ``task_class`` unless the pinned mapping coincidentally maps a name to an
+    identical string (D3/FR-6; not a false negative -- see phase-3 test
+    notes).
+
+    ``is_coverage_only`` is ``True`` whenever ``task_class`` is
+    ``UNCLASSIFIED_TASK_CLASS`` or a member of ``PROTECTED_TASK_CLASSES``.
+    T3-004 MUST hardcode ``eligible_for_adjustment=False`` for every row
+    where this flag is ``True``, independent of its own sample-size
+    threshold logic -- this flag is the single source of truth for that
+    invariant; T3-004 must not re-derive coverage-only status by re-checking
+    ``task_class`` membership itself.
+
+    ``provider`` and every D5 metric field (``success_rate``, ``cost_index``,
+    ``regression_rate``, ``confidence``, ``eligible_for_adjustment``, ...)
+    are still absent here -- those are T3-003/T3-004's job.
+    """
+
+    project_id: str
+    source_skill_name: str
+    model: str
+    session_count: int
+    window_start: datetime
+    window_end: datetime
+    task_class: str
+    is_coverage_only: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRollupRow:
+    """A ``MappedRollupRow`` extended with the derived ``provider`` field
+    (T3-003).
+
+    ``provider`` is ALWAYS ``derive_model_identity(model)["modelProvider"]``
+    -- never independently parsed or keyed in this module, even as a "quick"
+    fallback for an edge-case model string (phase-3 Implementation Notes:
+    "Do not add a new provider-derivation code path 'for efficiency' --
+    always call through derive_model_identity(), even if it means one extra
+    function call per row.").
+
+    Every other D5 metric field (``success_rate``, ``cost_index``,
+    ``regression_rate``, ``confidence``, ``eligible_for_adjustment``, ...)
+    is still absent here -- those, plus the ``RoutingRollupKeyDTO``/
+    ``RoutingRollupResponseDTO`` assembly, are T3-004's job.
+    """
+
+    project_id: str
+    source_skill_name: str
+    model: str
+    session_count: int
+    window_start: datetime
+    window_end: datetime
+    task_class: str
+    is_coverage_only: bool
+    provider: str
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageCounters:
+    """The three FR-7 response-level coverage counters (T3-003) --
+    ``mapped_count``, ``unclassified_count``, and ``distinct_unmapped_skill_names``.
+
+    Computed ONCE per response as session-level totals summed across the
+    whole window -- never as per-key figures (PRD Sec 6.3's
+    ``mapped_count: 767`` / ``unclassified_count: 13632`` example, magnitudes
+    far larger than any single key's ``sample_count``, confirms these are
+    aggregate window totals). ``mapped_count`` and ``unclassified_count`` are
+    keyed strictly off the *resolved* ``task_class`` value on each input row
+    -- never off whether a mapping entry existed for its
+    ``source_skill_name`` -- so ``mapped_count + unclassified_count`` always
+    equals the summed ``session_count`` of the input rows exactly; a row is
+    counted in exactly one of the two buckets, never both and never neither.
+    ``distinct_unmapped_skill_names`` is a deduplicated, deterministically
+    sorted list of the raw ``source_skill_name`` values that resolved to
+    ``UNCLASSIFIED_TASK_CLASS`` -- sorted order is required for T3-005's
+    downstream determinism guarantee.
+    """
+
+    mapped_count: int
+    unclassified_count: int
+    distinct_unmapped_skill_names: list[str]
+
+
+@functools.lru_cache(maxsize=1)
+def _load_skill_to_task_class_mapping() -> dict[str, str]:
+    """Load and cache the pinned ``skill_name -> task_class`` mapping.
+
+    Reads ONLY ``routing_feedback_contract.MAPPING_JSON_PATH`` -- this
+    function is a pure consumer of the Phase 1 contract, it never re-parses
+    a second copy of the mapping file or re-vendors the mapping data. Cached
+    at module scope because the vendored file is a frozen, version-pinned
+    contract artifact (``routing_feedback_contract.MAPPING_VERSION``) that
+    never changes at runtime; ``test_routing_feedback_contract_parity.py``
+    (T1-005) is the CI guard against silent byte-level drift of the file
+    this cache reads exactly once per process.
+    """
+    raw = json.loads(routing_feedback_contract.MAPPING_JSON_PATH.read_text(encoding="utf-8"))
+    return {
+        str(rule["source_skill_name"]): str(rule["task_class"])
+        for rule in raw.get("rules", [])
+    }
+
+
+def _resolve_task_class(source_skill_name: str, mapping: dict[str, str]) -> str:
+    """Exact dict lookup only -- never fuzzy-matched (phase-3 risk
+    mitigation table: "Mapping is applied via exact dict lookup ... never
+    fuzzy-matched").
+
+    Missing entry AND an entry that itself resolves to
+    ``UNCLASSIFIED_TASK_CLASS`` (executor-identity names, e.g. ``codex``,
+    ``claude-api``, ``ica-delegate``) are policy-identical outcomes -- the
+    caller must never distinguish "no entry" from "entry resolves to
+    _unclassified" (D3/FR-7); both paths return ``UNCLASSIFIED_TASK_CLASS``
+    from this single lookup.
+    """
+    resolved = mapping.get(source_skill_name)
+    return resolved or UNCLASSIFIED_TASK_CLASS
+
+
+def _iso(value: datetime) -> str:
+    """Render *value* to the naive ``YYYY-MM-DDTHH:MM:SS`` form used for
+    ``sessions.updated_at`` string comparisons elsewhere in this package
+    (see ``system_metrics.py::_query_max_updated_at`` and its test fixtures).
+    """
+    return value.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+async def _fetch_raw_aggregate_rows(
+    db: Any,
+    *,
+    project_ids: list[str] | None,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[RawRollupRow]:
+    """Issue exactly one ``GROUP BY`` aggregate query against ``sessions``.
+
+    Dual-path for SQLite (``aiosqlite``) and PostgreSQL (``asyncpg``),
+    mirroring ``system_metrics.py::_fetch_model_family_tokens``. Zero N+1: a
+    single SQL statement services the whole call regardless of how many
+    distinct ``(project_id, source_skill_name, model)`` keys exist in the
+    window. No ORM lazy-loading anywhere on this path.
+    """
+    window_start_iso = _iso(window_start)
+    window_end_iso = _iso(window_end)
+
+    if isinstance(db, aiosqlite.Connection):
+        params: list[Any] = [window_start_iso, window_end_iso]
+        project_filter_sql = ""
+        if project_ids:
+            project_filter_sql = f" AND project_id IN ({','.join('?' * len(project_ids))})"
+            params.extend(project_ids)
+
+        sql = f"""
+            SELECT
+                project_id,
+                skill_name AS source_skill_name,
+                model,
+                COUNT(*) AS session_count
+            FROM sessions
+            WHERE updated_at >= ? AND updated_at <= ?
+              {project_filter_sql}
+            GROUP BY project_id, skill_name, model
+        """  # noqa: S608
+        async with db.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+        raw_rows = [dict(row) for row in rows]
+    else:
+        params = [window_start_iso, window_end_iso]
+        project_filter_sql = ""
+        if project_ids:
+            placeholders = ",".join(f"${i}" for i in range(3, 3 + len(project_ids)))
+            project_filter_sql = f" AND project_id = ANY(ARRAY[{placeholders}]::text[])"
+            params.extend(project_ids)
+
+        sql = f"""
+            SELECT
+                project_id,
+                skill_name AS source_skill_name,
+                model,
+                COUNT(*) AS session_count
+            FROM sessions
+            WHERE updated_at >= $1 AND updated_at <= $2
+              {project_filter_sql}
+            GROUP BY project_id, skill_name, model
+        """  # noqa: S608
+        pg_rows = await db.fetch(sql, *params)
+        raw_rows = [dict(row) for row in pg_rows]
+
+    return [
+        RawRollupRow(
+            project_id=str(row["project_id"] or ""),
+            source_skill_name=str(row["source_skill_name"] or ""),
+            model=str(row["model"] or ""),
+            session_count=int(row["session_count"] or 0),
+            window_start=window_start,
+            window_end=window_end,
+        )
+        for row in raw_rows
+    ]
+
+
+class RoutingRollupQueryService:
+    """Aggregation entry point for the Proof -> Routing Feedback Loop.
+
+    T3-001 shipped ``fetch_raw_rows`` -- the single-query, pure-SQL
+    aggregation freezing the raw-row shape. T3-002 extended this class with
+    ``apply_mapping`` -- pinned ``skill_name -> task_class`` derivation plus
+    the ``_unclassified``/protected-class coverage-only policy. T3-003 (this
+    task) further extends it with ``apply_provider`` (derived ``provider``
+    per row, always via ``derive_model_identity()``) and
+    ``compute_coverage_counters`` (the ``mapped_count``/``unclassified_count``/
+    ``distinct_unmapped_skill_names`` FR-7 counters). T3-004 (this task)
+    further extends it with ``compute_metrics`` (the D5 metric payload,
+    terminal ``RoutingRollupKeyDTO`` assembly) and ``build_response`` (the
+    top-level ``RoutingRollupResponseDTO`` envelope).
+    """
+
+    async def fetch_raw_rows(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        project_ids: list[str] | None = None,
+        window_days: int | None = None,
+    ) -> list[RawRollupRow]:
+        """Return one ``RawRollupRow`` per distinct ``(project_id,
+        source_skill_name, model)`` key present in ``sessions`` over the
+        rolling window.
+
+        Issues exactly one aggregate SQL statement (zero N+1) via
+        ``_fetch_raw_aggregate_rows``. The window defaults to
+        ``config.CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS`` (never hardcoded);
+        pass *window_days* to override (test/worker convenience only).
+
+        *context* is accepted for calling-convention parity with this
+        directory's other query-service entry points
+        (``aar_review.py::AARReviewQueryService.get_review``,
+        ``system_metrics.py::SystemMetricsQueryService.get_system_token_rollup``)
+        -- it is not yet consumed at this skeleton stage.
+        """
+        _ = context  # unused at this skeleton stage; kept for signature parity
+        default_days = window_days if window_days is not None else config.CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS
+        window_start, window_end = resolve_time_window(default_days=default_days)
+
+        db = ports.storage.db
+        rows = await _fetch_raw_aggregate_rows(
+            db,
+            project_ids=project_ids,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        logger.debug(
+            "routing_rollup: fetched %d raw row(s) window=[%s, %s] project_ids=%s",
+            len(rows),
+            window_start.isoformat(),
+            window_end.isoformat(),
+            project_ids,
+        )
+        return rows
+
+    def apply_mapping(
+        self,
+        rows: list[RawRollupRow],
+        *,
+        include_protected_rows: bool | None = None,
+    ) -> list[MappedRollupRow]:
+        """Derive ``task_class`` for every raw row via the pinned v1 mapping
+        and apply the two independent coverage-only emission gates (T3-002).
+
+        Pure in-memory transform -- no I/O beyond the cached, one-time
+        mapping-file read (``_load_skill_to_task_class_mapping``). Never
+        mutates *rows*; returns a new list.
+
+        Emission policy (both gates evaluated against the *resolved*
+        ``task_class``, never against whether a mapping entry was found):
+
+          - ``task_class == UNCLASSIFIED_TASK_CLASS`` -- ALWAYS emitted,
+            unconditionally of *include_protected_rows* (FR-7). This covers
+            BOTH "no mapping entry for source_skill_name" and "a mapping
+            entry exists and explicitly resolves to
+            ``UNCLASSIFIED_TASK_CLASS``" (executor-identity names).
+          - ``task_class in PROTECTED_TASK_CLASSES`` -- emitted only when
+            *include_protected_rows* resolves ``True``. Defaults to
+            ``config.CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS`` when
+            the kwarg is left ``None`` (test/worker override point, mirrors
+            ``fetch_raw_rows``'s ``window_days`` convention).
+          - Any other resolved ``task_class`` -- always emitted, proceeds to
+            T3-003/T3-004 as an ordinary routing key.
+
+        Every emitted row carries ``is_coverage_only=True`` iff it matched
+        either of the first two branches above -- T3-004 MUST consume that
+        flag to hardcode ``eligible_for_adjustment=False``, never
+        re-deriving coverage-only status by re-checking ``task_class``
+        membership itself.
+        """
+        resolved_include_protected = (
+            include_protected_rows
+            if include_protected_rows is not None
+            else config.CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS
+        )
+        mapping = _load_skill_to_task_class_mapping()
+
+        mapped_rows: list[MappedRollupRow] = []
+        for row in rows:
+            task_class = _resolve_task_class(row.source_skill_name, mapping)
+            is_unclassified = task_class == UNCLASSIFIED_TASK_CLASS
+            is_protected = task_class in PROTECTED_TASK_CLASSES
+
+            if is_protected and not resolved_include_protected:
+                # Gated out entirely -- _unclassified rows never reach this
+                # branch (is_protected is always False for them).
+                continue
+
+            mapped_rows.append(
+                MappedRollupRow(
+                    project_id=row.project_id,
+                    source_skill_name=row.source_skill_name,
+                    model=row.model,
+                    session_count=row.session_count,
+                    window_start=row.window_start,
+                    window_end=row.window_end,
+                    task_class=task_class,
+                    is_coverage_only=is_unclassified or is_protected,
+                )
+            )
+        return mapped_rows
+
+    def apply_provider(self, rows: list[MappedRollupRow]) -> list[ProviderRollupRow]:
+        """Attach the derived ``provider`` field to every mapped row (T3-003).
+
+        ``provider`` is ALWAYS
+        ``derive_model_identity(row.model)["modelProvider"]`` -- never an
+        independently parsed or keyed value in this module. Pure in-memory
+        transform, zero I/O; never mutates *rows*, returns a new list.
+        """
+        provider_rows: list[ProviderRollupRow] = []
+        for row in rows:
+            provider = str(derive_model_identity(row.model).get("modelProvider") or "")
+            provider_rows.append(
+                ProviderRollupRow(
+                    project_id=row.project_id,
+                    source_skill_name=row.source_skill_name,
+                    model=row.model,
+                    session_count=row.session_count,
+                    window_start=row.window_start,
+                    window_end=row.window_end,
+                    task_class=row.task_class,
+                    is_coverage_only=row.is_coverage_only,
+                    provider=provider,
+                )
+            )
+        return provider_rows
+
+    def compute_coverage_counters(self, rows: list[MappedRollupRow]) -> CoverageCounters:
+        """Compute the three FR-7 response-level coverage counters (T3-003).
+
+        Keyed strictly off each row's *resolved* ``task_class`` value --
+        never off whether a mapping entry was found for its
+        ``source_skill_name`` (T3-002's executor-identity case --
+        ``codex``/``claude-api``/``ica-delegate`` have mapping entries that
+        themselves resolve to ``UNCLASSIFIED_TASK_CLASS`` -- lands in
+        ``unclassified_count``, never ``mapped_count``, proving the counters
+        never double-count a row that has both a mapping entry AND an
+        ``_unclassified`` resolution).
+
+        ``mapped_count`` and ``unclassified_count`` are session-level totals
+        (summed ``session_count``) across every row in *rows* -- not counts
+        of distinct rows and not per-key figures -- so
+        ``mapped_count + unclassified_count`` always equals the summed
+        ``session_count`` of *rows* exactly. ``distinct_unmapped_skill_names``
+        is deduplicated and returned in deterministic (alphabetically sorted)
+        order, required for T3-005's downstream determinism guarantee.
+        """
+        mapped_count = 0
+        unclassified_count = 0
+        unmapped_skill_names: set[str] = set()
+
+        for row in rows:
+            if row.task_class == UNCLASSIFIED_TASK_CLASS:
+                unclassified_count += row.session_count
+                unmapped_skill_names.add(row.source_skill_name)
+            else:
+                # Includes protected-class rows (`orchestration`, `mode_d`)
+                # -- still "mapped" for counter purposes even though
+                # `is_coverage_only` gates their `eligible_for_adjustment`.
+                mapped_count += row.session_count
+
+        return CoverageCounters(
+            mapped_count=mapped_count,
+            unclassified_count=unclassified_count,
+            distinct_unmapped_skill_names=sorted(unmapped_skill_names),
+        )
+
+    def compute_metrics(
+        self,
+        rows: list[ProviderRollupRow],
+        *,
+        min_sample_size: int | None = None,
+        freshness_ts: str | None = None,
+    ) -> list[RoutingRollupKeyDTO]:
+        """Compute the full D5 metric payload for every row and assemble the
+        terminal ``RoutingRollupKeyDTO`` (T3-004) -- the last transform in
+        the T3-001..T3-004 pipeline; no further processing stage follows
+        this one.
+
+        ``eligible_for_adjustment`` is
+        ``sample_count >= min_sample_size`` -- but ONLY when
+        ``row.is_coverage_only`` is ``False``. Coverage-only rows
+        (``_unclassified``/protected-class, T3-002) are hardcoded
+        ``eligible_for_adjustment=False`` regardless of ``sample_count``,
+        honoring T3-002's documented hard contract
+        (``MappedRollupRow.is_coverage_only`` is the single source of truth
+        for this; this method never re-derives coverage-only status by
+        re-checking ``task_class`` membership itself). Sub-threshold keys
+        are NEVER suppressed (AC-5) -- every row in *rows* produces exactly
+        one output DTO; only ``eligible_for_adjustment`` flips to ``False``.
+
+        *min_sample_size* defaults to
+        ``config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE`` (test/worker
+        override point, mirrors ``fetch_raw_rows``'s ``window_days``
+        convention). *freshness_ts* defaults to ``_now_iso()``, computed
+        ONCE for the whole call so every row in one response shares an
+        identical freshness timestamp -- also a test override point for
+        T3-005's determinism guard (freeze this to prove field-identical
+        output across two invocations).
+
+        ``success_rate``/``regression_rate`` are emitted ``None`` in this
+        v1 -- ``sessions.status`` (the only per-session outcome-adjacent
+        column available to this module) carries only
+        ``'active'``/``'completed'`` values in this codebase, never a
+        genuine success/failure/regression signal; fabricating one from a
+        non-signal would be actively misleading to a consuming router. The
+        ``routing_rollup`` DDL (Phase 2) already declares both columns
+        nullable for exactly this reason. ``cost_index`` is the fixed
+        PRD-literal baseline (``1.0``, see ``_COST_INDEX_BASELINE``) for the
+        same do-not-gold-plate rationale. All three are named, documented
+        v1 design gaps flagged for D9 socialization -- not bugs.
+        """
+        resolved_min_sample_size = (
+            min_sample_size
+            if min_sample_size is not None
+            else config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE
+        )
+        resolved_freshness_ts = freshness_ts if freshness_ts is not None else _now_iso()
+
+        key_dtos: list[RoutingRollupKeyDTO] = []
+        for row in rows:
+            eligible_for_adjustment = (
+                not row.is_coverage_only and row.session_count >= resolved_min_sample_size
+            )
+            key_dtos.append(
+                RoutingRollupKeyDTO(
+                    producer=routing_feedback_contract.PRODUCER,
+                    contract_id=routing_feedback_contract.CONTRACT_ID,
+                    contract_version=routing_feedback_contract.CONTRACT_VERSION,
+                    taxonomy_id=routing_feedback_contract.TAXONOMY_ID,
+                    taxonomy_version=routing_feedback_contract.TAXONOMY_VERSION,
+                    taxonomy_digest=routing_feedback_contract.TAXONOMY_DIGEST,
+                    mapping_id=routing_feedback_contract.MAPPING_ID,
+                    mapping_version=routing_feedback_contract.MAPPING_VERSION,
+                    mapping_digest=routing_feedback_contract.MAPPING_DIGEST,
+                    source_skill_name=row.source_skill_name,
+                    task_class=row.task_class,
+                    model=row.model,
+                    provider=row.provider,
+                    sample_count=row.session_count,
+                    success_rate=None,
+                    cost_index=_COST_INDEX_BASELINE,
+                    regression_rate=None,
+                    confidence=_confidence_for_sample_count(row.session_count),
+                    eligible_for_adjustment=eligible_for_adjustment,
+                    window_start=_iso8601(row.window_start),
+                    window_end=_iso8601(row.window_end),
+                    freshness_ts=resolved_freshness_ts,
+                )
+            )
+        return key_dtos
+
+    def build_response(
+        self,
+        rows: list[ProviderRollupRow],
+        coverage: CoverageCounters,
+        *,
+        min_sample_size: int | None = None,
+        freshness_ts: str | None = None,
+    ) -> RoutingRollupResponseDTO:
+        """Assemble the full top-level ``RoutingRollupResponseDTO`` envelope
+        (T3-004) -- the single convenient entry point Phase 4's worker and
+        Phase 5's transports call after running raw rows through
+        ``fetch_raw_rows`` -> ``apply_mapping`` -> ``apply_provider`` (to
+        produce *rows*) and ``apply_mapping``'s output through
+        ``compute_coverage_counters`` (to produce *coverage*).
+
+        Always assembles the ENABLED shape (``enabled=True``,
+        ``generated_at`` set to *freshness_ts* or ``_now_iso()``). The
+        deterministic DISABLED envelope
+        (``CCDASH_ROUTING_FEEDBACK_ENABLED=False`` -> ``enabled=False``,
+        ``generated_at=None``, zero counters, empty ``keys``) is a
+        transport/worker-level short-circuit (D6) -- deliberately NOT built
+        here; this compute service has no opinion on the flag and always
+        computes real rows when called.
+        """
+        resolved_freshness_ts = freshness_ts if freshness_ts is not None else _now_iso()
+        key_dtos = self.compute_metrics(
+            rows,
+            min_sample_size=min_sample_size,
+            freshness_ts=resolved_freshness_ts,
+        )
+        return RoutingRollupResponseDTO(
+            enabled=True,
+            generated_at=resolved_freshness_ts,
+            contract_id=routing_feedback_contract.CONTRACT_ID,
+            contract_version=routing_feedback_contract.CONTRACT_VERSION,
+            taxonomy_id=routing_feedback_contract.TAXONOMY_ID,
+            taxonomy_version=routing_feedback_contract.TAXONOMY_VERSION,
+            taxonomy_digest=routing_feedback_contract.TAXONOMY_DIGEST,
+            mapping_id=routing_feedback_contract.MAPPING_ID,
+            mapping_version=routing_feedback_contract.MAPPING_VERSION,
+            mapping_digest=routing_feedback_contract.MAPPING_DIGEST,
+            mapped_count=coverage.mapped_count,
+            unclassified_count=coverage.unclassified_count,
+            distinct_unmapped_skill_names=list(coverage.distinct_unmapped_skill_names),
+            keys=key_dtos,
+        )
+
+
+__all__ = [
+    "PROTECTED_TASK_CLASSES",
+    "UNCLASSIFIED_TASK_CLASS",
+    "CoverageCounters",
+    "MappedRollupRow",
+    "ProviderRollupRow",
+    "RawRollupRow",
+    "RoutingRollupQueryService",
+]

@@ -516,6 +516,21 @@ COLUMN_PARITY_DRIFT_ALLOWLIST: frozenset[tuple[str, str]] = frozenset({
     # intentionally NOT allowlisted here — see
     # backend/tests/test_aar_reviews_repo.py, which pins this and would fail
     # if a future edit introduced real drift.
+    #
+    # routing_rollup (T2-002/T2-004, proof-to-routing-loop-v1 Phase 2, v43):
+    # the (project_id, source_skill_name, model)-keyed routing feedback
+    # rollup persisted by backend/db/repositories/routing_rollup.py. Every
+    # column uses an identical literal type token in both dialects by
+    # construction — TEXT for every string/ISO-8601-timestamp column,
+    # INTEGER for sample_count/eligible_for_adjustment (deliberately NOT
+    # Postgres BOOLEAN, to avoid even needing the already-supported
+    # BOOLEAN-to-integer collapsing rule), REAL for the four nullable metric
+    # columns (deliberately NOT Postgres DOUBLE PRECISION), and the same
+    # timestamp-default nullability case established above for created_at/
+    # updated_at. `column_parity_diff("routing_rollup")` is `{}` by
+    # construction. routing_rollup is therefore intentionally NOT allowlisted
+    # here — see backend/tests/test_routing_rollup_repo.py, which pins this
+    # and would fail if a future edit introduced real drift.
 })
 
 # Regex for splitting a column line into (name, type-and-rest)

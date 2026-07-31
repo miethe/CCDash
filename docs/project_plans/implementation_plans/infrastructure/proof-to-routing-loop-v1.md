@@ -25,7 +25,10 @@ priority: medium
 risk_level: medium
 changelog_required: true
 intenttree_node: node_01KY69N7KW566PGJ51BMYRK5SN
-deferred_items_spec_refs: []
+deferred_items_spec_refs:
+  - docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
+  - docs/project_plans/design-specs/routing-feedback-model-provider-namespacing.md
+  - docs/project_plans/design-specs/routing-feedback-window-decay-defaults.md
 findings_doc_ref: null
 related_documents:
 - docs/project_plans/exploration/proof-to-routing-loop/proof-to-routing-loop-feasibility-brief.md
@@ -141,12 +144,12 @@ decisions:
   rationale: "Contract leaves the numeric payload unspecified \u2014 a unilaterally-designed\
     \ shape risks an unconsumable rollup, but router-owner acknowledgment cannot block\
     \ CCDash's own completion on an external repo's availability/timeline."
-  status: pending
+  status: attempted
 decision_gates:
 - gate: "D9 \u2014 socialize D5 metric-payload shape with router owner before Phase\
     \ 5 (Transport Surfaces) seals; strong recommendation, NOT a hard blocking gate\
     \ on this feature's own completion"
-  status: pending
+  status: attempted
 success_metrics:
 - "Mapping digest parity: 100% \u2014 vendored mapping bytes SHA-256 == contract's\
   \ pinned mapping_digest, every CI run"
@@ -448,14 +451,14 @@ above — it is a write-path-discipline gate, not one of AC-1..AC-8.
 | Silent non-join / cross-repo vocabulary drift (seam risk, R-P3) | High | Low (post-contract) | Emit canonical `task_class` via the exact pinned mapping only; carry all envelope digests verbatim; Phase 6 CI parity test (T6-002) on the vendored mapping bytes; router's `validateFeedbackJoin()` is the fail-closed backstop; `integration_owner` declared on Phase 6. |
 | Per-key sparsity for a single-operator workload | Medium | Medium | Coarsened, density-validated tuple (52% N≥5 per value-findings); emit `sample_count` + `eligible_for_adjustment` so the router applies its own threshold; thin keys simply don't route — safe, not wrong. |
 | Constraint-4 violation (LLM on the compute/read path) | Medium | Low | Pure-SQL aggregation; worker/service import nothing from `backend.adapters.agents`/`services.agents`; CI-enforced AST-walk guard (T3-005, extended T6-001); determinism test over a fixture DB. |
-| Metric-payload shape unconsumable by the router (unspecified by the contract) | Medium | Medium | D5 payload is additive-versioned; D9 (pending) — socialize to the router owner before Phase 5 ships; keep evidence-only so a mismatch is inert, never harmful. |
+| Metric-payload shape unconsumable by the router (unspecified by the contract) | Medium | Medium | D5 payload is additive-versioned; D9 (attempted 2026-07-31 — informal GitHub issue on `github.com/miethe/MeatySkills`, response pending) — socialized the shape to the router owner before Phase 5 sealed; keep evidence-only so a mismatch is inert, never harmful. |
 | Blast radius on CCDash (new table/worker/endpoints regress existing reads) | Low | Low | Additive-only DDL; default-off flag; zero mutation of `sessions`/`aar_reviews`; instant env-var revert; disabled state returns a deterministic empty envelope. |
 
 ### Schedule Risks
 
 | Risk | Impact | Likelihood | Mitigation Strategy |
 |------|--------|------------|-------------------|
-| D9 socialization slips past Phase 5 | Medium | Medium | Treat D9 as a decision gate (frontmatter `decision_gates`); do not seal Phase 5 without at minimum documenting the socialization attempt in the phase's completion note. |
+| D9 socialization slips past Phase 5 | Low (materialized, resolved) | — | Resolved 2026-07-31: attempt documented in Phase 5's completion note + `.claude/worknotes/proof-to-routing-loop/decisions-block.md` (informal GitHub issue, response pending). |
 | Phase 3 (the only algorithmic phase) runs long | Medium | Low | `karen` review at the Phase 3 milestone (per decisions block §4 estimation notes) in addition to `task-completion-validator` per phase. |
 
 ## Resource Requirements

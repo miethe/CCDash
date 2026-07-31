@@ -222,6 +222,50 @@ class CliCommandsTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 2)
         self.assertIn("Document 'missing-doc' was not found in project 'project-1'.", result.output)
 
+    def test_routing_rollup_help_is_registered(self) -> None:
+        result = self.runner.invoke(app, ["--help"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("routing", result.output)
+
+        rollup_help = self.runner.invoke(app, ["routing", "rollup", "--help"])
+
+        self.assertEqual(rollup_help.exit_code, 0)
+
+    def test_routing_rollup_renders_disabled_envelope(self) -> None:
+        from backend.application.services.agent_queries import routing_feedback_contract
+        from backend.application.services.agent_queries.models import RoutingRollupResponseDTO
+
+        payload = RoutingRollupResponseDTO(
+            enabled=False,
+            generated_at=None,
+            contract_id=routing_feedback_contract.CONTRACT_ID,
+            contract_version=routing_feedback_contract.CONTRACT_VERSION,
+            taxonomy_id=routing_feedback_contract.TAXONOMY_ID,
+            taxonomy_version=routing_feedback_contract.TAXONOMY_VERSION,
+            taxonomy_digest=routing_feedback_contract.TAXONOMY_DIGEST,
+            mapping_id=routing_feedback_contract.MAPPING_ID,
+            mapping_version=routing_feedback_contract.MAPPING_VERSION,
+            mapping_digest=routing_feedback_contract.MAPPING_DIGEST,
+            mapped_count=0,
+            unclassified_count=0,
+            distinct_unmapped_skill_names=[],
+            keys=[],
+        )
+
+        with patch(
+            "backend.cli.commands.routing.runtime.execute_query",
+            new=AsyncMock(return_value=payload),
+        ):
+            result = self.runner.invoke(app, ["routing", "rollup", "--json"])
+
+        self.assertEqual(result.exit_code, 0)
+        rendered = json.loads(result.output)
+        self.assertEqual(rendered["enabled"], False)
+        self.assertEqual(rendered["keys"], [])
+        self.assertEqual(rendered["mapped_count"], 0)
+        self.assertEqual(rendered["unclassified_count"], 0)
+
     def test_artifact_rankings_renders_json_output(self) -> None:
         payload = _ArtifactRankingsPayload(
             status="ok",

@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 42
+SCHEMA_VERSION = 43
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1463,6 +1463,56 @@ CREATE TABLE IF NOT EXISTS aar_reviews (
 CREATE INDEX IF NOT EXISTS idx_aar_reviews_project ON aar_reviews(project_id);
 CREATE INDEX IF NOT EXISTS idx_aar_reviews_document ON aar_reviews(aar_document_id);
 CREATE INDEX IF NOT EXISTS idx_aar_reviews_verdict ON aar_reviews(triage_verdict);
+
+-- ── Routing Feedback Persistence: routing_rollup (T2-002, proof-to-routing- --
+-- loop-v1 Phase 2) ─────────────────────────────────────────────────────────
+-- One row per (project_id, source_skill_name, model) key, computed by the
+-- deterministic RoutingRollupQueryService
+-- (backend/application/services/agent_queries/routing_rollup.py, Phase 3).
+-- PRIMARY KEY (project_id, source_skill_name, model) is both the natural
+-- dedup key and the upsert conflict target -- window_start/window_end are
+-- ORDINARY, UPDATE-in-place columns reflecting the CURRENT rolling window,
+-- deliberately excluded from the key (including them would turn this into
+-- an unbounded time-series log instead of a one-row-per-key rollup).
+-- `task_class` is derived/denormalized at write time via the pinned
+-- skill_name -> task_class mapping (D3) -- never the raw `source_skill_name`
+-- string; the router's validateFeedbackJoin() needs source_skill_name intact
+-- per row to independently re-verify the mapping, so rows are never
+-- pre-merged by task_class before emission (PRD Sec.6.3). `provider` is
+-- derived via derive_model_identity() -- read-side convenience only, never
+-- an independently keyed dimension (D2). `contract_version`/
+-- `taxonomy_version`/`mapping_version` are per-row AC-8 stamps of the
+-- routing_feedback_contract.py constants at write time; `producer`/
+-- `contract_id`/`taxonomy_id`/`taxonomy_digest`/`mapping_id`/`mapping_digest`
+-- are NOT persisted -- they are static and assembled at read time from the
+-- same module. `eligible_for_adjustment` is INTEGER 0/1 (not BOOLEAN) to
+-- keep the literal type token identical across dialects by construction.
+CREATE TABLE IF NOT EXISTS routing_rollup (
+    project_id                TEXT NOT NULL,
+    source_skill_name         TEXT NOT NULL,
+    model                     TEXT NOT NULL,
+    window_start              TEXT NOT NULL,
+    window_end                TEXT NOT NULL,
+    task_class                TEXT NOT NULL,
+    provider                  TEXT NOT NULL,
+    sample_count              INTEGER NOT NULL DEFAULT 0,
+    success_rate              REAL,
+    cost_index                REAL,
+    regression_rate           REAL,
+    confidence                REAL,
+    eligible_for_adjustment   INTEGER NOT NULL DEFAULT 0,
+    freshness_ts              TEXT NOT NULL,
+    contract_version          TEXT NOT NULL,
+    taxonomy_version          TEXT NOT NULL,
+    mapping_version           TEXT NOT NULL,
+    created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (project_id, source_skill_name, model)
+);
+
+CREATE INDEX IF NOT EXISTS idx_routing_rollup_project ON routing_rollup(project_id);
+CREATE INDEX IF NOT EXISTS idx_routing_rollup_task_class ON routing_rollup(task_class);
+CREATE INDEX IF NOT EXISTS idx_routing_rollup_skill_model ON routing_rollup(source_skill_name, model);
 """
 
 _PLANNING_WORKTREE_CONTEXTS_DDL = """
@@ -4292,6 +4342,60 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v42 migrations complete: aar_reviews table added "
             "(ccdash-automated-aar-review-v1, T1-005)."
+        )
+
+    # ── v43 migrations (T2-002: proof-to-routing-loop-v1 routing_rollup) ───────
+    # routing_rollup is also declared in _TABLES (above) so
+    # get_sqlite_migration_tables() discovers it for the dual-DDL
+    # parity/direct-count exit gate (T2-004). This version-gated CREATE TABLE
+    # guarantees the table also appears on databases that were already at/
+    # above the pre-bump SCHEMA_VERSION and would otherwise skip the
+    # executescript(_TABLES) path entirely (aar_reviews v42 / research_runs
+    # v41 precedent, exactly).
+    if current_version < 43:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS routing_rollup (
+                project_id                TEXT NOT NULL,
+                source_skill_name         TEXT NOT NULL,
+                model                     TEXT NOT NULL,
+                window_start              TEXT NOT NULL,
+                window_end                TEXT NOT NULL,
+                task_class                TEXT NOT NULL,
+                provider                  TEXT NOT NULL,
+                sample_count              INTEGER NOT NULL DEFAULT 0,
+                success_rate              REAL,
+                cost_index                REAL,
+                regression_rate           REAL,
+                confidence                REAL,
+                eligible_for_adjustment   INTEGER NOT NULL DEFAULT 0,
+                freshness_ts              TEXT NOT NULL,
+                contract_version          TEXT NOT NULL,
+                taxonomy_version          TEXT NOT NULL,
+                mapping_version           TEXT NOT NULL,
+                created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (project_id, source_skill_name, model)
+            )
+            """
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_routing_rollup_project ON routing_rollup(project_id)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_routing_rollup_task_class ON routing_rollup(task_class)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_routing_rollup_skill_model"
+            " ON routing_rollup(source_skill_name, model)",
+        )
+        await db.commit()
+        logger.info(
+            "v43 migrations complete: routing_rollup table added "
+            "(proof-to-routing-loop-v1, T2-002)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

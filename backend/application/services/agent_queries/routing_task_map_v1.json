@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "mapping_id": "ccdash.skill_name_to_aos.routing.task_class",
+  "mapping_version": "1.0.0",
+  "producer": "ccdash",
+  "source_field": "sessions.skill_name",
+  "taxonomy": {
+    "taxonomy_id": "aos.routing.task_class",
+    "taxonomy_version": "1.0.0",
+    "taxonomy_digest": "sha256:d96a0819b0a3a42d14eccc1421d3146b8364253d975d9d54f4f264d4b6adeaca"
+  },
+  "unmapped_policy": "_unclassified",
+  "external_identifier_policy": "canonical_only",
+  "rules": [
+    {
+      "source_skill_name": "artifact-tracking",
+      "task_class": "mechanical",
+      "rationale": "Deterministic plan and task state maintenance."
+    },
+    {
+      "source_skill_name": "changelog-sync",
+      "task_class": "documentation",
+      "rationale": "Changelog documentation reconciliation."
+    },
+    {
+      "source_skill_name": "claude-api",
+      "task_class": "_unclassified",
+      "rationale": "Platform identity does not determine the task semantics."
+    },
+    {
+      "source_skill_name": "codex",
+      "task_class": "_unclassified",
+      "rationale": "Executor identity does not determine the delegated task semantics."
+    },
+    {
+      "source_skill_name": "debug",
+      "task_class": "implementation",
+      "rationale": "Compatibility name for implementation-oriented debugging."
+    },
+    {
+      "source_skill_name": "debugging",
+      "task_class": "implementation",
+      "rationale": "Implementation diagnosis and repair workflow."
+    },
+    {
+      "source_skill_name": "dev-execution",
+      "task_class": "implementation",
+      "rationale": "Plan execution and code implementation workflow."
+    },
+    {
+      "source_skill_name": "enterprise-demo-deploy",
+      "task_class": "mode_d",
+      "rationale": "Deployment is protected work and receives no empirical adjustment."
+    },
+    {
+      "source_skill_name": "firecrawl-scrape",
+      "task_class": "web_research",
+      "rationale": "Web retrieval and extraction workflow."
+    },
+    {
+      "source_skill_name": "frontend-design",
+      "task_class": "implementation",
+      "rationale": "Product-surface implementation workflow."
+    },
+    {
+      "source_skill_name": "ica-delegate",
+      "task_class": "_unclassified",
+      "rationale": "Executor identity does not determine the delegated task semantics."
+    },
+    {
+      "source_skill_name": "plan-status",
+      "task_class": "documentation",
+      "rationale": "Evidence-backed status reporting."
+    },
+    {
+      "source_skill_name": "planning",
+      "task_class": "orchestration",
+      "rationale": "Master planning is protected orchestration and receives no empirical adjustment."
+    },
+    {
+      "source_skill_name": "release",
+      "task_class": "mode_d",
+      "rationale": "Release mutation is protected work and receives no empirical adjustment."
+    },
+    {
+      "source_skill_name": "skillmeat-cli",
+      "task_class": "mechanical",
+      "rationale": "Deterministic artifact and deployment administration."
+    },
+    {
+      "source_skill_name": "symbols",
+      "task_class": "mechanical",
+      "rationale": "Deterministic code-symbol discovery and navigation."
+    },
+    {
+      "source_skill_name": "workflow-authoring",
+      "task_class": "implementation",
+      "rationale": "Executable workflow construction."
+    }
+  ]
+}

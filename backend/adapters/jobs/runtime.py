@@ -17,6 +17,7 @@ from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob
 from backend.adapters.jobs.artifact_rollup_export_job import ArtifactRollupExportJob
+from backend.adapters.jobs.routing_rollup_sweep_job import RoutingRollupSweepJob
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
 from backend.services.test_config import effective_test_flags, resolve_test_sources
@@ -102,6 +103,9 @@ class RuntimeJobState:
     telemetry_export_task: asyncio.Task[None] | None = None
     artifact_rollup_export_task: asyncio.Task[None] | None = None
     aar_review_sweep_task: asyncio.Task[None] | None = None
+    # proof-to-routing-loop Phase 4 (T4-002): default-off Proof -> Routing
+    # Feedback Loop sweep. Mirrors aar_review_sweep_task's shape exactly.
+    routing_rollup_sweep_task: asyncio.Task[None] | None = None
     cache_warming_task: asyncio.Task[None] | None = None
     retention_prune_task: asyncio.Task[None] | None = None
     reconcile_task: asyncio.Task[None] | None = None
@@ -138,6 +142,10 @@ class RuntimeJobAdapter:
         artifact_rollup_export_job: ArtifactRollupExportJob | None = None,
         # Phase 6 (T6-006): default-off AAR-review autonomous sweep worker.
         aar_review_sweep_job: AARReviewSweepJob | None = None,
+        # proof-to-routing-loop Phase 4 (T4-002): default-off Proof -> Routing
+        # Feedback Loop sweep worker. Mirrors aar_review_sweep_job's param
+        # shape exactly.
+        routing_rollup_sweep_job: RoutingRollupSweepJob | None = None,
         # P3-005 / P3-010: additive param — safe default keeps container.py unchanged
         workspace_registry: Any | None = None,
     ) -> None:
@@ -150,6 +158,7 @@ class RuntimeJobAdapter:
         self.telemetry_exporter_job = telemetry_exporter_job
         self.artifact_rollup_export_job = artifact_rollup_export_job
         self.aar_review_sweep_job = aar_review_sweep_job
+        self.routing_rollup_sweep_job = routing_rollup_sweep_job
         # P3-005: workspace_registry kwarg allows injecting a custom registry in
         # tests; falls back to ports.workspace_registry at runtime.
         self._workspace_registry_override = workspace_registry
@@ -191,6 +200,15 @@ class RuntimeJobAdapter:
                 "aarReviewSweep": RuntimeJobObservation(
                     backlog_count=0,
                     backlog_unit="pairs",
+                    stale_threshold_seconds=7200,
+                ),
+                # proof-to-routing-loop Phase 4 (T4-002): default-off Proof ->
+                # Routing Feedback Loop sweep. Stale threshold is 4x the
+                # default 1800s interval — alarm only on a clearly stalled
+                # sweep, never on a single missed tick (mirrors aarReviewSweep).
+                "routingRollupSweep": RuntimeJobObservation(
+                    backlog_count=0,
+                    backlog_unit="rows",
                     stale_threshold_seconds=7200,
                 ),
                 "cacheWarming": RuntimeJobObservation(
@@ -417,6 +435,9 @@ class RuntimeJobAdapter:
             aar_review_sweep_task = self._start_aar_review_sweep_task()
             if aar_review_sweep_task is not None:
                 self.state.aar_review_sweep_task = aar_review_sweep_task
+            routing_rollup_sweep_task = self._start_routing_rollup_sweep_task()
+            if routing_rollup_sweep_task is not None:
+                self.state.routing_rollup_sweep_task = routing_rollup_sweep_task
             cache_warming_task = self._start_cache_warming_task()
             if cache_warming_task is not None:
                 self.state.cache_warming_task = cache_warming_task
@@ -747,6 +768,14 @@ class RuntimeJobAdapter:
             except asyncio.CancelledError:
                 pass
             self.state.aar_review_sweep_task = None
+
+        if self.state.routing_rollup_sweep_task is not None:
+            self.state.routing_rollup_sweep_task.cancel()
+            try:
+                await self.state.routing_rollup_sweep_task
+            except asyncio.CancelledError:
+                pass
+            self.state.routing_rollup_sweep_task = None
 
         if self.state.cache_warming_task is not None:
             self.state.cache_warming_task.cancel()
@@ -1212,6 +1241,10 @@ class RuntimeJobAdapter:
             else "idle",
             "aarReviewSweep": "running"
             if self.state.aar_review_sweep_task is not None and not self.state.aar_review_sweep_task.done()
+            else "idle",
+            "routingRollupSweep": "running"
+            if self.state.routing_rollup_sweep_task is not None
+            and not self.state.routing_rollup_sweep_task.done()
             else "idle",
             "cacheWarming": "running"
             if self.state.cache_warming_task is not None and not self.state.cache_warming_task.done()
@@ -1857,6 +1890,7 @@ class RuntimeJobAdapter:
             "telemetryExports": self.state.telemetry_export_task,
             "artifactRollupExports": self.state.artifact_rollup_export_task,
             "aarReviewSweep": self.state.aar_review_sweep_task,
+            "routingRollupSweep": self.state.routing_rollup_sweep_task,
             "cacheWarming": self.state.cache_warming_task,
         }
         jobs: dict[str, Any] = {}
@@ -1954,6 +1988,7 @@ class RuntimeJobAdapter:
             "telemetryExports",
             "artifactRollupExports",
             "aarReviewSweep",
+            "routingRollupSweep",
         ):
             payload = jobs.get(job_name, {})
             depth_map[job_name] = {
@@ -2713,4 +2748,77 @@ class RuntimeJobAdapter:
         return self.ports.job_scheduler.schedule(
             _run_periodic_aar_review_sweeps(),
             name=f"ccdash:{self.profile.name}:aar-review-sweep",
+        )
+
+    def _start_routing_rollup_sweep_task(self) -> asyncio.Task[None] | None:
+        """proof-to-routing-loop Phase 4 (T4-002): default-off Proof -> Routing
+        Feedback Loop sweep worker.
+
+        Mirrors ``_start_aar_review_sweep_task`` verbatim: ``worker``-profile-only,
+        gated on both the injected job object being present (container.py only
+        constructs it when ``CCDASH_ROUTING_FEEDBACK_ENABLED`` is true AND the
+        profile is in the telemetry/rollup export profile set,
+        ``_export_profiles``) and this method's own presence check -- so an
+        accidental double-gate never silently no-ops a config flip; the job's
+        own ``execute()`` ALSO re-checks the flag (defense in depth, matching
+        ``AARReviewSweepJob.execute()``'s own internal
+        ``CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED`` check). Note that
+        ``container.py`` constructs the job object for BOTH ``worker`` and
+        ``worker-watch`` (``_export_profiles``), but this method's own
+        ``profile.name != "worker"`` guard means only the plain ``worker``
+        profile ever actually starts the periodic loop -- identical to the
+        AAR-review precedent's own asymmetry between construction-time and
+        task-start-time profile gating; not a bug, a deliberate mirror.
+
+        Like the AAR review sweep, this job is ALWAYS multi-project:
+        ``container.py`` constructs ``RoutingRollupSweepJob`` with
+        ``project=None`` unconditionally, so every tick enumerates and sweeps
+        every registered project via ``ports.workspace_registry.list_projects()``
+        (see ``RoutingRollupSweepJob._resolve_projects_to_sweep``), independent
+        of whatever single project this worker's sync engine is bound to.
+        """
+        if self.profile.name != "worker" or self.routing_rollup_sweep_job is None:
+            return None
+        interval_seconds = max(
+            60, int(getattr(config, "CCDASH_ROUTING_FEEDBACK_SWEEP_INTERVAL_SECONDS", 1800))
+        )
+        self.state.job_observations["routingRollupSweep"].interval_seconds = interval_seconds
+
+        async def _run_periodic_routing_rollup_sweeps() -> None:
+            while True:
+                started = self._mark_job_started("routingRollupSweep")
+                try:
+                    result = await self.routing_rollup_sweep_job.execute(trigger="scheduled")
+                    self._mark_job_success(
+                        "routingRollupSweep",
+                        started,
+                        outcome=str(getattr(result, "outcome", "success") or "success"),
+                        backlog_count=int(getattr(result, "rows_written", 0) or 0),
+                        details={
+                            "keysComputed": int(getattr(result, "keys_computed", 0) or 0),
+                            "rowsWritten": int(getattr(result, "rows_written", 0) or 0),
+                            "projectIds": list((getattr(result, "details", None) or {}).get("projectIds", [])),
+                            "projectCount": int((getattr(result, "details", None) or {}).get("projectCount", 0) or 0),
+                        },
+                    )
+                except asyncio.CancelledError:
+                    self._mark_job_cancelled("routingRollupSweep", started)
+                    raise
+                except Exception:
+                    self._mark_job_failure(
+                        "routingRollupSweep",
+                        started,
+                        RuntimeError("routing_rollup_sweep_failed"),
+                    )
+                    logger.exception("Periodic routing rollup sweep failed")
+                await asyncio.sleep(interval_seconds)
+
+        logger.info(
+            "Started periodic routing rollup sweep job (profile=%s interval=%ss)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_routing_rollup_sweeps(),
+            name=f"ccdash:{self.profile.name}:routing-rollup-sweep",
         )

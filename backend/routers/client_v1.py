@@ -28,6 +28,10 @@ from backend.application.services.agent_queries import (
     ProjectStatusDTO,
     WorkflowDiagnosticsDTO,
 )
+from backend.application.services.agent_queries.models import RoutingRollupResponseDTO
+from backend.application.services.agent_queries.routing_feedback_contract import (
+    CAPABILITY_STRING as ROUTING_FEEDBACK_CAPABILITY_STRING,
+)
 from backend.observability import otel
 from backend.application.services.feature_surface import (
     FeatureModalOverviewDTO,
@@ -57,6 +61,7 @@ from backend.routers.client_v1_models import (
     build_client_v1_meta,
 )
 from backend.routers._client_v1_aar_review import get_aar_review_v1
+from backend.routers._client_v1_routing_rollup import get_routing_rollup_v1
 from backend.routers._client_v1_project import (
     get_project_status_v1,
     get_workflow_failures_v1,
@@ -152,6 +157,10 @@ _V1_CAPABILITIES: list[str] = [
                                # placeholder for the eventual query surface (Phase 3+).
     "aar-review",              # Persisted AAR-document-to-session triage rollup (T4-002) —
                                # GET /api/v1/project/aar-review reads the aar_reviews table.
+    ROUTING_FEEDBACK_CAPABILITY_STRING,  # "routing:feedback" (BP-6) — Proof -> Routing Feedback
+                               # Loop producer surface; identity pinned in routing_feedback_contract.py.
+                               # Advertised unconditionally (independent of CCDASH_ROUTING_FEEDBACK_ENABLED)
+                               # ahead of the route, which lands in Phase 5.
 ]
 
 
@@ -216,6 +225,27 @@ async def project_aar_review(
     never an HTTP error.
     """
     return await get_aar_review_v1(project_id, request_context, core_ports, bypass_cache=bypass_cache)
+
+
+@client_v1_router.get("/routing/rollup")
+async def routing_rollup(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[RoutingRollupResponseDTO]:
+    """Return the persisted routing-feedback rollup for a project (BP-6, T5-001).
+
+    Serves the ``routing_rollup`` table (computed offline by
+    :class:`~backend.application.services.agent_queries.routing_rollup.RoutingRollupQueryService`
+    via the P4 worker sweep). Returns the deterministic disabled envelope
+    (``enabled: false``, empty ``keys``, zero counts) when
+    ``CCDASH_ROUTING_FEEDBACK_ENABLED`` is false -- HTTP 200, never 404
+    (FR-10). An ``enabled: true`` response with an empty ``keys`` list is
+    also a normal contract state (feature on, worker sweep pending or no
+    in-window sessions yet), never an HTTP error.
+    """
+    return await get_routing_rollup_v1(project_id, request_context, core_ports, bypass_cache=bypass_cache)
 
 
 # ---------------------------------------------------------------------------

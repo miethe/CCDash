@@ -44,7 +44,30 @@ decisions:
 | D6: Capability `routing:feedback` + default-OFF flag `CCDASH_ROUTING_FEEDBACK_ENABLED`; disabled → deterministic disabled envelope | Mirrors AAR-review capability gate + flag; opt-in default-off honours contract baseline. | locked |
 | D7: Reversibility = emit-only + flag-flip (immediate, deterministic); CCDash never actuates | Emission reversibility is CCDash's; adjustment reversibility (scorecard revert, human-override, MUST-stay-primary immunity) is the router's. | locked |
 | D8: Router numeric merge (cap/floor/min-sample/decay/RoutingRecord provenance) out of scope; DOC-006 handoff spec | MeatySkills/ibm-main owns it; not buildable here. | locked |
-| D9: The metric payload is provisional/additive-versioned; socializing it to the router owner is a strong recommendation before Phase 5 seals — NOT a hard gate; this feature's "done" asserts producer-surface completeness, not that the feedback loop is live end-to-end | The contract leaves the numeric payload unspecified — a unilateral shape risks an unconsumable rollup, but router-owner acknowledgment cannot block CCDash's own completion on an external repo's availability/timeline. | pending |
+| D9: The metric payload is provisional/additive-versioned; socializing it to the router owner is a strong recommendation before Phase 5 seals — NOT a hard gate; this feature's "done" asserts producer-surface completeness, not that the feedback loop is live end-to-end | The contract leaves the numeric payload unspecified — a unilateral shape risks an unconsumable rollup, but router-owner acknowledgment cannot block CCDash's own completion on an external repo's availability/timeline. | attempted (informal) |
+
+### D9 Socialization Attempt (recorded 2026-07-31)
+
+Per this decision's own rationale, D9 is a schedule-risk gate, not a blocker — CCDash's Phase 5
+completion does not wait on a router-owner response. An informal, real, cross-repo attempt was
+nonetheless made before Phase 5 was marked complete:
+
+- **Channel**: GitHub issue (cross-repo, informal — the acceptable evidence tier named by the
+  Phase 5 plan itself).
+- **Target repo**: `github.com/miethe/MeatySkills` (the repo hosting the `delegation-router`
+  skill / `aos.routing.feedback` v1.0.0 contract, branch `ibm-main`).
+- **URL**: <https://github.com/miethe/MeatySkills/issues/1>
+- **Date**: 2026-07-31
+- **Content**: Documented the full D5 metric-payload shape (`model`, `provider`, `sample_count`,
+  `success_rate`, `cost_index`, `regression_rate`, `confidence`, `eligible_for_adjustment`,
+  `window_start`, `window_end`, `freshness_ts` — verbatim from `RoutingRollupKeyDTO`) and asked
+  three concrete questions ahead of DI-1's router-side merge-math work: (1) whether
+  `success_rate`/`regression_rate` always being `None` in v1 blocks the bounded-adjustment-cap /
+  effective-score-floor guardrails or can degrade gracefully; (2) whether `cost_index` is usable
+  as-is or needs router-side normalization; (3) whether `eligible_for_adjustment` is sufficient
+  as the min-sample-gate signal or the router wants raw `sample_count` + its own threshold only.
+- **Response**: pending as of this phase's completion — no reply yet. Non-blocking per D9's own
+  rationale; this is the documented attempt, not a resolution.
 
 ---
 
@@ -105,7 +128,7 @@ decisions:
 ### Risk 4: Metric-payload unconsumability (schedule/cross-repo)
 - **Severity**: medium
 - **Rationale**: The contract leaves the numeric payload unspecified; a unilaterally-designed shape may not match what the router's (future) merge needs.
-- **Mitigation**: D5 payload is additive-versioned; P1 records it in a CCDash-authored addendum to the seam doc; **socialize to the router owner before P5 ships** (D9, pending); keep it evidence-only so mismatch is inert, never harmful.
+- **Mitigation**: D5 payload is additive-versioned; P1 records it in a CCDash-authored addendum to the seam doc; **socialize to the router owner before P5 ships** (D9, attempted 2026-07-31 — see "D9 Socialization Attempt" above; response pending); keep it evidence-only so mismatch is inert, never harmful.
 
 ### Risk 5: Blast radius on CCDash
 - **Severity**: low
