@@ -4,9 +4,9 @@ title: "Implementation Plan: Proof \u2192 Routing Feedback Loop \u2014 CCDash Pr
 schema_version: 2
 doc_type: implementation_plan
 it_schema: 1
-status: approved
+status: completed
 created: 2026-07-29
-updated: '2026-07-29'
+updated: '2026-07-31'
 feature_slug: proof-to-routing-loop
 feature_version: v1
 tier: 2
@@ -26,9 +26,9 @@ risk_level: medium
 changelog_required: true
 intenttree_node: node_01KY69N7KW566PGJ51BMYRK5SN
 deferred_items_spec_refs:
-  - docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
-  - docs/project_plans/design-specs/routing-feedback-model-provider-namespacing.md
-  - docs/project_plans/design-specs/routing-feedback-window-decay-defaults.md
+- docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
+- docs/project_plans/design-specs/routing-feedback-model-provider-namespacing.md
+- docs/project_plans/design-specs/routing-feedback-window-decay-defaults.md
 findings_doc_ref: null
 related_documents:
 - docs/project_plans/exploration/proof-to-routing-loop/proof-to-routing-loop-feasibility-brief.md
@@ -72,7 +72,7 @@ milestone: null
 commit_refs: []
 pr_refs: []
 files_affected: []
-planning_maturity: scoped
+planning_maturity: shipped
 open_questions:
 - q: 'OQ-1: Is skill_name (bucketed via the pinned v1 mapping) an acceptable v1 task_class
     source?'
