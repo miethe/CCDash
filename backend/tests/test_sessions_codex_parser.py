@@ -381,6 +381,103 @@ class CodexSessionParserTests(unittest.TestCase):
         agent_artifacts = [artifact for artifact in session.linkedArtifacts if artifact.type == "agent"]
         self.assertTrue(any(artifact.title == "python-backend-engineer" for artifact in agent_artifacts))
 
+    def test_codex_session_effort_field_maps_to_effort_tier(self) -> None:
+        # Fixture reduced/redacted from a real ~/.codex/sessions/2026/08/02/
+        # rollout-*.jsonl turn_context record.
+        path = self._write_jsonl(
+            [
+                {
+                    "timestamp": "2026-08-02T04:05:07.900Z",
+                    "type": "turn_context",
+                    "payload": {
+                        "turn_id": "019fc0a5-8c83-70e1-9a3e-dc31fd1cbe4b",
+                        "cwd": "/tmp/ccdash/workspace",
+                        "model": "gpt-5.6-sol",
+                        "collaboration_mode": {
+                            "mode": "default",
+                            "settings": {
+                                "model": "gpt-5.6-sol",
+                                "reasoning_effort": "high",
+                                "developer_instructions": None,
+                            },
+                        },
+                        "effort": "high",
+                        "summary": "auto",
+                    },
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-08-02T04:05:08.000Z",
+                    "payload": {"type": "task_complete"},
+                },
+            ],
+            relative_path=".codex/sessions/2026/08/02/session-effort-present.jsonl",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.effortTier, "high")
+
+    def test_codex_session_falls_back_to_reasoning_effort_when_effort_absent(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "timestamp": "2026-08-02T04:05:07.900Z",
+                    "type": "turn_context",
+                    "payload": {
+                        "turn_id": "019fc0a5-8c83-70e1-9a3e-dc31fd1cbe4b",
+                        "model": "gpt-5.6-sol",
+                        "collaboration_mode": {
+                            "mode": "default",
+                            "settings": {
+                                "model": "gpt-5.6-sol",
+                                "reasoning_effort": "medium",
+                            },
+                        },
+                        "summary": "auto",
+                    },
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-08-02T04:05:08.000Z",
+                    "payload": {"type": "task_complete"},
+                },
+            ],
+            relative_path=".codex/sessions/2026/08/02/session-effort-fallback.jsonl",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.effortTier, "medium")
+
+    def test_codex_session_effort_absent_on_both_fields_yields_none(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "turn_context",
+                    "timestamp": "2026-03-05T09:00:00Z",
+                    "payload": {
+                        "type": "turn_context",
+                        "model": "gpt-5-codex",
+                        "cli_version": "0.9.3",
+                    },
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-03-05T09:00:01Z",
+                    "payload": {"type": "task_complete"},
+                },
+            ],
+            relative_path=".codex/sessions/2026/03/05/session-effort-absent.jsonl",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertIsNone(session.effortTier)
+
     def test_scan_sessions_supports_nested_codex_paths(self) -> None:
         path = self._write_jsonl(
             [
