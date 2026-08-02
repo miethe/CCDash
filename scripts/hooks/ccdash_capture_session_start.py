@@ -83,6 +83,54 @@ def _nullable_str(env: dict, key: str) -> Optional[str]:
     return stripped if stripped else None
 
 
+def _settings_effort_level(env: dict, project_dir: Optional[Path]) -> Optional[str]:
+    """Resolve a fallback ``effortTier`` from Claude Code settings files.
+
+    Checked in precedence order (first non-empty string wins):
+
+    1. ``<project_dir>/.claude/settings.local.json``
+    2. ``<project_dir>/.claude/settings.json``
+    3. ``$CLAUDE_CONFIG_DIR/settings.json`` if set and non-empty, else
+       ``~/.claude/settings.json``
+
+    Reads the top-level ``effortLevel`` key (written by the ``/effort`` slash
+    command). Any missing/unreadable/malformed file, or a non-string value,
+    is skipped (treated as absent) rather than raised — callers rely on this
+    to never fail the sidecar write.
+    """
+    candidates: list[Path] = []
+    if project_dir is not None:
+        candidates.append(project_dir / ".claude" / "settings.local.json")
+        candidates.append(project_dir / ".claude" / "settings.json")
+
+    config_dir = _nullable_str(env, "CLAUDE_CONFIG_DIR")
+    if config_dir:
+        candidates.append(Path(config_dir).expanduser() / "settings.json")
+    else:
+        candidates.append(Path.home() / ".claude" / "settings.json")
+
+    for candidate in candidates:
+        try:
+            if not candidate.is_file():
+                continue
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 — malformed/unreadable file → skip, not fatal
+            continue
+
+        if not isinstance(data, dict):
+            continue
+
+        value = data.get("effortLevel")
+        if not isinstance(value, str):
+            continue
+
+        stripped = value.strip()
+        if stripped:
+            return stripped
+
+    return None
+
+
 def _resolve_sidecar_path(
     session_id: str,
     transcript_path: Optional[str],
@@ -172,12 +220,33 @@ def write_capture_sidecar(
         except Exception:
             captured_at = None
 
+        # effortTier: explicit launcher env wins; otherwise fall back to the
+        # Claude Code settings.json `effortLevel` convention. Isolated in its
+        # own try/except so a bad settings file only nulls this one field —
+        # it must never take down launcher/profile/modelVariant.
+        effort_tier = _nullable_str(env, "CCDASH_LAUNCH_EFFORT")
+        if effort_tier is None:
+            try:
+                raw_cwd = payload.get("cwd")
+                project_dir = (
+                    Path(str(raw_cwd).strip()).expanduser()
+                    if raw_cwd and str(raw_cwd).strip()
+                    else Path.cwd()
+                )
+                effort_tier = _settings_effort_level(env, project_dir)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "ccdash_capture: settings effortLevel lookup failed (ignored): %s",
+                    exc,
+                )
+                effort_tier = None
+
         sidecar: dict[str, Any] = {
             "schemaVersion": _SCHEMA_VERSION,
             "sessionId": session_id,
             "launcher": _nullable_str(env, "CCDASH_LAUNCHER"),
             "profile": _nullable_str(env, "CCDASH_LAUNCH_PROFILE"),
-            "effortTier": _nullable_str(env, "CCDASH_LAUNCH_EFFORT"),
+            "effortTier": effort_tier,
             "modelVariant": _nullable_str(env, "CCDASH_LAUNCH_MODEL"),
             "capturedAt": captured_at,
         }

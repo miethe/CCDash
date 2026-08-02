@@ -24,7 +24,7 @@ The **launch-time capture sidecar** (`<session-id>.capture.json`) records metada
 | `sessionId` | string | **correlation key** | MUST equal JSONL stem; absent/mismatch ⇒ ignored |
 | `launcher` | string \| null | absent == `null` | Identity of launch path (e.g. `"ica-claude.sh"`); never defaulted |
 | `profile` | string \| null | absent == `null` | Deployment profile (e.g. `"ica-delegate"`); never defaulted |
-| `effortTier` | string \| null | absent == `null` | Effort/quality tier; never defaulted or inferred |
+| `effortTier` | string \| null | absent == `null` | Effort/quality tier; never defaulted. `CCDASH_LAUNCH_EFFORT` env wins; falls back to settings.json `effortLevel` — see "`effortTier` settings.json fallback" below |
 | `modelVariant` | string \| null | absent == `null` | Launch-time model (e.g. `"claude-opus-4-8[1m]"`); never defaulted |
 | `capturedAt` | string (ISO-8601 UTC) \| null | absent == `null` | Hook write time; advisory only, not used for correlation |
 
@@ -141,10 +141,25 @@ These are real, permanent characteristics of the design — not open bugs to fix
 
 1. **Re-sync mtime gate.** `backend/db/sync_engine.py:4967-4973` short-circuits before reparse when a JSONL's mtime matches the cached value from the last sync. Writing a capture sidecar does not touch the JSONL's own mtime, so a sidecar that appears *after* a session was already ingested is invisible to ordinary incremental sync — only a forced re-sync (reparse via `parse_session_file` then delete/reinsert, `sync_engine.py:4985-5001`) picks it up. This does **not** affect newly-launched sessions: the hook writes the sidecar at `SessionStart`, before the JSONL is written, so the first sync of that session already sees it.
 2. **Fallback-path mismatch.** When the hook's stdin payload carries no `transcript_path`, the writer falls back to `<cwd>/data/capture/<session_id>.capture.json` (`scripts/hooks/ccdash_capture_session_start.py::_resolve_sidecar_path`), while the parser's fallback probe looks under `<jsonl_parent>/../data/capture/<raw_session_id>.capture.json` (`backend/parsers/platforms/claude_code/parser.py:865-866`). These two paths generally do not coincide, so a launch without `transcript_path` can silently produce an unfindable sidecar. In practice Claude Code always supplies `transcript_path` (confirmed empirically — every capture sidecar produced during activation landed co-located), so this is a latent risk, not an active one.
-3. **`effortTier` is not capturable at launch on the subscription lane.** Effort is a per-session setting (e.g. `/effort`), not something present in the launch environment, so it stays `null` there. Contract state, not a defect.
+3. **`effortTier` is not capturable at launch on the subscription lane — partially superseded, see "`effortTier` settings.json fallback" below.** `CCDASH_LAUNCH_EFFORT` is still not exported by any launcher, so a *launch-time* effort tier is never directly observed. The fallback below closes most of the gap by reading the `/effort` slash command's persisted value instead, but it is a **snapshot at `SessionStart`, not a live launch signal** — see the staleness caveat.
 4. **`modelVariant` is the requested launch model, not the effective one.** A mid-session `--fallback-model` hop or a `/model` switch is never reflected retroactively — best-effort by design, captured once at `SessionStart`.
 5. **Subagent sessions carry `null` capture fields by contract.** `backend/parsers/platforms/claude_code/parser.py:849-850`: `if is_subagent or not raw_session_id: return _null`. The `SessionStart` hook only fires for root (interactive) sessions; family-root propagation is out of scope.
 6. **Backfill horizon — permanent, not queued.** The ~17,292 pre-activation rows can never be enriched, for two independent reasons: the launch environment that would have populated a sidecar is unrecoverable (no sidecar was ever written, and none can be reconstructed after the fact), and Limitation 1 means even a manufactured sidecar would still need a forced re-sync to be picked up. Treat this as a permanent known horizon in any historical analytics, not a backlog item.
+
+### `effortTier` settings.json fallback
+
+`CCDASH_LAUNCH_EFFORT` is exported by no known launcher. As a fallback, the hook also reads the top-level `effortLevel` key that the `/effort` slash command persists to Claude Code settings files. Resolution is first-non-empty-string-wins:
+
+1. `CCDASH_LAUNCH_EFFORT` env var — explicit launcher intent, always highest priority.
+2. `effortLevel` from settings files, checked in this order:
+   a. `<project>/.claude/settings.local.json`
+   b. `<project>/.claude/settings.json`
+   c. `$CLAUDE_CONFIG_DIR/settings.json` if `CLAUDE_CONFIG_DIR` is set and non-empty, else `~/.claude/settings.json`
+3. `null` — no defaulting, no allowlist. Any non-empty stripped string (including a future tier name) passes through as-is; a non-string, empty, or whitespace-only value is treated as absent.
+
+`<project>` is the SessionStart payload's `cwd` field when present, else the hook process's working directory. Each candidate file in the precedence chain above is independent: a missing, unreadable, or malformed candidate (or one with no usable `effortLevel`) is skipped, and resolution continues to the next-lower-precedence candidate — so, for example, a malformed project-local `settings.json` plus a valid user-level `settings.json` still yields the user tier, not `null`. `effortTier` resolves to `null` only when every candidate in the chain is exhausted without producing a non-empty string. Separately, this whole settings lookup runs inside its own isolated failure path: however it fails, it only nulls `effortTier` — `launcher`, `profile`, and `modelVariant` are written from the env vars regardless. Implementation: `_settings_effort_level()` in `scripts/hooks/ccdash_capture_session_start.py`.
+
+**Staleness caveat:** `effortLevel` is whatever `/effort` last set for that settings scope — it reflects the last time the user (or a config sync) changed the tier, not necessarily the tier in effect for *this* session if it was changed mid-session or the settings file predates the session by a long margin. Treat it as "the tier this launch environment was configured for," not a verified live value. Limitation 3 above (no direct launch-time effort signal) still holds in spirit — this fallback is a best-effort proxy, not a fix for the underlying gap.
 
 ## For Subagents
 

@@ -347,14 +347,20 @@ class WriterParserPrimaryPathContractTests(unittest.TestCase):
         d = self._tmpdir()
         jsonl_path = _write_jsonl(d, _SESSION_ID, [_MINIMAL_JSONL_ENTRY])
 
+        # Isolate the effortTier settings.json fallback from the real
+        # ~/.claude/settings.json on the machine running this test — this
+        # test asserts effortTier stays null when CCDASH_LAUNCH_EFFORT is
+        # empty, which only holds if no settings.json effortLevel is found.
+        empty_config_dir = self._tmpdir()
         env = {
             "CCDASH_LAUNCHER": "subscription",
             "CCDASH_LAUNCH_PROFILE": "",
             "CCDASH_LAUNCH_EFFORT": "",
             "CCDASH_LAUNCH_MODEL": "",
+            "CLAUDE_CONFIG_DIR": str(empty_config_dir),
         }
         write_capture_sidecar(
-            {"session_id": _SESSION_ID, "transcript_path": str(jsonl_path)},
+            {"session_id": _SESSION_ID, "transcript_path": str(jsonl_path), "cwd": str(d)},
             env,
         )
 

@@ -59,6 +59,43 @@ def _make_payload(session_id: str, transcript_path: str | None = None) -> dict:
     return p
 
 
+@pytest.fixture(autouse=True)
+def _isolate_settings_lookup(
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Isolate the `effortLevel` settings fallback from real machine state.
+
+    Without this, `_settings_effort_level` falls through to the real
+    `~/.claude/settings.json` on the machine running the tests (which may
+    carry a real `effortLevel`), silently breaking any test asserting
+    `effortTier is None`. Applied to every test in this module — including
+    the ones written before this fallback existed.
+
+    Isolated dirs are allocated OUTSIDE the per-test `tmp_path` (via
+    `tmp_path_factory`) so they don't show up in assertions like
+    ``list(tmp_path.iterdir()) == []``.
+
+    Covers both lookup paths: `Path.home()` is stubbed directly (for tests
+    that pass a literal env dict with no `CLAUDE_CONFIG_DIR` key), and
+    `CLAUDE_CONFIG_DIR` is also exported into `os.environ` (for tests that
+    pass `dict(os.environ)`). `Path.cwd()` is pinned to `tmp_path` so the
+    project-settings probe (`.claude/settings.local.json` / `.claude/settings.json`)
+    never sees this repo's own `.claude/` directory.
+
+    Returns the isolated home dir so tests can write a conflicting
+    `<home>/.claude/settings.json` into it to prove precedence/exclusion
+    behavior (see AC4 exclusion/positive tests below).
+    """
+    isolated_home = tmp_path_factory.mktemp("isolated_home")
+    isolated_config_dir = tmp_path_factory.mktemp("isolated_claude_config")
+    monkeypatch.setattr(_mod.Path, "home", staticmethod(lambda: isolated_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(isolated_config_dir))
+    monkeypatch.chdir(tmp_path)
+    return isolated_home
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -243,6 +280,276 @@ class TestWriteCaptureSidecar:
         sidecar = tmp_path / f"{_ICA_SESSION_ID}.capture.json"
         data = json.loads(sidecar.read_text())
         assert data["profile"] == "second-write"
+
+
+class TestSettingsEffortLevelFallback:
+    """AC1-AC10: `effortLevel` settings.json fallback for `effortTier`."""
+
+    def _write_json(self, path: Path, data: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_ac1_env_var_wins_over_settings(self, tmp_path: Path) -> None:
+        """CCDASH_LAUNCH_EFFORT set + settings has effortLevel → env wins."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        project_dir = tmp_path / "project"
+        self._write_json(
+            project_dir / ".claude" / "settings.json", {"effortLevel": "low"}
+        )
+
+        result = write_capture_sidecar(
+            {**_make_payload(_ICA_SESSION_ID, str(jsonl)), "cwd": str(project_dir)},
+            {"CCDASH_LAUNCH_EFFORT": "high"},
+        )
+        data = json.loads(result.read_text())
+        assert data["effortTier"] == "high"
+
+    def test_ac2_user_settings_used_when_env_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No env var + user settings.json has effortLevel → used."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+        self._write_json(config_dir / "settings.json", {"effortLevel": "medium"})
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            dict(os.environ),
+        )
+        data = json.loads(result.read_text())
+        assert data["effortTier"] == "medium"
+
+    def test_ac3_precedence_local_over_project_over_user(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """settings.local.json > settings.json (project) > user settings.json."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        project_dir = tmp_path / "project"
+        config_dir = tmp_path / "user_config"
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+        # Hop 1: only user settings.json → user value wins
+        self._write_json(config_dir / "settings.json", {"effortLevel": "user-tier"})
+        result = write_capture_sidecar(
+            {**_make_payload(_ICA_SESSION_ID, str(jsonl)), "cwd": str(project_dir)},
+            dict(os.environ),
+        )
+        assert json.loads(result.read_text())["effortTier"] == "user-tier"
+
+        # Hop 2: add project settings.json → project value wins over user
+        self._write_json(
+            project_dir / ".claude" / "settings.json", {"effortLevel": "project-tier"}
+        )
+        result = write_capture_sidecar(
+            {**_make_payload(_ICA_SESSION_ID, str(jsonl)), "cwd": str(project_dir)},
+            dict(os.environ),
+        )
+        assert json.loads(result.read_text())["effortTier"] == "project-tier"
+
+        # Hop 3: add project settings.local.json → local value wins over project
+        self._write_json(
+            project_dir / ".claude" / "settings.local.json",
+            {"effortLevel": "local-tier"},
+        )
+        result = write_capture_sidecar(
+            {**_make_payload(_ICA_SESSION_ID, str(jsonl)), "cwd": str(project_dir)},
+            dict(os.environ),
+        )
+        assert json.loads(result.read_text())["effortTier"] == "local-tier"
+
+    def test_ac4_claude_config_dir_overrides_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLAUDE_CONFIG_DIR set → user settings read from there, not ~/.claude."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        custom_config_dir = tmp_path / "custom_config"
+        self._write_json(
+            custom_config_dir / "settings.json", {"effortLevel": "custom-dir-tier"}
+        )
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(custom_config_dir))
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            dict(os.environ),
+        )
+        assert json.loads(result.read_text())["effortTier"] == "custom-dir-tier"
+
+    def test_ac4b_claude_config_dir_set_excludes_home_settings(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        _isolate_settings_lookup: Path,
+    ) -> None:
+        """CLAUDE_CONFIG_DIR set → ~/.claude/settings.json is NEVER consulted,
+        even when it holds a conflicting effortLevel value.
+
+        Proves exclusion (not just "a custom dir also works"): a regression
+        that checked both CLAUDE_CONFIG_DIR and home would leak the home
+        value here and fail this assertion.
+        """
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+
+        isolated_home = _isolate_settings_lookup
+        self._write_json(
+            isolated_home / ".claude" / "settings.json",
+            {"effortLevel": "HOME_SHOULD_BE_IGNORED"},
+        )
+
+        # CLAUDE_CONFIG_DIR points at a dir whose settings.json is absent.
+        empty_config_dir = tmp_path / "empty_config_dir_no_settings"
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(empty_config_dir))
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            dict(os.environ),
+        )
+        assert result is not None
+        assert json.loads(result.read_text())["effortTier"] is None
+
+    def test_ac4c_home_settings_used_when_config_dir_key_absent_from_env(
+        self,
+        tmp_path: Path,
+        _isolate_settings_lookup: Path,
+    ) -> None:
+        """No CLAUDE_CONFIG_DIR key in the passed env dict → falls back to
+        the plain `Path.home() / ".claude" / "settings.json"` branch.
+
+        Restores coverage of that branch, which the autouse isolation
+        fixture otherwise removes entirely (every other test either sets
+        CLAUDE_CONFIG_DIR explicitly or passes an env dict lacking it only
+        incidentally).
+        """
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+
+        isolated_home = _isolate_settings_lookup
+        self._write_json(
+            isolated_home / ".claude" / "settings.json",
+            {"effortLevel": "home-tier"},
+        )
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            {},  # no CLAUDE_CONFIG_DIR key at all
+        )
+        assert result is not None
+        assert json.loads(result.read_text())["effortTier"] == "home-tier"
+
+    def test_ac5_malformed_settings_nulls_only_effort_tier(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Malformed settings JSON → effortTier None, other fields still written."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+        config_dir.mkdir()
+        (config_dir / "settings.json").write_text("{not json", encoding="utf-8")
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            {
+                "CCDASH_LAUNCHER": "ica-claude.sh",
+                "CCDASH_LAUNCH_PROFILE": "ica-delegate",
+                "CCDASH_LAUNCH_MODEL": "claude-opus-4-8[1m]",
+                "CLAUDE_CONFIG_DIR": str(config_dir),
+            },
+        )
+        assert result is not None
+        data = json.loads(result.read_text())
+        assert data["effortTier"] is None
+        assert data["launcher"] == "ica-claude.sh"
+        assert data["profile"] == "ica-delegate"
+        assert data["modelVariant"] == "claude-opus-4-8[1m]"
+
+    def test_ac6_no_settings_files_effort_tier_none(self, tmp_path: Path) -> None:
+        """No settings files at all → effortTier None."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            dict(os.environ),
+        )
+        assert json.loads(result.read_text())["effortTier"] is None
+
+    @pytest.mark.parametrize("raw_value", ["", "   "])
+    def test_ac7_empty_or_whitespace_effort_level_is_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw_value: str
+    ) -> None:
+        """effortLevel of "" or "   " → None, never passed through."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+        self._write_json(config_dir / "settings.json", {"effortLevel": raw_value})
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            dict(os.environ),
+        )
+        assert json.loads(result.read_text())["effortTier"] is None
+
+    def test_ac8_unknown_tier_value_passes_through(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """effortLevel: "ultra" (not in any fixed allowlist) → passes through."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+        self._write_json(config_dir / "settings.json", {"effortLevel": "ultra"})
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            dict(os.environ),
+        )
+        assert json.loads(result.read_text())["effortTier"] == "ultra"
+
+    @pytest.mark.parametrize("raw_value", [123, {"a": 1}, None, True, [], ["high"]])
+    def test_ac9_non_string_effort_level_is_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw_value
+    ) -> None:
+        """Non-string effortLevel (int/dict/null/bool/list) → None."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+        self._write_json(config_dir / "settings.json", {"effortLevel": raw_value})
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            dict(os.environ),
+        )
+        assert json.loads(result.read_text())["effortTier"] is None
+
+    def test_ac10_sidecar_still_has_exactly_seven_keys_in_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Adding the fallback must not change the pinned sidecar key set OR
+        their order — a set comparison would miss a reordering regression."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+        self._write_json(config_dir / "settings.json", {"effortLevel": "medium"})
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+        result = write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            dict(os.environ),
+        )
+        data = json.loads(result.read_text())
+        assert list(data.keys()) == [
+            "schemaVersion", "sessionId", "launcher", "profile",
+            "effortTier", "modelVariant", "capturedAt",
+        ]
+        assert data["schemaVersion"] == 1
 
 
 class TestMainEntrypoint:
