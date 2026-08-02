@@ -32,6 +32,51 @@ schema_version: 2
 
 # Design Spec: Routing Feedback Router Merge Handoff (DI-1)
 
+## 0. Blocking Precondition — the v1 Envelope Carries No Outcome Signal
+
+> **Added 2026-08-01.** Read this before scheduling any router-side work. It changes what DI-1's
+> next actionable step *is*.
+
+The merge algorithm in §2 consumes `success_rate`, `cost_index`, and `regression_rate`. In the
+shipped v1 producer, **all three are null-or-constant for every row, by deliberate design**
+(`backend/application/services/agent_queries/routing_rollup.py`):
+
+| Field | v1 emitted value | Why (producer's own rationale) |
+|-------|------------------|--------------------------------|
+| `success_rate` | `None`, always | `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
+| `regression_rate` | `None`, always | Same — no genuine regression signal available to that module. |
+| `cost_index` | `1.0`, fixed (`_COST_INDEX_BASELINE`) | Per-key cost normalization is "a real design surface of its own," deliberately not gold-plated into a provisional payload. |
+| `sample_count` | real | — |
+| `confidence` | real — `n/(n+5)` | — |
+| `eligible_for_adjustment` | real | — |
+
+Running the ratified algorithm (§2.2) against those actual values, for every row:
+
+```
+penalty_for_failure    = 0.0        # success_rate None → neutral
+penalty_for_cost       = max(1.0 - 1.0, 0.0) = 0.0
+penalty_for_regression = 0.0        # regression_rate None → neutral
+combined_signal        = 0.0
+score_delta            = max(-0.0, -0.15) = 0.0   → NEUTRAL
+```
+
+**Every row, every model, every window resolves to NEUTRAL.** A router merge built against v1
+would be a correct, well-tested, permanently inert no-op machine. Enabling
+`live_consumption` would not make the feedback loop live; it would make it *silently* dead —
+strictly worse than the current honest `live_consumption_disabled`.
+
+**Consequence for sequencing.** DI-1 (router merge) is **not** the next actionable item. The
+blocking work is a CCDash producer increment that emits a real outcome signal. The signal source
+exists and is populated: `effectiveness_rollups` (14,561 rows on the node Postgres) carries
+`successScore`, `riskScore`, `qualityScore`, `efficiencyScore`, `sampleSize`, and per-model cost
+attribution. Its scope grain (`stack` / `agent`) does not match this envelope's
+`(source_skill_name × model)` grain, so the join is genuine design work — tracked as **DI-4**
+(see §5.4).
+
+Do not schedule DI-1 before DI-4 lands.
+
+---
+
 ## Deferral Rationale
 
 **Status**: `live_consumption_disabled` — The delegation-router's routing-adjustment logic
@@ -70,6 +115,27 @@ full access patterns and envelope structure.
 This section documents the **proposed** merge algorithm for router-side consumption. It is NOT
 implemented in CCDash Phase 1–6 and is provided for planning purposes only.
 
+> **Corrected 2026-08-01 (two defects in the original candidate).** The pseudocode below is the
+> ratified form; both fixes are load-bearing.
+>
+> 1. **Sign inversion.** The original computed `recommended_score_delta = max(combined_signal, cap)`.
+>    Because every `penalty_*` term is *positive* for a bad model, `combined_signal` is positive for
+>    a bad model, so the downweight trigger (`delta < -0.01`) could never fire. As written, a failing
+>    model was **never** downweighted — the only rows that ever adjusted were cheap *successful*
+>    ones, via the then-unclamped negative cost term. Fixed by negating: `max(-combined_signal, cap)`.
+> 2. **Cost bonus removed.** `penalty_for_cost` is now clamped at `0.0`, so a cheaper-than-baseline
+>    model can no longer offset its own failure rate. The surface is strictly a downweight signal,
+>    which is what "bounded-adjustment" is meant to mean.
+>
+> The original §2.3 numeric defaults (`confidence_threshold 0.7`, `max_adjustment_cap −0.15`,
+> weights `0.5 / 0.3 / 0.2`) are **ratified unchanged** — the defects were in the sign convention
+> and the cost clamp, not the parameter values. Verified against the extreme case
+> (`success_rate 0.20`, `cost_index 2.0`, `regression_rate 0.50`): `combined_signal = 0.750`,
+> `score_delta = −0.150` — the cap binds correctly.
+>
+> The Appendix example's `score_delta: -0.10` was hand-written and does not reproduce under either
+> the original or the corrected algorithm; it has been regenerated (see Appendix).
+
 ### 2.1 Metric Inputs (from CCDash)
 
 **Per `(source_skill_name × model)` key:**
@@ -106,15 +172,17 @@ for each RoutingFeedbackKeyDTO row from CCDash:
 
   2. Derive adjustment signals:
      - penalty_for_failure = 1.0 - success_rate              // range [0.0, 1.0]
-     - penalty_for_cost = cost_index - 1.0                  // range [-1.0, ∞]
+     - penalty_for_cost = max(cost_index - 1.0, 0.0)        // clamped: cheapness earns no bonus
      - penalty_for_regression = regression_rate * 0.5       // regression carries half weight
      - combined_signal = (penalty_for_failure * 0.5) +
                         (penalty_for_cost * 0.3) +
                         (penalty_for_regression * 0.2)      // weights: sum = 1.0
+                                                            // combined_signal >= 0 always;
+                                                            // larger = worse
 
   3. Apply bounded adjustment:
      - max_adjustment_cap = -0.15                           // never downweight >15%
-     - recommended_score_delta = max(combined_signal, max_adjustment_cap)
+     - recommended_score_delta = max(-combined_signal, max_adjustment_cap)   // NOTE the negation
      - if recommended_score_delta < -0.01: RECOMMEND DOWNWEIGHT by delta
      - else: NEUTRAL (no adjustment signal from this row)
 
@@ -266,6 +334,34 @@ shipping with `live_consumption_disabled` (default-off).
 4. **Stage in pre-production** with real sessions; validate signal correctness
 5. **Update router's consumer contract doc** to reference this spec and DI-2 (model namespacing) and DI-3 (window/decay defaults)
 
+### 5.4 DI-4 — Producer Outcome Metrics v1.1 (BLOCKS DI-1)
+
+**Added 2026-08-01. Owner: CCDash. This is the actual next actionable item.**
+
+Per §0, DI-1 cannot produce a non-neutral adjustment until the envelope carries a real outcome
+signal. DI-4 is that increment:
+
+- **Populate `success_rate`** from a genuine outcome signal rather than `sessions.status`.
+- **Populate `regression_rate`** likewise.
+- **Derive a real `cost_index`** — a per-key cost normalization against a cross-key baseline,
+  replacing the fixed `_COST_INDEX_BASELINE = 1.0`.
+
+**Signal source (verified present, not speculative)**: the `effectiveness_rollups` table —
+14,561 rows on the node Postgres as of 2026-08-01 — whose `metrics_json` carries `successScore`,
+`riskScore`, `qualityScore`, `efficiencyScore`, `sampleSize`, `attributionCoverage`, and
+per-model attributed cost. Companion table: `session_stack_observations`.
+
+**The real design work** is grain reconciliation. `effectiveness_rollups.scope_type` is
+`stack` / `agent` and its `scopeLabel` encodes an agent/skill/context tuple; this envelope's grain
+is `(source_skill_name × model)`. Mapping one onto the other — and deciding what to emit when a
+key has rollup coverage for the skill but not the model, or vice versa — is the substance of the
+increment, not an afterthought. `attributionCoverage: 0.0` appears in sampled rows, so coverage
+must be treated as a first-class contract state (emit `null`, never a fabricated zero — the same
+principle that made v1 emit `null` in the first place).
+
+**Versioning**: additive per D5. A v1.1 envelope that populates previously-`null` fields is
+forward-compatible with any consumer that already tolerates `null`.
+
 ### 5.3 CCDash Owner's Next Steps (If Promoted)
 
 1. **Track router's merge spec** as it stabilizes in MeatySkills/ibm-main
@@ -286,7 +382,7 @@ shipping with `live_consumption_disabled` (default-off).
   "task_class": "ai:model-selection:multi-choice",
   "model": "claude-haiku-4-5",
   "provider": "anthropic",
-  "score_delta": -0.10,
+  "score_delta": -0.15,
   "evidence": {
     "success_rate": 0.62,
     "cost_index": 0.50,
@@ -299,9 +395,24 @@ shipping with `live_consumption_disabled` (default-off).
 }
 ```
 
-**Interpretation**: Haiku's success rate on this task is 62% (vs ~80% for other models), but cost
-is very low (0.50x baseline). Router applies the merge algorithm, computes a −10% downweight to
-Haiku's score for this task, and emits the RoutingRecord for auditing.
+**Interpretation**: Haiku's success rate on this task is 62% (vs ~80% for other models). Cost is
+very low (0.50× baseline), but under the ratified algorithm cheapness earns no offset —
+`penalty_for_cost` clamps to `0.0`. The merge computes:
+
+```
+penalty_for_failure    = 1.0 - 0.62          = 0.380
+penalty_for_cost       = max(0.50 - 1.0, 0)  = 0.000
+penalty_for_regression = 0.15 * 0.5          = 0.075
+combined_signal        = 0.380*0.5 + 0.000*0.3 + 0.075*0.2 = 0.205
+score_delta            = max(-0.205, -0.15)  = -0.150      ← cap binds
+```
+
+Router applies the −15% cap to Haiku's score for this task and emits the RoutingRecord for
+auditing. (Under the *original* uncorrected pseudocode these same inputs produced `+0.055 →
+NEUTRAL` — no adjustment at all. That discrepancy is what surfaced the sign defect.)
+
+> **Reminder**: this example uses illustrative non-null metrics. The shipped v1 producer emits
+> `success_rate: null`, `regression_rate: null`, `cost_index: 1.0` for every row — see §0.
 
 ---
 

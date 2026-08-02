@@ -1218,6 +1218,25 @@ def _canonical_feature_slug(raw_slug: str) -> str:
 # (T5-003), not by mutating the slug.
 _MODEL_VARIANT_SUFFIX_PATTERN = re.compile(r"\s*\[[^\]]*\]\s*$")
 
+# Harness-generated sentinel model values (e.g. ``<synthetic>``) never came from
+# a real model response.
+_HARNESS_SENTINEL_MODEL_PATTERN = re.compile(r"^<.+>$")
+
+
+def _is_harness_sentinel_model(raw_model: str | None) -> bool:
+    """True when a raw ``message.model`` value is a harness sentinel, not a model.
+
+    Claude Code writes ``"model": "<synthetic>"`` on assistant entries it
+    generates itself (API-error notices, interrupts) -- zero-token entries whose
+    content is an error string, never a model response. Such a value must never
+    seat as a session's model: detection is first-wins, so one synthetic entry at
+    the head of a transcript would otherwise brand the entire session
+    ``<synthetic>``. Matches the angle-bracket placeholder shape generally so a
+    future harness sentinel is inert on arrival.
+    """
+    slug = (raw_model or "").strip()
+    return bool(slug) and bool(_HARNESS_SENTINEL_MODEL_PATTERN.match(slug))
+
 
 def _canonical_model_slug(raw_model: str) -> str:
     """Normalize a raw model id into a stable canonical *bare* slug.
@@ -2875,7 +2894,13 @@ def parse_session_file(path: Path) -> AgentSession | None:
         if isinstance(message, dict) and speaker == "agent":
             assistant_message_count += 1
             msg_model = message.get("model")
-            if isinstance(msg_model, str) and msg_model.strip():
+            # Harness sentinels (e.g. "<synthetic>") never seat as a message model
+            # or the session model -- see _is_harness_sentinel_model.
+            if (
+                isinstance(msg_model, str)
+                and msg_model.strip()
+                and not _is_harness_sentinel_model(msg_model)
+            ):
                 current_message_model = msg_model.strip()
                 if not model:
                     model = current_message_model

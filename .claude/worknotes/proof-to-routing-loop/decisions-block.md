@@ -69,6 +69,50 @@ nonetheless made before Phase 5 was marked complete:
 - **Response**: pending as of this phase's completion — no reply yet. Non-blocking per D9's own
   rationale; this is the documented attempt, not a resolution.
 
+### D9 Resolution (2026-08-01) — self-ratified, status `attempted (informal)` → `locked`
+
+The GitHub issue never received a reply because the "router owner" and the producer owner are the
+**same operator**; `github.com/miethe/MeatySkills` is a self-owned repo and the issue was a
+formality addressed to itself. D9 was therefore resolvable in-session and is now closed by
+ratification rather than by awaiting an external response.
+
+**Ratified merge parameters** (the §2.3 candidates, unchanged): `confidence_threshold = 0.7`,
+`max_adjustment_cap = -0.15`, `weight_failure = 0.5`, `weight_cost = 0.3`,
+`weight_regression = 0.2`, `regression_half_weight = 0.5`.
+
+**Two defects corrected in the candidate algorithm** (both in
+`design-specs/routing-feedback-router-merge-handoff.md` §2.2, not in shipped CCDash code):
+
+1. **Sign inversion.** `recommended_score_delta = max(combined_signal, cap)` could never fire the
+   downweight trigger (`delta < -0.01`), because `combined_signal` is *positive* for a bad model.
+   A failing model was never downweighted; only cheap *successful* models adjusted, via the
+   unclamped negative cost term. Now `max(-combined_signal, cap)`.
+2. **Cost bonus removed.** `penalty_for_cost` clamps at `0.0`, so cheapness cannot offset failure.
+
+The spec's own Appendix example (`score_delta: -0.10`) reproduced under neither the original nor
+the corrected math and has been regenerated (correct value: `-0.150`, cap-bound).
+
+**The decisive finding, recorded here because it re-sequences the whole loop**: answering D9's own
+question #1 ("does `success_rate`/`regression_rate` always being `None` in v1 block the
+guardrails?") — **yes, completely.** With `success_rate: null`, `regression_rate: null`, and
+`cost_index: 1.0` fixed, the ratified algorithm yields `combined_signal = 0.0` and
+`score_delta = 0.0` → NEUTRAL for **every row, every model, every window**. A router merge built
+against v1 would be a permanently inert no-op; flipping `live_consumption` would make the loop
+*silently* dead rather than honestly disabled.
+
+**Consequence**: DI-1 (router merge) is **not** the next actionable item and must not be
+scheduled first. It is blocked by new item **DI-4 — Producer Outcome Metrics v1.1** (CCDash-owned;
+see handoff spec §0 and §5.4), which populates the outcome fields from `effectiveness_rollups`
+(14,561 rows, verified populated) and derives a real per-key `cost_index`.
+
+| Decision | Ratified | Status |
+|----------|----------|--------|
+| D9 (socialization) | Self-ratified — router owner == producer owner | locked |
+| D9a (merge params) | 0.7 / −0.15 / 0.5·0.3·0.2 / half-weight 0.5 | locked |
+| D9b (sign convention) | `delta = max(-combined_signal, cap)` | locked |
+| D9c (cost clamp) | `penalty_for_cost = max(cost_index - 1.0, 0.0)` | locked |
+| D9d (sequencing) | DI-4 blocks DI-1 | locked |
+
 ---
 
 ## 1. Phase Boundaries

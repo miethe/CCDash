@@ -44,6 +44,10 @@ decay blend, `RoutingRecord` provenance) lands in MeatySkills/`ibm-main` — cur
 `live_consumption_disabled`. Nothing in this document claims routing improves automatically;
 it claims only that CCDash's evidence becomes consumable.
 
+**Mapping history**: v1.0.0 (17 rules, initial) → v1.1.0 (36 rules; added 19 observed-but-unmapped
+skill names so the coverage report distinguishes "known and deliberately unroutable" from
+"never seen").
+
 ---
 
 ## Capability Discovery
@@ -112,8 +116,8 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
     "taxonomy_version": "1.0.0",
     "taxonomy_digest": "sha256:d96a0819b0a3a42d14eccc1421d3146b8364253d975d9d54f4f264d4b6adeaca",
     "mapping_id": "ccdash.skill_name_to_aos.routing.task_class",
-    "mapping_version": "1.0.0",
-    "mapping_digest": "sha256:45a49bb1a6194c6a576160edab7c3212a9cc20e17e6a0b79d531c1c4928f63f5",
+    "mapping_version": "1.1.0",
+    "mapping_digest": "sha256:3935a9805c9197564af645311018e7fc61aabe10a6a82098920e32329066c855",
     "mapped_count": 767,
     "unclassified_count": 13632,
     "distinct_unmapped_skill_names": ["skill-x", "skill-y"],
@@ -126,8 +130,8 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
         "taxonomy_version": "1.0.0",
         "taxonomy_digest": "sha256:d96a0819b0a3a42d14eccc1421d3146b8364253d975d9d54f4f264d4b6adeaca",
         "mapping_id": "ccdash.skill_name_to_aos.routing.task_class",
-        "mapping_version": "1.0.0",
-        "mapping_digest": "sha256:45a49bb1a6194c6a576160edab7c3212a9cc20e17e6a0b79d531c1c4928f63f5",
+        "mapping_version": "1.1.0",
+        "mapping_digest": "sha256:3935a9805c9197564af645311018e7fc61aabe10a6a82098920e32329066c855",
         "source_skill_name": "dev-execution",
         "task_class": "implementation",
         "model": "claude-sonnet-5",
@@ -159,7 +163,7 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
 | `taxonomy_version` | string | The version of the task-class taxonomy (`"1.0.0"`). |
 | `taxonomy_digest` | string | SHA-256 hash of the canonical taxonomy file. Consumer may re-verify if desired. |
 | `mapping_id` | string | Always `"ccdash.skill_name_to_aos.routing.task_class"`. Identifies this feature's skill→task_class mapping. |
-| `mapping_version` | string | The version of the mapping (`"1.0.0"`). |
+| `mapping_version` | string | The version of the mapping (`"1.1.0"`). |
 | `mapping_digest` | string | SHA-256 hash of the vendored mapping file. **Seam safety**: must match the contract's pinned digest on every response. |
 | `source_skill_name` | string | The raw `skill_name` as captured from the session. **Critical for router's `validateFeedbackJoin()`**: the router re-validates this field's mapping independently; never rely on the derived `task_class` alone. |
 | `task_class` | string | The normalized task-class label derived by applying the pinned mapping to `source_skill_name`. Possible values: `implementation`, `planning`, `testing`, `documentation`, `refactoring`, `debugging`, `orchestration` (protected), `mode_d` (protected), `_unclassified` (coverage). |
@@ -207,8 +211,8 @@ When `CCDASH_ROUTING_FEEDBACK_ENABLED=false`, the response is deterministic acro
     "taxonomy_version": "1.0.0",
     "taxonomy_digest": "sha256:d96a0819b0a3a42d14eccc1421d3146b8364253d975d9d54f4f264d4b6adeaca",
     "mapping_id": "ccdash.skill_name_to_aos.routing.task_class",
-    "mapping_version": "1.0.0",
-    "mapping_digest": "sha256:45a49bb1a6194c6a576160edab7c3212a9cc20e17e6a0b79d531c1c4928f63f5",
+    "mapping_version": "1.1.0",
+    "mapping_digest": "sha256:3935a9805c9197564af645311018e7fc61aabe10a6a82098920e32329066c855",
     "mapped_count": 0,
     "unclassified_count": 0,
     "distinct_unmapped_skill_names": [],
@@ -397,7 +401,7 @@ CCDash has no visibility into steps 4–5; the loop closes only when the router 
 ### What CCDash Guarantees (Verifiable)
 
 - **Mapping fidelity**: Every `task_class` is derived only through the pinned `aos.routing.feedback`
-  v1.0.0 mapping; never a raw `skill_name` string. Digest parity is CI-enforced on every build.
+  v1.1.0 mapping; never a raw `skill_name` string. Digest parity is CI-enforced on every build.
 - **Envelope completeness**: All 11 pinned envelope fields appear on every enabled response.
   Version/digest fields are present even when disabled.
 - **No `_unclassified` in routing keys**: Unmapped skill names never appear as addressable

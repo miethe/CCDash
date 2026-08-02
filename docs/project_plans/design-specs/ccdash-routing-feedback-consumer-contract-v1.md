@@ -32,7 +32,7 @@ description: |
 
 **Transport**: PULL (consumers query CCDash; CCDash never pushes or dispatches work)
 
-**Canonical Source**: CCDash's REST/MCP/CLI surfaces expose the `routing_feedback_rollup` schema verbatim, vendored against the pinned `aos.routing.feedback` v1.0.0 contract and the exact `ccdash.skill_name_to_aos.routing.task_class` v1.0.0 mapping.
+**Canonical Source**: CCDash's REST/MCP/CLI surfaces expose the `routing_feedback_rollup` schema verbatim, vendored against the pinned `aos.routing.feedback` v1.0.0 contract and the exact `ccdash.skill_name_to_aos.routing.task_class` v1.1.0 mapping.
 
 **Consumer Responsibility**: MeatySkills/delegation-router owns all routing adjustment math, bounded-cap enforcement, minimum-sample re-gating, decay blending, empirical scoring, and RoutingRecord provenance. CCDash produces evidence only.
 
@@ -69,8 +69,8 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
     "taxonomy_version": string,         // "1.0.0"
     "taxonomy_digest": string,          // "sha256:..."
     "mapping_id": string,               // "ccdash.skill_name_to_aos.routing.task_class"
-    "mapping_version": string,          // "1.0.0"
-    "mapping_digest": string,           // "sha256:45a49bb1a6194c6a576160edab7c3212a9cc20e17e6a0b79d531c1c4928f63f5"
+    "mapping_version": string,          // "1.1.0"
+    "mapping_digest": string,           // "sha256:3935a9805c9197564af645311018e7fc61aabe10a6a82098920e32329066c855"
     "mapped_count": number,             // count of rows with task_class != "_unclassified"
     "unclassified_count": number,       // count of rows with task_class == "_unclassified"
     "distinct_unmapped_skill_names": [string],  // all skill_name values that mapped to _unclassified
@@ -216,8 +216,8 @@ taxonomy_id: str                                   # "aos.routing.task_class"
 taxonomy_version: str                              # "1.0.0"
 taxonomy_digest: str                               # SHA-256 of normative taxonomy
 mapping_id: str                                    # "ccdash.skill_name_to_aos.routing.task_class"
-mapping_version: str                               # "1.0.0"
-mapping_digest: str                                # SHA-256 of ccdash.skill_name_to_aos.routing.task_class v1.0.0 (fixed: 45a49bb1...)
+mapping_version: str                               # "1.1.0"
+mapping_digest: str                                # SHA-256 of ccdash.skill_name_to_aos.routing.task_class v1.1.0 (fixed: 3935a980...)
 source_skill_name: str                             # raw skill_name from sessions table
 task_class: str                                    # derived via pinned mapping; "_unclassified" if no match
 
@@ -246,7 +246,7 @@ project_id: str                                    # which registered project th
 
 **CRITICAL GUARANTEE:**
 
-> CCDash **never** emits raw `skill_name` as `task_class`. Every `task_class` value is derived deterministically and verbatim from the pinned `ccdash.skill_name_to_aos.routing.task_class` v1.0.0 mapping (digest: `sha256:45a49bb1a6194c6a576160edab7c3212a9cc20e17e6a0b79d531c1c4928f63f5`).
+> CCDash **never** emits raw `skill_name` as `task_class`. Every `task_class` value is derived deterministically and verbatim from the pinned `ccdash.skill_name_to_aos.routing.task_class` v1.1.0 mapping (digest: `sha256:3935a9805c9197564af645311018e7fc61aabe10a6a82098920e32329066c855`).
 
 **Verification**: CCDash vendors this mapping file locally and CI-verifies the SHA-256 digest against the contract's pinned value on every build. The vendored file is immutable at runtime; it does not call out to agentic_meta_dev or any external taxonomy source.
 
@@ -291,7 +291,7 @@ The consumer can rely unconditionally on these invariants:
 
 ### 5.3 Mapping Digest Enforcement
 
-- **Guarantee**: The vendored `routing-feedback-task-map.v1.json` is SHA-256-verified against the pinned digest (`45a49bb1a6194c6a576160edab7c3212a9cc20e17e6a0b79d531c1c4928f63f5`) on every CI run.
+- **Guarantee**: The vendored `routing-feedback-task-map.v1.json` is SHA-256-verified against the pinned digest (`3935a9805c9197564af645311018e7fc61aabe10a6a82098920e32329066c855`) on every CI run.
 - **Verification**: A failed digest parity check fails the build immediately; no rollup logic runs against a stale or locally-edited mapping.
 - **Consequence**: Silent vocabulary drift (skill-name non-join or mis-join) is impossible; CCDash's mapping is byte-for-byte identical to the normative copy in agentic_meta_dev.
 
@@ -523,7 +523,7 @@ This enables end-to-end tracing from rollup emission through consumer evaluation
   "freshness_ts": "2026-07-29T02:00:00Z",
   "contract_version": "1.0.0",
   "taxonomy_version": "1.0.0",
-  "mapping_version": "1.0.0"
+  "mapping_version": "1.1.0"
 }
 ```
 
@@ -553,7 +553,7 @@ This enables end-to-end tracing from rollup emission through consumer evaluation
   "freshness_ts": "2026-07-29T02:00:00Z",
   "contract_version": "1.0.0",
   "taxonomy_version": "1.0.0",
-  "mapping_version": "1.0.0"
+  "mapping_version": "1.1.0"
 }
 ```
 
@@ -585,7 +585,7 @@ This enables end-to-end tracing from rollup emission through consumer evaluation
   "freshness_ts": "2026-07-29T02:00:00Z",
   "contract_version": "1.0.0",
   "taxonomy_version": "1.0.0",
-  "mapping_version": "1.0.0"
+  "mapping_version": "1.1.0"
 }
 ```
 
@@ -616,7 +616,7 @@ This enables end-to-end tracing from rollup emission through consumer evaluation
   "freshness_ts": "2026-07-29T02:00:00Z",
   "contract_version": "1.0.0",
   "taxonomy_version": "1.0.0",
-  "mapping_version": "1.0.0"
+  "mapping_version": "1.1.0"
 }
 ```
 
@@ -633,7 +633,7 @@ This enables end-to-end tracing from rollup emission through consumer evaluation
 - **PRD (north-star)**: `docs/project_plans/PRDs/infrastructure/proof-to-routing-loop-v1.md` (sections 6, 7, 8, functional/non-functional requirements)
 - **Design Spec**: `docs/project_plans/design-specs/proof-to-routing-loop.md` (structural details, P1-P4 rollout)
 - **Cross-repo contract**: `/Users/miethe/dev/homelab/development/agentic_meta_dev/docs/agentic-operator/contracts/routing-feedback.md` (`aos.routing.feedback` v1.0.0 — the normative specification)
-- **Mapping artifact**: `/Users/miethe/dev/homelab/development/agentic_meta_dev/docs/agentic-operator/contracts/routing-feedback-task-map.v1.json` (`ccdash.skill_name_to_aos.routing.task_class` v1.0.0)
+- **Mapping artifact**: `/Users/miethe/dev/homelab/development/agentic_meta_dev/docs/agentic-operator/contracts/routing-feedback-task-map.v1.json` (`ccdash.skill_name_to_aos.routing.task_class` v1.1.0)
 - **Precedent (producer/consumer pattern)**: `docs/project_plans/design-specs/ccdash-aar-review-consumer-contract-v1.md` (parallel contract for AAR review)
 - **Operator guide**: `docs/guides/routing-feedback-loop.md` (how-to for enabling, tuning, monitoring the feature)
 
@@ -642,3 +642,4 @@ This enables end-to-end tracing from rollup emission through consumer evaluation
 ## 13. Change Log
 
 - **2026-07-31**: Initial draft. Contract locked at P1 scope (PULL transport, 6-metric inputs, mapping fidelity guardrails, invariants). Router-side empirical merge is named as out-of-scope cross-repo deferral.
+- **Mapping history**: v1.0.0 (17 rules, initial) → v1.1.0 (36 rules; added 19 observed-but-unmapped skill names so the coverage report distinguishes "known and deliberately unroutable" from "never seen"). Contract version and taxonomy are unchanged.

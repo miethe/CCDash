@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "mapping_id": "ccdash.skill_name_to_aos.routing.task_class",
-  "mapping_version": "1.0.0",
+  "mapping_version": "1.1.0",
   "producer": "ccdash",
   "source_field": "sessions.skill_name",
   "taxonomy": {
@@ -13,9 +13,19 @@
   "external_identifier_policy": "canonical_only",
   "rules": [
     {
+      "source_skill_name": "aos-operator",
+      "task_class": "orchestration",
+      "rationale": "Autonomy run-loop driver; dispatches work rather than performing it."
+    },
+    {
       "source_skill_name": "artifact-tracking",
       "task_class": "mechanical",
       "rationale": "Deterministic plan and task state maintenance."
+    },
+    {
+      "source_skill_name": "ccdash",
+      "task_class": "mechanical",
+      "rationale": "Deterministic project-intelligence queries over shipped surfaces."
     },
     {
       "source_skill_name": "changelog-sync",
@@ -23,7 +33,17 @@
       "rationale": "Changelog documentation reconciliation."
     },
     {
+      "source_skill_name": "claude-agent-sdk",
+      "task_class": "_unclassified",
+      "rationale": "Platform identity does not determine the task semantics."
+    },
+    {
       "source_skill_name": "claude-api",
+      "task_class": "_unclassified",
+      "rationale": "Platform identity does not determine the task semantics."
+    },
+    {
+      "source_skill_name": "claude-code",
       "task_class": "_unclassified",
       "rationale": "Platform identity does not determine the task semantics."
     },
@@ -31,6 +51,11 @@
       "source_skill_name": "codex",
       "task_class": "_unclassified",
       "rationale": "Executor identity does not determine the delegated task semantics."
+    },
+    {
+      "source_skill_name": "council-run",
+      "task_class": "council_review",
+      "rationale": "Adversarial review council execution."
     },
     {
       "source_skill_name": "debug",
@@ -43,6 +68,16 @@
       "rationale": "Implementation diagnosis and repair workflow."
     },
     {
+      "source_skill_name": "delegation-router",
+      "task_class": "orchestration",
+      "rationale": "Routing decisions; selects where work executes."
+    },
+    {
+      "source_skill_name": "delivery-report",
+      "task_class": "documentation",
+      "rationale": "Generates evidence-backed delivery reports."
+    },
+    {
       "source_skill_name": "dev-execution",
       "task_class": "implementation",
       "rationale": "Plan execution and code implementation workflow."
@@ -53,9 +88,19 @@
       "rationale": "Deployment is protected work and receives no empirical adjustment."
     },
     {
+      "source_skill_name": "firecrawl",
+      "task_class": "web_research",
+      "rationale": "Web content retrieval."
+    },
+    {
       "source_skill_name": "firecrawl-scrape",
       "task_class": "web_research",
       "rationale": "Web retrieval and extraction workflow."
+    },
+    {
+      "source_skill_name": "firecrawl-search",
+      "task_class": "web_research",
+      "rationale": "Web search with full page extraction."
     },
     {
       "source_skill_name": "frontend-design",
@@ -63,9 +108,39 @@
       "rationale": "Product-surface implementation workflow."
     },
     {
+      "source_skill_name": "gemini-cli",
+      "task_class": "second_opinion",
+      "rationale": "Cross-family lens for cross-validation."
+    },
+    {
+      "source_skill_name": "html-capsules",
+      "task_class": "implementation",
+      "rationale": "Builds interactive HTML artifacts."
+    },
+    {
       "source_skill_name": "ica-delegate",
       "task_class": "_unclassified",
       "rationale": "Executor identity does not determine the delegated task semantics."
+    },
+    {
+      "source_skill_name": "intentmd_creator",
+      "task_class": "documentation",
+      "rationale": "Authors IntentMD documents."
+    },
+    {
+      "source_skill_name": "intenttree",
+      "task_class": "orchestration",
+      "rationale": "Task-graph planning and dispatch."
+    },
+    {
+      "source_skill_name": "intenttree-cli",
+      "task_class": "orchestration",
+      "rationale": "Task-graph planning and dispatch via CLI."
+    },
+    {
+      "source_skill_name": "op",
+      "task_class": "orchestration",
+      "rationale": "Operator route-by-tier classification and dispatch."
     },
     {
       "source_skill_name": "plan-status",
@@ -78,9 +153,29 @@
       "rationale": "Master planning is protected orchestration and receives no empirical adjustment."
     },
     {
+      "source_skill_name": "receiving-code-review",
+      "task_class": "code_review",
+      "rationale": "Code-review response handling."
+    },
+    {
       "source_skill_name": "release",
       "task_class": "mode_d",
       "rationale": "Release mutation is protected work and receives no empirical adjustment."
+    },
+    {
+      "source_skill_name": "rf",
+      "task_class": "web_research",
+      "rationale": "Research Foundry evidence-gathering runs."
+    },
+    {
+      "source_skill_name": "skill-dev",
+      "task_class": "implementation",
+      "rationale": "Authors and validates skills and agents."
+    },
+    {
+      "source_skill_name": "skill_seekers",
+      "task_class": "_unclassified",
+      "rationale": "Experimental; task semantics not established."
     },
     {
       "source_skill_name": "skillmeat-cli",

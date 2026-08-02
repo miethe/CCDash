@@ -61,6 +61,78 @@ class PrimarySkillNameTests(unittest.TestCase):
         self.assertEqual(claude_parser._primary_skill_name(loads), "release")
 
 
+class HarnessSentinelModelTests(unittest.TestCase):
+    def test_angle_bracket_sentinel_is_true(self) -> None:
+        self.assertTrue(claude_parser._is_harness_sentinel_model("<synthetic>"))
+
+    def test_real_model_slug_is_false(self) -> None:
+        self.assertFalse(claude_parser._is_harness_sentinel_model("claude-sonnet-5"))
+
+    def test_empty_none_and_whitespace_are_false(self) -> None:
+        self.assertFalse(claude_parser._is_harness_sentinel_model(""))
+        self.assertFalse(claude_parser._is_harness_sentinel_model(None))
+        self.assertFalse(claude_parser._is_harness_sentinel_model("   "))
+
+    def _write_jsonl(self, lines: list[dict], relative_path: str = "session.jsonl") -> Path:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        path = Path(tmpdir.name) / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
+        return path
+
+    def test_sentinel_first_real_model_second_seats_real_model(self) -> None:
+        lines = [
+            {
+                "type": "assistant",
+                "timestamp": "2026-02-16T10:00:00Z",
+                "uuid": "a1",
+                "message": {
+                    "role": "assistant",
+                    "model": "<synthetic>",
+                    "stop_reason": "stop_sequence",
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                    "content": [{"type": "text", "text": "API Error: Connection closed mid-response"}],
+                },
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-02-16T10:00:01Z",
+                "uuid": "a2",
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-sonnet-5",
+                    "usage": {"input_tokens": 10, "output_tokens": 20},
+                    "content": [{"type": "text", "text": "hello"}],
+                },
+            },
+        ]
+        session = parse_session_file(self._write_jsonl(lines))
+        assert session is not None
+        self.assertEqual(session.modelSlug, "claude-sonnet-5")
+        self.assertNotEqual(session.modelSlug, "<synthetic>")
+
+    def test_only_sentinel_yields_empty_model_slug(self) -> None:
+        lines = [
+            {
+                "type": "assistant",
+                "timestamp": "2026-02-16T10:00:00Z",
+                "uuid": "a1",
+                "message": {
+                    "role": "assistant",
+                    "model": "<synthetic>",
+                    "stop_reason": "stop_sequence",
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                    "content": [{"type": "text", "text": "API Error: Connection closed mid-response"}],
+                },
+            },
+        ]
+        session = parse_session_file(self._write_jsonl(lines))
+        assert session is not None
+        self.assertEqual(session.modelSlug, "")
+        self.assertNotEqual(session.modelSlug, "<synthetic>")
+
+
 class ParserDetectionFieldTests(unittest.TestCase):
     def _write_jsonl(self, lines: list[dict], relative_path: str = "session.jsonl") -> Path:
         tmpdir = tempfile.TemporaryDirectory()

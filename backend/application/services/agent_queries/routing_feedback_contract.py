@@ -46,8 +46,8 @@ TAXONOMY_DIGEST = "sha256:d96a0819b0a3a42d14eccc1421d3146b8364253d975d9d54f4f264
 # --- Mapping identity (CCDash's pinned skill_name -> task_class mapping) -----
 
 MAPPING_ID = "ccdash.skill_name_to_aos.routing.task_class"
-MAPPING_VERSION = "1.0.0"
-MAPPING_DIGEST = "sha256:45a49bb1a6194c6a576160edab7c3212a9cc20e17e6a0b79d531c1c4928f63f5"
+MAPPING_VERSION = "1.1.0"
+MAPPING_DIGEST = "sha256:3935a9805c9197564af645311018e7fc61aabe10a6a82098920e32329066c855"
 
 # --- Producer + capability identity ------------------------------------------
 
