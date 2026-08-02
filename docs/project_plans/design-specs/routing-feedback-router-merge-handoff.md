@@ -66,14 +66,59 @@ would be a correct, well-tested, permanently inert no-op machine. Enabling
 strictly worse than the current honest `live_consumption_disabled`.
 
 **Consequence for sequencing.** DI-1 (router merge) is **not** the next actionable item. The
-blocking work is a CCDash producer increment that emits a real outcome signal. The signal source
-exists and is populated: `effectiveness_rollups` (14,561 rows on the node Postgres) carries
-`successScore`, `riskScore`, `qualityScore`, `efficiencyScore`, `sampleSize`, and per-model cost
-attribution. Its scope grain (`stack` / `agent`) does not match this envelope's
-`(source_skill_name × model)` grain, so the join is genuine design work — tracked as **DI-4**
+blocking work is a CCDash producer increment that emits a real outcome signal — tracked as **DI-4**
 (see §5.4).
 
-Do not schedule DI-1 before DI-4 lands.
+DI-4 does **not** decompose evenly. A signal-source audit against the node Postgres
+(2026-08-01, 18,762 sessions) found the three fields have completely different feasibility:
+
+| Field | Feasibility | Evidence |
+|-------|-------------|----------|
+| `cost_index` | **Buildable now** | `sessions.total_cost` / `display_cost_usd` > 0 on **13,460 of 18,762** rows (72%). Aggregates directly at the `(source_skill_name × model)` grain — no external join, no new table. |
+| `success_rate` | **No signal exists** | see audit below |
+| `regression_rate` | **No signal exists** | see audit below |
+
+**Signal-source audit — every candidate ruled out:**
+
+- `sessions.status` — 2 distinct values only (`completed` 18,229 / `active` 533). Confirms the v1
+  code comment; not an outcome signal.
+- `test_results` — **0 rows**. No test-outcome signal exists at all.
+- `effectiveness_rollups` — 14,561 rows, and it does carry `successScore` / `riskScore` /
+  `qualityScore`. **But it has no skill dimension whatsoever**: all 7,290 `stack`-scope rows have
+  `scopeLabel` matching `skills:none`, and the other 7,271 rows are `agent`-scope (opaque agent
+  hashes). There is nothing to join `source_skill_name` against. This is not a hard grain
+  reconciliation — it is an impossible one, until skill attribution is actually populated.
+  (`attributionCoverage: 0.0` in sampled rows is consistent with attribution never being wired.)
+- `session_stack_observations` — 16,559 rows, all `observation_source: backfill`, with
+  `skillsUsed: []` and `agentsUsed: []` empty in samples; payload is queue-pressure and
+  artifact-count telemetry, carrying no outcome semantics.
+
+> An earlier revision of this section named `effectiveness_rollups` as DI-4's signal source and
+> called the work "grain reconciliation." That was **wrong** and is corrected above — the table has
+> no populated skill dimension, so no join is possible. Recorded rather than silently edited,
+> because the mistaken version was committed and may have been read.
+
+**A promising lead for the success signal** (untested, for the SPIKE to evaluate): the
+`<synthetic>` harness entries this feature just taught the parser to ignore as a *model* are
+themselves **per-session failure events** — `API Error: Connection closed mid-response` and
+interrupt notices, present in 325 occurrences across 249 transcripts. Counting harness error
+entries per session is a candidate derivation for `regression_rate`, and its complement for
+`success_rate`. Adjacent candidates: tool-failure rates, session abandonment (`active` sessions
+that never complete), and rework/retry patterns already surfaced by the AAR review loop.
+
+**Consequent routing** — DI-4 is two artifacts, not one plan. Both authored 2026-08-01:
+
+1. **DI-4a `cost_index` → Tier 1 Feature Contract** (5 pts, buildable today):
+   `docs/project_plans/feature_contracts/routing-feedback-cost-index-v1.md`
+2. **DI-4b `success_rate` / `regression_rate` → exploration charter first** (3-day timebox):
+   `docs/project_plans/exploration/routing-feedback-success-signal/routing-feedback-success-signal-charter.md`
+   Whether *any* derivable success signal exists is an open feasibility question, not an
+   implementation task. Planning an implementation before that question is answered would repeat
+   the mistake this section documents.
+
+Do not schedule DI-1 before DI-4 lands. A partial DI-4 that ships only `cost_index` **does** make
+the loop non-inert (a genuinely expensive model can then be downweighted on cost alone), but leaves
+the failure half of the merge weightless — `weight_failure` is 0.5, the single largest term.
 
 ---
 
@@ -346,18 +391,25 @@ signal. DI-4 is that increment:
 - **Derive a real `cost_index`** — a per-key cost normalization against a cross-key baseline,
   replacing the fixed `_COST_INDEX_BASELINE = 1.0`.
 
-**Signal source (verified present, not speculative)**: the `effectiveness_rollups` table —
-14,561 rows on the node Postgres as of 2026-08-01 — whose `metrics_json` carries `successScore`,
-`riskScore`, `qualityScore`, `efficiencyScore`, `sampleSize`, `attributionCoverage`, and
-per-model attributed cost. Companion table: `session_stack_observations`.
+**Signal sources**: see the audit in §0. `cost_index` has a verified source
+(`sessions.total_cost`, 72% populated, already at the right grain). `success_rate` and
+`regression_rate` have **none** — every candidate table was checked and ruled out.
 
-**The real design work** is grain reconciliation. `effectiveness_rollups.scope_type` is
-`stack` / `agent` and its `scopeLabel` encodes an agent/skill/context tuple; this envelope's grain
-is `(source_skill_name × model)`. Mapping one onto the other — and deciding what to emit when a
-key has rollup coverage for the skill but not the model, or vice versa — is the substance of the
-increment, not an afterthought. `attributionCoverage: 0.0` appears in sampled rows, so coverage
-must be treated as a first-class contract state (emit `null`, never a fabricated zero — the same
-principle that made v1 emit `null` in the first place).
+**Split accordingly:**
+
+- **DI-4a — `cost_index` (Tier 1 Feature Contract).** Aggregate mean per-session cost per
+  `(source_skill_name × model)` key, normalize against a cross-key baseline, replace the fixed
+  `_COST_INDEX_BASELINE = 1.0`. The design decisions worth naming: which baseline (global mean vs
+  per-task-class mean vs cheapest-key), and what to emit for a key whose sessions have no cost
+  attribution (28% of rows) — `null`, never a fabricated `1.0`, per the same principle that made
+  v1 emit `null` in the first place.
+- **DI-4b — `success_rate` / `regression_rate` (SPIKE).** Answer "does a derivable per-session
+  success signal exist?" before planning an implementation. Lead candidate: harness error-entry
+  counts (see §0). Deal-killer: if no candidate reaches usable coverage, DI-1 stays deferred
+  indefinitely and the honest outcome is to leave `live_consumption_disabled` and say so.
+
+**Coverage is a first-class contract state** in both halves: emit `null` when a key lacks
+attribution, never a fabricated zero or baseline.
 
 **Versioning**: additive per D5. A v1.1 envelope that populates previously-`null` fields is
 forward-compatible with any consumer that already tolerates `null`.
