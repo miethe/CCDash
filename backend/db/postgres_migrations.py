@@ -43,7 +43,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 43
+SCHEMA_VERSION = 44
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -218,6 +218,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     profile            TEXT,
     effort_tier        TEXT,
     model_variant      TEXT,
+    -- Gap 4 effort-tier provenance (v44). Nullable; records WHICH lane supplied
+    -- effort_tier (launch env / Codex payload / Claude settings snapshot /
+    -- inherited) because those differ in trustworthiness. Token vocabulary lives
+    -- in backend/parsers/effort_provenance.py. NULL == provenance unknown (row
+    -- written before this column, or effort_tier itself NULL). No backfill.
+    effort_tier_source TEXT,
     -- Phase 2 Codex ingestion (codex-session-ingestion-v1).  Populated from
     -- session_forensics["entryContext"]["workingDirectories"][0] for Codex
     -- sessions; NULL for Claude Code sessions (contract state, not a bug).
@@ -3930,6 +3936,19 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         logger.info(
             "v43 migrations complete: routing_rollup table added "
             "(proof-to-routing-loop-v1, T2-002)."
+        )
+
+    # ── v44 migrations (Gap 4: effort_tier provenance) ───────────────────────
+    if current_version < 44:
+        # Mirror of the SQLite v44 block — nullable TEXT, null == provenance
+        # unknown, no backfill (the provenance of an already-stored effort_tier
+        # cannot be recovered after the fact, and guessing it would defeat the
+        # column's purpose). Present in the _TABLES DDL above for fresh
+        # instances; this call adds it to existing DBs.
+        await _ensure_column(db, "sessions", "effort_tier_source", "TEXT")
+        logger.info(
+            "v44 migrations complete: sessions.effort_tier_source added "
+            "(effort-tier-source-provenance, Gap 4)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

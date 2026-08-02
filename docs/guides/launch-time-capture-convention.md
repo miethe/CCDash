@@ -20,15 +20,16 @@ The **launch-time capture sidecar** (`<session-id>.capture.json`) records metada
 
 | Field | Type | Null Semantics | Notes |
 |-------|------|---|---|
-| `schemaVersion` | int | constant `1` | Gates future format changes |
+| `schemaVersion` | int | constant `2` | Gates format changes. **v1** omitted `effortTierSource`; the reader accepts both v1 and v2, so every sidecar already on disk keeps parsing (v1 ⇒ `effortTierSource: null`). |
 | `sessionId` | string | **correlation key** | MUST equal JSONL stem; absent/mismatch ⇒ ignored |
 | `launcher` | string \| null | absent == `null` | Identity of launch path (e.g. `"ica-claude.sh"`); never defaulted |
 | `profile` | string \| null | absent == `null` | Deployment profile (e.g. `"ica-delegate"`); never defaulted |
 | `effortTier` | string \| null | absent == `null` | Effort/quality tier; never defaulted. `CCDASH_LAUNCH_EFFORT` env wins; falls back to settings.json `effortLevel` — see "`effortTier` settings.json fallback" below |
+| `effortTierSource` | string \| null | absent == `null` | **Gap 4 provenance** for `effortTier`: which lane supplied it. `"launch_env"` (this hook, from `CCDASH_LAUNCH_EFFORT`) or `"claude_settings"` (this hook, from `effortLevel`). Non-null **iff** `effortTier` is non-null. Full vocabulary (incl. Codex lanes) in `backend/parsers/effort_provenance.py`. |
 | `modelVariant` | string \| null | absent == `null` | Launch-time model (e.g. `"claude-opus-4-8[1m]"`); never defaulted |
 | `capturedAt` | string (ISO-8601 UTC) \| null | absent == `null` | Hook write time; advisory only, not used for correlation |
 
-**Null contract:** All fields except `schemaVersion` may be `null` or absent (equivalent semantics). No field is ever synthesized to a default value. Partial sidecars are valid.
+**Null contract:** All fields except `schemaVersion` may be `null` or absent (equivalent semantics). No field is ever synthesized to a default value. Partial sidecars are valid. `effortTierSource` additionally obeys "no provenance without a value": if `effortTier` is `null`, the source is dropped to `null` even if a stray token was written.
 
 ## Environment Contract
 
@@ -160,6 +161,22 @@ These are real, permanent characteristics of the design — not open bugs to fix
 `<project>` is the SessionStart payload's `cwd` field when present, else the hook process's working directory. Each candidate file in the precedence chain above is independent: a missing, unreadable, or malformed candidate (or one with no usable `effortLevel`) is skipped, and resolution continues to the next-lower-precedence candidate — so, for example, a malformed project-local `settings.json` plus a valid user-level `settings.json` still yields the user tier, not `null`. `effortTier` resolves to `null` only when every candidate in the chain is exhausted without producing a non-empty string. Separately, this whole settings lookup runs inside its own isolated failure path: however it fails, it only nulls `effortTier` — `launcher`, `profile`, and `modelVariant` are written from the env vars regardless. Implementation: `_settings_effort_level()` in `scripts/hooks/ccdash_capture_session_start.py`.
 
 **Staleness caveat:** `effortLevel` is whatever `/effort` last set for that settings scope — it reflects the last time the user (or a config sync) changed the tier, not necessarily the tier in effect for *this* session if it was changed mid-session or the settings file predates the session by a long margin. Treat it as "the tier this launch environment was configured for," not a verified live value. Limitation 3 above (no direct launch-time effort signal) still holds in spirit — this fallback is a best-effort proxy, not a fix for the underlying gap.
+
+### `effortTierSource` provenance (Gap 4)
+
+`effort_tier` is populated by lanes that differ in trustworthiness by a wide margin, and until Gap 4 a rollup had no way to tell them apart. `effort_tier_source` records **which lane** supplied the value. It is written only where `effort_tier` is resolved, always together with it; a non-null tier with a `null` source means the row predates this column (provenance unknown — a legitimate contract state, never backfilled).
+
+| Token | Lane | Strength |
+|-------|------|----------|
+| `launch_env` | this hook, from `CCDASH_LAUNCH_EFFORT` | explicit launcher intent (strongest; env is currently never set) |
+| `codex_payload_effort` | Codex parser, `payload.effort` | harness-authoritative, per-session, cannot be stale |
+| `codex_collaboration_mode` | Codex parser, `payload.collaboration_mode.settings.reasoning_effort` | same authority; secondary field, read only when `payload.effort` is absent |
+| `claude_settings` | this hook, from settings `effortLevel` | SessionStart snapshot of a mutable global — **can be stale** (see caveat above) |
+| `inherited_parent` | *(reserved for Gap 2)* | derived from a parent session, not observed — no code path writes it yet |
+
+Canonical vocabulary + trust ordering: `backend/parsers/effort_provenance.py` (`EFFORT_SOURCE_*`, `AUTHORITATIVE_EFFORT_SOURCES`). Consumers **MUST** treat an unrecognised token as "unknown provenance" rather than hard-failing — the vocabulary may grow. Not yet consumed by `routing_rollup` (that is DI-4b); this change only records the provenance so a later rollup can weight by it.
+
+**Schema/column footprint:** sidecar `schemaVersion` 1→2 (reader still accepts v1); nullable `sessions.effort_tier_source` in **both** SQLite (v44) and Postgres (v44) DDL — `CREATE TABLE` + `_ensure_column` + a version-gated block per backend, parity-clean and not allowlisted. Surfaced camelCase as `effortTierSource` in session detail. Inspector "Effort Source" row shows the token, or `Unknown` when a tier exists without one, or `Not captured` when there is no tier.
 
 ## For Subagents
 

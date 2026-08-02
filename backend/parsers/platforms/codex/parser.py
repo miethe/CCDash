@@ -12,6 +12,10 @@ from typing import Any
 
 from backend.date_utils import file_metadata_dates, make_date_value
 from backend.models import AgentSession, ImpactPoint, SessionLog, ToolCallInfo, ToolUsage
+from backend.parsers.effort_provenance import (
+    EFFORT_SOURCE_CODEX_COLLABORATION_MODE,
+    EFFORT_SOURCE_CODEX_PAYLOAD_EFFORT,
+)
 from backend.parsers.platforms.test_runs import (
     aggregate_test_runs,
     enrich_test_run_with_output,
@@ -478,6 +482,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
     # Gap 3 (codex-effort-tier-ingestion): resolved reasoning-effort value for
     # sessions.effort_tier. None until a non-empty value is found; never guessed.
     effort_tier = None
+    # Gap 4 (effort-tier-source-provenance): which Codex field supplied the value
+    # above. Set together with effort_tier, never independently.
+    effort_tier_source = None
     platform_version = ""
     platform_versions: list[str] = []
     platform_versions_seen: set[str] = set()
@@ -788,16 +795,25 @@ def parse_session_file(path: Path) -> AgentSession | None:
         # non-empty value wins in this single forward pass over entries; the
         # raw stripped string is stored verbatim -- no case/vocabulary
         # mapping -- matching the Claude Code lane's passthrough convention.
+        # Gap 4 (effort-tier-source-provenance): each field gets its own
+        # provenance token so a rollup can tell the primary authoritative field
+        # from the secondary one. Assigned in the same branch as the value.
         if effort_tier is None:
             effort_value = str(payload_dict.get("effort") or "").strip()
+            effort_source = (
+                EFFORT_SOURCE_CODEX_PAYLOAD_EFFORT if effort_value else None
+            )
             if not effort_value:
                 collab_settings = payload_dict.get("collaboration_mode")
                 if isinstance(collab_settings, dict):
                     settings = collab_settings.get("settings")
                     if isinstance(settings, dict):
                         effort_value = str(settings.get("reasoning_effort") or "").strip()
+                        if effort_value:
+                            effort_source = EFFORT_SOURCE_CODEX_COLLABORATION_MODE
             if effort_value:
                 effort_tier = effort_value
+                effort_tier_source = effort_source
         cli_version = str(payload_dict.get("cli_version") or "").strip()
         if cli_version:
             platform_version = cli_version
@@ -1283,6 +1299,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
         # Gap 3 (codex-effort-tier-ingestion): resolved above from
         # payload.effort / payload.collaboration_mode.settings.reasoning_effort.
         effortTier=effort_tier,
+        # Gap 4: which of those two fields the value came from.
+        effortTierSource=effort_tier_source,
         durationSeconds=duration,
         tokensIn=tokens_in,
         tokensOut=tokens_out,

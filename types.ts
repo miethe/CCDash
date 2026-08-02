@@ -587,6 +587,13 @@ export interface AgentSession {
   launcher?: string | null; // launch path identity (e.g. "ica-claude.sh")
   profile?: string | null; // launch profile (e.g. "ica-delegate")
   effortTier?: string | null; // effort/ultracode tier; never defaulted
+  // Gap 4 provenance for effortTier — WHICH lane supplied it, since they differ
+  // in trustworthiness: "launch_env" (explicit launcher intent) |
+  // "codex_payload_effort" / "codex_collaboration_mode" (harness-authoritative) |
+  // "claude_settings" (SessionStart snapshot, can be stale) | "inherited_parent"
+  // (derived). null == provenance unknown (row predates the column, or no tier).
+  // Treat an unrecognised token as unknown rather than failing — vocabulary may grow.
+  effortTierSource?: string | null;
   modelVariant?: string | null; // launch-time model id (e.g. "claude-opus-4-8[1m]")
   modelDisplayName?: string;
   modelProvider?: string;

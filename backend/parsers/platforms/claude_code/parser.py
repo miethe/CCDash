@@ -828,7 +828,7 @@ def _collect_capture_sidecar(
     """Locate and parse the launch-time capture sidecar for a session (T11-004).
 
     Returns a dict with keys ``launcher``, ``profile``, ``effortTier``,
-    ``modelVariant`` (all ``None`` on any miss).
+    ``effortTierSource``, ``modelVariant`` (all ``None`` on any miss).
 
     Capture targets the **root** session only: subagent records legitimately carry
     null capture fields (a contract state, not a defect). Family-root propagation
@@ -843,6 +843,7 @@ def _collect_capture_sidecar(
         "launcher": None,
         "profile": None,
         "effortTier": None,
+        "effortTierSource": None,
         "modelVariant": None,
     }
 
@@ -884,6 +885,8 @@ def _collect_capture_sidecar(
         "launcher": sidecar.launcher,
         "profile": sidecar.profile,
         "effortTier": sidecar.effort_tier,   # snake_case → camelCase for AgentSession
+        # Gap 4: null on v1 sidecars (key predates them) — provenance unknown.
+        "effortTierSource": sidecar.effort_tier_source,
         "modelVariant": sidecar.model_variant,  # snake_case → camelCase for AgentSession
     }
 
@@ -4564,6 +4567,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
         launcher=capture_sidecar.get("launcher"),
         profile=capture_sidecar.get("profile"),
         effortTier=capture_sidecar.get("effortTier"),
+        # Gap 4: which lane supplied effortTier (launch_env vs claude_settings).
+        effortTierSource=capture_sidecar.get("effortTierSource"),
         modelVariant=capture_sidecar.get("modelVariant"),
     )
 

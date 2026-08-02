@@ -418,6 +418,9 @@ class CodexSessionParserTests(unittest.TestCase):
         self.assertIsNotNone(session)
         assert session is not None
         self.assertEqual(session.effortTier, "high")
+        # Gap 4: payload.effort is the primary authoritative field — its own token,
+        # distinct from the collaboration_mode fallback below.
+        self.assertEqual(session.effortTierSource, "codex_payload_effort")
 
     def test_codex_session_falls_back_to_reasoning_effort_when_effort_absent(self) -> None:
         path = self._write_jsonl(
@@ -451,6 +454,8 @@ class CodexSessionParserTests(unittest.TestCase):
         self.assertIsNotNone(session)
         assert session is not None
         self.assertEqual(session.effortTier, "medium")
+        # Gap 4: resolved via the secondary field, so the token must say so.
+        self.assertEqual(session.effortTierSource, "codex_collaboration_mode")
 
     def test_codex_session_effort_absent_on_both_fields_yields_none(self) -> None:
         path = self._write_jsonl(
@@ -477,6 +482,8 @@ class CodexSessionParserTests(unittest.TestCase):
         self.assertIsNotNone(session)
         assert session is not None
         self.assertIsNone(session.effortTier)
+        # Gap 4: no value to explain ⇒ no provenance invented.
+        self.assertIsNone(session.effortTierSource)
 
     def test_scan_sessions_supports_nested_codex_paths(self) -> None:
         path = self._write_jsonl(

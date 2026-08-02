@@ -95,8 +95,8 @@ class SqliteSessionRepository:
                 models_used_json, agents_used_json, skills_used_json,
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
-                source_ref, cwd
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_ref, cwd, effort_tier_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -162,6 +162,10 @@ class SqliteSessionRepository:
                 profile=COALESCE(excluded.profile, sessions.profile),
                 effort_tier=COALESCE(excluded.effort_tier, sessions.effort_tier),
                 model_variant=COALESCE(excluded.model_variant, sessions.model_variant),
+                -- Gap 4 provenance: capture-once alongside effort_tier itself, so a
+                -- re-ingest without a sidecar never downgrades a known provenance
+                -- to unknown.
+                effort_tier_source=COALESCE(excluded.effort_tier_source, sessions.effort_tier_source),
                 source_ref=COALESCE(excluded.source_ref, sessions.source_ref),
                 -- Phase 2 Codex ingestion (codex-session-ingestion-v1). cwd is
                 -- capture-once: a re-ingest with a null value must not clobber a
@@ -247,6 +251,8 @@ class SqliteSessionRepository:
                 # populated from Codex forensics; NULL for Claude Code sessions
                 # (contract state, never defaulted).
                 session_data.get("cwd"),
+                # Gap 4: provenance for effortTier (null == unknown/absent).
+                session_data.get("effortTierSource"),
             ),
         )
         await self._commit()

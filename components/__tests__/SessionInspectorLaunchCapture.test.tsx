@@ -101,6 +101,23 @@ describe('T11-005 — field label rows are present in the Session Capture panel'
   it('has "Model Variant" label', () => {
     expect(SESSION_INSPECTOR_SOURCE).toContain('>Model Variant<');
   });
+
+  it('has "Effort Source" label (Gap 4 provenance)', () => {
+    expect(SESSION_INSPECTOR_SOURCE).toContain('>Effort Source<');
+  });
+});
+
+// ── 6. Gap 4 — effortTierSource provenance surface ────────────────────────────
+describe('Gap 4 — effortTierSource provenance row', () => {
+  it('types.ts declares effortTierSource?: string | null', () => {
+    expect(TYPES_SOURCE).toContain('effortTierSource?: string | null');
+  });
+
+  it('renders the three-state fallback: known token | "Unknown" (tier w/o source) | "Not captured"', () => {
+    expect(SESSION_INSPECTOR_SOURCE).toContain(
+      "session.effortTierSource || (session.effortTier ? 'Unknown' : 'Not captured')",
+    );
+  });
 });
 
 // ── 5. types.ts contract ──────────────────────────────────────────────────────

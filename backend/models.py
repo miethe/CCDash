@@ -282,6 +282,11 @@ class AgentSession(BaseModel):
     launcher: Optional[str] = None
     profile: Optional[str] = None
     effortTier: Optional[str] = None
+    # Gap 4 provenance for effortTier: which lane supplied the value, since they
+    # differ in trustworthiness (harness-authoritative vs stale-capable snapshot
+    # vs derived). Token vocabulary: backend/parsers/effort_provenance.py.
+    # None == provenance unknown (row predates the column, or effortTier is None).
+    effortTierSource: Optional[str] = None
     modelVariant: Optional[str] = None
     modelDisplayName: str = ""
     modelProvider: str = ""

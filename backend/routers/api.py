@@ -878,6 +878,9 @@ async def list_sessions(
             launcher=s.get("launcher"),
             profile=s.get("profile"),
             effortTier=s.get("effort_tier"),
+            # Gap 4: provenance token for effortTier. None == unknown provenance
+            # (row predates the column) — FE renders an explicit fallback.
+            effortTierSource=s.get("effort_tier_source"),
             modelVariant=s.get("model_variant"),
             modelDisplayName=model_identity["modelDisplayName"],
             modelProvider=model_identity["modelProvider"],
@@ -1294,6 +1297,9 @@ async def get_session(
         launcher=s.get("launcher"),
         profile=s.get("profile"),
         effortTier=s.get("effort_tier"),
+        # Gap 4: provenance token for effortTier. None == unknown provenance
+        # (row predates the column) — FE renders an explicit fallback.
+        effortTierSource=s.get("effort_tier_source"),
         modelVariant=s.get("model_variant"),
         modelDisplayName=model_identity["modelDisplayName"],
         modelProvider=model_identity["modelProvider"],

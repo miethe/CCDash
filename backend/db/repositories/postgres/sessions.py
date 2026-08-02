@@ -42,8 +42,8 @@ class PostgresSessionRepository:
                 thinking_level, session_forensics_json,
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
-                workspace_id, source_ref, cwd
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64)
+                workspace_id, source_ref, cwd, effort_tier_source
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -103,6 +103,10 @@ class PostgresSessionRepository:
                 profile=COALESCE(EXCLUDED.profile, sessions.profile),
                 effort_tier=COALESCE(EXCLUDED.effort_tier, sessions.effort_tier),
                 model_variant=COALESCE(EXCLUDED.model_variant, sessions.model_variant),
+                -- Gap 4 provenance: capture-once alongside effort_tier itself, so a
+                -- re-ingest without a sidecar never downgrades a known provenance
+                -- to unknown.
+                effort_tier_source=COALESCE(EXCLUDED.effort_tier_source, sessions.effort_tier_source),
                 source_ref=COALESCE(EXCLUDED.source_ref, sessions.source_ref),
                 -- Phase 2 Codex ingestion (codex-session-ingestion-v1). cwd is
                 -- capture-once: a re-ingest with a null value must not clobber a
@@ -181,6 +185,8 @@ class PostgresSessionRepository:
             # populated from Codex forensics; NULL for Claude Code sessions
             # (contract state, never defaulted).
             session_data.get("cwd"),
+            # Gap 4: provenance for effortTier (null == unknown/absent).
+            session_data.get("effortTierSource"),
         )
 
     async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:

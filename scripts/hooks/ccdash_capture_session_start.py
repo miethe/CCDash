@@ -12,20 +12,32 @@ Fail-open contract
 * Any error → no sidecar written (session simply carries null capture fields).
 * No blocking stdout output is ever emitted.
 
-Schema (schemaVersion=1)
+Schema (schemaVersion=2)
 ------------------------
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sessionId": "<uuid>",
   "launcher": "<str|null>",
   "profile": "<str|null>",
   "effortTier": "<str|null>",
+  "effortTierSource": "<'launch_env'|'claude_settings'|null>",
   "modelVariant": "<str|null>",
   "capturedAt": "<ISO-8601 UTC|null>"
 }
 
 All non-schemaVersion/sessionId fields are nullable.
 Unknown / unset env vars → null, NEVER defaulted.
+
+``effortTierSource`` (Gap 4) records WHICH lane supplied ``effortTier`` so a
+rollup can tell explicit launcher intent from a possibly-stale settings
+snapshot.  It is non-null iff ``effortTier`` is non-null.  The two literals are
+repeated here rather than imported: this script runs as a bare ``python3`` hook
+with no guarantee that CCDash's venv (or the repo itself) is importable.  The
+canonical definitions live in ``backend/parsers/effort_provenance.py`` and
+``backend/tests/test_effort_tier_source_provenance.py`` asserts they match.
+
+schemaVersion history: v1 omitted ``effortTierSource``.  The reader accepts both
+v1 and v2, so sidecars already on disk keep parsing (with a null source).
 
 Operator installation (do NOT apply these automatically — T11-008 documents it)
 ----------------------------------------------------------------------------------
@@ -70,8 +82,16 @@ logger = logging.getLogger("ccdash.hooks.capture_session_start")
 # Public API (importable — used directly by tests)
 # ---------------------------------------------------------------------------
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _FALLBACK_CAPTURE_DIR = "data/capture"
+
+# Gap 4 provenance tokens for effortTier.  MUST stay identical to
+# EFFORT_SOURCE_LAUNCH_ENV / EFFORT_SOURCE_CLAUDE_SETTINGS in
+# backend/parsers/effort_provenance.py (asserted by
+# backend/tests/test_effort_tier_source_provenance.py).  Duplicated as literals
+# because this hook must run without importing the backend package.
+_EFFORT_SOURCE_LAUNCH_ENV = "launch_env"
+_EFFORT_SOURCE_CLAUDE_SETTINGS = "claude_settings"
 
 
 def _nullable_str(env: dict, key: str) -> Optional[str]:
@@ -224,7 +244,13 @@ def write_capture_sidecar(
         # Claude Code settings.json `effortLevel` convention. Isolated in its
         # own try/except so a bad settings file only nulls this one field —
         # it must never take down launcher/profile/modelVariant.
+        #
+        # effortTierSource (Gap 4) is set at each resolution point and stays
+        # null whenever effortTier is null — provenance is never invented.
+        effort_tier_source: Optional[str] = None
         effort_tier = _nullable_str(env, "CCDASH_LAUNCH_EFFORT")
+        if effort_tier is not None:
+            effort_tier_source = _EFFORT_SOURCE_LAUNCH_ENV
         if effort_tier is None:
             try:
                 raw_cwd = payload.get("cwd")
@@ -234,12 +260,15 @@ def write_capture_sidecar(
                     else Path.cwd()
                 )
                 effort_tier = _settings_effort_level(env, project_dir)
+                if effort_tier is not None:
+                    effort_tier_source = _EFFORT_SOURCE_CLAUDE_SETTINGS
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
                     "ccdash_capture: settings effortLevel lookup failed (ignored): %s",
                     exc,
                 )
                 effort_tier = None
+                effort_tier_source = None
 
         sidecar: dict[str, Any] = {
             "schemaVersion": _SCHEMA_VERSION,
@@ -247,6 +276,7 @@ def write_capture_sidecar(
             "launcher": _nullable_str(env, "CCDASH_LAUNCHER"),
             "profile": _nullable_str(env, "CCDASH_LAUNCH_PROFILE"),
             "effortTier": effort_tier,
+            "effortTierSource": effort_tier_source,
             "modelVariant": _nullable_str(env, "CCDASH_LAUNCH_MODEL"),
             "capturedAt": captured_at,
         }

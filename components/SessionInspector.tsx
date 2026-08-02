@@ -3403,6 +3403,10 @@ const SessionForensicsView = React.memo<{ session: AgentSession }>(({ session })
                         <div className="flex justify-between gap-4"><span className="text-muted-foreground">Launcher</span><span className={`font-mono truncate max-w-[60%] ${session.launcher ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.launcher || 'Not captured'}</span></div>
                         <div className="flex justify-between gap-4"><span className="text-muted-foreground">Profile</span><span className={`font-mono truncate max-w-[60%] ${session.profile ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.profile || 'Not captured'}</span></div>
                         <div className="flex justify-between gap-4"><span className="text-muted-foreground">Effort Tier</span><span className={`font-mono truncate max-w-[60%] ${session.effortTier ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.effortTier || 'Not captured'}</span></div>
+                        {/* Gap 4 provenance. Three distinct states, all explicit: a known
+                            source token; 'Unknown' when a tier exists but predates this
+                            column; 'Not captured' when there is no tier to explain. */}
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Effort Source</span><span className={`font-mono truncate max-w-[60%] ${session.effortTierSource ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.effortTierSource || (session.effortTier ? 'Unknown' : 'Not captured')}</span></div>
                         <div className="flex justify-between gap-4"><span className="text-muted-foreground">Model Variant</span><span className={`font-mono truncate max-w-[60%] ${session.modelVariant ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.modelVariant || 'Not captured'}</span></div>
                     </div>
                 </div>

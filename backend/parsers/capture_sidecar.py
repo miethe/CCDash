@@ -25,7 +25,13 @@ from typing import Optional
 logger = logging.getLogger("ccdash.parsers.capture_sidecar")
 
 # Schema versions this parser accepts. Bump when the sidecar schema changes.
-_SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
+#
+# v1 → v2 (Gap 4) added the optional ``effortTierSource`` key.  BOTH versions
+# stay accepted deliberately: every sidecar already on disk is v1, and rejecting
+# them would blind the whole capture lane to win a cosmetic version check.  A v1
+# sidecar parses with ``effort_tier_source=None`` — "provenance unknown", which
+# is exactly the truth for a value written before the source was recorded.
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
 
 
 @dataclass
@@ -37,13 +43,19 @@ class CaptureSidecar:
 
     Attribute names are **snake_case** here (Python convention); callers that
     promote these onto ``AgentSession`` must map to the model's camelCase attrs:
-    ``effort_tier`` → ``effortTier``, ``model_variant`` → ``modelVariant``.
+    ``effort_tier`` → ``effortTier``, ``model_variant`` → ``modelVariant``,
+    ``effort_tier_source`` → ``effortTierSource``.
     """
 
     session_id: Optional[str] = None
     launcher: Optional[str] = None
     profile: Optional[str] = None
     effort_tier: Optional[str] = None
+    #: Gap 4 provenance for ``effort_tier`` — see
+    #: ``backend/parsers/effort_provenance.py`` for the token vocabulary.
+    #: ``None`` on v1 sidecars (written before the key existed) and whenever
+    #: ``effort_tier`` itself is ``None``.
+    effort_tier_source: Optional[str] = None
     model_variant: Optional[str] = None
     schema_version: Optional[int] = None
     captured_at: Optional[str] = None
@@ -97,11 +109,18 @@ def parse_capture_sidecar(path: Path) -> Optional[CaptureSidecar]:
         stripped = str(value).strip()
         return stripped if stripped else None
 
+    effort_tier = _opt_str("effortTier")
+    # Provenance without a value is meaningless — drop a stray source when the
+    # tier it describes is absent, so the invariant "source non-null implies
+    # tier non-null" holds for every consumer.
+    effort_tier_source = _opt_str("effortTierSource") if effort_tier else None
+
     return CaptureSidecar(
         session_id=_opt_str("sessionId"),
         launcher=_opt_str("launcher"),
         profile=_opt_str("profile"),
-        effort_tier=_opt_str("effortTier"),
+        effort_tier=effort_tier,
+        effort_tier_source=effort_tier_source,
         model_variant=_opt_str("modelVariant"),
         schema_version=int(schema_version),
         captured_at=_opt_str("capturedAt"),
