@@ -13,13 +13,33 @@ Run as a NAMED file::
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from backend.parsers.capture_sidecar import CaptureSidecar, parse_capture_sidecar
+from backend.parsers.platforms.claude_code.parser import _collect_capture_sidecar
 from backend.parsers.sessions import parse_session_file
+
+# ---------------------------------------------------------------------------
+# Load the SessionStart hook's writer directly from scripts/hooks/ (it is not
+# an importable package — same importlib idiom as
+# backend/tests/test_capture_session_start_hook.py) so this file can pin the
+# writer's output filename against the parser's primary probe below.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_HOOK_PATH = _REPO_ROOT / "scripts" / "hooks" / "ccdash_capture_session_start.py"
+
+_hook_spec = importlib.util.spec_from_file_location(
+    "ccdash_capture_session_start", _HOOK_PATH
+)
+_hook_mod = importlib.util.module_from_spec(_hook_spec)  # type: ignore[arg-type]
+_hook_spec.loader.exec_module(_hook_mod)  # type: ignore[union-attr]
+
+write_capture_sidecar = _hook_mod.write_capture_sidecar
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -272,6 +292,80 @@ class AgentSessionModelDumpMappingTests(unittest.TestCase):
         # this guard catches a future accidental double-write.)
         self.assertNotIn("effort_tier", dumped)
         self.assertNotIn("model_variant", dumped)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cross-module contract: writer's output filename == parser's primary probe.
+#
+# This is the silent-no-op risk: test_capture_session_start_hook.py exercises
+# write_capture_sidecar() in isolation (never calls the parser), and the tests
+# above exercise _collect_capture_sidecar()/parse_session_file() by writing
+# sidecar JSON directly with the _write_json() helper (never calls the real
+# writer). Neither file proves the writer's chosen filename is actually the
+# one the parser looks for. If either side's `<stem>.capture.json` convention
+# drifts, this test must fail.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class WriterParserPrimaryPathContractTests(unittest.TestCase):
+    def _tmpdir(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name)
+
+    def test_writer_output_found_by_parser_primary_probe(self) -> None:
+        """write_capture_sidecar()'s co-located output is found directly by
+        _collect_capture_sidecar()'s primary probe (path.with_name(...))."""
+        d = self._tmpdir()
+        jsonl_path = _write_jsonl(d, _SESSION_ID, [_MINIMAL_JSONL_ENTRY])
+
+        env = {
+            "CCDASH_LAUNCHER": "ica-claude.sh",
+            "CCDASH_LAUNCH_PROFILE": "ica-delegate",
+            "CCDASH_LAUNCH_EFFORT": "high",
+            "CCDASH_LAUNCH_MODEL": "claude-opus-4-8[1m]",
+        }
+        sidecar_path = write_capture_sidecar(
+            {"session_id": _SESSION_ID, "transcript_path": str(jsonl_path)},
+            env,
+        )
+        self.assertIsNotNone(sidecar_path)
+        assert sidecar_path is not None
+        self.assertTrue(sidecar_path.exists())
+        # The writer's chosen path must be exactly what the parser's primary
+        # (non-fallback) probe computes.
+        self.assertEqual(sidecar_path, jsonl_path.with_name(f"{jsonl_path.stem}.capture.json"))
+
+        result = _collect_capture_sidecar(jsonl_path, _SESSION_ID, is_subagent=False)
+
+        self.assertEqual(result["launcher"], "ica-claude.sh")
+        self.assertEqual(result["profile"], "ica-delegate")
+        self.assertEqual(result["effortTier"], "high")
+        self.assertEqual(result["modelVariant"], "claude-opus-4-8[1m]")
+
+    def test_writer_output_promoted_through_full_parse_session_file(self) -> None:
+        """End-to-end: real writer output -> parse_session_file() -> AgentSession."""
+        d = self._tmpdir()
+        jsonl_path = _write_jsonl(d, _SESSION_ID, [_MINIMAL_JSONL_ENTRY])
+
+        env = {
+            "CCDASH_LAUNCHER": "subscription",
+            "CCDASH_LAUNCH_PROFILE": "",
+            "CCDASH_LAUNCH_EFFORT": "",
+            "CCDASH_LAUNCH_MODEL": "",
+        }
+        write_capture_sidecar(
+            {"session_id": _SESSION_ID, "transcript_path": str(jsonl_path)},
+            env,
+        )
+
+        session = parse_session_file(jsonl_path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertEqual(session.launcher, "subscription")
+        self.assertIsNone(session.profile)     # empty env value -> null, never defaulted
+        self.assertIsNone(session.effortTier)
+        self.assertIsNone(session.modelVariant)
 
 
 if __name__ == "__main__":

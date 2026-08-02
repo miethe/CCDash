@@ -39,7 +39,7 @@ The **launch-time capture sidecar** (`<session-id>.capture.json`) records metada
 | `CCDASH_LAUNCH_EFFORT` | Launcher (conditionally) | `effortTier` field | Only when known; never defaulted |
 | `CCDASH_LAUNCH_MODEL` | Launcher | `modelVariant` field | May read from `$ANTHROPIC_MODEL` at launch time |
 
-**Writer:** `SessionStart` hook registered in both `~/.claude/settings.json` and `~/.claude/ica-settings.json` (or inherited via user-global settings block). The hook:
+**Writer:** `SessionStart` hook registered in `~/.claude/settings.json`, `~/.claude/ica-settings.json`, and `~/.claude/ica-gpt-shim-settings.json` (see "Activation" below for the live, verified registration — as of 2026-08-01 this is no longer a proposal, it is shipped). The hook:
 - Reads the four env vars + `session_id`/`transcript_path` from stdin payload.
 - Writes the sidecar to the primary location (co-located by stem).
 - **Always exits 0** (fail-open: any serialization/I/O error ⇒ no sidecar written, session carries `null` capture fields).
@@ -63,6 +63,88 @@ This sidecar is **distinct from** the Phase 5 `workflow.json` orchestration side
 - **Promotion:** `AgentSession(...)` constructor attaches the four fields to the in-memory record.
 - **Persistence:** `backend/db/sync_engine.py` writes four new nullable columns (T11-003).
 - **Frontend surface:** the four fields reach `types.ts` + the session-detail contract (`api.py` `list_sessions`/`get_session`, `session_detail.py`) and render inside `SessionInspector.tsx`'s **`SessionForensicsView`** panel (not the top-level session header) — null/absent fields show an explicit muted "Not captured" row (T11-005).
+
+## Activation (2026-08-01)
+
+**Status: ACTIVE.** Before 2026-08-01 this convention was wired end-to-end but never actually fired: 0 of 17,292 rows on the live node Postgres carried a non-null `launcher`/`profile`/`effort_tier`/`model_variant` value, because nothing exported the `CCDASH_LAUNCH_*` env vars and the `SessionStart` hook was never registered in any settings file. Activation closed both gaps — hook registration in three settings files plus env exports in the ICA gateway launcher — with no code change to the hook writer, model-identity module, or any parser/repository path (docs + config only).
+
+### Hook registration (verbatim, shipped)
+
+Registered as a `SessionStart` hook, matcher `"startup|resume|clear|compact"`, `"timeout": 5`, command:
+
+```
+/usr/bin/python3 /Users/miethe/dev/homelab/development/CCDash/scripts/hooks/ccdash_capture_session_start.py
+```
+
+in all three of:
+
+| File | Additional `env` block |
+|------|------------------------|
+| `~/.claude/settings.json` | `{"CCDASH_LAUNCHER": "subscription"}` |
+| `~/.claude/ica-settings.json` | `{"CCDASH_LAUNCHER": "ica-claude.sh", "CCDASH_LAUNCH_PROFILE": "ica-delegate"}` |
+| `~/.claude/ica-gpt-shim-settings.json` | `{"CCDASH_LAUNCHER": "ica-gpt-shim", "CCDASH_LAUNCH_PROFILE": "ica-gpt-shim"}` |
+
+`~/ica-claude.sh` (the ICA gateway launcher — a plain file in `$HOME`, **not** a symlink, with no copy under `agentic_meta_dev`) now exports before its `exec claude` line:
+
+```bash
+export CCDASH_LAUNCHER="ica-claude.sh"
+export CCDASH_LAUNCH_PROFILE="ica-delegate"
+export CCDASH_LAUNCH_MODEL="<explicit --model from \"$@\" if present, else $ANTHROPIC_MODEL>"
+# CCDASH_LAUNCH_EFFORT is not set here — effort is a per-session concept on this lane (see Limitation 3 below).
+```
+
+Both `--model X` and `--model=X` forms are parsed when resolving `CCDASH_LAUNCH_MODEL`.
+
+### Precedence (empirically settled)
+
+The main pre-activation risk was mislabeling: would a subscription-lane default (`CCDASH_LAUNCHER=subscription` in `~/.claude/settings.json`) leak into an ICA-launched session? Verified answer: no. A session launched via `~/ica-claude.sh` records `launcher="ica-claude.sh"`, never `"subscription"` — the `--settings ica-settings.json` env block plus the shell's own `export CCDASH_LAUNCHER=...` both take precedence over the base settings file's env block. Settings-file layering does not introduce a mislabeling risk.
+
+### Launcher → provider-channel mapping (observed)
+
+Captured via the real parser (`parse_session_file`) and `derive_provider_identity` run against live sessions launched through each path:
+
+| Launch path | `launcher` | `profile` | `effortTier` | `modelVariant` | `providerChannel` | `providerLabel` |
+|---|---|---|---|---|---|---|
+| `~/ica-claude.sh` | `ica-claude.sh` | `ica-delegate` | `None` | `claude-haiku-4-5[1m]` | `ica` | `Anthropic · Claude Code · ICA` |
+| `claude` (direct) | `subscription` | `None` | `None` | `None` | `subscription` | `Anthropic · Claude Code` |
+
+The channel rule itself (`backend/model_identity.py:188-194`): a non-empty `launcher` containing `"ica"` → `"ica"`; containing `"api"` → `"api"`; any other non-empty value → `"subscription"`; an empty/absent `launcher` falls through to the `model_variant` `"[1m]"` heuristic.
+
+### Verification recipe (reproducible)
+
+1. Launch a session through the path you want to verify (e.g. `~/ica-claude.sh` or plain `claude`).
+2. Confirm the sidecar landed next to the transcript: `ls ~/.claude/projects/<encoded-cwd>/<session-id>.capture.json`.
+3. Run the real parser plus provider-identity derivation against it — no server, no DB, no mocks:
+
+```python
+from pathlib import Path
+from backend.parsers.sessions import parse_session_file
+from backend.model_identity import derive_provider_identity
+
+jsonl = Path("~/.claude/projects/<encoded-cwd>/<session-id>.jsonl").expanduser()
+session = parse_session_file(jsonl)
+identity = derive_provider_identity(
+    getattr(session, "model", None),
+    getattr(session, "platformType", None),
+    getattr(session, "launcher", None),
+    getattr(session, "modelVariant", None),
+)
+print(session.launcher, session.profile, session.effortTier, session.modelVariant,
+      identity["providerChannel"], identity["providerLabel"])
+```
+
+A non-null `launcher` on the printed line confirms both halves of the contract: the hook fired at `SessionStart`, and the parser's primary co-located probe (`path.with_name(f"{path.stem}.capture.json")`, `parser.py:853`) found it.
+
+### Known limitations and horizons
+
+These are real, permanent characteristics of the design — not open bugs to fix:
+
+1. **Re-sync mtime gate.** `backend/db/sync_engine.py:4967-4973` short-circuits before reparse when a JSONL's mtime matches the cached value from the last sync. Writing a capture sidecar does not touch the JSONL's own mtime, so a sidecar that appears *after* a session was already ingested is invisible to ordinary incremental sync — only a forced re-sync (reparse via `parse_session_file` then delete/reinsert, `sync_engine.py:4985-5001`) picks it up. This does **not** affect newly-launched sessions: the hook writes the sidecar at `SessionStart`, before the JSONL is written, so the first sync of that session already sees it.
+2. **Fallback-path mismatch.** When the hook's stdin payload carries no `transcript_path`, the writer falls back to `<cwd>/data/capture/<session_id>.capture.json` (`scripts/hooks/ccdash_capture_session_start.py::_resolve_sidecar_path`), while the parser's fallback probe looks under `<jsonl_parent>/../data/capture/<raw_session_id>.capture.json` (`backend/parsers/platforms/claude_code/parser.py:865-866`). These two paths generally do not coincide, so a launch without `transcript_path` can silently produce an unfindable sidecar. In practice Claude Code always supplies `transcript_path` (confirmed empirically — every capture sidecar produced during activation landed co-located), so this is a latent risk, not an active one.
+3. **`effortTier` is not capturable at launch on the subscription lane.** Effort is a per-session setting (e.g. `/effort`), not something present in the launch environment, so it stays `null` there. Contract state, not a defect.
+4. **`modelVariant` is the requested launch model, not the effective one.** A mid-session `--fallback-model` hop or a `/model` switch is never reflected retroactively — best-effort by design, captured once at `SessionStart`.
+5. **Subagent sessions carry `null` capture fields by contract.** `backend/parsers/platforms/claude_code/parser.py:849-850`: `if is_subagent or not raw_session_id: return _null`. The `SessionStart` hook only fires for root (interactive) sessions; family-root propagation is out of scope.
+6. **Backfill horizon — permanent, not queued.** The ~17,292 pre-activation rows can never be enriched, for two independent reasons: the launch environment that would have populated a sidecar is unrecoverable (no sidecar was ever written, and none can be reconstructed after the fact), and Limitation 1 means even a manufactured sidecar would still need a forced re-sync to be picked up. Treat this as a permanent known horizon in any historical analytics, not a backlog item.
 
 ## For Subagents
 
