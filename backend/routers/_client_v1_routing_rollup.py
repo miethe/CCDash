@@ -142,7 +142,18 @@ def _row_to_key_dto(row: Mapping[str, Any]) -> RoutingRollupKeyDTO:
         provider=str(row.get("provider") or ""),
         sample_count=int(row.get("sample_count") or 0),
         success_rate=row.get("success_rate"),
-        cost_index=float(row.get("cost_index") if row.get("cost_index") is not None else 1.0),
+        # DI-4a: never fabricate a baseline for a persisted NULL -- a
+        # zero-coverage key means it, per the same null-over-fabrication
+        # principle success_rate/regression_rate already honor below. A
+        # fabricated 1.0 here would silently reintroduce the exact
+        # placeholder DI-4a exists to remove.
+        cost_index=(
+            float(row["cost_index"]) if row.get("cost_index") is not None else None
+        ),
+        # Computed-not-persisted (see RoutingRollupKeyDTO's docstring) --
+        # the routing_rollup table has no column for it, so it always reads
+        # back as 0.0 on this persisted-table path.
+        cost_coverage_fraction=float(row.get("cost_coverage_fraction") or 0.0),
         regression_rate=row.get("regression_rate"),
         confidence=float(row.get("confidence") if row.get("confidence") is not None else 0.0),
         eligible_for_adjustment=bool(row.get("eligible_for_adjustment")),

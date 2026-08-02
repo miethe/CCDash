@@ -138,7 +138,8 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
         "provider": "anthropic",
         "sample_count": 68,
         "success_rate": 0.91,
-        "cost_index": 1.0,
+        "cost_index": 1.12,
+        "cost_coverage_fraction": 0.94,
         "regression_rate": 0.03,
         "confidence": 0.8,
         "eligible_for_adjustment": true,
@@ -175,9 +176,10 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
 | `model` | string | The model identifier as captured from the session (e.g., `"claude-sonnet-5"`, `"gpt-5.6-terra"`). Verbatim; no cross-repo canonicalization yet. |
 | `provider` | string | Derived from `model` via `derive_model_identity()` (`"anthropic"`, `"openai"`, etc.). Never an independent routing dimension. |
 | `sample_count` | int | Number of sessions aggregated in this `(source_skill_name, model)` key within the rolling window. |
-| `success_rate` | float | Fraction of sessions in this key that completed without error (0.0–1.0). |
-| `cost_index` | float | Normalized cost per session relative to the lowest-cost model in the same task_class (baseline = 1.0). Higher = more expensive. |
-| `regression_rate` | float | Fraction of sessions in this key that regressed (introduced errors or quality loss) relative to the previous task (0.0–1.0). |
+| `success_rate` | float \| null | Fraction of sessions in this key that completed without error (0.0–1.0). `null` in v1 — no genuine per-session outcome signal exists yet (DI-4b, tracked separately). |
+| `cost_index` (DI-4a) | float \| null | This key's mean cost-per-covered-session divided by its own `task_class`'s mean cost-per-covered-session — **never a global baseline**: an orchestration key's cost is not comparable to a mechanical key's. A key at its class's baseline reads `~1.0`; twice as expensive reads `~2.0`. `null` when the key has zero cost-attributed sessions, or when its entire `task_class` has none to normalize against — never a fabricated `1.0`. |
+| `cost_coverage_fraction` (DI-4a) | float | `cost_covered_count / sample_count` for this key — the fraction of sessions that actually carried cost attribution. Always a real float (`0.0` at zero coverage), letting a router discount a `cost_index` computed from a small covered subset. Computed-not-persisted: reads back as `0.0` via the persisted `/api/v1/routing/rollup` read path (no DB column), but is a live value when computed directly via `RoutingRollupQueryService.compute_metrics`. |
+| `regression_rate` | float \| null | Fraction of sessions in this key that regressed (introduced errors or quality loss) relative to the previous task (0.0–1.0). `null` in v1 — no genuine regression signal exists yet (DI-4b, tracked separately). |
 | `confidence` | float | Producer confidence in the metrics (0.0–1.0), derived from sample density and stability. Higher = more reliable. |
 | `eligible_for_adjustment` | bool | `true` if `sample_count >= CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE`; `false` for `_unclassified`, `orchestration`, `mode_d`. Router may apply its own secondary threshold; this field is advisory. |
 | `window_start` | string | ISO 8601 start of the rolling aggregation window. |

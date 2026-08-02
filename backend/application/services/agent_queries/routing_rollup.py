@@ -113,10 +113,31 @@ genuine per-session success/failure/regression signal exists yet in
 ``sessions`` for this module to compute from (``status`` only ever carries
 ``'active'``/``'completed'`` in this codebase, never an outcome judgment) --
 fabricating one from a non-signal would be actively misleading to a
-consuming router. ``cost_index`` is the fixed PRD-literal baseline (``1.0``)
-for the same do-not-gold-plate rationale. Both are named, documented v1
-design gaps for D9 socialization, never bugs -- see ``compute_metrics``'s
-docstring for the full rationale.
+consuming router. Both are named, documented v1 design gaps for D9
+socialization, never bugs -- see ``compute_metrics``'s docstring for the
+full rationale.
+
+── DI-4a (this task): real per-key ``cost_index`` ─────────────────────────
+
+``cost_index`` was the fixed PRD-literal baseline (``1.0``) through the v1
+Phase 3 build. DI-4a (feature contract
+``docs/project_plans/feature_contracts/routing-feedback-cost-index-v1.md``)
+replaces that placeholder with a real per-``(source_skill_name x model)``
+cost signal derived from ``sessions.display_cost_usd``/``total_cost`` --
+aggregated in the SAME single query ``fetch_raw_rows`` already issues (no
+second DB round-trip). ``compute_metrics`` normalizes each key's mean
+cost-per-covered-session against its own ``task_class``'s mean (D-a1) --
+never a single global baseline, since a mechanical key's cost and an
+orchestration key's cost are not comparable on the same scale. A key (or an
+entire ``task_class``) with zero cost-attributed sessions emits
+``cost_index=None`` (D-a2) -- the same null-over-fabrication principle
+``success_rate``/``regression_rate`` already codify, extended to this third
+field. ``cost_coverage_fraction`` (D-a3) is the additive companion signal so
+a consuming router can discount a ``cost_index`` computed from a small
+covered subset. Outlier suppression (D-a4) is deliberately NOT implemented
+here -- the existing ``min_sample_size``/``eligible_for_adjustment`` gate is
+relied on to exclude low-sample keys from adjustment; see
+``compute_metrics``'s docstring for the full rationale.
 """
 from __future__ import annotations
 
@@ -154,17 +175,7 @@ UNCLASSIFIED_TASK_CLASS = "_unclassified"
 #: -- unlike ``UNCLASSIFIED_TASK_CLASS``, which bypasses that gate entirely.
 PROTECTED_TASK_CLASSES: frozenset[str] = frozenset({"orchestration", "mode_d"})
 
-# --- T3-004: D5 metric payload constants ------------------------------------
-
-#: v1 placeholder baseline for ``cost_index`` -- PRD Sec.6.3 defines ``1.0``
-#: as literally "baseline". This task's own design surface (D5 is
-#: unspecified by the cross-repo contract) deliberately keeps this a fixed
-#: constant rather than deriving a per-key cost-normalization signal from
-#: ``sessions.total_cost``/``reported_cost_usd`` -- that cross-key baseline
-#: derivation is a real design surface of its own, explicitly NOT
-#: gold-plated into this provisional, additive-versioned payload (phase-3
-#: Implementation Notes: "do not gold-plate this into a tunable model").
-_COST_INDEX_BASELINE = 1.0
+# --- T3-004 / DI-4a: D5 metric payload constants ----------------------------
 
 #: Saturation constant for ``_confidence_for_sample_count``. Fixed and
 #: deliberately independent of ``config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE``
@@ -188,6 +199,81 @@ def _confidence_for_sample_count(sample_count: int) -> float:
     if sample_count <= 0:
         return 0.0
     return min(1.0, sample_count / (sample_count + _CONFIDENCE_SATURATION_K))
+
+
+def _task_class_cost_baselines(rows: list[ProviderRollupRow]) -> dict[str, float | None]:
+    """Per-``task_class`` mean cost-per-covered-session baseline (DI-4a, D-a1).
+
+    Ratified choice: **per-task_class mean**, never a single global mean and
+    never a cheapest-key-as-baseline. Comparing an orchestration key's cost
+    against a mechanical key's cost is meaningless -- the two task classes
+    have structurally different expected cost profiles, so a global mean
+    would flag every orchestration key as "expensive" regardless of whether
+    it is well-routed within its own class. Grouping is by ``task_class``
+    exactly (the value already resolved by ``apply_mapping``), including
+    coverage-only classes (``_unclassified``/protected) -- they get their
+    own baseline too, computed the same way, even though their rows'
+    ``eligible_for_adjustment`` is hardcoded ``False`` independent of this.
+
+    Only the COVERED subset contributes to either side of the mean (never
+    diluted by treating an uncovered session as zero-cost, per D-a3) --
+    ``sum(row.cost_sum for row in class) / sum(row.cost_covered_count for
+    row in class)``. A ``task_class`` with zero covered sessions across ALL
+    of its rows gets a ``None`` baseline, which in turn forces
+    ``cost_index=None`` for every row in that class (D-a2) -- there is
+    nothing to normalize against.
+    """
+    cost_sums: dict[str, float] = {}
+    covered_counts: dict[str, int] = {}
+    for row in rows:
+        cost_sums[row.task_class] = cost_sums.get(row.task_class, 0.0) + row.cost_sum
+        covered_counts[row.task_class] = (
+            covered_counts.get(row.task_class, 0) + row.cost_covered_count
+        )
+
+    baselines: dict[str, float | None] = {}
+    for task_class, covered_count in covered_counts.items():
+        baselines[task_class] = (
+            (cost_sums[task_class] / covered_count) if covered_count > 0 else None
+        )
+    return baselines
+
+
+def _cost_index_and_coverage(
+    row: ProviderRollupRow, baseline: float | None
+) -> tuple[float | None, float]:
+    """Compute one row's ``(cost_index, cost_coverage_fraction)`` pair (DI-4a).
+
+    ``cost_coverage_fraction`` is always a float (``0.0`` when
+    ``session_count`` is ``0``, never a ``ZeroDivisionError``) --
+    ``cost_covered_count / session_count``, so a router can discount a
+    ``cost_index`` derived from a small covered subset (D-a3).
+
+    ``cost_index`` is ``None`` (D-a2, never a fabricated placeholder) when
+    EITHER: (a) this row itself has zero covered sessions, or (b) its
+    ``task_class``'s baseline could not be established (no covered sessions
+    anywhere in the class). Otherwise it is the row's own mean
+    cost-per-covered-session divided by its ``task_class`` baseline (D-a1) --
+    a key at its class's baseline reads ``~1.0``; a key twice as expensive
+    as baseline reads ``~2.0`` -- the same 1.0-centered scale the router's
+    ratified merge clamp (``penalty_for_cost = max(cost_index - 1.0, 0.0)``,
+    routing-feedback-router-merge-handoff.md Sec.2.2) depends on.
+
+    Outlier handling (D-a4): deliberately NOT implemented here. A low-sample
+    key with one dominant expensive session is left to the existing
+    ``eligible_for_adjustment``/``min_sample_size`` gate -- a key too small
+    to be adjustment-eligible does not need its cost math separately
+    robustified, since the router will not act on an ineligible row anyway.
+    Adding trimmed means/winsorization here would be scope creep relative to
+    this contract; see the feature contract's D-a4 decision record.
+    """
+    coverage_fraction = (
+        row.cost_covered_count / row.session_count if row.session_count > 0 else 0.0
+    )
+    if row.cost_covered_count <= 0 or baseline is None or baseline <= 0:
+        return None, coverage_fraction
+    key_mean_cost = row.cost_sum / row.cost_covered_count
+    return key_mean_cost / baseline, coverage_fraction
 
 
 def _now_iso() -> str:
@@ -222,6 +308,18 @@ class RawRollupRow:
     raw session count for the key over the resolved window; ``task_class``,
     ``provider``, and every D5 metric field are added by later tasks, never
     here.
+
+    ``cost_sum``/``cost_covered_count`` (DI-4a) are the exception: they are
+    per-session COST aggregates, not derived metric fields, and are cheapest
+    to compute in the SAME single ``GROUP BY`` query ``fetch_raw_rows``
+    already issues -- adding them here avoids a second DB round-trip in a
+    later stage. ``cost_covered_count`` is the count of sessions in this key
+    whose ``COALESCE(display_cost_usd, total_cost, 0) > 0`` (the same
+    "has cost attribution" criterion the DI-4a feature contract's signal-
+    source audit used); ``cost_sum`` is the sum of that same COALESCEd value
+    over exactly those covered sessions (uncovered sessions contribute
+    nothing to either aggregate -- never diluted by treating them as
+    zero-cost, per D-a3).
     """
 
     project_id: str
@@ -230,6 +328,8 @@ class RawRollupRow:
     session_count: int
     window_start: datetime
     window_end: datetime
+    cost_sum: float = 0.0
+    cost_covered_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +361,8 @@ class MappedRollupRow:
     window_end: datetime
     task_class: str
     is_coverage_only: bool
+    cost_sum: float = 0.0
+    cost_covered_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +392,8 @@ class ProviderRollupRow:
     task_class: str
     is_coverage_only: bool
     provider: str
+    cost_sum: float = 0.0
+    cost_covered_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,9 +480,19 @@ async def _fetch_raw_aggregate_rows(
     single SQL statement services the whole call regardless of how many
     distinct ``(project_id, source_skill_name, model)`` keys exist in the
     window. No ORM lazy-loading anywhere on this path.
+
+    DI-4a: the same statement additionally aggregates ``cost_sum``/
+    ``cost_covered_count`` (see ``RawRollupRow``'s docstring for the exact
+    "has cost attribution" criterion) -- ``COALESCE(display_cost_usd,
+    total_cost, 0) > 0``, mirroring the existing
+    ``feature_rollup.py::COALESCE(s.display_cost_usd, s.total_cost, 0)``
+    precedent for "the canonical per-session displayed cost" in this
+    codebase. No second query, no new join.
     """
     window_start_iso = _iso(window_start)
     window_end_iso = _iso(window_end)
+
+    _COST_EXPR = "COALESCE(display_cost_usd, total_cost, 0)"
 
     if isinstance(db, aiosqlite.Connection):
         params: list[Any] = [window_start_iso, window_end_iso]
@@ -392,7 +506,9 @@ async def _fetch_raw_aggregate_rows(
                 project_id,
                 skill_name AS source_skill_name,
                 model,
-                COUNT(*) AS session_count
+                COUNT(*) AS session_count,
+                SUM(CASE WHEN {_COST_EXPR} > 0 THEN {_COST_EXPR} ELSE 0 END) AS cost_sum,
+                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count
             FROM sessions
             WHERE updated_at >= ? AND updated_at <= ?
               {project_filter_sql}
@@ -414,7 +530,9 @@ async def _fetch_raw_aggregate_rows(
                 project_id,
                 skill_name AS source_skill_name,
                 model,
-                COUNT(*) AS session_count
+                COUNT(*) AS session_count,
+                SUM(CASE WHEN {_COST_EXPR} > 0 THEN {_COST_EXPR} ELSE 0 END) AS cost_sum,
+                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count
             FROM sessions
             WHERE updated_at >= $1 AND updated_at <= $2
               {project_filter_sql}
@@ -431,6 +549,8 @@ async def _fetch_raw_aggregate_rows(
             session_count=int(row["session_count"] or 0),
             window_start=window_start,
             window_end=window_end,
+            cost_sum=float(row.get("cost_sum") or 0.0),
+            cost_covered_count=int(row.get("cost_covered_count") or 0),
         )
         for row in raw_rows
     ]
@@ -558,6 +678,8 @@ class RoutingRollupQueryService:
                     window_end=row.window_end,
                     task_class=task_class,
                     is_coverage_only=is_unclassified or is_protected,
+                    cost_sum=row.cost_sum,
+                    cost_covered_count=row.cost_covered_count,
                 )
             )
         return mapped_rows
@@ -584,6 +706,8 @@ class RoutingRollupQueryService:
                     task_class=row.task_class,
                     is_coverage_only=row.is_coverage_only,
                     provider=provider,
+                    cost_sum=row.cost_sum,
+                    cost_covered_count=row.cost_covered_count,
                 )
             )
         return provider_rows
@@ -668,10 +792,15 @@ class RoutingRollupQueryService:
         genuine success/failure/regression signal; fabricating one from a
         non-signal would be actively misleading to a consuming router. The
         ``routing_rollup`` DDL (Phase 2) already declares both columns
-        nullable for exactly this reason. ``cost_index`` is the fixed
-        PRD-literal baseline (``1.0``, see ``_COST_INDEX_BASELINE``) for the
-        same do-not-gold-plate rationale. All three are named, documented
-        v1 design gaps flagged for D9 socialization -- not bugs.
+        nullable for exactly this reason -- both are named, documented v1
+        design gaps flagged for D9 socialization, not bugs.
+
+        ``cost_index``/``cost_coverage_fraction`` (DI-4a) are computed via
+        ``_task_class_cost_baselines``/``_cost_index_and_coverage`` -- see
+        those helpers' docstrings for the full D-a1/D-a2/D-a3/D-a4
+        rationale. The baseline map is computed ONCE per call over *rows*
+        (never per-row) since it is a ``task_class``-level aggregate shared
+        by every row in that class.
         """
         resolved_min_sample_size = (
             min_sample_size
@@ -679,11 +808,15 @@ class RoutingRollupQueryService:
             else config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE
         )
         resolved_freshness_ts = freshness_ts if freshness_ts is not None else _now_iso()
+        cost_baselines = _task_class_cost_baselines(rows)
 
         key_dtos: list[RoutingRollupKeyDTO] = []
         for row in rows:
             eligible_for_adjustment = (
                 not row.is_coverage_only and row.session_count >= resolved_min_sample_size
+            )
+            cost_index, cost_coverage_fraction = _cost_index_and_coverage(
+                row, cost_baselines.get(row.task_class)
             )
             key_dtos.append(
                 RoutingRollupKeyDTO(
@@ -702,7 +835,8 @@ class RoutingRollupQueryService:
                     provider=row.provider,
                     sample_count=row.session_count,
                     success_rate=None,
-                    cost_index=_COST_INDEX_BASELINE,
+                    cost_index=cost_index,
+                    cost_coverage_fraction=cost_coverage_fraction,
                     regression_rate=None,
                     confidence=_confidence_for_sample_count(row.session_count),
                     eligible_for_adjustment=eligible_for_adjustment,

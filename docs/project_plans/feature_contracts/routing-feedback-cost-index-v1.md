@@ -4,9 +4,9 @@ schema_version: 2
 doc_type: feature_contract
 it_schema: 1
 description: "Derive a real per-key cost_index in the routing-feedback envelope, replacing the fixed 1.0 baseline."
-status: draft
+status: completed
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-02
 feature_slug: routing-feedback-cost-index
 category: infrastructure
 estimated_points: 5
@@ -30,9 +30,15 @@ related_documents:
 spike_ref: null
 prd_ref: docs/project_plans/PRDs/infrastructure/proof-to-routing-loop-v1.md
 plan_ref: null
-commit_refs: []
+commit_refs: ["5d5da18"]
 pr_refs: []
-files_affected: []
+files_affected:
+  - backend/application/services/agent_queries/routing_rollup.py
+  - backend/application/services/agent_queries/models.py
+  - backend/routers/_client_v1_routing_rollup.py
+  - backend/tests/test_routing_rollup_metrics.py
+  - backend/tests/test_client_v1_routing_rollup.py
+  - docs/guides/routing-feedback-loop.md
 ---
 
 # Feature Contract: Routing Feedback Cost Index (DI-4a)

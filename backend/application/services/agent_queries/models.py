@@ -426,6 +426,20 @@ class RoutingRollupKeyDTO(BaseModel):
     gap for D9 socialization, not a bug -- see
     ``routing_rollup.py::RoutingRollupQueryService.compute_metrics``'s
     docstring.
+
+    ``cost_index`` (DI-4a) is a real per-``(source_skill_name x model)`` cost
+    signal, normalized against the row's own ``task_class``'s mean
+    cost-per-covered-session (D-a1) -- ``None`` when the key has zero
+    cost-attributed sessions (D-a2; never a fabricated ``1.0``) or when its
+    entire ``task_class`` has no covered sessions to normalize against.
+    ``cost_coverage_fraction`` is the additive companion signal (D-a3):
+    ``cost_covered_count / sample_count`` for the row, letting a consuming
+    router discount a ``cost_index`` computed from a small covered subset --
+    it is always a float (``0.0`` at zero coverage, never ``None``), and is
+    NOT persisted in the ``routing_rollup`` table (computed-not-persisted per
+    the DI-4a contract's no-new-DDL constraint), so it reads back as ``0.0``
+    on the persisted-table read path (``_client_v1_routing_rollup.py``) which
+    has no column to recover it from.
     """
 
     producer: str
@@ -444,7 +458,8 @@ class RoutingRollupKeyDTO(BaseModel):
     provider: str
     sample_count: int
     success_rate: float | None = None
-    cost_index: float
+    cost_index: float | None = None
+    cost_coverage_fraction: float = 0.0
     regression_rate: float | None = None
     confidence: float
     eligible_for_adjustment: bool

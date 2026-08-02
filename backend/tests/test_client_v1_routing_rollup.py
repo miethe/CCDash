@@ -162,11 +162,21 @@ class RowToKeyDtoTests(unittest.TestCase):
         self.assertEqual(dto.success_rate, 0.91)
         self.assertEqual(dto.regression_rate, 0.03)
 
-    def test_cost_index_defaults_to_one_when_none(self) -> None:
-        self.assertEqual(_row_to_key_dto(_make_row(cost_index=None)).cost_index, 1.0)
+    def test_cost_index_null_passes_through_unchanged(self) -> None:
+        """DI-4a: a persisted NULL cost_index (a zero-coverage key,
+        D-a2) must never be fabricated into a baseline -- the same
+        null-over-fabrication principle already honored for
+        success_rate/regression_rate below."""
+        self.assertIsNone(_row_to_key_dto(_make_row(cost_index=None)).cost_index)
 
     def test_cost_index_preserves_real_value(self) -> None:
         self.assertEqual(_row_to_key_dto(_make_row(cost_index=0.13)).cost_index, 0.13)
+
+    def test_cost_coverage_fraction_defaults_to_zero_since_not_persisted(self) -> None:
+        """cost_coverage_fraction is computed-not-persisted (no column in
+        the routing_rollup table, per the DI-4a contract's no-new-DDL
+        constraint) -- it always reads back as 0.0 on this path."""
+        self.assertEqual(_row_to_key_dto(_make_row()).cost_coverage_fraction, 0.0)
 
     def test_confidence_defaults_to_zero_when_none(self) -> None:
         self.assertEqual(_row_to_key_dto(_make_row(confidence=None)).confidence, 0.0)
