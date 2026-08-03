@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 45
+SCHEMA_VERSION = 46
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -250,6 +250,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- session_forensics["entryContext"]["workingDirectories"][0] for Codex
     -- sessions; NULL for Claude Code sessions (contract state, not a bug).
     cwd                TEXT,
+    -- Worktree attribution (worktree-as-first-class): the worktree's label when
+    -- this session was recorded in a git worktree of its project; NULL for
+    -- main-repo sessions. is_worktree is derived (worktree_name IS NOT NULL).
+    -- project_id already points at the PARENT repo — no per-worktree row.
+    worktree_name      TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -4455,6 +4460,19 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v45 migrations complete: routing_rollup effort_tier/"
             "effort_tier_source/authoritative_effort_fraction added (DI-4c)."
+        )
+
+    # ── v46 migrations (worktree-as-first-class) ─────────────────────────────
+    if current_version < 46:
+        # Nullable session label; see the pg v46 block for the full rationale.
+        # Row's project_id already targets the parent repo (watcher ingests
+        # worktree dirs under the parent), so no per-worktree row. Backfill is
+        # a separate one-shot script, not inline here.
+        await _ensure_column(db, "sessions", "worktree_name", "TEXT")
+        await db.commit()
+        logger.info(
+            "v46 migrations complete: sessions.worktree_name added "
+            "(worktree-as-first-class)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

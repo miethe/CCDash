@@ -42,8 +42,9 @@ class PostgresSessionRepository:
                 thinking_level, session_forensics_json,
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
-                workspace_id, source_ref, cwd, effort_tier_source
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65)
+                workspace_id, source_ref, cwd, effort_tier_source,
+                worktree_name
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -111,7 +112,11 @@ class PostgresSessionRepository:
                 -- Phase 2 Codex ingestion (codex-session-ingestion-v1). cwd is
                 -- capture-once: a re-ingest with a null value must not clobber a
                 -- previously-captured value.
-                cwd=COALESCE(EXCLUDED.cwd, sessions.cwd)
+                cwd=COALESCE(EXCLUDED.cwd, sessions.cwd),
+                -- Worktree attribution: capture-once (same posture as cwd) so a
+                -- re-ingest without a worktree_name never wipes a previously-
+                -- stamped label.
+                worktree_name=COALESCE(EXCLUDED.worktree_name, sessions.worktree_name)
             WHERE sessions.workspace_id = EXCLUDED.workspace_id
         """
         _conn = _pg_conn if _pg_conn is not None else self.db
@@ -187,6 +192,10 @@ class PostgresSessionRepository:
             session_data.get("cwd"),
             # Gap 4: provenance for effortTier (null == unknown/absent).
             session_data.get("effortTierSource"),
+            # Worktree attribution: null == main-repo session (not "unknown").
+            # Stamped at ingest by the watcher when the session's source_file is
+            # under a --claude-worktrees- / --git-hermes-worktrees- dir.
+            session_data.get("worktreeName"),
         )
 
     async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:

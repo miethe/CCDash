@@ -882,6 +882,9 @@ async def list_sessions(
             # (row predates the column) — FE renders an explicit fallback.
             effortTierSource=s.get("effort_tier_source"),
             modelVariant=s.get("model_variant"),
+            # Worktree attribution: None == main-repo session; a non-null label
+            # (e.g. "run-01ABC") means the row's projectId is the PARENT repo.
+            worktreeName=s.get("worktree_name"),
             modelDisplayName=model_identity["modelDisplayName"],
             modelProvider=model_identity["modelProvider"],
             modelFamily=model_identity["modelFamily"],
@@ -1301,6 +1304,8 @@ async def get_session(
         # (row predates the column) — FE renders an explicit fallback.
         effortTierSource=s.get("effort_tier_source"),
         modelVariant=s.get("model_variant"),
+        # Worktree attribution: None == main-repo session (see AgentSession).
+        worktreeName=s.get("worktree_name"),
         modelDisplayName=model_identity["modelDisplayName"],
         modelProvider=model_identity["modelProvider"],
         modelFamily=model_identity["modelFamily"],

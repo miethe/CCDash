@@ -288,6 +288,11 @@ class AgentSession(BaseModel):
     # None == provenance unknown (row predates the column, or effortTier is None).
     effortTierSource: Optional[str] = None
     modelVariant: Optional[str] = None
+    # Worktree attribution (worktree-as-first-class). When this session was
+    # recorded in a git worktree of its project, this holds the worktree's label
+    # (e.g. "run-01ABC", "plan-colorwork-bilateral"). The session's projectId
+    # already points at the PARENT repo. None == main-repo session.
+    worktreeName: Optional[str] = None
     modelDisplayName: str = ""
     modelProvider: str = ""
     modelFamily: str = ""
