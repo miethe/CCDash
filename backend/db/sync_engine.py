@@ -28,6 +28,7 @@ from backend import config, observability
 from backend.observability import otel
 from backend.models import Project
 from backend.parsers.sessions import parse_session_file
+from backend.parsers.worktree_attribution import worktree_name_for_source
 from backend.parsers.workflow_sidecar import scan_workflow_sidecars
 from backend.ingestion.jsonl_adapter import jsonl_session_to_envelope
 from backend.ingestion.session_ingest_service import SessionIngestService
@@ -5014,6 +5015,14 @@ class SyncEngine:
                 sidecar_context_window = _join_sidecar_context_window(session_payload, path)
                 if sidecar_context_window:
                     session_payload["contextWindow"] = sidecar_context_window
+                # Worktree attribution (worktree-as-first-class). Derived from the
+                # enclosing Claude project dir name, so ingest never needs to
+                # decide "am I running under a worktree?" — the fact is in the
+                # path. NULL == main-repo session; upsert is capture-once via
+                # COALESCE so re-ingest of an already-labeled row cannot wipe it.
+                worktree_name = worktree_name_for_source(path)
+                if worktree_name is not None:
+                    session_payload["worktreeName"] = worktree_name
                 # T11-004: launch-time capture sidecar fields (launcher, profile,
                 # effortTier, modelVariant) are already present in session_payload
                 # via AgentSession.model_dump() — the parser sets them from the

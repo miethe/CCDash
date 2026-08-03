@@ -199,12 +199,14 @@ def stable_project_id(dirname: str) -> str:
 #   <repo>/.git/hermes-worktrees/<name> → '--git-hermes-worktrees-' (Hermes, node)
 _WORKTREE_MARKERS = ("--claude-worktrees-", "--git-hermes-worktrees-")
 
-# Greppable marker written into Project.description for folded worktree rows.
-FOLD_PARENT_PREFIX = "ccdash-fold-parent:"
-
 
 def worktree_marker(dirname: str) -> str | None:
-    """Return the worktree marker present in ``dirname``, or None."""
+    """Return the worktree marker present in ``dirname``, or None.
+
+    Mirrors ``backend.parsers.worktree_attribution.worktree_marker``; kept
+    literal here because this script must run without importing ``backend``.
+    Any change to marker semantics MUST land in both places.
+    """
     for marker in _WORKTREE_MARKERS:
         if marker in dirname:
             return marker
@@ -212,47 +214,17 @@ def worktree_marker(dirname: str) -> str | None:
 
 
 def parent_repo_dirname(dirname: str) -> str | None:
-    """Given a worktree project dirname, return the PARENT repo's project dirname.
+    """Given a worktree project dirname, return the parent repo's project dirname.
 
-    Truncates at the worktree marker, so
-    ``-Users-…-agentic-meta-dev--claude-worktrees-run-01ABC`` yields
-    ``-Users-…-agentic-meta-dev``. Returns None when ``dirname`` is not a worktree.
+    Mirrors ``backend.parsers.worktree_attribution.parent_repo_dirname`` for the
+    same script-boundary reason as :func:`worktree_marker`. Truncates at the
+    marker so ``-Users-…-repo--claude-worktrees-run-01`` yields ``-Users-…-repo``;
+    returns None when ``dirname`` is not a worktree.
     """
     marker = worktree_marker(dirname)
     if marker is None:
         return None
     return dirname.split(marker, 1)[0]
-
-
-def fold_worktree_candidate(cand: dict) -> dict:
-    """Re-point a worktree candidate at its parent repo (session folding).
-
-    CCDash stores exactly ONE ``sessions_path`` per project row, so a worktree's
-    sessions can only be ingested if its own dir is registered — we cannot simply
-    reuse the parent's project id (it is the primary key). Folding therefore keeps
-    the per-worktree row (ingestion) but sets its ``repo_path`` to the PARENT
-    repo, so every rollup that groups by project path attributes the worktree's
-    sessions to the parent repo rather than to a phantom project.
-
-    The parent's project id is recorded in ``description`` as
-    ``ccdash-fold-parent:<id>`` — the ``Project`` model has no dedicated field for
-    it (see backend/models.py), and sending an unsupported key would be silently
-    dropped, so we use a supported field with a greppable prefix.
-
-    Deferred (needs backend work, not a script flag): collapsing these alias rows
-    into a single parent project row, which requires either multi-path projects or
-    an ingest-side dir→project map.
-    """
-    parent_dirname = parent_repo_dirname(cand["dirname"])
-    if not parent_dirname:
-        return cand
-    cand = dict(cand)
-    parent_id = stable_project_id(parent_dirname)
-    cand["repo_path"] = decode_repo_path(parent_dirname)
-    cand["fold_parent_id"] = parent_id
-    cand["is_folded_worktree"] = True
-    cand["description"] = f"{FOLD_PARENT_PREFIX}{parent_id}"
-    return cand
 
 
 # ---------------------------------------------------------------------------
@@ -314,14 +286,14 @@ def collect_candidates(
     include: list[str],
     exclude: list[str],
     no_worktrees: bool,
-    fold_worktrees: bool = False,
 ) -> list[dict]:
     """Return sorted (session count desc) list of candidate project dicts.
     Dirs below min_sessions are excluded entirely (not shown in the table).
 
-    ``fold_worktrees`` re-points worktree dirs at their parent repo — see
-    ``fold_worktree_candidate``. It is ignored when ``no_worktrees`` is set
-    (nothing to fold if worktrees are dropped outright).
+    Worktree handling is now done at INGEST time via ``sessions.worktree_name``
+    (schema v46). Registration itself only needs ``--no-worktrees`` to keep the
+    registry at one row per repo; the watcher discovers worktree dirs under
+    each registered project automatically.
     """
     if not projects_root.is_dir():
         print(f"ERROR: projects root '{projects_root}' not found", file=sys.stderr)
@@ -349,7 +321,7 @@ def collect_candidates(
             continue
 
         decoded = decode_repo_path(dirname)
-        cand = {
+        candidates.append({
             "dirname": dirname,
             "sessions_path": str(entry.resolve()),
             "repo_path": decoded,
@@ -357,10 +329,7 @@ def collect_candidates(
             "id": stable_project_id(dirname),
             "n_sessions": n,
             "action": "",
-        }
-        if fold_worktrees and worktree_marker(dirname) is not None:
-            cand = fold_worktree_candidate(cand)
-        candidates.append(cand)
+        })
 
     candidates.sort(key=lambda c: c["n_sessions"], reverse=True)
     return candidates
@@ -439,14 +408,10 @@ def main() -> None:
     )
     ap.add_argument(
         "--no-worktrees", action="store_true",
-        help="Drop worktree dirs entirely (their sessions are then never ingested)",
-    )
-    ap.add_argument(
-        "--fold-worktrees", action="store_true",
         help=(
-            "Register worktree dirs but attribute them to their PARENT repo "
-            "(sets repo_path to the parent, records foldParentId). Keeps worktree "
-            "sessions ingested instead of dropping them. Ignored with --no-worktrees."
+            "Skip worktree project dirs. Worktree SESSIONS are ingested at watch "
+            "time under the parent's project_id (with sessions.worktree_name set); "
+            "registering their dirs would just create alias project rows."
         ),
     )
     ap.add_argument(
@@ -477,7 +442,6 @@ def main() -> None:
         include=args.include,
         exclude=args.exclude,
         no_worktrees=args.no_worktrees,
-        fold_worktrees=args.fold_worktrees,
     )
     if args.limit is not None:
         rows = rows[: args.limit]
@@ -517,7 +481,7 @@ def main() -> None:
             "name": r["name"],
             "path": r["repo_path"],
             "sessionsPath": r["sessions_path"],
-            "description": r.get("description", ""),
+            "description": "",
             "repoUrl": "",
             # repo_path is the canonical repo cwd used for Codex session attribution.
             # Uses the greedy filesystem-decoded path from decode_repo_path().

@@ -291,6 +291,11 @@ def _apply_launch_capture(session_payload: dict[str, Any]) -> None:
     session_payload["profile"] = session_payload.get("profile")
     session_payload["effortTier"] = session_payload.get("effort_tier")
     session_payload["modelVariant"] = session_payload.get("model_variant")
+    # Worktree attribution (worktree-as-first-class). NULL == main-repo session.
+    # The row's project_id already targets the parent repo; this label carries
+    # the worktree's identity ("run-01ABC", "plan-colorwork-bilateral") into the
+    # session detail so the UI can badge/filter it without a second join.
+    session_payload["worktreeName"] = session_payload.get("worktree_name")
 
 
 def _classify_links(

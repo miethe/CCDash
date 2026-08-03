@@ -95,8 +95,9 @@ class SqliteSessionRepository:
                 models_used_json, agents_used_json, skills_used_json,
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
-                source_ref, cwd, effort_tier_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_ref, cwd, effort_tier_source,
+                worktree_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -170,7 +171,9 @@ class SqliteSessionRepository:
                 -- Phase 2 Codex ingestion (codex-session-ingestion-v1). cwd is
                 -- capture-once: a re-ingest with a null value must not clobber a
                 -- previously-captured value.
-                cwd=COALESCE(excluded.cwd, sessions.cwd)
+                cwd=COALESCE(excluded.cwd, sessions.cwd),
+                -- Worktree attribution: capture-once (same posture as cwd).
+                worktree_name=COALESCE(excluded.worktree_name, sessions.worktree_name)
             WHERE sessions.workspace_id = excluded.workspace_id
             """,
             (
@@ -253,6 +256,11 @@ class SqliteSessionRepository:
                 session_data.get("cwd"),
                 # Gap 4: provenance for effortTier (null == unknown/absent).
                 session_data.get("effortTierSource"),
+                # Worktree attribution: null == main-repo session (not "unknown").
+                # Stamped at ingest by the watcher when the source dir is under a
+                # --claude-worktrees- or --git-hermes-worktrees- sibling of the
+                # registered project.
+                session_data.get("worktreeName"),
             ),
         )
         await self._commit()

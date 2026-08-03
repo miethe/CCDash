@@ -130,14 +130,17 @@ def test_encode_segment_collapses_underscore_and_dot() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Worktree folding (--fold-worktrees)
+# Worktree marker/parent helpers (mirrored in backend.parsers.worktree_attribution)
 # ---------------------------------------------------------------------------
+#
+# The register script keeps the pure-string worktree helpers because it must
+# run without importing ``backend`` (stdlib-only stance). The full ingest-time
+# behaviour is tested in ``test_worktree_attribution.py``; the tests here only
+# lock the two functions that the script itself calls, so a drift between the
+# two copies would fail here fast.
 
 parent_repo_dirname = _mod.parent_repo_dirname
 worktree_marker = _mod.worktree_marker
-fold_worktree_candidate = _mod.fold_worktree_candidate
-FOLD_PARENT_PREFIX = _mod.FOLD_PARENT_PREFIX
-stable_project_id = _mod.stable_project_id
 
 
 @pytest.mark.parametrize(
@@ -165,39 +168,14 @@ def test_non_worktree_dir_has_no_parent_and_no_marker() -> None:
     assert parent_repo_dirname(plain) is None
 
 
-def test_fold_repoints_worktree_at_parent_repo(tree: Path) -> None:
-    """A folded worktree must carry the PARENT's path so rollups group correctly."""
-    parent_dirname = _encode_path(tree / "agentic_meta_dev")
-    wt_dirname = parent_dirname + "--claude-worktrees-run-01ABC"
+def test_no_worktrees_drops_worktree_dirs(tmp_path: Path) -> None:
+    """Registration now ONLY sees canonical repos.
 
-    folded = fold_worktree_candidate({
-        "dirname": wt_dirname,
-        "sessions_path": "/tmp/sessions/" + wt_dirname,
-        "repo_path": "/wrong/decoded/worktree/path",
-        "name": "agentic-meta-dev (wt: run-01ABC)",
-        "id": stable_project_id(wt_dirname),
-        "n_sessions": 7,
-        "action": "",
-    })
-
-    # Attributed to the parent repo, with underscores intact.
-    assert folded["repo_path"] == str(tree / "agentic_meta_dev")
-    assert folded["fold_parent_id"] == stable_project_id(parent_dirname)
-    assert folded["description"] == FOLD_PARENT_PREFIX + stable_project_id(parent_dirname)
-    assert folded["is_folded_worktree"] is True
-    # Its OWN sessions_path and id are preserved -- that is what keeps the
-    # worktree's sessions ingested rather than dropped.
-    assert folded["sessions_path"].endswith(wt_dirname)
-    assert folded["id"] == stable_project_id(wt_dirname)
-
-
-def test_fold_is_a_noop_for_non_worktrees() -> None:
-    cand = {"dirname": "-Users-m-dev-skillmeat", "repo_path": "/Users/m/dev/skillmeat"}
-    assert fold_worktree_candidate(cand) == cand
-
-
-def test_no_worktrees_and_fold_are_mutually_exclusive(tmp_path: Path) -> None:
-    """--no-worktrees drops worktree dirs, so folding has nothing to act on."""
+    Worktree sessions still get ingested (by the watcher, under the parent's
+    project_id, with ``sessions.worktree_name`` set) -- they just do not get
+    their own project row anymore. This test locks the "one row per repo"
+    invariant at registration time.
+    """
     root = tmp_path / "projects"
     (root / "-Users-m-dev-repo").mkdir(parents=True)
     wt = root / "-Users-m-dev-repo--claude-worktrees-run-1"
@@ -205,15 +183,18 @@ def test_no_worktrees_and_fold_are_mutually_exclusive(tmp_path: Path) -> None:
     (wt / "a.jsonl").write_text("{}")
     (root / "-Users-m-dev-repo" / "b.jsonl").write_text("{}")
 
-    dropped = _mod.collect_candidates(
-        projects_root=root, min_sessions=1, include=[], exclude=[],
-        no_worktrees=True, fold_worktrees=True,
-    )
-    assert all(worktree_marker(c["dirname"]) is None for c in dropped)
-
     kept = _mod.collect_candidates(
         projects_root=root, min_sessions=1, include=[], exclude=[],
-        no_worktrees=False, fold_worktrees=True,
+        no_worktrees=True,
     )
-    folded = [c for c in kept if c.get("is_folded_worktree")]
-    assert len(folded) == 1, "worktree should be kept and folded, not dropped"
+    assert [c["dirname"] for c in kept] == ["-Users-m-dev-repo"]
+
+    # Without --no-worktrees the worktree dir IS still collected (the flag is
+    # opt-in), but no folding transform runs -- the registry would just get an
+    # alias row. That is the legacy pre-schema-v46 shape; we keep the behaviour
+    # so operators who opt in explicitly are not surprised.
+    unfiltered = _mod.collect_candidates(
+        projects_root=root, min_sessions=1, include=[], exclude=[],
+        no_worktrees=False,
+    )
+    assert len(unfiltered) == 2

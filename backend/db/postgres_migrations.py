@@ -43,7 +43,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 45
+SCHEMA_VERSION = 46
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -228,6 +228,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- session_forensics["entryContext"]["workingDirectories"][0] for Codex
     -- sessions; NULL for Claude Code sessions (contract state, not a bug).
     cwd                TEXT,
+    -- Worktree attribution (worktree-as-first-class): the worktree's label
+    -- (e.g. "run-01ABC", "plan-colorwork-bilateral") when this session was
+    -- recorded in a git worktree of its project; NULL for main-repo sessions.
+    -- is_worktree is derived (worktree_name IS NOT NULL), so no separate column.
+    -- The row's project_id already points at the PARENT repo — this preserves
+    -- the worktree identity without a per-worktree project row.
+    worktree_name      TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -3983,6 +3990,21 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         logger.info(
             "v45 migrations complete: routing_rollup effort_tier/"
             "effort_tier_source/authoritative_effort_fraction added (DI-4c)."
+        )
+
+    # ── v46 migrations (worktree-as-first-class) ─────────────────────────────
+    if current_version < 46:
+        # Nullable session label carrying the worktree identity when a session
+        # was recorded in a git worktree of its project. The row's project_id
+        # already points at the PARENT repo (the watcher ingests worktree dirs
+        # under the parent), so this preserves the worktree name without a
+        # per-worktree project row. Present in the _TABLES DDL for fresh
+        # instances; this call adds it to existing DBs. Backfill is a separate
+        # one-shot script (existing worktree sessions), never inline here.
+        await _ensure_column(db, "sessions", "worktree_name", "TEXT")
+        logger.info(
+            "v46 migrations complete: sessions.worktree_name added "
+            "(worktree-as-first-class)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
