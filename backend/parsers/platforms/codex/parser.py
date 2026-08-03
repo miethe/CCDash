@@ -16,6 +16,7 @@ from backend.parsers.effort_provenance import (
     EFFORT_SOURCE_CODEX_COLLABORATION_MODE,
     EFFORT_SOURCE_CODEX_PAYLOAD_EFFORT,
 )
+from backend.parsers.platforms.codex.tool_outcome import classify_tool_outcome
 from backend.parsers.platforms.test_runs import (
     aggregate_test_runs,
     enrich_test_run_with_output,
@@ -1032,7 +1033,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 output_raw = entry.get("output")
             output_text = _coerce_text_blob(output_raw)
             status = str(payload_dict.get("status") or "").strip().lower()
-            is_error = status in {"error", "failed", "failure"}
+            # DI-4d: real Codex payloads carry NO `status` field, so the old
+            # `status in {"error","failed","failure"}` test never fired and every
+            # Codex tool call was recorded as a success. The outcome is emitted
+            # inside the output payload instead — see codex/tool_outcome.py.
+            detected_error, outcome_source = classify_tool_outcome(
+                output_raw,
+                payload_status=payload_dict.get("status"),
+            )
+            is_error = detected_error is True
             related_idx = tool_logs_by_call_id.get(call_id)
             if related_idx is not None:
                 related_log = logs[related_idx]
@@ -1042,6 +1051,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     related_log.toolCall.isError = is_error
                 related_log.metadata["toolOutput"] = output_text[:20000]
                 related_log.metadata["toolStatus"] = "error" if is_error else "success"
+                related_log.metadata["toolStatusSource"] = outcome_source
+                if detected_error is None:
+                    related_log.metadata["toolStatusUnresolved"] = True
                 related_log.relatedToolCallId = call_id or None
                 if is_error and related_log.toolCall:
                     tool_success[related_log.toolCall.name] -= 1

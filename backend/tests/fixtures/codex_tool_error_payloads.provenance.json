@@ -1,0 +1,60 @@
+{
+  "purpose": "DI-4d \u2014 real Codex tool-result payloads (verbatim) proving nonzero tool-error detection.",
+  "captured": "2026-08-03",
+  "capture_method": "verbatim JSONL lines copied from ~/.codex/sessions rollout logs; no payload shape was hand-authored.",
+  "header_line": {
+    "type": "turn_context",
+    "from": "/Users/miethe/.codex/sessions/2026/07/08/rollout-2026-07-08T16-49-13-019f437d-eb47-7060-b89d-aa006e217366.jsonl"
+  },
+  "pairs": [
+    {
+      "expect": "error",
+      "source": "exit_code_line",
+      "tool": "shell_command",
+      "from": "/Users/miethe/.codex/sessions/2025/11/20/rollout-2025-11-20T15-18-37-019aa2eb-3ed9-78f0-8e63-cc4292893ca9.jsonl",
+      "line_index": 18
+    },
+    {
+      "expect": "error",
+      "source": "envelope_exit_code",
+      "tool": "shell",
+      "from": "/Users/miethe/.codex/sessions/2025/09/02/rollout-2025-09-02T12-02-21-3bdfe280-f12e-4207-bb04-b480859f722e.jsonl",
+      "line_index": 97
+    },
+    {
+      "expect": "error",
+      "source": "failure_marker",
+      "tool": "shell",
+      "from": "/Users/miethe/.codex/sessions/2025/08/28/rollout-2025-08-28T10-58-35-410e3710-bb64-4536-9669-b9f370688297.jsonl",
+      "line_index": 63
+    },
+    {
+      "expect": "error",
+      "source": "script_lifecycle",
+      "tool": "exec",
+      "from": "/Users/miethe/.codex/sessions/2026/07/08/rollout-2026-07-08T16-49-13-019f437d-eb47-7060-b89d-aa006e217366.jsonl",
+      "line_index": 451
+    },
+    {
+      "expect": "success",
+      "source": "exit_code_line",
+      "tool": "exec_command",
+      "from": "/Users/miethe/.codex/sessions/2026/01/16/rollout-2026-01-16T11-45-53-019bc7b2-f63a-7430-b0a5-b637badf4350.jsonl",
+      "line_index": 12
+    },
+    {
+      "expect": "success",
+      "source": "envelope_exit_code",
+      "tool": "apply_patch",
+      "from": "/Users/miethe/.codex/sessions/2025/10/24/rollout-2025-10-24T10-32-22-019a16a2-8a46-7ce3-8ab0-4340cd3819e5.jsonl",
+      "line_index": 41
+    },
+    {
+      "expect": "success",
+      "source": "script_lifecycle",
+      "tool": "exec",
+      "from": "/Users/miethe/.codex/sessions/2026/07/08/rollout-2026-07-08T16-49-13-019f437d-eb47-7060-b89d-aa006e217366.jsonl",
+      "line_index": 455
+    }
+  ]
+}
