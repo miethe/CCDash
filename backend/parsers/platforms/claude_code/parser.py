@@ -694,18 +694,91 @@ def _collect_task_sidecar(
     }
 
 
+def _load_team_config(config_path: Path) -> dict[str, Any]:
+    """Read a Claude Team `config.json` (sits one level above `inboxes/`).
+
+    Benign on any read/parse failure — this runs on the parser hot path and a
+    missing or malformed config must never raise.
+    """
+    if not config_path.exists():
+        return {"teamName": "", "leadAgentId": "", "leadSessionId": "", "members": []}
+
+    raw = _load_json_dict(config_path)
+    members: list[dict[str, Any]] = []
+    for member in raw.get("members") or []:
+        if not isinstance(member, dict):
+            continue
+        members.append({
+            "agentId": str(member.get("agentId") or "").strip(),
+            "name": str(member.get("name") or "").strip(),
+            "agentType": str(member.get("agentType") or "").strip(),
+            "model": str(member.get("model") or "").strip(),
+        })
+
+    return {
+        "teamName": str(raw.get("name") or "").strip(),
+        "leadAgentId": str(raw.get("leadAgentId") or "").strip(),
+        "leadSessionId": str(raw.get("leadSessionId") or "").strip(),
+        "members": members,
+    }
+
+
 def _collect_team_sidecar(
     claude_root: Path | None,
     raw_session_id: str,
     schema: dict[str, Any],
 ) -> dict[str, Any]:
+    empty_team: dict[str, Any] = {
+        "teamName": "",
+        "leadAgentId": "",
+        "leadSessionId": "",
+        "members": [],
+    }
     if not claude_root or not raw_session_id:
-        return {"directory": "", "exists": False, "teamMembers": [], "inboxes": [], "totalMessages": 0, "unreadMessages": 0}
+        return {
+            "directory": "",
+            "exists": False,
+            "teamMembers": [],
+            "inboxes": [],
+            "totalMessages": 0,
+            "unreadMessages": 0,
+            **empty_team,
+        }
 
     team_cfg = schema.get("sidecars", {}).get("teams", {})
-    inbox_dir = claude_root / str(team_cfg.get("dir") or "teams/{session_id}/inboxes").replace("{session_id}", raw_session_id)
+    session_id_short = raw_session_id[:8]
+
+    # Claude Code names on-disk team directories `session-<first8>` (observed on 38/39
+    # real dirs); a small minority use the full-UUID form. Prefer whichever actually
+    # exists, trying the short form first since it is the dominant real layout.
+    short_dir = claude_root / str(team_cfg.get("dir_short") or "teams/session-{session_id_short}/inboxes").replace(
+        "{session_id_short}", session_id_short
+    )
+    full_dir = claude_root / str(team_cfg.get("dir") or "teams/{session_id}/inboxes").replace(
+        "{session_id}", raw_session_id
+    )
+
+    if short_dir.exists():
+        inbox_dir = short_dir
+    elif full_dir.exists():
+        inbox_dir = full_dir
+    else:
+        inbox_dir = short_dir
+
     if not inbox_dir.exists():
-        return {"directory": str(inbox_dir), "exists": False, "teamMembers": [], "inboxes": [], "totalMessages": 0, "unreadMessages": 0}
+        return {
+            "directory": str(inbox_dir),
+            "exists": False,
+            "teamMembers": [],
+            "inboxes": [],
+            "totalMessages": 0,
+            "unreadMessages": 0,
+            **empty_team,
+        }
+
+    team_dir = inbox_dir.parent
+    config_file_name = str(team_cfg.get("config_file") or "config.json")
+    team_info = _load_team_config(team_dir / config_file_name)
 
     inbox_glob = str(team_cfg.get("glob") or "*.json")
     inbox_files = sorted(inbox_dir.glob(inbox_glob))
@@ -760,6 +833,7 @@ def _collect_team_sidecar(
         "inboxes": inboxes,
         "totalMessages": total_messages,
         "unreadMessages": unread_messages,
+        **team_info,
     }
 
 

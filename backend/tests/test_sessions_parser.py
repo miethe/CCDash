@@ -1691,6 +1691,84 @@ class SessionParserTests(unittest.TestCase):
         self.assertIn("team_inbox", artifact_types)
         self.assertIn("session_env", artifact_types)
 
+    def test_team_sidecar_resolves_short_dir_layout_and_reads_config_membership(self) -> None:
+        # Real on-disk layout: Claude Code names team dirs `session-<first8>`, NOT
+        # the full session UUID (38 of 39 dirs observed on disk use this form).
+        raw_session_id = "0876ab73-e6bf-4c13-9978-a96419e4cc20"
+        session_id_short = raw_session_id[:8]
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T16:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "working"}],
+                    },
+                }
+            ],
+            relative_path=f".claude/projects/demo/{raw_session_id}.jsonl",
+        )
+        claude_root = path.parents[2]
+
+        team_dir = claude_root / "teams" / f"session-{session_id_short}"
+        inbox_dir = team_dir / "inboxes"
+        inbox_dir.mkdir(parents=True, exist_ok=True)
+        (inbox_dir / "team-lead.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "from": "team-lead",
+                        "text": "status check",
+                        "timestamp": "2026-02-16T16:00:01Z",
+                        "read": True,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (team_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "name": f"session-{session_id_short}",
+                    "leadAgentId": f"team-lead@session-{session_id_short}",
+                    "leadSessionId": raw_session_id,
+                    "members": [
+                        {
+                            "agentId": f"team-lead@session-{session_id_short}",
+                            "name": "team-lead",
+                            "agentType": "team-lead",
+                        },
+                        {
+                            "agentId": f"P1-backend@session-{session_id_short}",
+                            "name": "P1-backend",
+                            "agentType": "python-backend-engineer",
+                            "model": "sonnet",
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        teams = session.sessionForensics.get("sidecars", {}).get("teams", {})
+        self.assertTrue(teams.get("exists"))
+        self.assertEqual(teams.get("directory"), str(inbox_dir))
+        self.assertEqual(teams.get("totalMessages"), 1)
+
+        self.assertEqual(teams.get("teamName"), f"session-{session_id_short}")
+        self.assertEqual(teams.get("leadAgentId"), f"team-lead@session-{session_id_short}")
+        self.assertEqual(teams.get("leadSessionId"), raw_session_id)
+        members = teams.get("members", [])
+        self.assertEqual(len(members), 2)
+        backend_member = next(m for m in members if m.get("name") == "P1-backend")
+        self.assertEqual(backend_member.get("agentType"), "python-backend-engineer")
+        self.assertEqual(backend_member.get("model"), "sonnet")
+
     def test_statusline_sidecar_sets_context_and_reported_cost_fields(self) -> None:
         raw_session_id = "22222222-3333-4444-5555-666666666666"
         path = self._write_jsonl(

@@ -294,13 +294,18 @@ async def get_session_family_v1(
     # derived id into the family lookup so descendants/ancestors are scoped to the
     # anchor's project end-to-end.
     project_id: str = anchor.get("project_id") or requested_project_id or ""
+    # ``include_subagents`` defaults to False in list_paginated's filter logic
+    # (see repositories/sessions.py ~L425), which appends
+    # "(session_type IS NULL OR session_type != 'subagent')" and silently
+    # drops every subagent child from the family. A session family MUST
+    # include subagent children, so this is explicitly requested here.
     rows: list[dict] = await session_repo.list_paginated(
         offset=0,
         limit=500,
         project_id=project_id or None,
         sort_by="started_at",
         sort_order="asc",
-        filters={"root_session_id": root_id},
+        filters={"root_session_id": root_id, "include_subagents": True},
         workspace_id="default-local",  # TODO(workspace-routing)
     )
 
@@ -318,6 +323,20 @@ async def get_session_family_v1(
             total_cost=float(row.get("total_cost") or 0.0),
             total_tokens=int(row.get("tokens_in", 0) or 0) + int(row.get("tokens_out", 0) or 0),
             duration_seconds=float(row.get("duration_seconds") or 0.0),
+            # workflow_id is a plain column on the sessions row; wrap it as a
+            # single-element list to match SessionSummary.workflow_refs shape
+            # (same pattern as workflow_intelligence.py:_row_to_ref).
+            workflow_refs=(
+                [str(row["workflow_id"])] if str(row.get("workflow_id") or "").strip() else []
+            ),
+            # source_ref is a plain column on the sessions row (see
+            # repositories/sessions.py:compute_source_ref) — populate directly.
+            source_ref=str(row.get("source_ref") or ""),
+            # tool_names is NOT present on the sessions row itself; deriving it
+            # requires a separate tool-usage query (see feature_forensics.py
+            # ~L180-196), which is out of scope here. Left empty — documented
+            # gap in .claude/worknotes/session-family-and-team-sidecar/
+            # implementation-notes.md.
         )
         for row in rows
     ]

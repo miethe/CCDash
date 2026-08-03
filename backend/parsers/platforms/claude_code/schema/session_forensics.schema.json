@@ -45,6 +45,8 @@
     },
     "teams": {
       "dir": "teams/{session_id}/inboxes",
+      "dir_short": "teams/session-{session_id_short}/inboxes",
+      "config_file": "config.json",
       "glob": "*.json"
     },
     "session_env": {
