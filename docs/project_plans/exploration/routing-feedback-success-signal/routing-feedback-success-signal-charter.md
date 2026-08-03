@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: exploration_charter
 title: "Routing Feedback Success Signal — Exploration Charter"
-status: draft
+status: completed
 created: 2026-08-01
 feature_slug: routing-feedback-success-signal
 timebox_days: 3
@@ -31,9 +31,46 @@ verdict_criteria:
     - "The only coverage-adequate candidate has an unmitigable confound (e.g. harness-errors signal is dominated by infrastructure noise, not model-quality variance)"
   conditional:
     - "A candidate shows promise but its coverage or confound risk can only be resolved by a specific named follow-up (e.g. populating effectiveness_rollups skill attribution first, per the existing-rollups leg)"
-verdict: null
-verdict_rationale: null
-output_artifacts: []
+verdict: conditional
+verdict_rationale: >-
+  Only the tool-failures leg clears the >=50% coverage threshold (140/188 = 74.5% informative keys);
+  the other three fail on coverage alone (harness-errors 37.2%, abandonment 31.9%, existing-rollups
+  26.1%) before their confounds are weighed. The deal-killer therefore did NOT trigger. But
+  tool-failures cannot ship as-is: 0 of 37 GPT/Codex keys are informative (190,450 all-time tool
+  calls, exactly 0 errors) against 137 of 138 Claude keys, because the Codex error-detection
+  heuristic never matches real payloads. Since weight_failure is 0.5 -- the largest merge term --
+  shipping it would systematically bias routing toward GPT/Codex models on a parser artifact, which
+  is worse than the honest null. The defect is a bounded, named fix in one parser path, not a
+  missing capture surface, which is exactly this charter's conditional criterion. Named
+  precondition: fix Codex tool-error detection, re-measure the family split against the same
+  188-key denominator, and only then scope the producer increment. regression_rate remains
+  unsourced by every leg and should stay null indefinitely (test_results/test_runs are 0 rows; no
+  retry linkage exists). Two committed prior-art claims were refuted -- see synthesis Sec.6.
+output_artifacts:
+  - path: docs/project_plans/exploration/routing-feedback-success-signal/routing-feedback-success-signal-synthesis.md
+    leg_id: synthesis
+    confidence: 0.84
+    status: complete
+  - path: docs/project_plans/exploration/routing-feedback-success-signal/spikes/tool-failures/tool-failures-findings.md
+    leg_id: tool-failures
+    confidence: 0.85
+    status: complete
+  - path: docs/project_plans/exploration/routing-feedback-success-signal/spikes/harness-errors/harness-errors-findings.md
+    leg_id: harness-errors
+    confidence: 0.85
+    status: complete
+  - path: docs/project_plans/exploration/routing-feedback-success-signal/spikes/abandonment/abandonment-findings.md
+    leg_id: abandonment
+    confidence: 0.85
+    status: complete
+  - path: docs/project_plans/exploration/routing-feedback-success-signal/spikes/existing-rollups/existing-rollups-findings.md
+    leg_id: existing-rollups
+    confidence: 0.75
+    status: complete
+  - path: docs/project_plans/exploration/routing-feedback-success-signal/spikes/SHARED-CONTEXT.md
+    leg_id: shared-context
+    confidence: 1.0
+    status: complete
 related_documents:
   - docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
 ---
@@ -148,3 +185,26 @@ plausibly existing-rollups' attribution gap) — the next step is that follow-up
 ## Notes
 
 2026-08-01: Charter authored per the ground-truth audit in the handoff spec §0/§5.4. No legs run yet.
+
+2026-08-03: All four legs run in parallel against the operative node Postgres (19,178 sessions).
+Verdict **conditional** -- see `routing-feedback-success-signal-synthesis.md` for the full record.
+Headlines:
+
+- Denominator measured at **188** keys clearing `min_sample`=5 (of 396 in-window keys). Note the
+  real key includes `project_id`, which this charter's `(source_skill_name × model)` shorthand omits.
+- Only `tool-failures` clears the ≥50% bar (140/188 = 74.5%). Its blocker is a bounded parser fix
+  (Codex tool-error detection: 0/37 GPT/Codex keys informative, 190,450 all-time calls / 0 errors),
+  not a missing capture surface -- hence conditional, not no-go. Deal-killer did NOT trigger.
+- `regression_rate` found unsourced by every leg (`test_results`/`test_runs` are 0 rows; no retry
+  linkage). It should stay null indefinitely; the follow-up above will not populate it.
+- **This charter's designated lead candidate was mis-specified.** The `<synthetic>` figure in
+  handoff §0 ("325 occurrences / 249 transcripts") conflated `sessions.model = '<synthetic>'` (244
+  sessions) with harness error entries; the literal string appears in only 11 message rows / 5
+  sessions. Worse, `model = '<synthetic>'` is self-referential as an outcome signal -- the model is
+  unresolved *because* the request failed. Synthesis §6.1.
+- The `effectiveness_rollups` path is closed on new grounds: its scores are largely a re-encoding of
+  `sessions.status` (the already-rejected signal), and its scope key has no `model` dimension at all.
+  Synthesis §6.2.
+- Out-of-scope but decision-relevant: **61% of min_sample-clearing keys have a NULL `skill_name`**,
+  and `cost_index` is now live (DI-4a shipped), so the loop is cost-only rather than inert.
+  Synthesis §7.
