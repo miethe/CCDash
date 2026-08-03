@@ -617,6 +617,14 @@ async def list_sessions(
     limit: int = 50,
     sort_by: str = "started_at",
     sort_order: str = "desc",
+    project_id: str | None = Query(
+        None,
+        description=(
+            "Scope results to this project id. When omitted, falls back to the "
+            "request-context / active project. Prefer this over the deprecated "
+            "x-ccdash-project-id header for cross-project reads."
+        ),
+    ),
     status: str | None = Query(None, description="Filter by session status"),
     model: str | None = Query(None, description="Filter by model name (partial match)"),
     model_provider: str | None = Query(None, description="Filter by model provider"),
@@ -642,8 +650,16 @@ async def list_sessions(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
-    """Return paginated sessions from DB."""
-    project = resolve_project(request_context, core_ports)
+    """Return paginated sessions from DB.
+
+    ``project_id`` scopes the read explicitly. Without it the resolution order is
+    request-context project → active project, which means an unscoped call returns
+    only ONE project's sessions — easy to misread as "everything is attributed to
+    the active project" when inspecting a multi-project instance. ``limit`` is
+    capped upstream (values above the cap are rejected), so paginate via ``offset``
+    rather than raising ``limit`` to sweep a large project.
+    """
+    project = resolve_project(request_context, core_ports, requested_project_id=project_id)
     if not project:
         return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 

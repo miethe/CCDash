@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -26,41 +27,96 @@ from pathlib import Path
 # Path decoding
 # ---------------------------------------------------------------------------
 
+def encode_segment(name: str) -> str:
+    """Apply Claude Code's own segment encoding to a real directory name.
+
+    Claude collapses '_' and '.' to '-' when encoding a path segment (and '/'
+    between segments).  Applying that encoding FORWARD to real directory names
+    is exact, whereas trying to decode it backwards is ambiguous — see
+    ``_match_child``.
+    """
+    return re.sub(r"[_.]", "-", name)
+
+
+def _match_child(parent: str, target: str) -> str | None:
+    """Return the real child dir of ``parent`` whose encoded name == ``target``.
+
+    The encoding is lossy: '-', '_', '.' and '/' all become '-', so the encoded
+    token run 'agentic-meta-dev' could mean the single segment 'agentic_meta_dev',
+    'agentic-meta-dev', 'agentic.meta.dev', OR the three segments
+    'agentic/meta/dev'.  Rather than guessing which separators to substitute
+    (combinatorial), we list the real children and encode each one the same way
+    Claude does, then compare.  Exact, and covers every separator combination in
+    a single readdir.
+
+    An exact-path probe is tried first so the common case costs no readdir.
+    """
+    exact = os.path.join(parent, target)
+    if os.path.isdir(exact):
+        return target
+    try:
+        entries = sorted(os.listdir(parent))
+    except OSError:
+        return None
+    for entry in entries:
+        if encode_segment(entry) == target and os.path.isdir(os.path.join(parent, entry)):
+            return entry
+    return None
+
+
 def decode_repo_path(dirname: str) -> str:
     """Reverse-engineer an absolute repo path from a Claude project dir name.
 
-    Claude encodes the repo path by replacing '/' (and '.') with '-', e.g.
-    '/Users/foo/.claude/bar' → '-Users-foo--claude-bar'.  Path segments may
-    themselves contain '-' (e.g. 'agentic-meta-dev'), making a naive split
-    ambiguous.
+    Claude encodes the repo path by replacing '/', '_' and '.' with '-', e.g.
+    '/Users/foo/.claude/bar' → '-Users-foo--claude-bar' and
+    '/Users/foo/agentic_meta_dev' → '-Users-foo-agentic-meta-dev'.  Segments may
+    themselves contain '-', making a naive split ambiguous.
 
-    Strategy: strip the single leading '-', split on '-' (filtering empty
-    tokens produced by '--' runs), then greedily consume the longest run of
-    remaining tokens (joined by '-') that forms an existing directory at each
-    level.  Falls back to single-token consumption on no match (best-effort).
-    The decoded path is used only for the 'path' field; sessionsPath never
-    depends on this decode being perfect.
+    Strategy: strip the single leading '-', split on '-' (filtering empty tokens
+    produced by '--' runs), then greedily consume the longest run of remaining
+    tokens that resolves to an existing directory at each level — matching via
+    ``_match_child`` so underscore/dot segments resolve, not just literal-dash
+    ones.  Longest-run-first is what makes 'agentic_meta_dev' win over the
+    spurious 'agentic/meta/dev'.  Falls back to single-token consumption on no
+    match (best-effort).
+
+    The decoded path feeds the 'path' field, which drives project_root-relative
+    resolution (planDocs, progress); sessionsPath never depends on this decode.
     """
     if not dirname.startswith("-"):
         return dirname  # unexpected format; return as-is
 
-    tokens = [t for t in dirname[1:].split("-") if t]  # strip empty from '--'
+    # NOTE: empty tokens are deliberately KEPT. A '--' run is ambiguous — it can
+    # come from a dot-dir ('/.claude' → '--claude') or from an '_' sitting against
+    # a separator ('/p_/' → '-p--'). Discarding empties throws that away and makes
+    # such segments unrecoverable, so we keep them and let the forward-encoding
+    # comparison in _match_child decide.
+    tokens = dirname[1:].split("-")
     path = "/"
     i = 0
     while i < len(tokens):
+        if tokens[i] == "" and i + 1 >= len(tokens):
+            break  # trailing empty from a segment-final '_' or '.'; nothing left
         # Try longest match first; shrink window until we find a real dir
-        best_j = None
+        best_j = 0
+        best_segment: str | None = None
         for j in range(len(tokens), i, -1):
-            candidate = os.path.join(path, "-".join(tokens[i:j]))
-            if os.path.isdir(candidate):
+            target = "-".join(tokens[i:j])
+            if not target:
+                continue  # an all-empty window names nothing
+            segment = _match_child(path, target)
+            if segment is not None:
                 best_j = j
+                best_segment = segment
                 break
-        if best_j is not None:
-            path = os.path.join(path, "-".join(tokens[i:best_j]))
+        if best_segment is not None:
+            path = os.path.join(path, best_segment)
             i = best_j
         else:
-            # No filesystem match — consume one token and continue
-            path = os.path.join(path, tokens[i])
+            # No filesystem match — consume one token and continue. Skip empties
+            # so a '--' run cannot inject an empty path component.
+            if tokens[i]:
+                path = os.path.join(path, tokens[i])
             i += 1
 
     return path if path != "/" else dirname
@@ -137,6 +193,68 @@ def stable_project_id(dirname: str) -> str:
     return "ccp-" + hashlib.sha1(dirname.encode()).hexdigest()[:12]
 
 
+# Worktree dir markers. A Claude project dir for a worktree encodes the worktree's
+# absolute path, so the parent repo is everything left of the marker:
+#   <repo>/.claude/worktrees/<name>     → '--claude-worktrees-'   (dev-execution)
+#   <repo>/.git/hermes-worktrees/<name> → '--git-hermes-worktrees-' (Hermes, node)
+_WORKTREE_MARKERS = ("--claude-worktrees-", "--git-hermes-worktrees-")
+
+# Greppable marker written into Project.description for folded worktree rows.
+FOLD_PARENT_PREFIX = "ccdash-fold-parent:"
+
+
+def worktree_marker(dirname: str) -> str | None:
+    """Return the worktree marker present in ``dirname``, or None."""
+    for marker in _WORKTREE_MARKERS:
+        if marker in dirname:
+            return marker
+    return None
+
+
+def parent_repo_dirname(dirname: str) -> str | None:
+    """Given a worktree project dirname, return the PARENT repo's project dirname.
+
+    Truncates at the worktree marker, so
+    ``-Users-…-agentic-meta-dev--claude-worktrees-run-01ABC`` yields
+    ``-Users-…-agentic-meta-dev``. Returns None when ``dirname`` is not a worktree.
+    """
+    marker = worktree_marker(dirname)
+    if marker is None:
+        return None
+    return dirname.split(marker, 1)[0]
+
+
+def fold_worktree_candidate(cand: dict) -> dict:
+    """Re-point a worktree candidate at its parent repo (session folding).
+
+    CCDash stores exactly ONE ``sessions_path`` per project row, so a worktree's
+    sessions can only be ingested if its own dir is registered — we cannot simply
+    reuse the parent's project id (it is the primary key). Folding therefore keeps
+    the per-worktree row (ingestion) but sets its ``repo_path`` to the PARENT
+    repo, so every rollup that groups by project path attributes the worktree's
+    sessions to the parent repo rather than to a phantom project.
+
+    The parent's project id is recorded in ``description`` as
+    ``ccdash-fold-parent:<id>`` — the ``Project`` model has no dedicated field for
+    it (see backend/models.py), and sending an unsupported key would be silently
+    dropped, so we use a supported field with a greppable prefix.
+
+    Deferred (needs backend work, not a script flag): collapsing these alias rows
+    into a single parent project row, which requires either multi-path projects or
+    an ingest-side dir→project map.
+    """
+    parent_dirname = parent_repo_dirname(cand["dirname"])
+    if not parent_dirname:
+        return cand
+    cand = dict(cand)
+    parent_id = stable_project_id(parent_dirname)
+    cand["repo_path"] = decode_repo_path(parent_dirname)
+    cand["fold_parent_id"] = parent_id
+    cand["is_folded_worktree"] = True
+    cand["description"] = f"{FOLD_PARENT_PREFIX}{parent_id}"
+    return cand
+
+
 # ---------------------------------------------------------------------------
 # HTTP helpers (stdlib urllib only — no third-party deps)
 # ---------------------------------------------------------------------------
@@ -196,9 +314,14 @@ def collect_candidates(
     include: list[str],
     exclude: list[str],
     no_worktrees: bool,
+    fold_worktrees: bool = False,
 ) -> list[dict]:
     """Return sorted (session count desc) list of candidate project dicts.
     Dirs below min_sessions are excluded entirely (not shown in the table).
+
+    ``fold_worktrees`` re-points worktree dirs at their parent repo — see
+    ``fold_worktree_candidate``. It is ignored when ``no_worktrees`` is set
+    (nothing to fold if worktrees are dropped outright).
     """
     if not projects_root.is_dir():
         print(f"ERROR: projects root '{projects_root}' not found", file=sys.stderr)
@@ -211,7 +334,7 @@ def collect_candidates(
         dirname = entry.name
 
         # Filter: worktrees
-        if no_worktrees and "--claude-worktrees-" in dirname:
+        if no_worktrees and worktree_marker(dirname) is not None:
             continue
         # Filter: --include (any match keeps the dir)
         if include and not any(p in dirname for p in include):
@@ -226,7 +349,7 @@ def collect_candidates(
             continue
 
         decoded = decode_repo_path(dirname)
-        candidates.append({
+        cand = {
             "dirname": dirname,
             "sessions_path": str(entry.resolve()),
             "repo_path": decoded,
@@ -234,7 +357,10 @@ def collect_candidates(
             "id": stable_project_id(dirname),
             "n_sessions": n,
             "action": "",
-        })
+        }
+        if fold_worktrees and worktree_marker(dirname) is not None:
+            cand = fold_worktree_candidate(cand)
+        candidates.append(cand)
 
     candidates.sort(key=lambda c: c["n_sessions"], reverse=True)
     return candidates
@@ -313,7 +439,15 @@ def main() -> None:
     )
     ap.add_argument(
         "--no-worktrees", action="store_true",
-        help="Drop dirs whose name contains '--claude-worktrees-'",
+        help="Drop worktree dirs entirely (their sessions are then never ingested)",
+    )
+    ap.add_argument(
+        "--fold-worktrees", action="store_true",
+        help=(
+            "Register worktree dirs but attribute them to their PARENT repo "
+            "(sets repo_path to the parent, records foldParentId). Keeps worktree "
+            "sessions ingested instead of dropping them. Ignored with --no-worktrees."
+        ),
     )
     ap.add_argument(
         "--limit", type=int, default=None,
@@ -343,6 +477,7 @@ def main() -> None:
         include=args.include,
         exclude=args.exclude,
         no_worktrees=args.no_worktrees,
+        fold_worktrees=args.fold_worktrees,
     )
     if args.limit is not None:
         rows = rows[: args.limit]
@@ -382,7 +517,7 @@ def main() -> None:
             "name": r["name"],
             "path": r["repo_path"],
             "sessionsPath": r["sessions_path"],
-            "description": "",
+            "description": r.get("description", ""),
             "repoUrl": "",
             # repo_path is the canonical repo cwd used for Codex session attribution.
             # Uses the greedy filesystem-decoded path from decode_repo_path().
