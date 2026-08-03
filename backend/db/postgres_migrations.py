@@ -4050,25 +4050,35 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         # the ON UPDATE clause is appended, so column order and the
         # referenced-key spelling cannot drift. Idempotent by construction --
         # confupdtype <> 'c' skips constraints already carrying CASCADE.
+        # Schema-QUALIFY every ALTER. The child tables are not all in `public`
+        # (session_embeddings lives in `app`), so an unqualified
+        # `ALTER TABLE session_embeddings` resolves against search_path and
+        # dies with UndefinedTableError mid-loop -- leaving the rebuild
+        # half-applied and the schema_version un-bumped, i.e. a crash-looping
+        # API on every subsequent startup. Qualifying is strictly better than
+        # filtering to `public`, which would silently skip that table.
         fk_rows = await db.fetch(
             """
             SELECT c.conname        AS name,
+                   n.nspname        AS schema_name,
                    rel.relname      AS table_name,
                    pg_get_constraintdef(c.oid) AS def
             FROM pg_constraint c
-            JOIN pg_class rel  ON rel.oid  = c.conrelid
-            JOIN pg_class frel ON frel.oid = c.confrelid
+            JOIN pg_class rel      ON rel.oid = c.conrelid
+            JOIN pg_namespace n    ON n.oid   = rel.relnamespace
+            JOIN pg_class frel     ON frel.oid = c.confrelid
             WHERE c.contype = 'f'
               AND frel.relname = 'sessions'
               AND c.confupdtype <> 'c'
             """
         )
         for fk in fk_rows:
+            qualified = f'"{fk["schema_name"]}"."{fk["table_name"]}"'
             await db.execute(
-                f'ALTER TABLE {fk["table_name"]} DROP CONSTRAINT IF EXISTS {fk["name"]}'
+                f'ALTER TABLE {qualified} DROP CONSTRAINT IF EXISTS {fk["name"]}'
             )
             await db.execute(
-                f'ALTER TABLE {fk["table_name"]} ADD CONSTRAINT {fk["name"]} '
+                f'ALTER TABLE {qualified} ADD CONSTRAINT {fk["name"]} '
                 f'{fk["def"]} ON UPDATE CASCADE'
             )
         logger.info(
