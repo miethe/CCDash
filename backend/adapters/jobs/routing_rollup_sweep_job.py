@@ -149,6 +149,11 @@ def _build_routing_rollup_row(provider_row: Any, key_dto: Any) -> dict[str, Any]
         "sample_count": key_dto.sample_count,
         "success_rate": key_dto.success_rate,
         "cost_index": key_dto.cost_index,
+        # v47: persisted verbatim from the terminal DTO like cost_index --
+        # zero derivation here. Previously computed-not-persisted (no
+        # column); now the read path can recover the key's real coverage
+        # fraction instead of always reassembling 0.0.
+        "cost_coverage_fraction": key_dto.cost_coverage_fraction,
         "regression_rate": key_dto.regression_rate,
         # DI-4c: copied verbatim from the terminal DTO like every other metric
         # field -- the unambiguous-or-null resolution and the authoritative

@@ -434,17 +434,22 @@ class RoutingRollupKeyDTO(BaseModel):
     entire ``task_class`` has no covered sessions to normalize against.
     ``cost_coverage_fraction`` is the additive companion signal (D-a3):
     ``cost_covered_count / sample_count`` for the row, letting a consuming
-    router discount a ``cost_index`` computed from a small covered subset --
-    it is always a float (``0.0`` at zero coverage, never ``None``), and is
-    NOT persisted in the ``routing_rollup`` table (computed-not-persisted per
-    the DI-4a contract's no-new-DDL constraint), so it reads back as ``0.0``
-    on the persisted-table read path (``_client_v1_routing_rollup.py``) which
-    has no column to recover it from.
+    router discount a ``cost_index`` computed from a small covered subset.
+    At the compute layer (``RoutingRollupQueryService.compute_metrics``) it
+    is always a real float (``0.0`` at zero coverage, never ``None``). As of
+    schema v47 it IS persisted in the ``routing_rollup`` table
+    (``cost_coverage_fraction`` column), so the persisted-table read path
+    (``_client_v1_routing_rollup.py``) recovers its true value instead of a
+    fabricated ``0.0``; on that path ``None`` means "no column value" (a row
+    written before v47, or never re-swept since) -- the same
+    null-over-fabrication principle ``cost_index`` already codifies (D-a2),
+    extended to its own trust companion, kept distinguishable from a
+    genuinely computed ``0.0``.
 
     ``effort_tier``/``effort_tier_source``/``authoritative_effort_fraction``
     (DI-4c) carry the key's effort dimension and how far it can be trusted,
     aggregated from ``sessions.effort_tier``/``sessions.effort_tier_source``
-    (Gap 4). Unlike ``cost_coverage_fraction`` all three ARE persisted, so they
+    (Gap 4). Like ``cost_coverage_fraction`` (as of v47) all three ARE persisted, so they
     survive the read path intact.
 
     ``effort_tier``/``effort_tier_source`` are **unambiguous-or-null**: set only
@@ -482,7 +487,7 @@ class RoutingRollupKeyDTO(BaseModel):
     sample_count: int
     success_rate: float | None = None
     cost_index: float | None = None
-    cost_coverage_fraction: float = 0.0
+    cost_coverage_fraction: float | None = None
     regression_rate: float | None = None
     effort_tier: str | None = None
     effort_tier_source: str | None = None

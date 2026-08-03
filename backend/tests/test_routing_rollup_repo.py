@@ -148,6 +148,7 @@ def _make_row(
     sample_count: int = 12,
     success_rate: float | None = 0.9,
     cost_index: float | None = 0.42,
+    cost_coverage_fraction: float | None = 0.94,
     regression_rate: float | None = 0.05,
     effort_tier: str | None = "high",
     effort_tier_source: str | None = "codex_payload_effort",
@@ -174,6 +175,7 @@ def _make_row(
         "sample_count": sample_count,
         "success_rate": success_rate,
         "cost_index": cost_index,
+        "cost_coverage_fraction": cost_coverage_fraction,
         "regression_rate": regression_rate,
         "effort_tier": effort_tier,
         "effort_tier_source": effort_tier_source,
@@ -282,7 +284,8 @@ class SqliteRoutingRollupDirectCountTests(unittest.IsolatedAsyncioTestCase):
     async def test_nullable_metric_columns_accept_none(self) -> None:
         """A coverage-only/_unclassified row may have no meaningful metric value (D5)."""
         row = _make_row(
-            success_rate=None, cost_index=None, regression_rate=None, confidence=None,
+            success_rate=None, cost_index=None, cost_coverage_fraction=None,
+            regression_rate=None, confidence=None,
             eligible_for_adjustment=0, task_class="_unclassified",
         )
         await self.repo.upsert(row)
@@ -290,9 +293,21 @@ class SqliteRoutingRollupDirectCountTests(unittest.IsolatedAsyncioTestCase):
         stored = (await self.repo.get_by_project("project-1"))[0]
         self.assertIsNone(stored["success_rate"])
         self.assertIsNone(stored["cost_index"])
+        self.assertIsNone(stored["cost_coverage_fraction"])
         self.assertIsNone(stored["regression_rate"])
         self.assertIsNone(stored["confidence"])
         self.assertEqual(stored["eligible_for_adjustment"], 0)
+
+    async def test_cost_coverage_fraction_round_trips_partial_value(self) -> None:
+        """v47: a persisted PARTIAL-coverage key (e.g. 2 of 50 sessions carried
+        cost attribution) must read back with its real fraction, not a
+        fabricated/rounded value -- direct repository round-trip companion
+        to the client_v1 round-trip in test_client_v1_routing_rollup.py."""
+        row = _make_row(cost_coverage_fraction=2 / 50)
+        await self.repo.upsert(row)
+
+        stored = (await self.repo.get_by_project("project-1"))[0]
+        self.assertAlmostEqual(stored["cost_coverage_fraction"], 2 / 50)
 
 
 # ── 4. ADR-007 direct-count assertion: Postgres (fake asyncpg-shaped conn) ──

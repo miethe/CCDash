@@ -66,11 +66,12 @@ _REPO_NAME = "routing_rollup"
 # clause below sets explicitly to "now" on conflict). Order matches the DDL
 # column order exactly in both ``sqlite_migrations.py`` and
 # ``postgres_migrations.py`` (v43; extended in v45 by DI-4c's three effort
-# columns, inserted mid-list to keep this DDL-order correspondence -- safe
-# because every statement built below names its columns explicitly, so nothing
-# on this path is positional. Existing databases get the columns appended
-# physically by ``_ensure_column``; that physical/declared order divergence is
-# invisible for the same reason.)
+# columns and in v47 by ``cost_coverage_fraction``, inserted mid-list to keep
+# this DDL-order correspondence -- safe because every statement built below
+# names its columns explicitly, so nothing on this path is positional.
+# Existing databases get the columns appended physically by
+# ``_ensure_column``; that physical/declared order divergence is invisible
+# for the same reason.)
 
 ROUTING_ROLLUP_COLUMNS: tuple[str, ...] = (
     "project_id",
@@ -83,6 +84,7 @@ ROUTING_ROLLUP_COLUMNS: tuple[str, ...] = (
     "sample_count",
     "success_rate",
     "cost_index",
+    "cost_coverage_fraction",
     "regression_rate",
     "effort_tier",
     "effort_tier_source",

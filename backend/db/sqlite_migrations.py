@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 46
+SCHEMA_VERSION = 47
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1511,6 +1511,13 @@ CREATE INDEX IF NOT EXISTS idx_aar_reviews_verdict ON aar_reviews(triage_verdict
 -- sessions whose `effort_tier_source` is in `AUTHORITATIVE_EFFORT_SOURCES`
 -- (backend/parsers/effort_provenance.py), NULL only at zero samples, so a
 -- consuming router can discount a tier that rests mostly on stale snapshots.
+-- `cost_coverage_fraction` (v47) persists the DI-4a coverage companion that
+-- was previously computed-not-persisted: `cost_covered_count / sample_count`
+-- for the key, nullable so a legacy row written before this column existed
+-- (and never re-swept) reads back as NULL rather than a fabricated 0.0 --
+-- the same null-over-fabrication discipline `cost_index` already codifies
+-- (D-a2), now extended to its own trust companion. A genuinely computed
+-- zero-coverage key still persists a real `0.0`.
 CREATE TABLE IF NOT EXISTS routing_rollup (
     project_id                TEXT NOT NULL,
     source_skill_name         TEXT NOT NULL,
@@ -1522,6 +1529,7 @@ CREATE TABLE IF NOT EXISTS routing_rollup (
     sample_count              INTEGER NOT NULL DEFAULT 0,
     success_rate              REAL,
     cost_index                REAL,
+    cost_coverage_fraction    REAL,
     regression_rate           REAL,
     effort_tier               TEXT,
     effort_tier_source        TEXT,
@@ -4473,6 +4481,26 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v46 migrations complete: sessions.worktree_name added "
             "(worktree-as-first-class)."
+        )
+
+    # ── v47 migrations (routing_rollup.cost_coverage_fraction persistence) ──
+    if current_version < 47:
+        # Nullable REAL column so the read path
+        # (backend/routers/_client_v1_routing_rollup.py) can distinguish a
+        # legacy/un-re-swept row (NULL) from a genuinely computed
+        # zero-coverage key (0.0) -- the same null-over-fabrication
+        # discipline `cost_index` already codifies (D-a2), extended to its
+        # own coverage companion. Present in _TABLES for fresh instances;
+        # this call adds it to existing DBs.
+        #
+        # Deliberately NOT backfilled: routing_rollup is a derived rollup
+        # the sweep job re-upserts every tick (mirrors the DI-4c/v45
+        # precedent exactly), so the next sweep populates this for free.
+        await _ensure_column(db, "routing_rollup", "cost_coverage_fraction", "REAL")
+        await db.commit()
+        logger.info(
+            "v47 migrations complete: routing_rollup.cost_coverage_fraction "
+            "added (persist the DI-4a coverage companion)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

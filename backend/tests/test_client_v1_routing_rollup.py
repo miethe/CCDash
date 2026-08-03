@@ -92,6 +92,7 @@ def _make_row(**overrides: Any) -> dict[str, Any]:
         "sample_count": 12,
         "success_rate": None,
         "cost_index": 0.42,
+        "cost_coverage_fraction": 0.94,
         "regression_rate": None,
         # DI-4c (v45): unambiguous-or-null tier + provenance + the
         # authoritative-fraction trust companion.
@@ -177,11 +178,25 @@ class RowToKeyDtoTests(unittest.TestCase):
     def test_cost_index_preserves_real_value(self) -> None:
         self.assertEqual(_row_to_key_dto(_make_row(cost_index=0.13)).cost_index, 0.13)
 
-    def test_cost_coverage_fraction_defaults_to_zero_since_not_persisted(self) -> None:
-        """cost_coverage_fraction is computed-not-persisted (no column in
-        the routing_rollup table, per the DI-4a contract's no-new-DDL
-        constraint) -- it always reads back as 0.0 on this path."""
-        self.assertEqual(_row_to_key_dto(_make_row()).cost_coverage_fraction, 0.0)
+    def test_cost_coverage_fraction_null_passes_through_unchanged(self) -> None:
+        """v47: a persisted NULL cost_coverage_fraction (a row written before
+        this column existed, or never re-swept since) must never be coerced
+        into a fabricated 0.0 -- the same null-over-fabrication principle
+        already honored for cost_index above."""
+        self.assertIsNone(_row_to_key_dto(_make_row(cost_coverage_fraction=None)).cost_coverage_fraction)
+
+    def test_cost_coverage_fraction_preserves_real_partial_value(self) -> None:
+        """v47: a persisted PARTIAL-coverage key (2 of 50 sessions carried
+        cost attribution) must round-trip through the client_v1 read path
+        with its real fraction, not a fabricated/rounded value."""
+        dto = _row_to_key_dto(_make_row(cost_coverage_fraction=2 / 50))
+        self.assertAlmostEqual(dto.cost_coverage_fraction, 2 / 50)
+
+    def test_cost_coverage_fraction_preserves_genuine_zero(self) -> None:
+        """A genuinely computed zero-coverage key (0.0, not NULL) must still
+        read back as a real 0.0, distinguishable from the None case above."""
+        dto = _row_to_key_dto(_make_row(cost_coverage_fraction=0.0))
+        self.assertEqual(dto.cost_coverage_fraction, 0.0)
 
     def test_confidence_defaults_to_zero_when_none(self) -> None:
         self.assertEqual(_row_to_key_dto(_make_row(confidence=None)).confidence, 0.0)
@@ -456,6 +471,7 @@ class TestClientV1RoutingRollupEnabledSeeded(unittest.TestCase):
             sample_count=10,
             success_rate=None,
             cost_index=0.5,
+            cost_coverage_fraction=2 / 50,
             regression_rate=None,
             confidence=0.7,
             eligible_for_adjustment=1,
@@ -469,6 +485,7 @@ class TestClientV1RoutingRollupEnabledSeeded(unittest.TestCase):
             sample_count=4,
             success_rate=None,
             cost_index=0.1,
+            cost_coverage_fraction=None,
             regression_rate=None,
             confidence=0.0,
             eligible_for_adjustment=0,
@@ -489,6 +506,12 @@ class TestClientV1RoutingRollupEnabledSeeded(unittest.TestCase):
         self.assertEqual(by_skill["planning"]["task_class"], "orchestration")
         self.assertEqual(by_skill["planning"]["sample_count"], 10)
         self.assertEqual(by_skill["planning"]["eligible_for_adjustment"], True)
+        # v47 end-to-end round trip: a persisted PARTIAL-coverage key reads
+        # back with its real fraction through the full client_v1 path
+        # (repository read -> reassembly -> envelope), and a persisted NULL
+        # (never re-swept / pre-v47 row) reads back as null, not 0.0.
+        self.assertAlmostEqual(by_skill["planning"]["cost_coverage_fraction"], 2 / 50)
+        self.assertIsNone(by_skill["codex"]["cost_coverage_fraction"])
         self.assertEqual(by_skill["codex"]["task_class"], UNCLASSIFIED_TASK_CLASS)
         self.assertEqual(by_skill["codex"]["eligible_for_adjustment"], False)
         # Contract identity fields are populated on every key row, even

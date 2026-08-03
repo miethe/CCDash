@@ -22,6 +22,14 @@ no in-request ``GROUP BY``. It only:
      it is response-shaping over already-computed values, never a new
      derivation of ``task_class``/``provider``/metric fields.
 
+``cost_coverage_fraction`` (v47)
+---------------------------------
+As of schema v47 this field IS persisted (``routing_rollup.cost_coverage_fraction``)
+and is read back verbatim by ``_row_to_key_dto`` below -- no longer the
+always-``0.0`` computed-not-persisted placeholder. A ``NULL`` column value
+(a row written before v47, or never re-swept since) reads back as ``None``,
+kept distinguishable from a genuinely computed ``0.0``.
+
 Disabled state (D6/FR-10)
 -------------------------
 When ``config.CCDASH_ROUTING_FEEDBACK_ENABLED`` is false, this module
@@ -150,14 +158,21 @@ def _row_to_key_dto(row: Mapping[str, Any]) -> RoutingRollupKeyDTO:
         cost_index=(
             float(row["cost_index"]) if row.get("cost_index") is not None else None
         ),
-        # Computed-not-persisted (see RoutingRollupKeyDTO's docstring) --
-        # the routing_rollup table has no column for it, so it always reads
-        # back as 0.0 on this persisted-table path.
-        cost_coverage_fraction=float(row.get("cost_coverage_fraction") or 0.0),
+        # v47: now persisted (see RoutingRollupKeyDTO's docstring) -- read
+        # back verbatim, never coerced. A NULL means "no column value yet"
+        # (a row written before this column existed, or never re-swept),
+        # kept distinguishable from a genuinely computed 0.0 -- the same
+        # null-over-fabrication discipline `cost_index` already codifies
+        # (D-a2), extended to its own coverage companion.
+        cost_coverage_fraction=(
+            float(row["cost_coverage_fraction"])
+            if row.get("cost_coverage_fraction") is not None
+            else None
+        ),
         regression_rate=row.get("regression_rate"),
-        # DI-4c: all three ARE persisted (unlike cost_coverage_fraction), so
-        # they survive this read path intact. A NULL is never coerced to a
-        # value: null effort_tier/effort_tier_source means "no session carried
+        # DI-4c: all three ARE persisted (as of v47, cost_coverage_fraction
+        # also is), so they survive this read path intact. A NULL is never
+        # coerced to a value: null effort_tier/effort_tier_source means "no session carried
         # one, or the key mixes several, or the rows predate v44" -- never
         # "low effort" -- and a null authoritative_effort_fraction means zero
         # samples, distinct from a genuine 0.0 ("checked, none authoritative").

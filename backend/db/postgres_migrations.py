@@ -43,7 +43,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 46
+SCHEMA_VERSION = 47
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1528,6 +1528,13 @@ CREATE INDEX IF NOT EXISTS idx_aar_reviews_verdict ON aar_reviews(triage_verdict
 -- (backend/parsers/effort_provenance.py), NULL only at zero samples, so a
 -- consuming router can discount a tier that rests mostly on stale snapshots.
 -- REAL (never DOUBLE PRECISION) keeps the literal type token dialect-identical.
+-- `cost_coverage_fraction` (v47) persists the DI-4a coverage companion that
+-- was previously computed-not-persisted: `cost_covered_count / sample_count`
+-- for the key, nullable so a legacy row written before this column existed
+-- (and never re-swept) reads back as NULL rather than a fabricated 0.0 --
+-- the same null-over-fabrication discipline `cost_index` already codifies
+-- (D-a2), now extended to its own trust companion. A genuinely computed
+-- zero-coverage key still persists a real `0.0`.
 CREATE TABLE IF NOT EXISTS routing_rollup (
     project_id                 TEXT NOT NULL,
     source_skill_name          TEXT NOT NULL,
@@ -1539,6 +1546,7 @@ CREATE TABLE IF NOT EXISTS routing_rollup (
     sample_count               INTEGER NOT NULL DEFAULT 0,
     success_rate               REAL,
     cost_index                 REAL,
+    cost_coverage_fraction     REAL,
     regression_rate            REAL,
     effort_tier                TEXT,
     effort_tier_source         TEXT,
@@ -4005,6 +4013,23 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         logger.info(
             "v46 migrations complete: sessions.worktree_name added "
             "(worktree-as-first-class)."
+        )
+
+    # ── v47 migrations (routing_rollup.cost_coverage_fraction persistence) ──
+    if current_version < 47:
+        # Mirror of the SQLite v47 block, column-for-column and type-token-
+        # for-type-token (REAL -- never DOUBLE PRECISION, so the parity sweep
+        # stays clean by construction). Nullable so the read path
+        # (backend/routers/_client_v1_routing_rollup.py) can distinguish a
+        # legacy/un-re-swept row (NULL) from a genuinely computed
+        # zero-coverage key (0.0) -- the same null-over-fabrication
+        # discipline `cost_index` already codifies (D-a2), extended to its
+        # own coverage companion. Not backfilled: the sweep job re-upserts
+        # every tick, so the next sweep populates this for free.
+        await _ensure_column(db, "routing_rollup", "cost_coverage_fraction", "REAL")
+        logger.info(
+            "v47 migrations complete: routing_rollup.cost_coverage_fraction "
+            "added (persist the DI-4a coverage companion)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
