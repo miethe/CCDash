@@ -65,7 +65,12 @@ _REPO_NAME = "routing_rollup"
 # ``updated_at``, which the DDL defaults server-side on insert and the SET
 # clause below sets explicitly to "now" on conflict). Order matches the DDL
 # column order exactly in both ``sqlite_migrations.py`` and
-# ``postgres_migrations.py`` (v43).
+# ``postgres_migrations.py`` (v43; extended in v45 by DI-4c's three effort
+# columns, inserted mid-list to keep this DDL-order correspondence -- safe
+# because every statement built below names its columns explicitly, so nothing
+# on this path is positional. Existing databases get the columns appended
+# physically by ``_ensure_column``; that physical/declared order divergence is
+# invisible for the same reason.)
 
 ROUTING_ROLLUP_COLUMNS: tuple[str, ...] = (
     "project_id",
@@ -79,6 +84,9 @@ ROUTING_ROLLUP_COLUMNS: tuple[str, ...] = (
     "success_rate",
     "cost_index",
     "regression_rate",
+    "effort_tier",
+    "effort_tier_source",
+    "authoritative_effort_fraction",
     "confidence",
     "eligible_for_adjustment",
     "freshness_ts",

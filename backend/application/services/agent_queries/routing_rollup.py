@@ -154,6 +154,7 @@ from backend import config
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.model_identity import derive_model_identity
+from backend.parsers.effort_provenance import AUTHORITATIVE_EFFORT_SOURCES
 
 from . import routing_feedback_contract
 from ._filters import resolve_time_window
@@ -299,6 +300,48 @@ def _iso8601(value: datetime) -> str:
     return value.isoformat()
 
 
+def _unambiguous_or_none(distinct_count: Any, candidate: Any) -> str | None:
+    """Resolve a DI-4c unambiguous-or-null effort field.
+
+    Returns *candidate* only when the key's sessions carry EXACTLY ONE distinct
+    non-null value for the field (``distinct_count == 1``, where the SQL
+    ``COUNT(DISTINCT ...)`` already excluded NULLs). Any other count means the
+    key either mixes values or carries none, and the honest answer is ``None``
+    -- never a mode with a tiebreak, which would fabricate a winner exactly as
+    a fabricated ``cost_index`` of ``1.0`` would (D-a2).
+
+    Empty/whitespace-only *candidate* also resolves to ``None``: a blank string
+    is an absent value, not a distinct tier.
+    """
+    if int(distinct_count or 0) != 1:
+        return None
+    text = str(candidate or "").strip()
+    return text or None
+
+
+def _authoritative_effort_fraction(
+    authoritative_count: int, session_count: int
+) -> float | None:
+    """Fraction of a key's sessions whose ``effort_tier_source`` is
+    harness-authoritative (DI-4c).
+
+    ``None`` only when *session_count* is ``0`` -- there is nothing to
+    characterize, and ``0.0`` would read as "we checked and none were
+    authoritative". Otherwise always a real float, including a genuine ``0.0``
+    (every session's provenance was stale/derived/unknown), which is the signal
+    a router needs to discount the accompanying ``effort_tier``.
+
+    Deliberately asymmetric with DI-4a's ``cost_coverage_fraction`` (always a
+    float, never ``None``): that field's ``0.0`` is unambiguous because its
+    companion ``cost_index`` is itself ``None`` at zero coverage, whereas an
+    ``effort_tier`` can be perfectly well-defined while resting entirely on
+    non-authoritative provenance.
+    """
+    if session_count <= 0:
+        return None
+    return authoritative_count / session_count
+
+
 @dataclass(frozen=True, slots=True)
 class RawRollupRow:
     """One raw aggregated ``(project_id, source_skill_name, model)`` key.
@@ -330,6 +373,9 @@ class RawRollupRow:
     window_end: datetime
     cost_sum: float = 0.0
     cost_covered_count: int = 0
+    effort_tier: str | None = None
+    effort_tier_source: str | None = None
+    effort_authoritative_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +409,9 @@ class MappedRollupRow:
     is_coverage_only: bool
     cost_sum: float = 0.0
     cost_covered_count: int = 0
+    effort_tier: str | None = None
+    effort_tier_source: str | None = None
+    effort_authoritative_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,6 +443,9 @@ class ProviderRollupRow:
     provider: str
     cost_sum: float = 0.0
     cost_covered_count: int = 0
+    effort_tier: str | None = None
+    effort_tier_source: str | None = None
+    effort_authoritative_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -493,6 +545,25 @@ async def _fetch_raw_aggregate_rows(
     window_end_iso = _iso(window_end)
 
     _COST_EXPR = "COALESCE(display_cost_usd, total_cost, 0)"
+    # DI-4c: inlined rather than parameterized because these are OUR OWN module
+    # constants (backend/parsers/effort_provenance.py), never user input -- the
+    # same reasoning that lets _COST_EXPR be inlined. sorted() keeps the emitted
+    # SQL byte-stable across runs (frozenset iteration order is not), which the
+    # determinism test depends on.
+    _AUTHORITATIVE_LIST = ", ".join(
+        f"'{token}'" for token in sorted(AUTHORITATIVE_EFFORT_SOURCES)
+    )
+    # Unambiguous-or-null needs two aggregates per field: a distinct-value count
+    # (COUNT(DISTINCT x) ignores NULLs in both dialects) and any one non-null
+    # value. When the count is exactly 1, MIN() *is* the single agreed value;
+    # any other count means "mixed" (or "none") and the caller resolves to None.
+    _EFFORT_AGGREGATES = f"""
+                COUNT(DISTINCT effort_tier) AS effort_tier_distinct_count,
+                MIN(effort_tier) AS effort_tier_any,
+                COUNT(DISTINCT effort_tier_source) AS effort_source_distinct_count,
+                MIN(effort_tier_source) AS effort_source_any,
+                SUM(CASE WHEN effort_tier_source IN ({_AUTHORITATIVE_LIST})
+                         THEN 1 ELSE 0 END) AS effort_authoritative_count"""
 
     if isinstance(db, aiosqlite.Connection):
         params: list[Any] = [window_start_iso, window_end_iso]
@@ -508,7 +579,7 @@ async def _fetch_raw_aggregate_rows(
                 model,
                 COUNT(*) AS session_count,
                 SUM(CASE WHEN {_COST_EXPR} > 0 THEN {_COST_EXPR} ELSE 0 END) AS cost_sum,
-                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count
+                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count,{_EFFORT_AGGREGATES}
             FROM sessions
             WHERE updated_at >= ? AND updated_at <= ?
               {project_filter_sql}
@@ -532,7 +603,7 @@ async def _fetch_raw_aggregate_rows(
                 model,
                 COUNT(*) AS session_count,
                 SUM(CASE WHEN {_COST_EXPR} > 0 THEN {_COST_EXPR} ELSE 0 END) AS cost_sum,
-                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count
+                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count,{_EFFORT_AGGREGATES}
             FROM sessions
             WHERE updated_at >= $1 AND updated_at <= $2
               {project_filter_sql}
@@ -551,6 +622,13 @@ async def _fetch_raw_aggregate_rows(
             window_end=window_end,
             cost_sum=float(row.get("cost_sum") or 0.0),
             cost_covered_count=int(row.get("cost_covered_count") or 0),
+            effort_tier=_unambiguous_or_none(
+                row.get("effort_tier_distinct_count"), row.get("effort_tier_any")
+            ),
+            effort_tier_source=_unambiguous_or_none(
+                row.get("effort_source_distinct_count"), row.get("effort_source_any")
+            ),
+            effort_authoritative_count=int(row.get("effort_authoritative_count") or 0),
         )
         for row in raw_rows
     ]
@@ -680,6 +758,9 @@ class RoutingRollupQueryService:
                     is_coverage_only=is_unclassified or is_protected,
                     cost_sum=row.cost_sum,
                     cost_covered_count=row.cost_covered_count,
+                    effort_tier=row.effort_tier,
+                    effort_tier_source=row.effort_tier_source,
+                    effort_authoritative_count=row.effort_authoritative_count,
                 )
             )
         return mapped_rows
@@ -708,6 +789,9 @@ class RoutingRollupQueryService:
                     provider=provider,
                     cost_sum=row.cost_sum,
                     cost_covered_count=row.cost_covered_count,
+                    effort_tier=row.effort_tier,
+                    effort_tier_source=row.effort_tier_source,
+                    effort_authoritative_count=row.effort_authoritative_count,
                 )
             )
         return provider_rows
@@ -838,6 +922,11 @@ class RoutingRollupQueryService:
                     cost_index=cost_index,
                     cost_coverage_fraction=cost_coverage_fraction,
                     regression_rate=None,
+                    effort_tier=row.effort_tier,
+                    effort_tier_source=row.effort_tier_source,
+                    authoritative_effort_fraction=_authoritative_effort_fraction(
+                        row.effort_authoritative_count, row.session_count
+                    ),
                     confidence=_confidence_for_sample_count(row.session_count),
                     eligible_for_adjustment=eligible_for_adjustment,
                     window_start=_iso8601(row.window_start),

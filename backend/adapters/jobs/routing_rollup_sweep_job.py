@@ -150,6 +150,13 @@ def _build_routing_rollup_row(provider_row: Any, key_dto: Any) -> dict[str, Any]
         "success_rate": key_dto.success_rate,
         "cost_index": key_dto.cost_index,
         "regression_rate": key_dto.regression_rate,
+        # DI-4c: copied verbatim from the terminal DTO like every other metric
+        # field -- the unambiguous-or-null resolution and the authoritative
+        # fraction are both already computed in compute_metrics(). Zero
+        # derivation here, same as cost_index.
+        "effort_tier": key_dto.effort_tier,
+        "effort_tier_source": key_dto.effort_tier_source,
+        "authoritative_effort_fraction": key_dto.authoritative_effort_fraction,
         "confidence": key_dto.confidence,
         "eligible_for_adjustment": int(bool(key_dto.eligible_for_adjustment)),
         "freshness_ts": key_dto.freshness_ts,

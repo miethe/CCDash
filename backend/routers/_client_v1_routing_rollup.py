@@ -155,6 +155,21 @@ def _row_to_key_dto(row: Mapping[str, Any]) -> RoutingRollupKeyDTO:
         # back as 0.0 on this persisted-table path.
         cost_coverage_fraction=float(row.get("cost_coverage_fraction") or 0.0),
         regression_rate=row.get("regression_rate"),
+        # DI-4c: all three ARE persisted (unlike cost_coverage_fraction), so
+        # they survive this read path intact. A NULL is never coerced to a
+        # value: null effort_tier/effort_tier_source means "no session carried
+        # one, or the key mixes several, or the rows predate v44" -- never
+        # "low effort" -- and a null authoritative_effort_fraction means zero
+        # samples, distinct from a genuine 0.0 ("checked, none authoritative").
+        effort_tier=(str(row["effort_tier"]) if row.get("effort_tier") else None),
+        effort_tier_source=(
+            str(row["effort_tier_source"]) if row.get("effort_tier_source") else None
+        ),
+        authoritative_effort_fraction=(
+            float(row["authoritative_effort_fraction"])
+            if row.get("authoritative_effort_fraction") is not None
+            else None
+        ),
         confidence=float(row.get("confidence") if row.get("confidence") is not None else 0.0),
         eligible_for_adjustment=bool(row.get("eligible_for_adjustment")),
         window_start=str(row.get("window_start") or ""),

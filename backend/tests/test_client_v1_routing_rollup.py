@@ -93,6 +93,11 @@ def _make_row(**overrides: Any) -> dict[str, Any]:
         "success_rate": None,
         "cost_index": 0.42,
         "regression_rate": None,
+        # DI-4c (v45): unambiguous-or-null tier + provenance + the
+        # authoritative-fraction trust companion.
+        "effort_tier": "high",
+        "effort_tier_source": "codex_payload_effort",
+        "authoritative_effort_fraction": 0.75,
         "confidence": 0.8,
         "eligible_for_adjustment": 1,
         "freshness_ts": "2026-07-31T00:00:00+00:00",

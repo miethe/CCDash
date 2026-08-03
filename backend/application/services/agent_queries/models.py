@@ -440,6 +440,29 @@ class RoutingRollupKeyDTO(BaseModel):
     the DI-4a contract's no-new-DDL constraint), so it reads back as ``0.0``
     on the persisted-table read path (``_client_v1_routing_rollup.py``) which
     has no column to recover it from.
+
+    ``effort_tier``/``effort_tier_source``/``authoritative_effort_fraction``
+    (DI-4c) carry the key's effort dimension and how far it can be trusted,
+    aggregated from ``sessions.effort_tier``/``sessions.effort_tier_source``
+    (Gap 4). Unlike ``cost_coverage_fraction`` all three ARE persisted, so they
+    survive the read path intact.
+
+    ``effort_tier``/``effort_tier_source`` are **unambiguous-or-null**: set only
+    when every tier-carrying session in the key agrees on the value, ``None``
+    when the key mixes values or carries none. A mode with a tiebreak would
+    fabricate a winner, the same failure ``cost_index`` already refuses (D-a2).
+    A null here is therefore three states at once -- no session carried a tier,
+    or the key spans several tiers, or (for ``effort_tier_source``) the rows
+    predate the v44 provenance column. Consumers MUST NOT read null as "low
+    effort".
+
+    ``authoritative_effort_fraction`` is the additive trust companion: the
+    fraction of the key's sessions whose ``effort_tier_source`` is in
+    ``AUTHORITATIVE_EFFORT_SOURCES`` (``backend/parsers/effort_provenance.py``).
+    ``None`` only at zero samples; a genuine ``0.0`` means "checked, none
+    authoritative" -- every tier in the key rests on a stale snapshot, a derived
+    inheritance, or unknown provenance. Per that module's contract, an
+    unrecognised token counts as non-authoritative rather than hard-failing.
     """
 
     producer: str
@@ -461,6 +484,9 @@ class RoutingRollupKeyDTO(BaseModel):
     cost_index: float | None = None
     cost_coverage_fraction: float = 0.0
     regression_rate: float | None = None
+    effort_tier: str | None = None
+    effort_tier_source: str | None = None
+    authoritative_effort_fraction: float | None = None
     confidence: float
     eligible_for_adjustment: bool
     window_start: str

@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 44
+SCHEMA_VERSION = 45
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1493,6 +1493,19 @@ CREATE INDEX IF NOT EXISTS idx_aar_reviews_verdict ON aar_reviews(triage_verdict
 -- are NOT persisted -- they are static and assembled at read time from the
 -- same module. `eligible_for_adjustment` is INTEGER 0/1 (not BOOLEAN) to
 -- keep the literal type token identical across dialects by construction.
+-- `effort_tier`/`effort_tier_source`/`authoritative_effort_fraction` (DI-4c)
+-- carry the key's effort dimension and how far it can be trusted, derived from
+-- `sessions.effort_tier`/`sessions.effort_tier_source` (Gap 4). All three are
+-- nullable and NONE is a key column -- the PRIMARY KEY grain is unchanged.
+-- `effort_tier`/`effort_tier_source` are UNAMBIGUOUS-OR-NULL: populated only
+-- when every tier-carrying session in the key agrees, NULL when the key mixes
+-- values or carries none. A mode with a tiebreak would fabricate a winner --
+-- the same failure this table already refuses for `cost_index` (D-a2, never a
+-- fabricated 1.0). `authoritative_effort_fraction` is the additive trust
+-- companion (the `cost_coverage_fraction` analogue): the fraction of the key's
+-- sessions whose `effort_tier_source` is in `AUTHORITATIVE_EFFORT_SOURCES`
+-- (backend/parsers/effort_provenance.py), NULL only at zero samples, so a
+-- consuming router can discount a tier that rests mostly on stale snapshots.
 CREATE TABLE IF NOT EXISTS routing_rollup (
     project_id                TEXT NOT NULL,
     source_skill_name         TEXT NOT NULL,
@@ -1505,6 +1518,9 @@ CREATE TABLE IF NOT EXISTS routing_rollup (
     success_rate              REAL,
     cost_index                REAL,
     regression_rate           REAL,
+    effort_tier               TEXT,
+    effort_tier_source        TEXT,
+    authoritative_effort_fraction REAL,
     confidence                REAL,
     eligible_for_adjustment   INTEGER NOT NULL DEFAULT 0,
     freshness_ts              TEXT NOT NULL,
@@ -4418,6 +4434,27 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v44 migrations complete: sessions.effort_tier_source added "
             "(effort-tier-source-provenance, Gap 4)."
+        )
+
+    # ── v45 migrations (DI-4c: routing_rollup effort dimension) ──────────────
+    if current_version < 45:
+        # Three nullable columns on routing_rollup so the rollup can carry the
+        # key's effort tier AND how far that tier can be trusted (see the
+        # _TABLES DDL header comment for the unambiguous-or-null and
+        # authoritative-fraction semantics). Present in _TABLES for fresh
+        # instances; these calls add them to existing DBs.
+        #
+        # Deliberately NOT backfilled: routing_rollup is a derived rollup that
+        # the sweep job re-upserts every tick, so the next sweep populates
+        # these for free. Nothing is lost by leaving existing rows null, and a
+        # backfill would have to re-run the aggregation anyway.
+        await _ensure_column(db, "routing_rollup", "effort_tier", "TEXT")
+        await _ensure_column(db, "routing_rollup", "effort_tier_source", "TEXT")
+        await _ensure_column(db, "routing_rollup", "authoritative_effort_fraction", "REAL")
+        await db.commit()
+        logger.info(
+            "v45 migrations complete: routing_rollup effort_tier/"
+            "effort_tier_source/authoritative_effort_fraction added (DI-4c)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────
