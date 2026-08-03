@@ -49,6 +49,13 @@
       "config_file": "config.json",
       "glob": "*.json"
     },
+    "teammate_meta": {
+      "file_suffix": ".meta.json",
+      "colocated": true,
+      "subagent_only": true,
+      "fields": ["taskKind", "teamName", "parentAgentId", "spawnDepth"],
+      "note": "Co-located with the subagent's own JSONL (same dir, same stem: agent-<hash>.jsonl -> agent-<hash>.meta.json). Most .meta.json files lack the team fields; absence is normal, not an error. parentAgentId points at a sibling subagent's own agent_id (its agent-<hash> filename stem), not the flat subagent_parent_id column."
+    },
     "session_env": {
       "dir": "session-env/{session_id}",
       "glob": "*"

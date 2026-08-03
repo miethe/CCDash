@@ -266,6 +266,17 @@ async def get_session_family_v1(
     3. Return a ``SessionFamilyDTO`` wrapped in a ``ClientV1Envelope``.
 
     Raises HTTP 404 when the target session does not exist.
+
+    Note on ``SessionRef.tool_names``: every member in this response's ``members`` list
+    has ``tool_names == []`` today, always. It is not a column on the ``sessions`` row this
+    endpoint reads (only ``workflow_refs``/``source_ref`` are plain columns and are
+    populated directly below); populating it would require a separate per-session
+    tool-usage/transcript query for every family member, which this endpoint does not run
+    (see the inline comment at the ``SessionRef(...)`` construction below, and
+    ``feature_forensics.py``'s ``_enrich_session_refs`` ~L180-196 for the only call site
+    that does run that query). An empty list here is a contract state, not a bug — see
+    ``SessionRef.tool_names``'s field description and
+    ``.claude/worknotes/session-family-and-team-sidecar/implementation-notes.md``.
     """
     app_request = await _resolve_app_request(request_context, core_ports)
     session_repo = get_session_repository(core_ports.storage.db)

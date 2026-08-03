@@ -1769,6 +1769,128 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(backend_member.get("agentType"), "python-backend-engineer")
         self.assertEqual(backend_member.get("model"), "sonnet")
 
+    def test_teammate_meta_sidecar_parses_adjacent_meta_json_for_subagent(self) -> None:
+        root_session_id = "33333333-4444-5555-6666-777777777777"
+        agent_hash = "a04e4c5c3c09601ca"
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T16:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "working"}],
+                    },
+                }
+            ],
+            relative_path=f".claude/projects/demo/{root_session_id}/subagents/agent-{agent_hash}.jsonl",
+        )
+        meta_path = path.with_suffix(".meta.json")
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "parentAgentId": "a071e8a915d823eab",
+                    "spawnDepth": 1,
+                    "taskKind": "in_process_teammate",
+                    "teamName": "session-0a86d381",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        teammate_meta = session.sessionForensics.get("sidecars", {}).get("teammateMeta", {})
+        self.assertTrue(teammate_meta.get("exists"))
+        self.assertEqual(teammate_meta.get("file"), str(meta_path))
+        self.assertEqual(teammate_meta.get("parentAgentId"), "a071e8a915d823eab")
+        self.assertEqual(teammate_meta.get("spawnDepth"), 1)
+        self.assertEqual(teammate_meta.get("taskKind"), "in_process_teammate")
+        self.assertEqual(teammate_meta.get("teamName"), "session-0a86d381")
+
+    def test_teammate_meta_sidecar_is_absent_for_root_session(self) -> None:
+        raw_session_id = "44444444-5555-6666-7777-888888888888"
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T16:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "working"}],
+                    },
+                }
+            ],
+            relative_path=f".claude/projects/demo/{raw_session_id}.jsonl",
+        )
+        # A root session never has a `.meta.json` sidecar by construction, but even if a
+        # stray adjacent file existed, root sessions must resolve to the absent contract.
+        stray_meta = path.with_suffix(".meta.json")
+        stray_meta.write_text(json.dumps({"taskKind": "should_be_ignored"}), encoding="utf-8")
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        teammate_meta = session.sessionForensics.get("sidecars", {}).get("teammateMeta", {})
+        self.assertFalse(teammate_meta.get("exists"))
+        self.assertEqual(teammate_meta.get("file"), "")
+        self.assertEqual(teammate_meta.get("taskKind"), "")
+        self.assertEqual(teammate_meta.get("teamName"), "")
+        self.assertEqual(teammate_meta.get("parentAgentId"), "")
+        self.assertIsNone(teammate_meta.get("spawnDepth"))
+
+    def test_teammate_meta_sidecar_benign_on_missing_and_malformed_json(self) -> None:
+        root_session_id = "55555555-6666-7777-8888-999999999999"
+
+        # Case 1: subagent with no adjacent `.meta.json` at all — the majority case on
+        # disk (only 430/5228 sampled files carry the team fields).
+        no_meta_path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T16:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "working"}],
+                    },
+                }
+            ],
+            relative_path=f".claude/projects/demo/{root_session_id}/subagents/agent-aaa111.jsonl",
+        )
+        session_no_meta = parse_session_file(no_meta_path)
+        self.assertIsNotNone(session_no_meta)
+        assert session_no_meta is not None
+        teammate_meta_missing = session_no_meta.sessionForensics.get("sidecars", {}).get("teammateMeta", {})
+        self.assertFalse(teammate_meta_missing.get("exists"))
+        self.assertEqual(teammate_meta_missing.get("taskKind"), "")
+
+        # Case 2: subagent with a malformed (non-JSON) adjacent `.meta.json` — must
+        # never raise, must resolve to the same benign/absent contract.
+        malformed_path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T16:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "working"}],
+                    },
+                }
+            ],
+            relative_path=f".claude/projects/demo/{root_session_id}/subagents/agent-bbb222.jsonl",
+        )
+        malformed_path.with_suffix(".meta.json").write_text("{not valid json", encoding="utf-8")
+        session_malformed = parse_session_file(malformed_path)
+        self.assertIsNotNone(session_malformed)
+        assert session_malformed is not None
+        teammate_meta_malformed = session_malformed.sessionForensics.get("sidecars", {}).get("teammateMeta", {})
+        self.assertFalse(teammate_meta_malformed.get("exists"))
+        self.assertEqual(teammate_meta_malformed.get("parentAgentId"), "")
+        self.assertIsNone(teammate_meta_malformed.get("spawnDepth"))
+
     def test_statusline_sidecar_sets_context_and_reported_cost_fields(self) -> None:
         raw_session_id = "22222222-3333-4444-5555-666666666666"
         path = self._write_jsonl(

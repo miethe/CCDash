@@ -837,6 +837,73 @@ def _collect_team_sidecar(
     }
 
 
+def _collect_teammate_meta_sidecar(
+    path: Path,
+    is_subagent: bool,
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Parse the adjacent Claude Team `.meta.json` sidecar for a subagent session.
+
+    The sidecar is co-located with the subagent's own JSONL transcript (same directory,
+    same filename stem — e.g. ``agent-<hash>.jsonl`` -> ``agent-<hash>.meta.json``) and
+    carries per-subagent teammate attribution fields (``taskKind``, ``teamName``,
+    ``parentAgentId``, ``spawnDepth``) that the flat ``subagent_parent_id`` column cannot
+    supply: that column is derived from ``path.parent.parent.name`` (see
+    ``_extract_raw_session_id`` / the ``is_subagent`` branch), so it always resolves to the
+    ROOT session directory, never an intermediate spawner. ``.meta.json``'s own
+    ``parentAgentId`` instead points at a SIBLING subagent's ``agent_id`` (the
+    ``agent-<hash>`` filename stem in the same directory), forming the real spawn tree the
+    flat column collapses.
+
+    Ground truth on disk (5,228 sampled `.meta.json` files): most carry `agentType` but the
+    team-attribution fields are the minority case — absence of `taskKind`/`teamName`/
+    `parentAgentId`/`spawnDepth` is normal, never an error. Root sessions never have a
+    `.meta.json` sidecar by construction. Benign on any read/parse failure — this runs on
+    the parser hot path and a missing or malformed sidecar must never raise (same
+    convention as ``_load_team_config``).
+    """
+    empty: dict[str, Any] = {
+        "exists": False,
+        "file": "",
+        "taskKind": "",
+        "teamName": "",
+        "parentAgentId": "",
+        "spawnDepth": None,
+    }
+    if not is_subagent:
+        return empty
+
+    meta_cfg = schema.get("sidecars", {}).get("teammate_meta", {})
+    suffix = str(meta_cfg.get("file_suffix") or ".meta.json")
+    try:
+        meta_path = path.with_suffix(suffix)
+    except Exception:
+        return empty
+
+    if not meta_path.exists():
+        return empty
+
+    raw = _load_json_dict(meta_path)
+    if not raw:
+        return empty
+
+    spawn_depth_raw = raw.get("spawnDepth")
+    spawn_depth: int | None
+    try:
+        spawn_depth = int(spawn_depth_raw) if spawn_depth_raw is not None else None
+    except (TypeError, ValueError):
+        spawn_depth = None
+
+    return {
+        "exists": True,
+        "file": str(meta_path),
+        "taskKind": str(raw.get("taskKind") or "").strip(),
+        "teamName": str(raw.get("teamName") or "").strip(),
+        "parentAgentId": str(raw.get("parentAgentId") or "").strip(),
+        "spawnDepth": spawn_depth,
+    }
+
+
 def _collect_session_env_sidecar(
     claude_root: Path | None,
     raw_session_id: str,
@@ -4026,6 +4093,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
     todo_sidecar = _collect_todo_sidecar(claude_root, raw_session_id, forensics_schema)
     task_sidecar = _collect_task_sidecar(claude_root, raw_session_id, forensics_schema)
     team_sidecar = _collect_team_sidecar(claude_root, raw_session_id, forensics_schema)
+    teammate_meta_sidecar = _collect_teammate_meta_sidecar(path, is_subagent, forensics_schema)
     session_env_sidecar = _collect_session_env_sidecar(claude_root, raw_session_id, forensics_schema)
     tool_results_sidecar = _collect_tool_results_sidecar(path, raw_session_id, is_subagent, forensics_schema)
     # T11-004: launch-time capture sidecar — launcher/profile/effortTier/modelVariant.
@@ -4320,6 +4388,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "todos": todo_sidecar,
             "tasks": task_sidecar,
             "teams": team_sidecar,
+            "teammateMeta": teammate_meta_sidecar,
             "sessionEnv": session_env_sidecar,
             "toolResults": tool_results_sidecar,
         },

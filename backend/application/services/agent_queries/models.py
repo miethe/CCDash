@@ -57,7 +57,17 @@ class SessionSummary(BaseModel):
 
 class SessionRef(SessionSummary):
     duration_seconds: float = 0.0
-    tool_names: list[str] = Field(default_factory=list)
+    tool_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Tool names used by this session. NOT populated from the sessions row alone — "
+            "requires a separate per-session tool-usage/transcript lookup (see "
+            "feature_forensics.py's _enrich_session_refs). Call sites that build a SessionRef "
+            "directly from a sessions row (e.g. the /sessions/{id}/family endpoint) leave this "
+            "as the default empty list; an empty list on those responses means 'not looked up', "
+            "NOT 'this session used no tools' — it is a contract state, not a signal."
+        ),
+    )
     source_ref: str = ""
 
 
