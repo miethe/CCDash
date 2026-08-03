@@ -6,7 +6,7 @@ feature_slug: proof-to-routing-loop
 prd_ref: docs/project_plans/PRDs/infrastructure/proof-to-routing-loop-v1.md
 status: draft
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-03
 audience: developers
 category: cross-repo-integration
 tags:
@@ -45,7 +45,7 @@ shipped v1 producer, **all three are null-or-constant for every row, by delibera
 |-------|------------------|--------------------------------|
 | `success_rate` | `None`, always | `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
 | `regression_rate` | `None`, always | Same — no genuine regression signal available to that module. |
-| `cost_index` | `1.0`, fixed (`_COST_INDEX_BASELINE`) | Per-key cost normalization is "a real design surface of its own," deliberately not gold-plated into a provisional payload. |
+| `cost_index` | ~~`1.0`, fixed (`_COST_INDEX_BASELINE`)~~ — **SUPERSEDED 2026-08-03: now real.** DI-4a shipped; the node serves 261/346 rows non-null across 249 distinct values. | Was: per-key cost normalization is "a real design surface of its own," deliberately not gold-plated into a provisional payload. |
 | `sample_count` | real | — |
 | `confidence` | real — `n/(n+5)` | — |
 | `eligible_for_adjustment` | real | — |
@@ -74,9 +74,9 @@ DI-4 does **not** decompose evenly. A signal-source audit against the node Postg
 
 | Field | Feasibility | Evidence |
 |-------|-------------|----------|
-| `cost_index` | **Buildable now** | `sessions.total_cost` / `display_cost_usd` > 0 on **13,460 of 18,762** rows (72%). Aggregates directly at the `(source_skill_name × model)` grain — no external join, no new table. |
-| `success_rate` | **No signal exists** | see audit below |
-| `regression_rate` | **No signal exists** | see audit below |
+| `cost_index` | **SHIPPED (DI-4a, 2026-08-02)** | `sessions.total_cost` / `display_cost_usd` > 0 on **13,460 of 18,762** rows (72%). Aggregates directly at the `(source_skill_name × model)` grain — no external join, no new table. |
+| `success_rate` | **Conditional — one candidate, gated on a parser fix** (DI-4b exploration closed 2026-08-03) | see audit below, then the DI-4b outcome box |
+| `regression_rate` | **No signal exists — confirmed by all four DI-4b legs** | see audit below, then the DI-4b outcome box |
 
 **Signal-source audit — every candidate ruled out:**
 
@@ -89,6 +89,18 @@ DI-4 does **not** decompose evenly. A signal-source audit against the node Postg
   hashes). There is nothing to join `source_skill_name` against. This is not a hard grain
   reconciliation — it is an impossible one, until skill attribution is actually populated.
   (`attributionCoverage: 0.0` in sampled rows is consistent with attribution never being wired.)
+  **Correction 2026-08-03 (DI-4b `existing-rollups` leg):** the *cause* stated here and elsewhere —
+  component extraction emitting hashes/prompt-text — is **wrong**. Clean skill slugs do exist
+  (`toolLabel: "dev-execution"`, `"planning"`) in `session_messages`; `stack_observations.py` reads
+  exclusively from `session_logs`, which is **0 rows** on the operative Postgres because the
+  enterprise sync profile deliberately stopped writing it
+  (`sync_engine.py:_should_write_legacy_session_logs`). That part is a bounded wiring bug (~3-5 pts).
+  **But this table is now closed as a signal source on two further grounds:** (a) its scope key has
+  **no `model` dimension at all**, so fixing attribution cannot serve a `(skill x model)` key without
+  a separate open-ended redesign; (b) 86.4% of stack-scope rows sit at an identical formulaic
+  `successScore ~= 0.45` driven by `sessions.status` -- the signal this very audit rejected -- plus a
+  `test_pass_ratio` term that is always 0 because `test_results`/`test_runs` are empty. It is largely
+  a re-encoding of the rejected signal, not a latent outcome signal awaiting a join.
 - `session_stack_observations` — 16,559 rows, all `observation_source: backfill`, with
   `skillsUsed: []` and `agentsUsed: []` empty in samples; payload is queue-pressure and
   artifact-count telemetry, carrying no outcome semantics.
@@ -98,13 +110,68 @@ DI-4 does **not** decompose evenly. A signal-source audit against the node Postg
 > no populated skill dimension, so no join is possible. Recorded rather than silently edited,
 > because the mistaken version was committed and may have been read.
 
-**A promising lead for the success signal** (untested, for the SPIKE to evaluate): the
-`<synthetic>` harness entries this feature just taught the parser to ignore as a *model* are
-themselves **per-session failure events** — `API Error: Connection closed mid-response` and
-interrupt notices, present in 325 occurrences across 249 transcripts. Counting harness error
-entries per session is a candidate derivation for `regression_rate`, and its complement for
-`success_rate`. Adjacent candidates: tool-failure rates, session abandonment (`active` sessions
-that never complete), and rework/retry patterns already surfaced by the AAR review loop.
+~~**A promising lead for the success signal**~~ — **REFUTED 2026-08-03. This lead was
+mis-specified, and the exploration built on it found it to be a false trail.** Recorded rather than
+silently edited, per the same precedent this section set above.
+
+The claim was: `<synthetic>` harness entries are per-session failure events, "325 occurrences across
+249 transcripts," making harness-error counts a candidate `regression_rate` and its complement a
+candidate `success_rate`. Measured against the node Postgres:
+
+| Query | Result |
+|-------|--------|
+| `session_messages.content LIKE '%<synthetic>%'` | **11 rows / 5 sessions** |
+| `sessions.model = '<synthetic>'` | **244 sessions** |
+| `content LIKE '%API Error%'` | 545 rows / 436 sessions |
+| `content LIKE '%Request interrupted%'` | 427 rows / 399 sessions |
+
+The audit conflated *sessions whose model never resolved* (`model = '<synthetic>'`, 244 — the origin
+of the "249 transcripts" figure) with *harness error entries*. The literal string is near-absent
+from transcript content, and mostly meta-discussion where it appears. Real harness errors live as
+free text (`API Error:`, `Agent "..." failed:`, `[Request interrupted...]`) in
+`session_messages.content`.
+
+Worse, `model = '<synthetic>'` is **self-referential as an outcome signal**: the model is unresolved
+*because the request failed first*. 5 of the 188 min-sample-clearing keys carry it, one driving an
+82% "error rate" that is pure circularity. The designated lead was, in part, an artifact of the
+failure it was meant to measure.
+
+### DI-4b outcome — exploration closed 2026-08-03, verdict CONDITIONAL
+
+Full record: `docs/project_plans/exploration/routing-feedback-success-signal/routing-feedback-success-signal-synthesis.md`
+
+Denominator: **188** keys clear `min_sample`=5 (of 396 in-window keys). Note the real producer key
+is `(project_id, skill_name, model)` — `project_id` is part of it, which the
+`(source_skill_name × model)` shorthand used throughout this spec omits.
+
+| Leg | Informative keys / 188 | Confound | Verdict |
+|-----|------------------------|----------|---------|
+| `tool-failures` | **140 (74.5%)** | Categorical parser gap — *mitigable* | **conditional** |
+| `harness-errors` | 70 (37.2%) | Unmitigable | no-go |
+| `abandonment` | 60 (31.9%) | Unmitigable (parse-time freeze artifact) | no-go |
+| `existing-rollups` | 49 (26.1%) if fixed | Scores circular on `sessions.status` | no-go |
+
+Only `tool-failures` clears the >=50% threshold, so the deal-killer did **not** trigger. It cannot
+ship as-is: **0 of 37 GPT/Codex keys are informative** (190,450 all-time tool calls, exactly 0
+errors) against **137 of 138** Claude keys, because the Codex error-detection heuristic never
+matches real payloads. With `weight_failure` at 0.5 — the largest term in §2.3 — shipping this would
+systematically bias routing *toward* GPT/Codex models on a parser artifact. An inert loop misroutes
+nothing; a categorically biased one misroutes confidently.
+
+**Named precondition before any `success_rate` producer work:** fix Codex tool-error detection,
+re-measure the family split against the same 188-key denominator, then scope the increment. Do not
+ship a Claude-family-only signal into a cross-family router key.
+
+**`regression_rate` is closed, not deferred.** No leg found a regression signal;
+`test_results`/`test_runs` are 0 rows and the schema has no retry linkage (95.2% of sessions with a
+recorded tool failure still completed, so "failed then recovered" is indistinguishable from "failed
+and stayed broken"). Populating it is a new-capture question, not a derivation question.
+
+**Blocking discovery, out of the charter's scope but conditioning all of it:** **61% of
+min-sample-clearing keys (114/188) have a NULL `skill_name`**, which the producer coalesces to `""`.
+Even given a perfect success signal, most keys the router acts on carry no skill identity and
+degenerate to `(project × model)`. Tracked as its own exploration:
+`docs/project_plans/exploration/routing-key-skill-attribution/`.
 
 **Consequent routing** — DI-4 is two artifacts, not one plan. Both authored 2026-08-01:
 
@@ -267,6 +334,144 @@ These values are **illustrative** and subject to empirical validation (see Promo
 
 ---
 
+### 2.4 ADR — Landing Surface for the Empirical Adjustment (RATIFIED 2026-08-03)
+
+> **Read this together with §2.2 and §2.3.** This addendum amends both. §2.2's *aggregation* math
+> survives intact; §2.3's `max_adjustment_cap` does **not** survive as a magnitude. Anyone
+> implementing DI-1 from §2.2/§2.3 alone will build an adjustment with nowhere to apply.
+
+**Status**: Ratified (self-ratified — router owner == producer owner, same operator).
+**Decision date**: 2026-08-03.
+**Supersedes**: §2.3 `max_adjustment_cap` semantics; §2.2 step 3–4 actuation shape.
+**Prerequisite closed**: DI-1 PREREQ (`node_01KZ484RDK3Y1AXQ59EAVY16QV`).
+
+#### 2.4.1 Problem
+
+§2.2 emits a **bounded continuous** `score_delta` (cap −0.15) and SPEC.md invariant 10 assigns the
+router a *"bounded-adjustment cap and **effective-score floor**"*. Neither exists. The resolver does
+not rank by any score — it selects by **chain position** and **integer within-model priority**.
+Implementing §2.2 verbatim would compute a correct number with nowhere to put it.
+
+#### 2.4.2 Verification (independent, source-read 2026-08-03 — not taken on report)
+
+Against `~/.claude/skills/delegation-router/{resolver.js,SPEC.md,SKILL.md}` and
+`~/.claude/config/model-registry.yaml`:
+
+1. **The production path has no score.** `resolve()` (`resolver.js:651`) dispatches to
+   `resolveFromToml` **only when `input._configPath` is set**, which the JSDoc marks
+   `INTERNAL: legacy provider-plugins.toml path (tests)`. Production always takes
+   `resolveFromRegistry` (`:684`). Its selection order is: MUST-stay → determinism filter →
+   explicit-provider (`byModelThenPriority`) → `routing_policy` chain walk (first resolvable entry
+   wins, **position-based**) → cost/priority ranking → claude fallback. Every comparator is
+   discrete/lexicographic: `free` bool, `COST_TIER_RANK` int (`:480`), `priority` int (`:799`).
+2. **The one continuous score is test-only and unusable anyway.** `candidateScore` (`:1022`) sits
+   under the header *"Legacy TOML resolution (preserves existing 33-test fixture behavior)"* and is
+   reached only via `resolveFromToml`. It is also quantized — `COST_TIER_RANK` (0–3) plus a 0/0.5
+   determinism bonus, with −10 / +0.1 offsets — so a −0.15 delta could not flip anything except a
+   0.1-spaced fallback tie. **A continuous landing surface does not exist in either path.**
+3. **`scores:` is not wired.** Zero reads of `.scores` in `resolver.js`. SKILL.md:140–144 states the
+   resolver does not order by it: *"advisory metadata … **not** a resolver input in v3 (reserved for
+   a future upgrade)."*
+4. **The spec's own invariant is unsatisfiable as written.** SPEC.md:222 requires an
+   "effective-score floor" over a score the resolver does not compute. Confirmed contradiction, not
+   a misreading.
+5. **`priority_overrides` is provably inert for every feedback-eligible class.** `resolveChainEntry`
+   (`:601–618`) never reads `priority`; the chain walk (stage 2) short-circuits before the priority
+   ranking (stage 3, guarded `if (!chosen)`). The registry declares **12 `routing_policy` chains, 10
+   of them non-MUST-stay** (`orchestration`, `mode_d` are MUST-stay and immune) — i.e. *all* eligible
+   classes are chain-routed, so all of them bypass `priority` entirely. `priority` is additionally
+   documented as a **within-model** rank that "must never be compared across different models"
+   (`:740–749`).
+
+**Verdict: the finding is CONFIRMED and strengthened** — option (B) as originally stated
+("emit `priority_overrides`") would have been a **no-op** for 10 of 10 eligible classes.
+
+#### 2.4.3 BL-1 determination — distinct, not a prerequisite
+
+SPEC.md BL-1 ("Registry-aware scoring fully wired", *status: planned (design W2)*) scopes
+`enabled` · `priority` · availability · capability-match from the registry — **registry-field
+honoring, not a continuous score.** Two reasons it is not this work:
+
+- **It is already delivered.** SKILL.md:127–129 instructs readers *not* to say the resolver scores on
+  `cost_tier + sampling`, because *"v3 **is** registry-aware (`enabled`, priority, availability,
+  capability match)"* — BL-1's exact scope. `resolveFromRegistry` confirms it. **BL-1's `planned`
+  status is stale**; a follow-up should mark it complete.
+- **Even fully re-opened it would not produce an effective score.** SKILL.md:140–141 keeps the two
+  strictly separate: v3 ranking is *"chain / priority / availability / capability-match"* **and** the
+  `scores:` block is *"not a resolver input."*
+
+→ **DI-1 is NOT sequenced behind BL-1.** This node is not duplicate scope, and closing it by
+reference to BL-1 would have left the gap open.
+
+#### 2.4.4 Options considered
+
+| | Option | Rejected because |
+|---|---|---|
+| **A** | **Resolver v4 — score-aware ranking.** Wire `scores:` into ranking, apply the delta to the effective score. | Blast radius covers **every** route, not just feedback-touched ones, so it needs its own regression posture before any feedback value is realized. Worse, it is the wrong *shape*: `scores:` is **per-model**, while selection is over **(model, provider) lanes** — it cannot express "this model on ICA vs subscription", which is most of what routing decides. And a `routing_policy` chain is an operator's **statement of intent** ("free first, then this"); collapsing it into a scalar is a real semantic loss. Scale mismatch is fatal on its own: −0.15 against 1–10 registry scores is 1.5% and would never flip anything. |
+| **B** | **Emit `priority_overrides` / `routing_policy_overrides`.** | `priority_overrides` is a **no-op for all 10 eligible classes** (§2.4.2 finding 5). And both levers live in `routing.local.toml` — the **human-authored** project-local override file. Writing machine feedback into the human channel makes SPEC.md invariant 10's *"absolute human-override precedence"* unenforceable: two writers, one field, no discriminator. |
+| **C** | ✅ **Separate demotion-only feedback channel, actuated on the chain.** | **CHOSEN.** |
+
+#### 2.4.5 Decision — Option (C)
+
+Keep §2.2's scalar as an **evidence aggregate that triggers a bounded discrete demotion**. Do not
+invent a resolver-wide score; do not write into the human override channel.
+
+1. **Channel.** A dedicated machine-written state file (e.g.
+   `~/.claude/state/routing-feedback-overrides.json`), **never** `routing.local.toml`. Precedence
+   becomes structural, not conventional:
+   `MUST-stay (absolute) > routing.local.toml (human) > routing-feedback state (machine) > registry defaults`.
+2. **Actuation point.** One new stage between the current stage 2 and stage 3: reorder the
+   `routing_policy` chain array for that `task_class` **before** the position-based walk. This is a
+   pure `(chain, feedbackForClass) → chain'` function — the three-stage structure is unchanged. For
+   any class with no chain, the same record nudges stage-3 `priority` instead (secondary path).
+3. **Demotion-only, one step.** An adjustment may move a chain entry **at most one position later**
+   and may **never promote**. Feedback can only say "prefer this less", never "prefer this more".
+4. **Provenance.** RoutingRecord carries `rank_displacement` (the applied action) *and*
+   `combined_signal` + the §2.2 evidence block (why), so `skillmeat routing audit --violations`
+   remains meaningful.
+
+#### 2.4.6 Re-ratified guardrail semantics (discrete world)
+
+SPEC.md invariant 10's vocabulary is re-expressed. **A magnitude cap is meaningless when there is
+exactly one available action; boundedness must come from displacement limits and hysteresis.**
+
+| Continuous invariant (retired) | Discrete re-ratification | Value |
+|---|---|---|
+| bounded-adjustment **cap** (−0.15 magnitude) | **max rank displacement**, demotion-only | `1` position; promotion forbidden |
+| **effective-score floor** | **never-empty / last-candidate floor** — a demotion may never empty a chain, displace the sole remaining candidate, or touch a MUST-stay class | structural |
+| **decay** toward zero | **hysteresis + TTL** — demote at `θ`, restore below `θ_restore`; an override expires if not re-confirmed by the next window | `θ = 0.15`, `θ_restore = 0.08`, TTL = 1 window |
+| min-sample defense | unchanged — carried by `eligible_for_adjustment` | producer-side |
+
+**Why `θ = 0.15`:** in §2.2 the trigger was `delta < −0.01` (fires at `combined_signal > 0.01`) and
+the cap **bound** at `combined_signal ≥ 0.15`. A single rank displacement is a *full-strength*
+action, so it must fire at the old **saturation** point, not the old sensitivity point. Firing a
+whole rank flip on `combined_signal = 0.02` would be far more aggressive than the ratified
+continuous design ever intended. `|−0.15|` therefore survives as a **trigger threshold**, not as a
+magnitude. `θ_restore = 0.08` (≈ θ/2) is the anti-flap band.
+
+#### 2.4.7 Retirement / survival ledger — do not let stale params carry over
+
+| Parameter (§2.2 / §2.3) | Fate |
+|---|---|
+| `weight_failure` 0.5 · `weight_cost` 0.3 · `weight_regression` 0.2 | ✅ **SURVIVE** — they aggregate evidence into `combined_signal`, which is still computed verbatim |
+| `regression_half_weight` 0.5 | ✅ **SURVIVES** |
+| `confidence_threshold` 0.7 | ✅ **SURVIVES** |
+| D9b sign inversion `max(-combined_signal, cap)` | ⚠️ **PARTLY RETIRED** — the sign defect is real and its *lesson* holds (`combined_signal` is positive for a bad model), but the `max(…, cap)` clamp goes away with the magnitude. Compare `combined_signal ≥ θ` directly |
+| D9c cost clamp `max(cost_index − 1.0, 0.0)` | ✅ **SURVIVES** — still inside `combined_signal` |
+| `max_adjustment_cap` **−0.15** | ❌ **RETIRED as a magnitude.** `|0.15|` is re-purposed as `θ` |
+| `score_delta` (RoutingRecord field) | ❌ **RETIRED** — replaced by `rank_displacement`; `combined_signal` is kept as *evidence*, never as an applied value |
+| §2.2 step 3 worked example **−0.150 (cap-bound)** | ❌ **RETIRED as an assertion.** Its replacement: `combined_signal = 0.750 ≥ θ = 0.15` → demote 1 position |
+
+#### 2.4.8 Consequences
+
+- **DI-1 is unblocked on shape** and its acceptance criteria are updated to (C). It remains gated on
+  DI-4b's verdict (cost-only merge acceptable or not) — an orthogonal blocker.
+- **Resolver v4 / `scores:` wiring is out of scope for DI-1** and stays a standalone future upgrade.
+- **Router-repo follow-ups** (MeatySkills, not CCDash): amend SPEC.md:222 to the §2.4.6 vocabulary
+  (drop "effective-score floor"), and correct BL-1's stale `planned` status.
+
+---
+
 ## 3. Promotion Readiness Criteria
 
 ### 3.1 Router Owner Readiness Checklist
@@ -403,10 +608,33 @@ signal. DI-4 is that increment:
   per-task-class mean vs cheapest-key), and what to emit for a key whose sessions have no cost
   attribution (28% of rows) — `null`, never a fabricated `1.0`, per the same principle that made
   v1 emit `null` in the first place.
-- **DI-4b — `success_rate` / `regression_rate` (SPIKE).** Answer "does a derivable per-session
-  success signal exist?" before planning an implementation. Lead candidate: harness error-entry
-  counts (see §0). Deal-killer: if no candidate reaches usable coverage, DI-1 stays deferred
-  indefinitely and the honest outcome is to leave `live_consumption_disabled` and say so.
+- **DI-4b — `success_rate` / `regression_rate` (SPIKE).** ~~Answer "does a derivable per-session
+  success signal exist?"~~ **CLOSED 2026-08-03 — verdict CONDITIONAL.** All four legs ran; see the
+  DI-4b outcome box in §0 and the full synthesis at
+  `docs/project_plans/exploration/routing-feedback-success-signal/routing-feedback-success-signal-synthesis.md`.
+  The lead candidate named here (harness error-entry counts) was **refuted** — and was
+  mis-specified in §0 to begin with. Outcome:
+  - `success_rate`: one viable candidate (per-key tool-error rate, 140/188 = 74.5% informative
+    keys), gated on a **named bounded precondition** — fix Codex tool-error detection (0/37
+    GPT/Codex keys informative today) and re-measure. Successor task: **DI-4d** below.
+  - `regression_rate`: **no signal exists**, confirmed by all four legs. Closed, not deferred.
+    Leave null indefinitely; revisit only as a new-capture question.
+  - Leave `live_consumption_disabled` until DI-4d clears.
+
+- **DI-4d — Fix Codex tool-error detection (NEW, blocks `success_rate`).** The Codex parser's
+  error-detection heuristic never matches real payloads: GPT/Codex sessions record 190,450 tool
+  calls with exactly 0 errors, while Claude-family tools show plausible rates (`Bash` 3.7%,
+  `Write` 6.2%, `WebSearch` 7.5%). Acceptance: GPT/Codex informative-key fraction becomes
+  comparable to Claude's, or the residual gap is quantified and explicitly accepted; then re-run
+  the DI-4b `tool-failures` coverage measurement against the same 188-key denominator so
+  before/after is directly comparable. Only after that is a `success_rate` producer increment
+  (DI-4e) scopeable.
+
+- **DI-4f — Routing-key skill attribution (NEW, conditions all DI-4b value).** 114 of the 188
+  min-sample-clearing keys (61%) have a NULL `skill_name`. Exploration charter:
+  `docs/project_plans/exploration/routing-key-skill-attribution/routing-key-skill-attribution-charter.md`.
+  Decide this before further `success_rate` investment — a perfect signal on a key with no skill
+  dimension is a `(project × model)` signal, not the skill-aware feedback DI-1 was designed for.
 
 **Coverage is a first-class contract state** in both halves: emit `null` when a key lacks
 attribution, never a fabricated zero or baseline.
