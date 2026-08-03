@@ -43,7 +43,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 47
+SCHEMA_VERSION = 48
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -4030,6 +4030,51 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         logger.info(
             "v47 migrations complete: routing_rollup.cost_coverage_fraction "
             "added (persist the DI-4a coverage companion)."
+        )
+
+    # ── v48 migrations (sessions child FKs gain ON UPDATE CASCADE) ──────────
+    if current_version < 48:
+        # The v31 composite-PK promotion gave every child table a
+        # (project_id, session_id) -> sessions(project_id, id) FK with
+        # ON DELETE CASCADE but NO ON UPDATE rule, i.e. NO ACTION. That makes
+        # `project_id` effectively immutable: re-attributing a session from a
+        # catch-all bucket to its real project aborts with
+        # ForeignKeyViolation, because 13 child tables still reference the old
+        # composite key. Re-attribution is a recurring operational need
+        # (decoder fixes, newly-registered repos, junk-bucket folds), so the
+        # rule belongs in the schema rather than in a one-off deferral dance
+        # against the live DB.
+        #
+        # Rebuilt from pg_get_constraintdef() rather than from reconstructed
+        # column lists: the existing definition is reused verbatim and only
+        # the ON UPDATE clause is appended, so column order and the
+        # referenced-key spelling cannot drift. Idempotent by construction --
+        # confupdtype <> 'c' skips constraints already carrying CASCADE.
+        fk_rows = await db.fetch(
+            """
+            SELECT c.conname        AS name,
+                   rel.relname      AS table_name,
+                   pg_get_constraintdef(c.oid) AS def
+            FROM pg_constraint c
+            JOIN pg_class rel  ON rel.oid  = c.conrelid
+            JOIN pg_class frel ON frel.oid = c.confrelid
+            WHERE c.contype = 'f'
+              AND frel.relname = 'sessions'
+              AND c.confupdtype <> 'c'
+            """
+        )
+        for fk in fk_rows:
+            await db.execute(
+                f'ALTER TABLE {fk["table_name"]} DROP CONSTRAINT IF EXISTS {fk["name"]}'
+            )
+            await db.execute(
+                f'ALTER TABLE {fk["table_name"]} ADD CONSTRAINT {fk["name"]} '
+                f'{fk["def"]} ON UPDATE CASCADE'
+            )
+        logger.info(
+            "v48 migrations complete: %s sessions child FK(s) rebuilt with "
+            "ON UPDATE CASCADE (project_id re-attribution now permitted).",
+            len(fk_rows),
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

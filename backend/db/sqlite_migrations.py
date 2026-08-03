@@ -65,7 +65,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 47
+SCHEMA_VERSION = 48
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -4501,6 +4501,39 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v47 migrations complete: routing_rollup.cost_coverage_fraction "
             "added (persist the DI-4a coverage companion)."
+        )
+
+    # ── v48 migrations (sessions child FKs gain ON UPDATE CASCADE) ──────────
+    if current_version < 48:
+        # v48 is deliberately a POSTGRES-ONLY schema change. This block exists
+        # so the version bump is explicit rather than silently skipped, and so
+        # the asymmetry is documented at the point someone would look for it.
+        #
+        # Postgres v48 rebuilds the 14 sessions child FKs with
+        # ON UPDATE CASCADE, making `project_id` mutable so a session can be
+        # re-attributed from a catch-all bucket to its real project. SQLite
+        # does NOT get the rule, for two reasons:
+        #
+        #   1. SQLite cannot ALTER a constraint -- a foreign key lives inside
+        #      its table's CREATE TABLE text, so the change would mean a full
+        #      13-table rebuild on every dev/offline database.
+        #   2. It would put the legacy-upgrade paths at risk for no gain:
+        #      SQLite resolves the parent key on UPDATE as well as DELETE, and
+        #      a pre-v31 `sessions` (id-only PK, no unique index on
+        #      (project_id, id)) raises "foreign key mismatch" when it cannot.
+        #      Note the two legacy tests in test_sqlite_migrations.py are
+        #      already red on main for unrelated reasons, so they could not
+        #      have confirmed or refuted this either way -- which is itself a
+        #      reason not to take the risk here.
+        #
+        # This costs nothing operationally: Postgres is the backend for fleet
+        # telemetry, where cross-project re-attribution actually runs. SQLite
+        # is the dev/offline cache and does not enforce foreign keys at all
+        # unless PRAGMA foreign_keys=ON.
+        logger.info(
+            "v48 migrations complete (SQLite): no-op by design -- the "
+            "sessions child FK ON UPDATE CASCADE change is Postgres-only "
+            "(see block comment)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────
