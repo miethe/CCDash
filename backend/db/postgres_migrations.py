@@ -1,6 +1,12 @@
 """PostgreSQL database schema creation and versioning.
 
 Schema version history (keep in lockstep with sqlite_migrations.py):
+  v49 — subagent-skill-inheritance: sessions table gains skill_name_source
+         (nullable TEXT, closed vocabulary — see
+         backend/parsers/skill_provenance.py). Distinguishes a directly
+         detected skill_name from one inherited (one hop) from the parent
+         session. Additive, no backfill in the migration itself (the backfill
+         runs as its own repository-level pass, see AC 5/6).
   v35 — Phase 11 launch-time capture columns (T11-003): sessions table gains
          launcher, profile, effort_tier, model_variant (all nullable TEXT).
          Mirrors sqlite_migrations.py v35. Additive, no backfill required.
@@ -43,7 +49,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 48
+SCHEMA_VERSION = 49
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -224,6 +230,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- in backend/parsers/effort_provenance.py. NULL == provenance unknown (row
     -- written before this column, or effort_tier itself NULL). No backfill.
     effort_tier_source TEXT,
+    -- subagent-skill-inheritance (v49). Nullable; records whether skill_name
+    -- was directly detected on this session's own transcript or inherited
+    -- (one hop) from the parent session's skill_name. Token vocabulary lives
+    -- in backend/parsers/skill_provenance.py. NULL == provenance unknown (row
+    -- written before this column, or skill_name itself NULL). Direct detection
+    -- always wins; inheritance never overwrites a non-null skill_name.
+    skill_name_source TEXT,
     -- Phase 2 Codex ingestion (codex-session-ingestion-v1).  Populated from
     -- session_forensics["entryContext"]["workingDirectories"][0] for Codex
     -- sessions; NULL for Claude Code sessions (contract state, not a bug).
@@ -4085,6 +4098,15 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
             "v48 migrations complete: %s sessions child FK(s) rebuilt with "
             "ON UPDATE CASCADE (project_id re-attribution now permitted).",
             len(fk_rows),
+        )
+
+    # ── v49 migrations (subagent-skill-inheritance) ──────────────────────────
+    if current_version < 49:
+        await _ensure_column(db, "sessions", "skill_name_source", "TEXT")
+        logger.info(
+            "v49 migrations complete: sessions.skill_name_source added "
+            "(nullable, no default, no backfill in this migration -- see "
+            "backend/parsers/skill_provenance.py)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

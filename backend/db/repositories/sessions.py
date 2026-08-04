@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import aiosqlite
 from backend.model_identity import model_filter_tokens
 from backend.db.repositories.base import retry_on_locked, DEFAULT_WORKSPACE_ID
+from backend.parsers.skill_provenance import SKILL_SOURCE_DIRECT, SKILL_SOURCE_INHERITED_PARENT
 
 logger = logging.getLogger("ccdash.db.sessions")
 
@@ -96,8 +97,8 @@ class SqliteSessionRepository:
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
                 source_ref, cwd, effort_tier_source,
-                worktree_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                worktree_name, skill_name_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -153,6 +154,14 @@ class SqliteSessionRepository:
                 workflow_id=excluded.workflow_id,
                 subagent_parent_id=excluded.subagent_parent_id,
                 skill_name=excluded.skill_name,
+                -- subagent-skill-inheritance: written unconditionally alongside
+                -- skill_name itself (both come from the same parser pass). The
+                -- separate inheritance backfill (backfill_skill_name_inheritance)
+                -- runs AFTER this upsert in the sync pass and only ever touches
+                -- rows where skill_name IS NULL, so a re-parse that resets
+                -- skill_name to NULL here is self-healed by the next inheritance
+                -- pass rather than by this upsert.
+                skill_name_source=excluded.skill_name_source,
                 -- context_window comes from the sidecar join (T5-003), which may be
                 -- transiently absent on re-ingest; never wipe a prior attribution.
                 context_window=COALESCE(excluded.context_window, sessions.context_window),
@@ -243,6 +252,8 @@ class SqliteSessionRepository:
                 session_data.get("subagentParentId"),
                 session_data.get("skillName"),
                 session_data.get("contextWindow"),
+                # (skill_name_source bound further below, alongside worktree_name,
+                # to match the trailing column order in the INSERT list above.)
                 # Phase 11 launch-time capture columns (T11-003). All nullable;
                 # null == "not captured" (contract state, no default, no backfill).
                 session_data.get("launcher"),
@@ -261,9 +272,62 @@ class SqliteSessionRepository:
                 # --claude-worktrees- or --git-hermes-worktrees- sibling of the
                 # registered project.
                 session_data.get("worktreeName"),
+                # subagent-skill-inheritance: stamp directly_detected whenever the
+                # parser itself supplied a skill_name. A caller may also pass an
+                # explicit "skillNameSource" (e.g. a future direct-write path);
+                # absent that, fall back to the direct-detection stamp iff
+                # skillName is non-null, else None (null skill -> null source).
+                session_data.get(
+                    "skillNameSource",
+                    SKILL_SOURCE_DIRECT if session_data.get("skillName") else None,
+                ),
             ),
         )
         await self._commit()
+
+    async def backfill_skill_name_inheritance(self, project_id: str) -> dict[str, int]:
+        """One-hop subagent -> parent skill_name inheritance (idempotent).
+
+        Copies the parent session's ``skill_name`` onto a child subagent session
+        whose own ``skill_name`` is NULL, stamping
+        ``skill_name_source = SKILL_SOURCE_INHERITED_PARENT``. Both sides of the
+        join are scoped to ``(id, project_id)`` -- ``sessions.id`` is NOT
+        globally unique, and an unscoped join silently inflates counts (see
+        Architecture Constraint 3 of the subagent-skill-inheritance Feature
+        Contract). A second run touches zero rows by construction: the WHERE
+        clause only matches rows where ``child.skill_name IS NULL``, and this
+        UPDATE is the only writer of ``inherited_parent`` -- it never overwrites
+        a directly-detected skill_name (AC 3/AC 5).
+
+        Returns ``{"rows": <count updated>}``.
+        """
+        cursor = await retry_on_locked(
+            lambda: self.db.execute(
+                """
+                UPDATE sessions AS child
+                SET skill_name = (
+                        SELECT parent.skill_name FROM sessions AS parent
+                        WHERE parent.id = child.subagent_parent_id
+                          AND parent.project_id = child.project_id
+                    ),
+                    skill_name_source = ?
+                WHERE child.project_id = ?
+                  AND child.skill_name IS NULL
+                  AND child.subagent_parent_id IS NOT NULL
+                  AND EXISTS (
+                        SELECT 1 FROM sessions AS parent
+                        WHERE parent.id = child.subagent_parent_id
+                          AND parent.project_id = child.project_id
+                          AND parent.skill_name IS NOT NULL
+                  )
+                """,
+                (SKILL_SOURCE_INHERITED_PARENT, project_id),
+            ),
+            repo="sessions",
+        )
+        rows = cursor.rowcount if cursor is not None else 0
+        await self._commit()
+        return {"rows": max(rows, 0)}
 
     async def update_session_badges(
         self,

@@ -4,6 +4,11 @@ All CREATE TABLE statements for the caching layer.
 Uses IF NOT EXISTS for idempotent runs.
 
 Schema version history (keep in lockstep with postgres_migrations.py):
+  v49 — subagent-skill-inheritance: sessions table gains skill_name_source
+         (nullable TEXT, closed vocabulary — see
+         backend/parsers/skill_provenance.py). Distinguishes a directly
+         detected skill_name from one inherited (one hop) from the parent
+         session. Additive, no backfill in the migration itself.
   v34 — T1-004: additive index sessions(git_branch, project_id) for branch-aware
          planning intelligence; IF NOT EXISTS guard; no column or data changes.
   v33 — scope/scope_id columns on analytics_entries; new idx_analytics_point_daily key.
@@ -65,7 +70,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 48
+SCHEMA_VERSION = 49
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -246,6 +251,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- in backend/parsers/effort_provenance.py. NULL == provenance unknown (row
     -- written before this column, or effort_tier itself NULL). No backfill.
     effort_tier_source TEXT,
+    -- subagent-skill-inheritance (v49). Nullable; records whether skill_name
+    -- was directly detected on this session's own transcript or inherited
+    -- (one hop) from the parent session's skill_name. Token vocabulary lives
+    -- in backend/parsers/skill_provenance.py. NULL == provenance unknown (row
+    -- written before this column, or skill_name itself NULL). Direct detection
+    -- always wins; inheritance never overwrites a non-null skill_name.
+    skill_name_source TEXT,
     -- Phase 2 Codex ingestion (codex-session-ingestion-v1).  Populated from
     -- session_forensics["entryContext"]["workingDirectories"][0] for Codex
     -- sessions; NULL for Claude Code sessions (contract state, not a bug).
@@ -4534,6 +4546,15 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
             "v48 migrations complete (SQLite): no-op by design -- the "
             "sessions child FK ON UPDATE CASCADE change is Postgres-only "
             "(see block comment)."
+        )
+
+    # ── v49 migrations (subagent-skill-inheritance) ──────────────────────────
+    if current_version < 49:
+        await _ensure_column(db, "sessions", "skill_name_source", "TEXT")
+        logger.info(
+            "v49 migrations complete: sessions.skill_name_source added "
+            "(nullable, no default, no backfill in this migration -- see "
+            "backend/parsers/skill_provenance.py)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

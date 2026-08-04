@@ -10,6 +10,7 @@ import asyncpg
 from backend.model_identity import model_filter_tokens
 from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.postgres._transactions import postgres_transaction
+from backend.parsers.skill_provenance import SKILL_SOURCE_DIRECT, SKILL_SOURCE_INHERITED_PARENT
 
 logger = logging.getLogger("ccdash.db.postgres.sessions")
 
@@ -43,8 +44,8 @@ class PostgresSessionRepository:
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
                 workspace_id, source_ref, cwd, effort_tier_source,
-                worktree_name
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66)
+                worktree_name, skill_name_source
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -94,6 +95,14 @@ class PostgresSessionRepository:
                 workflow_id=EXCLUDED.workflow_id,
                 subagent_parent_id=EXCLUDED.subagent_parent_id,
                 skill_name=EXCLUDED.skill_name,
+                -- subagent-skill-inheritance: written unconditionally alongside
+                -- skill_name itself (both come from the same parser pass). The
+                -- separate inheritance backfill (backfill_skill_name_inheritance)
+                -- runs AFTER this upsert in the sync pass and only ever touches
+                -- rows where skill_name IS NULL, so a re-parse that resets
+                -- skill_name to NULL here is self-healed by the next inheritance
+                -- pass rather than by this upsert.
+                skill_name_source=EXCLUDED.skill_name_source,
                 -- context_window comes from the sidecar join (T5-003); never wipe a
                 -- prior attribution when the sidecar is transiently absent.
                 context_window=COALESCE(EXCLUDED.context_window, sessions.context_window),
@@ -196,7 +205,53 @@ class PostgresSessionRepository:
             # Stamped at ingest by the watcher when the session's source_file is
             # under a --claude-worktrees- / --git-hermes-worktrees- dir.
             session_data.get("worktreeName"),
+            # subagent-skill-inheritance: stamp directly_detected whenever the
+            # parser itself supplied a skill_name; null skill -> null source.
+            session_data.get(
+                "skillNameSource",
+                SKILL_SOURCE_DIRECT if session_data.get("skillName") else None,
+            ),
         )
+
+    async def backfill_skill_name_inheritance(self, project_id: str) -> dict[str, int]:
+        """One-hop subagent -> parent skill_name inheritance (idempotent).
+
+        Copies the parent session's ``skill_name`` onto a child subagent session
+        whose own ``skill_name`` is NULL, stamping
+        ``skill_name_source = SKILL_SOURCE_INHERITED_PARENT``. Both sides of the
+        join are scoped to ``(id, project_id)`` -- ``sessions.id`` is NOT
+        globally unique across projects, and an unscoped join silently inflates
+        counts (Architecture Constraint 3 of the subagent-skill-inheritance
+        Feature Contract; this exact join fooled two prior spike legs). A second
+        run touches zero rows by construction: the WHERE clause only matches
+        rows where ``child.skill_name IS NULL``, and this UPDATE is the only
+        writer of ``inherited_parent`` -- it never overwrites a
+        directly-detected skill_name (AC 3/AC 5).
+
+        Returns ``{"rows": <count updated>}``.
+        """
+        result = await self.db.execute(
+            """
+            UPDATE sessions AS child
+            SET skill_name = parent.skill_name,
+                skill_name_source = $1
+            FROM sessions AS parent
+            WHERE parent.id = child.subagent_parent_id
+              AND parent.project_id = child.project_id
+              AND child.project_id = $2
+              AND child.skill_name IS NULL
+              AND parent.skill_name IS NOT NULL
+            """,
+            SKILL_SOURCE_INHERITED_PARENT,
+            project_id,
+        )
+        # asyncpg execute() returns a status string like "UPDATE 42".
+        rows = 0
+        if isinstance(result, str):
+            parts = result.split()
+            if len(parts) >= 2 and parts[-1].isdigit():
+                rows = int(parts[-1])
+        return {"rows": rows}
 
     async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
         """Fetch a single session by id, optionally scoped to project_id and workspace_id.

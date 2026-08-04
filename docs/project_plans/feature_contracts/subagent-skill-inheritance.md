@@ -1,12 +1,15 @@
 ---
 schema_version: 2
 doc_type: feature_contract
-title: "Subagent Skill Inheritance — Feature Contract"
-description: "Attribute a parent session's detected skill to its subagent sessions when the subagent's own skill_name is NULL, recording provenance so an inherited skill is never mistaken for an observed one. Session-detail correctness and per-skill analytics only — explicitly not a routing-feedback unblocker."
+title: "Subagent Skill Inheritance \u2014 Feature Contract"
+description: "Attribute a parent session's detected skill to its subagent sessions\
+  \ when the subagent's own skill_name is NULL, recording provenance so an inherited\
+  \ skill is never mistaken for an observed one. Session-detail correctness and per-skill\
+  \ analytics only \u2014 explicitly not a routing-feedback unblocker."
 owner: nick
-status: draft
-created: 2026-08-03
-updated: 2026-08-03
+status: completed-pending-verification
+created: '2026-08-03'
+updated: '2026-08-03'
 feature_slug: subagent-skill-inheritance
 tier: 1
 estimated_points: 5
@@ -15,9 +18,22 @@ risk_level: medium
 category: enhancements
 changelog_required: true
 related_documents:
-  - docs/project_plans/exploration/routing-key-skill-attribution/routing-key-skill-attribution-feasibility-brief.md
-  - docs/project_plans/exploration/routing-key-skill-attribution/spikes/capture-path/capture-path-findings.md
-  - docs/project_plans/exploration/routing-key-skill-attribution/spikes/null-population/null-population-findings.md
+- docs/project_plans/exploration/routing-key-skill-attribution/routing-key-skill-attribution-feasibility-brief.md
+- docs/project_plans/exploration/routing-key-skill-attribution/spikes/capture-path/capture-path-findings.md
+- docs/project_plans/exploration/routing-key-skill-attribution/spikes/null-population/null-population-findings.md
+files_affected:
+- backend/parsers/skill_provenance.py
+- backend/db/postgres_migrations.py
+- backend/db/sqlite_migrations.py
+- backend/db/repositories/sessions.py
+- backend/db/repositories/postgres/sessions.py
+- backend/db/repositories/base.py
+- backend/db/sync_engine.py
+- backend/tests/test_skill_name_source_provenance.py
+commit_refs:
+- cf44ac5
+- 848deae
+- fb9f65d
 ---
 
 # Subagent Skill Inheritance — Feature Contract

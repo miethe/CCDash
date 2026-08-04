@@ -3201,6 +3201,7 @@ class SyncEngine:
             "telemetry_backfilled_events": 0,
             "commit_correlations_backfilled_sessions": 0,
             "commit_correlations_backfilled": 0,
+            "skill_name_inherited": 0,
             "documents_synced": 0,
             "documents_skipped": 0,
             "tasks_synced": 0,
@@ -3296,6 +3297,15 @@ class SyncEngine:
                 s_stats = await self._sync_sessions(project.id, sessions_dir, force)
                 stats["sessions_synced"] = s_stats["synced"]
                 stats["sessions_skipped"] = s_stats["skipped"]
+                # subagent-skill-inheritance: one-hop skill_name inheritance runs
+                # every pass (not gated on backfill_session_intelligence) because
+                # it is the self-heal step for the ordinary upsert above -- a
+                # re-parsed subagent session with no direct skill detection has
+                # its skill_name reset to NULL by _sync_sessions, and this is
+                # the pass that re-derives it from the parent. Idempotent by
+                # construction (WHERE child.skill_name IS NULL).
+                skill_inherit_stats = await self.session_repo.backfill_skill_name_inheritance(project.id)
+                stats["skill_name_inherited"] = int(skill_inherit_stats.get("rows", 0))
                 if backfill_session_intelligence:
                     usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
                     stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))
