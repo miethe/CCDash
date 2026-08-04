@@ -2,38 +2,90 @@
 schema_version: 2
 doc_type: exploration_charter
 title: "Routing Key Skill Attribution — Exploration Charter"
-status: draft
+status: concluded
 created: 2026-08-03
 feature_slug: routing-key-skill-attribution
 timebox_days: 2
-hypothesis: "The 61% NULL `skill_name` rate on min_sample-clearing routing keys is a capture or derivation gap that can be closed for a material fraction of keys, rather than an irreducible property of how sessions are invoked."
-deal_killer: "If the NULL population turns out to be dominated by session kinds that genuinely have no skill (bare interactive sessions, subagent threads with no skill in scope), and no derivation can attribute them without fabricating a skill, then the honest outcome is to redefine the routing key rather than fix attribution -- and to say so. Do not backfill a guessed skill onto a session that never had one."
+hypothesis: "The 61% NULL `skill_name` rate on min_sample-clearing routing keys is
+  a capture or derivation gap that can be closed for a material fraction of keys,
+  rather than an irreducible property of how sessions are invoked."
+deal_killer: "If the NULL population turns out to be dominated by session kinds that
+  genuinely have no skill (bare interactive sessions, subagent threads with no skill
+  in scope), and no derivation can attribute them without fabricating a skill, then
+  the honest outcome is to redefine the routing key rather than fix attribution --
+  and to say so. Do not backfill a guessed skill onto a session that never had one."
 investigation_legs:
-  - id: null-population
-    question: "What ARE the 114 NULL-skill_name keys? Break the NULL population down by session_type, launcher, platform_type, command_slug, subagent/thread kind, and project -- is it one coherent cohort or several unrelated ones?"
-    assigned_to: spike-writer
-  - id: capture-path
-    question: "Where does `skill_name` get set, and where does it fail? Is the skill known at capture time and dropped, derivable post-hoc from what IS captured (skills_used_json, command_slug, transcript Skill tool calls), or genuinely absent?"
-    assigned_to: spike-writer
-  - id: key-redefinition
-    question: "If attribution cannot be materially improved, what is the right routing key? Evaluate the alternatives against DI-1's actual need -- (project x model), (command_slug x model), (task_class x model), or a coalesce/fallback chain -- including what each does to the 188-key denominator and to min_sample eligibility."
-    assigned_to: spike-writer
+- id: null-population
+  question: What ARE the 114 NULL-skill_name keys? Break the NULL population 
+    down by session_type, launcher, platform_type, command_slug, subagent/thread
+    kind, and project -- is it one coherent cohort or several unrelated ones?
+  assigned_to: spike-writer
+- id: capture-path
+  question: Where does `skill_name` get set, and where does it fail? Is the 
+    skill known at capture time and dropped, derivable post-hoc from what IS 
+    captured (skills_used_json, command_slug, transcript Skill tool calls), or 
+    genuinely absent?
+  assigned_to: spike-writer
+- id: key-redefinition
+  question: If attribution cannot be materially improved, what is the right 
+    routing key? Evaluate the alternatives against DI-1's actual need -- 
+    (project x model), (command_slug x model), (task_class x model), or a 
+    coalesce/fallback chain -- including what each does to the 188-key 
+    denominator and to min_sample eligibility.
+  assigned_to: spike-writer
 verdict_criteria:
   go:
-    - "A bounded fix (capture-time or derivation-time) raises non-NULL `skill_name` coverage on min_sample-clearing keys by a material margin -- recommend to >=60% of keys non-NULL, and the SPIKE must state and justify its own threshold"
-    - "The fix does not fabricate a skill for sessions that genuinely had none (a session correctly attributed as 'no skill' is a right answer, not a gap)"
-    - "Deal-killer condition not triggered"
+  - A bounded fix (capture-time or derivation-time) raises non-NULL `skill_name`
+    coverage on min_sample-clearing keys by a material margin -- recommend to 
+    >=60% of keys non-NULL, and the SPIKE must state and justify its own 
+    threshold
+  - The fix does not fabricate a skill for sessions that genuinely had none (a 
+    session correctly attributed as 'no skill' is a right answer, not a gap)
+  - Deal-killer condition not triggered
   no_go:
-    - "Deal-killer triggered: the NULL population is dominated by genuinely skill-less sessions and no honest derivation exists"
-    - "A fix exists but is open-ended (requires new capture instrumentation across multiple platforms) with no bounded first increment"
+  - 'Deal-killer triggered: the NULL population is dominated by genuinely skill-less
+    sessions and no honest derivation exists'
+  - A fix exists but is open-ended (requires new capture instrumentation across 
+    multiple platforms) with no bounded first increment
   conditional:
-    - "Attribution is improvable but only for one platform/launcher cohort, leaving a skewed key space -- the same categorical-bias failure mode that gated DI-4b, requiring a named follow-up before the key is trustworthy"
-verdict: null
-verdict_rationale: null
-output_artifacts: []
+  - Attribution is improvable but only for one platform/launcher cohort, leaving
+    a skewed key space -- the same categorical-bias failure mode that gated 
+    DI-4b, requiring a named follow-up before the key is trustworthy
+verdict: no-go
+verdict_rationale: "Go bar (>=60% of min_sample-clearing keys non-NULL) is unreachable:
+  current 74/187 (39.6%), and the only honest zero-lead-time fix (Claude Code subagent->parent
+  skill inheritance) converts just 10 of 113 NULL keys -- ceiling 84/187 = 44.9%.
+  The fix repairs ~31% of NULL sessions at row level but fragments one large NULL
+  bucket into many small per-skill buckets that individually miss min_sample=5, so
+  a row-level win does not survive the key-level threshold. Hard floor beneath it:
+  37/113 NULL keys are pure-Codex and 100% of all 3,482 Codex sessions ever recorded
+  carry zero skill-adjacent signal (codex/parser.py:953 has never fired) -- permanent
+  capture absence, unattributable post-hoc. No alternative key wins: task_class measured
+  38.9% (inherits the same NULL fallback via _resolve_task_class routing_rollup.py:497-510),
+  command_slug 7.8% (regression), coalesce chain 41.1% for a breaking dual-DDL migration;
+  all candidates churn at Jaccard 0.29-0.35. Not conditional: the Claude-Code-only
+  fix is platform-skewed but immaterial at key level (8.8% of NULLs), so the conditional
+  premise fails at the level DI-1 consumes -- collapsing into the deal_killer's named
+  redirect. Redirect (not a dead end): keep (project_id, skill_name, model), emit
+  null for the no-skill cohort, document coverage as a contract state per the existing
+  null-over-fabrication precedent. Human sign-off 2026-08-03."
+output_artifacts:
+- path: docs/project_plans/exploration/routing-key-skill-attribution/spikes/null-population/null-population-findings.md
+  leg_id: null-population
+  confidence: 0.75
+- path: docs/project_plans/exploration/routing-key-skill-attribution/spikes/capture-path/capture-path-findings.md
+  leg_id: capture-path
+  confidence: 0.8
+- path: docs/project_plans/exploration/routing-key-skill-attribution/spikes/key-redefinition/key-redefinition-findings.md
+  leg_id: key-redefinition
+  confidence: 0.75
+- path: docs/project_plans/exploration/routing-key-skill-attribution/routing-key-skill-attribution-feasibility-brief.md
+  role: feasibility_brief
+  confidence: 0.78
 related_documents:
-  - docs/project_plans/exploration/routing-feedback-success-signal/routing-feedback-success-signal-synthesis.md
-  - docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
+- docs/project_plans/exploration/routing-feedback-success-signal/routing-feedback-success-signal-synthesis.md
+- docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
+updated: '2026-08-03'
 ---
 
 # Routing Key Skill Attribution — Exploration Charter

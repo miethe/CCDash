@@ -33,6 +33,25 @@ per statement.)
 WHERE updated_at >= to_char(NOW() - INTERVAL '30 days','YYYY-MM-DD"T"HH24:MI:SS')
 ```
 
+**`sessions.id` is NOT globally unique** — 19,260 rows carry 17,844 distinct ids (measured
+2026-08-03). It is unique only per project. Any self-join for parent/root lookups
+(`s.subagent_parent_id = p.id`) therefore **fans out and silently inflates counts by hundreds**.
+Scope every such join to the composite key:
+
+```sql
+-- WRONG: fans out
+JOIN sessions p ON s.subagent_parent_id = p.id
+-- RIGHT: scope to (id, project_id), or DISTINCT ON when you need one row per parent
+JOIN sessions p ON s.subagent_parent_id = p.id AND s.project_id = p.project_id
+```
+
+Discovered independently by two DI-4f legs; the first-draft inheritance numbers were wrong by
+400–900 rows per bucket before it was caught. The failure is silent — counts come back plausible.
+
+**NULL-join trap**: `skill_name = skill_name` never matches when both sides are NULL. Any key-level
+join must use `IS NOT DISTINCT FROM`, or it silently drops exactly the NULL cohort — which is the
+cohort under investigation in most of this work. This trap bit the DI-4b orchestrator.
+
 ## 2. The key grain and the denominator
 
 The rollup producer's key is **`(project_id, skill_name, model)`** — confirmed in
