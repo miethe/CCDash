@@ -5415,9 +5415,15 @@ const SessionDetail = React.memo<{
                                 {session.skillName ? (
                                     <span
                                         className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/30"
-                                        title={`Skill: ${session.skillName}`}
+                                        title={
+                                            session.skillNameSource === 'inherited_parent'
+                                                ? `Skill: ${session.skillName} (inherited from parent)`
+                                                : `Skill: ${session.skillName}`
+                                        }
                                     >
-                                        {session.skillName}
+                                        {session.skillNameSource === 'inherited_parent'
+                                            ? `↳ ${session.skillName}`
+                                            : session.skillName}
                                     </span>
                                 ) : null}
                                 {session.subagentParentId ? (

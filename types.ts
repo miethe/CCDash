@@ -579,6 +579,14 @@ export interface AgentSession {
   workflowId?: string | null; // workflow grouping id (null == standalone)
   subagentParentId?: string | null; // parent session id for subagents (null otherwise)
   skillName?: string | null; // primary attributed skill (null == none derivable)
+  // Schema v49 provenance for skillName — WHICH lane supplied it:
+  // "directly_detected" (this session's own transcript produced the detection,
+  // strongest signal) | "inherited_parent" (copied one hop from the parent
+  // session's skillName because this session's own value was null, weaker —
+  // derived not observed). null == provenance unknown (row predates the column,
+  // or skillName itself is null). Treat an unrecognised token as unknown rather
+  // than failing. Canonical vocabulary: backend/parsers/skill_provenance.py.
+  skillNameSource?: string | null;
   contextWindow?: string | null; // e.g. "1M" when a sidecar matched; null otherwise
   // ── Phase 11 launch-time capture fields (T11-005; R-P2 / AC-11.D) ──
   // Written by the SessionStart hook via the <session-id>.capture.json sidecar.

@@ -273,6 +273,12 @@ class AgentSession(BaseModel):
     subagentParentId: Optional[str] = None
     # T5-005: primary log-attributed skill; None == explicit null contract state.
     skillName: Optional[str] = None
+    # Schema v49 provenance for skillName: which lane supplied the value —
+    # this session's own transcript detection vs a one-hop copy from its
+    # parent's skillName (subagent skill inheritance). Token vocabulary:
+    # backend/parsers/skill_provenance.py (directly_detected / inherited_parent).
+    # None == provenance unknown (row predates the column, or skillName is None).
+    skillNameSource: Optional[str] = None
     # T5-003: context-window label (e.g. "1M") attributed via the workflow.json
     # sidecar join in sync_engine. None == no sidecar matched (contract state).
     contextWindow: Optional[str] = None
