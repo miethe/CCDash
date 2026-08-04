@@ -35,6 +35,17 @@ x-backend-service: &backend-service
     CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS: "${CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS:-30}"
     CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS: "${CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS:-true}"
     CCDASH_ROUTING_FEEDBACK_SWEEP_INTERVAL_SECONDS: "${CCDASH_ROUTING_FEEDBACK_SWEEP_INTERVAL_SECONDS:-1800}"
+    # Capability flags. All default to the same value as backend/config.py, so an
+    # unset host env is behaviour-identical to not listing them here at all. They
+    # must be listed: this environment map is an explicit allowlist, so a flag set
+    # only in .env never reaches the container namespace.
+    CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED: "${CCDASH_MULTI_PROJECT_COMMAND_CENTER_ENABLED:-false}"
+    CCDASH_CODEX_INGEST_ENABLED: "${CCDASH_CODEX_INGEST_ENABLED:-false}"
+    CCDASH_CODEX_SESSIONS_PATH: "${CCDASH_CODEX_SESSIONS_PATH:-}"
+    CCDASH_CODEX_BACKFILL_DAYS: "${CCDASH_CODEX_BACKFILL_DAYS:-7}"
+    CCDASH_ARTIFACT_INTELLIGENCE_ENABLED: "${CCDASH_ARTIFACT_INTELLIGENCE_ENABLED:-false}"
+    CCDASH_ARC_ENABLED: "${CCDASH_ARC_ENABLED:-false}"
+    CCDASH_MEATYWIKI_ENABLED: "${CCDASH_MEATYWIKI_ENABLED:-false}"
     GIT_OPTIONAL_LOCKS: "${GIT_OPTIONAL_LOCKS:-0}"
   healthcheck: &api-healthcheck
     test:
