@@ -462,6 +462,8 @@ class TestIngestEndpoint(unittest.TestCase):
 
         conn = sqlite3.connect(str(_resolve_db_path()))
         try:
+            # Independent SQLite connections must set busy_timeout (CLAUDE.md).
+            conn.execute("PRAGMA busy_timeout = 30000")
             cur = conn.execute(
                 "SELECT COUNT(*) FROM session_logs WHERE session_id = ?",
                 (session_id,),

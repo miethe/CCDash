@@ -18,7 +18,22 @@ priority: high
 risk_level: low
 changelog_required: true
 node_type: work_package
-acceptance_criteria: []
+acceptance_criteria:
+  - id: AC1
+    text: "A remote push whose event payload.logs is a non-empty list results in those logs being persisted and retrievable afterward, not silently discarded behind a 200 accepted response."
+    target_surfaces: ["backend/application/services/ingest/session_ingest.py"]
+  - id: AC2
+    text: "A regression test pushes an event carrying payload.logs then asserts the logs are retrievable, and fails against the pre-fix code."
+    target_surfaces: ["backend/tests/test_ingest_endpoint.py"]
+  - id: AC3
+    text: "An event with no logs key, or an empty logs list, is unaffected — no new empty-log rows, no new errors, dedup/cursor behavior identical."
+    target_surfaces: ["backend/tests/test_ingest_endpoint.py"]
+  - id: AC4
+    text: "Both RemoteSessionIngestService.process() and the file-based SessionIngestService.process() carry a cross-referencing note on logs handling so the divergence cannot silently reappear."
+    target_surfaces: ["backend/application/services/ingest/session_ingest.py", "backend/ingestion/session_ingest_service.py"]
+  - id: AC5
+    text: "A failure inside the new upsert_logs call surfaces as IngestProcessingError(code=upsert_failed) with cursor record_error, verified by a test forcing upsert_logs to raise."
+    target_surfaces: ["backend/tests/test_ingest_endpoint.py"]
 definition_of_done: A remote push carrying payload.logs cannot silently lose data;
   a 200 response with a non-empty logs array MUST result in the logs being retrievable
   afterward. A regression test enforces this.
