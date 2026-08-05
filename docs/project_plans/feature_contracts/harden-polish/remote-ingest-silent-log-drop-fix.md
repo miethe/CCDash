@@ -1,14 +1,16 @@
 ---
-title: "Feature Contract: Remote Session Ingest Silently Drops payload.logs"
+title: 'Feature Contract: Remote Session Ingest Silently Drops payload.logs'
 schema_version: 2
 doc_type: feature_contract
 it_schema: 1
-description: "RemoteSessionIngestService.process() never persists payload.logs; make the remote ingest path honour declared transcript data instead of silently discarding it."
-status: draft
-created: 2026-08-05
-updated: 2026-08-05
+description: RemoteSessionIngestService.process() never persists payload.logs; make
+  the remote ingest path honour declared transcript data instead of silently discarding
+  it.
+status: completed
+created: '2026-08-05'
+updated: '2026-08-05'
 feature_slug: remote-ingest-silent-log-drop-fix
-category: "harden-polish"
+category: harden-polish
 estimated_points: 5
 tier: 1
 owner: null
@@ -17,27 +19,38 @@ risk_level: low
 changelog_required: true
 node_type: work_package
 acceptance_criteria: []
-definition_of_done: "A remote push carrying payload.logs cannot silently lose data; a 200 response with a non-empty logs array MUST result in the logs being retrievable afterward. A regression test enforces this."
+definition_of_done: A remote push carrying payload.logs cannot silently lose data;
+  a 200 response with a non-empty logs array MUST result in the logs being retrievable
+  afterward. A regression test enforces this.
 execution_mode: unassigned
-agent_title: "Fix silent transcript drop in RemoteSessionIngestService"
-agent_summary: "Make the remote NDJSON ingest path call upsert_logs like the file-based path already does, and document the two divergent call sites."
-agent_context: "Two independent classes both ingest AgentSession-shaped payloads and both declare a `logs` field, but only one of them writes it to session_logs. See references/notes below for the exact divergence."
+agent_title: Fix silent transcript drop in RemoteSessionIngestService
+agent_summary: Make the remote NDJSON ingest path call upsert_logs like the file-based
+  path already does, and document the two divergent call sites.
+agent_context: Two independent classes both ingest AgentSession-shaped payloads and
+  both declare a `logs` field, but only one of them writes it to session_logs. See
+  references/notes below for the exact divergence.
 open_questions: []
 decisions:
-  - decision: "Honour payload.logs on the remote path by calling upsert_logs, rather than rejecting the field with a 4xx."
-    rationale: "The file-based SessionIngestService already treats logs as a normal, expected field; rejecting it on the remote path would create an unnecessary asymmetry between the two ingest transports for data the daemon legitimately sends on every push."
-    status: accepted
+- decision: Honour payload.logs on the remote path by calling upsert_logs, rather
+    than rejecting the field with a 4xx.
+  rationale: The file-based SessionIngestService already treats logs as a normal,
+    expected field; rejecting it on the remote path would create an unnecessary asymmetry
+    between the two ingest transports for data the daemon legitimately sends on every
+    push.
+  status: accepted
 scores: {}
 related_documents: []
 spike_ref: null
 prd_ref: null
 plan_ref: null
-commit_refs: []
+commit_refs:
+- cd26d83
 pr_refs: []
 files_affected:
-  - backend/application/services/ingest/session_ingest.py
-  - backend/ingestion/session_ingest_service.py
-  - backend/tests/test_ingest_endpoint.py
+- backend/application/services/ingest/session_ingest.py
+- backend/ingestion/session_ingest_service.py
+- backend/tests/test_ingest_endpoint.py
+- CHANGELOG.md
 ---
 
 # Feature Contract: Remote Session Ingest Silently Drops `payload.logs`
