@@ -53,6 +53,15 @@ class RemoteSessionIngestService:
     The router creates one instance via the RuntimeContainer singleton so the
     LRU is shared across all requests in the same worker.
 
+    ``event.payload.get("logs")`` (when present and non-empty) is persisted via
+    ``self._session_repo.upsert_logs(...)`` — see the sibling file-based path's
+    ``SessionIngestService.process()`` (backend/ingestion/session_ingest_service.py)
+    for the analogous ``logs`` handling. That path additionally maintains
+    canonical per-message rows (``session_message_repo``) and telemetry replay;
+    this remote path deliberately does not replicate that — writing to
+    ``session_logs`` alone satisfies the remote transport's contract for
+    "logs are not silently dropped".
+
     Parameters
     ----------
     session_repo:
@@ -133,6 +142,23 @@ class RemoteSessionIngestService:
                 workspace_id=workspace_id,
                 source_ref=source_ref,
             )
+
+            # Persist payload.logs when present and non-empty (see class
+            # docstring). Skip the call entirely when there is nothing to
+            # write, to avoid a spurious delete-then-reinsert-nothing cycle
+            # on the common no-logs event.
+            logs = event.payload.get("logs")
+            if isinstance(logs, list) and logs:
+                session_id = str(event.payload.get("id") or "").strip()
+                if session_id:
+                    await self._session_repo.upsert_logs(session_id, logs, project_id)
+                else:
+                    logger.debug(
+                        "ingest: skipping upsert_logs, empty session id: event_id=%s workspace=%s",
+                        event.event_id,
+                        workspace_id,
+                    )
+
             await self._cursor_repo.advance(
                 source_id="remote_ingest",
                 project_id=project_id,

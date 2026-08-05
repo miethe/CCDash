@@ -451,6 +451,138 @@ class TestIngestEndpoint(unittest.TestCase):
     # Content-Type guard
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # (h) payload.logs is persisted, not silently dropped
+    # ------------------------------------------------------------------
+
+    def _count_session_logs(self, session_id: str) -> int:
+        import sqlite3
+
+        from backend.db.connection import _resolve_db_path
+
+        conn = sqlite3.connect(str(_resolve_db_path()))
+        try:
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM session_logs WHERE session_id = ?",
+                (session_id,),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
+
+    def test_h_payload_logs_persisted_and_retrievable(self) -> None:
+        event_id = _event_id()
+        session_id = f"sess-logs-{event_id[:8]}"
+        logs = [
+            {
+                "id": "log-1",
+                "timestamp": "2026-05-19T10:00:00.000000Z",
+                "speaker": "user",
+                "type": "message",
+                "content": "hello from the daemon",
+            },
+            {
+                "id": "log-2",
+                "timestamp": "2026-05-19T10:00:01.000000Z",
+                "speaker": "assistant",
+                "type": "message",
+                "content": "hi back",
+            },
+        ]
+        event = _make_event(event_id=event_id, session_id=session_id)
+        event["payload"]["logs"] = logs
+
+        resp = self.client.post(
+            "/api/v1/ingest/sessions",
+            content=_ndjson(event),
+            headers=_DEFAULT_HEADERS,
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        data = resp.json()
+        self.assertEqual(data["accepted"], 1, data)
+        self.assertEqual(data["rejected"], [], data)
+
+        # This is the actual regression guard: a 200-accepted push with a
+        # non-empty payload.logs must leave the logs retrievable afterward.
+        # Pre-fix, this count would be 0 despite the 200 response above.
+        count = self._count_session_logs(session_id)
+        self.assertEqual(count, 2, f"Expected 2 session_logs rows for {session_id!r}, got {count}")
+
+    # ------------------------------------------------------------------
+    # (i) No logs / empty logs → unaffected, no spurious rows or errors
+    # ------------------------------------------------------------------
+
+    def test_i_no_logs_key_or_empty_logs_unaffected(self) -> None:
+        # No "logs" key at all.
+        event_id_1 = _event_id()
+        session_id_1 = f"sess-nologs-{event_id_1[:8]}"
+        event_1 = _make_event(event_id=event_id_1, session_id=session_id_1)
+
+        resp1 = self.client.post(
+            "/api/v1/ingest/sessions",
+            content=_ndjson(event_1),
+            headers=_DEFAULT_HEADERS,
+        )
+        self.assertEqual(resp1.status_code, 200, resp1.text)
+        data1 = resp1.json()
+        self.assertEqual(data1["accepted"], 1, data1)
+        self.assertEqual(data1["rejected"], [], data1)
+        self.assertEqual(self._count_session_logs(session_id_1), 0)
+
+        # Explicit empty logs list.
+        event_id_2 = _event_id()
+        session_id_2 = f"sess-emptylogs-{event_id_2[:8]}"
+        event_2 = _make_event(event_id=event_id_2, session_id=session_id_2)
+        event_2["payload"]["logs"] = []
+
+        resp2 = self.client.post(
+            "/api/v1/ingest/sessions",
+            content=_ndjson(event_2),
+            headers=_DEFAULT_HEADERS,
+        )
+        self.assertEqual(resp2.status_code, 200, resp2.text)
+        data2 = resp2.json()
+        self.assertEqual(data2["accepted"], 1, data2)
+        self.assertEqual(data2["rejected"], [], data2)
+        self.assertEqual(self._count_session_logs(session_id_2), 0)
+
+    # ------------------------------------------------------------------
+    # (j) upsert_logs failure surfaces as upsert_failed, cursor records error
+    # ------------------------------------------------------------------
+
+    def test_j_upsert_logs_failure_surfaces_as_upsert_failed(self) -> None:
+        event_id = _event_id()
+        session_id = f"sess-logsfail-{event_id[:8]}"
+        event = _make_event(event_id=event_id, session_id=session_id)
+        event["payload"]["logs"] = [
+            {
+                "id": "log-1",
+                "timestamp": "2026-05-19T10:00:00.000000Z",
+                "speaker": "user",
+                "type": "message",
+                "content": "this write will be forced to fail",
+            }
+        ]
+
+        with patch(
+            "backend.db.repositories.sessions.SqliteSessionRepository.upsert_logs",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("forced upsert_logs failure"),
+        ):
+            resp = self.client.post(
+                "/api/v1/ingest/sessions",
+                content=_ndjson(event),
+                headers=_DEFAULT_HEADERS,
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        data = resp.json()
+        self.assertEqual(data["accepted"], 0, data)
+        self.assertEqual(len(data["rejected"]), 1, data)
+        self.assertEqual(data["rejected"][0]["code"], "upsert_failed", data)
+
     def test_wrong_content_type_returns_415(self) -> None:
         resp = self.client.post(
             "/api/v1/ingest/sessions",

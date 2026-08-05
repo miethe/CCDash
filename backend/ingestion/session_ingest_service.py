@@ -161,6 +161,11 @@ class SessionIngestService:
             result.session_ids.append(session_id)
             result.updated_session_ids.append(session_id)
 
+            # Sibling path: RemoteSessionIngestService.process()
+            # (backend/application/services/ingest/session_ingest.py) also
+            # persists payload.logs via upsert_logs, but does not replicate
+            # the canonical-message derivation below — keep both paths'
+            # `logs` contracts in sync when changing either one.
             logs = session_dict.get("logs", [])
             if not isinstance(logs, list):
                 logs = []
