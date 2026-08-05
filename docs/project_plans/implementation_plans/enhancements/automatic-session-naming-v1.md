@@ -1,14 +1,14 @@
 ---
 it_schema: 1
-schema_version: 2   # repo's implementation-plan schema requires this; the doctrine template emits
-                    # only `it_schema`. Both are carried so validate_artifact.py passes.
+schema_version: 2
 feature_slug: automatic-session-naming
-title: "Automatic Session Naming — implementation plan"
+title: "Automatic Session Naming \u2014 implementation plan"
 doc_type: implementation_plan
 status: draft
 prd_ref: docs/project_plans/PRDs/enhancements/automatic-session-naming-v1.md
 plan_ref: null
-commit_refs: []
+commit_refs:
+- 0de559a
 pr_refs: []
 files_affected: []
 deferred_items_spec_refs: []
@@ -18,70 +18,106 @@ tier: 2
 priority: P2
 points: 15
 risk_level: medium
-context_class: C3   # broad write surface (dual DDL + 16 files), shared hot files (sync_engine.py,
-                    # runtime/container.py), validation fan-out across SQLite+Postgres
-created: 2026-08-04
+context_class: C3
+created: '2026-08-04'
 related_documents:
-  - docs/project_plans/PRDs/enhancements/automatic-session-naming-v1.md
-  - docs/project_plans/exploration/automatic-session-naming/automatic-session-naming-feasibility-brief.md
-  - docs/project_plans/exploration/automatic-session-naming/spikes/integration-spike.md
-  - docs/project_plans/exploration/automatic-session-naming/spikes/derived-naming-spike.md
+- docs/project_plans/PRDs/enhancements/automatic-session-naming-v1.md
+- docs/project_plans/exploration/automatic-session-naming/automatic-session-naming-feasibility-brief.md
+- docs/project_plans/exploration/automatic-session-naming/spikes/integration-spike.md
+- docs/project_plans/exploration/automatic-session-naming/spikes/derived-naming-spike.md
 acceptance_criteria:
-  - "sessions.session_name + session_name_source exist in BOTH SQLite and Postgres DDL, with a passing COLUMN_PARITY_DRIFT_ALLOWLIST check."
-  - "A Claude Code session with an ai-title record and a Codex session with thread_name_updated both surface their provider name in session detail, search, and the planning session board."
-  - "Every session resolves to a better-than-UUID label; sessions with no name render a defined fallback, never a crash or blank."
-  - "No read/render path triggers a model call; the naming job is worker-side and its result is persisted."
-  - "Default configuration performs ZERO off-box egress of transcript content."
+- sessions.session_name + session_name_source exist in BOTH SQLite and Postgres DDL,
+  with a passing COLUMN_PARITY_DRIFT_ALLOWLIST check.
+- A Claude Code session with an ai-title record and a Codex session with thread_name_updated
+  both surface their provider name in session detail, search, and the planning session
+  board.
+- Every session resolves to a better-than-UUID label; sessions with no name render
+  a defined fallback, never a crash or blank.
+- No read/render path triggers a model call; the naming job is worker-side and its
+  result is persisted.
+- Default configuration performs ZERO off-box egress of transcript content.
 open_questions:
-  - "OQ-C1: what triggers ai-title generation? Coverage rises with session size (29.1%/36.9%/87.2%) but the trigger is unobserved. Bounds the coverage ceiling; does not block."
-  - "OQ-C2: is ai-title operator-influenceable, or purely model-generated? Determines whether operator_set provenance is reachable now or stays reserved."
-  - "OQ-1: LinkedFeatureSessionDTO.title has unclear provenance and may already overlap session_name. Resolve in M1 before adding a second title field to the same DTO."
+- 'OQ-C1: what triggers ai-title generation? Coverage rises with session size (29.1%/36.9%/87.2%)
+  but the trigger is unobserved. Bounds the coverage ceiling; does not block.'
+- 'OQ-C2: is ai-title operator-influenceable, or purely model-generated? Determines
+  whether operator_set provenance is reachable now or stays reserved.'
+- 'OQ-1: LinkedFeatureSessionDTO.title has unclear provenance and may already overlap
+  session_name. Resolve in M1 before adding a second title field to the same DTO.'
 decisions:
-  - decision: "Lane A (local Ollama/Gemma) is the DEFAULT derived-naming backend; Lane B (hosted) is OPT-IN via CCDASH_SESSION_NAMING_BACKEND=local|hosted."
-    rationale: "Equal cost (4 pts each). ai_insight.py sends only aggregated metrics, so Lane B would be CCDash's FIRST transcript-content egress. Redaction mitigates but does not eliminate that; local keeps AOS constraint 3 intact by default."
-    status: accepted
-  - decision: "Lane C (embedding k-NN title transfer) is DEFERRED."
-    rationale: "Build, not reuse — app.session_embeddings.embedding is always inserted NULL and no embedding-generation code exists; enterprise-Postgres-only, unavailable on local SQLite. 9 pts, as large as the base. Defer-until: session_embeddings is populated by another feature, OR shipped title quality proves inadequate."
-    status: accepted
-  - decision: "Provenance rank: provider_persisted > derived_deterministic > llm_derived_local > llm_derived_hosted; operator_set reserved."
-    rationale: "Follows the shipped skill_name_source / effort_tier_source precedent. Consumers treat unknown tokens as unknown provenance and never hard-fail."
-    status: accepted
-  - decision: "Coverage is judged on the nameable-session denominator, not all-files."
-    rationale: "Neither provider titles non-interactive sessions (subagent sidechains 0/5,462; codex_exec 0/960); those have separate identity mechanisms. Segmented coverage is 87.2% / 72.4%."
-    status: accepted
+- decision: Lane A (local Ollama/Gemma) is the DEFAULT derived-naming backend; Lane
+    B (hosted) is OPT-IN via CCDASH_SESSION_NAMING_BACKEND=local|hosted.
+  rationale: Equal cost (4 pts each). ai_insight.py sends only aggregated metrics,
+    so Lane B would be CCDash's FIRST transcript-content egress. Redaction mitigates
+    but does not eliminate that; local keeps AOS constraint 3 intact by default.
+  status: accepted
+- decision: Lane C (embedding k-NN title transfer) is DEFERRED.
+  rationale: "Build, not reuse \u2014 app.session_embeddings.embedding is always inserted\
+    \ NULL and no embedding-generation code exists; enterprise-Postgres-only, unavailable\
+    \ on local SQLite. 9 pts, as large as the base. Defer-until: session_embeddings\
+    \ is populated by another feature, OR shipped title quality proves inadequate."
+  status: accepted
+- decision: 'Provenance rank: provider_persisted > derived_deterministic > llm_derived_local
+    > llm_derived_hosted; operator_set reserved.'
+  rationale: Follows the shipped skill_name_source / effort_tier_source precedent.
+    Consumers treat unknown tokens as unknown provenance and never hard-fail.
+  status: accepted
+- decision: Coverage is judged on the nameable-session denominator, not all-files.
+  rationale: Neither provider titles non-interactive sessions (subagent sidechains
+    0/5,462; codex_exec 0/960); those have separate identity mechanisms. Segmented
+    coverage is 87.2% / 72.4%.
+  status: accepted
 routing_constraints:
-  - "Provenance + attribution correctness (the M1 sessionId assertion) MUST stay claude-primary — a wrong name on the wrong session is the failure mode this feature exists to avoid."
-  - "The Lane B egress path and its redaction-gate wiring (M3) MUST stay claude-primary — no offload."
-  - "Dual-DDL mechanical sweeps, FE null-fallback wiring, and test scaffolding are offload-eligible."
-  - "Capability bar: sonnet-class throughout; the M3 egress boundary requires Opus review before merge."
-
+- "Provenance + attribution correctness (the M1 sessionId assertion) MUST stay claude-primary\
+  \ \u2014 a wrong name on the wrong session is the failure mode this feature exists\
+  \ to avoid."
+- "The Lane B egress path and its redaction-gate wiring (M3) MUST stay claude-primary\
+  \ \u2014 no offload."
+- Dual-DDL mechanical sweeps, FE null-fallback wiring, and test scaffolding are offload-eligible.
+- 'Capability bar: sonnet-class throughout; the M3 egress boundary requires Opus review
+  before merge.'
 wave_plan:
-  waves: [["M1"], ["M2"], ["M3"]]
+  waves:
+  - - M1
+  - - M2
+  - - M3
   phases:
-    - id: M1
-      title: "Provider-set names are ingested and visible"
-      depends_on: []
-      exit_criteria:
-        - "Dual DDL + parity check green; ai-title and thread_name_updated both land in sessions.session_name with provenance provider_persisted."
-        - "session_name renders in session detail, search, and the planning board; null renders the defined fallback."
-      gate_lens: [validator]
-      # NOT security-gated by deliberate call (gate-risk-classes.md §2): adds a field to an
-      # established parse+render contract, not a new untrusted-input parse. Escaping is an AC.
-    - id: M2
-      title: "Every session has a better-than-UUID name, with zero model calls"
-      depends_on: ["M1"]
-      exit_criteria:
-        - "Subagent sessions inherit the parent title; Codex codex_exec sessions fall back to git.branch; remaining sessions fall back deterministically."
-        - "No session renders a bare UUID; provenance is derived_deterministic on every fallback."
-      gate_lens: [validator]
-    - id: M3
-      title: "Derived naming closes the remainder, local-by-default"
-      depends_on: ["M2"]
-      exit_criteria:
-        - "SessionNamingSweepJob names the residual population worker-side; results persist; no read path calls a model."
-        - "Default config performs zero egress; the hosted backend is unreachable without an explicit opt-in flag AND the redaction gate."
-      gate_lens: [security, validator]
-      gate_lens_reason: irreversible-outward
+  - id: M1
+    title: Provider-set names are ingested and visible
+    depends_on: []
+    exit_criteria:
+    - Dual DDL + parity check green; ai-title and thread_name_updated both land in
+      sessions.session_name with provenance provider_persisted.
+    - session_name renders in session detail, search, and the planning board; null
+      renders the defined fallback.
+    gate_lens:
+    - validator
+  - id: M2
+    title: Every session has a better-than-UUID name, with zero model calls
+    depends_on:
+    - M1
+    exit_criteria:
+    - Subagent sessions inherit the parent title; Codex codex_exec sessions fall back
+      to git.branch; remaining sessions fall back deterministically.
+    - No session renders a bare UUID; provenance is derived_deterministic on every
+      fallback.
+    gate_lens:
+    - validator
+  - id: M3
+    title: Derived naming closes the remainder, local-by-default
+    depends_on:
+    - M2
+    exit_criteria:
+    - SessionNamingSweepJob names the residual population worker-side; results persist;
+      no read path calls a model.
+    - Default config performs zero egress; the hosted backend is unreachable without
+      an explicit opt-in flag AND the redaction gate.
+    gate_lens:
+    - security
+    - validator
+    gate_lens_reason: irreversible-outward
+updated: '2026-08-05'
+merge_commit: 0de559a
+merge_branch: main
 ---
 
 # Implementation Plan — Automatic Session Naming
