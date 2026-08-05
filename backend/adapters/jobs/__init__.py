@@ -5,6 +5,10 @@ from backend.adapters.jobs.runtime import RuntimeJobAdapter, RuntimeJobState, Wa
 from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob, AARReviewSweepRunResult
 from backend.adapters.jobs.artifact_rollup_export_job import ArtifactRollupExportJob
 from backend.adapters.jobs.routing_rollup_sweep_job import RoutingRollupSweepJob, RoutingRollupSweepRunResult
+from backend.adapters.jobs.session_naming_sweep_job import (
+    SessionNamingSweepJob,
+    SessionNamingSweepRunResult,
+)
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
 
 __all__ = [
@@ -16,6 +20,8 @@ __all__ = [
     "RoutingRollupSweepRunResult",
     "RuntimeJobAdapter",
     "RuntimeJobState",
+    "SessionNamingSweepJob",
+    "SessionNamingSweepRunResult",
     "TelemetryExporterJob",
     "WatcherRebindError",
 ]

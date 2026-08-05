@@ -11,6 +11,10 @@ from backend.model_identity import model_filter_tokens
 from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.postgres._transactions import postgres_transaction
 from backend.parsers.skill_provenance import SKILL_SOURCE_DIRECT, SKILL_SOURCE_INHERITED_PARENT
+from backend.parsers.session_name_provenance import (
+    SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC,
+    may_overwrite,
+)
 
 logger = logging.getLogger("ccdash.db.postgres.sessions")
 
@@ -44,8 +48,9 @@ class PostgresSessionRepository:
                 model_slug, workflow_id, subagent_parent_id, skill_name, context_window,
                 launcher, profile, effort_tier, model_variant,
                 workspace_id, source_ref, cwd, effort_tier_source,
-                worktree_name, skill_name_source
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67)
+                worktree_name, skill_name_source,
+                session_name, session_name_source
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -125,7 +130,20 @@ class PostgresSessionRepository:
                 -- Worktree attribution: capture-once (same posture as cwd) so a
                 -- re-ingest without a worktree_name never wipes a previously-
                 -- stamped label.
-                worktree_name=COALESCE(EXCLUDED.worktree_name, sessions.worktree_name)
+                worktree_name=COALESCE(EXCLUDED.worktree_name, sessions.worktree_name),
+                -- automatic-session-naming (v50, T1-003): capture-once, same
+                -- posture as cwd/worktree_name. A re-parse that transiently
+                -- fails to detect the provider name must never wipe a
+                -- previously-captured one; session_name_source travels in
+                -- lockstep with session_name (both null or both set), so
+                -- COALESCE-ing them independently stays consistent. Ranked
+                -- overwrite ("a weaker source never overwrites a stronger
+                -- one", backend/parsers/session_name_provenance.py) is the
+                -- responsibility of the M2/M3 write sites that only ever
+                -- target NULL rows -- not this upsert, which is the sole
+                -- provider_persisted writer in M1.
+                session_name=COALESCE(EXCLUDED.session_name, sessions.session_name),
+                session_name_source=COALESCE(EXCLUDED.session_name_source, sessions.session_name_source)
             WHERE sessions.workspace_id = EXCLUDED.workspace_id
         """
         _conn = _pg_conn if _pg_conn is not None else self.db
@@ -211,10 +229,15 @@ class PostgresSessionRepository:
                 "skillNameSource",
                 SKILL_SOURCE_DIRECT if session_data.get("skillName") else None,
             ),
+            # automatic-session-naming (T1-003): both null == "not captured"
+            # contract state (see backend/parsers/session_name_provenance.py).
+            # The parser (T1-002) sets these together or not at all.
+            session_data.get("sessionName"),
+            session_data.get("sessionNameSource"),
         )
 
     async def backfill_skill_name_inheritance(self, project_id: str) -> dict[str, int]:
-        """One-hop subagent -> parent skill_name inheritance (idempotent).
+        """One-hop subagent -> parent inheritance pass (idempotent).
 
         Copies the parent session's ``skill_name`` onto a child subagent session
         whose own ``skill_name`` is NULL, stamping
@@ -228,7 +251,22 @@ class PostgresSessionRepository:
         writer of ``inherited_parent`` -- it never overwrites a
         directly-detected skill_name (AC 3/AC 5).
 
-        Returns ``{"rows": <count updated>}``.
+        automatic-session-naming (T2-001): this same one-hop pass also carries
+        ``session_name`` from parent to child subagent sidechain, stamping
+        ``session_name_source = derived_deterministic``. When the parent has no
+        ``session_name`` either, the child falls back to its OWN
+        ``subagent_type`` -- the "existing agent-name record" already used as
+        this session's title fallback in
+        ``backend/routers/_client_v1_features.py::_derive_session_title``. This
+        is deliberately NOT a new inheritance mechanism: it extends the exact
+        call site above rather than adding a parallel one. The rank invariant
+        ("a weaker source never overwrites a stronger one") is enforced via
+        :func:`may_overwrite` per row rather than duplicating the trust order
+        as a hardcoded comparison in SQL (see
+        ``backend/parsers/session_name_provenance.py`` contract).
+
+        Returns ``{"rows": <skill_name count updated>, "session_name_rows":
+        <session_name count updated>}``.
         """
         result = await self.db.execute(
             """
@@ -251,7 +289,101 @@ class PostgresSessionRepository:
             parts = result.split()
             if len(parts) >= 2 and parts[-1].isdigit():
                 rows = int(parts[-1])
-        return {"rows": rows}
+
+        session_name_rows = await self._backfill_session_name_inheritance(project_id)
+
+        return {"rows": rows, "session_name_rows": session_name_rows}
+
+    async def _backfill_session_name_inheritance(self, project_id: str) -> int:
+        """One-hop subagent -> parent ``session_name`` inheritance (T2-001).
+
+        See :meth:`backfill_skill_name_inheritance` for the full contract this
+        extends. Implemented as fetch-then-decide-then-write (rather than a
+        single declarative UPDATE like the sibling ``skill_name`` pass) so the
+        rank comparison can go through :func:`may_overwrite` in Python instead
+        of re-encoding the provenance trust order inline in SQL.
+        """
+        candidates = await self.db.fetch(
+            """
+            SELECT child.id AS child_id,
+                   child.session_name AS child_name,
+                   child.session_name_source AS child_source,
+                   child.subagent_type AS child_subagent_type,
+                   parent.session_name AS parent_name
+            FROM sessions AS child
+            LEFT JOIN sessions AS parent
+              ON parent.id = child.subagent_parent_id
+             AND parent.project_id = child.project_id
+            WHERE child.project_id = $1
+              AND child.subagent_parent_id IS NOT NULL
+            """,
+            project_id,
+        )
+
+        updates: list[tuple[str, str, str, str]] = []
+        for row in candidates:
+            parent_name = (row["parent_name"] or "").strip()
+            own_agent_name = (row["child_subagent_type"] or "").strip()
+            new_name = parent_name or own_agent_name
+            if not new_name:
+                continue
+            if not may_overwrite(SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC, row["child_source"]):
+                continue
+            if row["child_name"] == new_name and row["child_source"] == SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC:
+                continue  # already correct -- idempotent no-op
+            updates.append((new_name, SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC, project_id, row["child_id"]))
+
+        if not updates:
+            return 0
+
+        await self.db.executemany(
+            """
+            UPDATE sessions
+            SET session_name = $1, session_name_source = $2
+            WHERE project_id = $3 AND id = $4
+            """,
+            updates,
+        )
+        return len(updates)
+
+    async def set_derived_session_name(
+        self,
+        project_id: str,
+        session_id: str,
+        name: str,
+        source: str,
+        *,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> bool:
+        """Persist a derived ``session_name`` for one row, honoring the rank gate.
+
+        Mirrors the SQLite backend's method of the same name exactly (see
+        that docstring for the full contract). Re-reads the row's current
+        ``session_name_source`` immediately before writing and refuses via
+        :func:`may_overwrite` whenever a stronger/equal source has already
+        landed -- never re-encoded as a SQL string comparison. Returns
+        ``True`` only when a row was actually written.
+        """
+        row = await self.get_by_id(session_id, project_id=project_id, workspace_id=workspace_id)
+        if row is None:
+            return False
+        if not may_overwrite(source, row.get("session_name_source")):
+            return False
+        if row.get("session_name") == name and row.get("session_name_source") == source:
+            return False  # already correct -- idempotent no-op
+        await self.db.execute(
+            """
+            UPDATE sessions
+            SET session_name = $1, session_name_source = $2
+            WHERE project_id = $3 AND id = $4 AND workspace_id = $5
+            """,
+            name,
+            source,
+            project_id,
+            session_id,
+            workspace_id,
+        )
+        return True
 
     async def get_by_id(self, session_id: str, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
         """Fetch a single session by id, optionally scoped to project_id and workspace_id.
@@ -312,6 +444,68 @@ class PostgresSessionRepository:
             workspace_id,
         )
         return [dict(row) for row in rows]
+
+    async def list_missing_session_name(
+        self,
+        project_id: str,
+        *,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+        limit: int | None = None,
+        since: str | None = None,
+    ) -> list[dict]:
+        """Candidate-selection query for the M3 derived-naming sweep (T3-001).
+
+        Mirrors the SQLite backend exactly: ``session_name IS NULL`` is the
+        idempotency predicate -- a session with a non-null ``session_name``
+        from any source is never selected again -- and stays the sole
+        idempotency guard regardless of ``since`` below.
+
+        ``limit`` bounds the result set at the SQL layer (T3-004's
+        ``CCDASH_SESSION_NAMING_QUOTA`` wiring) so a large backlog is never
+        loaded into memory wholesale; ``None`` returns every candidate.
+        ``since`` (an ISO-8601 string) additionally bounds the candidate set
+        to ``created_at >= since`` -- the ``CCDASH_SESSION_NAMING_WINDOW_HOURS``
+        recency-scoping wiring, read-time only. ``None`` applies no bound.
+        """
+        query = (
+            "SELECT * FROM sessions WHERE project_id = $1 AND workspace_id = $2 "
+            "AND session_name IS NULL"
+        )
+        params: list[object] = [project_id, workspace_id]
+        if since is not None:
+            params.append(since)
+            query += f" AND created_at >= ${len(params)}"
+        # See the SQLite sibling for why ORDER BY before LIMIT is load-bearing
+        # (feature-level review finding L-3): an unordered LIMIT lets a
+        # deterministically-failing candidate hold the same quota slot every tick
+        # and starve nameable rows behind it. Kept identical across both backends.
+        query += " ORDER BY created_at DESC"
+        if limit is not None:
+            params.append(limit)
+            query += f" LIMIT ${len(params)}"
+        rows = await self.db.fetch(query, *params)
+        return [dict(row) for row in rows]
+
+    async def count_missing_session_name(
+        self,
+        project_id: str,
+        *,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> int:
+        """Full-backlog count for :meth:`list_missing_session_name`'s predicate.
+
+        Mirrors the SQLite backend's ``count_missing_session_name`` exactly --
+        a separate ``COUNT(*)`` query so the sweep job can report
+        ``candidates_found`` as the true backlog size while
+        ``list_missing_session_name`` is always called with ``limit=quota``.
+        """
+        row = await self.db.fetchrow(
+            "SELECT COUNT(*) AS c FROM sessions WHERE project_id = $1 AND workspace_id = $2 "
+            "AND session_name IS NULL",
+            project_id,
+            workspace_id,
+        )
+        return int(row["c"]) if row is not None else 0
 
     async def list_paginated(
         self, offset: int, limit: int, project_id: str | None = None,

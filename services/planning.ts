@@ -392,6 +392,10 @@ interface WirePlanningAgentSessionCard {
   git_branch?: string | null;
   /** Abbreviated or full git commit hash for the session.  Null when unavailable. */
   git_commit_hash?: string | null;
+  /** automatic-session-naming: provider-persisted/derived session label. Null == no name yet. */
+  session_name?: string | null;
+  /** Provenance token for session_name. Null == unknown provenance. */
+  session_name_source?: string | null;
 }
 
 interface WirePlanningBoardGroup {
@@ -717,6 +721,8 @@ function adaptPlanningAgentSessionCard(wire: WirePlanningAgentSessionCard): Plan
     activityMarkers: (wire.activity_markers ?? []).map(adaptSessionActivityMarker),
     gitBranch: wire.git_branch ?? null,
     gitCommitHash: wire.git_commit_hash ?? null,
+    sessionName: wire.session_name ?? null,
+    sessionNameSource: wire.session_name_source ?? null,
   };
 }
 

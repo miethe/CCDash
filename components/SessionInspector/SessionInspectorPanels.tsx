@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Activity, BarChart2, ExternalLink, FileText, GitCommit, Maximize2, Zap } from 'lucide-react';
 import { useData } from '../../contexts/DataContext';
 import { AgentSession, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate } from '../../types';
-import { SessionCard, SessionCardDetailSection, deriveEffortTimelineLabel, deriveTranscriptIntelligenceTitle } from '../SessionCard';
+import { SessionCard, SessionCardDetailSection, deriveEffortTimelineLabel, deriveTranscriptIntelligenceTitle, SessionNameProvenanceBadge } from '../SessionCard';
 import { resolveDisplayCost } from '../../lib/sessionSemantics';
 import { isTranscriptIntelligenceEnabled } from '../../lib/featureFlags';
 import {
@@ -554,14 +554,16 @@ export const SessionSummaryCard: React.FC<{
 }> = ({ session, onClick, onOpenAnalytics, className, statusOverride, threadToggle }) => {
     const transcriptIntelligenceEnabled = isTranscriptIntelligenceEnabled();
     const displayTitle = useMemo(
+        // automatic-session-naming: session.sessionName takes priority over the
+        // legacy session.title explicitTitle slot — same chain, no new fallback.
         () => deriveTranscriptIntelligenceTitle(
             session.id,
-            session.title,
+            session.sessionName || session.title,
             session.sessionMetadata || null,
             session.transcriptIntelligence?.title?.displayTitle,
             transcriptIntelligenceEnabled,
         ),
-        [session.id, session.sessionMetadata, session.title, session.transcriptIntelligence?.title?.displayTitle, transcriptIntelligenceEnabled]
+        [session.id, session.sessionMetadata, session.sessionName, session.title, session.transcriptIntelligence?.title?.displayTitle, transcriptIntelligenceEnabled]
     );
     const effortLabel = useMemo(
         () => transcriptIntelligenceEnabled
@@ -660,6 +662,7 @@ export const SessionSummaryCard: React.FC<{
             )}
             infoBadges={(
                 <div className="flex items-center gap-2">
+                    <SessionNameProvenanceBadge sessionName={session.sessionName} sessionNameSource={session.sessionNameSource} />
                     {effortLabel && (
                         <span
                             className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-500/35 text-amber-200 bg-amber-500/10 font-semibold"

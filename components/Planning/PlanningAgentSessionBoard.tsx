@@ -30,6 +30,7 @@ import { PlanningNextRunPreview } from './PlanningNextRunPreview';
 import { Panel, Dot } from './primitives';
 import type { StateFilter } from './PlanningBoardToolbar';
 import { formatLastActivity } from '@/lib/planningHelpers';
+import { deriveSessionCardTitle, SessionNameProvenanceBadge } from '@/components/SessionCard';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -616,6 +617,26 @@ const SessionCard = memo(function SessionCard({
           {STATE_LABEL[card.state]}
         </span>
       </div>
+
+      {/* Row 1.5: session name (automatic-session-naming) — fed through the
+          existing deriveSessionCardTitle chain as explicitTitle, never
+          rendered directly. Only shown when a name actually exists; the
+          bare session id is already visible in Row 1 above, so an empty
+          sessionName falling through to the id fallback would just repeat it. */}
+      {Boolean((card.sessionName || '').trim()) && (
+        <div
+          className="mt-1 flex items-center gap-1 min-w-0"
+          style={{ minHeight: '1rem' }}
+        >
+          <span
+            className="planning-mono truncate text-[10.5px] font-semibold text-[color:var(--ink-1)] min-w-0"
+            title={deriveSessionCardTitle(card.sessionId, card.sessionName ?? undefined, null)}
+          >
+            {deriveSessionCardTitle(card.sessionId, card.sessionName ?? undefined, null)}
+          </span>
+          <SessionNameProvenanceBadge sessionName={card.sessionName} sessionNameSource={card.sessionNameSource} />
+        </div>
+      )}
 
       {/* Row 2: agent name */}
       <div

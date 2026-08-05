@@ -587,6 +587,24 @@ export interface AgentSession {
   // or skillName itself is null). Treat an unrecognised token as unknown rather
   // than failing. Canonical vocabulary: backend/parsers/skill_provenance.py.
   skillNameSource?: string | null;
+  // automatic-session-naming (schema v50): human-meaningful session label.
+  // Populated from a provider-persisted record (Claude Code "ai-title", Codex
+  // "thread_name_updated") in M1, then by deterministic fallbacks (M2) and a
+  // worker-side derived-naming job (M3). null/absent == no name yet (a
+  // contract state, never guessed at render time) — feed this as the
+  // explicitTitle into the existing deriveSessionCardTitle /
+  // deriveTranscriptIntelligenceTitle chain (components/SessionCard.tsx),
+  // never a new fallback path. MUST be escaped on every render surface — it
+  // can arrive caller-controlled via the NDJSON ingest path.
+  sessionName?: string | null;
+  // Provenance for sessionName — WHICH lane supplied it. Token vocabulary +
+  // trust order (including reserved, not-yet-written tokens):
+  // backend/parsers/session_name_provenance.py ("provider_persisted" |
+  // "derived_deterministic" | "derived_embedding_transfer" (reserved) |
+  // "derived_generative" | "operator_set" (reserved)). null == provenance
+  // unknown (row predates the column, or sessionName itself is null). Treat
+  // an unrecognised token as unknown rather than failing — vocabulary may grow.
+  sessionNameSource?: string | null;
   contextWindow?: string | null; // e.g. "1M" when a sidecar matched; null otherwise
   // ── Phase 11 launch-time capture fields (T11-005; R-P2 / AC-11.D) ──
   // Written by the SessionStart hook via the <session-id>.capture.json sidecar.
@@ -3762,6 +3780,18 @@ export interface PlanningAgentSessionCard {
    * never infer the platform from other session attributes.
    */
   platform?: string | null;
+  /**
+   * automatic-session-naming (schema v50): human-meaningful session label +
+   * its provenance. null/absent == no name yet (contract state, never
+   * guessed here). Feed as explicitTitle into the existing FE title chain
+   * (deriveSessionCardTitle / deriveTranscriptIntelligenceTitle,
+   * components/SessionCard.tsx) — never render directly, never a new
+   * fallback path. MUST be escaped on every render surface — it can arrive
+   * caller-controlled via the NDJSON ingest path.
+   */
+  sessionName?: string | null;
+  /** Provenance for sessionName — see AgentSession.sessionNameSource for the vocabulary. */
+  sessionNameSource?: string | null;
 }
 
 /** A column of cards on the Planning Agent Session Board, keyed by the active grouping. */

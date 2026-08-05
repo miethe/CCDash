@@ -175,6 +175,75 @@ CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS = _env_bool(
 CCDASH_ROUTING_FEEDBACK_SWEEP_INTERVAL_SECONDS = _env_int(
     "CCDASH_ROUTING_FEEDBACK_SWEEP_INTERVAL_SECONDS", 1800
 )
+# automatic-session-naming-v1 M3 (T3-004): SessionNamingSweepJob's guard
+# flags -- mirrors CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED's shape
+# exactly (same kill-switch / quota / window / interval quartet), but this
+# flag's default is False (opt-in), the INVERSE polarity of
+# CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED's default-True (opt-out) --
+# do not copy that flag's default, same caution as
+# CCDASH_ROUTING_FEEDBACK_ENABLED's note above. Reason: this job (once
+# T3-002/T3-003 land) calls a naming backend (Lane A local / Lane B
+# hosted), which is new egress-shaped behavior, unlike the AAR-review
+# sweep's pure-DB rollup. Default False -- when False,
+# SessionNamingSweepJob.execute() short-circuits to outcome="disabled" on
+# its first line (backend/adapters/jobs/session_naming_sweep_job.py); every
+# M1/M2 session-name read/write path this feature already shipped is
+# completely unaffected regardless of this flag's value.
+CCDASH_SESSION_NAMING_ENABLED = _env_bool("CCDASH_SESSION_NAMING_ENABLED", False)
+# Per-tick cap on how many `session_name IS NULL` candidates a single sweep
+# tick will attempt to derive a name for. Bounds worst-case per-tick cost
+# (model-call / local-inference time) the same way CCDASH_AAR_ESCALATION_QUOTA
+# bounds escalation volume above -- a conservative default so a large
+# backlog is worked down gradually across many ticks rather than in one
+# unbounded pass. Consumed by T3-002/T3-003's backend-selection loop.
+CCDASH_SESSION_NAMING_QUOTA = _env_int("CCDASH_SESSION_NAMING_QUOTA", 200)
+# Rolling lookback window (hours) T3-002/T3-003 use when scoping which
+# `session_name IS NULL` candidates are eligible for a given tick (e.g.
+# recency-prioritized backlog processing). Read-time windowing only -- this
+# flag does NOT change `list_missing_session_name`'s own `IS NULL`
+# predicate, which remains the sole idempotency guard (T3-001; a session
+# named from ANY source is never re-selected regardless of this window).
+CCDASH_SESSION_NAMING_WINDOW_HOURS = _env_int("CCDASH_SESSION_NAMING_WINDOW_HOURS", 24)
+# Interval between SessionNamingSweepJob ticks when the flag above is
+# enabled. Sibling of CCDASH_AAR_REVIEW_SWEEP_INTERVAL_SECONDS /
+# CCDASH_ROUTING_FEEDBACK_SWEEP_INTERVAL_SECONDS -- same 1800s (30 min)
+# default, same 60s floor clamp applied in
+# backend/adapters/jobs/runtime.py's `_start_session_naming_sweep_task`
+# (mirrors `_start_aar_review_sweep_task`'s floor verbatim). Constructed for
+# both `worker`/`worker-watch` profiles (container.py's `_export_profiles`)
+# but the periodic loop only ever starts under the plain `worker` profile --
+# same worker-only-loop-start asymmetry as the AAR-review/routing-feedback
+# precedents.
+CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS = _env_int(
+    "CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS", 1800
+)
+# Which naming backend T3-002 (Lane A, local, zero-egress) / T3-003 (Lane B,
+# hosted) is active. "local" is the DEFAULT -- the zero-egress-by-default
+# milestone AC -- "hosted" is opt-in only, and additionally gated behind
+# CCDASH_REDACTION_PATTERNS_ENABLED, checked by ``resolve_naming_backend``
+# (backend/services/session_naming_local_backend.py, T3-003) -- not here.
+# An unrecognized value is treated by T3-002/T3-003 as "local"
+# (fail toward zero egress, never toward an unintended hosted call).
+CCDASH_SESSION_NAMING_BACKEND = os.getenv("CCDASH_SESSION_NAMING_BACKEND", "local").strip().lower() or "local"
+# automatic-session-naming-v1 M3 (T3-002): Lane A local backend -- the
+# zero-egress-by-default HTTP client target. Talks to a local Ollama
+# daemon; localhost-only by construction (a homelab/dev-box loopback
+# address, not a third-party endpoint), so this flag's DEFAULT never
+# performs off-box egress regardless of CCDASH_SESSION_NAMING_BACKEND's
+# own value -- the egress boundary this feature's AC cares about is the
+# "local" vs. "hosted" backend SELECTION (above), not this URL.
+CCDASH_OLLAMA_BASE_URL = os.getenv("CCDASH_OLLAMA_BASE_URL", "http://localhost:11434").strip() or "http://localhost:11434"
+# Small instruction-tuned model, chosen for low-latency title generation on
+# commodity hardware. Any locally-pulled Ollama model tag works; this is a
+# sane default, not a hard requirement -- an unpulled/missing model simply
+# makes every call fail, which the fail-open contract already covers (leaves
+# session_name NULL, logs, never crashes).
+CCDASH_OLLAMA_MODEL = os.getenv("CCDASH_OLLAMA_MODEL", "gemma2:2b").strip() or "gemma2:2b"
+# Per-call HTTP timeout (seconds) for the local Ollama client. Short by
+# design: a hung/overloaded local daemon must fail a single candidate fast
+# (fail-open -- leave session_name NULL, log, move to the next candidate)
+# rather than stall the whole sweep tick.
+CCDASH_OLLAMA_TIMEOUT_SECONDS = _env_int("CCDASH_OLLAMA_TIMEOUT_SECONDS", 15)
 CCDASH_SNAPSHOT_FRESHNESS_DISABLE_CANDIDATE_SECONDS = _env_int(
     "CCDASH_SNAPSHOT_FRESHNESS_DISABLE_CANDIDATE_SECONDS",
     7 * 24 * 60 * 60,
@@ -1324,6 +1393,12 @@ DROP_SESSION_LOGS_ENABLED = _env_bool("CCDASH_DROP_SESSION_LOGS_ENABLED", False)
 # AI insight proxy
 # CCDASH_GEMINI_API_KEY — Gemini REST API key used by the server-side AI insight proxy.
 # When unset, POST /api/ai/insight returns {disabled: true} instead of 500.
+# Also consumed by automatic-session-naming-v1 M3's Lane B hosted naming
+# backend (session_naming_hosted_backend.py, T3-003) -- unset there means
+# the same fail-open "leave session_name NULL and log" behavior, never a
+# crash. Must be listed in deploy/runtime/compose.yaml's
+# x-backend-shared-env allowlist for either consumer to see it in a
+# container deployment (that map is explicit, not pass-through).
 CCDASH_GEMINI_API_KEY: str = os.getenv("CCDASH_GEMINI_API_KEY", "").strip()
 
 # Capability flags (enterprise add-on surfaces; default OFF)

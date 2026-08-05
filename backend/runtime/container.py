@@ -22,6 +22,7 @@ from backend.adapters.jobs import (
     RoutingRollupSweepJob,
     RuntimeJobAdapter,
     RuntimeJobState,
+    SessionNamingSweepJob,
     TelemetryExporterJob,
 )
 from backend.application.context import (
@@ -56,8 +57,48 @@ from backend.runtime.storage_contract import (
 from backend.project_manager import db_project_manager
 from backend.runtime_ports import build_core_ports, build_runtime_metadata, build_workspace_registry
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
+from backend.services.session_naming_local_backend import resolve_naming_backend
 
 logger = logging.getLogger("ccdash.runtime")
+
+# Profiles eligible to construct worker-only background-sweep jobs
+# (telemetry/rollup export, AAR-review sweep, routing-rollup sweep, and — as
+# of automatic-session-naming-v1 M3 T3-001 — the session-naming sweep). The
+# ``api`` profile is deliberately excluded: it must never construct any of
+# these jobs. Module-level (rather than a local inside ``startup()``) so it
+# is directly testable without exercising the full container lifecycle.
+_WORKER_JOB_PROFILES = {"worker", "worker-watch"}
+
+
+def _construct_session_naming_sweep_job(profile_name: str, ports: Any) -> SessionNamingSweepJob | None:
+    """The exact gate + construction ``RuntimeContainer.startup()`` runs for
+    ``SessionNamingSweepJob`` -- extracted to a module-level function so it is
+    directly unit-testable (a real ``ports`` object with live DB connections
+    is never required to exercise this gate) without needing to drive the
+    full ``startup()`` lifecycle, which touches the DB and hangs in this
+    repo's unscoped test collection (see other worker-bootstrap tests' own
+    warnings against calling ``startup()`` directly).
+
+    Returns ``None`` unless BOTH hold: ``profile_name`` is in
+    ``_WORKER_JOB_PROFILES`` (the ``api`` profile is deliberately excluded --
+    it must never construct this job) AND
+    ``CCDASH_SESSION_NAMING_ENABLED`` is true AT THIS CALL (read once, at
+    ``startup()`` time -- toggling the flag later requires a full backend
+    restart, since nothing re-evaluates this gate after construction; see
+    ``_start_session_naming_sweep_task``'s docstring in
+    ``backend/adapters/jobs/runtime.py``). ``naming_backend`` is resolved via
+    ``resolve_naming_backend`` unconditionally alongside the flag check
+    (construction is cheap -- no network call happens at construction time).
+    """
+    if profile_name not in _WORKER_JOB_PROFILES:
+        return None
+    if not bool(getattr(config, "CCDASH_SESSION_NAMING_ENABLED", False)):
+        return None
+    return SessionNamingSweepJob(
+        ports=ports,
+        project=None,
+        naming_backend=resolve_naming_backend(ports),
+    )
 
 
 class RuntimeContainer:
@@ -173,7 +214,7 @@ class RuntimeContainer:
         # P3-009: TelemetryExporterJob and ArtifactRollupExportJob run under
         # both 'worker' and 'worker-watch' profiles so that telemetry export
         # works regardless of which worker variant is deployed in a cluster.
-        _export_profiles = {"worker", "worker-watch"}
+        _export_profiles = _WORKER_JOB_PROFILES
         self.job_adapter = RuntimeJobAdapter(
             profile=self.profile,
             ports=self.require_ports(),
@@ -238,6 +279,24 @@ class RuntimeContainer:
                 and bool(getattr(config, "CCDASH_ROUTING_FEEDBACK_ENABLED", False))
                 else None
             ),
+            # automatic-session-naming-v1 M3 (T3-001 scaffold / T3-004
+            # guards): default-off derived session-naming sweep worker. The
+            # profile-gate (`_WORKER_JOB_PROFILES`, which excludes `api`) AND
+            # flag-gate (CCDASH_SESSION_NAMING_ENABLED, default False, the
+            # kill-switch) AND `naming_backend` resolution (T3-002/T3-003's
+            # ``resolve_naming_backend`` -- "local" by default, "hosted" only
+            # when CCDASH_REDACTION_PATTERNS_ENABLED also holds, else a
+            # structural no-op, never a fallback to sending) all live in
+            # `_construct_session_naming_sweep_job`, extracted to a
+            # module-level function specifically so this gate is directly
+            # unit-testable without exercising the full `startup()`
+            # lifecycle (see that function's own docstring). Unconditional
+            # `project=None` inside it (cross-project candidate selection
+            # over the whole DB-authoritative registry, ADR-006), same as
+            # aar_review_sweep_job/routing_rollup_sweep_job above.
+            session_naming_sweep_job=_construct_session_naming_sweep_job(
+                self.profile.name, self.require_ports()
+            ),
         )
         self.lifecycle = await self.job_adapter.start()
         app.state.runtime_jobs = self.job_adapter
@@ -254,6 +313,8 @@ class RuntimeContainer:
             app.state.aar_review_sweep_task = self.lifecycle.aar_review_sweep_task
         if self.lifecycle.routing_rollup_sweep_task is not None:
             app.state.routing_rollup_sweep_task = self.lifecycle.routing_rollup_sweep_task
+        if self.lifecycle.session_naming_sweep_task is not None:
+            app.state.session_naming_sweep_task = self.lifecycle.session_naming_sweep_task
 
     async def shutdown(self, app: FastAPI) -> None:
         logger.info("CCDash backend shutting down (profile=%s)", self.profile.name)

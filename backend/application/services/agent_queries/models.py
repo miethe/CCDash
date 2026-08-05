@@ -1114,6 +1114,13 @@ class PlanningAgentSessionCardDTO(BaseModel):
     activity_markers: list[SessionActivityMarker] = Field(default_factory=list)
     git_branch: str | None = None
     git_commit_hash: str | None = None
+    # automatic-session-naming (schema v50): human-meaningful session label +
+    # its provenance. None == no name yet (contract state, never guessed
+    # here). Feed as explicitTitle into the existing FE title chain
+    # (deriveSessionCardTitle / deriveTranscriptIntelligenceTitle) rather than
+    # a new fallback path.
+    session_name: str | None = None
+    session_name_source: str | None = None
 
 
 class PlanningBoardGroupDTO(BaseModel):

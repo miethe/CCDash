@@ -46,6 +46,44 @@ x-backend-service: &backend-service
     CCDASH_ARTIFACT_INTELLIGENCE_ENABLED: "${CCDASH_ARTIFACT_INTELLIGENCE_ENABLED:-false}"
     CCDASH_ARC_ENABLED: "${CCDASH_ARC_ENABLED:-false}"
     CCDASH_MEATYWIKI_ENABLED: "${CCDASH_MEATYWIKI_ENABLED:-false}"
+    # automatic-session-naming-v1 M3 (T3-003): the Lane B hosted
+    # derived-naming backend's API key. Same gap class 5cb8e00 fixed for
+    # five other flags -- this map is an explicit allowlist, so a key set
+    # only in .env would never reach the container namespace, silently
+    # leaving the hosted backend permanently disabled (fail-open, but for
+    # the wrong reason) even after an operator opts in via
+    # CCDASH_SESSION_NAMING_BACKEND=hosted. Default empty, identical to
+    # backend/config.py's own default -- unset host env is
+    # behaviour-identical to not listing it here.
+    CCDASH_GEMINI_API_KEY: "${CCDASH_GEMINI_API_KEY:-}"
+    # automatic-session-naming-v1 M3 (T3-001/T3-002/T3-003/T3-004): the
+    # SessionNamingSweepJob guard-flag quartet + backend selector +
+    # local-lane URL. Same gap class as CCDASH_GEMINI_API_KEY directly
+    # above -- flagged but explicitly left unfixed by T3-003 (see
+    # implementation-notes.md) because none of these six were in that
+    # task's scope. Without this block, CCDASH_SESSION_NAMING_ENABLED set
+    # only in .env never reaches the worker container namespace, so the
+    # sweep can never be turned on for a node deployment regardless of the
+    # backend logic above being correct. Defaults mirror
+    # backend/config.py's own defaults exactly -- unset host env is
+    # behaviour-identical to not listing them here.
+    CCDASH_SESSION_NAMING_ENABLED: "${CCDASH_SESSION_NAMING_ENABLED:-false}"
+    CCDASH_SESSION_NAMING_QUOTA: "${CCDASH_SESSION_NAMING_QUOTA:-200}"
+    CCDASH_SESSION_NAMING_WINDOW_HOURS: "${CCDASH_SESSION_NAMING_WINDOW_HOURS:-24}"
+    CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS: "${CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS:-1800}"
+    CCDASH_SESSION_NAMING_BACKEND: "${CCDASH_SESSION_NAMING_BACKEND:-local}"
+    CCDASH_OLLAMA_BASE_URL: "${CCDASH_OLLAMA_BASE_URL:-http://localhost:11434}"
+    # The remaining two Ollama flags, added at the feature-level review (finding L-5):
+    # the block above shipped six of eight and left these out, which is the SAME
+    # explicit-allowlist gap the comment above is about -- a containerised deployment
+    # would have been pinned to gemma2:2b / 15s with no override, failing silently.
+    # NOTE on CCDASH_OLLAMA_BASE_URL's default: "localhost" resolves to the CONTAINER's
+    # own loopback, where no Ollama daemon runs. A compose deployment that wants the
+    # (default, zero-egress) local lane to actually function must point this at the
+    # host -- e.g. http://host.containers.internal:11434 under podman. Left as-is so
+    # the default matches backend/config.py exactly; see deploy/runtime/.env.example.
+    CCDASH_OLLAMA_MODEL: "${CCDASH_OLLAMA_MODEL:-gemma2:2b}"
+    CCDASH_OLLAMA_TIMEOUT_SECONDS: "${CCDASH_OLLAMA_TIMEOUT_SECONDS:-15}"
     GIT_OPTIONAL_LOCKS: "${GIT_OPTIONAL_LOCKS:-0}"
   healthcheck: &api-healthcheck
     test:

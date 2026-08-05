@@ -18,6 +18,7 @@ from backend.runtime.profiles import RuntimeProfile
 from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob
 from backend.adapters.jobs.artifact_rollup_export_job import ArtifactRollupExportJob
 from backend.adapters.jobs.routing_rollup_sweep_job import RoutingRollupSweepJob
+from backend.adapters.jobs.session_naming_sweep_job import SessionNamingSweepJob
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
 from backend.services.test_config import effective_test_flags, resolve_test_sources
@@ -106,6 +107,9 @@ class RuntimeJobState:
     # proof-to-routing-loop Phase 4 (T4-002): default-off Proof -> Routing
     # Feedback Loop sweep. Mirrors aar_review_sweep_task's shape exactly.
     routing_rollup_sweep_task: asyncio.Task[None] | None = None
+    # automatic-session-naming-v1 M3 (T3-004): default-off derived
+    # session-naming sweep. Mirrors aar_review_sweep_task's shape exactly.
+    session_naming_sweep_task: asyncio.Task[None] | None = None
     cache_warming_task: asyncio.Task[None] | None = None
     retention_prune_task: asyncio.Task[None] | None = None
     reconcile_task: asyncio.Task[None] | None = None
@@ -146,6 +150,11 @@ class RuntimeJobAdapter:
         # Feedback Loop sweep worker. Mirrors aar_review_sweep_job's param
         # shape exactly.
         routing_rollup_sweep_job: RoutingRollupSweepJob | None = None,
+        # automatic-session-naming-v1 M3 (T3-001 scaffold / T3-004 guards):
+        # default-off derived session-naming sweep worker. Mirrors
+        # aar_review_sweep_job's param shape and periodic-task wiring
+        # exactly (see `_start_session_naming_sweep_task` below).
+        session_naming_sweep_job: SessionNamingSweepJob | None = None,
         # P3-005 / P3-010: additive param — safe default keeps container.py unchanged
         workspace_registry: Any | None = None,
     ) -> None:
@@ -159,6 +168,7 @@ class RuntimeJobAdapter:
         self.artifact_rollup_export_job = artifact_rollup_export_job
         self.aar_review_sweep_job = aar_review_sweep_job
         self.routing_rollup_sweep_job = routing_rollup_sweep_job
+        self.session_naming_sweep_job = session_naming_sweep_job
         # P3-005: workspace_registry kwarg allows injecting a custom registry in
         # tests; falls back to ports.workspace_registry at runtime.
         self._workspace_registry_override = workspace_registry
@@ -209,6 +219,16 @@ class RuntimeJobAdapter:
                 "routingRollupSweep": RuntimeJobObservation(
                     backlog_count=0,
                     backlog_unit="rows",
+                    stale_threshold_seconds=7200,
+                ),
+                # automatic-session-naming-v1 M3 (T3-004): default-off
+                # derived session-naming sweep. Stale threshold is 4x the
+                # default 1800s interval -- alarm only on a clearly stalled
+                # sweep, never on a single missed tick (mirrors
+                # aarReviewSweep/routingRollupSweep above).
+                "sessionNamingSweep": RuntimeJobObservation(
+                    backlog_count=0,
+                    backlog_unit="sessions",
                     stale_threshold_seconds=7200,
                 ),
                 "cacheWarming": RuntimeJobObservation(
@@ -438,6 +458,9 @@ class RuntimeJobAdapter:
             routing_rollup_sweep_task = self._start_routing_rollup_sweep_task()
             if routing_rollup_sweep_task is not None:
                 self.state.routing_rollup_sweep_task = routing_rollup_sweep_task
+            session_naming_sweep_task = self._start_session_naming_sweep_task()
+            if session_naming_sweep_task is not None:
+                self.state.session_naming_sweep_task = session_naming_sweep_task
             cache_warming_task = self._start_cache_warming_task()
             if cache_warming_task is not None:
                 self.state.cache_warming_task = cache_warming_task
@@ -776,6 +799,14 @@ class RuntimeJobAdapter:
             except asyncio.CancelledError:
                 pass
             self.state.routing_rollup_sweep_task = None
+
+        if self.state.session_naming_sweep_task is not None:
+            self.state.session_naming_sweep_task.cancel()
+            try:
+                await self.state.session_naming_sweep_task
+            except asyncio.CancelledError:
+                pass
+            self.state.session_naming_sweep_task = None
 
         if self.state.cache_warming_task is not None:
             self.state.cache_warming_task.cancel()
@@ -1245,6 +1276,10 @@ class RuntimeJobAdapter:
             "routingRollupSweep": "running"
             if self.state.routing_rollup_sweep_task is not None
             and not self.state.routing_rollup_sweep_task.done()
+            else "idle",
+            "sessionNamingSweep": "running"
+            if self.state.session_naming_sweep_task is not None
+            and not self.state.session_naming_sweep_task.done()
             else "idle",
             "cacheWarming": "running"
             if self.state.cache_warming_task is not None and not self.state.cache_warming_task.done()
@@ -1891,6 +1926,7 @@ class RuntimeJobAdapter:
             "artifactRollupExports": self.state.artifact_rollup_export_task,
             "aarReviewSweep": self.state.aar_review_sweep_task,
             "routingRollupSweep": self.state.routing_rollup_sweep_task,
+            "sessionNamingSweep": self.state.session_naming_sweep_task,
             "cacheWarming": self.state.cache_warming_task,
         }
         jobs: dict[str, Any] = {}
@@ -1989,6 +2025,7 @@ class RuntimeJobAdapter:
             "artifactRollupExports",
             "aarReviewSweep",
             "routingRollupSweep",
+            "sessionNamingSweep",
         ):
             payload = jobs.get(job_name, {})
             depth_map[job_name] = {
@@ -2821,4 +2858,85 @@ class RuntimeJobAdapter:
         return self.ports.job_scheduler.schedule(
             _run_periodic_routing_rollup_sweeps(),
             name=f"ccdash:{self.profile.name}:routing-rollup-sweep",
+        )
+
+    def _start_session_naming_sweep_task(self) -> asyncio.Task[None] | None:
+        """automatic-session-naming-v1 M3 (T3-004): default-off derived
+        session-naming sweep worker.
+
+        Mirrors ``_start_routing_rollup_sweep_task`` / ``_start_aar_review_sweep_task``
+        verbatim: ``worker``-profile-only, gated on both the injected job
+        object being present and this method's own presence check.
+        ``container.py`` constructs ``SessionNamingSweepJob`` for the
+        ``worker``/``worker-watch`` profile set ONLY when
+        ``CCDASH_SESSION_NAMING_ENABLED`` is also true at that moment -- the
+        flag is read ONCE, at ``RuntimeContainer.startup()`` construction
+        time, not re-read on every tick. When the flag is false at startup,
+        ``self.session_naming_sweep_job`` is ``None`` and this method never
+        even reaches the periodic loop below. ``execute()`` DOES re-check the
+        same flag on every call (defense in depth against a job object that
+        somehow got constructed anyway, e.g. a future direct-construction
+        call site), but that recheck is not how an operator actually toggles
+        this feature in practice: because the gate that matters lives at
+        construction time, flipping ``CCDASH_SESSION_NAMING_ENABLED`` in the
+        environment requires a full backend restart (of the worker process)
+        to take effect -- there is no live-reload path. ``container.py``
+        constructs the job object for BOTH ``worker`` and ``worker-watch``
+        (once the flag is on), but this method's own
+        ``profile.name != "worker"`` guard means only the plain ``worker``
+        profile ever actually starts the periodic loop -- identical to the
+        AAR-review/routing-feedback precedents' own construction-time vs.
+        task-start-time profile-gating asymmetry.
+
+        Like the AAR review and routing feedback sweeps, this job is ALWAYS
+        multi-project: ``container.py`` constructs ``SessionNamingSweepJob``
+        with ``project=None`` unconditionally, so every tick enumerates and
+        sweeps every registered project via
+        ``ports.workspace_registry.list_projects()``, independent of
+        whatever single project this worker's sync engine is bound to.
+        """
+        if self.profile.name != "worker" or self.session_naming_sweep_job is None:
+            return None
+        interval_seconds = max(
+            60, int(getattr(config, "CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS", 1800))
+        )
+        self.state.job_observations["sessionNamingSweep"].interval_seconds = interval_seconds
+
+        async def _run_periodic_session_naming_sweeps() -> None:
+            while True:
+                started = self._mark_job_started("sessionNamingSweep")
+                try:
+                    result = await self.session_naming_sweep_job.execute(trigger="scheduled")
+                    self._mark_job_success(
+                        "sessionNamingSweep",
+                        started,
+                        outcome=str(getattr(result, "outcome", "success") or "success"),
+                        backlog_count=int(getattr(result, "candidates_found", 0) or 0),
+                        details={
+                            "candidatesFound": int(getattr(result, "candidates_found", 0) or 0),
+                            "sessionsNamed": int(getattr(result, "sessions_named", 0) or 0),
+                            "projectIds": list((getattr(result, "details", None) or {}).get("projectIds", [])),
+                            "projectCount": int((getattr(result, "details", None) or {}).get("projectCount", 0) or 0),
+                        },
+                    )
+                except asyncio.CancelledError:
+                    self._mark_job_cancelled("sessionNamingSweep", started)
+                    raise
+                except Exception:
+                    self._mark_job_failure(
+                        "sessionNamingSweep",
+                        started,
+                        RuntimeError("session_naming_sweep_failed"),
+                    )
+                    logger.exception("Periodic session naming sweep failed")
+                await asyncio.sleep(interval_seconds)
+
+        logger.info(
+            "Started periodic session naming sweep job (profile=%s interval=%ss)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_session_naming_sweeps(),
+            name=f"ccdash:{self.profile.name}:session-naming-sweep",
         )

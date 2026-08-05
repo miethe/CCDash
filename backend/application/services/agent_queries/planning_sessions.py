@@ -192,6 +192,11 @@ async def build_active_session_card(
     git_branch: str | None = _safe_str(session.get("git_branch")) or None
     git_commit_hash: str | None = _safe_str(session.get("git_commit_hash")) or None
 
+    # automatic-session-naming (schema v50): human-meaningful session label +
+    # its provenance. None == no name yet (contract state, never guessed here).
+    session_name: str | None = _safe_str(session.get("session_name")) or None
+    session_name_source: str | None = _safe_str(session.get("session_name_source")) or None
+
     # Parent / root relationships
     parent_session_id: str | None = _safe_str(session.get("parent_session_id")) or None
     root_session_id: str | None = _safe_str(session.get("root_session_id")) or None
@@ -295,6 +300,8 @@ async def build_active_session_card(
         activity_markers=activity_markers,
         git_branch=git_branch,
         git_commit_hash=git_commit_hash,
+        session_name=session_name,
+        session_name_source=session_name_source,
     )
 
 

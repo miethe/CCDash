@@ -3202,6 +3202,7 @@ class SyncEngine:
             "commit_correlations_backfilled_sessions": 0,
             "commit_correlations_backfilled": 0,
             "skill_name_inherited": 0,
+            "session_name_inherited": 0,
             "documents_synced": 0,
             "documents_skipped": 0,
             "tasks_synced": 0,
@@ -3304,8 +3305,13 @@ class SyncEngine:
                 # its skill_name reset to NULL by _sync_sessions, and this is
                 # the pass that re-derives it from the parent. Idempotent by
                 # construction (WHERE child.skill_name IS NULL).
+                # automatic-session-naming (T2-001): the same call also carries
+                # session_name onto subagent sidechains (see
+                # backfill_skill_name_inheritance's docstring); its count is
+                # reported separately as session_name_inherited.
                 skill_inherit_stats = await self.session_repo.backfill_skill_name_inheritance(project.id)
                 stats["skill_name_inherited"] = int(skill_inherit_stats.get("rows", 0))
+                stats["session_name_inherited"] = int(skill_inherit_stats.get("session_name_rows", 0))
                 if backfill_session_intelligence:
                     usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
                     stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))

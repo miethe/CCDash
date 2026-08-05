@@ -16,6 +16,11 @@ from backend.parsers.effort_provenance import (
     EFFORT_SOURCE_CODEX_COLLABORATION_MODE,
     EFFORT_SOURCE_CODEX_PAYLOAD_EFFORT,
 )
+from backend.parsers.session_name_provenance import (
+    SESSION_NAME_FALLBACK_TRUNCATION_LEN,
+    SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC,
+    SESSION_NAME_SOURCE_PROVIDER_PERSISTED,
+)
 from backend.parsers.platforms.codex.tool_outcome import classify_tool_outcome
 from backend.parsers.platforms.test_runs import (
     aggregate_test_runs,
@@ -486,6 +491,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
     # Gap 4 (effort-tier-source-provenance): which Codex field supplied the value
     # above. Set together with effort_tier, never independently.
     effort_tier_source = None
+    # automatic-session-naming (M1/FR-4): provider-persisted thread name from
+    # event_msg.payload.type == "thread_name_updated". "" == no name found yet.
+    session_name = ""
+    session_name_source = ""
+    # automatic-session-naming (M1/FR-5): session_meta.payload.git.branch,
+    # currently hardcoded None below; measured 95% present (tech-codex-spike.md),
+    # and the M2 deterministic fallback source for codex_exec sessions (FR-7).
+    git_branch = None
     platform_version = ""
     platform_versions: list[str] = []
     platform_versions_seen: set[str] = set()
@@ -822,6 +835,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 platform_versions_seen.add(cli_version)
                 platform_versions.append(cli_version)
 
+        # automatic-session-naming (M1/FR-5): session_meta.payload.git.branch.
+        # Only session_meta entries carry a "git" key, so this mirrors the
+        # existing generic cwd/model/cli_version extraction above rather than
+        # adding a dedicated "session_meta" branch. Latest non-empty wins.
+        git_info = payload_dict.get("git")
+        if isinstance(git_info, dict):
+            branch_value = str(git_info.get("branch") or "").strip()
+            if branch_value:
+                git_branch = branch_value
+
         if entry_type_lower == "turn_context":
             line_model = str(payload_dict.get("model") or "").strip()
             if line_model:
@@ -1146,6 +1169,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
             continue
 
         if entry_type_lower == "event_msg":
+            if payload_type == "thread_name_updated":
+                # automatic-session-naming (M1/FR-4): previously read into a
+                # local variable and discarded (tech-codex-spike.md Finding 5).
+                # "Replace-in-place" semantics observed (0.74% of named sessions
+                # emit a second thread_name_updated) -- last non-empty value wins.
+                thread_name_value = str(payload_dict.get("thread_name") or "").strip()
+                if thread_name_value:
+                    session_name = thread_name_value
+                    session_name_source = SESSION_NAME_SOURCE_PROVIDER_PERSISTED
+                continue
             summary_text = str(payload_dict.get("summary") or payload_dict.get("message") or payload_dict.get("text") or "").strip()
             if payload_type in {"task_started", "task_complete", "turn_aborted", "context_compacted", "item_completed", "thread_rolled_back"}:
                 append_log(
@@ -1258,6 +1291,36 @@ def parse_session_file(path: Path) -> AgentSession | None:
         },
     }
 
+    # automatic-session-naming (M2/T2-002/FR-7): codex_exec headless sessions never
+    # emit thread_name_updated (0/960 measured, tech-codex-spike.md Finding 2), so
+    # they reach this point with session_name still "". git_branch (read above from
+    # session_meta.payload.git.branch, FR-5) is a zero-model-call deterministic
+    # fallback, 95% present per the same spike. Gate on "no provider name yet" so a
+    # derived_deterministic value never overwrites a stronger provider_persisted one
+    # (session_name_provenance.py's rubric contract) -- session_name is only ever ""
+    # here if no thread_name_updated fired anywhere earlier in this same forward pass.
+    if not session_name and git_branch:
+        session_name = git_branch
+        session_name_source = SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC
+
+    # automatic-session-naming (M2/T2-003/FR-7): the plan's M2 text closes "the
+    # remainder" with "last-prompt then a truncated first message", provider-agnostic.
+    # `last-prompt` is a Claude-Code-only record type (no Codex equivalent), but the
+    # truncated-first-message tail is not — without it a Codex session with neither a
+    # thread_name nor a git.branch (the ~5% of files where session_meta carries no
+    # branch) reaches the FE with no name at all and leans entirely on M3's model call.
+    # first_user_message_text is already captured above for badgeLatestSummary, so this
+    # reuses it rather than adding a second text-extraction path. Truncated to 120 to
+    # match the bound the Claude parser's equivalent rank-4 write uses (which in turn
+    # reuses that file's pre-existing `summary_text[:120]` convention); the capture
+    # above is bounded at 200 for its badge use, so re-slice here rather than widen it.
+    # Gated on `not session_name` for the same reason as the Claude-side rank-4 write:
+    # equal-rank tokens are mutually overwritable under may_overwrite, so a plain
+    # emptiness gate — not a rank comparison — is what makes this defer to git_branch.
+    if not session_name and first_user_message_text:
+        session_name = first_user_message_text[:SESSION_NAME_FALLBACK_TRUNCATION_LEN].strip()
+        session_name_source = SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC
+
     session_dates: dict[str, Any] = {}
     for key, candidate in (
         ("createdAt", make_date_value(fs_dates.get("createdAt", ""), "high", "filesystem", "session_file_created")),
@@ -1297,6 +1360,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
         taskId="",
         status=session_status,
         model=model,
+        # automatic-session-naming (M1/FR-4): provider-persisted thread name
+        # from event_msg.payload.type == "thread_name_updated". "" -> None: no
+        # name found is a null contract state, never an empty string.
+        sessionName=session_name or None,
+        sessionNameSource=session_name_source or None,
         modelSlug=_canonical_model_slug(model),
         platformType="Codex",
         platformVersion=platform_version,
@@ -1321,7 +1389,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         endedAt=last_ts,
         createdAt=fs_dates.get("createdAt", ""),
         updatedAt=fs_dates.get("updatedAt", ""),
-        gitBranch=None,
+        gitBranch=git_branch,
         gitAuthor=None,
         gitCommitHash=None,
         gitCommitHashes=[],

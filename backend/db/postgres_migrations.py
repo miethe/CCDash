@@ -1,6 +1,10 @@
 """PostgreSQL database schema creation and versioning.
 
 Schema version history (keep in lockstep with sqlite_migrations.py):
+  v50 — automatic-session-naming M1: sessions table gains session_name
+         (nullable TEXT) + session_name_source (nullable TEXT, closed
+         vocabulary -- see backend/parsers/session_name_provenance.py).
+         Additive, no backfill in the migration itself.
   v49 — subagent-skill-inheritance: sessions table gains skill_name_source
          (nullable TEXT, closed vocabulary — see
          backend/parsers/skill_provenance.py). Distinguishes a directly
@@ -49,7 +53,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 49
+SCHEMA_VERSION = 50
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -237,6 +241,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- written before this column, or skill_name itself NULL). Direct detection
     -- always wins; inheritance never overwrites a non-null skill_name.
     skill_name_source TEXT,
+    -- automatic-session-naming (v50). Nullable; the human-meaningful session
+    -- name (provider-set, deterministically derived, or model-generated).
+    -- NULL == not yet named (contract state, never fabricated).
+    session_name TEXT,
+    -- automatic-session-naming (v50). Nullable; records how session_name was
+    -- obtained. Closed vocabulary lives in
+    -- backend/parsers/session_name_provenance.py. NULL == provenance unknown
+    -- (row written before this column, or session_name itself NULL). A
+    -- weaker source must never overwrite a stronger one (see that module's
+    -- rank helper).
+    session_name_source TEXT,
     -- Phase 2 Codex ingestion (codex-session-ingestion-v1).  Populated from
     -- session_forensics["entryContext"]["workingDirectories"][0] for Codex
     -- sessions; NULL for Claude Code sessions (contract state, not a bug).
@@ -4107,6 +4122,17 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
             "v49 migrations complete: sessions.skill_name_source added "
             "(nullable, no default, no backfill in this migration -- see "
             "backend/parsers/skill_provenance.py)."
+        )
+
+    # ── v50 migrations (automatic-session-naming M1) ─────────────────────────
+    if current_version < 50:
+        await _ensure_column(db, "sessions", "session_name", "TEXT")
+        await _ensure_column(db, "sessions", "session_name_source", "TEXT")
+        logger.info(
+            "v50 migrations complete: sessions.session_name + "
+            "sessions.session_name_source added (nullable, no default, no "
+            "backfill in this migration -- see "
+            "backend/parsers/session_name_provenance.py)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

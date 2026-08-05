@@ -539,6 +539,11 @@ async def _impl(
         str(session_payload.get("platform_type") or "Claude Code").strip() or "Claude Code"
     )
     session_payload["projectId"] = str(session_payload.get("project_id") or "")
+    # automatic-session-naming (schema v50, T1-003): camelCase aliases for the
+    # session-name pair, same additive idiom as platformType/projectId above.
+    # None/absent == no name yet (a contract state, never guessed here).
+    session_payload["sessionName"] = session_payload.get("session_name")
+    session_payload["sessionNameSource"] = session_payload.get("session_name_source")
     transcript_logs_for_intelligence = transcript_page.items if transcript_page is not None else []
     transcript_intelligence = build_transcript_intelligence_index(
         session_payload,

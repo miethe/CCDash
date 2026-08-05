@@ -32,6 +32,7 @@ import type {
 } from '@/types';
 import { BtnGhost } from '../primitives';
 import { formatLastActivity } from '@/lib/planningHelpers';
+import { deriveSessionCardTitle, SessionNameProvenanceBadge } from '@/components/SessionCard';
 
 // Multi-project grouping extends V1 PlanningBoardGroupingMode with 'project'
 // exported so callers can reference the extended type.
@@ -219,6 +220,23 @@ const AggregateSessionCardView = memo(function AggregateSessionCardView({
               {card.state}
             </span>
           </div>
+
+          {/* Session name (automatic-session-naming) — fed through the
+              existing deriveSessionCardTitle chain as explicitTitle, never
+              rendered directly. Only shown when a name exists; the bare
+              session id is already in the card's aria-label/data attributes. */}
+          {Boolean((card.sessionName || '').trim()) && (
+            <p
+              className="planning-mono text-[11px] truncate flex items-center gap-1"
+              style={{ color: 'var(--ink-1)' }}
+              title={deriveSessionCardTitle(card.sessionId, card.sessionName ?? undefined, null)}
+            >
+              <span className="truncate">
+                {deriveSessionCardTitle(card.sessionId, card.sessionName ?? undefined, null)}
+              </span>
+              <SessionNameProvenanceBadge sessionName={card.sessionName} sessionNameSource={card.sessionNameSource} />
+            </p>
+          )}
 
           {/* Feature correlation */}
           {card.correlation?.featureName && (

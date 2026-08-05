@@ -890,6 +890,11 @@ async def list_sessions(
             # Schema v49: provenance token for skillName. None == unknown
             # provenance (row predates the column, or skillName is None).
             skillNameSource=s.get("skill_name_source"),
+            # automatic-session-naming (schema v50): human-meaningful session
+            # label + its provenance. None == no name yet (contract state,
+            # never guessed at read time).
+            sessionName=s.get("session_name"),
+            sessionNameSource=s.get("session_name_source"),
             contextWindow=s.get("context_window"),
             # Phase 11 launch-time capture (T11-005). DB columns are snake_case
             # (effort_tier/model_variant); the contract is camelCase. None ==
@@ -1315,6 +1320,11 @@ async def get_session(
         # Schema v49: provenance token for skillName. None == unknown
         # provenance (row predates the column, or skillName is None).
         skillNameSource=s.get("skill_name_source"),
+        # automatic-session-naming (schema v50): human-meaningful session
+        # label + its provenance. None == no name yet (contract state, never
+        # guessed at read time).
+        sessionName=s.get("session_name"),
+        sessionNameSource=s.get("session_name_source"),
         contextWindow=s.get("context_window"),
         # Phase 11 launch-time capture (T11-005). DB columns are snake_case
         # (effort_tier/model_variant); the contract is camelCase. None ==

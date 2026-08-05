@@ -228,7 +228,19 @@ def _derive_session_title(
     *,
     session_type: str = "",
     subagent_type: str = "",
+    session_name: str = "",
 ) -> str:
+    # automatic-session-naming (OQ-1, resolved 2026-08-05): sessions.session_name
+    # is the strongest available title signal (provider_persisted / derived_*),
+    # so it takes priority over every fallback below, mirroring the FE title
+    # chain's explicitTitle precedence (components/SessionCard.tsx
+    # deriveSessionCardTitle). See
+    # .claude/worknotes/automatic-session-naming/implementation-notes.md for the
+    # reuse-vs-distinct-field decision record.
+    session_name_text = (session_name or "").strip()
+    if session_name_text:
+        return session_name_text
+
     if str(session_type or "").strip().lower() == "subagent" and subagent_type:
         return subagent_type
 
@@ -859,6 +871,7 @@ async def _enrich_linked_session_row(
         session_id,
         session_type=session_type,
         subagent_type=subagent_type,
+        session_name=str(row.get("session_name") or ""),
     )
     is_direct_link = link_data is not None
     model_identity = derive_model_identity(row.get("model"))

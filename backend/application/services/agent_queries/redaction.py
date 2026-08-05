@@ -42,6 +42,19 @@ def _redaction_env_bool(name: str, default: bool = True) -> bool:
     return val.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def redaction_patterns_enabled() -> bool:
+    """Public reader for the Layer 1 pattern-scan gate (``CCDASH_REDACTION_PATTERNS_ENABLED``).
+
+    Fail-closed default (``True``) — same semantics ``redact_entries``/
+    ``redact_log_entry`` use internally when no override is passed. Exists
+    so call sites that need to gate *other* behavior on this flag (e.g. the
+    automatic-session-naming Lane B hosted backend, which must be
+    unreachable unless this gate is on) read the exact same env-parsing
+    logic ``redact_entries`` itself uses, rather than re-deriving it.
+    """
+    return _redaction_env_bool("CCDASH_REDACTION_PATTERNS_ENABLED", True)
+
+
 # ── Layer 1: Known-secret patterns ───────────────────────────────────────────
 #
 # Each entry: (label, compiled_regex)

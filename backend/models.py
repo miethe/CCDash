@@ -279,6 +279,17 @@ class AgentSession(BaseModel):
     # backend/parsers/skill_provenance.py (directly_detected / inherited_parent).
     # None == provenance unknown (row predates the column, or skillName is None).
     skillNameSource: Optional[str] = None
+    # automatic-session-naming (schema v50): human-meaningful session label.
+    # Populated from a provider-persisted record (Claude Code ``ai-title``,
+    # Codex ``thread_name_updated``) in M1, then by deterministic fallbacks
+    # (M2) and a worker-side derived-naming job (M3). None == no name yet
+    # (contract state, never guessed at read time).
+    sessionName: Optional[str] = None
+    # Provenance for sessionName: which lane supplied the value. Token
+    # vocabulary + trust order (including reserved, not-yet-written tokens):
+    # backend/parsers/session_name_provenance.py. None == provenance unknown
+    # (row predates the column, or sessionName is None).
+    sessionNameSource: Optional[str] = None
     # T5-003: context-window label (e.g. "1M") attributed via the workflow.json
     # sidecar join in sync_engine. None == no sidecar matched (contract state).
     contextWindow: Optional[str] = None

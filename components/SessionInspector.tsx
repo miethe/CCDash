@@ -21,7 +21,7 @@ import { getFeatureStatusStyle } from './featureStatus';
 import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 import { ActivityView, FilesView, SessionSummaryCard } from './SessionInspector/SessionInspectorPanels';
 import { collectThreadDetailSessions } from './SessionInspector/sessionInspectorShared';
-import { deriveSessionCardTitle } from './SessionCard';
+import { deriveSessionCardTitle, SessionNameProvenanceBadge } from './SessionCard';
 import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
 import { Badge, ModelBadge, StableBadge } from './ui/badge';
@@ -5304,8 +5304,12 @@ const SessionDetail = React.memo<{
             .map(([normalizedTaskId, taskId]) => ({ normalizedTaskId, taskId }));
     }, [effectiveSession.linkedArtifacts, effectiveSession.logs]);
     const sessionDisplayTitle = useMemo(
-        () => deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null),
-        [session.id, session.title, session.sessionMetadata]
+        // automatic-session-naming: feed session.sessionName (provider-persisted
+        // or deterministically/generatively derived, schema v50) into the
+        // existing explicitTitle slot ahead of the legacy session.title field —
+        // no new fallback logic, same chain, same null-resilience.
+        () => deriveSessionCardTitle(session.id, session.sessionName || session.title, session.sessionMetadata || null),
+        [session.id, session.sessionName, session.title, session.sessionMetadata]
     );
     const sessionForensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
     const forkSummary = useMemo(() => asRecord(sessionForensics.forkSummary), [sessionForensics]);
@@ -5383,7 +5387,8 @@ const SessionDetail = React.memo<{
                         </button>
                         <div className="min-w-0">
                             <h2 className="text-xl font-bold text-panel-foreground flex items-center gap-2 min-w-0">
-                                {sessionDisplayTitle}
+                                <span className="truncate">{sessionDisplayTitle}</span>
+                                <SessionNameProvenanceBadge sessionName={session.sessionName} sessionNameSource={session.sessionNameSource} />
                             </h2>
                             <div className="text-xs text-muted-foreground font-mono tracking-wider mt-0.5 truncate">{session.id}</div>
                             <div className="flex flex-wrap items-center gap-3 mt-0.5">

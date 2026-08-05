@@ -229,6 +229,11 @@ function adaptV1SessionCard(wire: Record<string, unknown>): PlanningAgentSession
           };
         })
       : [],
+    // automatic-session-naming: provider-persisted/derived session label +
+    // provenance. null/absent == no name yet (contract state) — fed into the
+    // existing FE title chain by callers, never rendered directly.
+    sessionName: wire.session_name != null ? String(wire.session_name) : null,
+    sessionNameSource: wire.session_name_source != null ? String(wire.session_name_source) : null,
   };
 }
 

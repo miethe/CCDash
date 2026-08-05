@@ -31,6 +31,19 @@ from backend.parsers.platforms.test_runs import (
     parse_test_run_from_command,
 )
 from backend.parsers.capture_sidecar import parse_capture_sidecar
+from backend.parsers.session_name_provenance import (
+    SESSION_NAME_FALLBACK_TRUNCATION_LEN,
+    SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC,
+    SESSION_NAME_SOURCE_PROVIDER_PERSISTED,
+    may_overwrite,
+)
+
+#: Matches the ``.orphaned-<epoch>-<hash>`` suffix orphan recovery appends to a
+#: session's filename (e.g. ``0eac19af-….orphaned-1785631141454-be039dde``).
+#: The base UUID before the suffix is still the file's real session id -- see
+#: tech-claude-spike.md §5 ("Attribution") -- so this must be stripped before
+#: comparing against an ``ai-title`` record's ``sessionId`` field.
+_ORPHANED_SUFFIX_PATTERN = re.compile(r"\.orphaned-\d+-[0-9a-fA-F]+$")
 
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
@@ -43,6 +56,21 @@ _REQ_ID_PATTERN = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
 _VERSION_SUFFIX_PATTERN = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
 _PLACEHOLDER_PATH_PATTERN = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
 _ASYNC_TASK_AGENT_ID_PATTERN = re.compile(r"\bagentid\s*:\s*([A-Za-z0-9_-]+)\b", re.IGNORECASE)
+
+#: automatic-session-naming (M2/T2-003): truncation length for the two
+#: lowest-ranked deterministic fallbacks (``last-prompt`` and "first user
+#: message"). Chosen to match this file's own existing title-length
+#: convention rather than inventing a new one -- the ``summary`` entry type
+#: already truncates its artifact ``title`` to 120 chars (see the
+#: ``entry_type == "summary"`` branch below), and neither a ``last-prompt``
+#: text nor a raw first message is any shorter or more title-shaped than a
+#: provider summary, so the same bound applies. No ellipsis is appended,
+#: matching that same precedent.
+#: Now an alias for the shared constant in ``session_name_provenance`` (feature-level
+#: review finding L-8) so the Codex parser, which cuts the same kind of name, cannot
+#: drift from this value. Kept as a module-local name because this file references it
+#: in two places; the rationale above is preserved as the origin of the number.
+_SESSION_NAME_FALLBACK_TRUNCATION_LEN = SESSION_NAME_FALLBACK_TRUNCATION_LEN
 _TASK_ID_PATTERN = re.compile(r"\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b")
 _BATCH_HEADER_PATTERN = re.compile(r"(?:\*\*)?\s*Batch\s+([A-Za-z0-9_-]+)\s*(?:\*\*)?", re.IGNORECASE)
 _BATCH_BULLET_PATTERN = re.compile(r"^\s*-\s*\*\*([^*]+)\*\*\s*:\s*(.+?)\s*$")
@@ -475,6 +503,18 @@ def _extract_raw_session_id(path: Path, is_subagent: bool) -> str:
     if is_subagent:
         return path.parent.parent.name
     return path.stem
+
+
+def _strip_orphan_suffix(stem: str) -> str:
+    """Strip a trailing ``.orphaned-<epoch>-<hash>`` suffix from a file stem.
+
+    Orphan recovery renames a session file to append this suffix while
+    leaving the base UUID (the file's real session id) intact. Used to
+    recover the file's own session id for the ``ai-title.sessionId``
+    attribution assertion (FR-3 / named risk "Wrong name on the wrong
+    session").
+    """
+    return _ORPHANED_SUFFIX_PATTERN.sub("", stem)
 
 
 def _normalize_thinking_level(raw_level: str) -> str:
@@ -1918,6 +1958,19 @@ def parse_session_file(path: Path) -> AgentSession | None:
     git_author = ""
     git_commit = ""
     git_commits: set[str] = set()
+    # automatic-session-naming (M1/FR-3): provider-persisted name from the
+    # session's own ``ai-title`` record. "" == no (verified) name found yet;
+    # a mismatched sessionId is skipped, never stored (see _strip_orphan_suffix).
+    session_name = ""
+    session_name_source = ""
+    # automatic-session-naming (M2/T2-003): rank-4 fallback ("first user
+    # message, truncated") -- the ~100%-coverage floor of the chain
+    # (tech-claude-spike.md's "No-Name Fallback Options" table). Captured once,
+    # from the FIRST user-authored message text seen in the forward pass
+    # (str message, str content, and joined text-block content all funnel a
+    # user message through this one variable), so later user turns never
+    # displace it.
+    first_user_message_text = ""
     tokens_in = 0
     tokens_out = 0
     first_ts = ""
@@ -2917,6 +2970,57 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 )
             continue
 
+        if entry_type == "ai-title":
+            # automatic-session-naming (M1/FR-3): the record is self-referential
+            # for 12,746/12,746 measured files (tech-claude-spike.md §5), but the
+            # parser MUST still assert sessionId == <file's session id> and skip
+            # on mismatch -- that assertion, not the historical measurement, is
+            # what keeps "wrong name on the wrong session" (the plan's
+            # highest-consequence named risk) from becoming true under a future
+            # provider change. Idempotent re-emission (2.1% of files mutate the
+            # value) is handled by "latest wins": a later verified record simply
+            # overwrites the earlier one via this same assignment.
+            ai_title_value = str(entry.get("aiTitle") or "").strip()
+            ai_title_session_id = str(entry.get("sessionId") or "").strip()
+            file_session_id = _strip_orphan_suffix(path.stem)
+            if ai_title_value and ai_title_session_id == file_session_id:
+                session_name = ai_title_value
+                session_name_source = SESSION_NAME_SOURCE_PROVIDER_PERSISTED
+            continue
+
+        if entry_type == "last-prompt":
+            # automatic-session-naming (M2/T2-003): rank-3 deterministic
+            # fallback (tech-claude-spike.md's "No-Name Fallback Options"
+            # table, 25.51% file coverage). The record shares ``ai-title``'s
+            # exact self-attribution shape -- {"type", "lastPrompt"/"aiTitle",
+            # "sessionId"} -- so the same skip-on-mismatch assertion applies
+            # (the plan's highest-consequence named risk is "wrong name on the
+            # wrong session"). Excluded from subagent files: T2-001 already
+            # owns that population via parent-title inheritance at
+            # sync_engine.py:3307, and this fallback must not race it with a
+            # second, weaker mechanism for the same rows (scope note in the
+            # T2-003 dispatch). Rank enforcement goes through ``may_overwrite``
+            # rather than an inline comparison, per
+            # session_name_provenance.py's own contract -- a later ``ai-title``
+            # record elsewhere in the file (mean relative position 0.577, so
+            # order is not guaranteed) must still win regardless of when this
+            # branch runs.
+            if not is_subagent:
+                last_prompt_value = str(entry.get("lastPrompt") or "").strip()
+                last_prompt_session_id = str(entry.get("sessionId") or "").strip()
+                file_session_id = _strip_orphan_suffix(path.stem)
+                if (
+                    last_prompt_value
+                    and last_prompt_session_id == file_session_id
+                    and may_overwrite(
+                        SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC,
+                        session_name_source or None,
+                    )
+                ):
+                    session_name = last_prompt_value[:_SESSION_NAME_FALLBACK_TRUNCATION_LEN]
+                    session_name_source = SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC
+            continue
+
         if entry_type == "pr-link":
             pr_number = entry.get("prNumber") or entry.get("pr_number")
             pr_url = entry.get("prUrl") or entry.get("pr_url") or entry.get("url")
@@ -3114,6 +3218,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
         if isinstance(message, str):
             content = message.strip()
             if content:
+                # automatic-session-naming (M2/T2-003): rank-4 fallback --
+                # capture the FIRST user-authored text seen in the forward
+                # pass, regardless of which of the three message shapes it
+                # arrives in (str message / str content / joined text
+                # blocks). Excludes subagent files for the same reason as the
+                # ``last-prompt`` branch above (T2-001 already owns that
+                # population).
+                if not is_subagent and speaker == "user" and not first_user_message_text:
+                    first_user_message_text = content
                 message_metadata: dict[str, Any] = {}
                 if current_message_model:
                     message_metadata["model"] = current_message_model
@@ -3146,6 +3259,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
         if isinstance(content_blocks, str):
             content = content_blocks.strip()
             if content:
+                if not is_subagent and speaker == "user" and not first_user_message_text:
+                    first_user_message_text = content
                 message_metadata: dict[str, Any] = {}
                 if current_message_model:
                     message_metadata["model"] = current_message_model
@@ -3614,6 +3729,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
         message_text = "\n".join(part for part in text_parts if part and part.strip()).strip()
         if message_text:
+            if not is_subagent and speaker == "user" and not first_user_message_text:
+                first_user_message_text = message_text
             message_metadata: dict[str, Any] = {}
             if current_message_model:
                 message_metadata["model"] = current_message_model
@@ -3640,6 +3757,26 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 metadata=message_metadata,
             )
             postprocess_message_log(idx, message_text, speaker, entry)
+
+    # automatic-session-naming (M2/T2-003): rank-4, last-resort fallback --
+    # "first user message, truncated" -- closes the ~100%-coverage floor of
+    # the chain (tech-claude-spike.md's "No-Name Fallback Options" table) for
+    # any interactive (non-subagent) session that still has no name after
+    # ai-title (rank 1) and last-prompt (rank 3; rank 2, ``agent-name``, is a
+    # subagent-only label and out of scope here). Applied once, after the full
+    # forward pass, so every stronger write above has already had its chance.
+    #
+    # Gated on ``not session_name`` rather than ``may_overwrite`` on purpose:
+    # last-prompt and this fallback share the SAME provenance token
+    # (``derived_deterministic`` -- see that module's docstring, "subagent
+    # inheritance, git.branch, last-prompt, truncated first message" are one
+    # tier), so ``may_overwrite`` cannot distinguish rank 3 from rank 4 -- it
+    # would happily let this weaker candidate replace an already-written
+    # last-prompt value at equal rank. "Only fire when nothing wrote a name at
+    # all" is what actually preserves the chain's ordering here.
+    if not is_subagent and not session_name and first_user_message_text:
+        session_name = first_user_message_text[:_SESSION_NAME_FALLBACK_TRUNCATION_LEN]
+        session_name_source = SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC
 
     if not is_subagent:
         nodes_by_uuid, children_by_parent, parent_by_child = _build_entry_graph(entries)
@@ -4650,6 +4787,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
         id=session_id,
         taskId=task_id,
         status=session_status,
+        # automatic-session-naming (M1/FR-3): provider-persisted name from this
+        # file's own (attribution-verified) ai-title record. "" -> None: no
+        # name found is a null contract state, never an empty string.
+        sessionName=session_name or None,
+        sessionNameSource=session_name_source or None,
         model=model,
         modelSlug=_canonical_model_slug(model),
         platformType=platform_type,
