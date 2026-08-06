@@ -68,6 +68,13 @@ OTEL_ENABLED = _env_bool("CCDASH_OTEL_ENABLED", False)
 OTEL_ENDPOINT = os.getenv("CCDASH_OTEL_ENDPOINT", "http://localhost:4318")
 OTEL_SERVICE_NAME = os.getenv("CCDASH_OTEL_SERVICE_NAME", "ccdash-backend")
 PROM_PORT = _env_int("CCDASH_PROM_PORT", 9464)
+# CCDASH_LOG_LEVEL — root logger level for ``backend/runtime/container.py``'s
+# ``_configure_root_logging``. Without a root handler, records below WARNING
+# never reach any output (Python's ``lastResort`` handler is WARNING-level
+# only), so every ``ccdash.*`` INFO/DEBUG log is silently dropped in every
+# runtime profile. Normalized upper-case; an unrecognised value falls back to
+# INFO at the call site (``getattr(logging, name, logging.INFO)``), never raises.
+CCDASH_LOG_LEVEL = os.getenv("CCDASH_LOG_LEVEL", "INFO").strip().upper() or "INFO"
 
 # Feature flags
 CCDASH_TEST_VISUALIZER_ENABLED = _env_bool("CCDASH_TEST_VISUALIZER_ENABLED", False)

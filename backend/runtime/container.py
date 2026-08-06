@@ -70,6 +70,57 @@ logger = logging.getLogger("ccdash.runtime")
 _WORKER_JOB_PROFILES = {"worker", "worker-watch"}
 
 
+def _configure_root_logging() -> None:
+    """Attach a handler to the root logger so ``ccdash.*`` INFO/DEBUG records
+    are actually emitted, in every runtime profile.
+
+    Extracted to a module-level function (mirrors
+    ``_construct_session_naming_sweep_job`` above) so it is directly
+    unit-testable without exercising ``RuntimeContainer.startup()`` -- which
+    touches the DB and hangs under this repo's unscoped test collection.
+
+    The defect this fixes: no code path in this repo ever called
+    ``logging.basicConfig`` (or configured the root logger any other way).
+    Every ``backend/**`` module does ``logger = logging.getLogger("ccdash....")``
+    and calls ``.info()``/``.debug()``, but with zero handlers on the root
+    logger, only Python's built-in ``lastResort`` handler fires -- and that
+    is stderr, WARNING-level only. INFO/DEBUG lines (including a job's
+    "started" / "candidates found" / "sweep complete" lines) are silently
+    dropped in every profile, including ``api`` -- uvicorn's own
+    ``Config.configure_logging()`` only attaches handlers to the
+    ``uvicorn``/``uvicorn.access`` namespaces, which is uvicorn's request
+    logging, not this application's.
+
+    Idempotent and non-destructive:
+
+    - If the root logger ALREADY has a handler (uvicorn's own startup,
+      pytest's ``caplog``/log-capturing fixtures, or a previous call to this
+      function within the same process), this is a no-op -- existing handler
+      configuration is left completely untouched.
+    - ``startup()`` may run more than once in a process (tests especially);
+      the handler-presence check makes repeat calls safe without needing any
+      extra idempotency flag.
+
+    Level is controlled by ``config.CCDASH_LOG_LEVEL`` (default ``"INFO"``);
+    an unrecognised value falls back to ``logging.INFO`` rather than raising.
+    """
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        # Something already configured the root logger (uvicorn, pytest's
+        # caplog, an embedding host application, or a prior call to this
+        # function in-process). Respect it -- do not add a duplicate handler
+        # and do not touch existing configuration.
+        return
+
+    level = getattr(logging, config.CCDASH_LOG_LEVEL, logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    root_logger.addHandler(handler)
+    root_logger.setLevel(level)
+
+
 def _construct_session_naming_sweep_job(profile_name: str, ports: Any) -> SessionNamingSweepJob | None:
     """The exact gate + construction ``RuntimeContainer.startup()`` runs for
     ``SessionNamingSweepJob`` -- extracted to a module-level function so it is
@@ -137,6 +188,7 @@ class RuntimeContainer:
         self._binding_lru_maxsize: int = 64
 
     async def startup(self, app: FastAPI) -> None:
+        _configure_root_logging()
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
         validate_migration_governance_contract()
         self.auth_config = config.resolve_auth_provider_config(self.profile.name)
