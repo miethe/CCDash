@@ -14,12 +14,14 @@ Coverage:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
+from pydantic import BaseModel
 
 
 class TestInProcessCacheBackend(unittest.TestCase):
@@ -617,6 +619,203 @@ class TestMemoizedQueryTTL(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result1, result2)
         finally:
             c._active_backend = original_backend
+
+
+class _RoundTripRow(BaseModel):
+    """Sub-model standing in for one element of a DTO's list field."""
+
+    flag_id: str
+    triggered: bool = False
+
+
+class _RoundTripDTO(BaseModel):
+    """Module-level so ``typing.get_type_hints`` can resolve the annotation.
+
+    ``memoized_query`` resolves the wrapped function's return type ONCE at
+    decoration time via ``typing.get_type_hints(func)``.  Because this module
+    uses ``from __future__ import annotations`` the raw annotation is a string,
+    so the referenced type must live in the function's module globals -- a
+    class defined inside a test method body would not resolve and the
+    reconstruction path would silently degrade to "return raw JSON".  Mirrors
+    the real ``AARReviewListDTO`` shape (scalar fields + a list of sub-models)
+    without coupling these tests to the AAR domain.
+    """
+
+    project_id: str = ""
+    total: int = 0
+    reviews: list[_RoundTripRow] = []
+
+
+class TestMemoizedQueryCacheHitReconstruction(unittest.IsolatedAsyncioTestCase):
+    """Regression: aar-review-response-serialization-fix (cache-HIT half).
+
+    ``test_aset_of_a_pydantic_model_does_not_corrupt_into_a_repr_string``
+    (above) covers ``_json_safe`` on the WRITE side only -- it calls
+    ``PostgresCacheBackend.aset``/``aget`` directly and therefore never
+    reaches ``memoized_query``'s cache-HIT branch.  These tests drive the FULL
+    decorator round trip over a JSON-serialising backend so that
+    ``_reconstruct_from_cache`` (and the decoration-time return-type
+    resolution it depends on) is genuinely exercised: without it a HIT hands
+    the caller a bare ``dict`` where the ``response_model`` expects the
+    declared pydantic model, producing the ``ResponseValidationError`` (500)
+    seen on ``GET /api/v1/project/aar-review`` with the Postgres cache
+    backend active.
+    """
+
+    async def asyncSetUp(self):
+        from backend.application.services.agent_queries import cache as c
+        from backend.application.services.agent_queries.cache import PostgresCacheBackend
+
+        self._db = await aiosqlite.connect(":memory:")
+        self._db.row_factory = aiosqlite.Row
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS query_cache (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                project_id TEXT NOT NULL DEFAULT '',
+                expires_at TEXT NOT NULL
+            )
+        """)
+        await self._db.commit()
+
+        # Activate the serialising backend: an in-process backend can never
+        # reproduce this bug class because it stores the live Python object.
+        self._cache_mod = c
+        self._original_backend = c._active_backend
+        c._active_backend = PostgresCacheBackend(db=self._db)
+
+    async def asyncTearDown(self):
+        self._cache_mod._active_backend = self._original_backend
+        await self._db.close()
+
+    async def _stored_rows(self) -> list[dict]:
+        async with self._db.execute("SELECT key, value FROM query_cache") as cur:
+            rows = await cur.fetchall()
+        return [{"key": r[0], "value": r[1]} for r in rows]
+
+    async def test_cache_hit_returns_the_declared_model_not_a_dict_or_str(self):
+        """A HIT through the serialising backend must rehydrate into the model."""
+        from backend.application.services.agent_queries import cache as c
+        from backend.application.services.agent_queries.cache import memoized_query
+
+        call_count = 0
+
+        class FakeService:
+            @memoized_query("rt_flat_endpoint")
+            async def get_dto(self, context, ports, *, project_id=None) -> _RoundTripDTO:
+                nonlocal call_count
+                call_count += 1
+                return _RoundTripDTO(project_id="proj-RT", total=call_count)
+
+        ctx = MagicMock()
+        ctx.project.project_id = "proj-RT"
+        ports = MagicMock()
+        ports.storage.db = MagicMock()
+        svc = FakeService()
+
+        with patch.object(c, "get_data_version_fingerprint", new=AsyncMock(return_value="fp_rt")):
+            first = await svc.get_dto(ctx, ports, project_id="proj-RT")   # MISS -> stores
+            second = await svc.get_dto(ctx, ports, project_id="proj-RT")  # HIT  -> rehydrates
+
+        # The second call must not have re-entered the wrapped function.
+        self.assertEqual(call_count, 1, "second call should have been served from cache")
+
+        self.assertIsInstance(first, _RoundTripDTO)
+        self.assertNotIsInstance(
+            second, str,
+            f"cache HIT degraded into an opaque string: {second!r}",
+        )
+        self.assertIsInstance(
+            second, _RoundTripDTO,
+            f"cache HIT returned {type(second).__name__} instead of _RoundTripDTO "
+            f"-- FastAPI response_model validation would reject this: {second!r}",
+        )
+        self.assertEqual(second.project_id, "proj-RT")
+        self.assertEqual(second.total, 1)
+
+    async def test_cache_hit_preserves_nested_sub_model_list_integrity(self):
+        """Nested list-of-models survives the JSON round trip as real sub-models."""
+        from backend.application.services.agent_queries import cache as c
+        from backend.application.services.agent_queries.cache import memoized_query
+
+        call_count = 0
+
+        class FakeService:
+            @memoized_query("rt_nested_endpoint")
+            async def get_dto(self, context, ports, *, project_id=None) -> _RoundTripDTO:
+                nonlocal call_count
+                call_count += 1
+                return _RoundTripDTO(
+                    project_id="proj-RT2",
+                    total=2,
+                    reviews=[
+                        _RoundTripRow(flag_id="f1", triggered=True),
+                        _RoundTripRow(flag_id="f2", triggered=False),
+                    ],
+                )
+
+        ctx = MagicMock()
+        ctx.project.project_id = "proj-RT2"
+        ports = MagicMock()
+        ports.storage.db = MagicMock()
+        svc = FakeService()
+
+        with patch.object(c, "get_data_version_fingerprint", new=AsyncMock(return_value="fp_rt2")):
+            await svc.get_dto(ctx, ports, project_id="proj-RT2")          # MISS
+            hit = await svc.get_dto(ctx, ports, project_id="proj-RT2")    # HIT
+
+        self.assertEqual(call_count, 1)
+        self.assertIsInstance(
+            hit, _RoundTripDTO,
+            f"cache HIT returned {type(hit).__name__}: {hit!r}",
+        )
+        self.assertEqual(len(hit.reviews), 2)
+        for row in hit.reviews:
+            self.assertIsInstance(
+                row, _RoundTripRow,
+                f"nested element did not rehydrate into _RoundTripRow: {row!r}",
+            )
+        self.assertEqual([r.flag_id for r in hit.reviews], ["f1", "f2"])
+        self.assertEqual([r.triggered for r in hit.reviews], [True, False])
+
+    async def test_stored_backend_value_is_json_native_not_a_repr_string(self):
+        """Negative control: the WRITE half stores JSON, so the HIT half can rehydrate.
+
+        Proves the two halves of the fix compose -- ``_json_safe`` puts a plain
+        dict/list tree on the wire, and ``_reconstruct_from_cache`` turns that
+        back into the declared model.  If the stored payload were the historical
+        opaque repr string, no reconstruction would be possible at all.
+        """
+        from backend.application.services.agent_queries import cache as c
+        from backend.application.services.agent_queries.cache import memoized_query
+
+        class FakeService:
+            @memoized_query("rt_negctl_endpoint")
+            async def get_dto(self, context, ports, *, project_id=None) -> _RoundTripDTO:
+                return _RoundTripDTO(
+                    project_id="proj-RT3",
+                    total=1,
+                    reviews=[_RoundTripRow(flag_id="f9", triggered=True)],
+                )
+
+        ctx = MagicMock()
+        ctx.project.project_id = "proj-RT3"
+        ports = MagicMock()
+        ports.storage.db = MagicMock()
+        svc = FakeService()
+
+        with patch.object(c, "get_data_version_fingerprint", new=AsyncMock(return_value="fp_rt3")):
+            await svc.get_dto(ctx, ports, project_id="proj-RT3")
+
+        rows = await self._stored_rows()
+        self.assertEqual(len(rows), 1, f"expected exactly one cached row, got {rows!r}")
+        decoded = json.loads(rows[0]["value"])
+        self.assertIsInstance(
+            decoded, dict,
+            f"stored cache payload is not JSON-native: {rows[0]['value']!r}",
+        )
+        self.assertEqual(decoded["project_id"], "proj-RT3")
+        self.assertEqual(decoded["reviews"], [{"flag_id": "f9", "triggered": True}])
 
 
 class TestConfigNewVars(unittest.TestCase):
