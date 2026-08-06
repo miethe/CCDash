@@ -187,6 +187,48 @@ class TestPostgresCacheBackendSqlite(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await backend.aget("k1"))
         self.assertEqual(await backend.aget("k2"), "v2")
 
+    # ------------------------------------------------------------------
+    # Regression: aar-review-response-serialization-fix
+    #
+    # ``aset`` previously called ``json.dumps(value, default=str)`` with the
+    # RAW cached value. When that value was a pydantic BaseModel (as every
+    # memoized_query-decorated service method's result is), json.dumps has
+    # no native encoder for it and falls back to ``default=str`` at the TOP
+    # LEVEL -- stringifying the entire model into its repr, then encoding
+    # THAT string as the "cached value". A later cache hit then handed a
+    # plain string back in place of the model, which failed FastAPI's
+    # response-model validation with a ResponseValidationError (500) at
+    # the ClientV1Envelope[T] boundary. See GET /api/v1/project/aar-review.
+    # ------------------------------------------------------------------
+
+    async def test_aset_of_a_pydantic_model_does_not_corrupt_into_a_repr_string(self):
+        from pydantic import BaseModel
+
+        class _Nested(BaseModel):
+            flag_id: str
+            triggered: bool = False
+
+        class _Sample(BaseModel):
+            project_id: str = ""
+            total: int = 0
+            reviews: list[_Nested] = []
+
+        backend = self._make_backend()
+        model = _Sample(project_id="p1", total=1, reviews=[_Nested(flag_id="f1", triggered=True)])
+        await backend.aset("k1", model, ttl=3600, project_id="p1")
+
+        cached = await backend.aget("k1")
+
+        # The historical defect: cached becomes a single opaque repr string
+        # (e.g. "project_id='p1' total=1 reviews=[_Nested(...)]") instead of
+        # a plain JSON-decodable dict mirroring the model's shape.
+        self.assertIsInstance(
+            cached, dict, f"expected a JSON dict, got corrupted value: {cached!r}"
+        )
+        self.assertEqual(cached["project_id"], "p1")
+        self.assertEqual(cached["total"], 1)
+        self.assertEqual(cached["reviews"], [{"flag_id": "f1", "triggered": True}])
+
 
 class TestBackendSelection(unittest.TestCase):
     """P2-001: backend selection via CCDASH_QUERY_CACHE_BACKEND."""
