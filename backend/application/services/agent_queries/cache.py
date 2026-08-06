@@ -58,6 +58,7 @@ from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
 import aiosqlite
 from cachetools import TTLCache
+from pydantic import BaseModel, TypeAdapter
 
 from backend import config
 from backend.application.context import RequestContext
@@ -188,6 +189,73 @@ def _key_matches_project(key: str, project_id: str) -> bool:
 
 # ── PostgresCacheBackend ─────────────────────────────────────────────────────
 
+def _json_safe(value: Any) -> Any:
+    """Recursively convert *value* into a plain JSON-serialisable shape.
+
+    ``memoized_query``-decorated service methods routinely return pydantic
+    ``BaseModel`` instances (or containers of them) as their cached
+    ``result`` -- e.g. ``AARReviewListDTO``. ``json.dumps`` has no native
+    support for ``BaseModel`` and, given ``default=str`` (as
+    ``PostgresCacheBackend.aset`` historically called it, unguarded), it
+    would fall back to stringifying the *entire* top-level value via
+    ``str(model)`` the moment it hit the first non-JSON-native object --
+    silently corrupting the whole cached payload into a single opaque repr
+    string. A later cache HIT then hands that string back to the caller in
+    place of the real model, which fails FastAPI's response-model
+    validation at the ``ClientV1Envelope[T]`` boundary with a
+    ``ResponseValidationError`` (500) -- the exact defect this fixes.
+    ``model_dump(mode="json")`` already recurses through nested models, so
+    this helper only needs to additionally walk plain ``list``/``dict``
+    containers that might hold model instances at another level.
+    """
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    return value
+
+
+def _reconstruct_from_cache(cached_value: Any, return_type: Any) -> Any:
+    """Rehydrate a cache HIT back into *return_type* when needed.
+
+    The in-process backend never serialises -- a hit there already IS the
+    original Python object (model instance, dict, primitive, ...), so this
+    is a no-op for it. A ``PostgresCacheBackend`` hit, by contrast, is
+    always plain JSON-decoded data (dict/list/primitive) because it round
+    tripped through ``json.dumps``/``json.loads`` -- if the wrapped
+    function's resolved return type is a pydantic model (or a container of
+    one) and the cached value is not already an instance of it, validate it
+    back into that shape so callers downstream of the cache boundary always
+    see the same type on a hit as on a miss.
+    """
+    if return_type is None:
+        return cached_value
+    try:
+        if isinstance(return_type, type) and issubclass(return_type, BaseModel):
+            if isinstance(cached_value, return_type):
+                return cached_value
+            if isinstance(cached_value, dict):
+                return TypeAdapter(return_type).validate_python(cached_value)
+            return cached_value
+        # Non-BaseModel return annotations (primitives, dict[...], list[...],
+        # generics, etc.) round trip through JSON without needing
+        # reconstruction -- leave them exactly as the backend returned them.
+        return cached_value
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "memoized_query: failed to reconstruct cached value as %r (%s); "
+            "returning raw cached value -- this may fail response validation "
+            "downstream.",
+            return_type,
+            exc,
+        )
+        return cached_value
+
+
 class PostgresCacheBackend:
     """Postgres-backed distributed cache (P2-001 enterprise path).
 
@@ -231,7 +299,12 @@ class PostgresCacheBackend:
 
     async def aset(self, key: str, value: Any, ttl: int, project_id: str | None = None) -> None:
         expires_at = _iso_future(ttl)
-        serialised = json.dumps(value, default=str)
+        # ``_json_safe`` converts any pydantic BaseModel (or list/dict of
+        # them) into a plain dict/list/primitive tree BEFORE json.dumps sees
+        # it -- see that helper's docstring for why the previous unguarded
+        # ``default=str`` silently corrupted the entire cached value into an
+        # opaque repr string for any non-JSON-native ``value``.
+        serialised = json.dumps(_json_safe(value), default=str)
         pid = project_id or ""
         try:
             if isinstance(self._db, aiosqlite.Connection):
@@ -1019,6 +1092,29 @@ def memoized_query(
         # per-endpoint map entries so env-var changes in tests are honoured).
         _explicit_ttl = ttl  # from decorator kwarg; None means "use map / global"
 
+        # ── Resolve the wrapped function's return type (decoration time) ────
+        # Needed ONLY to reconstruct a pydantic model instance from the plain
+        # JSON-safe dict a PostgresCacheBackend cache HIT returns (see
+        # ``_json_safe``/``PostgresCacheBackend`` below) -- the in-process
+        # backend never serialises, so this is a no-op on that path. Resolved
+        # once here (not per-call) since ``func`` never changes after
+        # decoration; ``from __future__ import annotations`` means the raw
+        # annotation is a string until ``typing.get_type_hints`` resolves it
+        # against the function's own module globals.
+        try:
+            import typing as _typing  # noqa: PLC0415
+
+            _return_type: Any = _typing.get_type_hints(func).get("return")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "memoized_query(%s): could not resolve return type for cache "
+                "reconstruction (%s); Postgres-cache-backend hits will be "
+                "returned as raw JSON on any non-primitive shape.",
+                endpoint_name,
+                exc,
+            )
+            _return_type = None
+
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             # ── TTL=0 fast-path: bypass entirely ────────────────────────
@@ -1101,7 +1197,7 @@ def memoized_query(
                 cached_value = await _backend_get(cache_key)
                 if cached_value is not None:
                     _emit_hit(endpoint_name)
-                    return cached_value
+                    return _reconstruct_from_cache(cached_value, _return_type)
 
             # ── Cache miss: call through, store, emit counter ─────────────
             result = await func(*args, **kwargs)

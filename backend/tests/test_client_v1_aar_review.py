@@ -362,6 +362,30 @@ class TestClientV1AarReview(unittest.TestCase):
         self.assertIsNone(review["correlation"]["confidence"])
         self.assertIsNone(review["correlation"]["feature_id"])
 
+    def test_realistic_multi_row_payload_returns_200(self) -> None:
+        """Reproduction attempt: 6 documents, each with populated correlation
+        (non-null strategy/confidence/session_ids/feature_id) and a non-empty
+        flags[] -- the exact shape the reported node 500 was observed with.
+        """
+        for i in range(6):
+            self._insert_aar_review_row(
+                aar_document_id=f"aar-doc-multi-{i:03d}",
+                session_id=f"sess-multi-{i:03d}",
+                triage_verdict="deep_review_recommended" if i % 2 == 0 else "human_triage_required",
+                confidence=0.91 if i % 2 == 0 else None,
+                feature_id=f"FEAT-{i:03d}" if i % 2 == 0 else None,
+            )
+
+        resp = self.client.get(
+            "/api/v1/project/aar-review", params={"bypass_cache": "true"}
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        data = resp.json()["data"]
+        matching = [
+            r for r in data["reviews"] if r["document_id"].startswith("aar-doc-multi-")
+        ]
+        self.assertEqual(len(matching), 6, f"expected 6 multi-row entries, got {matching!r}")
+
     # ------------------------------------------------------------------
     # Capability advertisement (T4-003)
     # ------------------------------------------------------------------
