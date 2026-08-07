@@ -756,6 +756,61 @@ the frozen N=200 sample, via the one-shot bounded CLI entry point.
 **Not in any phase:** an embedding lane (no producer, no caller — Q1); making the AAR loop
 model-driven (settled NO-GO); anything that puts a model call on a render path.
 
+## Empirical Addendum — ICA compat probe (2026-08-07)
+
+Added after the SPIKE closed. Resolves **OQ-2** and **OQ-3**, the two implementation blockers, and
+falsifies one charter assumption. **The recommendation is unchanged and now rests on measurement
+rather than inference.** Four probes against `https://api.nextgen-beta.ica.ibm.com/ica/v1/messages`,
+all HTTP 200.
+
+### Confirmed — the adapter's assumptions hold
+
+| Assumption | Result |
+|---|---|
+| Endpoint path | `POST {base}/v1/messages` — works as assumed |
+| Version header | `anthropic-version: 2023-06-01`. **Optional** on ICA (200 without it), **required** on Anthropic direct. Always send it. |
+| Auth header shape | ICA accepts **both** `x-api-key` and `Authorization: Bearer` with the same token |
+| Response envelope | Standard Messages: `content` / `id` / `model` / `role` / `stop_reason` / `stop_sequence` / `type` / `usage`. `usage` carries `cache_creation` + `cache_read` fields. |
+
+This closes the strongest remaining doubt about [ADR-017](#adr-017--anthropic-wire-format-is-the-canonical-hosted-lane-ica-is-the-default-endpoint):
+one Anthropic-shaped adapter really does reach ICA unmodified.
+
+### Two caveats the adapter must account for
+
+1. **ICA ignores unknown top-level request fields.** Sending `ccdash_unknown_probe: true` returned
+   200; Anthropic direct would 400 it. **ICA is therefore not a validation lane** — a typo'd field
+   silently no-ops there and breaks on the paid lane. Validate against Anthropic direct, or accept
+   that ICA-green proves nothing about correctness.
+2. **ICA is Bedrock-backed.** Response ids come back as `msg_bdrk_…`. Model ids carry no
+   `anthropic.` prefix, so ICA normalizes that — but the Bedrock feature mask plausibly applies
+   (no Batches, Files API, Models API, automatic prompt caching, web search/fetch, code execution).
+   **None of those are in the seam's v1 scope, which strengthens the recommendation** (the workload
+   needs none of them) — but do not design a future surface on an unprobed feature there.
+
+### Falsified — `[1m]`-suffixed model ids are not servable on this lane
+
+The charter's decision inputs state ICA serves `claude-haiku-4-5[1m]`, `claude-sonnet-5[1m]`,
+`claude-opus-4-8[1m]`. Against the raw Messages endpoint with the default key, **all `[1m]` ids
+return 403**:
+
+```text
+team not allowed to access model. This team can only access models=['global-models'].
+Tried to access claude-opus-5[1m]          type: team_model_access_denied
+```
+
+Bare `claude-haiku-4-5` and `claude-sonnet-5` both return 200. The `[1m]` convention lives in the
+Claude Code + `ica-settings.json` layer, not in what the gateway endpoint accepts — consistent with
+the known dated-id failure (`claude-haiku-4-5-20251001` → 401), which is the same scoping.
+**The adapter must send bare ids.** Tracked as OQ-8 in the open-questions doc.
+
+### Rates for the experiment's arms
+
+`claude-haiku-4-5` $1/$5 per MTok (200K context, 64K max output — **the only current model that is
+not 1M context**); `claude-sonnet-5` $3/$15 ($2/$10 introductory through 2026-08-31). The
+[cost formula](#cost-model--formula-and-assumptions-not-asserted-rates) is rate-independent and now
+has real rates; its **one unmeasured input is the actual per-call token count** — measure it from
+`session_naming_prompt.build_prompt_text` before quoting any figure to anyone.
+
 ## ADR Candidates
 
 Highest existing ADR is `adr-015-local-daemon-packaging-as-ccdash-cli-subcommand.md` (verified by
