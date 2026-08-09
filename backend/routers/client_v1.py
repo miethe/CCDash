@@ -82,10 +82,17 @@ from backend.routers._client_v1_sessions import (
     get_session_drilldown_v1,
     get_session_family_v1,
     get_session_full_detail_v1,
+    get_session_tool_calls_v1,
     get_session_transcript_page_v1,
     list_sessions_v1,
     search_sessions_v1,
 )
+from backend.routers._client_v1_intent_nodes import (
+    IntentNodeSessionBindingRequest,
+    declare_intent_node_sessions_v1,
+    get_intent_node_cost_v1,
+)
+from ccdash_contracts import IntentNodeCostV1, IntentNodeSessionBindingV1, SessionToolCallsPageV1
 
 # ---------------------------------------------------------------------------
 # Router — single auth dependency applied to ALL /api/v1 routes (T10-004).
@@ -161,6 +168,14 @@ _V1_CAPABILITIES: list[str] = [
                                # Loop producer surface; identity pinned in routing_feedback_contract.py.
                                # Advertised unconditionally (independent of CCDASH_ROUTING_FEEDBACK_ENABLED)
                                # ahead of the route, which lands in Phase 5.
+    "intent-nodes:cost",       # itt-node-session-cost-join (AC1) — POST /api/v1/intent-nodes/{id}/sessions
+                               # declares node<->session bindings (entity_links, no schema migration);
+                               # GET /api/v1/intent-nodes/{id}/cost joins the node to its session
+                               # token/cost totals, with an opt-in ?expand_family= workflow-id widen.
+    "sessions:tool-calls",     # itt-node-session-cost-join (AC2) — GET /api/v1/sessions/{id}/tool-calls
+                               # makes session_logs rows reachable by an external script over HTTP
+                               # without direct postgres access; same {items,cursor,limit,nextCursor}
+                               # envelope as sessions:detail's /transcript route.
 ]
 
 
@@ -602,6 +617,98 @@ async def session_transcript(
         request_context,
         core_ports,
     )
+
+
+# itt-node-session-cost-join (AC2): tool-calls-only paginated endpoint
+@client_v1_router.get("/sessions/{session_id}/tool-calls")
+async def session_tool_calls(
+    session_id: str = Path(..., description="Session ID."),
+    project_id: str | None = Query(
+        default=None,
+        description=(
+            "Required. The project that owns the session. "
+            "Missing project_id returns HTTP 400 — there is no active-project fallback."
+        ),
+    ),
+    tool: str | None = Query(
+        default=None,
+        description="Optional exact tool name filter, matched against toolCall.name.",
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque pagination cursor (base64-encoded offset). Omit to start from the beginning.",
+    ),
+    limit: int = Query(
+        default=200,
+        ge=1,
+        le=1000,
+        description="Max raw log rows scanned per page before tool-call filtering (1-1000; default 200).",
+    ),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[SessionToolCallsPageV1]:
+    """Return a cursor-paginated page of tool-call ``session_logs`` rows for any project.
+
+    ``project_id`` is **required** (HTTP 400 if absent).  Unknown session yields
+    HTTP 404.  Redaction is applied before serialisation.  Uses the same
+    ``{items, cursor, limit, nextCursor}`` envelope as ``/transcript``, narrowed
+    to entries carrying a ``toolCall`` (AC2 — session_logs reachable without
+    direct postgres access).
+    """
+    return await get_session_tool_calls_v1(
+        session_id,
+        project_id,
+        tool,
+        cursor,
+        limit,
+        request_context,
+        core_ports,
+    )
+
+
+# ---------------------------------------------------------------------------
+# IntentTree node <-> session cost attribution (itt-node-session-cost-join, AC1)
+# ---------------------------------------------------------------------------
+
+
+@client_v1_router.post("/intent-nodes/{node_id}/sessions")
+async def intent_node_declare_sessions(
+    node_id: str = Path(..., description="IntentTree node id."),
+    payload: IntentNodeSessionBindingRequest = Body(...),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[IntentNodeSessionBindingV1]:
+    """Idempotently declare which sessions belong to an IntentTree node.
+
+    Body: ``{project_id, session_ids[]}``.  Re-declaring the same
+    (node, session) pair updates the existing binding rather than
+    duplicating it (backed by ``entity_links`` — no schema migration).
+    """
+    return await declare_intent_node_sessions_v1(node_id, payload, core_ports)
+
+
+@client_v1_router.get("/intent-nodes/{node_id}/cost")
+async def intent_node_cost(
+    node_id: str = Path(..., description="IntentTree node id."),
+    project_id: str = Query(
+        ...,
+        description="Required. Scopes the session lookup for this node's cost rollup.",
+    ),
+    expand_family: bool = Query(
+        default=False,
+        description=(
+            "When true, widen the rollup from the declared session set to every "
+            "session sharing a declared session's workflow_id within the project. "
+            "The response's attributionScope reports which scope was used."
+        ),
+    ),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[IntentNodeCostV1]:
+    """Return an IntentTree node's session token/cost rollup (AC1).
+
+    A node with no declared session bindings yields the explicit
+    zero-workload response (``totals.sessionCount == 0``), never a 404.
+    """
+    return await get_intent_node_cost_v1(node_id, project_id, expand_family, core_ports)
 
 
 # ---------------------------------------------------------------------------

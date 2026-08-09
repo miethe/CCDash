@@ -46,6 +46,12 @@ from ccdash_contracts.models import (
     SessionDetailV1,
     SessionTranscriptPageV1,
     TranscriptPageV1,
+    # itt-node-session-cost-join: node<->session cost attribution + tool-calls contracts
+    IntentNodeCostTotalsV1,
+    IntentNodeCostV1,
+    IntentNodeSessionBindingV1,
+    IntentNodeSessionRefV1,
+    SessionToolCallsPageV1,
 )
 
 __all__ = [
@@ -93,4 +99,10 @@ __all__ = [
     "SessionDetailV1",
     "SessionTranscriptPageV1",
     "TranscriptPageV1",
+    # itt-node-session-cost-join
+    "IntentNodeCostTotalsV1",
+    "IntentNodeCostV1",
+    "IntentNodeSessionBindingV1",
+    "IntentNodeSessionRefV1",
+    "SessionToolCallsPageV1",
 ]

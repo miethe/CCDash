@@ -436,6 +436,28 @@ class PostgresSessionRepository:
             )
         return {row["id"]: dict(row) for row in rows}
 
+    async def list_by_workflow_ids(
+        self, workflow_ids: list[str], project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID
+    ) -> list[dict]:
+        """Postgres mirror of ``SqliteSessionRepository.list_by_workflow_ids`` (AC1 family expansion)."""
+        if not workflow_ids:
+            return []
+        if project_id:
+            rows = await self.db.fetch(
+                "SELECT * FROM sessions WHERE project_id = $1 "
+                "AND workflow_id = ANY($2::text[]) AND workspace_id = $3",
+                project_id,
+                workflow_ids,
+                workspace_id,
+            )
+        else:
+            rows = await self.db.fetch(
+                "SELECT * FROM sessions WHERE workflow_id = ANY($1::text[]) AND workspace_id = $2",
+                workflow_ids,
+                workspace_id,
+            )
+        return [dict(r) for r in rows]
+
     async def list_by_source(self, source_file: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         """List sessions by source_file, scoped to workspace_id."""
         rows = await self.db.fetch(

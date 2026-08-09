@@ -564,6 +564,33 @@ class SqliteSessionRepository:
             rows = await cur.fetchall()
         return {row["id"]: self._row_to_dict(row) for row in rows}
 
+    async def list_by_workflow_ids(
+        self, workflow_ids: list[str], project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID
+    ) -> list[dict]:
+        """Fetch every session sharing any of *workflow_ids* (family expansion, AC1).
+
+        Used by ``intent_node_cost.py``'s ``expand_family=true`` path to widen a
+        node's declared session bindings to their ``workflow_id`` family.
+        ``project_id`` follows the same semantics as :meth:`get_many_by_ids`: a
+        non-empty value scopes the query to that project; ``None``/``''`` leaves
+        the read unscoped.  Empty *workflow_ids* returns ``[]`` without a query.
+        """
+        if not workflow_ids:
+            return []
+        placeholders = ",".join("?" for _ in workflow_ids)
+        if project_id:
+            query = (
+                f"SELECT * FROM sessions WHERE project_id = ? "
+                f"AND workflow_id IN ({placeholders}) AND workspace_id = ?"
+            )
+            params: tuple = (project_id, *workflow_ids, workspace_id)
+        else:
+            query = f"SELECT * FROM sessions WHERE workflow_id IN ({placeholders}) AND workspace_id = ?"
+            params = tuple(workflow_ids) + (workspace_id,)
+        async with self.db.execute(query, params) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     async def list_by_source(self, source_file: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
         """List sessions by source_file, scoped to workspace_id."""
         async with self.db.execute(

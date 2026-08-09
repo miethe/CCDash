@@ -15,14 +15,19 @@ fallback (HTTP 400 if ``project_id`` is missing).
 """
 from __future__ import annotations
 
+import base64
+import json
+import logging
+
 from fastapi import HTTPException
 
-from ccdash_contracts import SessionDetailV1, SessionTranscriptPageV1
+from ccdash_contracts import SessionDetailV1, SessionToolCallsPageV1, SessionTranscriptPageV1
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.agent_queries.models import SessionRef
+from backend.application.services.agent_queries.redaction import redact_entries
 from backend.application.services.agent_queries.session_detail import (
     DEFAULT_TRANSCRIPT_LIMIT,
     INCLUDE_TRANSCRIPT,
@@ -32,6 +37,7 @@ from backend.application.services.session_intelligence import (
     SessionIntelligenceReadService,
     TranscriptSearchService,
 )
+from backend.application.services.sessions import SessionTranscriptService
 from backend.db.factory import get_session_repository
 from backend.models import (
     SessionIntelligenceConcern,
@@ -54,8 +60,15 @@ from backend.routers.client_v1_models import (
 # Module-level service singletons (same pattern as analytics.py)
 # ---------------------------------------------------------------------------
 
+logger = logging.getLogger("ccdash.client_v1.sessions")
+
 session_intelligence_read_service = SessionIntelligenceReadService()
 transcript_search_service = TranscriptSearchService()
+# itt-node-session-cost-join (AC2): the only transcript reader used by the
+# tool-calls endpoint below -- mirrors session_detail.py's own singleton, but
+# this module does not go through the Phase 1 bundle service since the
+# tool-calls endpoint reuses list_session_logs directly (no new SQL).
+session_transcript_service = SessionTranscriptService()
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +512,152 @@ async def get_session_transcript_page_v1(
             redactedFieldCount=0,
         )
 
+    return ClientV1Envelope(
+        status="ok",
+        data=page_data,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Handler: tool-calls page — itt-node-session-cost-join (AC2)
+# ---------------------------------------------------------------------------
+
+
+def _encode_offset_cursor(offset: int) -> str:
+    """Encode an integer offset as an opaque URL-safe base64 cursor string.
+
+    Deliberately duplicated from ``session_detail.py``'s private
+    ``_encode_cursor`` (same shape: ``{"o": offset}``) rather than importing
+    a leading-underscore symbol across modules — this endpoint bypasses the
+    Phase 1 bundle service entirely (reuses ``list_session_logs`` directly,
+    no new SQL), so it owns its own tiny cursor codec instead of reaching
+    into that service's internals.
+    """
+    raw = json.dumps({"o": offset}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def _decode_offset_cursor(cursor: str | None) -> int:
+    """Decode an opaque cursor string to an integer offset.
+
+    Returns 0 on ``None``, empty string, or any decoding error (resilient —
+    a malformed cursor restarts pagination rather than erroring).
+    """
+    if not cursor:
+        return 0
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        payload = json.loads(raw)
+        return max(0, int(payload.get("o", 0)))
+    except Exception:
+        return 0
+
+
+async def get_session_tool_calls_v1(
+    session_id: str,
+    project_id: str | None,
+    tool: str | None,
+    cursor: str | None,
+    limit: int,
+    request_context: RequestContext,
+    core_ports: CorePorts,
+) -> ClientV1Envelope[SessionToolCallsPageV1]:
+    """Return a cursor-paginated page of tool-call ``session_logs`` rows (AC2).
+
+    Makes ``session_logs`` rows reachable by an external script over HTTP
+    without direct postgres access. Reuses
+    ``SessionTranscriptService.list_session_logs`` directly (the same reader
+    ``GET /sessions/{id}/logs`` and the Phase 1 ``session_detail`` bundle
+    service use) — no new SQL is introduced by this endpoint.
+
+    ``items`` is narrowed to entries carrying a non-empty ``toolCall.name``
+    (a truthy ``toolCall`` dict alone is not sufficient — see the inline
+    comment at the filter below), and further narrowed by exact
+    ``toolCall.name`` match when ``tool`` is supplied. The narrowing happens
+    AFTER a raw ``limit``-sized page is
+    fetched, so a page may contain fewer than ``limit`` items even when more
+    raw rows remain downstream — callers MUST keep following ``nextCursor``
+    until it is ``null``, not stop at a short page (documented contract
+    state, see ``SessionToolCallsPageV1``'s docstring).
+
+    Session-detail redaction (``agent_queries.redaction.redact_entries``) is
+    applied before egress, identically to every other transcript-bearing
+    endpoint.
+
+    ``project_id`` is **required** — HTTP 400 if absent.  There is no
+    active-project fallback.  Unknown ``session_id`` yields HTTP 404.
+    """
+    # request_context is accepted for signature symmetry with its sibling
+    # handlers in this module (supplied by the router already) but is
+    # intentionally unused here: this path takes no active-project
+    # fallback (project_id is required above), and neither
+    # list_session_logs nor redact_entries accepts a context.
+    if not project_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "project_id is required for GET /sessions/{id}/tool-calls. "
+                "Pass ?project_id=<project_id>. "
+                "Active-project fallback is not supported on this endpoint."
+            ),
+        )
+
+    session_repo = core_ports.storage.sessions()
+    session_row = await session_repo.get_by_id(session_id, project_id=project_id)
+    if session_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not found in project '{project_id}'",
+        )
+
+    offset = _decode_offset_cursor(cursor)
+    eff_limit = max(1, int(limit or DEFAULT_TRANSCRIPT_LIMIT))
+
+    # Request one extra raw row to detect whether a next page exists in the
+    # underlying (pre-filter) log stream.
+    raw_items = await session_transcript_service.list_session_logs(
+        session_row, core_ports, limit=eff_limit + 1, offset=offset
+    )
+    has_more = len(raw_items) > eff_limit
+    page_items = raw_items[:eff_limit]
+
+    # A toolCall dict is present on every legacy-round-tripped row (the
+    # storage layer defaults tool_status to "success" even for plain
+    # messages), so "has a tool call" MUST be judged by a non-empty
+    # ``toolCall.name`` -- a truthy ``toolCall`` dict alone is not sufficient.
+    tool_call_items = [
+        entry for entry in page_items if (entry.get("toolCall") or {}).get("name")
+    ]
+    if tool:
+        tool_call_items = [
+            entry
+            for entry in tool_call_items
+            if str((entry.get("toolCall") or {}).get("name") or "") == tool
+        ]
+
+    try:
+        redacted_items, redacted_count = redact_entries(tool_call_items)
+    except Exception:
+        logger.warning(
+            "get_session_tool_calls_v1: redaction raised unexpectedly for session %r; "
+            "proceeding without redaction for this page",
+            session_id,
+            exc_info=True,
+        )
+        # Fail-safe delivery beats a 500 (same posture as session_detail.py).
+        redacted_items, redacted_count = tool_call_items, 0
+
+    next_cursor = _encode_offset_cursor(offset + eff_limit) if has_more else None
+    page_data = SessionToolCallsPageV1(
+        sessionId=session_id,
+        projectId=project_id,
+        items=redacted_items,
+        cursor=_encode_offset_cursor(offset),
+        limit=eff_limit,
+        nextCursor=next_cursor,
+        redactedFieldCount=redacted_count,
+    )
     return ClientV1Envelope(
         status="ok",
         data=page_data,

@@ -8,6 +8,10 @@ import asyncpg
 
 from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.entity_graph import (
+    INTENT_NODE_LINK_ORIGIN,
+    INTENT_NODE_LINK_SOURCE_TYPE,
+    INTENT_NODE_LINK_TARGET_TYPE,
+    INTENT_NODE_LINK_TYPE,
     RESEARCH_RUN_CORRELATION_DEFAULT_TOLERANCE_SECONDS,
     RESEARCH_RUN_LINK_SOURCE_TYPE,
     RESEARCH_RUN_LINK_TARGET_TYPE,
@@ -204,6 +208,72 @@ class PostgresEntityLinkRepository:
             "session_count": int(totals.get("session_count") or 0),
             "session_ids": [str(r["session_id"]) for r in session_id_rows],
         }
+
+    # ── IntentTree node<->session cost attribution (itt-node-session-cost-join) ─
+    # Mirrors ``backend.db.repositories.entity_graph.SqliteEntityLinkRepository``
+    # exactly; see that method's docstring for the AC1 declarative-binding
+    # rationale. No retry-on-locked wrapper here -- asyncpg does not raise
+    # SQLite-style "database is locked" errors; Postgres row locking is
+    # handled by the driver/server, not by this repository layer.
+
+    async def link_intent_node_sessions(
+        self,
+        node_id: str,
+        session_ids: list[str],
+        *,
+        project_id: str | None = None,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> int:
+        if not node_id or not session_ids:
+            return 0
+
+        unique_session_ids = list(dict.fromkeys(session_ids))  # de-dupe, preserve order
+        now = datetime.now(timezone.utc).isoformat()
+        await self.db.executemany(
+            """
+            INSERT INTO entity_links (
+                workspace_id, source_type, source_id, target_type, target_id,
+                link_type, origin, confidence, created_at, project_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT(source_type, source_id, target_type, target_id, link_type) DO UPDATE SET
+                origin = EXCLUDED.origin,
+                confidence = EXCLUDED.confidence,
+                project_id = COALESCE(EXCLUDED.project_id, entity_links.project_id)
+            """,
+            [
+                (
+                    workspace_id,
+                    INTENT_NODE_LINK_SOURCE_TYPE,
+                    node_id,
+                    INTENT_NODE_LINK_TARGET_TYPE,
+                    session_id,
+                    INTENT_NODE_LINK_TYPE,
+                    INTENT_NODE_LINK_ORIGIN,
+                    1.0,
+                    now,
+                    project_id,
+                )
+                for session_id in unique_session_ids
+            ],
+        )
+        return len(unique_session_ids)
+
+    async def get_intent_node_session_ids(
+        self, node_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
+    ) -> list[str]:
+        # workspace_id is accepted for Protocol parity with the SQLite
+        # implementation but deliberately unused: the Postgres entity-graph
+        # layer has no workspace_id column plumbing (get_links_for below
+        # takes no workspace_id either) -- adding that plumbing is out of
+        # scope here.
+        links = await self.get_links_for(
+            INTENT_NODE_LINK_SOURCE_TYPE, node_id, link_type=INTENT_NODE_LINK_TYPE
+        )
+        return [
+            link["target_id"]
+            for link in links
+            if link.get("target_type") == INTENT_NODE_LINK_TARGET_TYPE
+        ]
 
     async def get_linked_session_ids_for_run(self, run_id: str) -> list[str]:
         links = await self.get_links_for(

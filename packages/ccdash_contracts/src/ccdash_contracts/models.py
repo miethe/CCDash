@@ -404,6 +404,88 @@ class SessionTranscriptPageV1(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# itt-node-session-cost-join: IntentTree node <-> session cost attribution (AC1)
+# and session_logs external reachability (AC2) contracts.
+# ---------------------------------------------------------------------------
+
+
+class SessionToolCallsPageV1(BaseModel):
+    """Cursor-paginated page of tool-call ``session_logs`` rows (AC2).
+
+    Same ``{items, cursor, limit, nextCursor}`` envelope shape as
+    ``SessionTranscriptPageV1``.  ``items`` is narrowed to log entries
+    carrying a non-empty ``toolCall.name`` (i.e. actual tool invocations, not
+    every transcript entry) and, when the ``tool`` query param is supplied, further
+    narrowed to entries whose ``toolCall.name`` matches exactly. Pagination
+    walks the underlying raw log stream in ``limit``-sized windows BEFORE
+    this filter is applied, so a returned page may legitimately contain
+    fewer than ``limit`` items even when more raw log rows remain -- a
+    documented contract state, not a bug; keep following ``nextCursor``
+    until it is ``null``.
+    """
+
+    sessionId: str = ""  # noqa: N815
+    projectId: str = ""  # noqa: N815
+    items: list[Any] = Field(default_factory=list)
+    cursor: str = ""
+    limit: int = 0
+    nextCursor: Optional[str] = None  # noqa: N815
+    redactedFieldCount: int = 0  # noqa: N815
+
+
+class IntentNodeSessionRefV1(BaseModel):
+    """One session's contribution to an IntentTree node's cost rollup."""
+
+    sessionId: str = ""  # noqa: N815
+    workflowId: Optional[str] = None  # noqa: N815
+    declared: bool = True
+    tokensIn: int = 0  # noqa: N815
+    tokensOut: int = 0  # noqa: N815
+    totalCost: float = 0.0  # noqa: N815
+
+
+class IntentNodeCostTotalsV1(BaseModel):
+    sessionCount: int = 0  # noqa: N815
+    tokensIn: int = 0  # noqa: N815
+    tokensOut: int = 0  # noqa: N815
+    totalCost: float = 0.0  # noqa: N815
+
+
+class IntentNodeCostV1(BaseModel):
+    """IntentTree node -> session token/cost rollup (AC1).
+
+    ``attributionScope`` is ``"declared"`` (exact -- only the sessions
+    explicitly bound via ``POST /intent-nodes/{id}/sessions``) or
+    ``"family"`` (widened to every session sharing a declared session's
+    ``workflow_id`` within the project, opt-in via ``?expand_family=true``).
+    The caller owns the decision to trust the wider claim -- this contract
+    always reports which scope produced the rollup, never leaves it implicit.
+    A node with no declared bindings yields the explicit zero-workload
+    response (``totals.sessionCount == 0``, ``sessions == []``), not an error.
+    """
+
+    nodeId: str = ""  # noqa: N815
+    attributionScope: Literal["declared", "family"] = "declared"  # noqa: N815
+    sessions: list[IntentNodeSessionRefV1] = Field(default_factory=list)
+    totals: IntentNodeCostTotalsV1 = Field(default_factory=IntentNodeCostTotalsV1)
+
+
+class IntentNodeSessionBindingV1(BaseModel):
+    """Result of declaring node<->session bindings (``POST /intent-nodes/{id}/sessions``).
+
+    Idempotent: re-declaring the same (node, session) pair updates the
+    existing ``entity_links`` row rather than creating a duplicate, so
+    ``linkedCount`` reflects the de-duplicated request size, not a running
+    total across repeated calls.
+    """
+
+    nodeId: str = ""  # noqa: N815
+    projectId: str = ""  # noqa: N815
+    linkedSessionIds: list[str] = Field(default_factory=list)  # noqa: N815
+    linkedCount: int = 0  # noqa: N815
+
+
+# ---------------------------------------------------------------------------
 # Phase 10 (T10-001): Capability discovery contract
 # ---------------------------------------------------------------------------
 

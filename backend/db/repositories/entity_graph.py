@@ -39,6 +39,28 @@ RESEARCH_RUN_LINK_TYPE = "research_run"
 RESEARCH_RUN_CORRELATION_DEFAULT_TOLERANCE_SECONDS = 900  # 15 minutes
 
 
+# ── IntentTree node<->session cost attribution (itt-node-session-cost-join) ─
+#
+# AC1: a completed IntentTree node's session bindings are declared as
+# ``entity_links`` rows so the cost rollup service
+# (``backend.application.services.agent_queries.intent_node_cost``) can join
+# node -> session token/cost totals purely by query, with zero manual
+# correlation and zero schema migration -- ``entity_links`` already carries
+# every column this binding needs (source_type/source_id/target_type/
+# target_id/link_type/origin/confidence/metadata_json/project_id), per the
+# hard constraint that this feature adds no new tables/columns.
+#
+# Unlike the RESEARCH_RUN_LINK_* correlation above (a *heuristic* time-window
+# match), this binding is *declarative*: the caller (IntentTree, via
+# ``POST /api/v1/intent-nodes/{node_id}/sessions``) explicitly names the
+# session ids it wants attributed to a node. ``origin='declared'`` marks this
+# distinction on the row itself (vs. ``origin='auto'`` for heuristic links).
+INTENT_NODE_LINK_SOURCE_TYPE = "intent_node"
+INTENT_NODE_LINK_TARGET_TYPE = "session"
+INTENT_NODE_LINK_TYPE = "intent_node"
+INTENT_NODE_LINK_ORIGIN = "declared"
+
+
 def _parse_iso_ts(value: str | None) -> datetime | None:
     """Parse an ISO-8601 timestamp string into an aware UTC ``datetime``.
 
@@ -344,6 +366,86 @@ class SqliteEntityLinkRepository:
             "session_ids": [str(r["session_id"]) for r in session_rows],
         }
 
+    # ── IntentTree node<->session cost attribution (itt-node-session-cost-join) ─
+
+    async def link_intent_node_sessions(
+        self,
+        node_id: str,
+        session_ids: list[str],
+        *,
+        project_id: str | None = None,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> int:
+        """Idempotently declare node<->session bindings for cost attribution (AC1).
+
+        Upserts one ``entity_links`` row per *session_ids* entry
+        (``source_type='intent_node'``/``source_id=node_id`` ->
+        ``target_type='session'``, ``link_type='intent_node'``,
+        ``origin='declared'``). Re-declaring the same (node_id, session_id)
+        pair is a no-op update via the existing ``idx_links_upsert`` unique
+        index -- never a duplicate row (ADR-007 direct-count-verified in
+        ``backend.tests.test_entity_graph_intent_node_links``).
+
+        The write is wrapped in :func:`retry_on_locked` (ADR-007) -- safe to
+        retry wholesale since it is a pure idempotent upsert.
+
+        Returns the number of distinct session ids processed (0 for an empty
+        *node_id*/*session_ids*).
+        """
+        if not node_id or not session_ids:
+            return 0
+
+        unique_session_ids = list(dict.fromkeys(session_ids))  # de-dupe, preserve order
+        now = datetime.now(timezone.utc).isoformat()
+        params = [
+            (
+                workspace_id,
+                INTENT_NODE_LINK_SOURCE_TYPE,
+                node_id,
+                INTENT_NODE_LINK_TARGET_TYPE,
+                session_id,
+                INTENT_NODE_LINK_TYPE,
+                INTENT_NODE_LINK_ORIGIN,
+                1.0,
+                now,
+                project_id,
+            )
+            for session_id in unique_session_ids
+        ]
+
+        async def _write() -> None:
+            await self.db.executemany(
+                """INSERT INTO entity_links (
+                    workspace_id, source_type, source_id, target_type, target_id,
+                    link_type, origin, confidence, created_at, project_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_type, source_id, target_type, target_id, link_type) DO UPDATE SET
+                    origin=excluded.origin, confidence=excluded.confidence,
+                    project_id=COALESCE(excluded.project_id, entity_links.project_id)
+                """,
+                params,
+            )
+            await self.db.commit()
+
+        await retry_on_locked(_write, repo="entity_links")
+        return len(unique_session_ids)
+
+    async def get_intent_node_session_ids(
+        self, node_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID
+    ) -> list[str]:
+        """Return session ids declared as bindings for an IntentTree node (AC1)."""
+        links = await self.get_links_for(
+            INTENT_NODE_LINK_SOURCE_TYPE,
+            node_id,
+            link_type=INTENT_NODE_LINK_TYPE,
+            workspace_id=workspace_id,
+        )
+        return [
+            link["target_id"]
+            for link in links
+            if link.get("target_type") == INTENT_NODE_LINK_TARGET_TYPE
+        ]
+
     async def bulk_upsert(self, links: list[dict], project_id: str | None = None) -> int:
         """Insert or update a batch of entity links in a single transaction.
 
@@ -427,7 +529,7 @@ class SqliteEntityLinkRepository:
             ]
 
         await self.db.executemany(sql, params)
-        await self.db.commit()
+        await self._commit()
         return len(links)
 
     async def get_links_for(

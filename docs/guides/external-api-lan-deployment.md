@@ -40,6 +40,8 @@ endpoints.  The server returns a `CapabilityV1` payload:
 | `sessions:cross-project` | List/search/detail/transcript accept an explicit `project_id`; detail + transcript REQUIRE it (HTTP 400 if absent — no active-project fallback). |
 | `sessions:detail` | Full transcript-bearing bundle available at `/sessions/{id}/detail`. |
 | `research-runs:*` | Research Foundry run telemetry ingest (`POST /api/v1/ingest/rf-events`); wildcard placeholder — the eventual query surface lands in a later phase. |
+| `intent-nodes:cost` | IntentTree node ↔ session cost attribution: `POST /intent-nodes/{id}/sessions` declares bindings, `GET /intent-nodes/{id}/cost` rolls up token/cost totals. |
+| `sessions:tool-calls` | `GET /sessions/{id}/tool-calls` makes `session_logs` rows reachable over HTTP without direct postgres access. |
 
 **Consumer rule**: treat an unknown capability string as a future addition — do
 NOT error on strings you don't recognise.  `api_version` is a string; a mismatch
@@ -142,6 +144,67 @@ must be explicit so agents cannot accidentally read the wrong project's data.
 Redacted fields: the Phase 1 redaction layer scrubs secrets before serialisation.
 `redactedFieldCount > 0` is a contract state, not a bug.  Consumers must handle
 missing/null fields gracefully.
+
+---
+
+## IntentTree node ↔ session cost attribution (`intent-nodes:cost`)
+
+Joins a completed IntentTree node to its session token/cost totals purely by
+query — no manual correlation, no schema migration.  The binding is stored as
+an `entity_links` row (`source_type='intent_node'`, `origin='declared'`); the
+rollup sums `tokens_in`/`tokens_out`/`total_cost` from `sessions`.
+
+**1. Declare which sessions belong to a node** (idempotent — re-declaring the
+same node/session pair updates the existing binding, never duplicates it):
+
+```bash
+curl -X POST http://<host>:8000/api/v1/intent-nodes/<node-id>/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"project_id": "<project-id>", "session_ids": ["<session-id-1>", "<session-id-2>"]}'
+```
+
+**2. Read the cost rollup:**
+
+```bash
+GET /api/v1/intent-nodes/<node-id>/cost?project_id=<project-id>
+GET /api/v1/intent-nodes/<node-id>/cost?project_id=<project-id>&expand_family=true
+```
+
+`project_id` is **required** (HTTP 400 if absent).  A node with no declared
+bindings returns the explicit zero-workload response
+(`totals.sessionCount == 0`), never a 404 — "not yet attributed" is a valid
+state.
+
+`attributionScope` in the response tells you which claim you're looking at:
+
+| Scope | `expand_family` | Meaning |
+|---|---|---|
+| `"declared"` | `false` (default) | EXACT — only the sessions explicitly bound via step 1. |
+| `"family"` | `true` | WIDENED — every session sharing a declared session's `workflow_id` within the project (e.g. subagent children of the same orchestrator run) is folded in too. |
+
+The caller owns the decision to trust the wider `"family"` claim — the server
+never silently widens the default.
+
+---
+
+## Tool-call `session_logs` access (`sessions:tool-calls`)
+
+`GET /sessions/{id}/tool-calls` makes `session_logs` rows reachable by an
+external script over HTTP, without direct postgres access:
+
+```bash
+GET /api/v1/sessions/<session-id>/tool-calls?project_id=<project-id>
+GET /api/v1/sessions/<session-id>/tool-calls?project_id=<project-id>&tool=Bash
+```
+
+`project_id` is **required** (HTTP 400 if absent) — same cross-project
+convention as `/transcript`.  `items` is narrowed to log entries carrying a
+non-empty `toolCall.name`, and further narrowed to an exact `toolCall.name`
+match when `tool` is supplied.  Uses the same `{items, cursor, limit,
+nextCursor}` cursor-pagination envelope as `/transcript`; redaction is applied
+identically.  A page may legitimately contain fewer than `limit` items even
+when more raw log rows remain downstream (the tool-call filter is applied
+after a raw page is fetched) — keep following `nextCursor` until it is `null`.
 
 ---
 
