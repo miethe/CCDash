@@ -228,7 +228,17 @@ fi
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+# The head version is read from the migration module rather than hardcoded. A
+# literal here said "35" long after SCHEMA_VERSION had moved on, so the smoke
+# reported a version it had not validated -- misleading evidence on a migration
+# gate is worse than no evidence.
+# -E for portability: BSD sed (macOS) does not support \+ in basic regex, so a
+# basic-regex form silently extracts nothing and reports "unknown".
+HEAD_VERSION=$(sed -nE 's/^SCHEMA_VERSION[[:space:]]*(:[[:space:]]*int)?[[:space:]]*=[[:space:]]*([0-9]+).*/\2/p' \
+    "${REPO_ROOT}/backend/db/postgres_migrations.py" | head -1)
+HEAD_VERSION="${HEAD_VERSION:-unknown}"
+
 ok "All seeded-pg smoke assertions passed."
 ok "  PG seed version   : v29 (sessions table without project_id)"
-ok "  Migration result  : ${migration_status} (reached SCHEMA_VERSION=35)"
+ok "  Migration result  : ${migration_status} (reached SCHEMA_VERSION=${HEAD_VERSION})"
 ok "  UndefinedColumnError : ABSENT"
