@@ -113,8 +113,12 @@ x-backend-service: &backend-service
     # Preferred lane selector; falls back to CCDASH_SESSION_NAMING_BACKEND
     # above when unset (empty default, not "local").
     CCDASH_LLM_SESSION_NAMING_LANE: "${CCDASH_LLM_SESSION_NAMING_LANE:-}"
-    # Selects ICA vs. Anthropic-direct by base URL alone.
-    CCDASH_LLM_ANTHROPIC_BASE_URL: "${CCDASH_LLM_ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
+    # Selects ICA vs. Anthropic-direct by base URL alone. Default is ICA
+    # per ADR-017 (docs/project_plans/adrs/adr-017-anthropic-wire-format-canonical-hosted-lane.md)
+    # -- the trust boundary is already crossed and ICA's free tier makes a
+    # systematic sweep affordable; point this at https://api.anthropic.com
+    # to opt into the PAID Anthropic-direct lane instead.
+    CCDASH_LLM_ANTHROPIC_BASE_URL: "${CCDASH_LLM_ANTHROPIC_BASE_URL:-https://api.nextgen-beta.ica.ibm.com/ica}"
     CCDASH_LLM_ANTHROPIC_API_KEY: "${CCDASH_LLM_ANTHROPIC_API_KEY:-}"
     # Deliberately NO default -- do not invent one. Empty means the anthropic
     # naming lane is unreachable at derive-time, same as an absent API key.

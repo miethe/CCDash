@@ -165,8 +165,14 @@ class WireShapeTests(unittest.IsolatedAsyncioTestCase):
         called_url = mock_client.post.await_args.args[0]
         self.assertEqual(called_url, "https://api.nextgen-beta.ica.ibm.com/ica/v1/messages")
 
-    async def test_default_base_url_is_anthropic_direct(self) -> None:
-        self.assertEqual(DEFAULT_BASE_URL, "https://api.anthropic.com")
+    async def test_default_base_url_is_ica(self) -> None:
+        """ADR-017: ICA is the default hosted endpoint, not Anthropic
+
+        direct -- the trust boundary is already crossed and ICA's free
+        tier makes a systematic sweep affordable. Pins the default so it
+        is not "fixed" back to the paid Anthropic-direct lane.
+        """
+        self.assertEqual(DEFAULT_BASE_URL, "https://api.nextgen-beta.ica.ibm.com/ica")
         mock_client = _mock_anthropic_client(response_text="A title")
         with patch(
             "backend.adapters.llm.anthropic.httpx.AsyncClient", return_value=mock_client
@@ -177,7 +183,9 @@ class WireShapeTests(unittest.IsolatedAsyncioTestCase):
             await adapter.complete(envelope_from_aggregate("hello"))
 
         called_url = mock_client.post.await_args.args[0]
-        self.assertEqual(called_url, "https://api.anthropic.com/v1/messages")
+        self.assertEqual(
+            called_url, "https://api.nextgen-beta.ica.ibm.com/ica/v1/messages"
+        )
 
     async def test_sends_anthropic_version_header(self) -> None:
         self.assertEqual(ANTHROPIC_VERSION, "2023-06-01")

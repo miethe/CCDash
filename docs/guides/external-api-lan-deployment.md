@@ -186,6 +186,12 @@ files already carry all six keys with defaults mirroring
 `backend/config.py` exactly. `CCDASH_LLM_ANTHROPIC_MODEL` deliberately has
 **no default anywhere** (env, compose, or `backend/config.py`) — empty means
 the anthropic naming lane is unreachable at derive-time; do not add one.
+`CCDASH_LLM_ANTHROPIC_BASE_URL` defaults to ICA
+(`https://api.nextgen-beta.ica.ibm.com/ica`) per ADR-017 — the trust
+boundary is already crossed and ICA's free tier makes a systematic sweep
+affordable. Explicitly pointing this var at `https://api.anthropic.com`
+selects the **paid** Anthropic-direct lane instead; that is an intentional
+opt-in, not something to do "helpfully".
 
 ---
 

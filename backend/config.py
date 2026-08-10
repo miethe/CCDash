@@ -328,13 +328,20 @@ CCDASH_LLM_SESSION_NAMING_LANE = os.getenv("CCDASH_LLM_SESSION_NAMING_LANE", "")
 CCDASH_LLM_EGRESS_CONSENT = _env_bool("CCDASH_LLM_EGRESS_CONSENT", False)
 # hosted-llm-anthropic-ica-lane-v1 M3: the Anthropic/ICA lane's credential
 # block. Selects ICA vs. Anthropic-direct by BASE URL ALONE -- there is no
-# provider-branching flag anywhere in this codebase; point this at ICA's
-# base URL (e.g. the nextgen-beta gateway) to use ICA, or leave it at the
-# default to reach Anthropic direct. No legacy equivalent (this is a wholly
-# new endpoint), so no fallback helper call is needed here.
+# provider-branching flag anywhere in this codebase; point this at
+# Anthropic direct's URL to opt into the PAID lane, or leave it at the
+# default to reach ICA. The default is ICA per ADR-017
+# (docs/project_plans/adrs/adr-017-anthropic-wire-format-canonical-hosted-lane.md)
+# -- the trust boundary is already crossed and ICA's free tier makes a
+# systematic sweep affordable, so defaulting to the paid Anthropic-direct
+# endpoint would silently cost money. Do not "fix" this back. No legacy
+# equivalent (this is a wholly new endpoint), so no fallback helper call is
+# needed here.
 CCDASH_LLM_ANTHROPIC_BASE_URL = (
-    os.getenv("CCDASH_LLM_ANTHROPIC_BASE_URL", "https://api.anthropic.com").strip()
-    or "https://api.anthropic.com"
+    os.getenv(
+        "CCDASH_LLM_ANTHROPIC_BASE_URL", "https://api.nextgen-beta.ica.ibm.com/ica"
+    ).strip()
+    or "https://api.nextgen-beta.ica.ibm.com/ica"
 )
 # No legacy equivalent. Empty (the default) means the anthropic naming lane
 # is UNREACHABLE at derive-time -- never a crash, never a fallback to

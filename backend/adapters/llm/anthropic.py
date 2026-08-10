@@ -11,7 +11,14 @@ re-probe, do not "improve" them:
   * Endpoint is always ``POST {base_url}/v1/messages``. ``base_url`` alone
     selects the provider: ICA is
     ``https://api.nextgen-beta.ica.ibm.com/ica``, Anthropic direct is
-    ``https://api.anthropic.com``.
+    ``https://api.anthropic.com``. **ICA is the default** (see
+    ``DEFAULT_BASE_URL`` below) per ADR-017
+    (``docs/project_plans/adrs/adr-017-anthropic-wire-format-canonical-hosted-lane.md``)
+    -- the trust boundary is already crossed by routing through this
+    adapter at all, and ICA's free tier makes a systematic sweep
+    affordable, so defaulting to the paid Anthropic-direct endpoint would
+    silently cost money for no benefit. Do not "fix" this back to
+    Anthropic direct.
   * ``anthropic-version: 2023-06-01`` is sent UNCONDITIONALLY -- required by
     Anthropic direct, merely optional (ignored) on ICA.
   * The credential travels as the ``x-api-key`` request header. ICA also
@@ -57,7 +64,11 @@ __all__ = ["AnthropicTextCompletionAdapter"]
 
 logger = logging.getLogger("ccdash.adapters.llm.anthropic")
 
-DEFAULT_BASE_URL = "https://api.anthropic.com"
+# ADR-017: ICA is the default hosted endpoint, not Anthropic direct -- the
+# trust boundary is already crossed and ICA's free tier makes a systematic
+# sweep affordable. Set this to "https://api.anthropic.com" explicitly to
+# opt into the PAID Anthropic-direct lane instead.
+DEFAULT_BASE_URL = "https://api.nextgen-beta.ica.ibm.com/ica"
 ANTHROPIC_VERSION = "2023-06-01"
 _DEFAULT_MAX_TOKENS = 1024
 _MODEL_ID_SUFFIX_MARKER = "[1m]"
