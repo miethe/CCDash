@@ -1876,6 +1876,11 @@ class Project(BaseModel):
     # True when the project id belongs to the well-known bootstrap seed set.
     # COLUMN_PARITY_DRIFT_ALLOWLIST: N/A — model-computed, not a DB column.
     is_seed: bool = False
+    # Per-project consent to send session data off-box to a hosted LLM
+    # provider. Maps to the `llm_egress_consent` column (v52 migration,
+    # hosted-llm-anthropic-ica-lane-v1 M2). Defaults to False — fail-closed:
+    # existing projects must never be silently opted into egress.
+    llm_egress_consent: bool = False
     agentPlatforms: list[str] = Field(default_factory=lambda: ["Claude Code"])
     planDocsPath: str = "docs/project_plans/"
     sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)

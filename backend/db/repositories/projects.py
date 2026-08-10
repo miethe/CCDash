@@ -84,12 +84,12 @@ class SqliteProjectRepository:
                     id, name, path, description, repo_url,
                     agent_platforms_json, plan_docs_path, sessions_path, progress_path,
                     path_config_json, test_config_json, skillmeat_json, display_json,
-                    is_active, repo_path, updated_at
+                    is_active, repo_path, llm_egress_consent, updated_at
                 ) VALUES (
                     :id, :name, :path, :description, :repo_url,
                     :agent_platforms_json, :plan_docs_path, :sessions_path, :progress_path,
                     :path_config_json, :test_config_json, :skillmeat_json, :display_json,
-                    :is_active, :repo_path, :updated_at
+                    :is_active, :repo_path, :llm_egress_consent, :updated_at
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,
@@ -106,6 +106,7 @@ class SqliteProjectRepository:
                     display_json=excluded.display_json,
                     is_active=excluded.is_active,
                     repo_path=excluded.repo_path,
+                    llm_egress_consent=excluded.llm_egress_consent,
                     updated_at=excluded.updated_at
                 """,
                 row,
@@ -183,6 +184,7 @@ class SqliteProjectRepository:
                 except (json.JSONDecodeError, TypeError):
                     pass
         d["is_active"] = bool(d.get("is_active", 0))
+        d["llm_egress_consent"] = bool(d.get("llm_egress_consent", 0))
         return d
 
     @staticmethod
@@ -213,6 +215,7 @@ class SqliteProjectRepository:
             "display_json": _json(project_dict.get("display")),
             "is_active": 1 if project_dict.get("is_active", False) else 0,
             "repo_path": project_dict.get("repoPath") or None,
+            "llm_egress_consent": 1 if project_dict.get("llm_egress_consent", False) else 0,
             "updated_at": now,
         }
 

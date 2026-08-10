@@ -113,6 +113,52 @@ class TestDbProjectRegistryRoundTrip(unittest.TestCase):
             result = mgr.get_project("p-upd")
             self.assertEqual(result.name, "New Name")
 
+    def test_llm_egress_consent_defaults_false_for_project_created_without_it(self) -> None:
+        """hosted-llm-anthropic-ica-lane-v1 M2: fail-closed default.
+
+        A project added without specifying `llm_egress_consent` must read
+        back as False -- the DDL default (SQLite `INTEGER NOT NULL DEFAULT 0`
+        / Postgres `BOOLEAN NOT NULL DEFAULT FALSE`) must never silently
+        opt an existing/new project into off-box egress.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _make_manager(tmpdir)
+            project = Project(id="p-consent-default", name="No Consent Specified", path=tmpdir)
+            self.assertFalse(project.llm_egress_consent, "Project model default must be False")
+
+            mgr.add_project(project)
+
+            result = mgr.get_project("p-consent-default")
+            self.assertIsNotNone(result)
+            self.assertFalse(
+                result.llm_egress_consent,
+                "llm_egress_consent must default to False when not specified (fail-closed)",
+            )
+
+    def test_llm_egress_consent_round_trips_true(self) -> None:
+        """Explicit True consent must persist and be read back as True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _make_manager(tmpdir)
+            project = Project(
+                id="p-consent-true",
+                name="Consent Given",
+                path=tmpdir,
+                llm_egress_consent=True,
+            )
+            mgr.add_project(project)
+
+            result = mgr.get_project("p-consent-true")
+            self.assertIsNotNone(result)
+            self.assertTrue(result.llm_egress_consent, "Explicit True consent must round-trip as True")
+
+            # A second, independent manager instance reading the same DB file
+            # (same tmpdir -> same deterministic db_path) must also observe
+            # True — proving persistence, not in-memory state.
+            mgr2 = _make_manager(tmpdir)
+            result2 = mgr2.get_project("p-consent-true")
+            self.assertIsNotNone(result2)
+            self.assertTrue(result2.llm_egress_consent, "Consent must survive a fresh manager instance (restart)")
+
     def test_set_active_raises_for_missing_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mgr = _make_manager(tmpdir)

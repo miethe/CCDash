@@ -297,6 +297,37 @@ class MigrationGovernanceTests(unittest.TestCase):
         diff = column_parity_diff("research_runs")
         self.assertEqual(diff, {}, msg=f"T2-002: research_runs must be column-parity-clean; found drift: {diff}")
 
+    def test_llm_egress_consent_column_present_in_both_backends_zero_allowlist(self) -> None:
+        """hosted-llm-anthropic-ica-lane-v1 M2: projects.llm_egress_consent (v52).
+
+        The column must exist, identically typed (boolean-family, NOT NULL,
+        DEFAULT false), in BOTH the SQLite and Postgres static CREATE TABLE
+        DDL for `projects`. It must NOT appear in
+        COLUMN_PARITY_DRIFT_ALLOWLIST -- this column is parity-clean by
+        construction (mirrors the `is_active` precedent), so any drift here
+        is a real regression, not a documented exception.
+        """
+        from backend.db.migration_governance import _backend_table_blocks, _parse_table_columns
+        from backend.db import sqlite_migrations, postgres_migrations
+
+        sqlite_blocks = _backend_table_blocks(sqlite_migrations)
+        pg_blocks = _backend_table_blocks(postgres_migrations)
+        sqlite_cols = set(_parse_table_columns(sqlite_blocks["projects"]))
+        pg_cols = set(_parse_table_columns(pg_blocks["projects"]))
+
+        self.assertIn("llm_egress_consent", sqlite_cols, "projects.llm_egress_consent absent from SQLite DDL")
+        self.assertIn("llm_egress_consent", pg_cols, "projects.llm_egress_consent absent from Postgres DDL")
+        self.assertNotIn(
+            ("projects", "llm_egress_consent"),
+            COLUMN_PARITY_DRIFT_ALLOWLIST,
+            msg="projects.llm_egress_consent should be parity-clean, not allowlisted",
+        )
+
+        diff = column_parity_diff("projects")
+        self.assertEqual(
+            diff, {}, msg=f"projects must be column-parity-clean after adding llm_egress_consent; found drift: {diff}"
+        )
+
     def test_allowlist_entries_are_all_documented(self) -> None:
         """Every allowlist entry must correspond to a DRIFT-NNN entry in the module docstring.
 
