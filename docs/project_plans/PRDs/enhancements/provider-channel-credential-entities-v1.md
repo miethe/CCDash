@@ -4,7 +4,7 @@ schema_version: 2
 doc_type: prd
 it_schema: 1
 description: "Promote provider/channel/credential from session attributes into addressable entities with their own identity, history, and cross-project rollups, so questions can be asked of a key or a channel without aggregating a session query."
-status: draft
+status: ready
 created: 2026-08-10
 updated: 2026-08-10
 feature_slug: provider-channel-credential-entities
@@ -12,7 +12,7 @@ feature_version: "v1"
 tier: 3
 effort_estimate: "17 pts (bottom-up H1-H7; anchor: v51 ICA capture ~8 pts, ~2x for 2 new dimension tables + rotation-lineage algorithm + cross-project rollup)"
 prd_ref: null
-plan_ref: null
+plan_ref: docs/project_plans/implementation_plans/enhancements/provider-channel-credential-entities-v1.md
 related_documents:
   - docs/project_plans/adrs/adr-006-db-authoritative-project-registry.md
   - docs/project_plans/adrs/adr-007-db-write-failure-surfacing-standard.md
@@ -51,11 +51,17 @@ changelog_required: true
 open_questions:
   - q: "Is rotation lineage (credential A superseded by credential B) declared manually (an explicit CLI/API action naming the predecessor) or inferred (e.g., same channel + a gap in ica_key activity)? Manual is safer against false continuity claims but requires an operator action at rotation time."
     owner: nick
-    status: open
+    status: resolved
+    answer: "MANUAL declaration. The rollup trusts only a stored predecessor pointer; inference is rejected for v1 because a wrong merge asserts a continuity that never happened and is invisible in the output. Resolved 2026-08-10 at plan time."
   - q: "Does the per-credential rollup API need a `?exclude_unattributed=false` escape hatch for debugging, or is exclusion-by-default with a reported count sufficient for all consumers?"
     owner: nick
-    status: open
+    status: resolved
+    answer: "Exclusion-by-default plus an always-reported excluded count, PLUS a `?include_unattributed=true` debug flag. Resolved 2026-08-10 at plan time."
   - q: "Should provider/channel/credential dimension rows be backfilled lazily (on first read) or eagerly (one-time migration pass over existing sessions)? Affects rollout NFR and whether a stale dimension table can exist before backfill completes."
+    owner: nick
+    status: resolved
+    answer: "EAGER, but as an idempotent worker/CLI job SEPARATE from the v51->v52 DDL migration — api and worker migrate concurrently on the node, so a long scan inside the migration widens that known race. Resolved 2026-08-10 at plan time."
+  - q: "Was ADR-019 actually signed off by Nick? It was committed (d5dc597) as `status: accepted, approved by Nick`; that approval could not be evidenced and was downgraded to `proposed` the same day. Confirm or re-accept."
     owner: nick
     status: open
 decisions:

@@ -1,8 +1,9 @@
 ---
 title: "ADR-019: Provider/Channel/Credential Correlation Home — CCDash"
 type: "adr"
-status: "accepted"
+status: "proposed"
 created: "2026-08-10"
+updated: "2026-08-10"
 parent_prd: "docs/project_plans/PRDs/enhancements/provider-channel-credential-entities-v1.md"
 tags: ["adr", "provider-identity", "credentials", "cost-attribution", "entity-model"]
 ---
@@ -11,7 +12,14 @@ tags: ["adr", "provider-identity", "credentials", "cost-attribution", "entity-mo
 
 ## Status
 
-Accepted (2026-08-10, approved by Nick)
+**Proposed** (2026-08-10) — awaiting explicit sign-off from Nick.
+
+> This ADR was first committed (`d5dc597`) reading `status: accepted` / "approved by Nick". That
+> approval could not be evidenced, and the parent PRD explicitly requires this ADR to ship
+> `proposed` pending the requester's explicit sign-off (PRD §AC4, §9 Risk 5). It was therefore
+> downgraded to `proposed` on the same day — the reversible direction. **If the sign-off did
+> happen, flip this back to `accepted` and delete this note.** Until then, AC4 stays open: the
+> recommendation below is the recorded decision, not a settled one.
 
 ## Context
 
