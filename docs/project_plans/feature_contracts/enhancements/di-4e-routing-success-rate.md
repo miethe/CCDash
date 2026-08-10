@@ -4,7 +4,7 @@ schema_version: 2
 doc_type: feature_contract
 it_schema: 1
 description: "Replace the always-null success_rate in the routing_rollup producer with the per-key tool-error-rate complement, plus a new skill-dimension coverage axis."
-status: blocked
+status: completed
 created: 2026-08-10
 updated: 2026-08-10
 feature_slug: di-4e-routing-success-rate
@@ -33,8 +33,18 @@ related_documents:
 spike_ref: null
 prd_ref: docs/project_plans/PRDs/infrastructure/proof-to-routing-loop-v1.md
 plan_ref: null
-commit_refs: []
-pr_refs: []
+commit_refs:
+  - 2f97ecb  # feat: compute real per-key routing_rollup.success_rate
+  - 6303bf4  # test: cover success_rate + skill-dimension coverage
+  - ad1cd24  # docs: document real success_rate + skill-dimension coverage
+  - 6cca100  # docs: sprint completion report
+  - 36beeb5  # fix: execute D-b4 live gate; result was HALT
+  - 4a39b55  # fix: mechanically gate stale-family success_rate; file backfill follow-up
+  - 2c59305  # test: seed cost_coverage_fraction in disabled-state fixture
+  - 4a68568  # feat: Codex session_tool_usage backfill script + dry-run measurement
+  - 81277ab  # chore: run_db4_verify.py -- run the AC2 gate without materializing the DSN
+  - 2778c8d  # feat: lift the stale-provider gate; success_rate real for every provider
+pr_refs: []  # PR not yet opened -- gh pr create declined by the permission layer
 files_affected:
   - backend/application/services/agent_queries/routing_rollup.py
   - backend/application/services/agent_queries/models.py
@@ -299,7 +309,7 @@ Backend-only, no UI surface. Behavior is specified by the emitted envelope:
   gpt/codex vs claude-family's ~90%), then CLEARED the same day** once the backfill
   precondition landed. Post-backfill: **25/28 = 89.3% informative, err_rate 0.87%** against
   claude-family 90.1% / 4.01% — a 0.8pp informative gap, down from 99.3pp pre-DI-4d and
-  10.1pp post-DI-4d. Records: `.claude/worknotes/di-4e-routing-success-rate/backfill-dry-run-2026-08-10.md`,
+  10.1pp post-DI-4d. Records: `.claude/worknotes/di-4e-routing-success-rate/backfill-apply-record-2026-08-10.md`,
   `routing-feedback-router-merge-handoff.md` §0a.
 - [x] **AC3**: Skill-dimension coverage (~40–45% of `min_sample`-clearing keys) documented
   in the envelope (new response-level counters) **and** in the consumer-facing handoff spec

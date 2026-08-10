@@ -156,6 +156,25 @@ window is no longer skewed, so `CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVI
 to **empty** and no provider is withheld. The gate mechanism itself is retained (both enforcement
 points, both test layers) as the sanctioned response to any *newly measured* skew.
 
+**Evidence you can re-derive rather than take on narrative** — full record in
+`.claude/worknotes/di-4e-routing-success-rate/backfill-apply-record-2026-08-10.md`:
+
+```bash
+# 1. Idempotency proof that the backfill's write actually landed. Dry-run reads the STORED rows as
+#    `before` and freshly re-parsed JSONL as `after`; if the write had not happened, the deltas
+#    would reappear. Expect before == after on every tool.
+backend/.venv/bin/python .claude/worknotes/di-4e-routing-success-rate/run_backfill.py
+
+# 2. The D-b4 family split itself (read-only, one SELECT).
+backend/.venv/bin/python .claude/worknotes/di-4e-routing-success-rate/run_db4_verify.py
+```
+
+A reviewer gate initially **rejected** this change (`defect_class: self-reported-side-effect`)
+because the apply was asserted only in a commit message while the branch's own artifact still read
+"NOT APPLIED" with different session counts — the counts differ because the window is a rolling 30
+days (1,197 → 1,242 → 1,240 in-window Codex sessions across the three runs), but the contradiction
+was real and the rejection was correct. The record above is the remediation.
+
 ⚠️ One residual worth a consumer's attention: the two families' informative fractions now agree
 (89.3% vs 90.1%), but their *error rates* still differ ~4.6x (0.87% vs 4.01%). That is a difference
 in measured tool-failure rate, not in coverage, and is plausibly a genuine property of the different
