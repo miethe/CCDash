@@ -247,6 +247,42 @@ def _build_merged_source_identity_policy(
 # ───────────────────────────────────────────────────────────────────────────
 
 
+def _session_input_mtime(path: Path) -> float:
+    """Freshness key for a session source: newest of the JSONL and its sidecar.
+
+    The launch-time capture sidecar (``<session-id>.capture.json``) is a SECOND
+    input to parsing this session, and it is routinely written *after* the
+    JSONL's last content change — SessionEnd appends the closing ICA spend
+    reading ~2s after the transcript stops growing. Keying freshness on the
+    JSONL's mtime alone therefore made the sidecar permanently invisible for any
+    session whose JSONL never changed again: the parse had already run, and the
+    unchanged-skip rejected every later attempt (a bare ``touch`` did not help —
+    it moved the JSONL mtime but the sidecar was already accounted for, and the
+    watcher never forwarded the sidecar at all).
+
+    Folding the sidecar's mtime in makes the skip correct rather than merely
+    cheap, and is self-healing: an already-ingested session whose sidecar landed
+    late re-parses exactly once, then stays skipped.
+
+    MUST be used for both the cached comparison and the stored ``file_mtime`` in
+    the same code path. Comparing max(...) while storing the JSONL-only mtime
+    would never converge and would re-parse the file on every pass.
+    """
+    newest = path.stat().st_mtime
+    stem = path.stem
+    candidates = (
+        path.with_name(f"{stem}.capture.json"),
+        # Fallback location mirrored from the parser's _collect_capture_sidecar.
+        path.parent.parent / "data" / "capture" / f"{stem}.capture.json",
+    )
+    for sidecar in candidates:
+        try:
+            newest = max(newest, sidecar.stat().st_mtime)
+        except OSError:
+            continue  # absent sidecar is the common case, not an error
+    return newest
+
+
 def _file_hash(path: Path) -> str:
     """Compute a fast hash of file content for change detection."""
     h = hashlib.md5()
@@ -4988,7 +5024,9 @@ class SyncEngine:
         """Parse and upsert a single session file. Returns True if actually synced."""
         file_path = str(path)
         sync_file_path = self._canonical_source_key(project_id, path, "session")
-        mtime = path.stat().st_mtime
+        # Includes the capture sidecar's mtime — see _session_input_mtime. The
+        # same value is stored as file_mtime below; they must not diverge.
+        mtime = _session_input_mtime(path)
 
         if not force:
             cached = await self.sync_repo.get_sync_state(sync_file_path)

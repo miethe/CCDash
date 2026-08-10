@@ -30,6 +30,9 @@ except ImportError:  # pragma: no cover — observability is optional
 
 logger = logging.getLogger("ccdash.watcher")
 
+# Suffix of the launch-time capture sidecar written beside each session JSONL.
+_CAPTURE_SIDECAR_SUFFIX = ".capture.json"
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -207,6 +210,7 @@ class FileWatcher:
                     changes,
                     test_results_dir,
                     test_sources,
+                    sessions_dir=sessions_dir,
                 )
                 logger.info(
                     "File watcher classified changes",
@@ -298,6 +302,7 @@ class FileWatcher:
         changes: set[tuple[Change, str]],
         test_results_dir: Path | None = None,
         test_sources: list[ResolvedTestSource] | None = None,
+        sessions_dir: Path | None = None,
     ) -> list[tuple[str, Path]]:
         """Classify raw watchfiles changes into (change_type, path) pairs.
 
@@ -307,6 +312,28 @@ class FileWatcher:
         result = []
         for change_type, path_str in changes:
             path = Path(path_str)
+
+            # A launch-capture sidecar (``<session-id>.capture.json``) is not an
+            # ingestable artifact itself, but its arrival is the ONLY signal that
+            # a session's capture fields (launcher/profile/icaKey/icaSpend*)
+            # became readable. It is routinely written AFTER the JSONL's last
+            # content change — SessionEnd writes the closing spend reading ~2s
+            # later — so a `.json` suffix falling through to the artifact drop
+            # below silently lost capture for fast/one-shot sessions. Map it to
+            # its sibling JSONL; the session path's unchanged-skip now folds the
+            # sidecar's mtime into the freshness key, so the re-parse is admitted.
+            if path.name.endswith(_CAPTURE_SIDECAR_SUFFIX):
+                in_sessions_scope = bool(
+                    sessions_dir
+                    and (path.parent == sessions_dir or sessions_dir in path.parents)
+                )
+                if in_sessions_scope and change_type != Change.deleted:
+                    stem = path.name[: -len(_CAPTURE_SIDECAR_SUFFIX)]
+                    sibling = path.with_name(f"{stem}.jsonl")
+                    if sibling.exists():
+                        result.append(("modified", sibling))
+                # Never forward the sidecar itself — nothing downstream parses it.
+                continue
 
             if path.suffix in artifact_suffixes:
                 in_legacy_dir = bool(
