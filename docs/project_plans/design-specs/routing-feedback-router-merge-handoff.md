@@ -43,8 +43,8 @@ shipped v1 producer, **all three are null-or-constant for every row, by delibera
 
 | Field | v1 emitted value | Why (producer's own rationale) |
 |-------|------------------|--------------------------------|
-| `success_rate` | `None`, always | `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
-| `regression_rate` | `None`, always | Same — no genuine regression signal available to that module. |
+| `success_rate` | ~~`None`, always~~ — **SUPERSEDED 2026-08-10: now real.** DI-4e shipped (see §0a below); per-key tool-error-rate complement, `null` only for keys with zero tool-usage attribution. | Was: `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
+| `regression_rate` | `None`, always — **still true, permanently.** CLOSED per DI-4b (2026-08-03): no `test_results`/`test_runs` signal exists anywhere in this schema. Not revisited by DI-4e. | No genuine regression signal available to that module, and none is being built. |
 | `cost_index` | ~~`1.0`, fixed (`_COST_INDEX_BASELINE`)~~ — **SUPERSEDED 2026-08-03: now real.** DI-4a shipped; the node serves 261/346 rows non-null across 249 distinct values. | Was: per-key cost normalization is "a real design surface of its own," deliberately not gold-plated into a provisional payload. |
 | `sample_count` | real | — |
 | `confidence` | real — `n/(n+5)` | — |
@@ -68,6 +68,50 @@ strictly worse than the current honest `live_consumption_disabled`.
 **Consequence for sequencing.** DI-1 (router merge) is **not** the next actionable item. The
 blocking work is a CCDash producer increment that emits a real outcome signal — tracked as **DI-4**
 (see §5.4).
+
+### 0a. Update 2026-08-10 — DI-4e shipped: `success_rate` is real, `live_consumption` still disabled
+
+DI-4d (Codex tool-error detection fix, main `b51de27`) and DI-4f (skill-attribution NO-GO, closed
+2026-08-03 — see `docs/project_plans/exploration/routing-key-skill-attribution/routing-key-skill-attribution-feasibility-brief.md`)
+together cleared the two preconditions §0's "named precondition" paragraph and the tool-failures
+audit below both named. DI-4e (feature contract
+`docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md`) then shipped a
+real per-`(project_id, source_skill_name, model)` `success_rate`:
+
+- **`success_rate = 1 - (sum(tool_errors) / sum(tool_calls))`**, call-volume-weighted across every
+  tool-usage-attributed session in the key (D-b1) — never a mean of per-session rates.
+- `null` (never a fabricated constant) for a key with zero tool-usage-attributed sessions (D-b2).
+- A per-key coverage companion (`success_rate_coverage_fraction`, mirrors `cost_coverage_fraction`'s
+  shape) — **compute-layer/response-DTO only, not persisted** (no new column/migration), so it reads
+  back `null` on every persisted-table transport (REST/MCP/CLI) today.
+- **AC3 — skill-dimension coverage is now an explicit contract state.** The response envelope
+  carries two additive counters, `skill_attributed_key_count`/`skill_unattributed_key_count`, scoped
+  to the same `min_sample_size`-clearing population the skill-attribution feasibility brief's
+  **~40-45% coverage figure** describes (non-empty `source_skill_name` vs. the `(project × model)`
+  cohort wearing a three-part key's clothes). A router-side (or any) consumer can now tell which
+  bucket a key falls into without inspecting `source_skill_name` per row — count/fraction only, no
+  per-consumer discounting logic (D-b3).
+- **Retry/recovery blindness is a documented, un-fixed limitation (D-b5):** raw error-rate cannot
+  distinguish "failed then recovered" from "failed and stayed broken" — 95.2% of tool-failure
+  sessions still reach `completed` (per the DI-4d re-measurement). Not modeled here; the schema has
+  no retry linkage.
+- `regression_rate` stays permanently `null` — DI-4b closure, unaffected, not revisited.
+- **`live_consumption_disabled` is untouched** (DI-1, router owner's call). Re-running §0's
+  "Running the ratified algorithm" arithmetic with a real `success_rate` now yields a genuinely
+  non-neutral `penalty_for_failure` for keys with tool-usage attribution — but that arithmetic still
+  never executes against live traffic while the flag stays disabled.
+
+**D-b4 live-verification caveat (read before trusting any live `success_rate` reading today):** the
+DI-4d re-measurement (`docs/project_plans/exploration/routing-feedback-success-signal/spikes/tool-failures/di-4d-remeasurement.md`
+§7) found that *historical* `session_tool_usage` rows for Codex sessions written before `b51de27`
+still record 100% success (the old parser's artifact) — a fix does not retroactively correct stored
+counts. DI-4e's implementation sprint could not re-run the live D-b4 family-split verification query
+against the operative Postgres in its execution sandbox (no reachable DB); the most recent evidence
+is the 2026-08-03 re-measurement (91.5% informative post-fix, confidence 0.88), which is **not** a
+substitute for a live re-check on the current window. **Operator action item:** re-run
+`di-4d-remeasurement.md` §1's query against the live window before treating any Codex-family
+`success_rate` value as trustworthy; if it is still categorically skewed, that is a backfill
+precondition, not a code defect.
 
 DI-4 does **not** decompose evenly. A signal-source audit against the node Postgres
 (2026-08-01, 18,762 sessions) found the three fields have completely different feasibility:
@@ -182,6 +226,8 @@ degenerate to `(project × model)`. Tracked as its own exploration:
    Whether *any* derivable success signal exists is an open feasibility question, not an
    implementation task. Planning an implementation before that question is answered would repeat
    the mistake this section documents.
+   **Status 2026-08-10: CLOSED-and-shipped for `success_rate` (DI-4e, see §0a); `regression_rate`
+   stays closed permanently.**
 
 Do not schedule DI-1 before DI-4 lands. A partial DI-4 that ships only `cost_index` **does** make
 the loop non-inert (a genuinely expensive model can then be downweighted on cost alone), but leaves
