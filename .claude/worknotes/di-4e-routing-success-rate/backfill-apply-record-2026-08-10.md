@@ -136,6 +136,41 @@ cross-family `success_rate` spread as purely behavioural until it has been.
 - Files appended-to or rotated since ingest re-parse to today's content, so figures drift slightly
   from the frozen DI-4d numbers by design.
 
+## 4b. Row-level artifact evidence
+
+A reviewer gate rejected the §1/§2 evidence a second time (`defect_class:
+self-reported-side-effect`) on a fair objection: its own permission classifier blocked it from
+executing anything against the live database, so the apply remained a *claim* from its position —
+"a leg's own report of it is not evidence that it happened." It asked for the row.
+
+`backfill-row-evidence-2026-08-10.txt` is that row, captured verbatim from
+`dump_backfill_rows.py` (read-only, two SELECTs). Excerpt:
+
+```
+=== Per-tool PERSISTED totals, platform_type='Codex' (all time) ===
+tool                                 calls   successes   errors  sessions
+exec                                 43657       43384      273      1103
+exec_command                        110602      110521       81      2225
+wait                                  5955        5874       81       311
+spawn_agent                           3493        3471       22       765
+
+=== Top 25 individual stored rows carrying errors ===
+session_id                                    tool         calls  succ  err
+S-rollout-2026-07-13T00-16-32-019f59b0-e4ad-  wait           101    87   14
+S-rollout-2026-07-13T13-28-43-019f5c86-2591-  exec           281   269   12
+S-rollout-2026-07-14T01-17-05-019f5f0e-aebb-  exec          1160  1148   12
+```
+
+**Why these rows are the proof and not a restatement.** Every row where `success_count <
+call_count` is a *stored* error against a Codex session. The pre-`b51de27` parser recorded **100%
+success for every one of the 3,482 Codex sessions ever ingested** — its detector never fired once
+(`codex/parser.py:953`). So a persisted Codex row carrying errors cannot have been written by the
+old parser. These rows exist only because the re-parse was written back.
+
+The sample is chosen mechanically — `ORDER BY (call_count - success_count) DESC LIMIT 25` — so it
+cannot be cherry-picked to flatter the result, and the per-tool block above it is the unfiltered
+population, not a sample.
+
 ## 5. How to run the apply (for the record)
 
 ```bash
