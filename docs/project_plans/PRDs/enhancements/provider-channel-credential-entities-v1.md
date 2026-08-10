@@ -22,7 +22,8 @@ references:
   specs: []
   related_prds: []
 spike_ref: null
-adr_refs: []
+adr_refs:
+  - docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md
 charter_ref: null
 changelog_ref: null
 test_plan_ref: null
@@ -60,12 +61,12 @@ open_questions:
 decisions:
   - decision: "CCDash is the correlation home for provider/channel/credential rollups, not only the ingest home for the underlying session facts."
     rationale: "CCDash already owns the session fact table and the only per-session spend readings that exist anywhere; it already owns the DB-authoritative cross-project registry (ADR-006) that AC3's join requires; ingest is already settled as CCDash by the requester; and the existing provider-identity derivation path already lives here, so siting analysis elsewhere would duplicate derive_provider_identity or depend on CCDash pre-deriving it for export."
-    status: proposed
+    status: accepted
 success_metrics:
   - "A query for a single credential name (e.g. CC3) returns cumulative and month-over-month spend/token/session counts across every project without the caller writing a session-level aggregation query."
   - "Zero net-new provider vocabulary introduced outside providerVendor/providerSurface/providerChannel — verified by a code-review check that no new enum/string set duplicates the existing _PROVIDER_VENDOR_TOKENS / _PROVIDER_SURFACE_LABELS / _provider_channel closed vocabularies."
   - "A credential rotation (old key retired, new key issued for the same lane) produces one continuous series in the rollup read, not two disjoint ones."
-  - "ADR-019 exists with a recorded decision and rationale, whether the eventual verdict is CCDash-as-home or otherwise."
+  - "ADR-019 exists and is accepted, recording CCDash as the correlation home with its rationale."
 agent_title: "Promote provider/channel/credential to entities with cross-project credential rollups"
 agent_summary: "Persist the existing providerId slug as a dimension key, add a credential entity keyed (channel, credential_name) with a rotation-lineage pointer, and add a cross-project per-credential spend/token/session rollup read — dual SQLite+Postgres DDL, SCHEMA_VERSION 51->52."
 required_artifacts: []
@@ -97,7 +98,7 @@ required_artifacts: []
 
 > - `docs/project_plans/adrs/adr-006-db-authoritative-project-registry.md` — cross-project registry pattern this feature's rollup reuses
 > - `docs/project_plans/adrs/adr-007-db-write-failure-surfacing-standard.md` — write-path standard the new dimension tables must follow
-> - `docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md` (to be created on acceptance — see §AC4 Decision below; **016–018 are reserved** by an unrelated tracker node, `node_01KZEXVPHVYAXR7QSKDT5FJ2G9`)
+> - `docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md` (accepted 2026-08-10 — see §AC4 Decision below; **016–018 are reserved** by an unrelated tracker node, `node_01KZEXVPHVYAXR7QSKDT5FJ2G9`)
 
 ---
 
@@ -184,7 +185,7 @@ See `success_metrics` in frontmatter (mirrored here for readability):
 | Cross-project per-credential rollup query | Not possible without hand-written SQL | Single API/CLI/MCP call returns cumulative + monthly series for a named credential | Manual + integration test against seeded multi-project fixture |
 | New provider vocabulary introduced | N/A | 0 | Code review checklist against `_PROVIDER_VENDOR_TOKENS`/`_PROVIDER_SURFACE_LABELS`/`_provider_channel` |
 | Rotation continuity | N/A (no lineage today) | 1 continuous series across a declared rotation | Test: seed CC3 sessions, declare rotation to CC4, seed CC4 sessions, assert one series |
-| ADR-019 exists | N/A | `status: proposed`, decision + rationale recorded | File exists at acceptance |
+| ADR-019 exists | N/A | `status: accepted`, decision + rationale recorded | Landed accepted 2026-08-10 |
 
 ---
 
@@ -232,7 +233,7 @@ graph TD
 | FR-8 | The rollup excludes any session whose `ica_spend_attribution` is not `attributed` from spend sums, and separately reports the excluded-session count. | Must | Directly enforces the shipped `decide_attribution` invariant (Ground Truth #6) at the rollup layer. |
 | FR-9 | The rollup follows a rotation lineage: querying either credential name in a declared rotation returns the same combined series. | Must | AC3's "surviving key rotation as a continuous series." |
 | FR-10 | Advertise the new read surface via `GET /api/v1/capabilities` per the existing capability-advertisement convention. | Should | Matches `sessions:detail`/`sessions:tool-calls` pattern; consumers must not hard-fail on the new string. |
-| FR-11 | Author ADR-019 recording the correlation-home decision (§ below), `status: proposed`. | Must | Satisfies AC4. Numbered 019 because 016–018 are reserved by an unrelated tracker node. |
+| FR-11 | Author ADR-019 recording the correlation-home decision (§ below), `status: accepted` — landed 2026-08-10. | Must | Satisfies AC4. Numbered 019 because 016–018 are reserved by an unrelated tracker node. |
 
 ### 6.2 Non-Functional Requirements
 
@@ -262,7 +263,7 @@ graph TD
 - Persisting/registering the existing `providerId` slug as the dimension key (FR-5).
 - Credential rows keyed `(channel, credential_name)` with a rotation-lineage pointer (FR-4).
 - A cross-project, per-credential rollup read surface (transport-neutral service + REST; capability advertisement).
-- ADR-019 (correlation-home decision, `status: proposed`).
+- ADR-019 (correlation-home decision, `status: accepted`).
 - Dual SQLite + Postgres DDL, `SCHEMA_VERSION` 51 → 52.
 - Backfill of dimension rows from existing `sessions` data.
 
@@ -302,7 +303,7 @@ graph TD
 | Silent spend-sum-over-NULL regression if a future contributor forgets the attribution filter. | High | Medium | NFR-1 is non-negotiable and test-covered with a direct-count assertion (ADR-007 pattern); rollup service is the single place attribution filtering happens — no duplicate implementations. |
 | Schema drift between SQLite and Postgres DDL. | Medium | Low | NFR-2 mandates same-change-set dual DDL + `COLUMN_PARITY_DRIFT_ALLOWLIST` check, per existing project convention. |
 | AC3's live demonstration is blocked on an out-of-repo dependency (launcher activation) outside this PRD's control. | Medium | High (until launcher ships) | Documented as a hard dependency (§8); acceptance criteria for this PRD are satisfied by the modelling + seeded-data demonstration, not by live production data. |
-| ADR-019's recommendation (CCDash-as-home) is presented as settled when it is not yet accepted. | Low | Low | ADR ships `status: proposed`; PRD text explicitly requires the requester's sign-off (§ below). |
+| ADR-019's recommendation (CCDash-as-home) is presented as settled when it is not yet accepted. | Low | Low | **RETIRED 2026-08-10** — Nick accepted the decision; ADR-019 landed `status: accepted`. Row kept for traceability. |
 
 ---
 
@@ -316,7 +317,7 @@ graph TD
 - Three new/promoted dimension tables (provider, channel, credential) following the `pricing_catalog_entries` pattern (`backend/db/sqlite_migrations.py:1050-1069` — `UNIQUE`-keyed reference table with `source_type`/`sync_status` lineage columns) as the nearest existing analog.
 - `derive_provider_identity`'s output (`providerId` slug) is the dimension key; no second vocabulary.
 - A rollup service in `backend/application/services/agent_queries/` reads across every registered project (ADR-006 pattern) and applies the attribution-exclusion filter (NFR-1) before summing.
-- ADR-019 exists, `status: proposed`, recording the correlation-home decision and its rationale.
+- ADR-019 exists, `status: accepted`, recording the correlation-home decision and its rationale.
 
 **Observable Outcomes:**
 - `SCHEMA_VERSION` is 52.
@@ -350,13 +351,13 @@ graph TD
 
 ### Documentation Acceptance
 
-- [ ] ADR-019 authored, `status: proposed`.
+- [x] ADR-019 authored and accepted 2026-08-10, `status: accepted`.
 - [ ] CHANGELOG `[Unreleased]` entry present (per `changelog_required: true`).
 - [ ] CLAUDE.md convention entry added for the new dimension tables + rollup surface, mirroring the existing v51 entry style.
 
 ---
 
-## AC4 — Decision on Correlation Home (becomes ADR-019, `status: proposed`)
+## AC4 — Decision on Correlation Home (ADR-019, `status: accepted`)
 
 **Recommendation: CCDash is the correlation home, not only the ingest home.**
 
@@ -368,7 +369,7 @@ Reasons, in order of weight:
 
 **Counter-position, stated honestly:** an external warehouse would be the right call if provider rollups needed to join against data CCDash does not hold — billing invoices, provider-side rate-limit records. That is not the current need. The decision should be revisited if it becomes one.
 
-**This decision is `proposed`, requiring the requester's (Nick's) explicit sign-off — it is not presented as settled.** On acceptance, promote to `docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md` with `status: accepted` (numbered 019 because 016–018 are reserved by unrelated tracker node `node_01KZEXVPHVYAXR7QSKDT5FJ2G9`).
+**This decision was accepted by Nick on 2026-08-10** and is recorded at `docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md` with `status: accepted` (numbered 019 because 016–018 are reserved by unrelated tracker node `node_01KZEXVPHVYAXR7QSKDT5FJ2G9` — do not renumber).
 
 ---
 
@@ -395,7 +396,7 @@ See `open_questions` in frontmatter (mirrored here):
 
 ### Related Documentation
 
-- **ADRs**: ADR-006 (DB-authoritative registry), ADR-007 (write-failure standard), ADR-019 (this PRD's AC4 decision, to be created)
+- **ADRs**: ADR-006 (DB-authoritative registry), ADR-007 (write-failure standard), ADR-019 (this PRD's AC4 decision, accepted 2026-08-10: `docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md`)
 - **Ground truth sources**: `backend/model_identity.py`, `lib/providerIdentity.ts`, `backend/routers/analytics.py`, `backend/parsers/ica_spend.py`, `backend/db/sqlite_migrations.py`, `backend/application/services/agent_queries/system_metrics.py`
 
 ### Prior Art

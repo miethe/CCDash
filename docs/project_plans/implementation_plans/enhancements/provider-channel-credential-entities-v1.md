@@ -33,9 +33,9 @@ open_questions:
   - "Rollup debug escape hatch for unattributed spend (PRD OQ2) — left to M3 implementation judgment."
   - "Lazy vs eager dimension backfill (PRD OQ3) — M1 assumes eager, one-time migration-time backfill."
 decisions:
-  - decision: "ADR-019 records CCDash as the correlation home for these rollups; status proposed pending Nick's sign-off."
+  - decision: "ADR-019 records CCDash as the correlation home for these rollups; accepted by Nick 2026-08-10."
     rationale: "CCDash already owns the session fact table, the only per-session spend readings that exist anywhere, and the DB-authoritative cross-project registry (ADR-006) AC3's join requires — see PRD §AC4 Decision."
-    status: proposed
+    status: accepted
 routing_constraints:
   - "Rotation-lineage continuity logic (M2) MUST stay claude-primary — a wrong lineage join silently fabricates a continuous series"
   - "Spend-attribution exclusion arithmetic (M3) MUST stay claude-primary — the never-silently-divided invariant is the feature's correctness core"
@@ -121,11 +121,11 @@ Context class here is C2, not the plan's dominant C3 — a bounded, single-servi
 | AC1 | `backend/.venv/bin/python -m pytest backend/tests/ -k "provider_dimension or channel_dimension or credential_dimension" -v` | Dimension row exists for a known `providerId`/channel/credential, addressable without a session aggregation. |
 | AC2 | `git grep -n "_PROVIDER_VENDOR_TOKENS\|_PROVIDER_SURFACE_LABELS\|_provider_channel" -- backend/ \| grep -v model_identity.py` | No hits outside `model_identity.py` — no parallel vocabulary introduced. |
 | AC3 | `backend/.venv/bin/python -m pytest backend/tests/ -k "credential_rotation" -v` | Positive: declared CC3→CC4 rotation yields one series. Negative: two undeclared credentials do not merge. |
-| AC4 | `test -f docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md && grep -q "status: proposed" docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md` | ADR-019 exists with decision + rationale, `status: proposed`. |
+| AC4 | `test -f docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md && grep -q 'status: "accepted"' docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md` | **MET 2026-08-10** — ADR-019 exists with decision + rationale, `status: accepted`. |
 
 ## Sequencing
 
-M1 → M2 → M3, and the ADR precedes all three. M2's credential rows carry a foreign reference to M1's channel dimension. M3 aggregates over M2's credential identity. The ADR precedes the DDL because the correlation-home decision determines whether these tables belong in CCDash at all — building the schema first would settle AC4 implicitly, which AC4 forbids.
+M1 → M2 → M3, and the ADR precedes all three. M2's credential rows carry a foreign reference to M1's channel dimension. M3 aggregates over M2's credential identity. The ADR precedes the DDL because the correlation-home decision determines whether these tables belong in CCDash at all — building the schema first would settle AC4 implicitly, which AC4 forbids. **The ADR has now landed (accepted 2026-08-10), so that precondition is satisfied — only M1's Mode-D migration approval remains.**
 
 ## Execution ledger
 

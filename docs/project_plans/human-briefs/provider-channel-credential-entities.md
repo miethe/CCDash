@@ -81,7 +81,7 @@ H1–H7 (given, not recomputed here):
 
 **Critical path**: M1 → M2 → M3, strictly sequential (see plan §Sequencing) — M2's credential rows FK into M1's channel dimension; M3 aggregates over M2's credential identity.
 **Parallel opportunities**: None load-bearing across milestones; within M1, dual-DDL authoring and backfill-script drafting can proceed in parallel once the dimension schema is settled.
-**Merge order**: ADR-019 lands (or is at minimum drafted `status: proposed`) before M1's DDL merges — building the schema first would settle AC4 implicitly.
+**Merge order**: **satisfied** — ADR-019 landed accepted 2026-08-10, ahead of any DDL. The constraint existed because building the schema first would settle AC4 implicitly.
 **Cross-feature coupling**: Blocked-on (not blocking-of) the out-of-repo launcher activation (`node_01KZP4D3BN6QYJAHC4FCRNGZNW`) for AC3's live demonstration only; modelling and seeded-data tests proceed independently.
 
 ---
@@ -93,7 +93,7 @@ H1–H7 (given, not recomputed here):
 | OQ-1 | PRD `open_questions` | Manual-declare vs. inferred rotation lineage? | open | Plan assumes manual declare (safer against false continuity); revisit if wrong. |
 | OQ-2 | PRD `open_questions` | Does the rollup API need an `exclude_unattributed=false` debug escape hatch? | open | Deferred to M3 implementation judgment. |
 | OQ-3 | PRD `open_questions` | Lazy vs. eager dimension-row backfill? | open | Plan assumes eager (one-time migration-pass backfill). |
-| OQ-4 (live) | PRD AC4 / ADR-019 | Is CCDash the correlation home, or should this live elsewhere? | **open — the live one** | Requires Nick's explicit sign-off on ADR-019 before it moves from `proposed` to `accepted`. This is a real gate, not a formality — the plan's Sequencing section makes the ADR a merge-order precondition, not a documentation afterthought. |
+| OQ-4 | PRD AC4 / ADR-019 | Is CCDash the correlation home, or should this live elsewhere? | **resolved 2026-08-10** | Accepted by Nick: CCDash is the correlation home. ADR-019 landed `status: accepted`; the alternative to revisit is the external warehouse, gated on needing provider-side billing/rate-limit data CCDash does not capture. |
 
 ---
 
@@ -115,7 +115,7 @@ None identified. No `DI-` items were pulled into this plan; the PRD's out-of-sco
 ## 7. What to Watch For
 
 - M1 is Mode-D gated (schema migration) — expect an explicit halt for human approval before the DDL runs; do not let an agent auto-approve past it.
-- ADR-019's `status: proposed` is not a rubber stamp — confirm Nick has actually reviewed and signed off before treating AC4 as satisfied.
+- ADR-019 sign-off happened 2026-08-10 and AC4 is satisfied — that watch-item is discharged. The remaining watch-item on this surface is the AC3 launcher-activation gap (`node_01KZP4D3BN6QYJAHC4FCRNGZNW`): until it ships, every per-credential series is empty and M3 must not be closed on live data.
 - Before declaring M3 "done," check whether the launcher activation (`node_01KZP4D3BN6QYJAHC4FCRNGZNW`) has shipped in the interim — if it has, re-run the rollup against real data as a bonus check, even though the plan's AC only requires the seeded fixture.
 
 ---
