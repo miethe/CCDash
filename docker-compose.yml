@@ -29,6 +29,8 @@
 #  CCDASH_POSTGRES_PORT              5432                Host-side Postgres port (binds 127.0.0.1 by default)
 #  CCDASH_API_PORT                   8000                Host-side API port (binds 127.0.0.1 by default)
 #  CCDASH_WORKER_PROBE_PORT          9465                Host-side worker probe port (binds 127.0.0.1 by default)
+#  CCDASH_API_TOKEN                  (empty)             Optional /api/v1 bearer token (require_v1_auth); SEPARATE from
+#                                                         CCDASH_API_BEARER_TOKEN below
 #  NOTE: all three ports bind 127.0.0.1 by default. To expose on the LAN, override the bind
 #  prefix in the ports: entry (e.g. "0.0.0.0:${CCDASH_API_PORT}:8000") AND set
 #  CCDASH_API_TOKEN / strong CCDASH_POSTGRES_PASSWORD before doing so.
@@ -89,6 +91,17 @@ x-shared-backend-env: &shared-backend-env
   # introduced in Phase 10 — that token is SEPARATE from CCDASH_API_BEARER_TOKEN.
   CCDASH_AUTH_PROVIDER: "local"
   CCDASH_LOCAL_NO_AUTH_ENABLED: "true"
+  # CCDASH_API_TOKEN gates the external /api/v1 surface (require_v1_auth in
+  # backend/routers/_client_v1_auth.py) independently of CCDASH_AUTH_PROVIDER
+  # above. Same explicit-allowlist gap as the two comment blocks above: the
+  # comment referenced this var but never actually listed it as a key here,
+  # so setting it in the host env or an --env-file was a silent no-op -- the
+  # container never saw it, require_v1_auth stayed in its no-op branch, and
+  # /api/v1 stayed unauthenticated regardless of the operator's intent.
+  # Default empty mirrors backend/config.py's os.getenv("CCDASH_API_TOKEN",
+  # "").strip() exactly, so an unset host env is behaviour-identical to not
+  # listing this key at all (local-trust no-auth default preserved).
+  CCDASH_API_TOKEN: "${CCDASH_API_TOKEN:-}"
   # ── Derived session naming (automatic-session-naming-v1 M3) ─────────────────
   # This environment map is an explicit ALLOWLIST: a var set only in the host
   # environment or an --env-file, but absent here, never reaches the container

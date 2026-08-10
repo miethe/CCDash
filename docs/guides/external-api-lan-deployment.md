@@ -123,6 +123,31 @@ injectable `Depends` function (`backend/routers/_client_v1_auth.py:require_v1_au
 A future workspace-scoped resolver replaces that function without touching any
 handler body.
 
+### Operator note — containerised deployments (compose env allowlists)
+
+Every CCDash compose stack (`docker-compose.yml` at the repo root and
+`deploy/runtime/compose.yaml`, the file the agentic node actually deploys)
+declares an **explicit environment allowlist** per service, not a passthrough
+of the host environment. A variable set only in the host shell, `.env`, or an
+`--env-file` — but not listed as a key in the compose file's `environment:`
+map for that service — **never reaches the container namespace**, no matter
+how it is set outside the container. For `CCDASH_API_TOKEN` specifically this
+means: the var must be present as a key (even with an empty default, e.g.
+`CCDASH_API_TOKEN: "${CCDASH_API_TOKEN:-}"`) on every service that mounts
+`client_v1_router` — currently the `local`/`backend` and `api` runtime
+profiles only; `worker`/`worker-watch` never serve `/api/v1` and do not need
+the key. If it is missing from the allowlist, setting `CCDASH_API_TOKEN` on
+the host is a **silent no-op**: `require_v1_auth` stays in its no-op branch
+and `/api/v1` stays reachable with no credential, with no error or log line
+to indicate why.
+
+Also note: a `git reset`/`git pull` followed by a plain container **restart**
+runs the **stale, already-built image** — `docker compose up -d` (or the
+podman equivalent) reuses the existing image layer and does not pick up
+source changes. Any change to `backend/` or to the compose files themselves
+requires a **rebuild** (`docker compose build` / `up -d --build`) before the
+new behaviour takes effect on a running deployment.
+
 ---
 
 ## Cross-project session access

@@ -160,6 +160,18 @@ services:
       CCDASH_STORAGE_PROFILE: "local"
       CCDASH_DB_BACKEND: "sqlite"
       CCDASH_DB_PATH: "${CCDASH_DB_PATH:-/var/lib/ccdash/ccdash.db}"
+      # External /api/v1 LAN token (require_v1_auth in
+      # backend/routers/_client_v1_auth.py). SEPARATE from
+      # CCDASH_API_BEARER_TOKEN below on the `api` service (that one gates
+      # the legacy static_bearer auth provider, applies only to
+      # runtime_profile=api). Only listed on the two services that mount
+      # client_v1_router (backend/runtime/bootstrap.py) -- `worker` and
+      # `worker-watch` never serve that router (worker-only probe app), so
+      # it is a no-op there and intentionally omitted. Default empty
+      # mirrors backend/config.py's os.getenv("CCDASH_API_TOKEN",
+      # "").strip() exactly, so an unset host env is behaviour-identical to
+      # not listing this key at all (local-trust no-auth default preserved).
+      CCDASH_API_TOKEN: "${CCDASH_API_TOKEN:-}"
     ports:
       - "${CCDASH_API_PORT:-8000}:8000"
     networks:
@@ -179,6 +191,10 @@ services:
       <<: [*backend-shared-env, *postgres-connection]
       CCDASH_RUNTIME_PROFILE: "api"
       CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
+      # External /api/v1 LAN token -- see the matching comment on the
+      # `backend` service above for the full explanation. SEPARATE from
+      # CCDASH_API_BEARER_TOKEN directly above.
+      CCDASH_API_TOKEN: "${CCDASH_API_TOKEN:-}"
       CCDASH_QUERY_CACHE_BACKEND: "${CCDASH_QUERY_CACHE_BACKEND:-postgres}"
       # P3-006-FU: durable job queue now live — enterprise services default to postgres.
       CCDASH_JOB_QUEUE_BACKEND: "${CCDASH_JOB_QUEUE_BACKEND:-postgres}"
