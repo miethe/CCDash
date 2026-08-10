@@ -76,8 +76,16 @@ class DefaultFlagValueTests(unittest.TestCase):
         """
         self.assertEqual(config.CCDASH_LLM_SESSION_NAMING_LANE, "")
 
-    def test_llm_anthropic_base_url_defaults_to_anthropic_direct(self) -> None:
-        self.assertEqual(config.CCDASH_LLM_ANTHROPIC_BASE_URL, "https://api.anthropic.com")
+    def test_llm_anthropic_base_url_defaults_to_ica(self) -> None:
+        """ADR-017: ICA is the default hosted endpoint, not the paid
+
+        Anthropic-direct lane -- the trust boundary is already crossed and
+        ICA's free tier makes a systematic sweep affordable.
+        """
+        self.assertEqual(
+            config.CCDASH_LLM_ANTHROPIC_BASE_URL,
+            "https://api.nextgen-beta.ica.ibm.com/ica",
+        )
 
     def test_llm_anthropic_api_key_defaults_empty_no_legacy(self) -> None:
         """No legacy equivalent -- absent means the anthropic lane is

@@ -267,7 +267,9 @@ class SessionNamingSweepJobUnitTests(unittest.IsolatedAsyncioTestCase):
         )
         storage = types.SimpleNamespace(sessions=lambda: sessions_repo)
         project = types.SimpleNamespace(id="proj-a")
-        workspace_registry = types.SimpleNamespace(list_projects=lambda: [project])
+        workspace_registry = types.SimpleNamespace(
+            list_projects=lambda: [project], reload_projects=lambda: None
+        )
         return types.SimpleNamespace(storage=storage, workspace_registry=workspace_registry)
 
     async def test_disabled_by_default(self) -> None:
@@ -341,6 +343,18 @@ class PerProjectEgressConsentTests(unittest.IsolatedAsyncioTestCase):
     cached on the job -- so a second test below proves the SAME job
     instance re-evaluates it on the very next tick without being
     reconstructed (the "no restart required" asymmetry the plan calls out).
+
+    NOTE on the security-review fix: every ``workspace_registry`` stub in
+    this class exposes a (no-op) ``reload_projects`` callable, so the
+    per-tick freshness check (``SessionNamingSweepJob._resolve_projects_to_sweep``)
+    always reports "confirmed" here -- these mock-based tests exercise the
+    per-project consent LOGIC, not the caching layer itself (a mock that
+    re-reads the same mutable Python object every call cannot exercise a
+    real snapshot cache -- see
+    ``test_db_project_registry.py::TestSweepJobObservesConsentFlipThroughTheRealCachingLayer``
+    for the test that actually exercises the caching layer against a real
+    ``DbProjectManager``). ``MissingReloadHookFailsClosedTests`` below is
+    the mock-based test for the OTHER branch: no reload hook at all.
     """
 
     def _make_two_project_ports(
@@ -353,7 +367,9 @@ class PerProjectEgressConsentTests(unittest.IsolatedAsyncioTestCase):
         storage = types.SimpleNamespace(sessions=lambda: sessions_repo)
         proj_a = types.SimpleNamespace(id="proj-a", llm_egress_consent=True)
         proj_b = types.SimpleNamespace(id="proj-b", llm_egress_consent=False)
-        workspace_registry = types.SimpleNamespace(list_projects=lambda: [proj_a, proj_b])
+        workspace_registry = types.SimpleNamespace(
+            list_projects=lambda: [proj_a, proj_b], reload_projects=lambda: None
+        )
         ports = types.SimpleNamespace(storage=storage, workspace_registry=workspace_registry)
         return ports, sessions_repo
 
@@ -430,7 +446,9 @@ class PerProjectEgressConsentTests(unittest.IsolatedAsyncioTestCase):
             count_missing_session_name=AsyncMock(return_value=1),
         )
         storage = types.SimpleNamespace(sessions=lambda: sessions_repo)
-        workspace_registry = types.SimpleNamespace(list_projects=lambda: [project])
+        workspace_registry = types.SimpleNamespace(
+            list_projects=lambda: [project], reload_projects=lambda: None
+        )
         ports = types.SimpleNamespace(storage=storage, workspace_registry=workspace_registry)
         backend = self._egress_backend()
         job = SessionNamingSweepJob(ports=ports, project=None, naming_backend=backend)
@@ -448,6 +466,71 @@ class PerProjectEgressConsentTests(unittest.IsolatedAsyncioTestCase):
 
         sessions_repo.count_missing_session_name.assert_not_awaited()
         self.assertEqual(second_tick.candidates_found, 0)
+
+
+class MissingReloadHookFailsClosedTests(unittest.IsolatedAsyncioTestCase):
+    """hosted-llm-anthropic-ica-lane-v1 M2 security-review fix, step 2's
+
+    DECISION: a ``workspace_registry`` that exposes NEITHER
+    ``reload_projects()`` nor ``reload()`` cannot prove its
+    ``list_projects()`` reads are fresh -- ``SessionNamingSweepJob`` treats
+    every project's consent as UNCONFIRMED (fail-CLOSED) on ticks where the
+    active naming backend is egress-shaped, rather than silently trusting a
+    possibly-stale flag. See
+    ``SessionNamingSweepJob._resolve_projects_to_sweep``'s own docstring for
+    the full rationale.
+    """
+
+    async def test_no_reload_hook_skips_every_project_as_consent_unconfirmed(self) -> None:
+        proj_a = types.SimpleNamespace(id="proj-a", llm_egress_consent=True)
+        proj_b = types.SimpleNamespace(id="proj-b", llm_egress_consent=False)
+        sessions_repo = types.SimpleNamespace(
+            list_missing_session_name=AsyncMock(return_value=[]),
+            count_missing_session_name=AsyncMock(return_value=0),
+        )
+        storage = types.SimpleNamespace(sessions=lambda: sessions_repo)
+        # Deliberately NO ``reload_projects``/``reload`` attribute at all.
+        workspace_registry = types.SimpleNamespace(list_projects=lambda: [proj_a, proj_b])
+        ports = types.SimpleNamespace(storage=storage, workspace_registry=workspace_registry)
+        backend = types.SimpleNamespace(
+            EGRESS=True, model="fake-hosted-model", derive_name=AsyncMock(return_value="A name")
+        )
+        job = SessionNamingSweepJob(ports=ports, project=None, naming_backend=backend)
+
+        with patch.object(config, "CCDASH_SESSION_NAMING_ENABLED", True):
+            result = await job.execute(trigger="scheduled")
+
+        # proj-a HAS consented, but freshness cannot be confirmed for this
+        # registry -- it must still be skipped, same as proj-b.
+        sessions_repo.count_missing_session_name.assert_not_awaited()
+        self.assertTrue(result.success)
+        self.assertEqual(result.candidates_found, 0)
+
+    async def test_local_backend_is_unaffected_by_a_missing_reload_hook(self) -> None:
+        """A non-egress backend never consults consent freshness either --
+
+        same exemption as ``PerProjectEgressConsentTests``'s local-backend
+        test, now also proven when the registry cannot be refreshed at all.
+        """
+        proj_a = types.SimpleNamespace(id="proj-a", llm_egress_consent=False)
+        sessions_repo = types.SimpleNamespace(
+            list_missing_session_name=AsyncMock(return_value=[{"id": "s1", "project_id": "proj-a"}]),
+            count_missing_session_name=AsyncMock(return_value=1),
+        )
+        storage = types.SimpleNamespace(sessions=lambda: sessions_repo)
+        workspace_registry = types.SimpleNamespace(list_projects=lambda: [proj_a])
+        ports = types.SimpleNamespace(storage=storage, workspace_registry=workspace_registry)
+        backend = types.SimpleNamespace(
+            model="fake-local-model", derive_name=AsyncMock(return_value="A name")
+        )  # no EGRESS attribute -- duck-typed default False
+
+        job = SessionNamingSweepJob(ports=ports, project=None, naming_backend=backend)
+
+        with patch.object(config, "CCDASH_SESSION_NAMING_ENABLED", True):
+            result = await job.execute(trigger="scheduled")
+
+        sessions_repo.count_missing_session_name.assert_awaited_once_with("proj-a")
+        self.assertEqual(result.candidates_found, 1)
 
 
 if __name__ == "__main__":
