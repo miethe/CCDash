@@ -174,5 +174,57 @@ class TestAIInsightRouterKeySet(unittest.TestCase):
         self.assertIn("Error connecting", data["error"])
 
 
+class TestAIInsightRouterAuth(unittest.TestCase):
+    """``/api/ai`` is gated by the SAME ``require_v1_auth`` dependency as /api/v1.
+
+    Before this gate the endpoint was an unauthenticated LLM proxy on any
+    non-loopback deployment.  Parity with /api/v1 is the contract: no-op when
+    CCDASH_API_TOKEN is unset, 401 on a missing bearer, 403 on a wrong one.
+    """
+
+    def setUp(self) -> None:
+        self.app = _make_app()
+        self.client = TestClient(self.app, raise_server_exceptions=True)
+
+    def test_allows_unauthenticated_when_token_unset(self) -> None:
+        """Local-trust default: no token configured => no credential required."""
+        with patch("backend.config.CCDASH_API_TOKEN", ""), \
+             patch("backend.config.CCDASH_GEMINI_API_KEY", ""):
+            resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["disabled"])
+
+    def test_rejects_unauthenticated_when_token_set(self) -> None:
+        """The defect this test pins: an unauthenticated POST must be rejected."""
+        with patch("backend.config.CCDASH_API_TOKEN", "secret-test-token"), \
+             patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-should-never-be-used"):
+            resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
+        self.assertEqual(resp.status_code, 401)
+
+    def test_rejects_wrong_token(self) -> None:
+        with patch("backend.config.CCDASH_API_TOKEN", "secret-test-token"), \
+             patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-should-never-be-used"):
+            resp = self.client.post(
+                "/api/ai/insight",
+                json={"metrics": [], "tasks": []},
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_accepts_correct_token_and_preserves_disabled_path(self) -> None:
+        """A valid bearer passes the gate; the disabled contract state survives it."""
+        with patch("backend.config.CCDASH_API_TOKEN", "secret-test-token"), \
+             patch("backend.config.CCDASH_GEMINI_API_KEY", ""):
+            resp = self.client.post(
+                "/api/ai/insight",
+                json={"metrics": [], "tasks": []},
+                headers={"Authorization": "Bearer secret-test-token"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["disabled"])
+        self.assertEqual(data["error"], "")
+
+
 if __name__ == "__main__":
     unittest.main()
