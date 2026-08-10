@@ -9,9 +9,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
+import httpx  # noqa: F401 -- re-exported so tests can patch
+# ``backend.services.ai_insight.httpx.AsyncClient`` (and used below for the
+# ``httpx.HTTPStatusError`` exception type); the actual POST now lives in
+# ``GeminiTextCompletionAdapter`` (``backend/adapters/llm/gemini.py``), but
+# ``httpx`` is a single shared module object, so patching the attribute here
+# mutates the same object the adapter's own ``import httpx`` resolves to.
 
 from backend import config
+from backend.adapters.llm.gemini import GeminiTextCompletionAdapter
+from backend.application.ports.llm import envelope_from_aggregate
 
 logger = logging.getLogger(__name__)
 
@@ -73,30 +80,17 @@ async def generate_dashboard_insight(
         "risk or the biggest win. Focus on cost vs. delivery velocity."
     )
 
-    url = f"{_GEMINI_BASE_URL}/{_GEMINI_MODEL}:generateContent?key={api_key}"
-    payload = {
-        "contents": [
-            {
-                "parts": [{"text": prompt}],
-            }
-        ]
-    }
+    envelope = envelope_from_aggregate(prompt)
+    adapter = GeminiTextCompletionAdapter(
+        api_key=api_key,
+        model=_GEMINI_MODEL,
+        timeout_seconds=_TIMEOUT_SECONDS,
+        base_url=_GEMINI_BASE_URL,
+    )
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            candidates = data.get("candidates") or []
-            text: str = ""
-            if candidates:
-                text = (
-                    candidates[0]
-                    .get("content", {})
-                    .get("parts", [{}])[0]
-                    .get("text", "")
-                ) or ""
-            return AIInsightResult(text=text or "Could not generate insight.")
+        text = await adapter.complete(envelope)
+        return AIInsightResult(text=text or "Could not generate insight.")
     except httpx.HTTPStatusError as exc:
         logger.warning("Gemini API HTTP error: %s %s", exc.response.status_code, exc.response.text)
         return AIInsightResult(error=f"Gemini API error: {exc.response.status_code}")

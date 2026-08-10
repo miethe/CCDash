@@ -44,9 +44,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
+import httpx  # noqa: F401 -- re-exported so tests can patch
+# ``backend.services.session_naming_local_backend.httpx.AsyncClient``; the
+# actual call now lives in ``OllamaTextCompletionAdapter``
+# (``backend/adapters/llm/ollama.py``), but ``httpx`` is a single shared
+# module object, so patching the attribute here mutates the same object the
+# adapter's own ``import httpx`` resolves to.
 
 from backend import config
+from backend.adapters.llm.ollama import OllamaTextCompletionAdapter
+from backend.application.ports.llm import PromptEnvelope, PromptProvenance
 from backend.application.services.agent_queries.redaction import (
     redaction_patterns_enabled,
 )
@@ -125,6 +132,11 @@ class LocalOllamaNamingBackend:
             timeout_seconds if timeout_seconds is not None else config.CCDASH_OLLAMA_TIMEOUT_SECONDS
         )
         self._consecutive_ollama_failures = 0
+        self._adapter = OllamaTextCompletionAdapter(
+            base_url=self.base_url,
+            model=self.model,
+            timeout_seconds=self.timeout_seconds,
+        )
 
     async def derive_name(self, candidate: dict[str, Any]) -> str | None:
         """Derive and persist a name for ``candidate``, or return ``None``.
@@ -190,8 +202,34 @@ class LocalOllamaNamingBackend:
         if not prompt_text:
             return None
 
+        instruction = (
+            "You generate short titles for software development session "
+            "transcripts. Read the excerpt below and respond with ONLY a "
+            "concise title (3-8 words, no quotation marks, no trailing "
+            "punctuation, no explanation) describing what the session was "
+            "about.\n\n"
+            f"Transcript excerpt:\n{prompt_text}\n\nTitle:"
+        )
+        # ``redaction_events`` is not currently threaded through
+        # ``get_session_detail``'s returned bundle -- passing 0 rather than
+        # fabricating a count (P2/P3 territory per the contract's Risk
+        # Areas; see the Completion Report's follow-up recommendation).
+        #
+        # This lane builds the envelope directly (not via
+        # ``envelope_from_redacted_transcript``'s fail-closed factory)
+        # deliberately: that factory's redaction-gate check exists to guard
+        # the off-box EGRESS boundary (Lane B/Gemini), and this lane never
+        # checked that flag before P1 (it is loopback-only, zero-egress by
+        # construction -- see the class docstring). Gating it here would be
+        # a genuine, untested behaviour change, not a preserved one.
+        envelope = PromptEnvelope(
+            text=instruction,
+            provenance=PromptProvenance.TRANSCRIPT_REDACTED,
+            redaction_events=0,
+        )
+
         try:
-            raw_title = await self._call_ollama(prompt_text)
+            raw_title = await self._adapter.complete(envelope)
         except Exception:
             # Fail-open: Ollama not installed/running, connection refused,
             # timeout, or any other transport error -- this is the expected,
@@ -261,36 +299,11 @@ class LocalOllamaNamingBackend:
         """
         self._consecutive_ollama_failures = 0
 
-    async def _call_ollama(self, prompt_text: str) -> str | None:
-        """POST to the local Ollama ``/api/generate`` endpoint; return the raw completion.
-
-        Raises on any transport/HTTP error -- the caller (:meth:`derive_name`)
-        is responsible for the fail-open wrapping, matching this codebase's
-        convention of separating "the call" from "the fail-open guarantee"
-        (mirrors ``ai_insight.generate_dashboard_insight``'s
-        try/except-at-the-call-site shape, and
-        ``session_naming_sweep_job.derive_name_fail_open``'s own separation
-        of concerns).
-        """
-        instruction = (
-            "You generate short titles for software development session "
-            "transcripts. Read the excerpt below and respond with ONLY a "
-            "concise title (3-8 words, no quotation marks, no trailing "
-            "punctuation, no explanation) describing what the session was "
-            "about.\n\n"
-            f"Transcript excerpt:\n{prompt_text}\n\nTitle:"
-        )
-        payload = {
-            "model": self.model,
-            "prompt": instruction,
-            "stream": False,
-        }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post(f"{self.base_url}/api/generate", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        response_text = data.get("response") if isinstance(data, dict) else None
-        return str(response_text) if response_text else None
+    # ``_call_ollama`` (the raw httpx POST to Ollama's ``/api/generate``)
+    # moved to ``OllamaTextCompletionAdapter`` (``backend/adapters/llm/ollama.py``,
+    # P1 TextCompletionPort seam) -- ``derive_name`` now calls
+    # ``self._adapter.complete(envelope)`` instead. Same URL, same payload
+    # shape, same raise-on-transport/HTTP-error semantics.
 
 
 def resolve_naming_backend(ports: Any) -> Any | None:
