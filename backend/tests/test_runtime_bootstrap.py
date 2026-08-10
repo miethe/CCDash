@@ -655,9 +655,13 @@ class RuntimeProfileTests(unittest.TestCase):
             payload["environmentContractRequired"],
             ["CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"],
         )
+        # CCDASH_API_TOKEN (T10-004 / OQ-6) is the optional LAN bearer gating
+        # /api/v1. It is a secret (secret=True) but NOT required
+        # (default_when_missing=True) — so it appears in the secrets list while
+        # environmentContractRequired above stays at two entries.
         self.assertEqual(
             payload["environmentContractSecrets"],
-            ["CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"],
+            ["CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN", "CCDASH_API_TOKEN"],
         )
         self.assertEqual(payload["environmentContract"]["deploymentMode"], "hosted")
         self.assertEqual(payload["environmentContract"]["runtimeProfile"], "api")
@@ -1528,29 +1532,52 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        with (
-            patch("backend.runtime.container.initialize_observability"),
-            patch("backend.runtime.container.shutdown_observability"),
-            patch("backend.runtime.container.connection.get_connection", AsyncMock(return_value=object())),
-            patch("backend.runtime.container.connection.close_connection", AsyncMock()) as close_connection,
-            patch("backend.runtime.container.migrations.run_migrations", AsyncMock()),
-            patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync),
-            patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]),
-            patch("backend.adapters.jobs.runtime.effective_test_flags", return_value=types.SimpleNamespace(testVisualizerEnabled=False)),
-            patch("backend.adapters.jobs.runtime.skillmeat_refresh_configured", return_value=False),
-            patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
-            patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
-            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_DELAY_SECONDS", 0),
-            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
-            patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
-            patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch(
-                "backend.runtime.container.config.resolve_worker_binding_config",
-                return_value=config.WorkerBindingConfig(project_id=project.id),
-            ),
-            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding),
-            patch("backend.runtime_ports.project_manager.get_active_project") as get_active_project,
-        ):
+        # NOTE: This block intentionally uses contextlib.ExitStack rather than a
+        # parenthesized ``with (...)`` context-manager group. Under the pinned
+        # CPython 3.12.0 interpreter, this specific method's parenthesized-with
+        # shape segfaults the bytecode compiler at import/collection time, which
+        # made the whole module uncollectable (observed as a hang/timeout). The
+        # sibling test_worker_watch_process_starts_file_watcher already uses this
+        # idiom for the same reason. See node_01KZP355P3KM5JK0MEQNWEAZ6R.
+        with ExitStack() as stack:
+            stack.enter_context(patch("backend.runtime.container.initialize_observability"))
+            stack.enter_context(patch("backend.runtime.container.shutdown_observability"))
+            stack.enter_context(patch("backend.runtime.container.connection.get_connection", AsyncMock(return_value=object())))
+            close_connection = stack.enter_context(
+                patch("backend.runtime.container.connection.close_connection", AsyncMock())
+            )
+            stack.enter_context(patch("backend.runtime.container.migrations.run_migrations", AsyncMock()))
+            stack.enter_context(patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync))
+            stack.enter_context(patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]))
+            stack.enter_context(
+                patch(
+                    "backend.adapters.jobs.runtime.effective_test_flags",
+                    return_value=types.SimpleNamespace(testVisualizerEnabled=False),
+                )
+            )
+            stack.enter_context(patch("backend.adapters.jobs.runtime.skillmeat_refresh_configured", return_value=False))
+            watcher_start = stack.enter_context(
+                patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock())
+            )
+            watcher_stop = stack.enter_context(
+                patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock())
+            )
+            stack.enter_context(patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_DELAY_SECONDS", 0))
+            stack.enter_context(patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True))
+            stack.enter_context(patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False))
+            stack.enter_context(patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0))
+            stack.enter_context(
+                patch(
+                    "backend.runtime.container.config.resolve_worker_binding_config",
+                    return_value=config.WorkerBindingConfig(project_id=project.id),
+                )
+            )
+            stack.enter_context(
+                patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding)
+            )
+            get_active_project = stack.enter_context(
+                patch("backend.runtime_ports.project_manager.get_active_project")
+            )
             with patch("backend.worker._resolve_probe_binding", return_value=None):
                 task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
                 await asyncio.sleep(0.05)
