@@ -246,11 +246,28 @@ CCDASH_OLLAMA_BASE_URL = os.getenv("CCDASH_OLLAMA_BASE_URL", "http://localhost:1
 # makes every call fail, which the fail-open contract already covers (leaves
 # session_name NULL, logs, never crashes).
 CCDASH_OLLAMA_MODEL = os.getenv("CCDASH_OLLAMA_MODEL", "gemma2:2b").strip() or "gemma2:2b"
-# Per-call HTTP timeout (seconds) for the local Ollama client. Short by
-# design: a hung/overloaded local daemon must fail a single candidate fast
-# (fail-open -- leave session_name NULL, log, move to the next candidate)
-# rather than stall the whole sweep tick.
-CCDASH_OLLAMA_TIMEOUT_SECONDS = _env_int("CCDASH_OLLAMA_TIMEOUT_SECONDS", 15)
+# Per-call HTTP timeout (seconds) for the local Ollama client. Must cover a
+# COLD model load, not just warm inference: the sweep interval (1800s) is far
+# longer than Ollama's 5m default keep_alive, so EVERY tick's first call pays
+# the load cost.
+#
+# This default was 15 until 2026-08-09, which was below measured cold-start
+# latency and therefore could not succeed on a tick's first call. Measured on
+# the agentic node (gemma2:2b, CPU, rootless podman, MAX_PROMPT_CHARS-length
+# prompt), from inside the worker container over
+# host.containers.internal:11434 -- cold 25.6s wall (9.1s of it model load)
+# vs warm 13.7s. At 15s the tick's first three calls timed out, the local
+# backend's consecutive-failure breaker opened
+# (LocalOllamaNamingBackend._CONSECUTIVE_FAILURE_THRESHOLD = 3), and the tick
+# yielded nothing -- self-perpetuating and near-silent, since the sweep's INFO
+# lines are swallowed repo-wide and only the breaker WARNING surfaces.
+#
+# The original "short by design" rationale (fail a hung/overloaded daemon fast
+# rather than stall a tick) is preserved by that breaker, not by this timeout:
+# a wedged daemon costs at most 3 x this value before the breaker skips every
+# remaining candidate in the tick. Failure stays fail-open throughout -- leave
+# session_name NULL, log, move on.
+CCDASH_OLLAMA_TIMEOUT_SECONDS = _env_int("CCDASH_OLLAMA_TIMEOUT_SECONDS", 60)
 CCDASH_SNAPSHOT_FRESHNESS_DISABLE_CANDIDATE_SECONDS = _env_int(
     "CCDASH_SNAPSHOT_FRESHNESS_DISABLE_CANDIDATE_SECONDS",
     7 * 24 * 60 * 60,

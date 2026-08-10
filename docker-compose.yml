@@ -89,6 +89,30 @@ x-shared-backend-env: &shared-backend-env
   # introduced in Phase 10 — that token is SEPARATE from CCDASH_API_BEARER_TOKEN.
   CCDASH_AUTH_PROVIDER: "local"
   CCDASH_LOCAL_NO_AUTH_ENABLED: "true"
+  # ── Derived session naming (automatic-session-naming-v1 M3) ─────────────────
+  # This environment map is an explicit ALLOWLIST: a var set only in the host
+  # environment or an --env-file, but absent here, never reaches the container
+  # namespace. Omitting these left the naming lane unreachable in THIS stack --
+  # CCDASH_SESSION_NAMING_ENABLED could be set and still no-op silently.
+  # (deploy/runtime/compose.yaml already carried them; that is the file the node
+  # deploys and compose.hosted.yml is an overlay on, so both were already fine.
+  # This stack is standalone and was not.)
+  # Every default below mirrors backend/config.py exactly, so an unset host env
+  # is behaviour-identical to not listing them at all.
+  CCDASH_SESSION_NAMING_ENABLED: "${CCDASH_SESSION_NAMING_ENABLED:-false}"
+  CCDASH_SESSION_NAMING_QUOTA: "${CCDASH_SESSION_NAMING_QUOTA:-200}"
+  CCDASH_SESSION_NAMING_WINDOW_HOURS: "${CCDASH_SESSION_NAMING_WINDOW_HOURS:-24}"
+  CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS: "${CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS:-1800}"
+  CCDASH_SESSION_NAMING_BACKEND: "${CCDASH_SESSION_NAMING_BACKEND:-local}"
+  # "localhost" is the CONTAINER's own loopback, where no Ollama runs. A compose
+  # deployment that wants the (default, zero-egress) local lane to function must
+  # point this at the host -- e.g. http://host.containers.internal:11434 under
+  # podman. Left matching backend/config.py; see deploy/runtime/.env.example.
+  CCDASH_OLLAMA_BASE_URL: "${CCDASH_OLLAMA_BASE_URL:-http://localhost:11434}"
+  CCDASH_OLLAMA_MODEL: "${CCDASH_OLLAMA_MODEL:-gemma2:2b}"
+  CCDASH_OLLAMA_TIMEOUT_SECONDS: "${CCDASH_OLLAMA_TIMEOUT_SECONDS:-60}"
+  # Lane B (hosted) only. Default empty == hosted lane disabled, fail-open.
+  CCDASH_GEMINI_API_KEY: "${CCDASH_GEMINI_API_KEY:-}"
 
 services:
   # ── Postgres 15 ────────────────────────────────────────────────────────────

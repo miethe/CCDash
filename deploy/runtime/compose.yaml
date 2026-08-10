@@ -83,7 +83,12 @@ x-backend-service: &backend-service
     # host -- e.g. http://host.containers.internal:11434 under podman. Left as-is so
     # the default matches backend/config.py exactly; see deploy/runtime/.env.example.
     CCDASH_OLLAMA_MODEL: "${CCDASH_OLLAMA_MODEL:-gemma2:2b}"
-    CCDASH_OLLAMA_TIMEOUT_SECONDS: "${CCDASH_OLLAMA_TIMEOUT_SECONDS:-15}"
+    # 60, not 15, since 2026-08-09: the old default sat BELOW measured cold-start
+    # latency (25.6s cold / 13.7s warm, gemma2:2b on the agentic node, measured
+    # from inside this worker container) so a tick's first calls could only ever
+    # time out. Kept in lockstep with backend/config.py's own default, per the
+    # "defaults mirror config.py exactly" contract above.
+    CCDASH_OLLAMA_TIMEOUT_SECONDS: "${CCDASH_OLLAMA_TIMEOUT_SECONDS:-60}"
     GIT_OPTIONAL_LOCKS: "${GIT_OPTIONAL_LOCKS:-0}"
   healthcheck: &api-healthcheck
     test:

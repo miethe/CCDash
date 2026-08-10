@@ -536,10 +536,15 @@ CCDASH_LLM_SESSION_NAMING_MODEL=<cheap-tier, verify per OQ-2>
 # CCDASH_REDACTION_PATTERNS_ENABLED must stay true or naming's hosted lane no-ops
 ```
 
-**Compose plumbing is a first-class deliverable, not a follow-up.** Per defect 6, every var above —
-*including the existing nine* — must be added to `docker-compose.yml`'s `x-shared-backend-env` anchor
-(`:68-91`) and to `deploy/runtime/compose.hosted.yml`, or the whole feature is a silent no-op in
-every container. This generalizes the naming PRD's FR-18 from one key to the whole surface.
+**Compose plumbing is a first-class deliverable, not a follow-up.** Every var above must reach the
+container namespace explicitly, or the whole feature is a silent no-op there. This generalizes the
+naming PRD's FR-18 from one key to the whole surface. **Corrected 2026-08-09** — the file that
+matters is `deploy/runtime/compose.yaml`'s `&backend-shared-env` anchor, which is what the node
+deploys and what every `package.json` compose script uses; the *existing nine* have been allowlisted
+there since `0de559a` and are verified present in both running containers. `compose.hosted.yml` is an
+overlay on that file and inherits them. The standalone `docker-compose.yml` stack was the only real
+gap and is now fixed. So this remains a first-class deliverable for **new** `CCDASH_LLM_*` vars, but
+it is no longer an outstanding one for the naming surface.
 
 ## Blast-Radius Controls
 
@@ -675,25 +680,51 @@ M3 show it is no more grounded or discriminating.
 practical envelope is disqualified regardless of quality — the sweep is designed to fail a candidate
 fast rather than stall a tick (`config.py:250-252`).
 
-### Cost model — formula and assumptions, not asserted rates
+### Cost model — formula and MEASURED token count
 
-Per-call token assumption to state explicitly: **~4,000 input tokens + ~30 output tokens** (a truncated
-transcript window in, a few words out). Then:
+> **MEASURED 2026-08-09 — this section's one unmeasured input is now measured, and the
+> original estimate was 4.4× too high.** The estimate below read *"~4,000 input tokens"*; the
+> real figure is **915**. The 4,000 came from `MAX_PROMPT_CHARS = 4000`
+> (`session_naming_prompt.py:45`) — a **character** bound read as a token count. At ~4.7
+> chars/token, a maxed-out prompt is ~915 tokens, not ~4,000. **Every dollar figure derived
+> from the old assumption is an overstatement by that factor.**
+
+Per-call token count, measured on the agentic node against the real request path — from inside
+the `ccdash_worker_1` container, over `host.containers.internal:11434`, using
+`session_naming_local_backend`'s exact payload shape and a prompt padded to `MAX_PROMPT_CHARS`
+(4,274 chars total after the instruction wrapper, i.e. the **worst case** the code permits):
+
+| Quantity | Measured | Prior estimate |
+|---|---|---|
+| Input tokens / call | **915** (`prompt_eval_count`) | ~4,000 (4.4× high) |
+| Output tokens / call | **8–10** (`eval_count`) | ~30 |
+| Cold wall time | **25.6s** (9.1s model load) | 20.0s believed |
+| Warm wall time | **13.7s** | 6.9s believed |
 
 ```
-monthly_cost  = calls_per_day × 30 × (4000/1e6 × rate_in + 30/1e6 × rate_out)
-backfill_cost = 20000        ×      (4000/1e6 × rate_in + 30/1e6 × rate_out)
+monthly_cost  = calls_per_day × 30 × (915/1e6 × rate_in + 10/1e6 × rate_out)
+backfill_cost = 20000        ×      (915/1e6 × rate_in + 10/1e6 × rate_out)
 ```
 
-At 100 calls/day that is 3,000 calls/month ≈ **12M input tokens + 0.09M output tokens**; the 20k
-backfill is ≈ **80M input + 0.6M output**. Output cost is negligible at this shape — **this workload is
-almost purely input-token-priced**, which is the single most useful planning fact here and is
-rate-independent. Concrete per-MTok rates are deliberately not asserted (**OQ-2**); on ICA free tier
-both figures are **$0**, which is why ICA is the recommended endpoint for any systematic run.
+At 100 calls/day that is 3,000 calls/month ≈ **2.7M input tokens + 0.03M output tokens**; the 20k
+backfill is ≈ **18.3M input + 0.2M output** (was modelled at 80M input). Output cost is negligible
+at this shape — **this workload is almost purely input-token-priced**, which is the single most
+useful planning fact here and is rate-independent. Concrete per-MTok rates are deliberately not
+asserted (**OQ-2**); on ICA free tier both figures are **$0**, which is why ICA is the recommended
+endpoint for any systematic run.
+
+915 is a worst-case ceiling, not a mean: it is a prompt padded to the `MAX_PROMPT_CHARS` bound.
+Real candidates whose transcript excerpt falls under that bound cost proportionally less, so
+**treat 915 as the upper bound for any budget and re-measure per model** — token count is a
+function of the tokenizer, and a hosted-lane model will not tokenize identically to `gemma2:2b`.
 
 Local-lane cost is $0 in dollars but non-zero in capacity: node has 23 GB RAM / ~14 GB free, and
-`gemma2:2b` at 6.9s warm × 100/day ≈ 12 minutes of daily compute — comfortably inside a 1800s sweep
-interval (`config.py:224-226`).
+`gemma2:2b` at the **measured 13.7s warm** × 100/day ≈ 23 minutes of daily compute — still inside a
+1800s sweep interval (`config.py:224-226`), but note the interaction with
+`CCDASH_SESSION_NAMING_QUOTA=200`: a full-quota tick at 13.7s/call is ~46 min, i.e. **longer than
+the 30-min interval**. That latent tick-overrun was invisible while the lane could not run at all;
+it is not a correctness bug (ticks are sequential, not overlapping) but it bounds real throughput
+to roughly the interval, and is the number to revisit if the backlog is ever worked down in bulk.
 
 ## Phased Implementation Shape
 
@@ -721,7 +752,19 @@ Declare `httpx` in `backend/requirements.txt`; add auth + a constrained request 
 it; stop logging provider error bodies; add **every** LLM env var to both compose files' env
 allowlists; add the redaction-provenance guardrail test.
 
-- **Exit:** the naming lane actually runs in a container (today it cannot — defect 6); an
+> **UPDATE 2026-08-09 — the compose half of this phase was already done, and defect 6 overstated
+> its own scope.** Defect 6 surveyed `docker-compose.yml` and `deploy/runtime/compose.hosted.yml`.
+> The node deploys **neither**: `bootstrap-agentic-node.sh` runs `-f deploy/runtime/compose.yaml
+> -f compose.override.yaml`, and that file has allowlisted all nine LLM vars since `0de559a`.
+> `compose.hosted.yml` is an *overlay* on `compose.yaml` and inherits them (compose merges
+> `environment:` maps across files). Only the standalone `docker-compose.yml` stack — used by no
+> script in `package.json` — was genuinely missing them; that gap is now closed. Verified live on
+> the node the same day: `podman exec` into **both** `ccdash_api_1` and `ccdash_worker_1` shows all
+> nine present, and `sessions.session_name_source = 'derived_generative'` holds **176 rows**, so the
+> lane has in fact been running. The generalised claim "no LLM env var reaches any container" was
+> false for the deployment that matters.
+
+- **Exit:** the naming lane actually runs in a container (**met** — see the update above); an
   unauthenticated request to `/api/ai/insight` is rejected; a grep for `?key=` in `backend/services/`
   returns nothing; the guardrail test fails if an `adapters/llm/` module imports `parsers.sessions`.
 - **Sequencing is load-bearing here**: compose plumbing must precede any hosted-lane work, or every
@@ -807,9 +850,10 @@ the known dated-id failure (`claude-haiku-4-5-20251001` → 401), which is the s
 
 `claude-haiku-4-5` $1/$5 per MTok (200K context, 64K max output — **the only current model that is
 not 1M context**); `claude-sonnet-5` $3/$15 ($2/$10 introductory through 2026-08-31). The
-[cost formula](#cost-model--formula-and-assumptions-not-asserted-rates) is rate-independent and now
-has real rates; its **one unmeasured input is the actual per-call token count** — measure it from
-`session_naming_prompt.build_prompt_text` before quoting any figure to anyone.
+[cost formula](#cost-model--formula-and-measured-token-count) is rate-independent and now
+has real rates; its last unmeasured input, the actual per-call token count, **was measured on
+2026-08-09: 915 input + 8–10 output per call at the worst-case prompt length, not the ~4,000 input
+originally assumed.** Use the measured figure — the old one overstates cost 4.4×.
 
 ## ADR Candidates
 
