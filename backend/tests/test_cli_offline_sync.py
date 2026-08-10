@@ -12,11 +12,16 @@ Run:
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
+import typer
+
+from backend import config
 from backend.cli import offline
 from backend.db import connection
 
@@ -263,6 +268,120 @@ class CliOfflineSyncTests(unittest.IsolatedAsyncioTestCase):
                 after,
                 "Offline sync mutated the project repo (allow_writeback=False contract violated).",
             )
+
+
+class OfflineBackendIsolationTests(unittest.IsolatedAsyncioTestCase):
+    """``--offline`` must resolve a LOCAL SQLite DB regardless of ambient config.
+
+    Regression for the production-write incident: ``bootstrap_offline`` set
+    ``connection.DB_PATH`` but never overrode ``config.DB_BACKEND``, so with
+    ``CCDASH_DB_BACKEND=postgres`` in the environment the "offline" lane opened
+    a pool against the shared Postgres and ran a full ``sync_project`` into it —
+    112,764 rows across 15 tables, under a project_id with no ``projects`` row.
+
+    Deliberately two-sided: one case proves the guard ACCEPTS a correctly
+    isolated SQLite connection, the other proves it REJECTS a non-SQLite one.
+    A guard that merely always passes would satisfy the first test alone.
+    """
+
+    async def asyncSetUp(self) -> None:
+        offline._offline_container = None
+        offline._offline_manager = None
+        offline._ephemeral_db_path = None
+        # Snapshot every global the fix now writes, so later tests in a sweep see
+        # the production defaults (see the DB_PATH test-ordering hazard).
+        self._orig_conn_db_path = connection.DB_PATH
+        self._orig_cfg_db_path = config.DB_PATH
+        self._orig_cfg_backend = config.DB_BACKEND
+        self._orig_env = {
+            k: os.environ.get(k)
+            for k in ("CCDASH_DB_BACKEND", "CCDASH_DB_PATH", "CCDASH_DATABASE_URL")
+        }
+
+    async def asyncTearDown(self) -> None:
+        try:
+            await offline.shutdown_offline()
+        except Exception:  # pragma: no cover - defensive cleanup
+            pass
+        connection.DB_PATH = self._orig_conn_db_path
+        config.DB_PATH = self._orig_cfg_db_path
+        config.DB_BACKEND = self._orig_cfg_backend
+        for key, value in self._orig_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    async def test_postgres_ambient_config_still_resolves_local_sqlite(self) -> None:
+        """The failing case from the incident: backend=postgres in the env."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            _, projects_json, _ = _build_temp_workspace(tmp_root)
+
+            # Reproduce the operative laptop config that caused the incident. The
+            # URL is unroutable on purpose: if isolation regresses, this test
+            # fails on a connection attempt instead of quietly writing somewhere.
+            os.environ["CCDASH_DB_BACKEND"] = "postgres"
+            os.environ["CCDASH_DATABASE_URL"] = (
+                "postgresql://nobody:nobody@240.0.0.1:1/should_never_connect"
+            )
+            config.DB_BACKEND = "postgres"
+            config.DATABASE_URL = os.environ["CCDASH_DATABASE_URL"]
+
+            offline_db = tmp_root / "offline-cache.db"
+            config.DB_PATH = offline_db
+            os.environ["CCDASH_DB_PATH"] = str(offline_db)
+
+            container = await offline.bootstrap_offline(
+                ephemeral=False,
+                config_path=str(projects_json),
+            )
+
+            self.assertIsInstance(
+                container.db,
+                aiosqlite.Connection,
+                "Offline bootstrap must yield a local SQLite connection even when "
+                "CCDASH_DB_BACKEND=postgres.",
+            )
+            self.assertEqual(
+                config.DB_BACKEND,
+                "sqlite",
+                "bootstrap_offline must pin config.DB_BACKEND to sqlite.",
+            )
+            # Prove it is a real local file that migrations actually ran against,
+            # rather than trusting the type alone.
+            async with container.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
+            ) as cur:
+                row = await cur.fetchone()
+            self.assertIsNotNone(
+                row, "Expected migrations to have created 'sessions' in the offline DB."
+            )
+
+    async def test_non_sqlite_connection_is_rejected_loudly(self) -> None:
+        """The guard must REFUSE, not warn, if a non-SQLite handle is resolved."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            _, projects_json, _ = _build_temp_workspace(tmp_root)
+
+            class _FakePool:  # stands in for an asyncpg pool
+                pass
+
+            async def _fake_get_connection() -> Any:
+                return _FakePool()
+
+            original = connection.get_connection
+            connection.get_connection = _fake_get_connection  # type: ignore[assignment]
+            try:
+                with self.assertRaises(typer.BadParameter) as ctx:
+                    await offline.bootstrap_offline(
+                        ephemeral=True,
+                        config_path=str(projects_json),
+                    )
+            finally:
+                connection.get_connection = original  # type: ignore[assignment]
+
+            self.assertIn("could not isolate", str(ctx.exception).lower())
 
 
 if __name__ == "__main__":
