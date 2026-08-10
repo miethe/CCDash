@@ -38,6 +38,18 @@ multi-line, wrapped in quotes, or (rarely) a hallucinated essay far longer
 than a title. :func:`_sanitize_title` enforces a hard length bound and
 **rejects** (returns ``None`` -- never truncates-and-stores) any output that
 is wildly non-conforming, rather than persisting raw model output verbatim.
+
+hosted-llm-anthropic-ica-lane-v1 M3-B
+--------------------------------------
+This module also houses :func:`resolve_naming_backend`, the SHARED selector
+for every naming lane (not only Lane A) -- so it is also where M3-B wires in
+the third, Anthropic/ICA lane (:class:`AnthropicNamingBackend`) alongside
+the existing local/hosted(Gemini) lanes, gated behind the SAME
+``CCDASH_LLM_EGRESS_CONSENT`` switch the hosted lane already proved in M2.
+See :func:`resolve_naming_backend`'s own docstring for the full gating
+story, and ``backend/config.py``'s ``CCDASH_LLM_*`` block for the config
+surface (``CCDASH_LLM_SESSION_NAMING_LANE``, ``CCDASH_LLM_ANTHROPIC_BASE_URL``
+/ ``_API_KEY`` / ``_MODEL``).
 """
 from __future__ import annotations
 
@@ -53,7 +65,11 @@ import httpx  # noqa: F401 -- re-exported so tests can patch
 
 from backend import config
 from backend.adapters.llm.ollama import OllamaTextCompletionAdapter
-from backend.application.ports.llm import PromptEnvelope, PromptProvenance
+from backend.application.ports.llm import (
+    PromptEnvelope,
+    PromptProvenance,
+    envelope_from_redacted_transcript,
+)
 from backend.application.services.agent_queries.redaction import (
     redaction_patterns_enabled,
 )
@@ -67,8 +83,17 @@ from backend.services.session_naming_prompt import sanitize_title as _sanitize_t
 
 __all__ = [
     "LocalOllamaNamingBackend",
+    "AnthropicNamingBackend",
     "resolve_naming_backend",
 ]
+
+# hosted-llm-anthropic-ica-lane-v1 M3-B: per-call HTTP timeout for the
+# anthropic lane's adapter. Not part of this leg's CCDASH_LLM_* config
+# surface (only CCDASH_LLM_ANTHROPIC_BASE_URL/API_KEY/MODEL were asked
+# for) -- mirrors HostedGeminiNamingBackend's own hardcoded
+# `_TIMEOUT_SECONDS = 30` module constant rather than inventing a new env
+# var this task's scope did not request.
+_ANTHROPIC_TIMEOUT_SECONDS = 30
 
 logger = logging.getLogger("ccdash.services.session_naming_local_backend")
 
@@ -320,6 +345,206 @@ class LocalOllamaNamingBackend:
     # shape, same raise-on-transport/HTTP-error semantics.
 
 
+class AnthropicNamingBackend:
+    """hosted-llm-anthropic-ica-lane-v1 M3-B -- the Anthropic/ICA naming lane.
+
+    Constructed by :func:`resolve_naming_backend` ONLY when BOTH
+    ``CCDASH_LLM_EGRESS_CONSENT`` and ``CCDASH_REDACTION_PATTERNS_ENABLED``
+    are true -- the exact SAME two structural gates that already guard
+    :class:`~backend.services.session_naming_hosted_backend.HostedGeminiNamingBackend`
+    (see that resolver's own docstring); this class is never constructed
+    any other way, and never re-checks consent itself (there is nothing
+    left to re-check -- consent is deployment-wide, read once at process
+    start, same as every other flag in ``backend/config.py``).
+
+    This class is the SECOND line of defense, deferring two further,
+    genuinely explicit degrade-not-fail preconditions to :meth:`derive_name`
+    -- mirroring ``HostedGeminiNamingBackend``'s own "``CCDASH_GEMINI_API_KEY``
+    unset -> disabled" precedent exactly:
+
+      - ``CCDASH_LLM_ANTHROPIC_API_KEY`` unset -> lane disabled (leaves
+        ``session_name`` NULL, logs, never sends, never raises).
+      - ``CCDASH_LLM_ANTHROPIC_MODEL`` unset -> lane ALSO disabled, the
+        exact same way. This var deliberately has NO config-level default
+        (see ``config.CCDASH_LLM_ANTHROPIC_MODEL``'s own comment) -- an
+        absent model is this feature's intended failure mode, not a bug to
+        paper over with a guessed default.
+
+    A THIRD failure mode -- the provider being unreachable (network error,
+    non-2xx, timeout, or even a construction-time adapter mismatch --
+    caught by :func:`resolve_naming_backend` itself before this class is
+    ever built) -- also degrades to ``None`` from :meth:`derive_name`. So
+    "no consent" (this class is never constructed), "not configured"
+    (constructed, but key/model absent), and "provider down" (constructed,
+    configured, the call itself failed) are three genuinely distinguishable
+    log lines -- never collapsed into one generic failure, per this leg's
+    own degradation contract.
+
+    ``adapter`` is INJECTED by the resolver (constructed there from the
+    lazily-imported ``AnthropicTextCompletionAdapter`` -- see
+    :func:`resolve_naming_backend`) rather than imported by this class
+    itself, so this module never imports ``backend.adapters.llm.anthropic``
+    at any level, at any time -- the one lazy import lives solely in the
+    resolver branch that is only ever reached once both gates above have
+    already passed.
+    """
+
+    def __init__(
+        self,
+        *,
+        ports: Any,
+        adapter: Any,
+        api_key: str,
+        model: str,
+    ) -> None:
+        self.ports = ports
+        self._adapter = adapter
+        self._api_key = api_key
+        self.model = model
+
+    @property
+    def EGRESS(self) -> bool:
+        """Delegates to the injected adapter -- see the sibling backends'
+
+        identical property (``LocalOllamaNamingBackend.EGRESS``,
+        ``HostedGeminiNamingBackend.EGRESS``) for the shared rationale:
+        ``SessionNamingSweepJob``'s per-project consent gate checks this on
+        whichever backend object it actually holds, without reaching into a
+        private ``_adapter`` attribute.
+        """
+        return bool(getattr(self._adapter, "EGRESS", False))
+
+    async def derive_name(self, candidate: dict[str, Any]) -> str | None:
+        """Derive and persist a name for ``candidate``, or return ``None``.
+
+        See the class docstring for the "not configured" / "provider down"
+        degrade states this method owns; "no consent" never reaches this
+        class at all. This method never raises, mirroring every other
+        ``naming_backend.derive_name`` implementation in this module.
+        """
+        if not self._api_key:
+            logger.debug(
+                "session_naming_local_backend: CCDASH_LLM_ANTHROPIC_API_KEY is "
+                "unset -- the anthropic naming lane is disabled; leaving "
+                "session_name NULL (not configured, never a crash)."
+            )
+            return None
+
+        if not self.model:
+            logger.debug(
+                "session_naming_local_backend: CCDASH_LLM_ANTHROPIC_MODEL is "
+                "unset -- the anthropic naming lane is disabled; leaving "
+                "session_name NULL (not configured, never a crash). This var "
+                "has no default by design -- see config.CCDASH_LLM_ANTHROPIC_MODEL."
+            )
+            return None
+
+        # Defense-in-depth re-check (mirrors HostedGeminiNamingBackend): the
+        # resolver already refused to construct this class unless this gate
+        # was on at construction time; this re-check covers the flag
+        # flipping off afterward, so every outbound prompt is provably
+        # gated at the moment it is actually sent.
+        if not redaction_patterns_enabled():
+            logger.info(
+                "session_naming_local_backend: CCDASH_REDACTION_PATTERNS_ENABLED "
+                "is off -- the anthropic naming lane is unreachable; leaving "
+                "session_name NULL (fail-closed, never sends unredacted)."
+            )
+            return None
+
+        project_id = str(candidate.get("project_id") or "") if isinstance(candidate, dict) else ""
+        session_id = str(candidate.get("id") or "") if isinstance(candidate, dict) else ""
+        if not project_id or not session_id:
+            return None
+
+        try:
+            bundle = await get_session_detail(
+                project_id,
+                session_id,
+                self.ports,
+                include={INCLUDE_TRANSCRIPT},
+            )
+        except Exception:
+            logger.warning(
+                "session_naming_local_backend: get_session_detail failed for "
+                "session_id=%s project_id=%s (anthropic lane) -- leaving "
+                "session_name NULL",
+                session_id,
+                project_id,
+                exc_info=True,
+            )
+            return None
+
+        if bundle is None or bundle.transcript is None:
+            return None
+
+        # ``bundle.transcript.items`` has already been through
+        # ``redact_entries`` inside ``get_session_detail`` -- this is the
+        # text this lane's prompt is built from; nothing raw is read here.
+        prompt_text = _build_prompt_text(bundle.transcript.items)
+        if not prompt_text:
+            return None
+
+        instruction = (
+            "You generate short titles for software development session "
+            "transcripts. Read the excerpt below and respond with ONLY a "
+            "concise title (3-8 words, no quotation marks, no trailing "
+            "punctuation, no explanation) describing what the session was "
+            "about.\n\n"
+            f"Transcript excerpt:\n{prompt_text}\n\nTitle:"
+        )
+        try:
+            # The fail-closed factory (not the manual PromptEnvelope(...)
+            # construction Lane A uses) -- this IS an egress lane, so the
+            # envelope must carry TRANSCRIPT_REDACTED provenance and refuse
+            # to build at all while redaction is off, matching
+            # HostedGeminiNamingBackend's identical choice.
+            envelope = envelope_from_redacted_transcript(instruction, redaction_events=0)
+        except RuntimeError:
+            # The factory's own fail-closed check refused (redaction
+            # flipped off between the re-check above and here) -- same
+            # fail-closed outcome, not a new failure path.
+            return None
+
+        try:
+            raw_title = await self._adapter.complete(envelope)
+        except Exception:
+            # Fail-open: network error, non-2xx, timeout, malformed
+            # response -- the "provider down" degrade state (see class
+            # docstring), never a crash.
+            logger.info(
+                "session_naming_local_backend: anthropic lane call failed for "
+                "session_id=%s (model=%s) -- leaving session_name NULL "
+                "(fail-open no-op, provider unreachable)",
+                session_id,
+                self.model,
+            )
+            return None
+
+        title = _sanitize_title(raw_title)
+        if not title:
+            return None
+
+        try:
+            written = await self.ports.storage.sessions().set_derived_session_name(
+                project_id,
+                session_id,
+                title,
+                SESSION_NAME_SOURCE_DERIVED_GENERATIVE,
+            )
+        except Exception:
+            logger.warning(
+                "session_naming_local_backend: persisting derived name failed for "
+                "session_id=%s project_id=%s (anthropic lane)",
+                session_id,
+                project_id,
+                exc_info=True,
+            )
+            return None
+
+        return title if written else None
+
+
 def resolve_naming_backend(ports: Any) -> Any | None:
     """Select the ``naming_backend`` object for ``SessionNamingSweepJob``.
 
@@ -328,16 +553,32 @@ def resolve_naming_backend(ports: Any) -> Any | None:
     ``CCDASH_SESSION_NAMING_BACKEND``'s own module-level contract in
     ``backend/config.py``) -- constructs :class:`LocalOllamaNamingBackend`.
 
-    ``"hosted"`` (T3-003, Lane B) is reachable ONLY when ALL of the
-    following hold, checked here (not inside the hosted backend itself, so
-    an unreachable path never even gets constructed):
+    The effective lane name is computed via
+    ``config.resolve_with_legacy_fallback`` (hosted-llm-anthropic-ica-lane-v1
+    M3, Named Risk #4's ONE shared fallback helper): the PREFERRED
+    ``CCDASH_LLM_SESSION_NAMING_LANE`` wins when set; otherwise the legacy
+    ``CCDASH_SESSION_NAMING_BACKEND`` (whose existing ``"local"``/``"hosted"``
+    values keep meaning exactly what they meant before); otherwise
+    ``"local"``. Both attributes are re-read via ``getattr`` on EVERY call
+    (never cached into a module-level constant here) so that patching
+    EITHER one -- the new attribute or the legacy one -- is honored, which
+    is what lets the pre-existing test suite keep patching
+    ``config.CCDASH_SESSION_NAMING_BACKEND`` directly, unmodified, while a
+    new test can instead patch ``config.CCDASH_LLM_SESSION_NAMING_LANE``.
 
-      1. ``CCDASH_SESSION_NAMING_BACKEND`` resolves to ``"hosted"`` (this
-         function's own selector, above).
+    ``"hosted"`` (T3-003, Lane B / Gemini) and ``"anthropic"`` (M3-B, Lane
+    C) are both EGRESS-shaped lanes and are reachable ONLY when ALL of the
+    following hold, checked here (not inside either backend itself, so an
+    unreachable path never even gets constructed):
+
+      1. The effective lane (above) resolves to ``"hosted"`` or
+         ``"anthropic"``.
       2. ``CCDASH_LLM_EGRESS_CONSENT`` reads ``True`` (hosted-llm-anthropic-
          ica-lane-v1 M2 -- the GLOBAL egress consent switch, defaults
          ``False``/fail-closed; checked FIRST, before condition 3, and
-         before the module below is even imported).
+         before either lane's backend module is even imported). This is the
+         SAME gate for both lanes -- M3 adds no second gate for the new
+         provider.
       3. ``CCDASH_REDACTION_PATTERNS_ENABLED`` reads ``True`` (checked via
          :func:`redaction.redaction_patterns_enabled`, the exact same
          env-parsing logic ``redact_entries`` uses internally -- never a
@@ -358,84 +599,158 @@ def resolve_naming_backend(ports: Any) -> Any | None:
     ``CCDASH_REDACTION_PATTERNS_ENABLED`` defaults ``True``
     (``agent_queries/redaction.py``'s fail-closed default, shared with every
     OTHER read path's Layer-1 secret scrub -- it is not a flag introduced by
-    this feature). In practice this means condition 2 above is satisfied by
-    doing NOTHING: setting ``CCDASH_SESSION_NAMING_BACKEND=hosted`` ALONE is
-    sufficient to make ``HostedGeminiNamingBackend`` reachable on a default
-    deployment. This is safe in outcome, not by accident: the redaction scrub
-    this condition gates is the SAME mechanism that actually strips secrets
-    from the outbound Gemini payload (``get_session_detail`` ->
-    ``redact_entries``, re-checked a second time inside
-    ``HostedGeminiNamingBackend.derive_name`` itself) -- so "reachable" never
-    means "sends unredacted"; it is fail-closed (default True = scrub is ON)
-    rather than fail-open. Deriving a name from a live candidate ALSO still
-    requires ``CCDASH_GEMINI_API_KEY`` to be set (``derive_name`` returns
-    ``None`` immediately without it) -- a genuinely explicit, default-empty
-    precondition, distinct from the redaction flag. Reviewed and accepted:
-    inverting the redaction default (making it opt-in rather than opt-out)
-    would weaken every other read path's secret scrub for the sake of this
-    one lane's messaging; the fix here is this corrected docstring plus the
-    reachability WARNING logged below, not a changed default.
+    this feature). In practice this means condition 3 above is satisfied by
+    doing NOTHING: setting the lane to ``"hosted"`` or ``"anthropic"`` ALONE
+    is sufficient to make that backend reachable on a default deployment
+    (once consent is also true). This is safe in outcome, not by accident:
+    the redaction scrub this condition gates is the SAME mechanism that
+    actually strips secrets from the outbound payload (``get_session_detail``
+    -> ``redact_entries``, re-checked a second time inside each backend's own
+    ``derive_name``) -- so "reachable" never means "sends unredacted"; it is
+    fail-closed (default True = scrub is ON) rather than fail-open. Deriving
+    a name from a live candidate on either egress lane ALSO still requires
+    that lane's own credential (``CCDASH_GEMINI_API_KEY`` for hosted,
+    ``CCDASH_LLM_ANTHROPIC_API_KEY`` **and** ``CCDASH_LLM_ANTHROPIC_MODEL``
+    for anthropic) to be set (``derive_name`` returns ``None`` immediately
+    without it) -- a genuinely explicit, default-empty precondition, distinct
+    from the redaction flag. Reviewed and accepted: inverting the redaction
+    default (making it opt-in rather than opt-out) would weaken every other
+    read path's secret scrub for the sake of this messaging; the fix here is
+    this docstring plus the reachability WARNING logged below, not a changed
+    default.
 
-    Any condition absent makes the hosted path unreachable, and this
-    resolver returns ``None`` -- the SAME structural no-op
+    Any condition absent makes the requested egress lane unreachable, and
+    this resolver returns ``None`` -- the SAME structural no-op
     ``SessionNamingSweepJob`` already treats as "no backend injected" (its
     derive loop is skipped entirely; ``sessions_named`` stays 0;
     ``candidates_found`` is still reported). This is a deliberate no-op,
     never a silent fallback to sending.
     """
-    backend_name = str(getattr(config, "CCDASH_SESSION_NAMING_BACKEND", "local") or "local").strip().lower()
-    if backend_name == "hosted":
+    new_lane = str(getattr(config, "CCDASH_LLM_SESSION_NAMING_LANE", "") or "").strip().lower()
+    legacy_lane = str(getattr(config, "CCDASH_SESSION_NAMING_BACKEND", "local") or "local").strip().lower()
+    backend_name = config.resolve_with_legacy_fallback(
+        new_lane,
+        legacy_lane,
+        "local",
+        new_name="CCDASH_LLM_SESSION_NAMING_LANE",
+        legacy_name="CCDASH_SESSION_NAMING_BACKEND",
+    )
+    if backend_name in ("hosted", "anthropic"):
         # hosted-llm-anthropic-ica-lane-v1 M2: the GLOBAL egress consent
         # gate, checked FIRST and structurally -- this `if not ...: return
         # None` runs before the redaction check below, and both run before
-        # the lazy `from ... import HostedGeminiNamingBackend` a few lines
-        # down. A reviewer can see, by reading this function alone (no call-
-        # site tracing required), that false consent makes it IMPOSSIBLE to
-        # reach the `HostedGeminiNamingBackend(...)` constructor call at the
-        # bottom -- the import itself is never executed, let alone the
-        # construction. Defaults False (fail-closed): an operator must set
-        # CCDASH_LLM_EGRESS_CONSENT=true explicitly; there is no fallback to
-        # any other flag that could accidentally satisfy this condition.
+        # EITHER lane's lazy backend import a few lines down. A reviewer can
+        # see, by reading this function alone (no call-site tracing
+        # required), that false consent makes it IMPOSSIBLE to reach either
+        # lane's constructor call at the bottom -- the import itself is
+        # never executed, let alone the construction. Defaults False
+        # (fail-closed): an operator must set CCDASH_LLM_EGRESS_CONSENT=true
+        # explicitly; there is no fallback to any other flag that could
+        # accidentally satisfy this condition.
         if not bool(getattr(config, "CCDASH_LLM_EGRESS_CONSENT", False)):
             logger.info(
-                "session_naming: CCDASH_SESSION_NAMING_BACKEND=hosted requested but "
-                "CCDASH_LLM_EGRESS_CONSENT is off -- hosted (egress) backend is "
-                "unreachable; naming sweep will no-op (never falls back to sending)."
+                "session_naming: lane=%s requested but CCDASH_LLM_EGRESS_CONSENT "
+                "is off -- this egress backend is unreachable; naming sweep "
+                "will no-op (never falls back to sending).",
+                backend_name,
             )
             return None
         if not redaction_patterns_enabled():
             logger.info(
-                "session_naming: CCDASH_SESSION_NAMING_BACKEND=hosted requested but "
-                "CCDASH_REDACTION_PATTERNS_ENABLED is off -- hosted backend is "
-                "unreachable; naming sweep will no-op (never falls back to sending)."
+                "session_naming: lane=%s requested but "
+                "CCDASH_REDACTION_PATTERNS_ENABLED is off -- this backend is "
+                "unreachable; naming sweep will no-op (never falls back to sending).",
+                backend_name,
             )
             return None
-        # Local import: avoids a module-load-time cycle (the hosted module
-        # does not import this one, so this is a one-way lazy edge purely to
-        # keep Lane A importable/testable in isolation with zero Lane-B
-        # dependency surface, mirroring how `LocalOllamaNamingBackend` is
-        # never imported by the hosted module either).
-        from backend.services.session_naming_hosted_backend import (
-            HostedGeminiNamingBackend,
+
+        if backend_name == "hosted":
+            # Local import: avoids a module-load-time cycle (the hosted
+            # module does not import this one, so this is a one-way lazy
+            # edge purely to keep Lane A importable/testable in isolation
+            # with zero Lane-B dependency surface, mirroring how
+            # `LocalOllamaNamingBackend` is never imported by the hosted
+            # module either).
+            from backend.services.session_naming_hosted_backend import (
+                HostedGeminiNamingBackend,
+            )
+
+            # Reachability WARNING (security review, T3-006): logged once
+            # per construction (container startup, worker-profile-only) at
+            # WARNING -- not the routine INFO/DEBUG level the rest of this
+            # module uses -- specifically so "this deployment's naming sweep
+            # can send transcript-derived text off-box" is a loud,
+            # discoverable line in the worker's own log stream, not
+            # something only visible by reading config.
+            # CCDASH_GEMINI_API_KEY absence still fails this closed at the
+            # first `derive_name` call, but a missing key can be added
+            # later without this backend being re-constructed, so this line
+            # does not promise egress has actually happened -- only that it
+            # is reachable.
+            logger.warning(
+                "session_naming: CCDASH_SESSION_NAMING_BACKEND=hosted -- Lane B "
+                "(hosted Gemini) derived-naming backend is now REACHABLE for "
+                "this process. Off-box transcript-derived text may be sent once "
+                "CCDASH_GEMINI_API_KEY is also set. Redaction "
+                "(CCDASH_REDACTION_PATTERNS_ENABLED) is ON, so outbound prompts "
+                "are scrubbed before send."
+            )
+            return HostedGeminiNamingBackend(ports=ports)
+
+        # backend_name == "anthropic" -- hosted-llm-anthropic-ica-lane-v1
+        # M3-B. Lazy import, mirroring the hosted branch immediately above
+        # (never at module top level): this is the ONLY place
+        # `backend.adapters.llm.anthropic` is ever imported by this module,
+        # and it is only ever reached once both structural gates above have
+        # already passed.
+        from backend.adapters.llm.anthropic import AnthropicTextCompletionAdapter
+
+        try:
+            adapter = AnthropicTextCompletionAdapter(
+                base_url=config.CCDASH_LLM_ANTHROPIC_BASE_URL,
+                api_key=config.CCDASH_LLM_ANTHROPIC_API_KEY,
+                model=config.CCDASH_LLM_ANTHROPIC_MODEL,
+                timeout_seconds=_ANTHROPIC_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            # Degrade, never crash the surface: a construction-time failure
+            # is treated the same as any other "provider unreachable"
+            # outcome elsewhere in this module (see the plan's Named Risk
+            # that a silent fail-OPEN is the whole risk here -- this is the
+            # mirror-image guard against a fail-CRASH on the same egress
+            # boundary, e.g. if the adapter's constructor signature drifts).
+            logger.warning(
+                "session_naming: failed to construct the anthropic adapter -- "
+                "the anthropic naming lane will no-op for this process "
+                "(base_url=%s).",
+                config.CCDASH_LLM_ANTHROPIC_BASE_URL,
+                exc_info=True,
+            )
+            return None
+
+        backend = AnthropicNamingBackend(
+            ports=ports,
+            adapter=adapter,
+            api_key=config.CCDASH_LLM_ANTHROPIC_API_KEY,
+            model=config.CCDASH_LLM_ANTHROPIC_MODEL,
         )
 
-        # Reachability WARNING (security review, T3-006): logged once per
-        # construction (container startup, worker-profile-only) at WARNING
-        # -- not the routine INFO/DEBUG level the rest of this module uses --
-        # specifically so "this deployment's naming sweep can send
-        # transcript-derived text off-box" is a loud, discoverable line in
-        # the worker's own log stream, not something only visible by reading
-        # config. CCDASH_GEMINI_API_KEY absence still fails this closed at
-        # the first `derive_name` call, but a missing key can be added later
-        # without this backend being re-constructed, so this line does not
-        # promise egress has actually happened -- only that it is reachable.
+        # Reachability WARNING (mirrors the hosted branch's identical T3-006
+        # fix): logged once per construction, at WARNING, only AFTER the
+        # adapter/backend were built successfully -- so this line is never
+        # emitted for a construction that actually failed above.
+        # CCDASH_LLM_ANTHROPIC_API_KEY / CCDASH_LLM_ANTHROPIC_MODEL absence
+        # still fails this closed at the first `derive_name` call (see that
+        # class), so this line does not promise egress has actually
+        # happened -- only that it is reachable.
         logger.warning(
-            "session_naming: CCDASH_SESSION_NAMING_BACKEND=hosted -- Lane B "
-            "(hosted Gemini) derived-naming backend is now REACHABLE for "
-            "this process. Off-box transcript-derived text may be sent once "
-            "CCDASH_GEMINI_API_KEY is also set. Redaction "
-            "(CCDASH_REDACTION_PATTERNS_ENABLED) is ON, so outbound prompts "
-            "are scrubbed before send."
+            "session_naming: CCDASH_LLM_SESSION_NAMING_LANE=anthropic -- the "
+            "Anthropic/ICA derived-naming backend is now REACHABLE for this "
+            "process. Off-box transcript-derived text may be sent once "
+            "CCDASH_LLM_ANTHROPIC_API_KEY and CCDASH_LLM_ANTHROPIC_MODEL are "
+            "also set. Redaction (CCDASH_REDACTION_PATTERNS_ENABLED) is ON, "
+            "so outbound prompts are scrubbed before send."
         )
-        return HostedGeminiNamingBackend(ports=ports)
+        return backend
+
     return LocalOllamaNamingBackend(ports=ports)

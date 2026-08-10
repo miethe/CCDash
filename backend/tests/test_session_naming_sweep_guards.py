@@ -66,6 +66,34 @@ class DefaultFlagValueTests(unittest.TestCase):
         """
         self.assertFalse(config.CCDASH_LLM_EGRESS_CONSENT)
 
+    def test_llm_session_naming_lane_defaults_to_unset(self) -> None:
+        """hosted-llm-anthropic-ica-lane-v1 M3-B: the PREFERRED lane
+
+        selector is left UN-defaulted (empty string, not "local") so the
+        legacy-fallback helper can distinguish "absent" from "explicitly
+        local" -- ``CCDASH_SESSION_NAMING_BACKEND`` above stays the
+        defaulted fallback source.
+        """
+        self.assertEqual(config.CCDASH_LLM_SESSION_NAMING_LANE, "")
+
+    def test_llm_anthropic_base_url_defaults_to_anthropic_direct(self) -> None:
+        self.assertEqual(config.CCDASH_LLM_ANTHROPIC_BASE_URL, "https://api.anthropic.com")
+
+    def test_llm_anthropic_api_key_defaults_empty_no_legacy(self) -> None:
+        """No legacy equivalent -- absent means the anthropic lane is
+
+        disabled at derive-time (never a crash), same contract as
+        ``CCDASH_GEMINI_API_KEY``'s own "unset -> disabled" precedent.
+        """
+        self.assertEqual(config.CCDASH_LLM_ANTHROPIC_API_KEY, "")
+
+    def test_llm_anthropic_model_defaults_empty_deliberately_no_default(self) -> None:
+        """This plan's own open_questions: "a wrong default is a silent
+
+        cost decision" -- pins that NO default was added, on purpose.
+        """
+        self.assertEqual(config.CCDASH_LLM_ANTHROPIC_MODEL, "")
+
 
 class DeriveNameFailOpenTests(unittest.IsolatedAsyncioTestCase):
     """Pure unit coverage of the fail-open primitive itself."""
