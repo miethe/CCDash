@@ -1,6 +1,16 @@
 """PostgreSQL database schema creation and versioning.
 
 Schema version history (keep in lockstep with sqlite_migrations.py):
+  v53 — hosted-llm-anthropic-ica-lane-v1 M2: projects table gains
+         llm_egress_consent (NOT NULL, DEFAULT FALSE). Mirrors
+         sqlite_migrations.py v53. Per-project consent gate for sending
+         session data to a hosted LLM provider; the FALSE default is
+         fail-closed and load-bearing so existing projects never silently
+         consent to egress. Additive, no backfill needed.
+  v52 — provider-channel-credential-entities-v1 M1: provider_dimensions,
+         provider_channels, provider_credentials tables. Mirrors
+         sqlite_migrations.py v52 (no FK on rotated_from_id, no CHECK on
+         channel, credential_name is a NAME never secret bytes).
   v50 — automatic-session-naming M1: sessions table gains session_name
          (nullable TEXT) + session_name_source (nullable TEXT, closed
          vocabulary -- see backend/parsers/session_name_provenance.py).
@@ -58,7 +68,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1270,6 +1280,11 @@ CREATE TABLE IF NOT EXISTS projects (
     display_json         JSONB,
     is_active            BOOLEAN NOT NULL DEFAULT FALSE,
     repo_path            TEXT,
+    -- hosted-llm-anthropic-ica-lane-v1 M2 (v53): per-project consent to send
+    -- session data off-box to a hosted LLM provider. FALSE default is
+    -- fail-closed and load-bearing -- existing projects never silently
+    -- consent to egress. Mirrors sqlite_migrations.py.
+    llm_egress_consent   BOOLEAN NOT NULL DEFAULT FALSE,
     created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -2871,6 +2886,11 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "sessions", "fork_point_parent_entry_uuid", "TEXT")
     await _ensure_column(db, "sessions", "fork_depth", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "fork_count", "INTEGER DEFAULT 0")
+    # hosted-llm-anthropic-ica-lane-v1 M2 (v53). NOT NULL DEFAULT FALSE --
+    # fail-closed; mirrors the sqlite_migrations.py unconditional-sweep
+    # placement (belt-and-suspenders alongside the v53 version-gate block
+    # below, so a pre-existing DB reaches the column either way).
+    await _ensure_column(db, "projects", "llm_egress_consent", "BOOLEAN NOT NULL DEFAULT FALSE")
     # P1 follow-up: ensure sessions.project_id exists before ANY unconditional
     # CREATE INDEX that references it (idx_sessions_root / _family / _thread_kind
     # immediately below).  On a pre-v30 DB the column is absent at this point;
@@ -4297,6 +4317,18 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
             "provider_credentials created (idempotent CREATE TABLE IF NOT EXISTS "
             "for pre-existing databases; no FK on rotated_from_id, no CHECK on "
             "channel -- see backend/db/postgres_migrations.py _TABLES comment)."
+        )
+
+    if current_version < 53:
+        # hosted-llm-anthropic-ica-lane-v1 M2: per-project egress consent gate.
+        # Mirror of the SQLite v53 block. NOT NULL DEFAULT FALSE is load-bearing
+        # and fail-closed -- every existing project must default to NOT
+        # consenting to off-box egress.
+        await _ensure_column(db, "projects", "llm_egress_consent", "BOOLEAN NOT NULL DEFAULT FALSE")
+        logger.info(
+            "v53 migrations complete: projects.llm_egress_consent added "
+            "(NOT NULL DEFAULT FALSE -- fail-closed; existing projects do not "
+            "consent to egress by default)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

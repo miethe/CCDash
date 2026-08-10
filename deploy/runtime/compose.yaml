@@ -89,13 +89,55 @@ x-backend-service: &backend-service
     # time out. Kept in lockstep with backend/config.py's own default, per the
     # "defaults mirror config.py exactly" contract above.
     CCDASH_OLLAMA_TIMEOUT_SECONDS: "${CCDASH_OLLAMA_TIMEOUT_SECONDS:-60}"
+    # hosted-llm-anthropic-ica-lane-v1 M2/M3: the anthropic/ICA lane's
+    # credential block + the global egress-consent switch. Same
+    # explicit-allowlist gap as CCDASH_GEMINI_API_KEY/CCDASH_SESSION_NAMING_*
+    # directly above -- placed in this ONE shared anchor (not per-service)
+    # because it is consumed by BOTH the `api` service (POST /api/ai/insight's
+    # gemini path) and the `worker` service (SessionNamingSweepJob's hosted/
+    # anthropic lanes), and the `backend` (local, single-process) service
+    # combines both roles. `worker-watch` gets it too for the same reason
+    # CCDASH_SESSION_NAMING_* already does above: it shares this anchor and
+    # the sweep loop only ever starts under the plain `worker` profile
+    # (see backend/config.py's comment on CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS),
+    # so the var is simply unused there, never harmful. Every default below
+    # mirrors backend/config.py exactly, so an unset host env is
+    # behaviour-identical to not listing the key at all.
+    #
+    # CCDASH_LLM_EGRESS_CONSENT: GLOBAL egress-consent switch. Defaults
+    # "false" -- fail-closed. "true" only PERMITS off-box calls; a project's
+    # own `projects.llm_egress_consent` DB column must ALSO be true before
+    # that project's sessions egress. See
+    # docs/guides/external-api-lan-deployment.md.
+    CCDASH_LLM_EGRESS_CONSENT: "${CCDASH_LLM_EGRESS_CONSENT:-false}"
+    # Preferred lane selector; falls back to CCDASH_SESSION_NAMING_BACKEND
+    # above when unset (empty default, not "local").
+    CCDASH_LLM_SESSION_NAMING_LANE: "${CCDASH_LLM_SESSION_NAMING_LANE:-}"
+    # Selects ICA vs. Anthropic-direct by base URL alone. Default is ICA
+    # per ADR-017 (docs/project_plans/adrs/adr-017-anthropic-wire-format-canonical-hosted-lane.md)
+    # -- the trust boundary is already crossed and ICA's free tier makes a
+    # systematic sweep affordable; point this at https://api.anthropic.com
+    # to opt into the PAID Anthropic-direct lane instead.
+    CCDASH_LLM_ANTHROPIC_BASE_URL: "${CCDASH_LLM_ANTHROPIC_BASE_URL:-https://api.nextgen-beta.ica.ibm.com/ica}"
+    CCDASH_LLM_ANTHROPIC_API_KEY: "${CCDASH_LLM_ANTHROPIC_API_KEY:-}"
+    # Deliberately NO default -- do not invent one. Empty means the anthropic
+    # naming lane is unreachable at derive-time, same as an absent API key.
+    CCDASH_LLM_ANTHROPIC_MODEL: "${CCDASH_LLM_ANTHROPIC_MODEL:-}"
+    # Preferred CCDASH_LLM_*-namespaced name for the CCDASH_GEMINI_API_KEY
+    # credential above; that legacy name remains the fallback forever.
+    CCDASH_LLM_GEMINI_API_KEY: "${CCDASH_LLM_GEMINI_API_KEY:-}"
     GIT_OPTIONAL_LOCKS: "${GIT_OPTIONAL_LOCKS:-0}"
   healthcheck: &api-healthcheck
+    # CMD-SHELL, not exec-form CMD. Under podman's compose implementation the
+    # unquoted exec-form scalar was split on whitespace into 10 argv elements,
+    # so python received `-c import` and every probe died with
+    # `SyntaxError: invalid syntax`. The container was serving 200s on
+    # /api/health/ready the whole time while compose reported it unhealthy --
+    # which then blocked dependents from starting. CMD-SHELL hands the whole
+    # string to `sh -c`, so there is no argv to split.
     test:
-      - CMD
-      - python
-      - -c
-      - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_PORT", "8000") + "/api/health/ready", timeout=3)
+      - CMD-SHELL
+      - python -c 'import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_PORT", "8000") + "/api/health/ready", timeout=3)'
     interval: 30s
     timeout: 5s
     retries: 3
@@ -160,6 +202,18 @@ services:
       CCDASH_STORAGE_PROFILE: "local"
       CCDASH_DB_BACKEND: "sqlite"
       CCDASH_DB_PATH: "${CCDASH_DB_PATH:-/var/lib/ccdash/ccdash.db}"
+      # External /api/v1 LAN token (require_v1_auth in
+      # backend/routers/_client_v1_auth.py). SEPARATE from
+      # CCDASH_API_BEARER_TOKEN below on the `api` service (that one gates
+      # the legacy static_bearer auth provider, applies only to
+      # runtime_profile=api). Only listed on the two services that mount
+      # client_v1_router (backend/runtime/bootstrap.py) -- `worker` and
+      # `worker-watch` never serve that router (worker-only probe app), so
+      # it is a no-op there and intentionally omitted. Default empty
+      # mirrors backend/config.py's os.getenv("CCDASH_API_TOKEN",
+      # "").strip() exactly, so an unset host env is behaviour-identical to
+      # not listing this key at all (local-trust no-auth default preserved).
+      CCDASH_API_TOKEN: "${CCDASH_API_TOKEN:-}"
     ports:
       - "${CCDASH_API_PORT:-8000}:8000"
     networks:
@@ -179,6 +233,10 @@ services:
       <<: [*backend-shared-env, *postgres-connection]
       CCDASH_RUNTIME_PROFILE: "api"
       CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
+      # External /api/v1 LAN token -- see the matching comment on the
+      # `backend` service above for the full explanation. SEPARATE from
+      # CCDASH_API_BEARER_TOKEN directly above.
+      CCDASH_API_TOKEN: "${CCDASH_API_TOKEN:-}"
       CCDASH_QUERY_CACHE_BACKEND: "${CCDASH_QUERY_CACHE_BACKEND:-postgres}"
       # P3-006-FU: durable job queue now live — enterprise services default to postgres.
       CCDASH_JOB_QUEUE_BACKEND: "${CCDASH_JOB_QUEUE_BACKEND:-postgres}"
@@ -217,11 +275,10 @@ services:
         condition: service_healthy
         required: false
     healthcheck:
+      # CMD-SHELL, not exec-form CMD -- see the &api-healthcheck comment above.
       test:
-        - CMD
-        - python
-        - -c
-        - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_PROBE_PORT", "9465") + "/readyz", timeout=3)
+        - CMD-SHELL
+        - python -c 'import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_PROBE_PORT", "9465") + "/readyz", timeout=3)'
       interval: 30s
       timeout: 5s
       retries: 3
@@ -274,11 +331,10 @@ services:
         condition: service_healthy
         required: false
     healthcheck:
+      # CMD-SHELL, not exec-form CMD -- see the &api-healthcheck comment above.
       test:
-        - CMD
-        - python
-        - -c
-        - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_WATCH_PROBE_PORT", "9466") + "/readyz", timeout=3)
+        - CMD-SHELL
+        - python -c 'import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_WATCH_PROBE_PORT", "9466") + "/readyz", timeout=3)'
       interval: 30s
       timeout: 5s
       retries: 3

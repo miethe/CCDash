@@ -4,6 +4,18 @@ All CREATE TABLE statements for the caching layer.
 Uses IF NOT EXISTS for idempotent runs.
 
 Schema version history (keep in lockstep with postgres_migrations.py):
+  v53 — hosted-llm-anthropic-ica-lane-v1 M2: projects table gains
+         llm_egress_consent (NOT NULL, DEFAULT FALSE/0). Per-project consent
+         gate for sending session data to a hosted LLM provider. The FALSE
+         default is fail-closed and load-bearing: every existing project
+         defaults to NOT consenting, so this migration cannot silently opt
+         the registry into egress. Additive, no backfill needed (0 is the
+         correct value for every pre-existing row).
+  v52 — provider-channel-credential-entities-v1 M1: provider_dimensions,
+         provider_channels, provider_credentials tables (see backend/db/
+         migration_governance.py and the _TABLES block for the full rationale
+         -- no FK on rotated_from_id, no CHECK on channel, credential_name is
+         a NAME never secret bytes).
   v51 — ica-key-and-spend-capture: sessions table gains ica_key,
          ica_spend_start, ica_spend_end, ica_spend_delta,
          ica_spend_attribution (all nullable TEXT). Key identity + per-session
@@ -82,7 +94,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1266,6 +1278,11 @@ CREATE TABLE IF NOT EXISTS projects (
     display_json         TEXT,
     is_active            INTEGER NOT NULL DEFAULT 0,
     repo_path            TEXT,
+    -- hosted-llm-anthropic-ica-lane-v1 M2 (v53): per-project consent to send
+    -- session data off-box to a hosted LLM provider. FALSE default is
+    -- fail-closed and load-bearing -- existing projects never silently
+    -- consent to egress.
+    llm_egress_consent   INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -3319,6 +3336,9 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
     await _ensure_column(db, "sessions", "fork_point_parent_entry_uuid", "TEXT")
     await _ensure_column(db, "sessions", "fork_depth", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "fork_count", "INTEGER DEFAULT 0")
+    # hosted-llm-anthropic-ica-lane-v1 M2 (v53). NOT NULL DEFAULT 0 -- fail-closed;
+    # mirrors the ica_key belt-and-suspenders placement above.
+    await _ensure_column(db, "projects", "llm_egress_consent", "INTEGER NOT NULL DEFAULT 0")
     await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
     await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_family ON sessions(project_id, conversation_family_id, started_at DESC)")
     await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_thread_kind ON sessions(project_id, thread_kind, started_at DESC)")
@@ -4758,6 +4778,19 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
             "provider_credentials created (idempotent CREATE TABLE IF NOT EXISTS "
             "for pre-existing databases; no FK on rotated_from_id, no CHECK on "
             "channel -- see backend/db/sqlite_migrations.py _TABLES comment)."
+        )
+
+    if current_version < 53:
+        # hosted-llm-anthropic-ica-lane-v1 M2: per-project egress consent gate.
+        # NOT NULL DEFAULT 0 is load-bearing and fail-closed -- every existing
+        # project must default to NOT consenting to off-box egress; a TRUE
+        # default would silently opt the whole registry into sending session
+        # data off-box. Mirror of the Postgres v53 block.
+        await _ensure_column(db, "projects", "llm_egress_consent", "INTEGER NOT NULL DEFAULT 0")
+        logger.info(
+            "v53 migrations complete: projects.llm_egress_consent added "
+            "(NOT NULL DEFAULT 0 -- fail-closed; existing projects do not "
+            "consent to egress by default)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

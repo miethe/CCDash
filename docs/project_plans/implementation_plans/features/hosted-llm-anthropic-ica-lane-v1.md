@@ -3,7 +3,7 @@ it_schema: 1
 feature_slug: hosted-llm-anthropic-ica-lane
 title: "Anthropic/ICA lane + egress consent gating — implementation plan"
 doc_type: implementation_plan
-status: draft
+status: completed
 tier: 2
 priority: P1
 points: 11
@@ -175,7 +175,9 @@ gemini lane — no new provider yet. **Touches a schema migration: Mode-D, halts
 **AC:** consent false => no egress adapter constructs and the sweep logs a no-op line (asserted by a
 no-construction test in the style of `test_aar_review_no_llm_imports.py`); global true + one project
 consented => only that project's sessions egress; column present in both backends' `CREATE TABLE`
-and `_ensure_column` paths with `SCHEMA_VERSION` bumped to 52 and zero allowlist entries; a
+and `_ensure_column` paths with `SCHEMA_VERSION` bumped to 53 (planned as 52; renumbered on merge
+because a concurrently-landed feature had already taken 52 — see the close-out ledger) and zero
+allowlist entries; a
 wrong-provenance envelope is rejected by any `egress=True` adapter; per-tick egress log line carries
 lane, model id served, and project id.
 
@@ -188,8 +190,17 @@ surface selects it with documented fallbacks to the legacy `CCDASH_SESSION_NAMIN
 **AC:** adapter POSTs `{base}/v1/messages` with `anthropic-version: 2023-06-01` and a **bare** model
 id (test pins that a `[1m]`-suffixed id is never sent); `CCDASH_LLM_SESSION_NAMING_LANE` resolves and
 falls back to the legacy var; absent key or unreachable provider degrades per the established
-`{disabled:true}` / `None` contract rather than failing the surface; a real ICA call names one session
-end-to-end; CHANGELOG `[Unreleased]` entry; ADR-017 + ADR-018 accepted.
+`{disabled:true}` / `None` contract rather than failing the surface; CHANGELOG `[Unreleased]` entry;
+ADR-017 + ADR-018 accepted.
+
+> **Deliberately NOT an acceptance criterion:** "a real ICA call names one session end-to-end."
+> It was listed here in the original draft but is absent from the frontmatter `acceptance_criteria`
+> (the machine-readable contract), and it was never obtained — it needs an operator-held ICA key, and
+> `open_questions[0]` (which ICA key the deployed adapter uses) is still open, so an agent selecting
+> one would be guessing at a cost and model-scope decision. The adapter's wire contract is separately
+> verified by `test_anthropic_adapter.py` against four live probes recorded in `spike_ref`; what
+> remains is this deployment's key scope and endpoint liveness. See the evidence table below, which
+> marks it NOT OBTAINED rather than asserting evidence that does not exist.
 
 ## AC -> command -> evidence
 
@@ -199,9 +210,10 @@ end-to-end; CHANGELOG `[Unreleased]` entry; ADR-017 + ADR-018 accepted.
 | M2 — consent false constructs nothing | `backend/.venv/bin/python -m pytest backend/tests/test_session_naming_sweep_guards.py -v` | Negative-construction test green; sweep emits the no-op log line |
 | M2 — per-project narrowing | `backend/.venv/bin/python -m pytest backend/tests/test_session_naming_sweep_job.py -v` | Two-project fixture: consented project egresses, other is skipped |
 | M2 — dual DDL parity | `backend/.venv/bin/python -m pytest backend/tests/test_migration_governance.py -v` | Column in both backends; zero `COLUMN_PARITY_DRIFT_ALLOWLIST` entries |
-| M2 — postgres migration actually applies | `npm run docker:hosted:smoke:seeded-pg` | v51->v52 in-place upgrade completes; api+worker both healthy |
+| M2 — postgres migration actually applies | `npm run docker:hosted:smoke:seeded-pg` | Re-run 2026-08-10 AFTER the renumber to v53 (see the close-out ledger entry): seeded at v29, `Migration result: applied (reached SCHEMA_VERSION=53)`, `/api/health/ready` returned `migrationStatus=="applied"`, `UndefinedColumnError` ABSENT from both the postgres and api container logs, script exit 0. This is the run that matters — it exercises the in-place upgrade with BOTH this feature's `projects.llm_egress_consent` and the concurrently-landed provider/channel/credential tables present |
 | M3 — provenance enforced on egress | `backend/.venv/bin/python -m pytest backend/tests/test_session_naming_read_path_no_model_client.py -v` | Guard green; wrong-provenance envelope raises |
-| M3 — bare model ids, live reachability | `backend/.venv/bin/ccdash` naming run against ICA with `CCDASH_LLM_ANTHROPIC_BASE_URL` set | HTTP 200, `msg_bdrk_` id in response, one session named |
+| M3 — bare model ids, base-URL-only routing, version header | `backend/.venv/bin/python -m pytest backend/tests/test_anthropic_adapter.py -v` | Green. Pins the URL, the ICA default base, `anthropic-version: 2023-06-01`, credential-as-header (asserts no `key=` in the URL), the frozen payload key-set, and `[1m]`-id rejection before the wire |
+| M3 — live reachability against ICA | `backend/.venv/bin/ccdash` naming run against ICA with `CCDASH_LLM_ANTHROPIC_BASE_URL` set | **NOT OBTAINED — deferred to the operator.** Needs an operator-held ICA key and a real outbound call, and `open_questions[0]` (which ICA key the deployed adapter uses) is still open, so an agent cannot pick one. The wire contract itself was measured by four live probes on 2026-08-07 (`spike_ref`, Empirical Addendum); what remains unverified is this deployment's key scope and endpoint liveness — operational facts no test can hold |
 
 ## Sequencing (load-bearing)
 

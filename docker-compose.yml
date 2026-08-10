@@ -29,6 +29,8 @@
 #  CCDASH_POSTGRES_PORT              5432                Host-side Postgres port (binds 127.0.0.1 by default)
 #  CCDASH_API_PORT                   8000                Host-side API port (binds 127.0.0.1 by default)
 #  CCDASH_WORKER_PROBE_PORT          9465                Host-side worker probe port (binds 127.0.0.1 by default)
+#  CCDASH_API_TOKEN                  (empty)             Optional /api/v1 bearer token (require_v1_auth); SEPARATE from
+#                                                         CCDASH_API_BEARER_TOKEN below
 #  NOTE: all three ports bind 127.0.0.1 by default. To expose on the LAN, override the bind
 #  prefix in the ports: entry (e.g. "0.0.0.0:${CCDASH_API_PORT}:8000") AND set
 #  CCDASH_API_TOKEN / strong CCDASH_POSTGRES_PASSWORD before doing so.
@@ -89,6 +91,17 @@ x-shared-backend-env: &shared-backend-env
   # introduced in Phase 10 — that token is SEPARATE from CCDASH_API_BEARER_TOKEN.
   CCDASH_AUTH_PROVIDER: "local"
   CCDASH_LOCAL_NO_AUTH_ENABLED: "true"
+  # CCDASH_API_TOKEN gates the external /api/v1 surface (require_v1_auth in
+  # backend/routers/_client_v1_auth.py) independently of CCDASH_AUTH_PROVIDER
+  # above. Same explicit-allowlist gap as the two comment blocks above: the
+  # comment referenced this var but never actually listed it as a key here,
+  # so setting it in the host env or an --env-file was a silent no-op -- the
+  # container never saw it, require_v1_auth stayed in its no-op branch, and
+  # /api/v1 stayed unauthenticated regardless of the operator's intent.
+  # Default empty mirrors backend/config.py's os.getenv("CCDASH_API_TOKEN",
+  # "").strip() exactly, so an unset host env is behaviour-identical to not
+  # listing this key at all (local-trust no-auth default preserved).
+  CCDASH_API_TOKEN: "${CCDASH_API_TOKEN:-}"
   # ── Derived session naming (automatic-session-naming-v1 M3) ─────────────────
   # This environment map is an explicit ALLOWLIST: a var set only in the host
   # environment or an --env-file, but absent here, never reaches the container
@@ -113,6 +126,41 @@ x-shared-backend-env: &shared-backend-env
   CCDASH_OLLAMA_TIMEOUT_SECONDS: "${CCDASH_OLLAMA_TIMEOUT_SECONDS:-60}"
   # Lane B (hosted) only. Default empty == hosted lane disabled, fail-open.
   CCDASH_GEMINI_API_KEY: "${CCDASH_GEMINI_API_KEY:-}"
+  # ── Hosted LLM lane (hosted-llm-anthropic-ica-lane-v1 M2/M3) ────────────────
+  # Same explicit-allowlist gap as CCDASH_API_TOKEN and the session-naming
+  # block above: a var set only in the host env or an --env-file, but absent
+  # here, never reaches the container. Every default below mirrors
+  # backend/config.py exactly, so an unset host env is behaviour-identical to
+  # not listing the key at all.
+  #
+  # CCDASH_LLM_EGRESS_CONSENT is the GLOBAL egress-consent switch. Defaults
+  # "false" -- fail-closed. Setting it "true" merely PERMITS off-box calls
+  # from the anthropic/hosted naming lanes; it does NOT itself cause egress.
+  # A given project ALSO requires its own `projects.llm_egress_consent`
+  # DB column to be true before that project's sessions are ever sent
+  # off-box -- this env var is the deployment-wide gate, the DB column is
+  # the per-project gate, and BOTH must be true. See
+  # docs/guides/external-api-lan-deployment.md.
+  CCDASH_LLM_EGRESS_CONSENT: "${CCDASH_LLM_EGRESS_CONSENT:-false}"
+  # Preferred selector for the naming sweep's lane ("local"/"hosted"/
+  # "anthropic"). Default empty -- falls back to CCDASH_SESSION_NAMING_BACKEND
+  # above via resolve_with_legacy_fallback when unset.
+  CCDASH_LLM_SESSION_NAMING_LANE: "${CCDASH_LLM_SESSION_NAMING_LANE:-}"
+  # Selects ICA vs. Anthropic-direct by base URL alone. Default is ICA per
+  # ADR-017 (docs/project_plans/adrs/adr-017-anthropic-wire-format-canonical-hosted-lane.md)
+  # -- the trust boundary is already crossed and ICA's free tier makes a
+  # systematic sweep affordable; point this at https://api.anthropic.com to
+  # opt into the PAID Anthropic-direct lane instead.
+  CCDASH_LLM_ANTHROPIC_BASE_URL: "${CCDASH_LLM_ANTHROPIC_BASE_URL:-https://api.nextgen-beta.ica.ibm.com/ica}"
+  CCDASH_LLM_ANTHROPIC_API_KEY: "${CCDASH_LLM_ANTHROPIC_API_KEY:-}"
+  # Deliberately NO default -- do not invent one here. Empty means the
+  # anthropic naming lane is unreachable at derive-time, same as an absent
+  # API key. See backend/config.py's own comment on this var.
+  CCDASH_LLM_ANTHROPIC_MODEL: "${CCDASH_LLM_ANTHROPIC_MODEL:-}"
+  # Preferred CCDASH_LLM_*-namespaced name for the CCDASH_GEMINI_API_KEY
+  # credential above. Default empty; CCDASH_GEMINI_API_KEY (already listed
+  # above) remains the legacy fallback forever.
+  CCDASH_LLM_GEMINI_API_KEY: "${CCDASH_LLM_GEMINI_API_KEY:-}"
 
 services:
   # ── Postgres 15 ────────────────────────────────────────────────────────────

@@ -3,6 +3,12 @@
 Covers:
   - key-set path: mocked httpx call returns a Gemini-shaped payload
   - key-unset / disabled path: returns {disabled: true, text: "", error: ""}
+  - the GLOBAL egress consent gate (``TestAIInsightEgressConsentGate``):
+    two-sided, with a negative-construction proof that no EGRESS adapter is
+    constructed when ``CCDASH_LLM_EGRESS_CONSENT`` is false. Note that every
+    test which drives a real send now patches that flag True as well as the
+    API key — with consent at its false default those paths correctly
+    short-circuit to the disabled contract state.
 
 Uses unittest.mock to patch httpx.AsyncClient.post so no real network calls
 are made.  The FastAPI TestClient drives the router layer end-to-end.
@@ -89,6 +95,7 @@ class TestAIInsightRouterKeySet(unittest.TestCase):
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
         with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-123"), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", True), \
              patch("backend.services.ai_insight.httpx.AsyncClient", return_value=mock_client_instance):
             resp = self.client.post(
                 "/api/ai/insight",
@@ -117,6 +124,7 @@ class TestAIInsightRouterKeySet(unittest.TestCase):
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
         with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-456"), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", True), \
              patch("backend.services.ai_insight.httpx.AsyncClient", return_value=mock_client_instance):
             resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
 
@@ -145,6 +153,7 @@ class TestAIInsightRouterKeySet(unittest.TestCase):
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
         with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-789"), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", True), \
              patch("backend.services.ai_insight.httpx.AsyncClient", return_value=mock_client_instance):
             resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
 
@@ -165,6 +174,7 @@ class TestAIInsightRouterKeySet(unittest.TestCase):
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
         with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-999"), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", True), \
              patch("backend.services.ai_insight.httpx.AsyncClient", return_value=mock_client_instance):
             resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
 
@@ -172,6 +182,58 @@ class TestAIInsightRouterKeySet(unittest.TestCase):
         data = resp.json()
         self.assertFalse(data["disabled"])
         self.assertIn("Error connecting", data["error"])
+
+
+class TestAIInsightRouterErrorBodyNeverLogged(unittest.TestCase):
+    """M1 (hosted-llm-anthropic-ica-lane-v1, egress-path hardening): a
+
+    provider error-response body must never reach a log record -- only the
+    status code plus a fixed message. Mirrors the
+    ``ProviderErrorBodyNeverLoggedTests`` shape added for the gemini adapter
+    in ``test_session_naming_hosted_backend.py``.
+    """
+
+    def setUp(self) -> None:
+        self.app = _make_app()
+        self.client = TestClient(self.app, raise_server_exceptions=True)
+
+    def test_http_error_body_is_absent_from_every_log_record(self) -> None:
+        import httpx as _httpx
+
+        secret_marker = "UPSTREAM_ERROR_BODY_MARKER_ai_insight_9f31"
+        mock_http_err_resp = MagicMock()
+        mock_http_err_resp.status_code = 503
+        mock_http_err_resp.text = secret_marker
+        exc = _httpx.HTTPStatusError(
+            secret_marker,
+            request=MagicMock(),
+            response=mock_http_err_resp,
+        )
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post = AsyncMock(side_effect=exc)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-000"), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", True), \
+             patch(
+                 "backend.services.ai_insight.httpx.AsyncClient",
+                 return_value=mock_client_instance,
+             ), \
+             self.assertLogs("backend.services.ai_insight", level="WARNING") as captured:
+            resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertFalse(data["disabled"])
+        self.assertIn("503", data["error"])
+
+        joined = "\n".join(captured.output)
+        self.assertNotIn(secret_marker, joined)
+        # The status code IS expected to be present -- "fixed message plus
+        # status code," not a blanket "log nothing."
+        self.assertIn("503", joined)
 
 
 class TestAIInsightRouterAuth(unittest.TestCase):
@@ -224,6 +286,161 @@ class TestAIInsightRouterAuth(unittest.TestCase):
         data = resp.json()
         self.assertTrue(data["disabled"])
         self.assertEqual(data["error"], "")
+
+
+class TestAIInsightEgressConsentGate(unittest.TestCase):
+    """The GLOBAL egress consent gate on the insight lane.
+
+    ``POST /api/ai/insight`` constructs ``GeminiTextCompletionAdapter``
+    (``EGRESS = True``) and sends the assembled prompt off-box. Before this
+    gate it was reachable on ``CCDASH_GEMINI_API_KEY`` ALONE, so a
+    deployment with a Gemini key and ``CCDASH_LLM_EGRESS_CONSENT=false``
+    still egressed from this route -- falsifying the unqualified acceptance
+    criterion "with CCDASH_LLM_EGRESS_CONSENT false, no egress adapter is
+    constructed."
+
+    Deliberately TWO-SIDED: the negative test proves non-construction and
+    the positive test proves the gate still lets a consented, credentialed
+    call through -- so a gate that always refused would fail here rather
+    than look like a pass.
+
+    SCOPE: this lane has ONE consent dimension. The per-project
+    ``projects.llm_egress_consent`` column applies to the session-naming
+    sweep (which has a project per unit of work); this request carries no
+    project id, so the global flag is the whole gate. See
+    ``generate_dashboard_insight``'s docstring.
+    """
+
+    def setUp(self) -> None:
+        self.app = _make_app()
+        self.client = TestClient(self.app, raise_server_exceptions=True)
+
+    def test_consent_defaults_false(self) -> None:
+        """Fail-closed by default: nothing needs to be set to be safe."""
+        from backend import config
+
+        self.assertFalse(config.CCDASH_LLM_EGRESS_CONSENT)
+
+    def test_negative_construction_adapter_never_constructed_when_consent_false(
+        self,
+    ) -> None:
+        """Structural guard, mirrors the naming-resolver technique in
+
+        ``test_session_naming_local_backend.py`` -- the patched constructor
+        RAISES, so this fails LOUDLY (with a named cause) if the request path
+        EVER reaches ``GeminiTextCompletionAdapter(...)`` while global
+        consent is false, rather than quietly passing on an empty result. A
+        key IS set and the payload IS non-empty -- every other precondition
+        is wide open -- so only the consent gate stands between this call and
+        construction.
+
+        Note the service imports the adapter lazily, below the gate, so
+        under false consent this patch target is never even resolved; the
+        patch exists to make the "would have constructed" case observable.
+        """
+
+        def _explode(**kwargs: object) -> None:
+            raise AssertionError(
+                "GeminiTextCompletionAdapter was constructed while "
+                "CCDASH_LLM_EGRESS_CONSENT was false -- the global egress "
+                "consent gate on POST /api/ai/insight has a "
+                "silent-fail-open regression."
+            )
+
+        with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-consent-false"), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", False), \
+             patch(
+                 "backend.adapters.llm.gemini.GeminiTextCompletionAdapter",
+                 _explode,
+             ):
+            resp = self.client.post(
+                "/api/ai/insight",
+                json={
+                    "metrics": [{"name": "cost", "value": 3.0}],
+                    "tasks": [{"title": "Auth", "status": "active", "cost": 3.0}],
+                },
+            )
+
+        # The EXISTING contract on refusal -- no API shape change, no new
+        # exception type: the route's usual 200 + disabled degrade. Asserted
+        # as well as the raising constructor above so the property still
+        # holds if a future refactor moved construction inside the service's
+        # broad ``except Exception`` (which would swallow the AssertionError).
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["disabled"])
+        self.assertEqual(data["text"], "")
+        self.assertEqual(data["error"], "")
+
+    def test_no_outbound_http_attempted_when_consent_false(self) -> None:
+        """Belt-and-braces: the httpx client is never even instantiated."""
+        mock_client_factory = MagicMock(
+            side_effect=AssertionError(
+                "httpx.AsyncClient was instantiated while "
+                "CCDASH_LLM_EGRESS_CONSENT was false."
+            )
+        )
+        with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-consent-false-2"), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", False), \
+             patch(
+                 "backend.services.ai_insight.httpx.AsyncClient",
+                 mock_client_factory,
+             ):
+            resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["disabled"])
+        mock_client_factory.assert_not_called()
+
+    def test_consent_true_with_key_reaches_the_adapter(self) -> None:
+        """The other side of the gate: a consented, credentialed call still
+
+        constructs the REAL adapter and returns provider text. Without this,
+        a gate that refused unconditionally would pass the negative test and
+        look correct.
+        """
+        expected_text = "Health: steady. Risk: Auth task token cost."
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": expected_text}]}}]
+        }
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post = AsyncMock(return_value=mock_resp)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-consent-true"), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", True), \
+             patch(
+                 "backend.services.ai_insight.httpx.AsyncClient",
+                 return_value=mock_client_instance,
+             ):
+            resp = self.client.post(
+                "/api/ai/insight",
+                json={
+                    "metrics": [{"name": "cost", "value": 3.0}],
+                    "tasks": [{"title": "Auth", "status": "active", "cost": 3.0}],
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertFalse(data["disabled"])
+        self.assertEqual(data["error"], "")
+        self.assertEqual(data["text"], expected_text)
+        mock_client_instance.post.assert_awaited_once()
+
+    def test_consent_true_without_key_still_disabled(self) -> None:
+        """Consent alone is not sufficient -- the credential gate survives."""
+        with patch("backend.config.CCDASH_GEMINI_API_KEY", ""), \
+             patch("backend.config.CCDASH_LLM_EGRESS_CONSENT", True):
+            resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["disabled"])
 
 
 if __name__ == "__main__":

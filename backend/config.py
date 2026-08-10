@@ -1,4 +1,5 @@
 """CCDash Backend Configuration."""
+import logging
 import os
 from pathlib import Path
 from typing import Literal, Mapping
@@ -8,6 +9,65 @@ from pydantic import BaseModel, Field, model_validator
 from backend.env_bootstrap import autoload_local_env
 
 autoload_local_env()
+
+logger = logging.getLogger("ccdash.config")
+
+# hosted-llm-anthropic-ica-lane-v1 M3 (Named Risk #4): "The config fallback
+# pattern does not exist yet in this repo. config.py reads every var once,
+# standalone -- there is no os.getenv(new) or os.getenv(old) precedent.
+# Write one helper and use it for all fallbacks rather than open-coding the
+# chain per var." This module-level set backs that helper's "log once,
+# ever, per legacy var name" guarantee -- see resolve_with_legacy_fallback.
+_LEGACY_ENV_FALLBACKS_WARNED: set[str] = set()
+
+
+def resolve_with_legacy_fallback(
+    new_value: str | None,
+    legacy_value: str | None,
+    default: str,
+    *,
+    new_name: str,
+    legacy_name: str,
+) -> str:
+    """New-var-wins config fallback -- THE ONE helper used for every
+
+    ``CCDASH_LLM_*``-vs-legacy-var pair in this module (Named Risk #4,
+    above). Precedence is: ``new_value`` wins when it is a non-empty
+    (post-``.strip()``) string; else ``legacy_value`` when non-empty; else
+    ``default``. ``None`` is treated identically to an empty string for
+    both arguments (both mean "not configured") -- callers pass whatever a
+    module attribute or ``os.getenv(...)`` already gave them, no
+    pre-normalization required.
+
+    When the resolved value came from ``legacy_value`` (i.e. the new var
+    was absent/empty but the legacy one was not), this logs ONE WARNING
+    naming BOTH ``new_name`` and ``legacy_name`` -- so an operator grepping
+    a worker's log stream can discover the rename without reading source.
+    "Once" is enforced by ``_LEGACY_ENV_FALLBACKS_WARNED`` (keyed on
+    ``legacy_name``, module-level, per-process) rather than by callers only
+    ever invoking this once -- some fallback pairs in this module (e.g. the
+    session-naming lane selector) are re-resolved at call time on every
+    read, precisely so a test can patch either the new or the legacy
+    attribute and have this function observe it; without the seen-set that
+    call-time re-resolution would re-log on every call instead of once.
+    """
+    new_str = (new_value or "").strip()
+    if new_str:
+        return new_str
+    legacy_str = (legacy_value or "").strip()
+    if legacy_str:
+        if legacy_name not in _LEGACY_ENV_FALLBACKS_WARNED:
+            _LEGACY_ENV_FALLBACKS_WARNED.add(legacy_name)
+            logger.warning(
+                "config: %s is DEPRECATED -- set %s instead. %s is still "
+                "honored as a fallback so nothing breaks today, but a "
+                "future release may remove it.",
+                legacy_name,
+                new_name,
+                legacy_name,
+            )
+        return legacy_str
+    return default
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -279,6 +339,113 @@ CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS = _env_int(
 # An unrecognized value is treated by T3-002/T3-003 as "local"
 # (fail toward zero egress, never toward an unintended hosted call).
 CCDASH_SESSION_NAMING_BACKEND = os.getenv("CCDASH_SESSION_NAMING_BACKEND", "local").strip().lower() or "local"
+# hosted-llm-anthropic-ica-lane-v1 M3: the PREFERRED selector for the naming
+# sweep's lane -- adds "anthropic" to CCDASH_SESSION_NAMING_BACKEND's
+# existing "local"/"hosted" vocabulary without renaming or retiring that
+# var (see the compatibility story below). Deliberately left UN-defaulted
+# (empty string, not "local") -- CCDASH_SESSION_NAMING_BACKEND above
+# already carries the "local" default and stays the fallback SOURCE, so
+# this var must be able to express "absent" distinctly from "explicitly
+# local" for resolve_with_legacy_fallback to fall through correctly.
+#
+# This attribute is intentionally NOT the value resolve_naming_backend
+# acts on directly -- that resolver re-reads BOTH this attribute and
+# CCDASH_SESSION_NAMING_BACKEND via getattr() at CALL TIME (through
+# resolve_with_legacy_fallback, Named Risk #4's one shared helper) rather
+# than consuming a single pre-computed constant, so that a caller (test or
+# deployment) patching EITHER attribute is honored -- the existing test
+# suite already patches CCDASH_SESSION_NAMING_BACKEND directly to drive the
+# resolver, and that must keep working unchanged.
+CCDASH_LLM_SESSION_NAMING_LANE = os.getenv("CCDASH_LLM_SESSION_NAMING_LANE", "").strip().lower()
+
+
+def resolve_session_naming_lane() -> str:
+    """The ONE resolution of the effective session-naming lane name.
+
+    Body is nothing but a :func:`resolve_with_legacy_fallback` call over the
+    ``CCDASH_LLM_SESSION_NAMING_LANE`` (new, preferred) /
+    ``CCDASH_SESSION_NAMING_BACKEND`` (legacy) pair, with ``"local"`` as the
+    default -- see both attributes' comments above for the compatibility
+    story, and ``resolve_with_legacy_fallback``'s docstring for precedence
+    and the log-once deprecation warning.
+
+    This exists as a FUNCTION, and every consumer calls it rather than
+    re-deriving the pair, because the lane name has TWO consumers that must
+    never disagree: ``resolve_naming_backend``
+    (``backend/services/session_naming_local_backend.py``), which decides
+    WHICH backend to construct, and ``SessionNamingSweepJob``'s per-tick
+    egress AUDIT event (``backend/adapters/jobs/session_naming_sweep_job.py``),
+    which REPORTS the lane that is egressing. They diverged once
+    (hosted-llm-anthropic-ica-lane-v1 M3 reviewer gate: the audit line read
+    the raw legacy attribute, so an operator who set only the new var got an
+    egress audit line naming ``lane=local`` while the sweep egressed to ICA
+    -- an audit line naming the wrong lane is worse than no audit line).
+    Hoisting the var pair, the default, and the precedence into one callable
+    makes that class of drift unrepresentable rather than merely fixed.
+
+    Both attributes are read at CALL TIME as module globals (never captured
+    into a third pre-computed constant), so patching EITHER one via
+    ``patch.object(config, ...)`` -- which mutates exactly this module's
+    global namespace -- is honored. That is the property the
+    ``CCDASH_LLM_SESSION_NAMING_LANE`` comment above already committed to,
+    and which the existing test suite (which patches the legacy attribute
+    directly to drive the resolver) depends on.
+    """
+    return resolve_with_legacy_fallback(
+        str(CCDASH_LLM_SESSION_NAMING_LANE or "").strip().lower(),
+        str(CCDASH_SESSION_NAMING_BACKEND or "local").strip().lower(),
+        "local",
+        new_name="CCDASH_LLM_SESSION_NAMING_LANE",
+        legacy_name="CCDASH_SESSION_NAMING_BACKEND",
+    )
+
+
+# hosted-llm-anthropic-ica-lane-v1 M2: the GLOBAL egress consent switch.
+# Defaults False -- fail-closed. Every hosted/egress-shaped naming backend
+# (today: Lane B / HostedGeminiNamingBackend; M3 adds an anthropic adapter
+# behind this SAME switch, no new gate) is reachable only when this flag is
+# explicitly true, regardless of CCDASH_SESSION_NAMING_BACKEND's own value
+# or CCDASH_REDACTION_PATTERNS_ENABLED. Checked structurally by
+# ``resolve_naming_backend`` (backend/services/session_naming_local_backend.py)
+# BEFORE it ever imports/constructs an egress-shaped backend class -- never
+# at the call site -- so a reviewer can see the fail-closed property by
+# reading that resolver alone, without tracing call sites. A project's own
+# `projects.llm_egress_consent` (v53 migration) is the SECOND, per-project
+# gate this flag composes with -- checked separately, per sweep tick, inside
+# SessionNamingSweepJob's fan-out loop (never here; this flag is
+# deployment-wide and read once at process start, same as every other
+# env-var flag in this module).
+CCDASH_LLM_EGRESS_CONSENT = _env_bool("CCDASH_LLM_EGRESS_CONSENT", False)
+# hosted-llm-anthropic-ica-lane-v1 M3: the Anthropic/ICA lane's credential
+# block. Selects ICA vs. Anthropic-direct by BASE URL ALONE -- there is no
+# provider-branching flag anywhere in this codebase; point this at
+# Anthropic direct's URL to opt into the PAID lane, or leave it at the
+# default to reach ICA. The default is ICA per ADR-017
+# (docs/project_plans/adrs/adr-017-anthropic-wire-format-canonical-hosted-lane.md)
+# -- the trust boundary is already crossed and ICA's free tier makes a
+# systematic sweep affordable, so defaulting to the paid Anthropic-direct
+# endpoint would silently cost money. Do not "fix" this back. No legacy
+# equivalent (this is a wholly new endpoint), so no fallback helper call is
+# needed here.
+CCDASH_LLM_ANTHROPIC_BASE_URL = (
+    os.getenv(
+        "CCDASH_LLM_ANTHROPIC_BASE_URL", "https://api.nextgen-beta.ica.ibm.com/ica"
+    ).strip()
+    or "https://api.nextgen-beta.ica.ibm.com/ica"
+)
+# No legacy equivalent. Empty (the default) means the anthropic naming lane
+# is UNREACHABLE at derive-time -- never a crash, never a fallback to
+# sending anyway -- see AnthropicNamingBackend.derive_name's explicit check
+# (backend/services/session_naming_local_backend.py), which mirrors
+# CCDASH_GEMINI_API_KEY's identical "unset -> disabled" precedent.
+CCDASH_LLM_ANTHROPIC_API_KEY = os.getenv("CCDASH_LLM_ANTHROPIC_API_KEY", "").strip()
+# Deliberately NO default. Per this plan's own open_questions ("Whether
+# CCDASH_LLM_ANTHROPIC_MODEL should have a default at all. The SPIKE
+# deliberately gives it none; a wrong default is a silent cost decision.")
+# -- do NOT "fix" this by adding one. Absent means the anthropic naming
+# lane is UNREACHABLE at derive-time, exactly like an absent API key above
+# -- see AnthropicNamingBackend.derive_name.
+CCDASH_LLM_ANTHROPIC_MODEL = os.getenv("CCDASH_LLM_ANTHROPIC_MODEL", "").strip()
 # automatic-session-naming-v1 M3 (T3-002): Lane A local backend -- the
 # zero-egress-by-default HTTP client target. Talks to a local Ollama
 # daemon; localhost-only by construction (a homelab/dev-box loopback
@@ -1470,7 +1637,26 @@ DROP_SESSION_LOGS_ENABLED = _env_bool("CCDASH_DROP_SESSION_LOGS_ENABLED", False)
 # crash. Must be listed in deploy/runtime/compose.yaml's
 # x-backend-shared-env allowlist for either consumer to see it in a
 # container deployment (that map is explicit, not pass-through).
-CCDASH_GEMINI_API_KEY: str = os.getenv("CCDASH_GEMINI_API_KEY", "").strip()
+#
+# hosted-llm-anthropic-ica-lane-v1 M3: CCDASH_LLM_GEMINI_API_KEY is the
+# preferred CCDASH_LLM_*-namespaced name for this SAME credential.
+# CCDASH_GEMINI_API_KEY keeps its exact name and meaning forever as the
+# legacy fallback -- resolved via resolve_with_legacy_fallback (Named Risk
+# #4's ONE shared helper), the same function CCDASH_LLM_SESSION_NAMING_LANE
+# falls back through, proving the helper generalizes past a single var
+# rather than being a one-off. This is computed ONCE here, at import time
+# (both env vars are read directly, not via another module attribute), NOT
+# per-call -- unlike the naming-lane selector, no existing test drives this
+# through a patched intermediate attribute, so there is no re-resolution
+# requirement, and resolving once avoids re-logging the deprecation
+# warning on every read.
+CCDASH_GEMINI_API_KEY: str = resolve_with_legacy_fallback(
+    os.getenv("CCDASH_LLM_GEMINI_API_KEY"),
+    os.getenv("CCDASH_GEMINI_API_KEY"),
+    "",
+    new_name="CCDASH_LLM_GEMINI_API_KEY",
+    legacy_name="CCDASH_GEMINI_API_KEY",
+)
 
 # Capability flags (enterprise add-on surfaces; default OFF)
 ARC_ENABLED = _env_bool("CCDASH_ARC_ENABLED", False)

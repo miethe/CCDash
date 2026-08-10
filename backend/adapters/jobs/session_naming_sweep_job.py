@@ -66,6 +66,14 @@ HARD INVARIANTS this module upholds and later tasks must preserve:
   - Worker-only: constructed for the ``worker``/``worker-watch`` profiles
     only (``backend/runtime/container.py``'s ``_WORKER_JOB_PROFILES`` gate);
     the ``api`` profile never constructs this job.
+  - Fail-closed on consent (hosted-llm-anthropic-ica-lane-v1 M2): when
+    ``self.naming_backend`` is egress-shaped (``EGRESS = True``), a project
+    whose ``llm_egress_consent`` reads false is skipped for the whole tick
+    -- no candidate-count query, no transcript fetch, no egress attempt --
+    and this is re-evaluated from the FRESH project row returned by
+    ``ports.workspace_registry.list_projects()`` every single tick, never
+    cached. A local-only backend (``EGRESS`` absent/False) is unaffected by
+    this check regardless of any project's consent value.
 """
 from __future__ import annotations
 
@@ -75,6 +83,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from backend import config
+from backend.observability import otel as observability
 
 logger = logging.getLogger("ccdash.jobs.session_naming_sweep")
 
@@ -180,6 +189,19 @@ class SessionNamingSweepJob:
         # (project_id, trigger) coalescing guard -- mirrors
         # AARReviewSweepJob's ``_in_flight`` set exactly.
         self._in_flight: set[tuple[str, str]] = set()
+        # hosted-llm-anthropic-ica-lane-v1 M2 (per-tick consent freshness
+        # fix): whether THIS tick's ``_resolve_projects_to_sweep()`` call
+        # was able to force a fresh registry read before reading any
+        # project's ``llm_egress_consent`` -- see that method's docstring.
+        # Defaults True (confirmed) so a job never constructed with a
+        # consent-gated backend (the common/default case) is unaffected;
+        # flipped per-tick by ``_resolve_projects_to_sweep``.
+        self._consent_freshness_confirmed: bool = True
+        # Log-once (not per-tick) guard for the "this registry cannot be
+        # refreshed at all" warning -- a standing configuration fact about
+        # which ``workspace_registry`` implementation this job was wired
+        # with, not a per-tick event.
+        self._registry_reload_missing_warned = False
 
     async def execute(self, *, trigger: str = "scheduled") -> SessionNamingSweepRunResult:
         if not bool(getattr(config, "CCDASH_SESSION_NAMING_ENABLED", False)):
@@ -193,10 +215,75 @@ class SessionNamingSweepJob:
             getattr(config, "SYNC_COALESCING_ENABLED", True)
         )
 
+        # hosted-llm-anthropic-ica-lane-v1 M2: is THIS tick's naming backend
+        # egress-shaped? A static fact about which backend
+        # ``resolve_naming_backend`` resolved at process start (see that
+        # function's own docstring for why per-project consent is
+        # deliberately NOT folded in there) -- read once per tick, outside
+        # the per-project loop, purely as a cheap gate for whether the
+        # per-project consent check below even applies. Local-only backends
+        # (``EGRESS`` absent or False) never require per-project consent.
+        backend_requires_consent = self.naming_backend is not None and bool(
+            getattr(self.naming_backend, "EGRESS", False)
+        )
+
         project_results: dict[str, SessionNamingSweepRunResult] = {}
         for project in projects:
             project_id = str(getattr(project, "id", "") or "")
             if not project_id:
+                continue
+
+            # hosted-llm-anthropic-ica-lane-v1 M2: if THIS tick could not
+            # confirm the registry was freshly reloaded before
+            # `_resolve_projects_to_sweep()` called `list_projects()` (see
+            # that method's docstring/DECISION), every project's consent is
+            # UNCONFIRMED for an egress-shaped backend this tick -- fail
+            # CLOSED rather than trust a flag that might be a stale,
+            # process-start snapshot. Distinct outcome from
+            # "consent_declined" (an explicit false reading) so operators
+            # can tell "we know they said no" apart from "we don't know
+            # what they currently say."
+            if backend_requires_consent and not self._consent_freshness_confirmed:
+                logger.info(
+                    "session_naming_sweep: project_id=%s -- consent freshness "
+                    "could not be confirmed this tick (egress-shaped backend "
+                    "active) -- skipping rather than trusting a possibly-stale "
+                    "llm_egress_consent read.",
+                    project_id,
+                )
+                project_results[project_id] = SessionNamingSweepRunResult(
+                    success=True, outcome="consent_unconfirmed"
+                )
+                continue
+
+            # The PER-PROJECT consent gate. ``project`` comes fresh from
+            # ``self._resolve_projects_to_sweep()`` -- called once per
+            # ``execute()`` invocation, i.e. once per sweep tick -- via
+            # ``ports.workspace_registry.list_projects()`` (ADR-006), which
+            # that same method now forces to re-read the registry from the
+            # DB every tick (the freshness fix above) rather than relying on
+            # `list_projects()` alone to do so. `llm_egress_consent` is
+            # therefore read fresh here every tick, never cached on ``self``
+            # or captured at job construction: a consent flip in the DB
+            # between ticks changes this check's outcome on the very next
+            # tick, with no restart of this job instance required. A
+            # declined project is recorded (never silently dropped -- same
+            # "no silent drop" posture as the coalescing branch below) with
+            # outcome="consent_declined" and is never touched by
+            # ``_execute_inner`` this tick -- no candidate-count query, no
+            # transcript fetch, no egress attempt.
+            if backend_requires_consent and not bool(
+                getattr(project, "llm_egress_consent", False)
+            ):
+                logger.info(
+                    "session_naming_sweep: project_id=%s has not consented to LLM "
+                    "egress (llm_egress_consent=false) -- skipping this tick "
+                    "(the active naming backend is egress-shaped).",
+                    project_id,
+                )
+                project_results[project_id] = SessionNamingSweepRunResult(
+                    success=True, outcome="consent_declined"
+                )
                 continue
 
             coal_key = (project_id, trigger or "scheduled")
@@ -213,6 +300,29 @@ class SessionNamingSweepJob:
                     continue
                 self._in_flight.add(coal_key)
             try:
+                if backend_requires_consent:
+                    # Reaching here means this project consented (the check
+                    # above did not skip it) -- per-tick egress
+                    # observability AC: log lane/model/project_id, never a
+                    # credential/prompt/transcript.
+                    #
+                    # ``lane`` is the RESOLVED lane
+                    # (``config.resolve_session_naming_lane()``), which is
+                    # the exact same call ``resolve_naming_backend``
+                    # (backend/services/session_naming_local_backend.py)
+                    # made to decide which backend to construct -- never the
+                    # raw legacy ``CCDASH_SESSION_NAMING_BACKEND``
+                    # attribute, which this line used to read. An operator
+                    # following the documented preference (set
+                    # CCDASH_LLM_SESSION_NAMING_LANE=anthropic, leave the
+                    # legacy var alone) got ``lane=local`` on a tick that
+                    # was egressing to ICA; an egress audit line naming the
+                    # wrong lane is worse than no audit line.
+                    observability.log_llm_egress_event(
+                        lane=config.resolve_session_naming_lane(),
+                        model=str(getattr(self.naming_backend, "model", "") or "unknown"),
+                        project_id=project_id,
+                    )
                 project_results[project_id] = await self._execute_inner(project, project_id)
             finally:
                 if coalescing_enabled:
@@ -228,15 +338,101 @@ class SessionNamingSweepJob:
         byte-for-byte; otherwise every registered project is enumerated via
         ``ports.workspace_registry.list_projects()`` (ADR-006), tolerating a
         test/mock registry that does not implement the method.
+
+        hosted-llm-anthropic-ica-lane-v1 M2 (security-review fix): forces a
+        fresh registry read BEFORE calling ``list_projects()`` below, and
+        records whether that was actually possible in
+        ``self._consent_freshness_confirmed`` for ``execute()`` to consult.
+
+        Why this is load-bearing, not decorative: the production
+        ``workspace_registry`` (``ProjectManagerWorkspaceRegistry`` wrapping
+        ``DbProjectManager``) hydrates an in-memory snapshot on FIRST use
+        (``DbProjectManager._ensure_snapshot``'s own docstring: "hydrate on
+        first use") and never re-reads the DB again on its own --
+        ``list_projects()`` alone would serve that same snapshot for the
+        entire lifetime of the worker process. ``projects.llm_egress_consent``
+        has no API in this change set; the only way to change it is a direct
+        DB write. Without forcing a reload here, a revoked consent would be
+        INVISIBLE to a running worker until it is restarted -- egress would
+        keep happening after an operator believed they had stopped it. That
+        is precisely the silent-fail-open shape this feature's rubric
+        forbids, and it is the failing direction that matters most: a
+        missed REVOCATION, not a missed grant.
+
+        ``reload_projects()``/``reload()`` (whichever the registry exposes)
+        is cheap -- it only invalidates the cached snapshot
+        (``_snapshot_loaded = False``); the actual DB hit happens lazily
+        inside ``list_projects()`` immediately below, in THIS SAME tick --
+        so calling it unconditionally, every tick, is not a meaningfully
+        more expensive operation than the tick was already about to perform.
+
+        DECISION (recorded per the plan's own instruction to justify this in
+        a comment, not just in code): when the registry exposes NEITHER
+        ``reload_projects()`` nor ``reload()`` -- or the call itself raises
+        -- this method does NOT silently proceed on whatever
+        ``list_projects()`` happens to return. It sets
+        ``self._consent_freshness_confirmed = False`` for this tick, which
+        ``execute()`` treats as "every project's consent is UNCONFIRMED" and
+        skips ALL projects on ticks where the active naming backend is
+        egress-shaped (outcome ``"consent_unconfirmed"``), rather than
+        trusting a flag it cannot prove is current. The asymmetry driving
+        this choice: the cost of being wrong toward fail-CLOSED is a
+        consented project's names going undelivered for a tick or two
+        (annoying, fully recoverable, never a safety issue); the cost of
+        being wrong toward fail-OPEN is transcript-derived content leaving
+        the box after an operator revoked permission for exactly that. Those
+        two costs are not symmetric, so this function does not treat them as
+        if they were. The missing-reload-hook case is logged ONCE (not per
+        tick, via ``self._registry_reload_missing_warned``) -- an operator
+        should see this as a standing configuration fact, not tick noise.
         """
         if self.project is not None:
+            # Test-only / single-project-pinned mode (pre-existing, not
+            # changed by this fix): there is no registry to refresh here,
+            # so freshness cannot be confirmed either way. This mode is not
+            # how `container.py` constructs the production job (it never
+            # passes `project=`), so this is a pre-existing, understood
+            # limitation of the pinned escape hatch, not a regression.
+            self._consent_freshness_confirmed = False
             return [self.project]
         workspace_registry = getattr(self.ports, "workspace_registry", None)
         if workspace_registry is None:
+            self._consent_freshness_confirmed = False
             return []
         list_projects = getattr(workspace_registry, "list_projects", None)
         if list_projects is None:
+            self._consent_freshness_confirmed = False
             return []
+
+        reload_callable = getattr(workspace_registry, "reload_projects", None) or getattr(
+            workspace_registry, "reload", None
+        )
+        if callable(reload_callable):
+            try:
+                reload_callable()
+                self._consent_freshness_confirmed = True
+            except Exception:
+                logger.exception(
+                    "session_naming_sweep: workspace_registry reload/invalidation "
+                    "raised -- this tick's llm_egress_consent reads cannot be "
+                    "trusted as fresh; treating consent as unconfirmed for "
+                    "egress-shaped backends this tick only."
+                )
+                self._consent_freshness_confirmed = False
+        else:
+            self._consent_freshness_confirmed = False
+            if not self._registry_reload_missing_warned:
+                self._registry_reload_missing_warned = True
+                logger.warning(
+                    "session_naming_sweep: workspace_registry exposes neither "
+                    "reload_projects() nor reload() -- projects.llm_egress_consent "
+                    "freshness cannot be guaranteed for this process. Every "
+                    "project's consent will be treated as UNCONFIRMED (and "
+                    "skipped) on ticks where the active naming backend is "
+                    "egress-shaped, until a refreshable registry is wired in. "
+                    "This is a one-time warning, not repeated per tick."
+                )
+
         try:
             projects = list(list_projects())
         except Exception:

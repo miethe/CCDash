@@ -1,8 +1,12 @@
 """AI insight service — proxies Gemini REST API server-side.
 
-The API key is read from config (CCDASH_GEMINI_API_KEY). When the key is
-unset the service returns a graceful DISABLED result instead of raising.
-Uses httpx (already a project dependency) — no new Python SDK is added.
+This is an EGRESS path: the assembled prompt leaves the box. It is gated on
+the GLOBAL ``CCDASH_LLM_EGRESS_CONSENT`` flag (default false, fail-closed)
+in addition to the credential ``CCDASH_GEMINI_API_KEY``. With either absent
+the service returns a graceful DISABLED result instead of raising — and
+under false consent no egress adapter is constructed at all (the adapter
+import itself is below the gate). Uses httpx (already a project dependency)
+— no new Python SDK is added.
 """
 from __future__ import annotations
 
@@ -17,8 +21,15 @@ import httpx  # noqa: F401 -- re-exported so tests can patch
 # mutates the same object the adapter's own ``import httpx`` resolves to.
 
 from backend import config
-from backend.adapters.llm.gemini import GeminiTextCompletionAdapter
 from backend.application.ports.llm import envelope_from_aggregate
+
+# NOTE: ``GeminiTextCompletionAdapter`` is deliberately NOT imported at module
+# scope -- it is an EGRESS-marked adapter (``EGRESS = True``) and its import
+# lives inside ``generate_dashboard_insight`` BELOW the consent gate, so false
+# consent never executes the import, let alone the constructor. Mirrors
+# ``resolve_naming_backend`` (``backend/services/session_naming_local_backend.py``),
+# which uses the same lazy-import-after-gate posture for the same reason. Do
+# not hoist it back up here.
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +69,46 @@ async def generate_dashboard_insight(
 ) -> AIInsightResult:
     """Call the Gemini REST API and return an insight string.
 
-    Returns a DISABLED result when CCDASH_GEMINI_API_KEY is unset so the
-    caller never receives a 500.
+    Returns a DISABLED result -- never a 500, never a new exception type --
+    when EITHER precondition is absent:
+
+      1. ``CCDASH_LLM_EGRESS_CONSENT`` reads True. This endpoint constructs
+         an EGRESS-marked adapter (``GeminiTextCompletionAdapter.EGRESS is
+         True``) that sends the assembled prompt off-box, so it sits behind
+         the same GLOBAL consent flag as the hosted naming lanes -- not a
+         second, weaker gate. Defaults False (fail-closed): an absent or
+         unparseable value is False (``config._env_bool``), and the
+         ``getattr(..., False)`` default below covers the flag being absent
+         from the module entirely. There is no fallback to any other flag
+         that could accidentally satisfy it.
+      2. ``CCDASH_GEMINI_API_KEY`` is set.
+
+    SCOPE, stated exactly: this lane has ONE consent dimension, not two.
+    The per-project ``projects.llm_egress_consent`` column composes with the
+    global flag only for the session-naming sweep, which fans out over
+    registered projects and therefore HAS a project to consult per unit of
+    work. This endpoint's request carries no project id (see
+    ``AIInsightRequest`` -- ``metrics`` and ``tasks`` only), so there is no
+    project whose consent could be read here; the global flag is the whole
+    gate. Do not describe this path as "opt in twice".
     """
+    # hosted-llm-anthropic-ica-lane-v1: the GLOBAL egress consent gate,
+    # checked FIRST and structurally -- this plain `if not ...: return` runs
+    # before the credential read, before the prompt is assembled, and before
+    # the adapter module is even IMPORTED further down. A reviewer can see,
+    # by reading this function alone (no call-site tracing required), that
+    # false consent makes it IMPOSSIBLE to reach the adapter constructor.
+    # Same shape as resolve_naming_backend's gate
+    # (backend/services/session_naming_local_backend.py) so the two egress
+    # entry points fail closed identically.
+    if not bool(getattr(config, "CCDASH_LLM_EGRESS_CONSENT", False)):
+        logger.info(
+            "ai_insight: CCDASH_LLM_EGRESS_CONSENT is off -- the hosted "
+            "insight lane is unreachable; returning the DISABLED contract "
+            "state (never falls back to sending)."
+        )
+        return AIInsightResult(disabled=True)
+
     api_key = config.CCDASH_GEMINI_API_KEY
     if not api_key:
         logger.debug("CCDASH_GEMINI_API_KEY is unset — AI insight is disabled")
@@ -80,6 +128,12 @@ async def generate_dashboard_insight(
         "risk or the biggest win. Focus on cost vs. delivery velocity."
     )
 
+    # Lazy import, positioned AFTER the consent gate above -- see the
+    # module-scope NOTE. Construction is also deliberately OUTSIDE the
+    # try/except below: a constructor failure must propagate, not be folded
+    # into the generic "Error connecting" branch.
+    from backend.adapters.llm.gemini import GeminiTextCompletionAdapter
+
     envelope = envelope_from_aggregate(prompt)
     adapter = GeminiTextCompletionAdapter(
         api_key=api_key,
@@ -92,7 +146,15 @@ async def generate_dashboard_insight(
         text = await adapter.complete(envelope)
         return AIInsightResult(text=text or "Could not generate insight.")
     except httpx.HTTPStatusError as exc:
-        logger.warning("Gemini API HTTP error: %s %s", exc.response.status_code, exc.response.text)
+        # Log the status code plus a fixed message only -- never
+        # ``exc.response.text`` / ``.content`` / a parsed body, which may
+        # echo request/provider diagnostic detail into the log stream (M1,
+        # hosted-llm-anthropic-ica-lane-v1).
+        logger.warning(
+            "Gemini API HTTP error: provider returned a non-2xx response "
+            "(status=%s)",
+            exc.response.status_code,
+        )
         return AIInsightResult(error=f"Gemini API error: {exc.response.status_code}")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Gemini API call failed: %s", exc)

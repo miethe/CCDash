@@ -26,6 +26,8 @@ __all__ = [
     "PromptEnvelope",
     "envelope_from_aggregate",
     "envelope_from_redacted_transcript",
+    "EGRESS_ALLOWED_PROVENANCE",
+    "enforce_egress_provenance",
 ]
 
 
@@ -119,3 +121,42 @@ def envelope_from_redacted_transcript(text: str, redaction_events: int = 0) -> P
         provenance=PromptProvenance.TRANSCRIPT_REDACTED,
         redaction_events=redaction_events,
     )
+
+
+# hosted-llm-anthropic-ica-lane-v1 M2: the full vocabulary of provenance
+# values ever cleared to leave the process. Today this is BOTH members of
+# ``PromptProvenance`` -- there is no "raw, unredacted" provenance value in
+# this codebase's vocabulary at all, by construction
+# (``envelope_from_redacted_transcript`` already refuses to build one while
+# redaction is off). This constant exists so a FUTURE provenance value can
+# be added to ``PromptProvenance`` without it silently becoming
+# egress-eligible -- it must be added here too, explicitly.
+EGRESS_ALLOWED_PROVENANCE: frozenset[PromptProvenance] = frozenset(
+    {PromptProvenance.AGGREGATE, PromptProvenance.TRANSCRIPT_REDACTED}
+)
+
+
+def enforce_egress_provenance(envelope: PromptEnvelope) -> None:
+    """Raise unless ``envelope.provenance`` is cleared to leave the box.
+
+    Every ``TextCompletionPort`` adapter that performs egress (marked
+    ``EGRESS = True`` -- see ``backend/adapters/llm/gemini.py``) calls this
+    at the very top of :meth:`TextCompletionPort.complete`, before building
+    a URL/payload or opening any connection, so a caller that constructs a
+    :class:`PromptEnvelope` with a provenance value outside
+    ``EGRESS_ALLOWED_PROVENANCE`` can never reach the network -- this is a
+    hard raise, not a fail-open no-op, because reaching this function with a
+    disallowed provenance means a caller bypassed (or a future refactor
+    broke) every earlier gate; the adapter is the last line of defense
+    before the process boundary.
+
+    Local-only adapters (e.g. Ollama, ``EGRESS = False``) never call this --
+    a loopback call has nothing off-box to protect.
+    """
+    if envelope.provenance not in EGRESS_ALLOWED_PROVENANCE:
+        raise ValueError(
+            "enforce_egress_provenance: refusing to send an envelope with "
+            f"provenance={envelope.provenance!r} off-box -- only "
+            f"{sorted(p.value for p in EGRESS_ALLOWED_PROVENANCE)} may leave "
+            "the box."
+        )

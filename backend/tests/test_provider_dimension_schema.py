@@ -41,13 +41,21 @@ _FORBIDDEN_EXACT_NAMES = frozenset({"key", "value"})
 
 
 class ProviderDimensionSchemaVersionTests(unittest.TestCase):
-    """AC1: SCHEMA_VERSION == 52 in both migration modules, asserted separately."""
+    """AC1: SCHEMA_VERSION >= 52 in both migration modules, asserted separately."""
 
-    def test_sqlite_schema_version_is_52(self) -> None:
-        self.assertEqual(sqlite_migrations.SCHEMA_VERSION, 52)
+    # Relaxed from `== 52` to `>= 52` when the hosted-llm-anthropic-ica-lane
+    # feature landed concurrently and took v53 (projects.llm_egress_consent).
+    # SCHEMA_VERSION is a repo-global high-water mark, not this feature's
+    # property, so pinning it with `==` made these two assertions fail on the
+    # next schema change by ANY feature. The invariant this test actually
+    # protects is that the provider-dimension DDL is gated at or after v52 --
+    # which `>=` states exactly, and which the `if current_version < 52`
+    # migration gate in both backends still implements unchanged.
+    def test_sqlite_schema_version_is_at_least_52(self) -> None:
+        self.assertGreaterEqual(sqlite_migrations.SCHEMA_VERSION, 52)
 
-    def test_postgres_schema_version_is_52(self) -> None:
-        self.assertEqual(postgres_migrations.SCHEMA_VERSION, 52)
+    def test_postgres_schema_version_is_at_least_52(self) -> None:
+        self.assertGreaterEqual(postgres_migrations.SCHEMA_VERSION, 52)
 
 
 class ProviderDimensionTablesPresentTests(unittest.TestCase):

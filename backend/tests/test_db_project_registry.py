@@ -23,6 +23,22 @@ from backend.models import Project
 from backend.project_manager import DbProjectManager
 
 
+async def _run_migrations_async(db_path: str) -> None:
+    """Async body shared by ``_run_migrations_sync`` and any caller that is
+
+    already inside a running event loop (e.g. an ``IsolatedAsyncioTestCase``
+    test method) -- ``asyncio.run()`` cannot be nested inside one, so those
+    callers must ``await`` this directly instead of going through the sync
+    wrapper below.
+    """
+    import aiosqlite
+    from backend.db.sqlite_migrations import run_migrations
+
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        await run_migrations(db)
+
+
 def _run_migrations_sync(db_path: str) -> None:
     """Run the canonical SQLite migration runner against *db_path* synchronously.
 
@@ -30,16 +46,12 @@ def _run_migrations_sync(db_path: str) -> None:
     merely guards that migrations have already run.  Tests that create a fresh
     DB must call this helper before instantiating DbProjectManager so that the
     projects table exists when _get_repo() calls ensure_table().
+
+    Synchronous (``TestCase``) callers only -- an ``IsolatedAsyncioTestCase``
+    test method is already inside a running event loop and must
+    ``await _run_migrations_async(db_path)`` directly instead.
     """
-    import aiosqlite
-    from backend.db.sqlite_migrations import run_migrations
-
-    async def _run() -> None:
-        async with aiosqlite.connect(db_path) as db:
-            db.row_factory = aiosqlite.Row
-            await run_migrations(db)
-
-    asyncio.run(_run())
+    asyncio.run(_run_migrations_async(db_path))
 
 
 def _make_manager(tmpdir: str, json_data: dict | None = None) -> DbProjectManager:
@@ -112,6 +124,52 @@ class TestDbProjectRegistryRoundTrip(unittest.TestCase):
 
             result = mgr.get_project("p-upd")
             self.assertEqual(result.name, "New Name")
+
+    def test_llm_egress_consent_defaults_false_for_project_created_without_it(self) -> None:
+        """hosted-llm-anthropic-ica-lane-v1 M2: fail-closed default.
+
+        A project added without specifying `llm_egress_consent` must read
+        back as False -- the DDL default (SQLite `INTEGER NOT NULL DEFAULT 0`
+        / Postgres `BOOLEAN NOT NULL DEFAULT FALSE`) must never silently
+        opt an existing/new project into off-box egress.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _make_manager(tmpdir)
+            project = Project(id="p-consent-default", name="No Consent Specified", path=tmpdir)
+            self.assertFalse(project.llm_egress_consent, "Project model default must be False")
+
+            mgr.add_project(project)
+
+            result = mgr.get_project("p-consent-default")
+            self.assertIsNotNone(result)
+            self.assertFalse(
+                result.llm_egress_consent,
+                "llm_egress_consent must default to False when not specified (fail-closed)",
+            )
+
+    def test_llm_egress_consent_round_trips_true(self) -> None:
+        """Explicit True consent must persist and be read back as True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _make_manager(tmpdir)
+            project = Project(
+                id="p-consent-true",
+                name="Consent Given",
+                path=tmpdir,
+                llm_egress_consent=True,
+            )
+            mgr.add_project(project)
+
+            result = mgr.get_project("p-consent-true")
+            self.assertIsNotNone(result)
+            self.assertTrue(result.llm_egress_consent, "Explicit True consent must round-trip as True")
+
+            # A second, independent manager instance reading the same DB file
+            # (same tmpdir -> same deterministic db_path) must also observe
+            # True — proving persistence, not in-memory state.
+            mgr2 = _make_manager(tmpdir)
+            result2 = mgr2.get_project("p-consent-true")
+            self.assertIsNotNone(result2)
+            self.assertTrue(result2.llm_egress_consent, "Consent must survive a fresh manager instance (restart)")
 
     def test_set_active_raises_for_missing_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -582,6 +640,118 @@ class TestImportExportRoundTrip(unittest.TestCase):
             # New 2 rows must also be present.
             self.assertIn("extra-0", all_ids)
             self.assertIn("extra-1", all_ids)
+
+
+class TestSweepJobObservesConsentFlipThroughTheRealCachingLayer(unittest.IsolatedAsyncioTestCase):
+    """hosted-llm-anthropic-ica-lane-v1 M2 security-review fix.
+
+    ``DbProjectManager.list_projects()`` hydrates an in-memory snapshot on
+    FIRST use and never re-reads the DB again on its own
+    (``_ensure_snapshot``'s own docstring: "hydrate on first use";
+    ``_snapshot_loaded`` is only cleared by ``_invalidate_snapshot()``,
+    which ``list_projects()`` itself never calls). A mock-based test that
+    hands ``SessionNamingSweepJob`` a ``types.SimpleNamespace(list_projects=
+    lambda: [project])`` re-reads the SAME mutable Python object every call,
+    so a mutation is trivially visible and this caching layer is never
+    exercised -- that shape of test cannot see this bug. This test does not
+    mock the registry at all: it drives a REAL ``DbProjectManager`` against
+    a real (temp-file) SQLite DB, through the REAL
+    ``ProjectManagerWorkspaceRegistry`` wrapper ``container.py`` actually
+    wires into ``SessionNamingSweepJob`` in production.
+
+    The consent flip happens through a SECOND, independent
+    ``DbProjectManager`` instance pointed at the same DB file -- simulating
+    an admin action or a separate process, which is the ONLY way to change
+    ``llm_egress_consent`` in this change set (there is no API for it).
+    Nothing in this test calls ``.reload()``/``.update_project()`` on
+    instance A directly -- proving THAT API exists would be a much weaker
+    claim than proving ``SessionNamingSweepJob`` itself calls it, which is
+    what the assertions below actually pin.
+    """
+
+    async def test_consent_flip_via_a_second_manager_is_observed_on_the_very_next_tick(
+        self,
+    ) -> None:
+        import types
+        from unittest.mock import AsyncMock, patch
+
+        from backend import config
+        from backend.adapters.jobs.session_naming_sweep_job import SessionNamingSweepJob
+        from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "registry.db")
+            json_path = Path(tmpdir) / "projects.json"
+            json_path.write_text("{}")  # empty JSON -> no bootstrap noise
+            # NOTE: this test method is itself async (IsolatedAsyncioTestCase)
+            # -- already inside a running event loop -- so it must await the
+            # async migration body directly rather than call
+            # `_run_migrations_sync`, which wraps it in `asyncio.run()` and
+            # would raise "cannot be called from a running event loop".
+            await _run_migrations_async(db_path)
+
+            # Instance A: the long-running worker's own manager -- the one
+            # SessionNamingSweepJob will read through on every tick.
+            manager_a = DbProjectManager(json_path, db_path=db_path, db_backend="sqlite")
+            manager_a.add_project(
+                Project(
+                    id="proj-consent-flip",
+                    name="Flip Target",
+                    path=tmpdir,
+                    llm_egress_consent=False,
+                )
+            )
+
+            registry_a = ProjectManagerWorkspaceRegistry(manager_a)
+
+            sessions_repo = types.SimpleNamespace(
+                list_missing_session_name=AsyncMock(return_value=[]),
+                count_missing_session_name=AsyncMock(return_value=0),
+            )
+            storage = types.SimpleNamespace(sessions=lambda: sessions_repo)
+            ports = types.SimpleNamespace(storage=storage, workspace_registry=registry_a)
+
+            # A minimal egress-shaped naming backend stand-in -- only the
+            # two attributes SessionNamingSweepJob actually reads.
+            naming_backend = types.SimpleNamespace(EGRESS=True, model="fake-hosted-model")
+            job = SessionNamingSweepJob(ports=ports, project=None, naming_backend=naming_backend)
+
+            with patch.object(config, "CCDASH_SESSION_NAMING_ENABLED", True):
+                first_tick = await job.execute(trigger="scheduled")
+
+            # Tick 1: consent is false as added -- the project must be
+            # skipped and the sessions repo never touched. This also
+            # hydrates instance A's in-memory snapshot.
+            self.assertTrue(first_tick.success)
+            sessions_repo.count_missing_session_name.assert_not_awaited()
+
+            # THE EXTERNAL FLIP: a DIFFERENT DbProjectManager instance,
+            # same DB file, same row -- instance A is never touched here.
+            manager_b = DbProjectManager(json_path, db_path=db_path, db_backend="sqlite")
+            manager_b.update_project(
+                "proj-consent-flip",
+                Project(
+                    id="proj-consent-flip",
+                    name="Flip Target",
+                    path=tmpdir,
+                    llm_egress_consent=True,
+                ),
+            )
+
+            with patch.object(config, "CCDASH_SESSION_NAMING_ENABLED", True):
+                second_tick = await job.execute(trigger="scheduled")
+
+            # Tick 2, on the SAME job / SAME manager_a instance, no restart:
+            # the flip made through manager_b must be visible NOW. If the
+            # per-tick forced-reload fix were absent, manager_a would still
+            # be serving its tick-1 snapshot (consent=False) and this
+            # assertion would fail -- see the "without the fix" run
+            # recorded in the completion report for this task.
+            self.assertTrue(second_tick.success)
+            sessions_repo.count_missing_session_name.assert_awaited_once_with(
+                "proj-consent-flip"
+            )
+            self.assertEqual(second_tick.candidates_found, 0)
 
 
 if __name__ == "__main__":

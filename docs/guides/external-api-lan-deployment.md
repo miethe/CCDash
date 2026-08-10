@@ -123,6 +123,76 @@ injectable `Depends` function (`backend/routers/_client_v1_auth.py:require_v1_au
 A future workspace-scoped resolver replaces that function without touching any
 handler body.
 
+### Operator note — containerised deployments (compose env allowlists)
+
+Every CCDash compose stack (`docker-compose.yml` at the repo root and
+`deploy/runtime/compose.yaml`, the file the agentic node actually deploys)
+declares an **explicit environment allowlist** per service, not a passthrough
+of the host environment. A variable set only in the host shell, `.env`, or an
+`--env-file` — but not listed as a key in the compose file's `environment:`
+map for that service — **never reaches the container namespace**, no matter
+how it is set outside the container. For `CCDASH_API_TOKEN` specifically this
+means: the var must be present as a key (even with an empty default, e.g.
+`CCDASH_API_TOKEN: "${CCDASH_API_TOKEN:-}"`) on every service that mounts
+`client_v1_router` — currently the `local`/`backend` and `api` runtime
+profiles only; `worker`/`worker-watch` never serve `/api/v1` and do not need
+the key. If it is missing from the allowlist, setting `CCDASH_API_TOKEN` on
+the host is a **silent no-op**: `require_v1_auth` stays in its no-op branch
+and `/api/v1` stays reachable with no credential, with no error or log line
+to indicate why.
+
+Also note: a `git reset`/`git pull` followed by a plain container **restart**
+runs the **stale, already-built image** — `docker compose up -d` (or the
+podman equivalent) reuses the existing image layer and does not pick up
+source changes. Any change to `backend/` or to the compose files themselves
+requires a **rebuild** (`docker compose build` / `up -d --build`) before the
+new behaviour takes effect on a running deployment.
+
+---
+
+## Hosted LLM egress consent (`CCDASH_LLM_EGRESS_CONSENT`)
+
+The derived-session-naming sweep's hosted/anthropic lanes (Lane B / the
+anthropic-ICA lane) send session-derived text to an off-box endpoint
+(Gemini, Anthropic direct, or an ICA gateway). CCDash gates that egress with
+a **two-level consent model** — both levels must be true, or nothing egresses:
+
+1. **Deployment-wide switch** — `CCDASH_LLM_EGRESS_CONSENT` (env var).
+   Defaults `false`; fail-closed. Setting it `true` merely *permits* the
+   hosted/anthropic backends to be constructed at all — it does not, by
+   itself, cause any project's sessions to be sent off-box.
+2. **Per-project switch** — the `projects.llm_egress_consent` DB column
+   (per-project, checked once per sweep tick inside
+   `SessionNamingSweepJob`'s fan-out loop). A project defaults to no consent;
+   an operator must explicitly opt that project in.
+
+Both gates are independent and additive — `CCDASH_LLM_EGRESS_CONSENT=true`
+with a project's `llm_egress_consent` left `false` (the default) still sends
+that project's sessions through the local, zero-egress naming backend only.
+
+### Same compose-allowlist gap as `CCDASH_API_TOKEN`
+
+Both `CCDASH_LLM_EGRESS_CONSENT` and the anthropic-lane credential vars
+(`CCDASH_LLM_SESSION_NAMING_LANE`, `CCDASH_LLM_ANTHROPIC_BASE_URL`,
+`CCDASH_LLM_ANTHROPIC_API_KEY`, `CCDASH_LLM_ANTHROPIC_MODEL`,
+`CCDASH_LLM_GEMINI_API_KEY`) are subject to the **exact same explicit-allowlist
+gap** described above for `CCDASH_API_TOKEN`: setting any of them in the host
+shell, `.env`, or an `--env-file` is a silent no-op unless the var is also
+listed as a key in the compose stack's `environment:` map for the service
+that needs it (`docker-compose.yml`'s `x-shared-backend-env` anchor, or
+`deploy/runtime/compose.yaml`'s `x-backend-service` → `environment:
+&backend-shared-env` anchor — the file the agentic node deploys). Both
+files already carry all six keys with defaults mirroring
+`backend/config.py` exactly. `CCDASH_LLM_ANTHROPIC_MODEL` deliberately has
+**no default anywhere** (env, compose, or `backend/config.py`) — empty means
+the anthropic naming lane is unreachable at derive-time; do not add one.
+`CCDASH_LLM_ANTHROPIC_BASE_URL` defaults to ICA
+(`https://api.nextgen-beta.ica.ibm.com/ica`) per ADR-017 — the trust
+boundary is already crossed and ICA's free tier makes a systematic sweep
+affordable. Explicitly pointing this var at `https://api.anthropic.com`
+selects the **paid** Anthropic-direct lane instead; that is an intentional
+opt-in, not something to do "helpfully".
+
 ---
 
 ## Cross-project session access

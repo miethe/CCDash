@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS projects (
     skillmeat_json       TEXT NOT NULL DEFAULT '{}',
     display_json         TEXT,
     is_active            INTEGER NOT NULL DEFAULT 0,
+    repo_path            TEXT,
+    llm_egress_consent   INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -683,6 +683,9 @@ class DbProjectManager:
             # is_active is stored in the DB and must be surfaced on the model
             # so the REST response includes it and the FE scope guard works.
             "is_active": bool(row.get("is_active", False)),
+            # llm_egress_consent (v52, hosted-llm-anthropic-ica-lane-v1 M2):
+            # fail-closed per-project egress consent flag. Missing -> False.
+            "llm_egress_consent": bool(row.get("llm_egress_consent", False)),
         }
         path_cfg = row.get("path_config_json")
         if path_cfg:

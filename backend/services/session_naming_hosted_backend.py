@@ -145,6 +145,20 @@ class HostedGeminiNamingBackend:
             base_url=_GEMINI_BASE_URL,
         )
 
+    @property
+    def EGRESS(self) -> bool:
+        """Whether a call from this backend can leave the box.
+
+        hosted-llm-anthropic-ica-lane-v1 M2: delegates to
+        ``self._adapter.EGRESS`` -- the adapter is the single source of
+        truth (``GeminiTextCompletionAdapter.EGRESS = True``); this property
+        exists purely so ``SessionNamingSweepJob``'s per-project consent
+        gate can check ``getattr(naming_backend, "EGRESS", False)`` on the
+        backend object it actually holds, without reaching into a private
+        ``_adapter`` attribute.
+        """
+        return bool(getattr(self._adapter, "EGRESS", False))
+
     async def derive_name(self, candidate: dict[str, Any]) -> str | None:
         """Derive and persist a name for ``candidate``, or return ``None``.
 
