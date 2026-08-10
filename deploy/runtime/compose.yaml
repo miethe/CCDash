@@ -91,11 +91,16 @@ x-backend-service: &backend-service
     CCDASH_OLLAMA_TIMEOUT_SECONDS: "${CCDASH_OLLAMA_TIMEOUT_SECONDS:-60}"
     GIT_OPTIONAL_LOCKS: "${GIT_OPTIONAL_LOCKS:-0}"
   healthcheck: &api-healthcheck
+    # CMD-SHELL, not exec-form CMD. Under podman's compose implementation the
+    # unquoted exec-form scalar was split on whitespace into 10 argv elements,
+    # so python received `-c import` and every probe died with
+    # `SyntaxError: invalid syntax`. The container was serving 200s on
+    # /api/health/ready the whole time while compose reported it unhealthy --
+    # which then blocked dependents from starting. CMD-SHELL hands the whole
+    # string to `sh -c`, so there is no argv to split.
     test:
-      - CMD
-      - python
-      - -c
-      - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_PORT", "8000") + "/api/health/ready", timeout=3)
+      - CMD-SHELL
+      - python -c 'import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_PORT", "8000") + "/api/health/ready", timeout=3)'
     interval: 30s
     timeout: 5s
     retries: 3
@@ -233,11 +238,10 @@ services:
         condition: service_healthy
         required: false
     healthcheck:
+      # CMD-SHELL, not exec-form CMD -- see the &api-healthcheck comment above.
       test:
-        - CMD
-        - python
-        - -c
-        - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_PROBE_PORT", "9465") + "/readyz", timeout=3)
+        - CMD-SHELL
+        - python -c 'import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_PROBE_PORT", "9465") + "/readyz", timeout=3)'
       interval: 30s
       timeout: 5s
       retries: 3
@@ -290,11 +294,10 @@ services:
         condition: service_healthy
         required: false
     healthcheck:
+      # CMD-SHELL, not exec-form CMD -- see the &api-healthcheck comment above.
       test:
-        - CMD
-        - python
-        - -c
-        - import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_WATCH_PROBE_PORT", "9466") + "/readyz", timeout=3)
+        - CMD-SHELL
+        - python -c 'import os, urllib.request; urllib.request.urlopen("http://127.0.0.1:" + os.environ.get("CCDASH_WORKER_WATCH_PROBE_PORT", "9466") + "/readyz", timeout=3)'
       interval: 30s
       timeout: 5s
       retries: 3
