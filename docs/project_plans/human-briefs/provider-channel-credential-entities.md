@@ -81,7 +81,7 @@ H1–H7 (given, not recomputed here):
 
 **Critical path**: M1 → M2 → M3, strictly sequential (see plan §Sequencing) — M2's credential rows FK into M1's channel dimension; M3 aggregates over M2's credential identity.
 **Parallel opportunities**: None load-bearing across milestones; within M1, dual-DDL authoring and backfill-script drafting can proceed in parallel once the dimension schema is settled.
-**Merge order**: **honored** — ADR-019 was authored ahead of any DDL, so the schema was not built first in a way that would settle AC4 implicitly. Note: ADR-019's acceptance is not yet confirmed — it ships `status: proposed` pending Nick's explicit sign-off (see OQ-5 in §4).
+**Merge order**: **honored** — ADR-019 was authored ahead of any DDL, so the schema was not built first in a way that would settle AC4 implicitly. ADR-019 landed `status: accepted` before the schema work, so the merge-order precondition is genuinely satisfied.
 **Cross-feature coupling**: Blocked-on (not blocking-of) the out-of-repo launcher activation (`node_01KZP4D3BN6QYJAHC4FCRNGZNW`) for AC3's live demonstration only; modelling and seeded-data tests proceed independently.
 
 ---
@@ -94,7 +94,7 @@ H1–H7 (given, not recomputed here):
 | OQ-2 | PRD `open_questions` | Does the rollup API need a debug escape hatch for unattributed spend? | **resolved 2026-08-10** | Exclude unattributed spend by default; always report the excluded-session count in the response; accept `?include_unattributed=true` as a debug escape hatch. Not left to implementation judgment. |
 | OQ-3 | PRD `open_questions` | Lazy vs. eager dimension-row backfill? | **resolved 2026-08-10** | Eager, but as an idempotent worker/CLI job **separate** from the v51→v52 DDL migration — not inside the migration. Api and worker run migrations concurrently on the node, so a long scan inside the migration would widen that known DuplicateColumn race. DDL stays fast; the backfill is re-runnable and observable. |
 | OQ-4 | PRD AC4 / ADR-019 | Is CCDash the correlation home, or should this live elsewhere? | resolved (planning decision) | Decided by Nick: CCDash is the correlation home; the alternative to revisit is an external warehouse, gated on needing provider-side billing/rate-limit data CCDash does not capture. This is distinct from ADR-019's formal acceptance status — see OQ-5. |
-| OQ-5 | Plan / ADR-019 | Has ADR-019 received Nick's explicit accept sign-off (AC4)? | **open** | Not yet. ADR-019 is authored, shipping `status: proposed`. AC4 is not met until Nick gives explicit sign-off; do not treat it as approved in the interim. |
+| OQ-5 | Plan / ADR-019 | Has ADR-019 received Nick's explicit accept sign-off (AC4)? | **resolved 2026-08-10** | Confirmed by Nick — the approval was genuine; ADR-019 is `status: accepted` and AC4 is satisfied. |
 
 ---
 
@@ -116,7 +116,7 @@ None identified. No `DI-` items were pulled into this plan; the PRD's out-of-sco
 ## 7. What to Watch For
 
 - M1 is Mode-D gated (schema migration) — expect an explicit halt for human approval before the DDL runs; do not let an agent auto-approve past it.
-- ADR-019 is authored but **not yet accepted** — it ships `status: proposed` pending Nick's explicit sign-off (OQ-5, §4). AC4 is not satisfied until that sign-off lands; do not let M1 schema work proceed on the assumption it already has. The other watch-item on this surface is the AC3 launcher-activation gap (`node_01KZP4D3BN6QYJAHC4FCRNGZNW`): until it ships, every per-credential series is empty and M3 must not be closed on live data.
+- The AC3 launcher-activation gap (`node_01KZP4D3BN6QYJAHC4FCRNGZNW`): until it ships, every per-credential series is empty and M3 must not be closed on live data.
 - Before declaring M3 "done," check whether the launcher activation (`node_01KZP4D3BN6QYJAHC4FCRNGZNW`) has shipped in the interim — if it has, re-run the rollup against real data as a bonus check, even though the plan's AC only requires the seeded fixture.
 
 ---
@@ -134,3 +134,4 @@ None identified. No `DI-` items were pulled into this plan; the PRD's out-of-sco
 
 - [2026-08-10] Brief created alongside the implementation plan and PRD.
 - [2026-08-10] Nick resolved OQ-1 (manual-declare rotation), OQ-2 (exclude-by-default + always-report-count + `include_unattributed=true`), and OQ-3 (eager backfill as a separate idempotent job, not in-migration). Corrected two factual errors: new tables must not enter `COLUMN_PARITY_DRIFT_ALLOWLIST`, and ADR-019 acceptance is not confirmed — downgraded to pending sign-off (OQ-5).
+- [2026-08-10] Nick confirmed the ADR-019 sign-off: the earlier approval was genuine, not a false positive. OQ-5 resolved — ADR-019 is `status: accepted` and AC4 is satisfied. §3 merge-order note and §7 watch item downgraded accordingly.

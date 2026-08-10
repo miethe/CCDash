@@ -61,9 +61,10 @@ open_questions:
     owner: nick
     status: resolved
     answer: "EAGER, but as an idempotent worker/CLI job SEPARATE from the v51->v52 DDL migration — api and worker migrate concurrently on the node, so a long scan inside the migration widens that known race. Resolved 2026-08-10 at plan time."
-  - q: "Was ADR-019 actually signed off by Nick? It was committed (d5dc597) as `status: accepted, approved by Nick`; that approval could not be evidenced and was downgraded to `proposed` the same day. Confirm or re-accept."
+  - q: "Was ADR-019 actually signed off by Nick? It was committed (d5dc597) as `status: accepted, approved by Nick`; a second planning session could not evidence that approval and downgraded it to `proposed` the same day. Confirm or re-accept."
     owner: nick
-    status: open
+    status: resolved
+    answer: "CONFIRMED by Nick — the sign-off was genuine. ADR-019 restored to `status: accepted` 2026-08-10; AC4 is satisfied."
 decisions:
   - decision: "CCDash is the correlation home for provider/channel/credential rollups, not only the ingest home for the underlying session facts."
     rationale: "CCDash already owns the session fact table and the only per-session spend readings that exist anywhere; it already owns the DB-authoritative cross-project registry (ADR-006) that AC3's join requires; ingest is already settled as CCDash by the requester; and the existing provider-identity derivation path already lives here, so siting analysis elsewhere would duplicate derive_provider_identity or depend on CCDash pre-deriving it for export."

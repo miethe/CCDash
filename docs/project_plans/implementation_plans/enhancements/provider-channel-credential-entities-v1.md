@@ -35,9 +35,11 @@ acceptance_criteria:
   - "AC2: The existing providerVendor/providerSurface/providerChannel axes are promoted, not duplicated — no parallel vocabulary."
   - "AC3: Cumulative and periodic spend/token/session counts are readable per credential across projects, surviving key rotation as a continuous series."
   - "AC4: The decision on whether correlation lives in CCDash or elsewhere is recorded with its reason, not left implicit."
-open_questions:
-  - "ADR-019 currently reads `status: accepted, approved by Nick` but that sign-off is UNVERIFIED — the PRD requires it ship `proposed` pending explicit approval. Confirm or downgrade before closing AC4."
+open_questions: []
 decisions:
+  - decision: "ADR-019 records CCDash as the correlation home; accepted, sign-off confirmed by Nick 2026-08-10. AC4 is satisfied."
+    rationale: "CCDash already owns the session fact table, the only per-session spend readings that exist anywhere, and the DB-authoritative cross-project registry (ADR-006) that AC3's join requires. Briefly downgraded to `proposed` when a second planning session could not evidence the sign-off; Nick confirmed it directly and the status was restored."
+    status: accepted
   - decision: "Rotation lineage is DECLARED, never inferred — an explicit action names the predecessor; the rollup trusts only the stored pointer."
     rationale: "A wrong inferred merge asserts a continuity that never happened and is invisible in the output. Operator cost is one action per rotation; rotations are rare (PRD §8). Resolves PRD OQ1."
     status: accepted
@@ -207,7 +209,7 @@ rotation lineage; capability string advertised and consumers tolerate its absenc
 | AC3 backfill | run the backfill CLI twice, compare counts | second run reports 0 inserts, identical totals |
 | AC3 rollup | `backend/.venv/bin/python -m pytest backend/tests/test_agent_queries_integration.py backend/tests/test_system_metrics.py -v` plus the new rollup test | attributed-only spend, exact excluded count, >=2 projects |
 | PG upgrade | `npm run docker:hosted:smoke:seeded-pg` | v51->v52 applies cleanly on a seeded PG |
-| AC4 | `grep -n '^status:' docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md` | ADR-019 exists with decision + rationale. **Sign-off UNVERIFIED — see open_questions; do not close AC4 on the current `accepted` string alone.** |
+| AC4 | `grep -q 'status: "accepted"' docs/project_plans/adrs/adr-019-provider-correlation-home-ccdash.md` | **MET 2026-08-10** — ADR-019 exists with decision + rationale, `status: accepted`, sign-off confirmed directly by Nick. |
 
 > Named test modules only — unscoped `pytest` (including `pytest backend/tests/ -k ...`, which
 > still collects the whole directory) hangs in this repo, and `test_runtime_bootstrap` hangs while
