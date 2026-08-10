@@ -43,7 +43,7 @@ shipped v1 producer, **all three are null-or-constant for every row, by delibera
 
 | Field | v1 emitted value | Why (producer's own rationale) |
 |-------|------------------|--------------------------------|
-| `success_rate` | ~~`None`, always~~ — **SUPERSEDED 2026-08-10: now real.** DI-4e shipped (see §0a below); per-key tool-error-rate complement, `null` only for keys with zero tool-usage attribution. | Was: `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
+| `success_rate` | ~~`None`, always~~ — **DI-4e implemented but HALTED at the ship gate 2026-08-10 (see §0a below).** Compute logic (per-key tool-error-rate complement, `null` on zero attribution) is correct; the live D-b4 verification found the current window's Codex/GPT family still stale-skewed, so the contract does not ship until a backfill precondition clears. | Was: `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
 | `regression_rate` | `None`, always — **still true, permanently.** CLOSED per DI-4b (2026-08-03): no `test_results`/`test_runs` signal exists anywhere in this schema. Not revisited by DI-4e. | No genuine regression signal available to that module, and none is being built. |
 | `cost_index` | ~~`1.0`, fixed (`_COST_INDEX_BASELINE`)~~ — **SUPERSEDED 2026-08-03: now real.** DI-4a shipped; the node serves 261/346 rows non-null across 249 distinct values. | Was: per-key cost normalization is "a real design surface of its own," deliberately not gold-plated into a provisional payload. |
 | `sample_count` | real | — |
@@ -69,7 +69,7 @@ strictly worse than the current honest `live_consumption_disabled`.
 blocking work is a CCDash producer increment that emits a real outcome signal — tracked as **DI-4**
 (see §5.4).
 
-### 0a. Update 2026-08-10 — DI-4e shipped: `success_rate` is real, `live_consumption` still disabled
+### 0a. Update 2026-08-10 — DI-4e implemented but HALTED at ship gate: `success_rate` code is real, live window still stale
 
 DI-4d (Codex tool-error detection fix, main `b51de27`) and DI-4f (skill-attribution NO-GO, closed
 2026-08-03 — see `docs/project_plans/exploration/routing-key-skill-attribution/routing-key-skill-attribution-feasibility-brief.md`)
@@ -101,17 +101,21 @@ real per-`(project_id, source_skill_name, model)` `success_rate`:
   non-neutral `penalty_for_failure` for keys with tool-usage attribution — but that arithmetic still
   never executes against live traffic while the flag stays disabled.
 
-**D-b4 live-verification caveat (read before trusting any live `success_rate` reading today):** the
+**D-b4 live-verification result: HALT (confirmed 2026-08-10 against the live node Postgres).** The
 DI-4d re-measurement (`docs/project_plans/exploration/routing-feedback-success-signal/spikes/tool-failures/di-4d-remeasurement.md`
 §7) found that *historical* `session_tool_usage` rows for Codex sessions written before `b51de27`
 still record 100% success (the old parser's artifact) — a fix does not retroactively correct stored
-counts. DI-4e's implementation sprint could not re-run the live D-b4 family-split verification query
-against the operative Postgres in its execution sandbox (no reachable DB); the most recent evidence
-is the 2026-08-03 re-measurement (91.5% informative post-fix, confidence 0.88), which is **not** a
-substitute for a live re-check on the current window. **Operator action item:** re-run
-`di-4d-remeasurement.md` §1's query against the live window before treating any Codex-family
-`success_rate` value as trustworthy; if it is still categorically skewed, that is a backfill
-precondition, not a code defect.
+counts. Fix cycle 1 of DI-4e's implementation sprint re-ran the D-b4 family-split verification query
+against the operative Postgres (`10.42.10.76:5440`) over the current 30-day window and found the
+gpt/codex-family still measurably skewed: **21.4% of keys informative, 0.04% error rate** — far
+closer to the pre-fix baseline (0.0% informative, 0.00% error rate) than to the fixed-parser
+re-parse's demonstrated 89.2% informative / 1.48% error rate. **No backfill/resync of historical
+Codex `session_tool_usage` rows has run**, so the code-fix-vs-stored-data gap `di-4d-remeasurement.md`
+§0/§7 warned about is still live today. Per the contract's own D-b4 ratification and
+`escalation_recommendation`, **DI-4e does not ship as-is**: a short Tier 1 backfill/resync follow-up
+(re-parse pre-`b51de27` Codex JSONL through the fixed parser and overwrite the stale
+`session_tool_usage` rows) is the precondition, after which this same D-b4 query should be re-run to
+confirm the window has cleared before treating any Codex-family `success_rate` value as trustworthy.
 
 DI-4 does **not** decompose evenly. A signal-source audit against the node Postgres
 (2026-08-01, 18,762 sessions) found the three fields have completely different feasibility:
@@ -226,8 +230,9 @@ degenerate to `(project × model)`. Tracked as its own exploration:
    Whether *any* derivable success signal exists is an open feasibility question, not an
    implementation task. Planning an implementation before that question is answered would repeat
    the mistake this section documents.
-   **Status 2026-08-10: CLOSED-and-shipped for `success_rate` (DI-4e, see §0a); `regression_rate`
-   stays closed permanently.**
+   **Status 2026-08-10: implemented but HALTED at the ship gate for `success_rate` (DI-4e, see
+   §0a — live D-b4 verification found the current window still stale-skewed for Codex/GPT;
+   backfill precondition required before ship); `regression_rate` stays closed permanently.**
 
 Do not schedule DI-1 before DI-4 lands. A partial DI-4 that ships only `cost_index` **does** make
 the loop non-inert (a genuinely expensive model can then be downweighted on cost alone), but leaves

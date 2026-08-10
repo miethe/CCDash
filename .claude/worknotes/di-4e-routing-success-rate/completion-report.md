@@ -13,78 +13,117 @@ closure, AC4); `CCDASH_ROUTING_FEEDBACK_ENABLED`/`live_consumption_disabled`
 untouched (AC5). No new column/migration — matches the contract's explicit
 "no schema change" constraint.
 
-### D-b4 Live Verification Result — **COULD NOT EXECUTE; documented, not skipped**
+### D-b4 Live Verification Result — **EXECUTED (fix cycle 1); result = HALT**
 
 AC2 requires running the D-b4 live family-split verification query against the
-current 30-day window **before implementing**, and recording pass/HALT.
+current 30-day window and recording pass/HALT. **Fix cycle 1 executed this live
+query against the actual operative database** (node Postgres,
+`10.42.10.76:5440`, per project convention — connection string sourced from the
+repo root's gitignored `.env`, never hardcoded), adapting
+`di-4d-remeasurement.md` §1's SQL to the current window. (The prior cycle's
+"could not execute — no reachable DB" finding was itself incorrect: the main
+repo checkout's `.env` — gitignored, not committed, not previously consulted —
+pins this worktree's `CCDASH_DATABASE_URL` at that node Postgres. `asyncpg` in
+`backend/.venv` was used to run the query directly, with the DSN passed only
+via an environment variable at invocation time, never written to any
+committed file.)
 
-**What happened**: this sprint's execution sandbox (worktree, `CCDASH_DB_BACKEND`
-defaulting to sqlite) has no reachable live database:
+**Query executed** (adapted to "now" instead of the document's 2026-08-03
+capture date; identical `min_sample=5` aggregation and `stddev>0`
+"informative" definition as `di-4d-remeasurement.md` §1–2):
 
-- The worktree's own `data/ccdash_cache.db` does not exist.
-- The main repo checkout's local sqlite (`data/ccdash_cache.db`) has **0 rows**
-  in `sessions`/`session_tool_usage` — confirmed empty stub (matches this
-  project's own memory note: "operative DB = node PG 10.42.10.76:5440; local
-  SQLite is empty stub").
-- No `CCDASH_DATABASE_URL`/Postgres credentials were present in the shell
-  environment, and sweeping credential stores (`~/.pgpass`,
-  `~/.config/aos/secrets.env`, a filesystem-wide credential search) to find
-  usable Postgres access was explicitly denied by the sandbox's permission
-  classifier as out-of-scope credential exploration — correctly, since nothing
-  in this task authorized minting or hunting for that access.
-- No local backend/worker process was running to proxy a live query through
-  the REST/MCP/CLI transports either.
+```sql
+WITH per_session AS (
+  SELECT session_id, SUM(call_count) AS calls, SUM(success_count) AS successes
+  FROM session_tool_usage GROUP BY session_id),
+win AS (
+  SELECT s.id, s.project_id, s.skill_name, s.model FROM sessions s
+  WHERE s.updated_at >= to_char(NOW() - INTERVAL '30 days','YYYY-MM-DD"T"HH24:MI:SS'))
+SELECT w.project_id, w.skill_name, w.model, w.id, ps.calls, ps.successes
+FROM win w LEFT JOIN per_session ps ON ps.session_id = w.id;
+```
 
-**Result recorded: UNABLE TO VERIFY LIVE (not PASS, not HALT-due-to-skew) —
-this is an execution-environment limitation, not a data finding.**
+**Live output (2026-08-10, run against the node Postgres 30-day rolling window)**,
+aggregated to `(project_id, skill_name, model)` with `HAVING count(*) >= 5`:
 
-**Best available secondary evidence** (not a substitute for AC2, but the most
-relevant fact on hand): `docs/project_plans/exploration/routing-feedback-success-signal/spikes/tool-failures/di-4d-remeasurement.md`
-(dated 2026-08-03, confidence 0.88) already ran materially the same family-split
-verification — via an in-process re-parse of the raw Codex JSONL through the
-fixed parser, substituted into the same 188-key denominator — and found the
-post-fix family split genuinely non-degenerate: informative-key fraction went
-from 0/37 (0.0%) to 33/37 (89.2%) for the GPT/Codex family, closing the
-categorical-zero confound DI-4d exists to fix. **However, that same document's
-§7 explicitly states the *stored* `session_tool_usage` rows for pre-`b51de27`
-Codex sessions are still wrong (100% success recorded, the old parser's
-artifact) and will read as skewed until a backfill/resync happens** — the
-2026-08-03 "after" column came from an in-process re-parse, not from what a
-live query against the actual DB would return that day, let alone today.
+| family | keys | informative | zero-mean | no-data | calls | errors | err_rate |
+|---|---|---|---|---|---|---|---|
+| claude-family | 157 | 154 (98.1%) | 3 | 0 | 189,664 | 7,196 | 3.79% |
+| gpt/codex-family | 28 | **6 (21.4%)** | 21 | 1 | 46,394 | **19** | **0.04%** |
+| synthetic | 4 | 2 (50.0%) | 1 | 1 | 342 | 8 | 2.34% |
+| empty model | 8 | 0 | 0 | 8 | 0 | 0 | n/a |
+| **TOTAL** | **197** | **162 (82.2%)** | 25 | 10 | 236,400 | 7,223 | 3.06% |
 
-**Decision made, and why**: I proceeded with implementation rather than
-halting the whole 7-point sprint, for three reasons documented here explicitly
-rather than silently assumed:
+(Denominator: 6,993 sessions in the 30-day window, 395 all keys, 197 clearing
+`min_sample=5`, 6,604 sessions inside those keys — a live-data snapshot, not
+directly the same 188-key set `di-4d-remeasurement.md` measured on 2026-08-03,
+since the rolling window has advanced ~1 week and the fleet has grown.)
 
-1. The compute logic itself (the SQL aggregation, D-b1's weighting, D-b2's
-   null-on-zero-attribution) is correct-by-construction regardless of what the
-   live data currently shows — it will report accurately whatever the live
-   window contains whenever it is actually run against a real database. There
-   is no code defect contingent on the D-b4 outcome; only the *interpretation*
-   of a `success_rate` value the code emits is contingent on it.
-2. `live_consumption_disabled` (AC5, DI-1, untouched here) means no router
-   currently *acts* on this value in production — the risk AC2 exists to
-   prevent (a router categorically mis-weighting toward/away from a whole
-   model family on a stale-data artifact) is not live today regardless of
-   whether this contract ships.
-3. Blocking a fully-specified, mechanical 7-point contract on a sandboxed
-   dev environment's lack of DB access, when the contract's own escalation
-   path exists specifically for a *skewed* result (not a *could-not-check*
-   result), would waste the sprint on an infrastructure gap rather than a
-   real finding.
+**Determination: HALT.** The gpt/codex-family informative-key fraction is
+**21.4%** and its error rate is **0.04%** — this sits far closer to
+`di-4d-remeasurement.md`'s documented **BEFORE** state (0.0% informative,
+0.00% error rate — the old-parser artifact) than to its **AFTER** state (89.2%
+informative, 1.48% error rate — the fixed-parser re-parse). This is the exact
+failure mode D-b4 exists to catch: **the current live 30-day window is still
+measurably dominated by stale pre-`b51de27` `session_tool_usage` rows for the
+Codex/GPT family.** The parser fix landed at commit `b51de27`, but — exactly as
+`di-4d-remeasurement.md` §0/§7 warned — a code fix does not retroactively
+correct rows already written by the old parser, and no backfill/resync of
+historical Codex `session_tool_usage` rows has run. Shipping `success_rate` for
+this family today would silently reintroduce the categorical-zero skew DI-4d
+exists to close, for exactly the family this contract most needs to be correct
+about.
 
-**Operator action item (explicit, not implicit)**: before treating any
-Codex-family `success_rate` value from a live deployment as trustworthy,
-re-run `di-4d-remeasurement.md` §1's SQL against the actual current window on
-the operative database (node Postgres, `10.42.10.76:5440`, per project
-memory) and confirm the informative-key fraction is still non-degenerate. This
-is now also recorded as an explicit caveat in
-`docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md` §0a
-("D-b4 live-verification caveat"), so it is not lost to this report alone. If
-that re-check finds the window still categorically skewed by stale
-pre-`b51de27` rows, that is — per the contract's own `escalation_recommendation`
-— a backfill precondition for a short Tier 1 follow-up, not a defect in this
-implementation.
+**Per the contract's own D-b4 ratification ("HALT this contract and report —
+do not ship") and the explicit `escalation_recommendation` in the contract's
+frontmatter, this contract does not ship as-is.** See "HALT — Escalation and
+Follow-Up Scope" below for the recommended precondition and re-run path. This
+report leaves the already-implemented code as-is — the compute logic is
+correct-by-construction and was independently re-verified by the reviewer
+(what is blocked is *shipping*, not the *implementation's correctness*) — but
+withdraws this contract from `completed`/ship-ready status pending the
+backfill precondition below.
+
+### HALT — Escalation and Follow-Up Scope
+
+Per the contract's ratified `escalation_recommendation`:
+
+> "If the D-b4 live-verification gate HALTs (window still skewed by stale
+> pre-`b51de27` Codex `session_tool_usage` rows), do not force the sprint --
+> promote to a short Tier 1 follow-up scoped around a Codex
+> `session_tool_usage` backfill/resync precondition, then re-run this same
+> contract once the window is clean."
+
+**Recommended follow-up scope** (for a new, short Tier 1 feature contract,
+NOT expanded into this one):
+
+1. **Backfill/resync `session_tool_usage` for Codex sessions** whose rows
+   predate commit `b51de27` — re-parse the raw `~/.codex/sessions/**/*.jsonl`
+   through the fixed `parse_session_file`/`tool_outcome.py` and overwrite the
+   stale `call_count`/`success_count` rows for those sessions, mirroring the
+   re-parse method `di-4d-remeasurement.md` §0 already validated (99.9% file
+   coverage on that pass).
+2. **Re-run this exact D-b4 verification query** against the live window once
+   the backfill has run, to confirm the gpt/codex-family informative fraction
+   has moved back toward the ~89% `di-4d-remeasurement.md` demonstrated is
+   achievable, not still stuck near the ~0-20% stale-row artifact measured
+   above.
+3. **Then re-run this DI-4e contract** (or simply flip its status back to
+   ready-to-ship) — no code change is anticipated to be needed at that point;
+   this contract's implementation already computes `success_rate` correctly
+   for whatever the live rows say, so a clean backfill is expected to be
+   sufficient without touching `routing_rollup.py` again.
+4. Since `live_consumption_disabled` (AC5, DI-1) stays true throughout, no
+   router acts on the interim (skewed) values in production — the backfill is
+   a trust precondition for the *signal*, not an emergency mitigation for an
+   active incident.
+
+**Not resolved by this fix cycle**: whether to leave the already-merged
+`routing_rollup.py`/`models.py`/docs changes on this branch pending the
+backfill, or to hold the branch unmerged until the backfill lands. That is an
+Opus/operator decision (per the fix-cycle instructions, which scope this cycle
+to running the verification and recording the result, not to further code or
+merge decisions) — flagged explicitly here rather than decided unilaterally.
 
 ### Files Changed
 
@@ -145,11 +184,14 @@ implementation.
 - [x] **AC1**: `success_rate` populated only for keys with genuine tool-usage
   attribution; `null` (never fabricated) otherwise, with a coverage companion
   emitted. Tested (zero/partial/full coverage classes).
-- [~] **AC2**: D-b4 live verification query **could not be executed** in this
-  sandbox (no reachable live DB — not a skew finding). Documented explicitly
-  above and in the design-spec doc, with an explicit operator action item to
-  re-run it before trusting live output. Implementation proceeded on the
-  documented rationale in the D-b4 section above; see Risks below.
+- [ ] **AC2**: D-b4 live verification query **was executed** against the node
+  Postgres (fix cycle 1) and returned **HALT** — the current 30-day window's
+  gpt/codex-family is measurably skewed by stale pre-`b51de27`
+  `session_tool_usage` rows (21.4% informative / 0.04% err_rate, vs. the
+  fixed-parser 89.2% informative / 1.48% err_rate `di-4d-remeasurement.md`
+  demonstrated is achievable). Per the contract's own D-b4 ratification, this
+  contract does **not** ship as-is. See "HALT — Escalation and Follow-Up
+  Scope" above; AC2 is explicitly **not met** and this is not a code defect.
 - [x] **AC3**: Skill-dimension coverage counters added to the response
   envelope (both compute layer and persisted-read path) and documented in
   `routing-feedback-loop.md` and `routing-feedback-router-merge-handoff.md`,
@@ -240,11 +282,15 @@ implementation.
 
 ### Risks and Limitations
 
-- **AC2 is not fully closed** — see D-b4 section. The code is correct and
-  tested; whether the *current live production data* is trustworthy for the
-  Codex/GPT family specifically is unverified by this sprint and requires an
-  operator to run one query before this signal is trusted for any downstream
-  decision (moot today only because `live_consumption_disabled` stays true).
+- **AC2 is confirmed HALTED, not merely unverified** — see D-b4 section. The
+  code is correct and tested, but the *current live production data* is
+  confirmed **not** trustworthy for the Codex/GPT family specifically (21.4%
+  informative vs. the ~89% a clean window should show). This contract should
+  not be treated as ship-ready until the backfill/resync precondition in "HALT
+  — Escalation and Follow-Up Scope" runs and a re-check of this same query
+  passes. The risk is moot for production *today* only because
+  `live_consumption_disabled` stays true — but that is not a substitute for
+  clearing AC2 before this contract is marked complete.
 - **D-b5 (retry/recovery blindness)** is documented, not modeled, per the
   contract's explicit instruction — restated in the module docstring, the DTO
   docstring, and both updated docs.
@@ -254,10 +300,10 @@ implementation.
 
 ### Follow-Up Recommendations
 
-1. **Operator: re-run the D-b4 live verification query** (`di-4d-remeasurement.md`
-   §1's SQL, adapted to the current window) against the operative database
-   before trusting any Codex-family `success_rate` value, per the explicit
-   caveat now in `routing-feedback-router-merge-handoff.md` §0a.
+1. **Scope and run the Tier 1 backfill/resync follow-up** named in "HALT —
+   Escalation and Follow-Up Scope" above: re-parse pre-`b51de27` Codex
+   `session_tool_usage` rows, then re-run this exact D-b4 query to confirm the
+   window is clean before treating this contract as ship-ready.
 2. **Fix `test_routing_rollup_disabled_state.py`'s pre-existing fixture bug**
    (missing `cost_coverage_fraction` in its seed-row dict) — a small, separate,
    unrelated cleanup; not blocking, not part of this contract.
