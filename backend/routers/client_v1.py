@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
 from backend import config
 from backend.application.context import RequestContext
@@ -29,6 +29,10 @@ from backend.application.services.agent_queries import (
     WorkflowDiagnosticsDTO,
 )
 from backend.application.services.agent_queries.models import RoutingRollupResponseDTO
+from backend.application.services.agent_queries.provider_credential_rollup import (
+    ProviderCredentialRollupResponse,
+    ProviderCredentialRollupService,
+)
 from backend.application.services.agent_queries.routing_feedback_contract import (
     CAPABILITY_STRING as ROUTING_FEEDBACK_CAPABILITY_STRING,
 )
@@ -109,6 +113,9 @@ client_v1_router = APIRouter(
 # P5a: dashboard bundle service singleton (T5-001/T5-002)
 _dashboard_query_service = DashboardQueryService()
 
+# M3-002: provider-credential rollup service singleton (provider-channel-credential-entities-v1)
+_provider_credential_rollup_service = ProviderCredentialRollupService()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -176,6 +183,13 @@ _V1_CAPABILITIES: list[str] = [
                                # makes session_logs rows reachable by an external script over HTTP
                                # without direct postgres access; same {items,cursor,limit,nextCursor}
                                # envelope as sessions:detail's /transcript route.
+    "provider-credentials:rollup",  # provider-channel-credential-entities-v1 (M3-002) —
+                               # GET /api/v1/provider-credentials/rollup: cross-project
+                               # per-credential-series spend/token/session rollup, following
+                               # declared rotation lineage. Spend defaults to attributed-only;
+                               # ?include_unattributed=true opts into the excluded rows. Every
+                               # series always carries spend_excluded_count alongside spend_usd
+                               # so a partial answer can never read as a complete one.
 ]
 
 
@@ -261,6 +275,69 @@ async def routing_rollup(
     in-window sessions yet), never an HTTP error.
     """
     return await get_routing_rollup_v1(project_id, request_context, core_ports, bypass_cache=bypass_cache)
+
+
+@client_v1_router.get("/provider-credentials/rollup")
+async def provider_credentials_rollup(
+    include_unattributed: bool = Query(
+        default=False,
+        description=(
+            "Opt-in only. When true, each series additionally populates "
+            "excluded_sessions with the raw rows excluded from spend_usd "
+            "(any ica_spend_attribution != 'attributed'). Default false — "
+            "the response still always reports spend_excluded_count per "
+            "series regardless of this flag."
+        ),
+    ),
+    since: str | None = Query(
+        default=None,
+        description=(
+            "Optional ISO-8601 window start (e.g. '2026-08-01T00:00:00Z'). "
+            "Narrows every series to sessions whose started_at falls in "
+            "[since, until]. Omitting both since and until reproduces the "
+            "cumulative (all-time) result exactly. The effective parsed "
+            "window is always echoed back as since/until on the response."
+        ),
+    ),
+    until: str | None = Query(
+        default=None,
+        description="Optional ISO-8601 window end. See `since`.",
+    ),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ClientV1Envelope[ProviderCredentialRollupResponse]:
+    """Return the cross-project per-credential spend/token/session rollup (M3-002).
+
+    Aggregates across every registered project (ADR-006), following declared
+    ``rotated_from_id`` rotation lineage so a rotated key reads as one
+    continuous series. ``spend_usd`` sums ONLY sessions whose
+    ``ica_spend_attribution == 'attributed'`` — every series ALWAYS carries
+    ``spend_excluded_count`` (and a per-attribution-token breakdown) next to
+    ``spend_usd``, so a caller can never mistake a partial spend answer for
+    a complete one, whether or not it opts into ``include_unattributed``.
+    Token and session counts cover every session regardless of attribution.
+    ``since``/``until`` add an optional periodic window on top of that same
+    attribution exclusion (never a second one) — see
+    ``backend/application/services/agent_queries/provider_credential_rollup.py``
+    for the full correctness contract this endpoint serves verbatim. An
+    unparseable ``since``/``until`` is rejected as a 400, never a 500.
+    """
+    try:
+        result = await _provider_credential_rollup_service.get_rollup(
+            request_context,
+            core_ports,
+            include_unattributed=include_unattributed,
+            since=since,
+            until=until,
+            bypass_cache=bypass_cache,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ClientV1Envelope(
+        data=result,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
 
 
 # ---------------------------------------------------------------------------

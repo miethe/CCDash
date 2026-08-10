@@ -118,7 +118,7 @@ def _start_app(tmp_path: str) -> tuple:
             new_callable=lambda: lambda: AsyncMock(),
         ),
         patch(
-            "backend.runtime_ports.project_manager.get_active_project",
+            "backend.runtime_ports.db_project_manager.get_active_project",
             return_value=None,
         ),
     ]

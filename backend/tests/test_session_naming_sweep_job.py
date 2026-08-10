@@ -533,5 +533,91 @@ class MissingReloadHookFailsClosedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.candidates_found, 1)
 
 
+class EgressAuditEventLaneTests(unittest.IsolatedAsyncioTestCase):
+    """The per-tick egress AUDIT line must name the lane that was RESOLVED.
+
+    hosted-llm-anthropic-ica-lane-v1 M3 (reviewer-gate fix): the event used
+    to be built from the raw LEGACY ``CCDASH_SESSION_NAMING_BACKEND``
+    attribute. An operator following the documented preference -- set the
+    NEW ``CCDASH_LLM_SESSION_NAMING_LANE=anthropic`` and leave the legacy
+    var alone -- therefore got ``lane="local"`` in an audit line emitted for
+    a tick that was egressing to ICA. An egress audit line that names the
+    wrong lane is worse than no line, so this class pins the VALUE (never
+    the event's field names/shape, which are unchanged) against BOTH
+    precedence directions of ``config.resolve_with_legacy_fallback``.
+    """
+
+    def _egress_ports_and_backend(self) -> tuple[object, object]:
+        sessions_repo = types.SimpleNamespace(
+            list_missing_session_name=AsyncMock(return_value=[{"id": "s1", "project_id": "proj-a"}]),
+            count_missing_session_name=AsyncMock(return_value=1),
+        )
+        storage = types.SimpleNamespace(sessions=lambda: sessions_repo)
+        project = types.SimpleNamespace(id="proj-a", llm_egress_consent=True)
+        workspace_registry = types.SimpleNamespace(
+            list_projects=lambda: [project], reload_projects=lambda: None
+        )
+        ports = types.SimpleNamespace(storage=storage, workspace_registry=workspace_registry)
+        backend = types.SimpleNamespace(
+            EGRESS=True,
+            model="claude-sonnet-5",
+            derive_name=AsyncMock(return_value="A name"),
+        )
+        return ports, backend
+
+    async def test_event_reports_the_new_lane_var_when_only_it_is_set(self) -> None:
+        """ONLY ``CCDASH_LLM_SESSION_NAMING_LANE=anthropic`` is set; the
+
+        legacy ``CCDASH_SESSION_NAMING_BACKEND`` is unset -- i.e. it holds
+        the ``"local"`` value ``config.py`` gives it when the env var is
+        absent. The emitted event must record ``lane="anthropic"``: the lane
+        the naming resolver actually resolved (and would have built the
+        Anthropic/ICA backend from), never the legacy var's default.
+        """
+        ports, backend = self._egress_ports_and_backend()
+        job = SessionNamingSweepJob(ports=ports, project=None, naming_backend=backend)
+
+        with patch.object(config, "CCDASH_SESSION_NAMING_ENABLED", True), patch.object(
+            config, "CCDASH_LLM_SESSION_NAMING_LANE", "anthropic"
+        ), patch.object(
+            # The legacy var's own default when its env var is absent -- this
+            # is exactly what an operator who only set the new var has.
+            config,
+            "CCDASH_SESSION_NAMING_BACKEND",
+            "local",
+        ), patch(
+            "backend.observability.otel.log_llm_egress_event"
+        ) as log_event:
+            await job.execute(trigger="scheduled")
+
+        log_event.assert_called_once()
+        _, kwargs = log_event.call_args
+        self.assertEqual(kwargs.get("lane"), "anthropic")
+        # Shape/field names unchanged -- only the lane VALUE was wrong.
+        self.assertEqual(kwargs.get("model"), "claude-sonnet-5")
+        self.assertEqual(kwargs.get("project_id"), "proj-a")
+
+    async def test_event_still_reports_the_legacy_var_when_the_new_one_is_unset(self) -> None:
+        """The other precedence direction, so the fix cannot over-correct
+
+        into ignoring the legacy var: new var absent (empty string, its real
+        default) + legacy ``CCDASH_SESSION_NAMING_BACKEND=hosted`` must
+        still audit as ``lane="hosted"``.
+        """
+        ports, backend = self._egress_ports_and_backend()
+        job = SessionNamingSweepJob(ports=ports, project=None, naming_backend=backend)
+
+        with patch.object(config, "CCDASH_SESSION_NAMING_ENABLED", True), patch.object(
+            config, "CCDASH_LLM_SESSION_NAMING_LANE", ""
+        ), patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch(
+            "backend.observability.otel.log_llm_egress_event"
+        ) as log_event:
+            await job.execute(trigger="scheduled")
+
+        log_event.assert_called_once()
+        _, kwargs = log_event.call_args
+        self.assertEqual(kwargs.get("lane"), "hosted")
+
+
 if __name__ == "__main__":
     unittest.main()

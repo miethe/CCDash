@@ -135,6 +135,17 @@ TOP_LEVEL_COUNTER_FIELDS: tuple[str, ...] = (
     "distinct_unmapped_skill_names",
 )
 
+#: DI-4e/D-b3 -- the two additive skill-dimension coverage counters. Kept
+#: as a separate tuple from ``TOP_LEVEL_COUNTER_FIELDS`` (never merged into
+#: it) since the two seed rows below use ``min_sample_size``-clearing
+#: sample counts and asserting these alongside the FR-7 counters proves
+#: the persisted-read path (``_client_v1_routing_rollup.py``) actually
+#: reassembles them, not merely the live compute path.
+SKILL_DIMENSION_COUNTER_FIELDS: tuple[str, ...] = (
+    "skill_attributed_key_count",
+    "skill_unattributed_key_count",
+)
+
 
 def _make_seed_row(**overrides: Any) -> dict[str, Any]:
     """A ``ROUTING_ROLLUP_COLUMNS``-shaped dict -- mirrors
@@ -151,6 +162,13 @@ def _make_seed_row(**overrides: Any) -> dict[str, Any]:
         "sample_count": 12,
         "success_rate": None,
         "cost_index": 1.0,
+        # DI-4e: this fixture was missing `cost_coverage_fraction` --
+        # (v47's persisted column) which drifted out of sync with
+        # ROUTING_ROLLUP_COLUMNS and failed this module's own
+        # `assert set(row) == set(ROUTING_ROLLUP_COLUMNS)` shape check.
+        # Fixed here as part of this task's fixture update (pre-existing
+        # bug, not introduced by DI-4e's own changes).
+        "cost_coverage_fraction": 1.0,
         "regression_rate": None,
         # DI-4c (v45): unambiguous-or-null tier + provenance + the
         # authoritative-fraction trust companion.
@@ -386,6 +404,12 @@ class TestRoutingRollupEnvelopeCompleteness(unittest.TestCase):
             self.assertIn(
                 field, data, f"{transport} response missing top-level counter {field!r}: {data}"
             )
+        for field in SKILL_DIMENSION_COUNTER_FIELDS:
+            self.assertIn(
+                field,
+                data,
+                f"{transport} response missing DI-4e skill-dimension counter {field!r}: {data}",
+            )
         self.assertTrue(
             data.get("keys"),
             f"{transport} response has no keys -- seed-row fixture did not reach "
@@ -417,6 +441,32 @@ class TestRoutingRollupEnvelopeCompleteness(unittest.TestCase):
         ):
             with self.subTest(transport=transport):
                 self._assert_response_envelope_complete(data, transport=transport)
+
+    # ------------------------------------------------------------------
+    # DI-4e/D-b3: the skill-dimension counters reassembled from persisted
+    # rows must reflect the SAME min_sample_size-clearing population the
+    # compute-layer's own _skill_dimension_coverage uses -- proven with
+    # concrete expected counts, not merely field presence.
+    # ------------------------------------------------------------------
+
+    def test_skill_dimension_counters_reflect_min_sample_size_population(self) -> None:
+        # setUp seeds sample_count=10 (clears the default min_sample_size=5,
+        # non-empty source_skill_name "planning" -> attributed) and
+        # sample_count=3 (below threshold -> excluded from BOTH counters).
+        rest_status, rest_body = self._fetch_via_rest()
+        self.assertEqual(rest_status, 200, rest_body)
+
+        mcp_data = _normalize_mcp_envelope(_run_mcp_tool(project_id=None))
+        cli_data = self._fetch_via_cli()
+
+        for transport, data in (
+            ("REST", rest_body["data"]),
+            ("MCP", mcp_data),
+            ("CLI", cli_data),
+        ):
+            with self.subTest(transport=transport):
+                self.assertEqual(data.get("skill_attributed_key_count"), 1, data)
+                self.assertEqual(data.get("skill_unattributed_key_count"), 0, data)
 
     # ------------------------------------------------------------------
     # Load-bearing proof: a response with any one pinned field deliberately

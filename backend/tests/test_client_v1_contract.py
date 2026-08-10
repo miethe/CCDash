@@ -63,7 +63,9 @@ class TestClientV1Contract(unittest.TestCase):
             patch("backend.runtime.container.shutdown_observability"),
             patch("backend.adapters.jobs.runtime.file_watcher.start", new_callable=lambda: lambda: AsyncMock()),
             patch("backend.adapters.jobs.runtime.file_watcher.stop", new_callable=lambda: lambda: AsyncMock()),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=None),
+            # ADR-006: the authoritative registry is db_project_manager; the legacy
+            # ``project_manager`` attribute no longer exists on backend.runtime_ports.
+            patch("backend.runtime_ports.db_project_manager.get_active_project", return_value=None),
         ]
         for p in cls._patches:
             p.start()

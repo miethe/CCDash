@@ -553,18 +553,24 @@ def resolve_naming_backend(ports: Any) -> Any | None:
     ``CCDASH_SESSION_NAMING_BACKEND``'s own module-level contract in
     ``backend/config.py``) -- constructs :class:`LocalOllamaNamingBackend`.
 
-    The effective lane name is computed via
-    ``config.resolve_with_legacy_fallback`` (hosted-llm-anthropic-ica-lane-v1
-    M3, Named Risk #4's ONE shared fallback helper): the PREFERRED
-    ``CCDASH_LLM_SESSION_NAMING_LANE`` wins when set; otherwise the legacy
-    ``CCDASH_SESSION_NAMING_BACKEND`` (whose existing ``"local"``/``"hosted"``
-    values keep meaning exactly what they meant before); otherwise
-    ``"local"``. Both attributes are re-read via ``getattr`` on EVERY call
-    (never cached into a module-level constant here) so that patching
-    EITHER one -- the new attribute or the legacy one -- is honored, which
-    is what lets the pre-existing test suite keep patching
+    The effective lane name comes from ``config.resolve_session_naming_lane()``
+    -- a thin wrapper over ``config.resolve_with_legacy_fallback``
+    (hosted-llm-anthropic-ica-lane-v1 M3, Named Risk #4's ONE shared fallback
+    helper): the PREFERRED ``CCDASH_LLM_SESSION_NAMING_LANE`` wins when set;
+    otherwise the legacy ``CCDASH_SESSION_NAMING_BACKEND`` (whose existing
+    ``"local"``/``"hosted"`` values keep meaning exactly what they meant
+    before); otherwise ``"local"``. Both attributes are re-read on EVERY call
+    (never cached into a module-level constant) so that patching EITHER one --
+    the new attribute or the legacy one -- is honored, which is what lets the
+    pre-existing test suite keep patching
     ``config.CCDASH_SESSION_NAMING_BACKEND`` directly, unmodified, while a
     new test can instead patch ``config.CCDASH_LLM_SESSION_NAMING_LANE``.
+
+    That resolution lives in ``config`` rather than inline here because this
+    resolver is not its only consumer: ``SessionNamingSweepJob``'s per-tick
+    egress AUDIT event must REPORT the same lane this function RESOLVED, and
+    the two are wired to the identical call so they cannot drift (see that
+    function's docstring for the drift this closed).
 
     ``"hosted"`` (T3-003, Lane B / Gemini) and ``"anthropic"`` (M3-B, Lane
     C) are both EGRESS-shaped lanes and are reachable ONLY when ALL of the
@@ -626,15 +632,7 @@ def resolve_naming_backend(ports: Any) -> Any | None:
     ``candidates_found`` is still reported). This is a deliberate no-op,
     never a silent fallback to sending.
     """
-    new_lane = str(getattr(config, "CCDASH_LLM_SESSION_NAMING_LANE", "") or "").strip().lower()
-    legacy_lane = str(getattr(config, "CCDASH_SESSION_NAMING_BACKEND", "local") or "local").strip().lower()
-    backend_name = config.resolve_with_legacy_fallback(
-        new_lane,
-        legacy_lane,
-        "local",
-        new_name="CCDASH_LLM_SESSION_NAMING_LANE",
-        legacy_name="CCDASH_SESSION_NAMING_BACKEND",
-    )
+    backend_name = config.resolve_session_naming_lane()
     if backend_name in ("hosted", "anthropic"):
         # hosted-llm-anthropic-ica-lane-v1 M2: the GLOBAL egress consent
         # gate, checked FIRST and structurally -- this `if not ...: return

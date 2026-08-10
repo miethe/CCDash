@@ -138,6 +138,84 @@ covered subset. Outlier suppression (D-a4) is deliberately NOT implemented
 here -- the existing ``min_sample_size``/``eligible_for_adjustment`` gate is
 relied on to exclude low-sample keys from adjustment; see
 ``compute_metrics``'s docstring for the full rationale.
+
+── DI-4e (this task): real per-key ``success_rate`` ───────────────────────
+
+``success_rate`` was the permanent ``None`` v1 design gap (no genuine
+per-session outcome signal existed). DI-4d (Codex tool-error detection fix,
+main ``b51de27``) and DI-4f (skill-attribution NO-GO, closed) together
+cleared the two preconditions this task depended on: the per-family error
+signal is no longer categorically skewed toward zero for Codex/GPT, and the
+``(project_id, source_skill_name, model)`` key is confirmed to stay as-is.
+DI-4e (feature contract
+``docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md``)
+replaces the placeholder with a real per-key tool-error-rate complement,
+aggregated in the SAME single query ``fetch_raw_rows`` already issues (a
+``LEFT JOIN`` against a per-``(project_id, session_id)`` pre-aggregate of
+``session_tool_usage`` -- a genuine second table, unlike the cost/effort
+columns which live directly on ``sessions``, so this join is scoped by BOTH
+``project_id`` AND ``session_id`` together, never ``session_id`` alone --
+``sessions``' own primary key is the composite ``(project_id, id)``, so a
+bare ``session_id`` join risks silently fusing two different projects'
+sessions that happen to share an id string).
+
+``success_rate = 1 - (sum(tool_errors) / sum(tool_calls))`` is
+call-volume-weighted across every tool-usage-attributed session in the key
+(D-b1) -- algebraically ``tool_success_sum / tool_call_sum`` since
+``tool_errors = tool_call_sum - tool_success_sum`` -- never an unweighted
+mean of each session's own error rate, which would let a 2-call session and
+a 200-call session contribute equally. A key with zero tool-usage-attributed
+sessions emits ``success_rate=None`` (D-b2) -- the same null-over-fabrication
+principle ``cost_index`` already codifies (D-a2), extended to this field.
+``success_rate_coverage_fraction`` is the per-key coverage companion,
+mirroring ``cost_coverage_fraction``'s shape -- **but it is compute-layer/
+response-DTO only, never persisted** (this contract adds no column/
+migration; see the feature contract's Sec.6 "Storage implications: None"),
+so it always reads back ``None`` on the persisted-table read path
+(``_client_v1_routing_rollup.py``) -- a documented v1 limitation, not a bug.
+
+Retry/recovery blindness (D-b5) is a named, documented limitation, not
+fixed here: raw error-rate cannot distinguish "failed then recovered" from
+"failed and stayed broken" (95.2% of tool-failure sessions still reach
+``completed``, per the DI-4d re-measurement's own finding) -- the schema has
+no retry linkage and building one is out of scope.
+
+``regression_rate`` remains permanently ``None`` -- CLOSED per DI-4b (no
+``test_results``/``test_runs`` signal exists anywhere in this schema); this
+is not a deferred gap, it is a decided non-goal (see ``compute_metrics``'s
+own comment at the assignment site).
+
+Skill-dimension coverage (D-b3): the response envelope additionally gains
+``skill_attributed_key_count``/``skill_unattributed_key_count`` -- computed
+once per response over the SAME ``min_sample_size``-clearing population the
+routing-key-skill-attribution feasibility brief's ~40-45% figure describes
+(every row with ``session_count >= min_sample_size``, regardless of
+``is_coverage_only`` -- that population is defined at the raw
+``(project_id, source_skill_name, model)`` grain, before ``task_class``
+mapping is even applied), so a consumer can tell a genuinely skill-aware key
+(non-empty ``source_skill_name``) from a ``(project_id x model)`` key
+wearing a three-part key's clothes without inspecting ``source_skill_name``
+per row.
+
+── DI-4e fix-cycle-2 (this task): the D-b4 HALT gate, made mechanical ──────
+
+Fix cycle 1 RAN the D-b4 live verification query and recorded a HALT
+determination (the gpt/codex-family's ``session_tool_usage`` window is still
+measurably dominated by stale pre-b51de27 rows) -- but left the already-
+implemented ``success_rate`` computation unconditional, with no code
+mechanism actually withholding it for that family. This cycle closes that
+gap: ``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS``
+(default ``("openai",)``) is threaded into ``_success_rate_and_coverage``
+(compute time -- so no future worker sweep persists a stale-family value)
+AND into ``_client_v1_routing_rollup.py::_row_to_key_dto`` (read time -- so
+an already-persisted row is never served with one either). A row whose
+``provider`` matches, case-insensitively, has ``success_rate``/
+``success_rate_coverage_fraction`` forced to ``(None, 0.0)`` unconditionally
+-- independent of ``CCDASH_ROUTING_FEEDBACK_ENABLED``/``live_consumption_disabled``
+(DI-1, both stay untouched) and independent of how much genuine tool-usage
+coverage the row actually has. This flag is the only sanctioned way to lift
+the gate: only once the Codex ``session_tool_usage`` backfill/resync
+precondition has run AND the D-b4 query has been re-run and shown clean.
 """
 from __future__ import annotations
 
@@ -277,6 +355,88 @@ def _cost_index_and_coverage(
     return key_mean_cost / baseline, coverage_fraction
 
 
+def _success_rate_and_coverage(
+    row: ProviderRollupRow, stale_providers: frozenset[str] = frozenset()
+) -> tuple[float | None, float]:
+    """Compute one row's ``(success_rate, success_rate_coverage_fraction)``
+    pair (DI-4e).
+
+    ``success_rate_coverage_fraction`` is always a float (``0.0`` when
+    ``session_count`` is ``0``, never a ``ZeroDivisionError``) --
+    ``tool_usage_covered_count / session_count`` -- so a consumer can
+    discount a ``success_rate`` derived from a small covered subset. This
+    field is compute-layer/response-DTO only (never persisted -- see the
+    module docstring's DI-4e section); the persisted-table read path always
+    reads it back ``None``.
+
+    ``success_rate`` is ``None`` (D-b2, never a fabricated constant) when
+    this row has zero tool-usage-covered sessions OR zero total tool calls
+    across its covered subset (a session can appear in ``session_tool_usage``
+    with rows that sum to ``call_count=0`` -- treated identically to "no
+    attribution", since there is nothing to divide by). Otherwise it is the
+    call-volume-weighted success fraction (D-b1):
+    ``tool_success_sum / tool_call_sum`` -- algebraically identical to
+    ``1 - (tool_errors / tool_calls)`` since ``tool_errors = tool_call_sum -
+    tool_success_sum``, but expressed without an intermediate subtraction.
+
+    DI-4e fix-cycle-2 (reviewer finding #1): before computing anything, a row
+    whose ``provider`` (case-insensitively) is in *stale_providers* has
+    ``success_rate`` withheld unconditionally -- returned ``None`` with a
+    forced ``0.0`` coverage fraction, the same "nothing to report" shape as
+    zero-attribution, REGARDLESS of how much genuine tool-usage coverage the
+    row actually has. This is the D-b4 HALT gate: the live verification
+    query (AC2) found the gpt/codex-family's ``session_tool_usage`` window
+    still measurably dominated by stale pre-b51de27 rows, and the contract's
+    own D-b4 ratification is a hard "do not ship" for that family until a
+    backfill/resync precondition lands and this gate re-verifies clean.
+    *stale_providers* defaults to empty here (this helper never reads
+    ``config`` itself, mirroring every other pure helper in this module) --
+    ``compute_metrics`` is the sole caller and always threads
+    ``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`` through.
+    """
+    coverage_fraction = (
+        row.tool_usage_covered_count / row.session_count if row.session_count > 0 else 0.0
+    )
+    if row.provider.strip().lower() in stale_providers:
+        return None, 0.0
+    if row.tool_usage_covered_count <= 0 or row.tool_call_sum <= 0:
+        return None, coverage_fraction
+    return row.tool_success_sum / row.tool_call_sum, coverage_fraction
+
+
+def _skill_dimension_coverage(
+    rows: list[ProviderRollupRow], min_sample_size: int
+) -> tuple[int, int]:
+    """Compute the two D-b3 response-level skill-dimension coverage counters.
+
+    Scoped to the SAME ``min_sample_size``-clearing population the
+    routing-key-skill-attribution feasibility brief's ~40-45% coverage
+    figure describes -- every row with ``session_count >= min_sample_size``,
+    evaluated at the raw ``(project_id, source_skill_name, model)`` grain
+    (i.e. regardless of ``is_coverage_only``/``task_class``, since that
+    population is defined BEFORE the pinned mapping is applied). A row
+    counts as skill-attributed iff its ``source_skill_name`` is non-empty
+    after stripping whitespace -- the same "blank is absent, not a distinct
+    tier" rule ``_unambiguous_or_none`` already applies elsewhere in this
+    module. Returns ``(skill_attributed_key_count, skill_unattributed_key_count)``;
+    a row below the threshold contributes to neither counter (deliberately
+    NOT the same population as ``eligible_for_adjustment``, which also
+    excludes coverage-only rows -- this counter answers "how much of the key
+    space clearing the sample bar is genuinely skill-aware", not "how much of
+    it is adjustment-eligible").
+    """
+    attributed = 0
+    unattributed = 0
+    for row in rows:
+        if row.session_count < min_sample_size:
+            continue
+        if row.source_skill_name.strip():
+            attributed += 1
+        else:
+            unattributed += 1
+    return attributed, unattributed
+
+
 def _now_iso() -> str:
     """Wall-clock ``freshness_ts``/``generated_at`` source, isolated into its
     own function so T3-005's determinism test can freeze it via
@@ -376,6 +536,18 @@ class RawRollupRow:
     effort_tier: str | None = None
     effort_tier_source: str | None = None
     effort_authoritative_count: int = 0
+    #: DI-4e: sum of ``session_tool_usage.call_count`` across every session
+    #: in this key that has at least one tool-usage row, joined scoped by
+    #: BOTH ``project_id`` AND ``session_id`` (never ``session_id`` alone --
+    #: see module docstring's DI-4e section for why).
+    tool_call_sum: int = 0
+    #: DI-4e: sum of ``session_tool_usage.success_count`` over the same
+    #: covered sessions as ``tool_call_sum``.
+    tool_success_sum: int = 0
+    #: DI-4e: count of sessions in this key with >=1 ``session_tool_usage``
+    #: row (i.e. "has tool-usage attribution") -- the numerator of
+    #: ``success_rate_coverage_fraction``.
+    tool_usage_covered_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,6 +584,9 @@ class MappedRollupRow:
     effort_tier: str | None = None
     effort_tier_source: str | None = None
     effort_authoritative_count: int = 0
+    tool_call_sum: int = 0
+    tool_success_sum: int = 0
+    tool_usage_covered_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,6 +621,9 @@ class ProviderRollupRow:
     effort_tier: str | None = None
     effort_tier_source: str | None = None
     effort_authoritative_count: int = 0
+    tool_call_sum: int = 0
+    tool_success_sum: int = 0
+    tool_usage_covered_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -539,12 +717,37 @@ async def _fetch_raw_aggregate_rows(
     total_cost, 0) > 0``, mirroring the existing
     ``feature_rollup.py::COALESCE(s.display_cost_usd, s.total_cost, 0)``
     precedent for "the canonical per-session displayed cost" in this
-    codebase. No second query, no new join.
+    codebase.
+
+    DI-4e: the same statement additionally ``LEFT JOIN``s a
+    per-``(project_id, session_id)`` pre-aggregate of ``session_tool_usage``
+    (``tool_call_sum``/``tool_success_sum``/``tool_usage_covered_count`` --
+    see ``RawRollupRow``'s docstring). The join is scoped by BOTH
+    ``project_id`` AND ``session_id`` together -- ``sessions``' own primary
+    key is the composite ``(project_id, id)``, so joining on ``session_id``
+    alone risks silently fusing two different projects' sessions that happen
+    to share an id string (the known gotcha the feature contract's
+    Implementation Notes flags explicitly). Still exactly one query -- the
+    join is folded into the same ``GROUP BY`` this function already issues,
+    no second DB round-trip.
     """
     window_start_iso = _iso(window_start)
     window_end_iso = _iso(window_end)
 
     _COST_EXPR = "COALESCE(display_cost_usd, total_cost, 0)"
+    # DI-4e: pre-aggregate session_tool_usage to (project_id, session_id)
+    # grain BEFORE joining to sessions -- session_tool_usage's own PK is
+    # (session_id, tool_name), so a naive join would fan out one row per
+    # tool_name and double-count session_count in the outer GROUP BY. The
+    # CTE collapses that fan-out to exactly one row per covered session.
+    _TOOL_USAGE_CTE = """
+        tool_usage_per_session AS (
+            SELECT project_id, session_id,
+                   SUM(call_count) AS calls,
+                   SUM(success_count) AS successes
+            FROM session_tool_usage
+            GROUP BY project_id, session_id
+        )"""
     # DI-4c: inlined rather than parameterized because these are OUR OWN module
     # constants (backend/parsers/effort_provenance.py), never user input -- the
     # same reasoning that lets _COST_EXPR be inlined. sorted() keeps the emitted
@@ -565,25 +768,41 @@ async def _fetch_raw_aggregate_rows(
                 SUM(CASE WHEN effort_tier_source IN ({_AUTHORITATIVE_LIST})
                          THEN 1 ELSE 0 END) AS effort_authoritative_count"""
 
+    # DI-4e: tool_usage_per_session.calls/.successes are NULL for a session
+    # with no session_tool_usage rows at all (LEFT JOIN, no match) --
+    # COALESCE(..., 0) folds that into the sums cleanly, while
+    # tool_usage_covered_count's CASE explicitly tests the pre-COALESCE
+    # NULL-ness of `.calls` so a genuinely-covered session whose calls sum
+    # to 0 is never confused with "no attribution" at this row-construction
+    # layer (see _success_rate_and_coverage for where that distinction is
+    # actually consumed).
+    _TOOL_AGGREGATES = """,
+                COALESCE(SUM(tu.calls), 0) AS tool_call_sum,
+                COALESCE(SUM(tu.successes), 0) AS tool_success_sum,
+                SUM(CASE WHEN tu.calls IS NOT NULL THEN 1 ELSE 0 END) AS tool_usage_covered_count"""
+
     if isinstance(db, aiosqlite.Connection):
         params: list[Any] = [window_start_iso, window_end_iso]
         project_filter_sql = ""
         if project_ids:
-            project_filter_sql = f" AND project_id IN ({','.join('?' * len(project_ids))})"
+            project_filter_sql = f" AND s.project_id IN ({','.join('?' * len(project_ids))})"
             params.extend(project_ids)
 
         sql = f"""
+            WITH {_TOOL_USAGE_CTE}
             SELECT
-                project_id,
-                skill_name AS source_skill_name,
-                model,
+                s.project_id AS project_id,
+                s.skill_name AS source_skill_name,
+                s.model AS model,
                 COUNT(*) AS session_count,
                 SUM(CASE WHEN {_COST_EXPR} > 0 THEN {_COST_EXPR} ELSE 0 END) AS cost_sum,
-                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count,{_EFFORT_AGGREGATES}
-            FROM sessions
-            WHERE updated_at >= ? AND updated_at <= ?
+                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count,{_EFFORT_AGGREGATES}{_TOOL_AGGREGATES}
+            FROM sessions s
+            LEFT JOIN tool_usage_per_session tu
+                ON tu.session_id = s.id AND tu.project_id = s.project_id
+            WHERE s.updated_at >= ? AND s.updated_at <= ?
               {project_filter_sql}
-            GROUP BY project_id, skill_name, model
+            GROUP BY s.project_id, s.skill_name, s.model
         """  # noqa: S608
         async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
@@ -593,21 +812,24 @@ async def _fetch_raw_aggregate_rows(
         project_filter_sql = ""
         if project_ids:
             placeholders = ",".join(f"${i}" for i in range(3, 3 + len(project_ids)))
-            project_filter_sql = f" AND project_id = ANY(ARRAY[{placeholders}]::text[])"
+            project_filter_sql = f" AND s.project_id = ANY(ARRAY[{placeholders}]::text[])"
             params.extend(project_ids)
 
         sql = f"""
+            WITH {_TOOL_USAGE_CTE}
             SELECT
-                project_id,
-                skill_name AS source_skill_name,
-                model,
+                s.project_id AS project_id,
+                s.skill_name AS source_skill_name,
+                s.model AS model,
                 COUNT(*) AS session_count,
                 SUM(CASE WHEN {_COST_EXPR} > 0 THEN {_COST_EXPR} ELSE 0 END) AS cost_sum,
-                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count,{_EFFORT_AGGREGATES}
-            FROM sessions
-            WHERE updated_at >= $1 AND updated_at <= $2
+                SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count,{_EFFORT_AGGREGATES}{_TOOL_AGGREGATES}
+            FROM sessions s
+            LEFT JOIN tool_usage_per_session tu
+                ON tu.session_id = s.id AND tu.project_id = s.project_id
+            WHERE s.updated_at >= $1 AND s.updated_at <= $2
               {project_filter_sql}
-            GROUP BY project_id, skill_name, model
+            GROUP BY s.project_id, s.skill_name, s.model
         """  # noqa: S608
         pg_rows = await db.fetch(sql, *params)
         raw_rows = [dict(row) for row in pg_rows]
@@ -629,6 +851,9 @@ async def _fetch_raw_aggregate_rows(
                 row.get("effort_source_distinct_count"), row.get("effort_source_any")
             ),
             effort_authoritative_count=int(row.get("effort_authoritative_count") or 0),
+            tool_call_sum=int(row.get("tool_call_sum") or 0),
+            tool_success_sum=int(row.get("tool_success_sum") or 0),
+            tool_usage_covered_count=int(row.get("tool_usage_covered_count") or 0),
         )
         for row in raw_rows
     ]
@@ -761,6 +986,9 @@ class RoutingRollupQueryService:
                     effort_tier=row.effort_tier,
                     effort_tier_source=row.effort_tier_source,
                     effort_authoritative_count=row.effort_authoritative_count,
+                    tool_call_sum=row.tool_call_sum,
+                    tool_success_sum=row.tool_success_sum,
+                    tool_usage_covered_count=row.tool_usage_covered_count,
                 )
             )
         return mapped_rows
@@ -792,6 +1020,9 @@ class RoutingRollupQueryService:
                     effort_tier=row.effort_tier,
                     effort_tier_source=row.effort_tier_source,
                     effort_authoritative_count=row.effort_authoritative_count,
+                    tool_call_sum=row.tool_call_sum,
+                    tool_success_sum=row.tool_success_sum,
+                    tool_usage_covered_count=row.tool_usage_covered_count,
                 )
             )
         return provider_rows
@@ -842,6 +1073,7 @@ class RoutingRollupQueryService:
         *,
         min_sample_size: int | None = None,
         freshness_ts: str | None = None,
+        stale_providers: frozenset[str] | None = None,
     ) -> list[RoutingRollupKeyDTO]:
         """Compute the full D5 metric payload for every row and assemble the
         terminal ``RoutingRollupKeyDTO`` (T3-004) -- the last transform in
@@ -869,15 +1101,29 @@ class RoutingRollupQueryService:
         T3-005's determinism guard (freeze this to prove field-identical
         output across two invocations).
 
-        ``success_rate``/``regression_rate`` are emitted ``None`` in this
-        v1 -- ``sessions.status`` (the only per-session outcome-adjacent
-        column available to this module) carries only
-        ``'active'``/``'completed'`` values in this codebase, never a
-        genuine success/failure/regression signal; fabricating one from a
-        non-signal would be actively misleading to a consuming router. The
-        ``routing_rollup`` DDL (Phase 2) already declares both columns
-        nullable for exactly this reason -- both are named, documented v1
-        design gaps flagged for D9 socialization, not bugs.
+        ``success_rate``/``success_rate_coverage_fraction`` (DI-4e) are
+        computed via ``_success_rate_and_coverage`` -- see that helper's
+        docstring for the full D-b1/D-b2 rationale (call-volume-weighted,
+        ``None`` on zero tool-usage attribution) AND the DI-4e fix-cycle-2
+        D-b4 HALT gate (``stale_providers``, below) it also enforces.
+
+        *stale_providers* defaults to
+        ``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`` (test
+        override point, same convention as *min_sample_size*) -- a row whose
+        ``provider`` matches (case-insensitively) has ``success_rate``
+        withheld unconditionally, independent of how much genuine tool-usage
+        coverage it has. This is the mechanism the D-b4 live-verification
+        gate (AC2) requires: the gpt/codex-family's confirmed-stale
+        ``session_tool_usage`` window must not be served through REST/MCP/
+        CLI until a backfill/resync precondition lands and the gate
+        re-verifies clean.
+
+        ``regression_rate`` remains permanently ``None`` -- CLOSED per DI-4b:
+        no ``test_results``/``test_runs`` signal exists anywhere in this
+        schema for a regression judgment to be derived from. This is a
+        decided non-goal, not a deferred gap (unlike ``success_rate`` before
+        DI-4e) -- the ``routing_rollup`` DDL (Phase 2) declares the column
+        nullable for exactly this reason, and it stays that way indefinitely.
 
         ``cost_index``/``cost_coverage_fraction`` (DI-4a) are computed via
         ``_task_class_cost_baselines``/``_cost_index_and_coverage`` -- see
@@ -892,6 +1138,11 @@ class RoutingRollupQueryService:
             else config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE
         )
         resolved_freshness_ts = freshness_ts if freshness_ts is not None else _now_iso()
+        resolved_stale_providers = (
+            stale_providers
+            if stale_providers is not None
+            else frozenset(config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS)
+        )
         cost_baselines = _task_class_cost_baselines(rows)
 
         key_dtos: list[RoutingRollupKeyDTO] = []
@@ -901,6 +1152,9 @@ class RoutingRollupQueryService:
             )
             cost_index, cost_coverage_fraction = _cost_index_and_coverage(
                 row, cost_baselines.get(row.task_class)
+            )
+            success_rate, success_rate_coverage_fraction = _success_rate_and_coverage(
+                row, resolved_stale_providers
             )
             key_dtos.append(
                 RoutingRollupKeyDTO(
@@ -918,9 +1172,14 @@ class RoutingRollupQueryService:
                     model=row.model,
                     provider=row.provider,
                     sample_count=row.session_count,
-                    success_rate=None,
+                    success_rate=success_rate,
+                    success_rate_coverage_fraction=success_rate_coverage_fraction,
                     cost_index=cost_index,
                     cost_coverage_fraction=cost_coverage_fraction,
+                    # DI-4b (closed): no test_results/test_runs signal exists
+                    # anywhere in this schema for a regression judgment to be
+                    # derived from -- regression_rate stays None permanently,
+                    # a decided non-goal, never revisited by this task.
                     regression_rate=None,
                     effort_tier=row.effort_tier,
                     effort_tier_source=row.effort_tier_source,
@@ -959,12 +1218,28 @@ class RoutingRollupQueryService:
         transport/worker-level short-circuit (D6) -- deliberately NOT built
         here; this compute service has no opinion on the flag and always
         computes real rows when called.
+
+        DI-4e/D-b3: also computes the two response-level skill-dimension
+        coverage counters (``skill_attributed_key_count``/
+        ``skill_unattributed_key_count``) via ``_skill_dimension_coverage``
+        -- scoped to the SAME resolved ``min_sample_size`` used by
+        ``compute_metrics``'s ``eligible_for_adjustment`` gate, computed over
+        *rows* directly (not *coverage*, which is keyed off already-resolved
+        ``task_class`` and has no notion of sample-size thresholds).
         """
+        resolved_min_sample_size = (
+            min_sample_size
+            if min_sample_size is not None
+            else config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE
+        )
         resolved_freshness_ts = freshness_ts if freshness_ts is not None else _now_iso()
         key_dtos = self.compute_metrics(
             rows,
-            min_sample_size=min_sample_size,
+            min_sample_size=resolved_min_sample_size,
             freshness_ts=resolved_freshness_ts,
+        )
+        skill_attributed_key_count, skill_unattributed_key_count = _skill_dimension_coverage(
+            rows, resolved_min_sample_size
         )
         return RoutingRollupResponseDTO(
             enabled=True,
@@ -980,6 +1255,8 @@ class RoutingRollupQueryService:
             mapped_count=coverage.mapped_count,
             unclassified_count=coverage.unclassified_count,
             distinct_unmapped_skill_names=list(coverage.distinct_unmapped_skill_names),
+            skill_attributed_key_count=skill_attributed_key_count,
+            skill_unattributed_key_count=skill_unattributed_key_count,
             keys=key_dtos,
         )
 

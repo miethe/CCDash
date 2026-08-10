@@ -305,3 +305,91 @@ session: force a fresh read via the existing `reload_projects()` before each tic
 any unavailable-refresh path *visible* rather than silently stale (a deliberate fail-closed-vs-proceed
 decision, recorded), and replace the mock test with one against a real `DbProjectManager` mutated through
 a second connection, proven to fail without the fix.
+
+## 2026-08-10 — Close-out: `main` moved and took our SCHEMA_VERSION; ours renumbered 52 -> 53
+
+The plan says "SCHEMA_VERSION 51 -> 52". By the time this branch was ready to land,
+`origin/main` was four commits past our base and one of them (`d230d78`, provider /
+channel / credential as first-class entities, from a concurrently-running session in a
+sibling worktree) had already taken **52**. Both branches set `SCHEMA_VERSION = 52` in
+both backends — verified by reading the constant on each side, not inferred from the
+commit subject.
+
+How bad: less bad than it looks, and the mechanism was checked rather than assumed.
+Migrations here are not a numbered chain. `SCHEMA_VERSION` is a high-water mark and the
+`_ensure_column` sweep runs **unconditionally** — `sqlite_migrations.py` logs
+"already recorded; running idempotent column/index checks" and then sweeps regardless.
+So a DB sitting at their 52 still receives `llm_egress_consent`. No data-loss path. But a
+version number that no longer identifies a schema is a real governance defect.
+
+DECISION (orchestrator, Mode-D surface, not delegated): merge `origin/main` in, keep both
+migrations in full, renumber ours to **53**. Theirs keeps its `if current_version < 52`
+gate untouched; ours re-gates to `< 53`. Zero new `COLUMN_PARITY_DRIFT_ALLOWLIST` entries.
+This is a deviation from the plan's literal text, forced by a moved base, and it is the
+only reading that satisfies the operator's "squash to main" intent.
+
+## 2026-08-10 — A real parity gap in our OWN M2 commit, found only because the base moved
+
+While resolving the above, `llm_egress_consent` turned out to be present in the
+**unconditional** `_ensure_column` sweep in `sqlite_migrations.py` but **absent** from the
+equivalent sweep in `postgres_migrations.py`. It was in Postgres' `CREATE TABLE` body and
+in its version-gated block, so a DB below our version converged correctly and every test
+passed — which is exactly why nobody caught it. Now added to the Postgres unconditional
+sweep, mirroring the sqlite placement.
+
+Worth naming the lesson: the dual-DDL rule in CLAUDE.md says "both backends", and we
+satisfied it in two of the three places it matters. The green suite proved convergence for
+fresh and below-version DBs and said nothing about the belt-and-braces path. This was found
+by a forced merge, not by a gate.
+
+## 2026-08-10 — Relaxed another feature's `== 52` assertions to `>= 52`
+
+`backend/tests/test_provider_dimension_schema.py` (theirs, landed on main hours earlier)
+asserted `SCHEMA_VERSION == 52` literally, twice. Our bump to 53 broke both. Changed to
+`assertGreaterEqual(..., 52)` and renamed the two methods to `..._is_at_least_52` so the
+names stop lying.
+
+Rationale for `>=` over bumping to `53`: `SCHEMA_VERSION` is a repo-global high-water mark,
+not one feature's property. Pinning it with `==` meant those assertions would fail on the
+next schema change by ANY feature, forever; bumping to `53` just relocates the same trap.
+The invariant the test actually protects — provider-dimension DDL gated at or after v52 —
+is what `>=` states, and their `if current_version < 52` gate still implements it unchanged.
+Flagged here because it edits a concurrent session's file.
+
+## 2026-08-10 — Plan gate: a TRUE rejection on AC1; consent gated one egress lane, not both
+
+The plan-level `karen` pass returned CHANGES_REQUESTED, correctly. `CCDASH_LLM_EGRESS_CONSENT`
+gated the session-naming lane only. `backend/services/ai_insight.py` constructed the Gemini
+adapter (`EGRESS = True`) on the API key alone, with no consent check, reachable live via
+`POST /insight` — so consent=false did not mean "egress is off", while the CHANGELOG told
+operators it did. AC1 is unqualified ("**no** egress adapter is constructed") where AC2 is
+deliberately scoped to sessions, and nothing in this ledger recorded the insight lane as an
+accepted exclusion. So: an oversight, not a scoping decision. Fixed, with a
+negative-construction test that fails without the fix.
+
+Also fixed from the same pass: the per-tick egress audit line reported the lane from the
+LEGACY `CCDASH_SESSION_NAMING_BACKEND` var, so an operator using the documented-preferred
+`CCDASH_LLM_SESSION_NAMING_LANE=anthropic` would get `lane=local` recorded while egressing
+to ICA.
+
+## 2026-08-10 — The M3 live-ICA-call criterion: NOT obtained, and the plan said it was
+
+The plan's AC->evidence table asserted, for the M3 live row, "HTTP 200, `msg_bdrk_` id in
+response, one session named." That never happened. Corrected: the row now splits the
+adapter's wire contract (verified by `test_anthropic_adapter.py` — URL, ICA default base,
+version header, credential-as-header, frozen payload key-set, `[1m]` rejection) from live
+reachability, which is marked NOT OBTAINED and deferred to the operator.
+
+It stays deferred deliberately. It needs an operator-held ICA key, and `open_questions[0]`
+— which ICA key the deployed adapter uses — is still open, so an agent picking one would be
+guessing at a cost/scope decision. The wire format itself was already measured by four live
+probes on 2026-08-07 (see `spike_ref`); what remains unverified is this deployment's key
+scope and endpoint liveness, which are operational facts no unit test can hold.
+
+## 2026-08-10 — The pre-existing parity failure, proven rather than assumed
+
+`test_migration_governance.py::test_column_parity_all_shared_tables` fails on this branch.
+It is NOT ours. Proven two-sided: a throwaway worktree detached at pristine `origin/main`
+(`b5b6a13`) fails the identical assertion with the identical drift set —
+`documents` / `entity_links` / `features` / `tasks` on `workspace_id`, with `projects`
+appearing nowhere. No allowlist entry was added, and none should be.

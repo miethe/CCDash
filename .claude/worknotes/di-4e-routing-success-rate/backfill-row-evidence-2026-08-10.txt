@@ -1,0 +1,69 @@
+[dsn source: .env]
+
+=== Per-tool PERSISTED totals, platform_type='Codex' (all time) ===
+tool                                 calls   successes   errors  sessions
+exec                                 43657       43384      273      1103
+exec_command                        110602      110521       81      2225
+wait                                  5955        5874       81       311
+spawn_agent                           3493        3471       22       765
+followup_task                          400         391        9        52
+write_stdin                           4439        4434        5       761
+wait_agent                            6321        6317        4       607
+apply_patch                          11395       11392        3      1106
+run                                     27          25        2         3
+send_message                          2182        2180        2       453
+close_agent                           1359        1359        0       323
+create_goal                              4           4        0         4
+_create_issue                            2           2        0         1
+_create_pull_request                     4           4        0         3
+get_goal                                 5           5        0         4
+interrupt_agent                        105         105        0        40
+js                                     117         117        0        18
+js_add_node_module_dir                   3           3        0         3
+list_agents                            623         623        0       168
+list_mcp_resources                      17          17        0        13
+list_mcp_resource_templates              2           2        0         2
+load_workspace_dependencies             27          27        0        26
+_merge_pull_request                      4           4        0         3
+read_mcp_resource                        3           3        0         3
+read_thread_terminal                    30          30        0        27
+request_user_input                      15          15        0        10
+resume_agent                             8           8        0         3
+send_input                             469         469        0       128
+shell                                 1584        1584        0        25
+shell_command                         5827        5827        0        80
+update_goal                              2           2        0         2
+update_plan                           1388        1388        0       575
+view_image                             333         333        0        69
+wait_for_agent                           3           3        0         1
+
+=== Top 25 individual stored rows carrying errors (session_id, tool) ===
+session_id                                    tool              calls   succ   err
+S-rollout-2026-07-13T00-16-32-019f59b0-e4ad-  wait                101     87    14
+S-rollout-2026-07-13T13-28-43-019f5c86-2591-  exec                281    269    12
+S-rollout-2026-07-14T01-17-05-019f5f0e-aebb-  exec               1160   1148    12
+S-rollout-2026-07-13T00-20-28-019f59b4-7b69-  exec                134    124    10
+S-rollout-2026-07-13T22-21-43-019f5e6e-220f-  exec                232    222    10
+S-rollout-2026-07-12T06-01-56-019f55c6-be57-  exec_command         19     11     8
+S-rollout-2026-07-13T00-15-17-019f59af-bc0c-  wait                126    118     8
+S-rollout-2026-07-18T23-29-23-019f786b-df43-  exec                721    713     8
+S-rollout-2026-07-12T21-16-37-019f590c-2c7e-  exec                684    677     7
+S-rollout-2026-07-12T21-22-35-019f5911-a29b-  exec                232    225     7
+S-rollout-2026-07-13T11-43-46-019f5c26-1174-  exec                100     93     7
+S-rollout-2026-07-10T21-48-42-019f4edc-d438-  spawn_agent          12      6     6
+S-rollout-2026-07-12T21-22-35-019f5911-a29b-  wait                 50     44     6
+S-rollout-2026-07-14T12-05-45-019f6160-8d4d-  exec                108    102     6
+S-rollout-2026-07-11T21-22-36-019f53eb-47cb-  wait                 58     53     5
+S-rollout-2026-07-12T11-34-00-019f56f6-c2d8-  wait                 41     36     5
+S-rollout-2026-07-14T00-20-40-019f5edb-05ea-  exec                157    152     5
+S-rollout-2026-07-28T13-34-46-019fa9cb-1679-  exec_command         27     22     5
+S-rollout-2026-07-12T13-00-36-019f5746-0ead-  exec                339    335     4
+S-rollout-2026-07-12T19-52-47-019f58bf-6beb-  exec                344    340     4
+S-rollout-2026-07-12T19-52-47-019f58bf-6beb-  wait                159    155     4
+S-rollout-2026-07-12T20-35-52-019f58e6-dcf8-  wait                 23     19     4
+S-rollout-2026-07-13T15-20-00-019f5cec-07f3-  exec                312    308     4
+S-rollout-2026-07-13T17-40-54-019f5d6d-0764-  exec                189    185     4
+S-rollout-2026-07-13T23-25-58-019f5ea8-f2a5-  exec                172    168     4
+
+25 rows shown. A row with succ < calls is a STORED, backfilled error.
+Pre-backfill this query returned rows only for non-Codex platforms: the old parser recorded 100% success for every Codex session ever ingested.

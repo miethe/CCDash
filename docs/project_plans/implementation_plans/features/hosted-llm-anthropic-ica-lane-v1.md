@@ -3,7 +3,7 @@ it_schema: 1
 feature_slug: hosted-llm-anthropic-ica-lane
 title: "Anthropic/ICA lane + egress consent gating — implementation plan"
 doc_type: implementation_plan
-status: draft
+status: in_progress
 tier: 2
 priority: P1
 points: 11
@@ -201,7 +201,8 @@ end-to-end; CHANGELOG `[Unreleased]` entry; ADR-017 + ADR-018 accepted.
 | M2 — dual DDL parity | `backend/.venv/bin/python -m pytest backend/tests/test_migration_governance.py -v` | Column in both backends; zero `COLUMN_PARITY_DRIFT_ALLOWLIST` entries |
 | M2 — postgres migration actually applies | `npm run docker:hosted:smoke:seeded-pg` | v51->v52 in-place upgrade completes; api+worker both healthy |
 | M3 — provenance enforced on egress | `backend/.venv/bin/python -m pytest backend/tests/test_session_naming_read_path_no_model_client.py -v` | Guard green; wrong-provenance envelope raises |
-| M3 — bare model ids, live reachability | `backend/.venv/bin/ccdash` naming run against ICA with `CCDASH_LLM_ANTHROPIC_BASE_URL` set | HTTP 200, `msg_bdrk_` id in response, one session named |
+| M3 — bare model ids, base-URL-only routing, version header | `backend/.venv/bin/python -m pytest backend/tests/test_anthropic_adapter.py -v` | Green. Pins the URL, the ICA default base, `anthropic-version: 2023-06-01`, credential-as-header (asserts no `key=` in the URL), the frozen payload key-set, and `[1m]`-id rejection before the wire |
+| M3 — live reachability against ICA | `backend/.venv/bin/ccdash` naming run against ICA with `CCDASH_LLM_ANTHROPIC_BASE_URL` set | **NOT OBTAINED — deferred to the operator.** Needs an operator-held ICA key and a real outbound call, and `open_questions[0]` (which ICA key the deployed adapter uses) is still open, so an agent cannot pick one. The wire contract itself was measured by four live probes on 2026-08-07 (`spike_ref`, Empirical Addendum); what remains unverified is this deployment's key scope and endpoint liveness — operational facts no test can hold |
 
 ## Sequencing (load-bearing)
 

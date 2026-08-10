@@ -75,6 +75,9 @@ def _provider_row(
     window_end: datetime = _FIXED_WINDOW_END,
     cost_sum: float = 0.0,
     cost_covered_count: int = 0,
+    tool_call_sum: int = 0,
+    tool_success_sum: int = 0,
+    tool_usage_covered_count: int = 0,
 ) -> ProviderRollupRow:
     return ProviderRollupRow(
         project_id=project_id,
@@ -88,6 +91,9 @@ def _provider_row(
         provider=provider if provider is not None else "anthropic",
         cost_sum=cost_sum,
         cost_covered_count=cost_covered_count,
+        tool_call_sum=tool_call_sum,
+        tool_success_sum=tool_success_sum,
+        tool_usage_covered_count=tool_usage_covered_count,
     )
 
 
@@ -279,23 +285,384 @@ class TestConfidenceSaturationCurve(_ServiceTestBase):
 
 
 # ---------------------------------------------------------------------------
-# AC: success_rate / regression_rate v1 design-gap values (unaffected by
-# DI-4a's cost_index change).
+# AC4: regression_rate remains None permanently (DI-4b closed, no
+# test_results/test_runs signal exists) -- a decided non-goal, never
+# revisited by this task, unlike success_rate below.
 # ---------------------------------------------------------------------------
 
 
-class TestUnavailableSignals(_ServiceTestBase):
-    def test_success_rate_and_regression_rate_are_none_for_every_row(self) -> None:
+class TestRegressionRatePermanentlyNone(_ServiceTestBase):
+    def test_regression_rate_is_none_for_every_row_regardless_of_tool_usage(self) -> None:
         rows = [
-            _provider_row(is_coverage_only=False, session_count=68),
+            _provider_row(
+                is_coverage_only=False,
+                session_count=68,
+                tool_call_sum=100,
+                tool_success_sum=90,
+                tool_usage_covered_count=68,
+            ),
             _provider_row(task_class=UNCLASSIFIED_TASK_CLASS, is_coverage_only=True, session_count=3),
         ]
 
         dtos = self.service.compute_metrics(rows)
 
         for dto in dtos:
-            self.assertIsNone(dto.success_rate)
             self.assertIsNone(dto.regression_rate)
+
+
+# ---------------------------------------------------------------------------
+# AC1/AC2/D-b1/D-b2: DI-4e real per-key success_rate -- call-volume-weighted
+# tool-error-rate complement (D-b1), null on zero attribution (D-b2), plus
+# its coverage-fraction companion.
+# ---------------------------------------------------------------------------
+
+
+class TestSuccessRateZeroCoverage(_ServiceTestBase):
+    """D-b2: a key with zero tool-usage-attributed sessions emits
+    success_rate=None, never a fabricated constant."""
+
+    def test_zero_coverage_key_emits_none_never_a_placeholder(self) -> None:
+        row = _provider_row(
+            session_count=68, tool_call_sum=0, tool_success_sum=0, tool_usage_covered_count=0
+        )
+
+        [dto] = self.service.compute_metrics([row])
+
+        self.assertIsNone(dto.success_rate)
+        self.assertNotEqual(dto.success_rate, 1.0)
+        self.assertNotEqual(dto.success_rate, 0.0)
+        self.assertEqual(dto.success_rate_coverage_fraction, 0.0)
+
+
+class TestSuccessRateFullCoverage(_ServiceTestBase):
+    """A fully-covered key emits a real, non-constant success_rate that
+    changes when the underlying call/error inputs change (provably derived,
+    not a disguised constant)."""
+
+    def test_full_coverage_key_computes_real_rate(self) -> None:
+        row = _provider_row(
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        [dto] = self.service.compute_metrics([row])
+
+        self.assertAlmostEqual(dto.success_rate, 0.95)
+        self.assertEqual(dto.success_rate_coverage_fraction, 1.0)
+
+    def test_success_rate_changes_when_underlying_call_error_inputs_change(self) -> None:
+        reliable = _provider_row(
+            source_skill_name="reliable-skill",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=99,
+            tool_usage_covered_count=10,
+        )
+        flaky = _provider_row(
+            source_skill_name="flaky-skill",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=60,
+            tool_usage_covered_count=10,
+        )
+
+        dtos = self.service.compute_metrics([reliable, flaky])
+        by_skill = {dto.source_skill_name: dto for dto in dtos}
+
+        self.assertAlmostEqual(by_skill["reliable-skill"].success_rate, 0.99)
+        self.assertAlmostEqual(by_skill["flaky-skill"].success_rate, 0.60)
+        self.assertNotEqual(
+            by_skill["reliable-skill"].success_rate, by_skill["flaky-skill"].success_rate
+        )
+
+
+class TestSuccessRatePartialCoverage(_ServiceTestBase):
+    """A partially-covered key's success_rate is computed over the covered
+    subset only, and its coverage-fraction signal differs from a
+    fully-covered key's."""
+
+    def test_partial_coverage_computed_over_covered_subset_only(self) -> None:
+        partial = _provider_row(
+            source_skill_name="partial-skill",
+            session_count=50,
+            tool_call_sum=100,
+            tool_success_sum=90,
+            tool_usage_covered_count=2,
+        )
+        full = _provider_row(
+            source_skill_name="full-skill",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=90,
+            tool_usage_covered_count=10,
+        )
+
+        dtos = self.service.compute_metrics([partial, full])
+        by_skill = {dto.source_skill_name: dto for dto in dtos}
+
+        # Identical tool_call_sum/tool_success_sum -> identical success_rate,
+        # regardless of how many uncovered sessions dilute session_count.
+        self.assertAlmostEqual(by_skill["partial-skill"].success_rate, by_skill["full-skill"].success_rate)
+
+    def test_partial_coverage_fraction_differs_from_full_coverage(self) -> None:
+        partial = _provider_row(
+            source_skill_name="partial-skill",
+            session_count=50,
+            tool_call_sum=100,
+            tool_success_sum=90,
+            tool_usage_covered_count=2,
+        )
+        full = _provider_row(
+            source_skill_name="full-skill",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=90,
+            tool_usage_covered_count=10,
+        )
+
+        dtos = self.service.compute_metrics([partial, full])
+        by_skill = {dto.source_skill_name: dto for dto in dtos}
+
+        self.assertAlmostEqual(by_skill["partial-skill"].success_rate_coverage_fraction, 2 / 50)
+        self.assertEqual(by_skill["full-skill"].success_rate_coverage_fraction, 1.0)
+        self.assertNotEqual(
+            by_skill["partial-skill"].success_rate_coverage_fraction,
+            by_skill["full-skill"].success_rate_coverage_fraction,
+        )
+
+
+class TestSuccessRateCallVolumeWeighted(_ServiceTestBase):
+    """D-b1: success_rate is call-volume-weighted (sum of errors over sum of
+    calls) across the key's covered sessions -- never a mean-of-per-session
+    error rates. Synthetic case where the two methods provably disagree: one
+    200-call session with 1 error (0.5% error rate) and one 2-call session
+    with 1 error (50% error rate) -- a per-session mean would average those
+    two rates to 25.25% error (74.75% success); the call-volume-weighted
+    answer pools 2 errors over 202 calls = ~0.99% error (~99.01% success)."""
+
+    def test_call_volume_weighted_not_mean_of_per_session_rates(self) -> None:
+        # This module aggregates at the (project_id, source_skill_name,
+        # model) key grain, not per-session -- so this fixture represents
+        # the KEY's already-summed tool_call_sum/tool_success_sum, as if
+        # the SQL aggregate had already pooled the two sessions' raw
+        # session_tool_usage rows (200+2=202 calls, (200-1)+(2-1)=200
+        # successes).
+        row = _provider_row(session_count=2, tool_call_sum=202, tool_success_sum=200, tool_usage_covered_count=2)
+
+        [dto] = self.service.compute_metrics([row])
+
+        call_volume_weighted_success_rate = 200 / 202
+        per_session_mean_success_rate = ((199 / 200) + (1 / 2)) / 2  # would be ~0.7475
+
+        self.assertAlmostEqual(dto.success_rate, call_volume_weighted_success_rate)
+        self.assertNotAlmostEqual(dto.success_rate, per_session_mean_success_rate, places=2)
+
+
+class TestSuccessRateDeterminism(_ServiceTestBase):
+    """Two invocations over a frozen fixture row-set produce field-identical
+    success_rate/coverage output."""
+
+    def test_two_invocations_produce_identical_success_rate_and_coverage(self) -> None:
+        rows = [
+            _provider_row(
+                source_skill_name="dev-execution",
+                session_count=68,
+                tool_call_sum=340,
+                tool_success_sum=330,
+                tool_usage_covered_count=60,
+            ),
+            _provider_row(
+                source_skill_name="debugging",
+                session_count=12,
+                tool_call_sum=0,
+                tool_success_sum=0,
+                tool_usage_covered_count=0,
+            ),
+        ]
+
+        dtos_first = self.service.compute_metrics(rows, freshness_ts=_FIXED_FRESHNESS_TS)
+        dtos_second = self.service.compute_metrics(rows, freshness_ts=_FIXED_FRESHNESS_TS)
+
+        first_pairs = [(dto.success_rate, dto.success_rate_coverage_fraction) for dto in dtos_first]
+        second_pairs = [(dto.success_rate, dto.success_rate_coverage_fraction) for dto in dtos_second]
+        self.assertEqual(first_pairs, second_pairs)
+
+
+# ---------------------------------------------------------------------------
+# AC2/D-b4 fix-cycle-2 (reviewer finding #1): success_rate is withheld
+# unconditionally for a provider named in
+# CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS, regardless of
+# tool-usage coverage -- the mechanical HALT gate the D-b4 live-verification
+# query's finding requires.
+# ---------------------------------------------------------------------------
+
+
+class TestSuccessRateStaleProviderGate(_ServiceTestBase):
+    def test_fully_covered_row_is_withheld_when_its_provider_is_gated(self) -> None:
+        """A fully-covered row would otherwise compute a real success_rate --
+        confirm a gated provider has it withheld anyway.
+
+        The config default no longer names "openai" (the backfill landed and
+        D-b4 re-verified clean, 2026-08-10 -- see the config comment), so this
+        drives the gate through `config` explicitly rather than relying on the
+        default. That keeps the MECHANISM under test: the assertion that
+        matters is "a gated provider is withheld", not "openai specifically is
+        gated today"."""
+        row = _provider_row(
+            provider="OpenAI",  # exact derive_model_identity() casing
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        with mock.patch.object(
+            config, "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
+        ):
+            [dto] = self.service.compute_metrics([row])
+
+        self.assertIsNone(dto.success_rate)
+        self.assertEqual(dto.success_rate_coverage_fraction, 0.0)
+
+    def test_gate_matches_case_insensitively(self) -> None:
+        """Row provider is "OpenAI", configured gate entry is "openai" --
+        the match must not be casing-dependent, or a provider string whose
+        casing changes upstream would silently escape the gate."""
+        row = _provider_row(
+            provider="OpenAI",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        with mock.patch.object(
+            config, "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
+        ):
+            [dto] = self.service.compute_metrics([row])
+
+        self.assertIsNone(dto.success_rate)
+
+    def test_non_gated_provider_still_computes_a_real_rate(self) -> None:
+        """Confirms the gate is provider-scoped, not a blanket suppression --
+        an anthropic-family row with identical coverage still emits a real
+        success_rate."""
+        row = _provider_row(
+            provider="anthropic",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        [dto] = self.service.compute_metrics([row])
+
+        self.assertAlmostEqual(dto.success_rate, 0.95)
+
+    def test_gate_is_configurable_not_hardcoded(self) -> None:
+        """Proves this is a real, liftable gate (per the D-b4 escalation
+        recommendation's re-run path), not a disguised permanent
+        suppression: overriding the stale-provider set via
+        compute_metrics's explicit parameter changes the outcome."""
+        row = _provider_row(
+            provider="openai",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        gated = self.service.compute_metrics([row], stale_providers=frozenset({"openai"}))
+        cleared = self.service.compute_metrics([row], stale_providers=frozenset())
+
+        self.assertIsNone(gated[0].success_rate)
+        self.assertAlmostEqual(cleared[0].success_rate, 0.95)
+
+    def test_config_default_is_empty_after_the_backfill_cleared_d_b4(self) -> None:
+        """The default gate set is EMPTY.
+
+        It defaulted to ("openai",) while the gpt/codex-family's
+        `session_tool_usage` window was dominated by stale pre-b51de27 parser
+        output (21.4%/28.6% informative keys vs claude-family's ~90%). The
+        backfill ran 2026-08-10 (node_01KZP9FBMYNB6BE8EFPAZFYVJ0, 1,239/1,242
+        sessions re-parsed) and D-b4 re-verified clean at 25/28 = 89.3%
+        informative, err_rate 0.87% -- a 0.8pp gap to claude-family, so
+        nothing is withheld by default any more.
+
+        This test pins the default so re-adding a provider is a deliberate,
+        visible act backed by a fresh measurement -- never a quiet default."""
+        self.assertEqual(tuple(config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS), ())
+
+    def test_build_response_honors_the_config_gate_too(self) -> None:
+        """build_response delegates to compute_metrics without overriding
+        stale_providers -- confirm the gate is not accidentally bypassed at
+        the response-assembly entry point real callers use.
+
+        Driven through `config` so it proves build_response RESOLVES the
+        config default rather than ignoring it; with the default now empty,
+        asserting on the bare default could not distinguish "gate honored"
+        from "gate absent"."""
+        row = _provider_row(
+            provider="OpenAI",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+        coverage = CoverageCounters(mapped_count=10, unclassified_count=0, distinct_unmapped_skill_names=[])
+
+        with mock.patch.object(
+            config, "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
+        ):
+            response = self.service.build_response([row], coverage)
+
+        self.assertIsNone(response.keys[0].success_rate)
+
+    def test_build_response_emits_a_real_rate_for_that_provider_by_default(self) -> None:
+        """The other side of the gate, and the actual DI-4e deliverable: with
+        the default empty, the very row the HALT gate used to withhold now
+        carries a real success_rate end-to-end. Two-sided with the test above,
+        so a gate stuck permanently ON cannot pass both."""
+        row = _provider_row(
+            provider="OpenAI",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+        coverage = CoverageCounters(mapped_count=10, unclassified_count=0, distinct_unmapped_skill_names=[])
+
+        response = self.service.build_response([row], coverage)
+
+        self.assertAlmostEqual(response.keys[0].success_rate, 0.95)
+
+
+# ---------------------------------------------------------------------------
+# AC3/D-b3: skill-dimension coverage counters -- response-level, scoped to
+# the min_sample_size-clearing population.
+# ---------------------------------------------------------------------------
+
+
+class TestSkillDimensionCoverageCounters(_ServiceTestBase):
+    def test_attributed_and_unattributed_counts_over_eligible_population(self) -> None:
+        rows = [
+            # Clears min_sample_size=5, non-empty source_skill_name -> attributed.
+            _provider_row(source_skill_name="dev-execution", session_count=68),
+            # Clears min_sample_size=5, empty source_skill_name -> unattributed.
+            _provider_row(source_skill_name="", session_count=20, task_class=UNCLASSIFIED_TASK_CLASS, is_coverage_only=True),
+            # Below min_sample_size=5 -- excluded from BOTH counters, regardless
+            # of source_skill_name.
+            _provider_row(source_skill_name="dev-execution", session_count=2),
+            _provider_row(source_skill_name="", session_count=1, task_class=UNCLASSIFIED_TASK_CLASS, is_coverage_only=True),
+        ]
+        coverage = CoverageCounters(mapped_count=70, unclassified_count=21, distinct_unmapped_skill_names=[""])
+
+        response = self.service.build_response(rows, coverage, min_sample_size=5)
+
+        self.assertEqual(response.skill_attributed_key_count, 1)
+        self.assertEqual(response.skill_unattributed_key_count, 1)
 
 
 # ---------------------------------------------------------------------------

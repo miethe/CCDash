@@ -4,13 +4,18 @@ All CREATE TABLE statements for the caching layer.
 Uses IF NOT EXISTS for idempotent runs.
 
 Schema version history (keep in lockstep with postgres_migrations.py):
-  v52 — hosted-llm-anthropic-ica-lane-v1 M2: projects table gains
+  v53 — hosted-llm-anthropic-ica-lane-v1 M2: projects table gains
          llm_egress_consent (NOT NULL, DEFAULT FALSE/0). Per-project consent
          gate for sending session data to a hosted LLM provider. The FALSE
          default is fail-closed and load-bearing: every existing project
          defaults to NOT consenting, so this migration cannot silently opt
          the registry into egress. Additive, no backfill needed (0 is the
          correct value for every pre-existing row).
+  v52 — provider-channel-credential-entities-v1 M1: provider_dimensions,
+         provider_channels, provider_credentials tables (see backend/db/
+         migration_governance.py and the _TABLES block for the full rationale
+         -- no FK on rotated_from_id, no CHECK on channel, credential_name is
+         a NAME never secret bytes).
   v51 — ica-key-and-spend-capture: sessions table gains ica_key,
          ica_spend_start, ica_spend_end, ica_spend_delta,
          ica_spend_attribution (all nullable TEXT). Key identity + per-session
@@ -89,7 +94,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1610,6 +1615,63 @@ CREATE TABLE IF NOT EXISTS routing_rollup (
 CREATE INDEX IF NOT EXISTS idx_routing_rollup_project ON routing_rollup(project_id);
 CREATE INDEX IF NOT EXISTS idx_routing_rollup_task_class ON routing_rollup(task_class);
 CREATE INDEX IF NOT EXISTS idx_routing_rollup_skill_model ON routing_rollup(source_skill_name, model);
+
+-- ── 16. Provider Dimension Entities (provider-channel-credential-entities-v1 M1) ──
+-- provider_dimensions: one row per providerId slug ("{vendor}:{surface}:{channel}")
+-- from backend/model_identity.py derive_provider_identity. provider_channels: the
+-- open-vocabulary channel dimension (subscription/ica/api/unknown, never CHECK-
+-- constrained). provider_credentials: credentials as entities, keyed by credential
+-- NAME ONLY (e.g. "CC1") -- NEVER secret bytes. rotated_from_id is a deliberately
+-- plain integer pointer with NO foreign key (SQLite doesn't enforce FKs by default,
+-- Postgres does -- an FK here would be a real cross-backend behavioural divergence);
+-- rotation-lineage integrity is enforced in the repository layer.
+CREATE TABLE IF NOT EXISTS provider_dimensions (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id        TEXT NOT NULL,
+    provider_vendor    TEXT NOT NULL DEFAULT '',
+    provider_surface   TEXT NOT NULL DEFAULT '',
+    provider_channel   TEXT NOT NULL DEFAULT '',
+    provider_label     TEXT NOT NULL DEFAULT '',
+    first_seen_at      TEXT,
+    last_seen_at       TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_dimensions_channel
+    ON provider_dimensions(provider_channel);
+
+CREATE TABLE IF NOT EXISTS provider_channels (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel            TEXT NOT NULL,
+    label              TEXT NOT NULL DEFAULT '',
+    first_seen_at      TEXT,
+    last_seen_at       TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(channel)
+);
+
+CREATE TABLE IF NOT EXISTS provider_credentials (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel               TEXT NOT NULL,
+    credential_name       TEXT NOT NULL,
+    provider_id           TEXT NOT NULL DEFAULT '',
+    rotated_from_id       INTEGER,
+    rotation_declared_at  TEXT,
+    rotation_declared_by  TEXT,
+    first_seen_at         TEXT,
+    last_seen_at          TEXT,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(channel, credential_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_channel
+    ON provider_credentials(channel, credential_name);
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_rotated_from
+    ON provider_credentials(rotated_from_id);
 """
 
 _PLANNING_WORKTREE_CONTEXTS_DDL = """
@@ -1648,6 +1710,60 @@ CREATE TABLE IF NOT EXISTS filesystem_scan_manifest (
     size       INTEGER NOT NULL,
     scanned_at TEXT NOT NULL
 );
+"""
+
+_PROVIDER_DIMENSION_TABLES = """
+-- ── Provider Dimension Entities (provider-channel-credential-entities-v1 M1) ──
+-- Migration-path mirror of the _TABLES baseline block of the same name, for
+-- pre-existing databases (fresh DBs get these from _TABLES directly). See the
+-- _TABLES comment for the rationale on no FK / no CHECK constraint.
+CREATE TABLE IF NOT EXISTS provider_dimensions (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id        TEXT NOT NULL,
+    provider_vendor    TEXT NOT NULL DEFAULT '',
+    provider_surface   TEXT NOT NULL DEFAULT '',
+    provider_channel   TEXT NOT NULL DEFAULT '',
+    provider_label     TEXT NOT NULL DEFAULT '',
+    first_seen_at      TEXT,
+    last_seen_at       TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_dimensions_channel
+    ON provider_dimensions(provider_channel);
+
+CREATE TABLE IF NOT EXISTS provider_channels (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel            TEXT NOT NULL,
+    label              TEXT NOT NULL DEFAULT '',
+    first_seen_at      TEXT,
+    last_seen_at       TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(channel)
+);
+
+CREATE TABLE IF NOT EXISTS provider_credentials (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel               TEXT NOT NULL,
+    credential_name       TEXT NOT NULL,
+    provider_id           TEXT NOT NULL DEFAULT '',
+    rotated_from_id       INTEGER,
+    rotation_declared_at  TEXT,
+    rotation_declared_by  TEXT,
+    first_seen_at         TEXT,
+    last_seen_at          TEXT,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(channel, credential_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_channel
+    ON provider_credentials(channel, credential_name);
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_rotated_from
+    ON provider_credentials(rotated_from_id);
 """
 
 _TEST_VISUALIZER_TABLES = """
@@ -1953,6 +2069,12 @@ async def _ensure_test_visualizer_tables(db: aiosqlite.Connection) -> None:
 async def _ensure_planning_worktree_contexts_table(db: aiosqlite.Connection) -> None:
     """Idempotent: create planning_worktree_contexts table and indexes if missing."""
     await db.executescript(_PLANNING_WORKTREE_CONTEXTS_DDL)
+
+
+async def _ensure_provider_dimension_tables(db: aiosqlite.Connection) -> None:
+    """Idempotent: create provider_dimensions/provider_channels/provider_credentials
+    tables and indexes if missing (provider-channel-credential-entities-v1 M1)."""
+    await db.executescript(_PROVIDER_DIMENSION_TABLES)
 
 
 async def _prepare_legacy_tables_for_bootstrap(db: aiosqlite.Connection) -> None:
@@ -3214,7 +3336,7 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
     await _ensure_column(db, "sessions", "fork_point_parent_entry_uuid", "TEXT")
     await _ensure_column(db, "sessions", "fork_depth", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "fork_count", "INTEGER DEFAULT 0")
-    # hosted-llm-anthropic-ica-lane-v1 M2 (v52). NOT NULL DEFAULT 0 -- fail-closed;
+    # hosted-llm-anthropic-ica-lane-v1 M2 (v53). NOT NULL DEFAULT 0 -- fail-closed;
     # mirrors the ica_key belt-and-suspenders placement above.
     await _ensure_column(db, "projects", "llm_egress_consent", "INTEGER NOT NULL DEFAULT 0")
     await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
@@ -4644,14 +4766,29 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         )
 
     if current_version < 52:
+        # provider-channel-credential-entities-v1 M1: three provider dimension
+        # tables for pre-existing databases (fresh DBs get these from _TABLES).
+        # CREATE TABLE IF NOT EXISTS keeps this idempotent. No FK on
+        # rotated_from_id (deliberate -- see comment in _TABLES); no CHECK on
+        # channel (open vocabulary); credential_name is a NAME, never secret
+        # bytes.
+        await _ensure_provider_dimension_tables(db)
+        logger.info(
+            "v52 migrations complete: provider_dimensions + provider_channels + "
+            "provider_credentials created (idempotent CREATE TABLE IF NOT EXISTS "
+            "for pre-existing databases; no FK on rotated_from_id, no CHECK on "
+            "channel -- see backend/db/sqlite_migrations.py _TABLES comment)."
+        )
+
+    if current_version < 53:
         # hosted-llm-anthropic-ica-lane-v1 M2: per-project egress consent gate.
         # NOT NULL DEFAULT 0 is load-bearing and fail-closed -- every existing
         # project must default to NOT consenting to off-box egress; a TRUE
         # default would silently opt the whole registry into sending session
-        # data off-box. Mirror of the Postgres v52 block.
+        # data off-box. Mirror of the Postgres v53 block.
         await _ensure_column(db, "projects", "llm_egress_consent", "INTEGER NOT NULL DEFAULT 0")
         logger.info(
-            "v52 migrations complete: projects.llm_egress_consent added "
+            "v53 migrations complete: projects.llm_egress_consent added "
             "(NOT NULL DEFAULT 0 -- fail-closed; existing projects do not "
             "consent to egress by default)."
         )

@@ -25,6 +25,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import aiosqlite
 import typer
 
 from backend import config
@@ -128,10 +129,45 @@ async def bootstrap_offline(
 
     db_path = resolve_offline_db_path(ephemeral)
 
-    # Gotcha: set the module-global DB path BEFORE the first get_connection().
+    # Gotcha: pin the ENTIRE backend resolution BEFORE the first
+    # get_connection(). Setting ``connection.DB_PATH`` alone is not enough and
+    # never was — two separate reads defeat it:
+    #
+    #   1. ``get_connection()`` branches on ``config.DB_BACKEND``. With
+    #      ``CCDASH_DB_BACKEND=postgres`` in the environment (or .env), the
+    #      offline lane opened a pool against the PRODUCTION Postgres and ran a
+    #      full ``SyncEngine.sync_project()`` into it — silently, because the
+    #      offline contract's stderr banner only covers worker-only enrichment
+    #      gaps, not backend misresolution.
+    #   2. Even on SQLite, ``connection._resolve_db_path()`` reads
+    #      ``CCDASH_DB_PATH`` / ``config.DB_PATH`` — never ``connection.DB_PATH``
+    #      — so the offline cache path was ignored and the shared repo-local
+    #      ``data/ccdash_cache.db`` was used instead.
+    #
+    # So force every read point a connect can consult, then verify below. The
+    # offline lane is defined by its isolation; a silent fallback to shared
+    # state is worse than a hard failure.
+    config.DB_BACKEND = "sqlite"
+    config.DB_PATH = db_path
+    # _resolve_db_path() prefers the env var over config.DB_PATH, so an inherited
+    # CCDASH_DB_PATH would otherwise win over the offline cache path.
+    os.environ["CCDASH_DB_PATH"] = str(db_path)
+    os.environ["CCDASH_DB_BACKEND"] = "sqlite"
     connection.DB_PATH = db_path
 
     db = await connection.get_connection()
+
+    # Fail loudly rather than sync against shared state. This is the assertion the
+    # original isolation lacked: it trusted the assignment instead of the outcome.
+    if not isinstance(db, aiosqlite.Connection):
+        await connection.close_connection()
+        raise typer.BadParameter(
+            "Offline mode could not isolate the database: expected a local "
+            f"SQLite connection but resolved {type(db).__name__}. Refusing to "
+            "run an offline sync against a shared/remote backend. Unset "
+            "CCDASH_DB_BACKEND (or set it to 'sqlite') for offline runs."
+        )
+
     await migrations.run_migrations(db)
 
     # Gotcha #1: a FRESH DbProjectManager scoped to the offline DB — never the

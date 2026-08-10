@@ -1,12 +1,16 @@
 """PostgreSQL database schema creation and versioning.
 
 Schema version history (keep in lockstep with sqlite_migrations.py):
-  v52 — hosted-llm-anthropic-ica-lane-v1 M2: projects table gains
+  v53 — hosted-llm-anthropic-ica-lane-v1 M2: projects table gains
          llm_egress_consent (NOT NULL, DEFAULT FALSE). Mirrors
-         sqlite_migrations.py v52. Per-project consent gate for sending
+         sqlite_migrations.py v53. Per-project consent gate for sending
          session data to a hosted LLM provider; the FALSE default is
          fail-closed and load-bearing so existing projects never silently
          consent to egress. Additive, no backfill needed.
+  v52 — provider-channel-credential-entities-v1 M1: provider_dimensions,
+         provider_channels, provider_credentials tables. Mirrors
+         sqlite_migrations.py v52 (no FK on rotated_from_id, no CHECK on
+         channel, credential_name is a NAME never secret bytes).
   v50 — automatic-session-naming M1: sessions table gains session_name
          (nullable TEXT) + session_name_source (nullable TEXT, closed
          vocabulary -- see backend/parsers/session_name_provenance.py).
@@ -64,7 +68,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1622,6 +1626,63 @@ CREATE TABLE IF NOT EXISTS routing_rollup (
 CREATE INDEX IF NOT EXISTS idx_routing_rollup_project ON routing_rollup(project_id);
 CREATE INDEX IF NOT EXISTS idx_routing_rollup_task_class ON routing_rollup(task_class);
 CREATE INDEX IF NOT EXISTS idx_routing_rollup_skill_model ON routing_rollup(source_skill_name, model);
+
+-- ── 16. Provider Dimension Entities (provider-channel-credential-entities-v1 M1) ──
+-- provider_dimensions: one row per providerId slug ("{vendor}:{surface}:{channel}")
+-- from backend/model_identity.py derive_provider_identity. provider_channels: the
+-- open-vocabulary channel dimension (subscription/ica/api/unknown, never CHECK-
+-- constrained). provider_credentials: credentials as entities, keyed by credential
+-- NAME ONLY (e.g. "CC1") -- NEVER secret bytes. rotated_from_id is a deliberately
+-- plain integer pointer with NO foreign key (SQLite doesn't enforce FKs by default,
+-- Postgres does -- an FK here would be a real cross-backend behavioural divergence);
+-- rotation-lineage integrity is enforced in the repository layer.
+CREATE TABLE IF NOT EXISTS provider_dimensions (
+    id                  BIGSERIAL PRIMARY KEY,
+    provider_id         TEXT NOT NULL,
+    provider_vendor     TEXT NOT NULL DEFAULT '',
+    provider_surface    TEXT NOT NULL DEFAULT '',
+    provider_channel    TEXT NOT NULL DEFAULT '',
+    provider_label      TEXT NOT NULL DEFAULT '',
+    first_seen_at       TEXT,
+    last_seen_at        TEXT,
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_dimensions_channel
+    ON provider_dimensions(provider_channel);
+
+CREATE TABLE IF NOT EXISTS provider_channels (
+    id                  BIGSERIAL PRIMARY KEY,
+    channel             TEXT NOT NULL,
+    label               TEXT NOT NULL DEFAULT '',
+    first_seen_at       TEXT,
+    last_seen_at        TEXT,
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(channel)
+);
+
+CREATE TABLE IF NOT EXISTS provider_credentials (
+    id                    BIGSERIAL PRIMARY KEY,
+    channel               TEXT NOT NULL,
+    credential_name       TEXT NOT NULL,
+    provider_id           TEXT NOT NULL DEFAULT '',
+    rotated_from_id       BIGINT,
+    rotation_declared_at  TEXT,
+    rotation_declared_by  TEXT,
+    first_seen_at         TEXT,
+    last_seen_at          TEXT,
+    created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(channel, credential_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_channel
+    ON provider_credentials(channel, credential_name);
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_rotated_from
+    ON provider_credentials(rotated_from_id);
 """
 
 _PLANNING_WORKTREE_CONTEXTS_DDL = """
@@ -2825,6 +2886,11 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "sessions", "fork_point_parent_entry_uuid", "TEXT")
     await _ensure_column(db, "sessions", "fork_depth", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "fork_count", "INTEGER DEFAULT 0")
+    # hosted-llm-anthropic-ica-lane-v1 M2 (v53). NOT NULL DEFAULT FALSE --
+    # fail-closed; mirrors the sqlite_migrations.py unconditional-sweep
+    # placement (belt-and-suspenders alongside the v53 version-gate block
+    # below, so a pre-existing DB reaches the column either way).
+    await _ensure_column(db, "projects", "llm_egress_consent", "BOOLEAN NOT NULL DEFAULT FALSE")
     # P1 follow-up: ensure sessions.project_id exists before ANY unconditional
     # CREATE INDEX that references it (idx_sessions_root / _family / _thread_kind
     # immediately below).  On a pre-v30 DB the column is absent at this point;
@@ -4179,13 +4245,88 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         )
 
     if current_version < 52:
+        # provider-channel-credential-entities-v1 M1: three provider dimension
+        # tables for pre-existing databases (fresh DBs get these from _TABLES).
+        # Mirror of the SQLite v52 block. CREATE TABLE IF NOT EXISTS keeps this
+        # idempotent. No FK on rotated_from_id (deliberate -- see comment in
+        # _TABLES); no CHECK on channel (open vocabulary); credential_name is a
+        # NAME, never secret bytes.
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS provider_dimensions (
+                id                  BIGSERIAL PRIMARY KEY,
+                provider_id         TEXT NOT NULL,
+                provider_vendor     TEXT NOT NULL DEFAULT '',
+                provider_surface    TEXT NOT NULL DEFAULT '',
+                provider_channel    TEXT NOT NULL DEFAULT '',
+                provider_label      TEXT NOT NULL DEFAULT '',
+                first_seen_at       TEXT,
+                last_seen_at        TEXT,
+                created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                UNIQUE(provider_id)
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_dimensions_channel"
+            " ON provider_dimensions(provider_channel)"
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS provider_channels (
+                id                  BIGSERIAL PRIMARY KEY,
+                channel             TEXT NOT NULL,
+                label               TEXT NOT NULL DEFAULT '',
+                first_seen_at       TEXT,
+                last_seen_at        TEXT,
+                created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                UNIQUE(channel)
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS provider_credentials (
+                id                    BIGSERIAL PRIMARY KEY,
+                channel               TEXT NOT NULL,
+                credential_name       TEXT NOT NULL,
+                provider_id           TEXT NOT NULL DEFAULT '',
+                rotated_from_id       BIGINT,
+                rotation_declared_at  TEXT,
+                rotation_declared_by  TEXT,
+                first_seen_at         TEXT,
+                last_seen_at          TEXT,
+                created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                updated_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                UNIQUE(channel, credential_name)
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_credentials_channel"
+            " ON provider_credentials(channel, credential_name)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_credentials_rotated_from"
+            " ON provider_credentials(rotated_from_id)"
+        )
+        logger.info(
+            "v52 migrations complete: provider_dimensions + provider_channels + "
+            "provider_credentials created (idempotent CREATE TABLE IF NOT EXISTS "
+            "for pre-existing databases; no FK on rotated_from_id, no CHECK on "
+            "channel -- see backend/db/postgres_migrations.py _TABLES comment)."
+        )
+
+    if current_version < 53:
         # hosted-llm-anthropic-ica-lane-v1 M2: per-project egress consent gate.
-        # Mirror of the SQLite v52 block. NOT NULL DEFAULT FALSE is load-bearing
+        # Mirror of the SQLite v53 block. NOT NULL DEFAULT FALSE is load-bearing
         # and fail-closed -- every existing project must default to NOT
         # consenting to off-box egress.
         await _ensure_column(db, "projects", "llm_egress_consent", "BOOLEAN NOT NULL DEFAULT FALSE")
         logger.info(
-            "v52 migrations complete: projects.llm_egress_consent added "
+            "v53 migrations complete: projects.llm_egress_consent added "
             "(NOT NULL DEFAULT FALSE -- fail-closed; existing projects do not "
             "consent to egress by default)."
         )

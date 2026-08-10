@@ -305,8 +305,21 @@ class SessionNamingSweepJob:
                     # above did not skip it) -- per-tick egress
                     # observability AC: log lane/model/project_id, never a
                     # credential/prompt/transcript.
+                    #
+                    # ``lane`` is the RESOLVED lane
+                    # (``config.resolve_session_naming_lane()``), which is
+                    # the exact same call ``resolve_naming_backend``
+                    # (backend/services/session_naming_local_backend.py)
+                    # made to decide which backend to construct -- never the
+                    # raw legacy ``CCDASH_SESSION_NAMING_BACKEND``
+                    # attribute, which this line used to read. An operator
+                    # following the documented preference (set
+                    # CCDASH_LLM_SESSION_NAMING_LANE=anthropic, leave the
+                    # legacy var alone) got ``lane=local`` on a tick that
+                    # was egressing to ICA; an egress audit line naming the
+                    # wrong lane is worse than no audit line.
                     observability.log_llm_egress_event(
-                        lane=str(getattr(config, "CCDASH_SESSION_NAMING_BACKEND", "") or ""),
+                        lane=config.resolve_session_naming_lane(),
                         model=str(getattr(self.naming_backend, "model", "") or "unknown"),
                         project_id=project_id,
                     )

@@ -30,6 +30,7 @@ from backend.models import Project
 from backend.parsers.sessions import parse_session_file
 from backend.parsers.worktree_attribution import worktree_name_for_source
 from backend.parsers.workflow_sidecar import scan_workflow_sidecars
+from backend.db.repositories.provider_dimensions import get_provider_dimensions_repository
 from backend.ingestion.jsonl_adapter import jsonl_session_to_envelope
 from backend.ingestion.session_ingest_service import SessionIngestService
 from backend.parsers.documents import parse_document_file
@@ -245,6 +246,42 @@ def _build_merged_source_identity_policy(
 
 
 # ───────────────────────────────────────────────────────────────────────────
+
+
+def _session_input_mtime(path: Path) -> float:
+    """Freshness key for a session source: newest of the JSONL and its sidecar.
+
+    The launch-time capture sidecar (``<session-id>.capture.json``) is a SECOND
+    input to parsing this session, and it is routinely written *after* the
+    JSONL's last content change — SessionEnd appends the closing ICA spend
+    reading ~2s after the transcript stops growing. Keying freshness on the
+    JSONL's mtime alone therefore made the sidecar permanently invisible for any
+    session whose JSONL never changed again: the parse had already run, and the
+    unchanged-skip rejected every later attempt (a bare ``touch`` did not help —
+    it moved the JSONL mtime but the sidecar was already accounted for, and the
+    watcher never forwarded the sidecar at all).
+
+    Folding the sidecar's mtime in makes the skip correct rather than merely
+    cheap, and is self-healing: an already-ingested session whose sidecar landed
+    late re-parses exactly once, then stays skipped.
+
+    MUST be used for both the cached comparison and the stored ``file_mtime`` in
+    the same code path. Comparing max(...) while storing the JSONL-only mtime
+    would never converge and would re-parse the file on every pass.
+    """
+    newest = path.stat().st_mtime
+    stem = path.stem
+    candidates = (
+        path.with_name(f"{stem}.capture.json"),
+        # Fallback location mirrored from the parser's _collect_capture_sidecar.
+        path.parent.parent / "data" / "capture" / f"{stem}.capture.json",
+    )
+    for sidecar in candidates:
+        try:
+            newest = max(newest, sidecar.stat().st_mtime)
+        except OSError:
+            continue  # absent sidecar is the common case, not an error
+    return newest
 
 
 def _file_hash(path: Path) -> str:
@@ -1465,6 +1502,13 @@ class SyncEngine:
         self.pricing_catalog_repo = get_pricing_catalog_repository(db)
         self.pricing_catalog_service = PricingCatalogService(self.pricing_catalog_repo)
         self.scan_manifest_repo = get_scan_manifest_repository(db)
+        # provider-channel-credential-entities-v1 (M2-002). Dual-backend via
+        # get_provider_dimensions_repository -- picks Sqlite/Postgres by
+        # connection type, mirroring get_session_repository and friends
+        # above. Always returns a repo; the phase-1 call below is
+        # unconditional (see the factory's docstring for why no guard is
+        # needed here).
+        self.provider_dimensions_repo = get_provider_dimensions_repository(db)
         self._session_ingest_service: SessionIngestService | None = None
         self._ops_lock = asyncio.Lock()
         self._operations: dict[str, dict[str, Any]] = {}
@@ -3211,6 +3255,8 @@ class SyncEngine:
             "links_created": 0,
             "duration_ms": 0,
             "operation_id": "",
+            "provider_dimensions_backfilled": 0,
+            "provider_dimensions_backfill_error": "",
         }
         # ── Phase 7: in-process coalescing guard ──────────────────────────────
         # Key: (project_id, trigger).  The set-membership check and the add are
@@ -3321,6 +3367,41 @@ class SyncEngine:
                 # idempotent (recomputes from the stored readings).
                 ica_spend_stats = await self.session_repo.backfill_ica_spend_attribution(project.id)
                 stats["ica_spend_attributed"] = int(ica_spend_stats.get("rows", 0))
+                # provider-channel-credential-entities-v1 (M2-002): derive
+                # provider_dimensions / provider_channels / provider_credentials
+                # rows from this project's sessions every pass. Idempotent
+                # (re-running upserts the same distinct keys) and read-only
+                # against `sessions` itself, so it is safe to run unconditionally
+                # like the two backfills above rather than gating on
+                # backfill_session_intelligence. Dual-backend via
+                # get_provider_dimensions_repository (SQLite + Postgres) --
+                # unconditional, no skip guard, this is the deployment target.
+                #
+                # This is optional, non-essential enrichment layered on top of
+                # the core sync (documents/tasks/features/links below still
+                # need to run even if this fails) -- so a failure here is
+                # caught, logged at warning with the project id + exception,
+                # and recorded in `stats` rather than allowed to propagate
+                # into the outer `except Exception as exc: ... raise` below
+                # and abort the whole sync pass. See test coverage in
+                # backend/tests/test_provider_dimension_backfill.py proving a
+                # raising backfill does not abort the surrounding sync.
+                try:
+                    provider_backfill_stats = (
+                        await self.provider_dimensions_repo.backfill_provider_dimensions_from_sessions(
+                            project.id
+                        )
+                    )
+                    stats["provider_dimensions_backfilled"] = int(
+                        provider_backfill_stats.get("providers_inserted", 0)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "provider dimension backfill failed (non-fatal) for project %s: %s",
+                        project.id,
+                        e,
+                    )
+                    stats["provider_dimensions_backfill_error"] = str(e)
                 if backfill_session_intelligence:
                     usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
                     stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))
@@ -4988,7 +5069,9 @@ class SyncEngine:
         """Parse and upsert a single session file. Returns True if actually synced."""
         file_path = str(path)
         sync_file_path = self._canonical_source_key(project_id, path, "session")
-        mtime = path.stat().st_mtime
+        # Includes the capture sidecar's mtime — see _session_input_mtime. The
+        # same value is stored as file_mtime below; they must not diverge.
+        mtime = _session_input_mtime(path)
 
         if not force:
             cached = await self.sync_repo.get_sync_state(sync_file_path)

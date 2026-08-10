@@ -168,6 +168,66 @@ class RowToKeyDtoTests(unittest.TestCase):
         self.assertEqual(dto.success_rate, 0.91)
         self.assertEqual(dto.regression_rate, 0.03)
 
+    def test_success_rate_withheld_for_stale_provider_even_with_a_persisted_value(self) -> None:
+        """The D-b4 gate must apply on this READ path too -- a persisted row
+        carrying a real success_rate for a provider named in
+        CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS must still be
+        served as None. This is the backstop that makes "not served through
+        REST/MCP/CLI" true regardless of what already landed in the column.
+
+        Driven through `config` because the default is now EMPTY (the backfill
+        landed and D-b4 re-verified clean at 89.3% informative, 2026-08-10).
+        The mechanism is what matters here, not which provider happens to be
+        listed today."""
+        with patch.object(
+            config, "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
+        ):
+            dto = _row_to_key_dto(_make_row(provider="OpenAI", success_rate=0.99))
+        self.assertIsNone(dto.success_rate)
+
+    def test_success_rate_gate_normalizes_the_row_side_casing(self) -> None:
+        """The persisted `provider` is whatever `derive_model_identity()` wrote
+        ("OpenAI"), while configured entries are lowercase -- so the read path
+        must lowercase the ROW side or a mixed-case provider escapes the gate.
+
+        Asymmetric on purpose: the gate lowercases the row and trusts the
+        config side to already be lowercase, which
+        `test_env_csv_lower_normalizes_configured_entries` below pins. Note the
+        sharp edge that follows from `_env_csv_lower`'s documented "falls back
+        to *default* verbatim": a mixed-case tuple hardcoded as the DEFAULT in
+        config.py would not be normalized and would silently not match. Keep
+        any future default lowercase."""
+        with patch.object(
+            config, "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
+        ):
+            dto = _row_to_key_dto(_make_row(provider="OpenAI", success_rate=0.99))
+        self.assertIsNone(dto.success_rate)
+
+    def test_env_csv_lower_normalizes_configured_entries(self) -> None:
+        """The invariant the gate's one-sided comparison rests on: entries
+        supplied through the environment are lowercased at load time, so the
+        read path only has to normalize the row side."""
+        with patch.dict(
+            os.environ,
+            {"CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS": "OpenAI, ANTHROPIC "},
+        ):
+            parsed = config._env_csv_lower(
+                "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ()
+            )
+        self.assertEqual(parsed, ("openai", "anthropic"))
+
+    def test_persisted_success_rate_is_served_for_that_provider_by_default(self) -> None:
+        """The other side: with the default empty, the row the HALT gate used
+        to withhold is now served with its real persisted value. Two-sided
+        with the test above so a gate stuck permanently ON fails one of them."""
+        dto = _row_to_key_dto(_make_row(provider="OpenAI", success_rate=0.99))
+        self.assertEqual(dto.success_rate, 0.99)
+
+    def test_success_rate_preserved_for_non_gated_provider(self) -> None:
+        """Confirms the gate is provider-scoped, not a blanket suppression."""
+        dto = _row_to_key_dto(_make_row(provider="anthropic", success_rate=0.91))
+        self.assertEqual(dto.success_rate, 0.91)
+
     def test_cost_index_null_passes_through_unchanged(self) -> None:
         """DI-4a: a persisted NULL cost_index (a zero-coverage key,
         D-a2) must never be fabricated into a baseline -- the same

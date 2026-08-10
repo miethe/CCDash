@@ -2,9 +2,8 @@
   "mcpServers": {
     "ccdash": {
       "type": "stdio",
-      "command": "python",
+      "command": "backend/.venv/bin/python",
       "args": ["-m", "backend.mcp.server"],
-      "cwd": "${workspaceFolder}",
       "env": {
         "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "false",
         "CCDASH_TELEMETRY_EXPORT_ENABLED": "false"

@@ -51,7 +51,7 @@ types.ts                    → All TypeScript interfaces (AgentSession, Feature
 constants.ts                → App constants
 contexts/DataContext.tsx    → Compatibility facade over split shell providers
 contexts/AppSessionContext.tsx → Project/session shell state
-contexts/AppEntityDataContext.tsx → Sessions/documents/tasks/features state
+contexts/DataClientContext.tsx → Query-client wiring (AppEntityDataProvider was removed in T4-005; entity state lives in services/queries/)
 contexts/AppRuntimeContext.tsx → Polling, loading/error state, runtime health
 services/apiClient.ts       → Typed API client for app-shell fetch/mutation flows
 services/runtimeProfile.ts  → Runtime-health normalization helpers
