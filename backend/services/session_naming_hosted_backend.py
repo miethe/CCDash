@@ -70,9 +70,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
+import httpx  # noqa: F401 -- re-exported so tests can patch
+# ``backend.services.session_naming_hosted_backend.httpx.AsyncClient``; the
+# actual call now lives in ``GeminiTextCompletionAdapter``
+# (``backend/adapters/llm/gemini.py``), but ``httpx`` is a single shared
+# module object, so patching the attribute here mutates the same object the
+# adapter's own ``import httpx`` resolves to.
 
 from backend import config
+from backend.adapters.llm.gemini import GeminiTextCompletionAdapter
+from backend.application.ports.llm import envelope_from_redacted_transcript
 from backend.application.services.agent_queries.redaction import (
     redaction_patterns_enabled,
 )
@@ -130,6 +137,12 @@ class HostedGeminiNamingBackend:
         self.model = model or _GEMINI_MODEL
         self.timeout_seconds = (
             timeout_seconds if timeout_seconds is not None else _TIMEOUT_SECONDS
+        )
+        self._adapter = GeminiTextCompletionAdapter(
+            api_key=self._api_key or "",
+            model=self.model,
+            timeout_seconds=self.timeout_seconds,
+            base_url=_GEMINI_BASE_URL,
         )
 
     async def derive_name(self, candidate: dict[str, Any]) -> str | None:
@@ -198,8 +211,18 @@ class HostedGeminiNamingBackend:
         if not prompt_text:
             return None
 
+        instruction = _NAMING_INSTRUCTION.format(prompt_text=prompt_text)
+        # ``redaction_events`` is not currently threaded through
+        # ``get_session_detail``'s returned bundle -- passing 0 rather than
+        # fabricating a count (P2/P3 territory per the contract's Risk
+        # Areas; see the Completion Report's follow-up recommendation). The
+        # redaction-gate re-check above already ran, so
+        # ``envelope_from_redacted_transcript``'s own fail-closed check here
+        # is pure defense-in-depth, not a new reachable failure path.
+        envelope = envelope_from_redacted_transcript(instruction, redaction_events=0)
+
         try:
-            raw_title = await self._call_gemini(prompt_text)
+            raw_title = await self._adapter.complete(envelope)
         except Exception:
             # Fail-open: network error, non-2xx, timeout, malformed
             # response -- this is the expected no-op path for a deployment
@@ -254,33 +277,9 @@ class HostedGeminiNamingBackend:
 
         return title if written else None
 
-    async def _call_gemini(self, prompt_text: str) -> str | None:
-        """POST to the Gemini ``generateContent`` REST endpoint; return the raw completion.
-
-        Raises on any transport/HTTP error -- the caller (:meth:`derive_name`)
-        is responsible for the fail-open wrapping, matching this codebase's
-        convention of separating "the call" from "the fail-open guarantee"
-        (mirrors ``ai_insight.generate_dashboard_insight``'s own
-        try/except-at-the-call-site shape, and
-        ``LocalOllamaNamingBackend._call_ollama``'s identical division of
-        labor for Lane A).
-        """
-        instruction = _NAMING_INSTRUCTION.format(prompt_text=prompt_text)
-        url = f"{_GEMINI_BASE_URL}/{self.model}:generateContent?key={self._api_key}"
-        payload = {"contents": [{"parts": [{"text": instruction}]}]}
-
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-
-        candidates = data.get("candidates") or [] if isinstance(data, dict) else []
-        if not candidates:
-            return None
-        text = (
-            candidates[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-        return str(text) if text else None
+    # ``_call_gemini`` (the raw httpx POST to Gemini's ``generateContent``
+    # REST endpoint) moved to ``GeminiTextCompletionAdapter``
+    # (``backend/adapters/llm/gemini.py``, P1 TextCompletionPort seam) --
+    # ``derive_name`` now calls ``self._adapter.complete(envelope)`` instead.
+    # Same URL, same payload shape, same raise-on-transport/HTTP-error
+    # semantics.

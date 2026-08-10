@@ -60,3 +60,10 @@ deploy/local-streaming/stream.env
 
 # execute-plan wave rollback checkpoints (local orchestration state)
 .claude/progress/*/.wave-*-checkpoint
+
+# Worktree-placement probe verdict cache. PER-MACHINE measurement of one Claude
+# Code version by one probe shape -- must never be committed: a stale or wrong
+# `inherits` propagated to another machine suppresses the very probe that would
+# catch a harness regression, and the failure mode is silent (a run reports
+# `isolation: worktree` while its agents commit in the main checkout).
+.claude/.autopilot-worktree-capability.json
