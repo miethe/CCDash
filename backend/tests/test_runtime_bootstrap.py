@@ -1418,7 +1418,8 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
             patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding),
+            # ADR-006: authoritative registry is db_project_manager (see runtime_ports.py).
+            patch("backend.runtime_ports.db_project_manager.resolve_project_binding", return_value=binding),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -1573,10 +1574,10 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             stack.enter_context(
-                patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding)
+                patch("backend.runtime_ports.db_project_manager.resolve_project_binding", return_value=binding)
             )
             get_active_project = stack.enter_context(
-                patch("backend.runtime_ports.project_manager.get_active_project")
+                patch("backend.runtime_ports.db_project_manager.get_active_project")
             )
             with patch("backend.worker._resolve_probe_binding", return_value=None):
                 task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
@@ -1658,10 +1659,10 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             stack.enter_context(
-                patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding)
+                patch("backend.runtime_ports.db_project_manager.resolve_project_binding", return_value=binding)
             )
             get_active_project = stack.enter_context(
-                patch("backend.runtime_ports.project_manager.get_active_project")
+                patch("backend.runtime_ports.db_project_manager.get_active_project")
             )
             with patch("backend.worker._resolve_probe_binding", return_value=None):
                 task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
@@ -1740,7 +1741,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "backend.runtime.container.config.resolve_worker_binding_config",
                 return_value=config.WorkerBindingConfig(project_id="missing-project"),
             ),
-            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=None),
+            patch("backend.runtime_ports.db_project_manager.resolve_project_binding", return_value=None),
             patch("backend.runtime.container.initialize_observability") as initialize_observability,
             patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
         ):
