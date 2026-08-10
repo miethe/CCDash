@@ -121,7 +121,7 @@ wire format and are recorded here so they are never re-probed or "improved":
 - Egress is gated by a two-level consent model, not by the lane selector alone: a global
   `CCDASH_LLM_EGRESS_CONSENT` (default `False`, fail-closed — no `egress=True` adapter may be
   constructed unless this is explicitly `true`) **and** a per-project `projects.llm_egress_consent`
-  column (v52 migration, `NOT NULL DEFAULT FALSE`/`0`, both SQLite and Postgres DDL), evaluated by
+  column (v53 migration, `NOT NULL DEFAULT FALSE`/`0`, both SQLite and Postgres DDL), evaluated by
   `SessionNamingSweepJob` per project, per sweep tick. Separating the two means a deployment can have
   the Anthropic lane fully configured (URL, key, model) with egress still cold, and a shared
   multi-project deployment's egress decision is per-project, not deployment-wide — one operator's

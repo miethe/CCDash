@@ -410,7 +410,7 @@ def resolve_session_naming_lane() -> str:
 # BEFORE it ever imports/constructs an egress-shaped backend class -- never
 # at the call site -- so a reviewer can see the fail-closed property by
 # reading that resolver alone, without tracing call sites. A project's own
-# `projects.llm_egress_consent` (v52 migration) is the SECOND, per-project
+# `projects.llm_egress_consent` (v53 migration) is the SECOND, per-project
 # gate this flag composes with -- checked separately, per sweep tick, inside
 # SessionNamingSweepJob's fan-out loop (never here; this flag is
 # deployment-wide and read once at process start, same as every other

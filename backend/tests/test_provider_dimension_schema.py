@@ -41,7 +41,7 @@ _FORBIDDEN_EXACT_NAMES = frozenset({"key", "value"})
 
 
 class ProviderDimensionSchemaVersionTests(unittest.TestCase):
-    """AC1: SCHEMA_VERSION == 52 in both migration modules, asserted separately."""
+    """AC1: SCHEMA_VERSION >= 52 in both migration modules, asserted separately."""
 
     # Relaxed from `== 52` to `>= 52` when the hosted-llm-anthropic-ica-lane
     # feature landed concurrently and took v53 (projects.llm_egress_consent).

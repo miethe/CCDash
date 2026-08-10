@@ -1877,7 +1877,7 @@ class Project(BaseModel):
     # COLUMN_PARITY_DRIFT_ALLOWLIST: N/A — model-computed, not a DB column.
     is_seed: bool = False
     # Per-project consent to send session data off-box to a hosted LLM
-    # provider. Maps to the `llm_egress_consent` column (v52 migration,
+    # provider. Maps to the `llm_egress_consent` column (v53 migration,
     # hosted-llm-anthropic-ica-lane-v1 M2). Defaults to False — fail-closed:
     # existing projects must never be silently opted into egress.
     llm_egress_consent: bool = False

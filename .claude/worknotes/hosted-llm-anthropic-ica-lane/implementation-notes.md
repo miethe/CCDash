@@ -393,3 +393,64 @@ It is NOT ours. Proven two-sided: a throwaway worktree detached at pristine `ori
 (`b5b6a13`) fails the identical assertion with the identical drift set —
 `documents` / `entity_links` / `features` / `tasks` on `workspace_id`, with `projects`
 appearing nowhere. No allowlist entry was added, and none should be.
+
+## 2026-08-10 — seeded-pg smoke RE-RUN after the renumber, because SQLite-green proves nothing here
+
+The renumber to v53 changed the in-place Postgres upgrade path, and the earlier smoke
+evidence was obtained for 51->52 against a base that no longer exists. A migration change
+whose only evidence is a green SQLite suite is exactly the shape that crash-loops the node,
+so the smoke was re-run rather than assumed still valid.
+
+Result (`bash deploy/runtime/scripts/smoke-seeded-pg.sh`, exit 0): seeded at v29,
+`Migration result: applied (reached SCHEMA_VERSION=53)`, `/api/health/ready` returned
+`migrationStatus=="applied"`, and `UndefinedColumnError` was ABSENT from both the postgres
+and api container logs. This run exercises the upgrade with BOTH `projects.llm_egress_consent`
+and the concurrently-landed provider/channel/credential tables present -- which the original
+run could not, because that DDL did not exist yet.
+
+Note the M2 fix in `00981fe` is what made this trustworthy: the smoke now DERIVES
+`HEAD_VERSION` from the source constant instead of hardcoding it. A hardcoded literal would
+have kept asserting 52 and passed while validating the wrong thing -- the exact failure the
+commit message for `00981fe` describes having found at "35".
+
+The background shell reported "exit code 0" for the whole invocation, which is meaningless
+here (the compound ends in an `echo`). The trustworthy value is the script's own
+`SMOKE_EXIT=0` recorded in the log, and the PASS lines above it. Reading the wrapper's code
+instead of the script's is how a smoke that actually failed once got reported as green.
+
+## 2026-08-10 — Plan gate round 2: substance closed, and the renumber had left FIVE stale v52 labels
+
+Round 2 returned CHANGES_REQUESTED again, but on a different and much smaller class: all four
+round-1 findings verified closed, the v53 merge verified sound, and the only remaining items were
+stale `v52` strings that MY OWN renumber created. One was blocking on honesty grounds
+(`CHANGELOG.md` still said "SCHEMA_VERSION 51->52", which attributes this feature's column to v52 --
+a version that actually belongs to provider-entities).
+
+This is deliberately NOT treated as a third gate round. The reviewer's own instruction was to
+re-verify by grep rather than spend another whole-tree pass, and the same-class stop rule does not
+apply -- these are not the round-1 defect class recurring, they are a new mechanical class the
+renumber introduced. A third full pass over an unchanged behavioural surface would buy nothing.
+
+Corrected: `CHANGELOG.md:60`, both `CREATE TABLE` inline comments, the plan's M2 AC prose,
+`adr-017` line 124, and the `test_provider_dimension_schema.py` class docstring.
+
+MY BROADER GREP FOUND TWO THE REVIEWER'S LIST MISSED: `backend/config.py:413` and
+`backend/models.py:1880` both said "(v52 migration)" of this column. Worth noting as a method
+point -- working the reviewer's enumerated list alone would have shipped two of them. The check that
+caught it was a two-sided grep: assert ours all read v53 AND that theirs still correctly reads v52,
+rather than grepping only for what I expected to have fixed.
+
+Also removed from the plan's M3 prose: "a real ICA call names one session end-to-end", which was
+listed as an AC but is absent from the frontmatter `acceptance_criteria` (the machine-readable
+contract) and was never obtained. Replaced with an explicit "deliberately NOT an acceptance
+criterion" note carrying the reason.
+
+Recommendation R1 (make the naming backends self-gating by re-checking consent inside `derive_name`,
+as they already do for the redaction flag) was NOT implemented -- filed as
+node_01KZPR9FW06VJJ6G2V92R440GB. Landing a further edit on the egress boundary after the final gate,
+with the 2-pass budget spent, would ship an unreviewed change to the most safety-critical surface in
+the feature. The reviewer confirmed there is no open bypass path today, so deferring is the right
+trade; the third construction site is unbypassED, not unbypassABLE, and the node says so.
+
+Post-correction test state: 202 passed, exit 0 across the adapter, consent-gate, sweep, registry and
+provider-schema suites.

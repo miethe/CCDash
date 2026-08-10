@@ -1278,7 +1278,7 @@ CREATE TABLE IF NOT EXISTS projects (
     display_json         TEXT,
     is_active            INTEGER NOT NULL DEFAULT 0,
     repo_path            TEXT,
-    -- hosted-llm-anthropic-ica-lane-v1 M2 (v52): per-project consent to send
+    -- hosted-llm-anthropic-ica-lane-v1 M2 (v53): per-project consent to send
     -- session data off-box to a hosted LLM provider. FALSE default is
     -- fail-closed and load-bearing -- existing projects never silently
     -- consent to egress.
