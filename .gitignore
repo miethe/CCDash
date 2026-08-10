@@ -67,3 +67,6 @@ deploy/local-streaming/stream.env
 # catch a harness regression, and the failure mode is silent (a run reports
 # `isolation: worktree` while its agents commit in the main checkout).
 .claude/.autopilot-worktree-capability.json
+
+# AOS Operator local run records (file-canonical, machine-local)
+.operator/

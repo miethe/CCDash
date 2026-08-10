@@ -4,6 +4,7 @@ doc_type: prd
 title: "Automatic Session Naming — PRD"
 status: draft
 created: 2026-08-04
+updated: 2026-08-04
 feature_slug: automatic-session-naming
 category: enhancements
 priority: P2
@@ -12,7 +13,7 @@ tier: 2
 estimated_points: 15
 changelog_required: true
 prd_ref: null
-plan_ref: null
+plan_ref: docs/project_plans/implementation_plans/enhancements/automatic-session-naming-v1.md
 related_documents:
   - docs/project_plans/exploration/automatic-session-naming/automatic-session-naming-feasibility-brief.md
   - docs/project_plans/exploration/automatic-session-naming/automatic-session-naming-charter.md
