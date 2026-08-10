@@ -30,6 +30,7 @@ from backend.models import Project
 from backend.parsers.sessions import parse_session_file
 from backend.parsers.worktree_attribution import worktree_name_for_source
 from backend.parsers.workflow_sidecar import scan_workflow_sidecars
+from backend.db.repositories.provider_dimensions import get_provider_dimensions_repository
 from backend.ingestion.jsonl_adapter import jsonl_session_to_envelope
 from backend.ingestion.session_ingest_service import SessionIngestService
 from backend.parsers.documents import parse_document_file
@@ -1501,6 +1502,13 @@ class SyncEngine:
         self.pricing_catalog_repo = get_pricing_catalog_repository(db)
         self.pricing_catalog_service = PricingCatalogService(self.pricing_catalog_repo)
         self.scan_manifest_repo = get_scan_manifest_repository(db)
+        # provider-channel-credential-entities-v1 (M2-002). Dual-backend via
+        # get_provider_dimensions_repository -- picks Sqlite/Postgres by
+        # connection type, mirroring get_session_repository and friends
+        # above. Always returns a repo; the phase-1 call below is
+        # unconditional (see the factory's docstring for why no guard is
+        # needed here).
+        self.provider_dimensions_repo = get_provider_dimensions_repository(db)
         self._session_ingest_service: SessionIngestService | None = None
         self._ops_lock = asyncio.Lock()
         self._operations: dict[str, dict[str, Any]] = {}
@@ -3247,6 +3255,8 @@ class SyncEngine:
             "links_created": 0,
             "duration_ms": 0,
             "operation_id": "",
+            "provider_dimensions_backfilled": 0,
+            "provider_dimensions_backfill_error": "",
         }
         # ── Phase 7: in-process coalescing guard ──────────────────────────────
         # Key: (project_id, trigger).  The set-membership check and the add are
@@ -3357,6 +3367,41 @@ class SyncEngine:
                 # idempotent (recomputes from the stored readings).
                 ica_spend_stats = await self.session_repo.backfill_ica_spend_attribution(project.id)
                 stats["ica_spend_attributed"] = int(ica_spend_stats.get("rows", 0))
+                # provider-channel-credential-entities-v1 (M2-002): derive
+                # provider_dimensions / provider_channels / provider_credentials
+                # rows from this project's sessions every pass. Idempotent
+                # (re-running upserts the same distinct keys) and read-only
+                # against `sessions` itself, so it is safe to run unconditionally
+                # like the two backfills above rather than gating on
+                # backfill_session_intelligence. Dual-backend via
+                # get_provider_dimensions_repository (SQLite + Postgres) --
+                # unconditional, no skip guard, this is the deployment target.
+                #
+                # This is optional, non-essential enrichment layered on top of
+                # the core sync (documents/tasks/features/links below still
+                # need to run even if this fails) -- so a failure here is
+                # caught, logged at warning with the project id + exception,
+                # and recorded in `stats` rather than allowed to propagate
+                # into the outer `except Exception as exc: ... raise` below
+                # and abort the whole sync pass. See test coverage in
+                # backend/tests/test_provider_dimension_backfill.py proving a
+                # raising backfill does not abort the surrounding sync.
+                try:
+                    provider_backfill_stats = (
+                        await self.provider_dimensions_repo.backfill_provider_dimensions_from_sessions(
+                            project.id
+                        )
+                    )
+                    stats["provider_dimensions_backfilled"] = int(
+                        provider_backfill_stats.get("providers_inserted", 0)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "provider dimension backfill failed (non-fatal) for project %s: %s",
+                        project.id,
+                        e,
+                    )
+                    stats["provider_dimensions_backfill_error"] = str(e)
                 if backfill_session_intelligence:
                     usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
                     stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))

@@ -4,7 +4,7 @@ feature_slug: provider-channel-credential-entities
 title: "Provider, Channel & Credential Entities — implementation plan"
 doc_type: implementation_plan
 schema_version: 2
-status: not_started
+status: completed
 planning_maturity: draft
 tier: 3
 priority: medium
