@@ -184,7 +184,7 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
 | `model` | string | The model identifier as captured from the session (e.g., `"claude-sonnet-5"`, `"gpt-5.6-terra"`). Verbatim; no cross-repo canonicalization yet. |
 | `provider` | string | Derived from `model` via `derive_model_identity()` (`"anthropic"`, `"openai"`, etc.). Never an independent routing dimension. |
 | `sample_count` | int | Number of sessions aggregated in this `(source_skill_name, model)` key within the rolling window. |
-| `success_rate` (DI-4e) | float \| null | The key's tool-error-rate complement — `1 - (sum(tool_errors) / sum(tool_calls))`, call-volume-weighted across every tool-usage-attributed session in the key (never a mean of per-session rates). `null` (never a fabricated constant) for a key with zero tool-usage-attributed sessions. Compute logic implemented 2026-08-10, superseding the permanent-`null` v1 placeholder — **but the D-b4 live gate HALTed at ship time**: the current 30-day window is still stale-skewed for the Codex/GPT family (pre-`b51de27` `session_tool_usage` rows, no backfill run yet). Do not trust a Codex/GPT-family value until a backfill/resync follow-up runs and a re-check of the D-b4 query passes; see `routing-feedback-router-merge-handoff.md` §0a. |
+| `success_rate` (DI-4e) | float \| null | The key's tool-error-rate complement — `1 - (sum(tool_errors) / sum(tool_calls))`, call-volume-weighted across every tool-usage-attributed session in the key (never a mean of per-session rates). `null` (never a fabricated constant) for a key with zero tool-usage-attributed sessions. Compute logic implemented 2026-08-10, superseding the permanent-`null` v1 placeholder. **The D-b4 live gate HALTed at ship time for the Codex/GPT family, and this is now enforced mechanically, not just documented**: `config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` (default `("openai",)`) unconditionally forces `success_rate: null` for any matching `provider`, at both compute time and the persisted-read path — so a Codex/GPT-family key is *always* `null` here today, never merely "untrustworthy." This stays `null` until a Codex `session_tool_usage` backfill/resync follow-up runs and a re-check of the D-b4 query passes, at which point an operator clears the flag; see `routing-feedback-router-merge-handoff.md` §0a. |
 | `success_rate_coverage_fraction` (DI-4e) | float \| null | `tool_usage_covered_count / sample_count` for this key — mirrors `cost_coverage_fraction`'s shape. **Compute-layer/response-DTO only** (no persisted column) — always `null` on the persisted `/api/v1/routing/rollup` read path; recoverable only from a live `RoutingRollupQueryService.compute_metrics()` call. |
 | `cost_index` (DI-4a) | float \| null | This key's mean cost-per-covered-session divided by its own `task_class`'s mean cost-per-covered-session — **never a global baseline**: an orchestration key's cost is not comparable to a mechanical key's. A key at its class's baseline reads `~1.0`; twice as expensive reads `~2.0`. `null` when the key has zero cost-attributed sessions, or when its entire `task_class` has none to normalize against — never a fabricated `1.0`. |
 | `cost_coverage_fraction` (DI-4a) | float \| null | `cost_covered_count / sample_count` for this key — the fraction of sessions that actually carried cost attribution, letting a router discount a `cost_index` computed from a small covered subset. Computed directly via `RoutingRollupQueryService.compute_metrics`, it is always a real float (`0.0` at zero coverage, never `null`). As of schema v47 it IS persisted (`routing_rollup.cost_coverage_fraction`), so the persisted `/api/v1/routing/rollup` read path returns its true value; `null` on that path means no column value yet (a row written before v47, or never re-swept since), kept distinguishable from a genuinely computed `0.0`. |
@@ -339,6 +339,42 @@ export CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS=false
 
 # Include them (operator debugging, full transparency)
 export CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS=true
+```
+
+---
+
+### `success_rate` Stale-Provider HALT Gate (DI-4e fix cycle 2)
+
+One config flag withholds `success_rate` for providers whose `session_tool_usage` window is
+confirmed stale, per the D-b4 live-verification gate
+(`docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md` AC2):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` | `openai` | Comma-separated, case-insensitive list of `provider` values (`derive_model_identity()["modelProvider"]`) whose `success_rate`/`success_rate_coverage_fraction` are unconditionally forced `null`/`0.0`. |
+
+**Interpretation**: A key whose `provider` matches this list has `success_rate` withheld
+regardless of how much genuine tool-usage attribution it has — enforced both at compute time
+(so no future worker sweep persists a stale-family value) and at the persisted-read path (so an
+already-persisted row is never served with one either, across REST/MCP/CLI). This is the
+mechanism, not merely the documentation, behind the D-b4 HALT recorded 2026-08-10: the
+gpt/codex-family's `session_tool_usage` window is still measurably dominated by stale
+pre-`b51de27` rows (21.4% informative-key fraction / 0.04% error rate, independently re-confirmed
+against the live node Postgres in fix cycle 2, vs. the fixed-parser 89.2% / 1.48% baseline). See
+`routing-feedback-router-merge-handoff.md` §0a for the full record.
+
+**Do not clear this flag as a workaround.** It is lifted only once the Codex
+`session_tool_usage` backfill/resync follow-up (tracked separately — see the feature contract's
+Follow-Up Recommendations) has run AND the D-b4 query has been re-run against the live window and
+shown clean.
+
+```bash
+# Default posture -- withhold success_rate for the gpt/codex family (do not change without
+# re-running the D-b4 query first).
+export CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS=openai
+
+# Post-backfill, once D-b4 has been re-run and shown clean -- lift the gate.
+export CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS=
 ```
 
 ---

@@ -42,6 +42,9 @@ files_affected:
   - backend/tests/test_routing_rollup_envelope_completeness.py
   - docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
   - docs/guides/routing-feedback-loop.md
+  - backend/config.py
+  - backend/routers/_client_v1_routing_rollup.py
+  - backend/tests/test_client_v1_routing_rollup.py
 ---
 
 # Feature Contract: Populate `routing_rollup.success_rate` (DI-4e)
@@ -454,3 +457,47 @@ documented in the module's docstring and the consumer-facing handoff spec, not f
 the schema has no retry linkage and building one is out of scope.
 
 **Status**: ratified.
+
+---
+
+## Fix Cycle 2 (2026-08-10) — Mechanical HALT Gate + Tracked Follow-Up
+
+Fix cycle 1 executed the D-b4 live verification query and recorded a HALT determination, but
+left `success_rate` computation unconditional in code — nothing actually withheld a
+gpt/codex-family value from being computed, persisted, or served. Fix cycle 2 closed that gap
+and addressed four further reviewer findings:
+
+1. **Mechanical gate added.** `config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`
+   (default `("openai",)`) unconditionally withholds `success_rate`/
+   `success_rate_coverage_fraction` (forces `(None, 0.0)`) for any row whose `provider`
+   matches, case-insensitively — enforced at BOTH compute time
+   (`routing_rollup.py::_success_rate_and_coverage`, via a new `stale_providers` parameter
+   threaded through `compute_metrics`) AND read time
+   (`_client_v1_routing_rollup.py::_row_to_key_dto`), so the confirmed-stale gpt/codex-family
+   data is not served through REST/MCP/CLI regardless of what is (or will be) sitting in the
+   persisted `routing_rollup` table. The gate is config-driven specifically so lifting it
+   post-backfill requires no further code change to `routing_rollup.py`.
+2. **Tracked follow-up filed.** The Codex `session_tool_usage` backfill/resync precondition
+   named in `escalation_recommendation` is now IntentTree node
+   `node_01KZP9FBMYNB6BE8EFPAZFYVJ0` (tree `tree_01KVTH95F7P7CXK3QH9ZMECM5T`, ccdash),
+   `blocks`-linked to this contract's own node (`node_01KZ4AKJZ27M2648AKGN00WCJ7`) —
+   previously this precondition existed only as prose in the Completion Report.
+3. **`status` remains `blocked`** (frontmatter, unchanged by this cycle) pending that
+   follow-up and a clean D-b4 re-verification — not flipped to `completed`.
+4. **D-b4 independently re-run**, not re-derived from fix cycle 1's self-reported figures: the
+   same family-split query was re-executed directly against the live node Postgres
+   (`10.42.10.76:5440`) in this cycle and reproduced **21.4% informative-key fraction / 0.04%
+   error rate** for the gpt/codex-family — unchanged from fix cycle 1's measurement,
+   confirming the window is still stale. Script:
+   `.claude/worknotes/di-4e-routing-success-rate/db4_verify.py`.
+5. **Process correction for any future re-run of this contract**: this cycle's fix work
+   (like fix cycle 1's before it) necessarily continued from an existing merged
+   implementation, so the sequencing correction below applies going forward, not
+   retroactively. **When this contract is next executed from a clean state** (e.g. after the
+   backfill follow-up lands and an operator re-opens it), the D-b4 live verification gate MUST
+   run FIRST, before any implementation code is written — exactly as TASK-1.1 step 1 and D-b4's
+   own ratification specify. Do not implement first and gate second.
+
+No further changes were made to `_success_rate_and_coverage`'s D-b1/D-b2 arithmetic, the D-b3
+skill-dimension counters, or `regression_rate`'s permanent-`None` status — those were reviewed
+and approved in fix cycle 1 and are untouched here.

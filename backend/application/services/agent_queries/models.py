@@ -438,6 +438,19 @@ class RoutingRollupKeyDTO(BaseModel):
     persisted-table read path (``_client_v1_routing_rollup.py``); recoverable
     only from a live ``RoutingRollupQueryService.compute_metrics()`` call.
 
+    **DI-4e fix-cycle-2 HALT gate**: ``success_rate`` is ALSO unconditionally
+    ``None`` for any key whose ``provider`` matches (case-insensitively)
+    ``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`` (default
+    ``("openai",)``) -- regardless of tool-usage coverage. This is the D-b4
+    live-verification gate's enforcement mechanism (AC2 of
+    ``docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md``):
+    the gpt/codex-family's ``session_tool_usage`` window is confirmed to
+    still be dominated by stale pre-b51de27 rows, so its ``success_rate`` is
+    withheld from every transport (REST/MCP/CLI) until a backfill/resync
+    precondition lands and the gate is cleared. Enforced both at compute
+    time (``routing_rollup.py::_success_rate_and_coverage``) and at read
+    time (``_client_v1_routing_rollup.py::_row_to_key_dto``).
+
     ``regression_rate`` remains permanently ``None`` -- CLOSED per DI-4b (no
     ``test_results``/``test_runs`` signal exists anywhere in this schema);
     the ``routing_rollup`` DDL (Phase 2) already declares the column nullable

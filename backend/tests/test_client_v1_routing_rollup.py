@@ -168,6 +168,27 @@ class RowToKeyDtoTests(unittest.TestCase):
         self.assertEqual(dto.success_rate, 0.91)
         self.assertEqual(dto.regression_rate, 0.03)
 
+    def test_success_rate_withheld_for_stale_provider_even_with_a_persisted_value(self) -> None:
+        """DI-4e fix-cycle-2 (reviewer finding #1): the D-b4 HALT gate must
+        also apply on this READ path -- a persisted row carrying a real
+        success_rate for a provider named in
+        CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS (default
+        includes "openai") must still be served as None. This is the
+        backstop that makes "not served through REST/MCP/CLI" true
+        regardless of what already landed in the persisted column."""
+        self.assertIn("openai", config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS)
+        dto = _row_to_key_dto(_make_row(provider="OpenAI", success_rate=0.99))
+        self.assertIsNone(dto.success_rate)
+
+    def test_success_rate_gate_matches_case_insensitively(self) -> None:
+        dto = _row_to_key_dto(_make_row(provider="openai", success_rate=0.99))
+        self.assertIsNone(dto.success_rate)
+
+    def test_success_rate_preserved_for_non_gated_provider(self) -> None:
+        """Confirms the gate is provider-scoped, not a blanket suppression."""
+        dto = _row_to_key_dto(_make_row(provider="anthropic", success_rate=0.91))
+        self.assertEqual(dto.success_rate, 0.91)
+
     def test_cost_index_null_passes_through_unchanged(self) -> None:
         """DI-4a: a persisted NULL cost_index (a zero-coverage key,
         D-a2) must never be fabricated into a baseline -- the same

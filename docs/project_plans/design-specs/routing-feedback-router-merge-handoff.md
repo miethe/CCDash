@@ -43,7 +43,7 @@ shipped v1 producer, **all three are null-or-constant for every row, by delibera
 
 | Field | v1 emitted value | Why (producer's own rationale) |
 |-------|------------------|--------------------------------|
-| `success_rate` | ~~`None`, always~~ — **DI-4e implemented but HALTED at the ship gate 2026-08-10 (see §0a below).** Compute logic (per-key tool-error-rate complement, `null` on zero attribution) is correct; the live D-b4 verification found the current window's Codex/GPT family still stale-skewed, so the contract does not ship until a backfill precondition clears. | Was: `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
+| `success_rate` | ~~`None`, always~~ — **DI-4e real for Claude-family keys; HALTED (forced `null`) for gpt/codex-family keys via a mechanical gate, 2026-08-10 (see §0a below).** Compute logic (per-key tool-error-rate complement, `null` on zero attribution) is correct for every provider; a separate, config-driven stale-provider gate (`CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`) unconditionally withholds `success_rate` for the gpt/codex family until a backfill precondition clears and D-b4 re-verifies clean — enforced at both compute time and read time, so REST/MCP/CLI never serve a stale-family value. | Was: `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
 | `regression_rate` | `None`, always — **still true, permanently.** CLOSED per DI-4b (2026-08-03): no `test_results`/`test_runs` signal exists anywhere in this schema. Not revisited by DI-4e. | No genuine regression signal available to that module, and none is being built. |
 | `cost_index` | ~~`1.0`, fixed (`_COST_INDEX_BASELINE`)~~ — **SUPERSEDED 2026-08-03: now real.** DI-4a shipped; the node serves 261/346 rows non-null across 249 distinct values. | Was: per-key cost normalization is "a real design surface of its own," deliberately not gold-plated into a provisional payload. |
 | `sample_count` | real | — |
@@ -116,6 +116,23 @@ Codex `session_tool_usage` rows has run**, so the code-fix-vs-stored-data gap `d
 (re-parse pre-`b51de27` Codex JSONL through the fixed parser and overwrite the stale
 `session_tool_usage` rows) is the precondition, after which this same D-b4 query should be re-run to
 confirm the window has cleared before treating any Codex-family `success_rate` value as trustworthy.
+
+**Update 2026-08-10 (fix cycle 2) — the HALT is now a mechanical gate, and the finding was
+independently re-confirmed.** Fix cycle 1 recorded the HALT determination but left
+`success_rate` computation unconditional in code — nothing actually withheld a gpt/codex-family
+value from being served. This is now closed:
+`config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` (default `("openai",)`) forces
+`success_rate`/`success_rate_coverage_fraction` to `null`/`0.0` for any matching provider, enforced
+BOTH at compute time (`routing_rollup.py::_success_rate_and_coverage`, so no future worker sweep
+persists a stale-family value) AND at read time
+(`_client_v1_routing_rollup.py::_row_to_key_dto`, so an already-persisted row is never served with
+one either) — independent of `CCDASH_ROUTING_FEEDBACK_ENABLED`/`live_consumption_disabled`. This
+flag is the only sanctioned way to lift the gate, and only once the backfill/resync precondition
+below has run and this same D-b4 query has been re-run and shown clean. Additionally, fix cycle 2
+independently re-ran the D-b4 query (not merely re-reading fix cycle 1's self-reported figures)
+against the same live node Postgres and reproduced the finding: **21.4% of gpt/codex-family keys
+informative, 0.04% error rate** — unchanged from fix cycle 1's measurement, confirming the window
+is still stale.
 
 DI-4 does **not** decompose evenly. A signal-source audit against the node Postgres
 (2026-08-01, 18,762 sessions) found the three fields have completely different feasibility:

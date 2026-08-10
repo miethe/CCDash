@@ -37,6 +37,18 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_csv_lower(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Parse a comma-separated env var into a tuple of lowercased, stripped
+    tokens. Missing env var falls back to *default* verbatim (never an empty
+    tuple by omission) -- a caller that wants "gate disabled" must set the
+    env var to an explicit empty string, not merely leave it unset.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return tuple(part.strip().lower() for part in value.split(",") if part.strip())
+
+
 def _env_bool_from(environ: Mapping[str, str], name: str, default: bool = False) -> bool:
     value = environ.get(name)
     if value is None:
@@ -164,6 +176,31 @@ CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS = _env_int("CCDASH_ROUTING_FEEDBACK_WINDOW_D
 # this flag only controls the additional protected-class rows.
 CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS = _env_bool(
     "CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS", True
+)
+# DI-4e fix-cycle-2 (reviewer finding #1): the D-b4 live verification gate
+# (docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md
+# AC2) independently re-confirmed the gpt/codex-family's `session_tool_usage`
+# window is still measurably dominated by stale pre-b51de27 rows (21.4%
+# informative-key fraction / 0.04% error rate, vs. the fixed-parser 89.2% /
+# 1.48% baseline `di-4d-remeasurement.md` demonstrated is achievable). The
+# contract's own D-b4 ratification is a hard "do not ship" for that family
+# until a Codex `session_tool_usage` backfill/resync precondition lands and
+# this gate re-verifies clean. This flag is the mechanism: any provider
+# named here has its `success_rate`/`success_rate_coverage_fraction`
+# withheld (forced null, same shape as zero-attribution) both at compute
+# time (`routing_rollup.py::_success_rate_and_coverage`, so no future worker
+# sweep persists a stale-family value) and at read time
+# (`_client_v1_routing_rollup.py::_row_to_key_dto`, so an already-persisted
+# row is never served with a stale-family value either) -- independent of
+# `CCDASH_ROUTING_FEEDBACK_ENABLED`. Matches
+# `derive_model_identity()["modelProvider"]` case-insensitively; "openai"
+# covers both Codex and bare gpt-* sessions since this module has no
+# finer-grained Codex-vs-other-OpenAI distinction to gate on. Clear this
+# (set to an explicit empty string) only once the backfill/resync has run
+# AND the D-b4 query has been re-run and shown clean -- never as a
+# workaround for a failing test or an impatient re-run.
+CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS = _env_csv_lower(
+    "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
 )
 # proof-to-routing-loop Phase 4 (T4-002): RoutingRollupSweepJob -- the
 # default-off (per CCDASH_ROUTING_FEEDBACK_ENABLED above) background worker

@@ -196,6 +196,26 @@ mapping is even applied), so a consumer can tell a genuinely skill-aware key
 (non-empty ``source_skill_name``) from a ``(project_id x model)`` key
 wearing a three-part key's clothes without inspecting ``source_skill_name``
 per row.
+
+── DI-4e fix-cycle-2 (this task): the D-b4 HALT gate, made mechanical ──────
+
+Fix cycle 1 RAN the D-b4 live verification query and recorded a HALT
+determination (the gpt/codex-family's ``session_tool_usage`` window is still
+measurably dominated by stale pre-b51de27 rows) -- but left the already-
+implemented ``success_rate`` computation unconditional, with no code
+mechanism actually withholding it for that family. This cycle closes that
+gap: ``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS``
+(default ``("openai",)``) is threaded into ``_success_rate_and_coverage``
+(compute time -- so no future worker sweep persists a stale-family value)
+AND into ``_client_v1_routing_rollup.py::_row_to_key_dto`` (read time -- so
+an already-persisted row is never served with one either). A row whose
+``provider`` matches, case-insensitively, has ``success_rate``/
+``success_rate_coverage_fraction`` forced to ``(None, 0.0)`` unconditionally
+-- independent of ``CCDASH_ROUTING_FEEDBACK_ENABLED``/``live_consumption_disabled``
+(DI-1, both stay untouched) and independent of how much genuine tool-usage
+coverage the row actually has. This flag is the only sanctioned way to lift
+the gate: only once the Codex ``session_tool_usage`` backfill/resync
+precondition has run AND the D-b4 query has been re-run and shown clean.
 """
 from __future__ import annotations
 
@@ -335,7 +355,9 @@ def _cost_index_and_coverage(
     return key_mean_cost / baseline, coverage_fraction
 
 
-def _success_rate_and_coverage(row: ProviderRollupRow) -> tuple[float | None, float]:
+def _success_rate_and_coverage(
+    row: ProviderRollupRow, stale_providers: frozenset[str] = frozenset()
+) -> tuple[float | None, float]:
     """Compute one row's ``(success_rate, success_rate_coverage_fraction)``
     pair (DI-4e).
 
@@ -356,10 +378,27 @@ def _success_rate_and_coverage(row: ProviderRollupRow) -> tuple[float | None, fl
     ``tool_success_sum / tool_call_sum`` -- algebraically identical to
     ``1 - (tool_errors / tool_calls)`` since ``tool_errors = tool_call_sum -
     tool_success_sum``, but expressed without an intermediate subtraction.
+
+    DI-4e fix-cycle-2 (reviewer finding #1): before computing anything, a row
+    whose ``provider`` (case-insensitively) is in *stale_providers* has
+    ``success_rate`` withheld unconditionally -- returned ``None`` with a
+    forced ``0.0`` coverage fraction, the same "nothing to report" shape as
+    zero-attribution, REGARDLESS of how much genuine tool-usage coverage the
+    row actually has. This is the D-b4 HALT gate: the live verification
+    query (AC2) found the gpt/codex-family's ``session_tool_usage`` window
+    still measurably dominated by stale pre-b51de27 rows, and the contract's
+    own D-b4 ratification is a hard "do not ship" for that family until a
+    backfill/resync precondition lands and this gate re-verifies clean.
+    *stale_providers* defaults to empty here (this helper never reads
+    ``config`` itself, mirroring every other pure helper in this module) --
+    ``compute_metrics`` is the sole caller and always threads
+    ``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`` through.
     """
     coverage_fraction = (
         row.tool_usage_covered_count / row.session_count if row.session_count > 0 else 0.0
     )
+    if row.provider.strip().lower() in stale_providers:
+        return None, 0.0
     if row.tool_usage_covered_count <= 0 or row.tool_call_sum <= 0:
         return None, coverage_fraction
     return row.tool_success_sum / row.tool_call_sum, coverage_fraction
@@ -1034,6 +1073,7 @@ class RoutingRollupQueryService:
         *,
         min_sample_size: int | None = None,
         freshness_ts: str | None = None,
+        stale_providers: frozenset[str] | None = None,
     ) -> list[RoutingRollupKeyDTO]:
         """Compute the full D5 metric payload for every row and assemble the
         terminal ``RoutingRollupKeyDTO`` (T3-004) -- the last transform in
@@ -1064,7 +1104,19 @@ class RoutingRollupQueryService:
         ``success_rate``/``success_rate_coverage_fraction`` (DI-4e) are
         computed via ``_success_rate_and_coverage`` -- see that helper's
         docstring for the full D-b1/D-b2 rationale (call-volume-weighted,
-        ``None`` on zero tool-usage attribution).
+        ``None`` on zero tool-usage attribution) AND the DI-4e fix-cycle-2
+        D-b4 HALT gate (``stale_providers``, below) it also enforces.
+
+        *stale_providers* defaults to
+        ``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`` (test
+        override point, same convention as *min_sample_size*) -- a row whose
+        ``provider`` matches (case-insensitively) has ``success_rate``
+        withheld unconditionally, independent of how much genuine tool-usage
+        coverage it has. This is the mechanism the D-b4 live-verification
+        gate (AC2) requires: the gpt/codex-family's confirmed-stale
+        ``session_tool_usage`` window must not be served through REST/MCP/
+        CLI until a backfill/resync precondition lands and the gate
+        re-verifies clean.
 
         ``regression_rate`` remains permanently ``None`` -- CLOSED per DI-4b:
         no ``test_results``/``test_runs`` signal exists anywhere in this
@@ -1086,6 +1138,11 @@ class RoutingRollupQueryService:
             else config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE
         )
         resolved_freshness_ts = freshness_ts if freshness_ts is not None else _now_iso()
+        resolved_stale_providers = (
+            stale_providers
+            if stale_providers is not None
+            else frozenset(config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS)
+        )
         cost_baselines = _task_class_cost_baselines(rows)
 
         key_dtos: list[RoutingRollupKeyDTO] = []
@@ -1096,7 +1153,9 @@ class RoutingRollupQueryService:
             cost_index, cost_coverage_fraction = _cost_index_and_coverage(
                 row, cost_baselines.get(row.task_class)
             )
-            success_rate, success_rate_coverage_fraction = _success_rate_and_coverage(row)
+            success_rate, success_rate_coverage_fraction = _success_rate_and_coverage(
+                row, resolved_stale_providers
+            )
             key_dtos.append(
                 RoutingRollupKeyDTO(
                     producer=routing_feedback_contract.PRODUCER,

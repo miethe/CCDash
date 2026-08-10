@@ -47,6 +47,18 @@ row write. Freshness is instead handled at the write site: the P4 sweep
 worker (``backend/adapters/jobs/routing_rollup_sweep_job.py``) calls
 ``aclear_project_cache`` whenever it persists rows -- mirrors
 ``_client_v1_aar_review.py``'s identical caching note.
+
+DI-4e fix-cycle-2 success_rate HALT gate
+-----------------------------------------
+``_row_to_key_dto`` withholds ``success_rate`` (forces ``None``) for any
+persisted row whose ``provider`` matches, case-insensitively,
+``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`` (default
+``("openai",)``) -- the D-b4 live-verification gate's mechanism, per
+``docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md``
+AC2. This is a read-time backstop on top of the compute-time gate in
+``routing_rollup.py::_success_rate_and_coverage`` -- it never trusts the
+persisted column's value for a gated provider, regardless of when or by
+which binary that row was written.
 """
 from __future__ import annotations
 
@@ -149,7 +161,21 @@ def _row_to_key_dto(row: Mapping[str, Any]) -> RoutingRollupKeyDTO:
         model=str(row.get("model") or ""),
         provider=str(row.get("provider") or ""),
         sample_count=int(row.get("sample_count") or 0),
-        success_rate=row.get("success_rate"),
+        # DI-4e fix-cycle-2 (reviewer finding #1): the D-b4 HALT gate applies
+        # on this read path too, not only at compute time -- a row whose
+        # persisted `provider` matches (case-insensitively)
+        # `config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` has
+        # `success_rate` withheld unconditionally, regardless of what value
+        # is already sitting in the persisted column. This is the backstop
+        # that makes the gate real for REST/MCP/CLI: even a row a stale-gate
+        # worker sweep already wrote (or a future sweep run with an
+        # unpatched binary) is never served with a stale-family value.
+        success_rate=(
+            None
+            if str(row.get("provider") or "").strip().lower()
+            in config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS
+            else row.get("success_rate")
+        ),
         # DI-4e: success_rate_coverage_fraction is compute-layer/response-DTO
         # ONLY -- this task adds no persisted column (see RoutingRollupKeyDTO's
         # docstring). Always None on this read path; recoverable only from a

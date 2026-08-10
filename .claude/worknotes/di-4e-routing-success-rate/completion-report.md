@@ -312,6 +312,84 @@ merge decisions) — flagged explicitly here rather than decided unilaterally.
    explicitly out of scope here) if a live consumer ever needs it to survive
    the read path the way `cost_coverage_fraction` does since v47.
 
+### Fix Cycle 2 Addendum (2026-08-10)
+
+Reviewer findings addressed this cycle (numbered per the fix-cycle instructions):
+
+1. **Gated `success_rate` emission for the confirmed-stale gpt/codex family.** Added
+   `config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` (default `("openai",)`) and
+   threaded it into `routing_rollup.py::_success_rate_and_coverage`/`compute_metrics`
+   (compute-time gate — no future worker sweep persists a stale-family value) AND
+   `_client_v1_routing_rollup.py::_row_to_key_dto` (read-time backstop — an already-persisted
+   row is never served with a stale-family value either, regardless of what landed in the
+   column). Case-insensitive provider match, forces `(success_rate=None,
+   success_rate_coverage_fraction=0.0)` unconditionally for a matching row. This is the
+   mechanism finding #1 asked for; previously the HALT determination was recorded but nothing
+   in code enforced it.
+2. **Filed a tracked follow-up.** IntentTree node `node_01KZP9FBMYNB6BE8EFPAZFYVJ0` (tree
+   `tree_01KVTH95F7P7CXK3QH9ZMECM5T`, ccdash) captures the Codex `session_tool_usage`
+   backfill/resync precondition from `escalation_recommendation`, `blocks`-linked to this
+   contract's own node (`node_01KZ4AKJZ27M2648AKGN00WCJ7`) and external-linked back to the
+   feature contract file. No longer prose-only.
+3. **Contract status untouched at `blocked`.** Verified the frontmatter already reads
+   `status: blocked` (line 7) and left it there — not flipped to `completed`.
+4. **D-b4 independently re-run.** Executed the same family-split query directly against the
+   live node Postgres (`10.42.10.76:5440`, connection string from the main checkout's
+   gitignored `.env`, never hardcoded/committed) in this fix cycle, rather than trusting fix
+   cycle 1's self-reported figures. Result: **21.4% informative-key fraction / 0.04% error
+   rate** for the gpt/codex-family — identical to fix cycle 1's measurement, confirming the
+   window is still stale. Script preserved at
+   `.claude/worknotes/di-4e-routing-success-rate/db4_verify.py` for reproducibility. Raw output:
+
+   ```
+   total_sessions_in_30d_window=7019
+   total_keys=398 keys_clearing_min5=197 sessions_in_clearing_keys=6625
+
+   family              keys     informative  zero_mean  no_data     calls   errors  err_rate
+   claude-family        157   154( 98.1%)          3        0    190413     7250     3.81%
+   empty model            8     0(  0.0%)          0        8         0        0      nan%
+   gpt/codex-family      28     6( 21.4%)         21        1     46394       19     0.04%
+   synthetic              4     2( 50.0%)          1        1       342        8     2.34%
+   ```
+5. **Process correction recorded for future re-runs.** Added an explicit note (feature
+   contract "Fix Cycle 2" section) that any future execution of this contract from a clean
+   state must run the D-b4 live verification gate FIRST, before writing implementation code —
+   this and the prior cycle both necessarily continued from an already-merged implementation,
+   so the correction is prescriptive for the next clean run, not retroactive for these two.
+
+**Files touched this cycle** (beyond the original `files_affected` list, documented as
+deviations consistent with fix cycle 1's own precedent of touching
+`_client_v1_routing_rollup.py`):
+- `backend/config.py` — added `_env_csv_lower` helper + the new stale-providers flag.
+- `backend/application/services/agent_queries/routing_rollup.py` — gate wiring +
+  docstring updates (module docstring, `_success_rate_and_coverage`, `compute_metrics`).
+- `backend/application/services/agent_queries/models.py` — `RoutingRollupKeyDTO` docstring
+  addition describing the gate.
+- `backend/routers/_client_v1_routing_rollup.py` — read-path gate + module docstring note.
+- `backend/tests/test_routing_rollup_metrics.py` — new `TestSuccessRateStaleProviderGate`
+  (6 tests: default-gated, case-insensitive match, non-gated provider unaffected,
+  gate is config-driven not hardcoded, config default sanity check, `build_response`
+  honors the gate too).
+- `backend/tests/test_client_v1_routing_rollup.py` — 3 new tests on `RowToKeyDtoTests`
+  confirming the read-path backstop withholds an already-persisted real value.
+- `docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md` — §0 field-table
+  row and §0a updated to describe the mechanical gate and the independent re-verification.
+- `docs/guides/routing-feedback-loop.md` — new "`success_rate` Stale-Provider HALT Gate"
+  operator-guidance subsection + updated `success_rate` field-table row.
+- `docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md` — new
+  "Fix Cycle 2" section (this contract file itself) + `files_affected` list extended.
+
+**Validation Run (fix cycle 2)**:
+
+| Command | Result | Notes |
+|---|---|---|
+| `pytest backend/tests/test_routing_rollup_metrics.py -q` | Pass (40/40) | Includes 6 new stale-provider-gate tests |
+| `pytest backend/tests/test_client_v1_routing_rollup.py -q` | Pass (27/27) | Includes 3 new read-path gate tests |
+| `pytest backend/tests/test_routing_rollup_envelope_completeness.py backend/tests/test_routing_rollup_aggregation.py backend/tests/test_routing_rollup_determinism.py backend/tests/test_routing_rollup_effort_dimension.py backend/tests/test_routing_rollup_mapping.py backend/tests/test_routing_rollup_no_llm_imports.py -q` | Pass (57/57, 23 subtests) | |
+| `pytest backend/tests/test_routing_rollup_provider_coverage.py backend/tests/test_routing_rollup_repo.py backend/tests/test_routing_rollup_sparse_protected.py backend/tests/test_routing_rollup_sweep_job.py backend/tests/test_routing_rollup_transports.py backend/tests/test_routing_rollup_disabled_state.py -q` | 8 failed (pre-existing, unrelated), 53 passed | Same pre-existing `cost_coverage_fraction`-missing fixture bug in `test_routing_rollup_disabled_state.py` documented in fix cycle 1's report — confirmed still untouched by this cycle's diff, not caused or worsened here |
+| `ruff check` (7 touched Python files) | Pass | "All checks passed!" |
+| Module import smoke (`config`, `routing_rollup`, `models`, `_client_v1_routing_rollup`) | Pass | |
+
 ### Memory Candidates Captured
 
 None captured via the memory CLI/API in this sprint (sandboxed environment,

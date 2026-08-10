@@ -491,6 +491,103 @@ class TestSuccessRateDeterminism(_ServiceTestBase):
 
 
 # ---------------------------------------------------------------------------
+# AC2/D-b4 fix-cycle-2 (reviewer finding #1): success_rate is withheld
+# unconditionally for a provider named in
+# CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS, regardless of
+# tool-usage coverage -- the mechanical HALT gate the D-b4 live-verification
+# query's finding requires.
+# ---------------------------------------------------------------------------
+
+
+class TestSuccessRateStaleProviderGate(_ServiceTestBase):
+    def test_fully_covered_openai_row_is_still_withheld_by_default(self) -> None:
+        """A fully-covered row would otherwise compute a real success_rate --
+        confirm the default stale-provider gate (config default: "openai")
+        withholds it anyway, since provider is the gpt/codex family the
+        live D-b4 query found still confirmed-stale."""
+        row = _provider_row(
+            provider="OpenAI",  # exact derive_model_identity() casing
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        [dto] = self.service.compute_metrics([row])
+
+        self.assertIsNone(dto.success_rate)
+        self.assertEqual(dto.success_rate_coverage_fraction, 0.0)
+
+    def test_gate_matches_case_insensitively(self) -> None:
+        row = _provider_row(
+            provider="openai",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        [dto] = self.service.compute_metrics([row])
+
+        self.assertIsNone(dto.success_rate)
+
+    def test_non_gated_provider_still_computes_a_real_rate(self) -> None:
+        """Confirms the gate is provider-scoped, not a blanket suppression --
+        an anthropic-family row with identical coverage still emits a real
+        success_rate."""
+        row = _provider_row(
+            provider="anthropic",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        [dto] = self.service.compute_metrics([row])
+
+        self.assertAlmostEqual(dto.success_rate, 0.95)
+
+    def test_gate_is_configurable_not_hardcoded(self) -> None:
+        """Proves this is a real, liftable gate (per the D-b4 escalation
+        recommendation's re-run path), not a disguised permanent
+        suppression: overriding the stale-provider set via
+        compute_metrics's explicit parameter changes the outcome."""
+        row = _provider_row(
+            provider="openai",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+
+        gated = self.service.compute_metrics([row], stale_providers=frozenset({"openai"}))
+        cleared = self.service.compute_metrics([row], stale_providers=frozenset())
+
+        self.assertIsNone(gated[0].success_rate)
+        self.assertAlmostEqual(cleared[0].success_rate, 0.95)
+
+    def test_config_default_includes_openai(self) -> None:
+        self.assertIn("openai", config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS)
+
+    def test_build_response_honors_the_default_gate_too(self) -> None:
+        """build_response delegates to compute_metrics without overriding
+        stale_providers -- confirm the gate is not accidentally bypassed at
+        the response-assembly entry point real callers use."""
+        row = _provider_row(
+            provider="OpenAI",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+        coverage = CoverageCounters(mapped_count=10, unclassified_count=0, distinct_unmapped_skill_names=[])
+
+        response = self.service.build_response([row], coverage)
+
+        self.assertIsNone(response.keys[0].success_rate)
+
+
+# ---------------------------------------------------------------------------
 # AC3/D-b3: skill-dimension coverage counters -- response-level, scoped to
 # the min_sample_size-clearing population.
 # ---------------------------------------------------------------------------
