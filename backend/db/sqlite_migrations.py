@@ -4,6 +4,14 @@ All CREATE TABLE statements for the caching layer.
 Uses IF NOT EXISTS for idempotent runs.
 
 Schema version history (keep in lockstep with postgres_migrations.py):
+  v51 — ica-key-and-spend-capture: sessions table gains ica_key,
+         ica_spend_start, ica_spend_end, ica_spend_delta,
+         ica_spend_attribution (all nullable TEXT). Key identity + per-session
+         ICA dollar spend (raw start/end readings + attributable delta). The
+         delta is NULL unless exclusivity is provable; ica_spend_attribution
+         carries the reason (closed vocab -- see backend/parsers/ica_spend.py).
+         Additive, no backfill in the migration; attribution is derived by a
+         repository-level pass (backfill_ica_spend_attribution).
   v50 — automatic-session-naming M1: sessions table gains session_name
          (nullable TEXT) + session_name_source (nullable TEXT, closed
          vocabulary -- see backend/parsers/session_name_provenance.py).
@@ -74,7 +82,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 50
+SCHEMA_VERSION = 51
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -255,6 +263,21 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- in backend/parsers/effort_provenance.py. NULL == provenance unknown (row
     -- written before this column, or effort_tier itself NULL). No backfill.
     effort_tier_source TEXT,
+    -- ica-key-and-spend-capture (v51). All nullable; the two dimensions the
+    -- launcher sidecar could not carry. ica_key is the ICA key NAME (CC1..CC6),
+    -- NEVER secret bytes; NULL == not an ICA-launched session (never defaulted
+    -- to CC1). ica_spend_start/end are the raw x-litellm-key-spend header
+    -- readings (cumulative-per-key dollars) at session start/end. ica_spend_delta
+    -- is end-start ONLY when exclusivity is provable; NULL otherwise (never
+    -- silently divided). ica_spend_attribution carries the reason token (closed
+    -- vocabulary -- backend/parsers/ica_spend.py): attributed / concurrent_shared_key
+    -- / key_changed / incomplete_readings. Delta+attribution are derived post-
+    -- upsert by backfill_ica_spend_attribution, not written by the parser.
+    ica_key                TEXT,
+    ica_spend_start        TEXT,
+    ica_spend_end          TEXT,
+    ica_spend_delta        TEXT,
+    ica_spend_attribution  TEXT,
     -- subagent-skill-inheritance (v49). Nullable; records whether skill_name
     -- was directly detected on this session's own transcript or inherited
     -- (one hop) from the parent session's skill_name. Token vocabulary lives
@@ -3167,6 +3190,12 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
     await _ensure_column(db, "sessions", "model_variant", "TEXT")
     # Gap 4 effort-tier provenance (v44). Nullable; no backfill.
     await _ensure_column(db, "sessions", "effort_tier_source", "TEXT")
+    # ica-key-and-spend-capture (v51). Nullable; no backfill in-migration.
+    await _ensure_column(db, "sessions", "ica_key", "TEXT")
+    await _ensure_column(db, "sessions", "ica_spend_start", "TEXT")
+    await _ensure_column(db, "sessions", "ica_spend_end", "TEXT")
+    await _ensure_column(db, "sessions", "ica_spend_delta", "TEXT")
+    await _ensure_column(db, "sessions", "ica_spend_attribution", "TEXT")
     await _ensure_column(db, "sessions", "fork_parent_session_id", "TEXT")
     await _ensure_column(db, "sessions", "fork_point_log_id", "TEXT")
     await _ensure_column(db, "sessions", "fork_point_entry_uuid", "TEXT")
@@ -4581,6 +4610,22 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
             "sessions.session_name_source added (nullable, no default, no "
             "backfill in this migration -- see "
             "backend/parsers/session_name_provenance.py)."
+        )
+
+    if current_version < 51:
+        # ica-key-and-spend-capture (v51). Nullable; no in-migration backfill.
+        # ica_key is the ICA key NAME (never secret bytes); ica_spend_* carry the
+        # raw x-litellm-key-spend readings + attributable delta + reason token.
+        await _ensure_column(db, "sessions", "ica_key", "TEXT")
+        await _ensure_column(db, "sessions", "ica_spend_start", "TEXT")
+        await _ensure_column(db, "sessions", "ica_spend_end", "TEXT")
+        await _ensure_column(db, "sessions", "ica_spend_delta", "TEXT")
+        await _ensure_column(db, "sessions", "ica_spend_attribution", "TEXT")
+        logger.info(
+            "v51 migrations complete: sessions.ica_key + ica_spend_start/end/"
+            "delta/attribution added (nullable, no default, no backfill in this "
+            "migration -- delta/attribution derived by "
+            "backfill_ica_spend_attribution; vocab in backend/parsers/ica_spend.py)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

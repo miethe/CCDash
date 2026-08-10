@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import aiosqlite
 from backend.model_identity import model_filter_tokens
+from backend.parsers.ica_spend import decide_attribution, windows_overlap
 from backend.db.repositories.base import retry_on_locked, DEFAULT_WORKSPACE_ID
 from backend.parsers.skill_provenance import SKILL_SOURCE_DIRECT, SKILL_SOURCE_INHERITED_PARENT
 from backend.parsers.session_name_provenance import (
@@ -102,8 +103,9 @@ class SqliteSessionRepository:
                 launcher, profile, effort_tier, model_variant,
                 source_ref, cwd, effort_tier_source,
                 worktree_name, skill_name_source,
-                session_name, session_name_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                session_name, session_name_source,
+                ica_key, ica_spend_start, ica_spend_end, ica_spend_delta, ica_spend_attribution
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -188,6 +190,16 @@ class SqliteSessionRepository:
                 cwd=COALESCE(excluded.cwd, sessions.cwd),
                 -- Worktree attribution: capture-once (same posture as cwd).
                 worktree_name=COALESCE(excluded.worktree_name, sessions.worktree_name),
+                -- ica-key-and-spend-capture (v51). Capture-once via COALESCE: a
+                -- re-parse with a null value (e.g. delta/attribution the parser
+                -- never sets, or a lost sidecar) must never wipe a value the
+                -- backfill or an earlier ingest already stored. A later non-null
+                -- end reading still lands (excluded non-null wins).
+                ica_key=COALESCE(excluded.ica_key, sessions.ica_key),
+                ica_spend_start=COALESCE(excluded.ica_spend_start, sessions.ica_spend_start),
+                ica_spend_end=COALESCE(excluded.ica_spend_end, sessions.ica_spend_end),
+                ica_spend_delta=COALESCE(excluded.ica_spend_delta, sessions.ica_spend_delta),
+                ica_spend_attribution=COALESCE(excluded.ica_spend_attribution, sessions.ica_spend_attribution),
                 -- automatic-session-naming (v50, T1-003): capture-once, same
                 -- posture as cwd/worktree_name. A re-parse that transiently
                 -- fails to detect the provider name must never wipe a
@@ -305,6 +317,15 @@ class SqliteSessionRepository:
                 # (T1-002) sets these together or not at all.
                 session_data.get("sessionName"),
                 session_data.get("sessionNameSource"),
+                # ica-key-and-spend-capture (v51). icaKey + raw readings come
+                # from the sidecar; icaSpendDelta / icaSpendAttribution are
+                # None here (the parser cannot know the cross-session ledger)
+                # and are filled by backfill_ica_spend_attribution afterwards.
+                session_data.get("icaKey"),
+                session_data.get("icaSpendStart"),
+                session_data.get("icaSpendEnd"),
+                session_data.get("icaSpendDelta"),
+                session_data.get("icaSpendAttribution"),
             ),
         )
         await self._commit()
@@ -370,6 +391,88 @@ class SqliteSessionRepository:
         session_name_rows = await self._backfill_session_name_inheritance(project_id)
 
         return {"rows": max(rows, 0), "session_name_rows": session_name_rows}
+
+    async def backfill_ica_spend_attribution(self, project_id: str) -> dict[str, int]:
+        """Derive ``ica_spend_delta`` + ``ica_spend_attribution`` (v51, idempotent).
+
+        The ``x-litellm-key-spend`` header is a cumulative-per-key total shared
+        across every session using that ICA key, so a lone session's delta
+        (end - start) is honest ONLY when no other session used the same key in
+        its window. This pass owns that decision because it needs the
+        cross-session ledger the parser cannot see. For every session in the
+        project that has BOTH raw readings, it:
+
+          * checks whether any OTHER session with the same ``ica_key`` has an
+            overlapping [started_at, ended_at] window (concurrent contamination),
+          * asks :func:`decide_attribution` for the verdict, and
+          * writes delta (only when ``attributed``) + the reason token.
+
+        "Never silently divided" (AC3) is structural: a contaminated window
+        yields ``concurrent_shared_key`` with a NULL delta -- there is no code
+        path that apportions a shared counter. Idempotent: recomputed from the
+        raw readings every pass; re-running writes the same values.
+
+        Returns ``{"rows": <sessions whose delta/attribution changed>}``.
+        """
+        async with self.db.execute(
+            """
+            SELECT id, ica_key, started_at, ended_at,
+                   ica_spend_start, ica_spend_end,
+                   ica_spend_delta, ica_spend_attribution
+            FROM sessions
+            WHERE project_id = ? AND ica_key IS NOT NULL
+            """,
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        by_key: dict[str, list] = {}
+        for r in rows:
+            by_key.setdefault(r["ica_key"], []).append(r)
+
+        updates: list[tuple] = []
+        for r in rows:
+            start_reading = r["ica_spend_start"]
+            end_reading = r["ica_spend_end"]
+            if start_reading is None or end_reading is None:
+                continue
+            overlap = False
+            for other in by_key.get(r["ica_key"], ()):
+                if other["id"] == r["id"]:
+                    continue
+                if windows_overlap(
+                    r["started_at"], r["ended_at"],
+                    other["started_at"], other["ended_at"],
+                ):
+                    overlap = True
+                    break
+            verdict = decide_attribution(
+                start_reading=start_reading,
+                end_reading=end_reading,
+                shared_key_overlap=overlap,
+            )
+            new_delta = verdict.delta_str
+            new_attr = verdict.attribution
+            if r["ica_spend_delta"] == new_delta and r["ica_spend_attribution"] == new_attr:
+                continue
+            updates.append((new_delta, new_attr, project_id, r["id"]))
+
+        if not updates:
+            return {"rows": 0}
+
+        await retry_on_locked(
+            lambda: self.db.executemany(
+                """
+                UPDATE sessions
+                SET ica_spend_delta = ?, ica_spend_attribution = ?
+                WHERE project_id = ? AND id = ?
+                """,
+                updates,
+            ),
+            repo="sessions",
+        )
+        await self._commit()
+        return {"rows": len(updates)}
 
     async def _backfill_session_name_inheritance(self, project_id: str) -> int:
         """One-hop subagent -> parent ``session_name`` inheritance (T2-001).

@@ -11,6 +11,7 @@ from backend.model_identity import model_filter_tokens
 from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.postgres._transactions import postgres_transaction
 from backend.parsers.skill_provenance import SKILL_SOURCE_DIRECT, SKILL_SOURCE_INHERITED_PARENT
+from backend.parsers.ica_spend import decide_attribution, windows_overlap
 from backend.parsers.session_name_provenance import (
     SESSION_NAME_SOURCE_DERIVED_DETERMINISTIC,
     may_overwrite,
@@ -49,8 +50,9 @@ class PostgresSessionRepository:
                 launcher, profile, effort_tier, model_variant,
                 workspace_id, source_ref, cwd, effort_tier_source,
                 worktree_name, skill_name_source,
-                session_name, session_name_source
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69)
+                session_name, session_name_source,
+                ica_key, ica_spend_start, ica_spend_end, ica_spend_delta, ica_spend_attribution
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -143,7 +145,17 @@ class PostgresSessionRepository:
                 -- target NULL rows -- not this upsert, which is the sole
                 -- provider_persisted writer in M1.
                 session_name=COALESCE(EXCLUDED.session_name, sessions.session_name),
-                session_name_source=COALESCE(EXCLUDED.session_name_source, sessions.session_name_source)
+                session_name_source=COALESCE(EXCLUDED.session_name_source, sessions.session_name_source),
+                -- ica-key-and-spend-capture (v51). Capture-once via COALESCE: a
+                -- re-parse with a null value (delta/attribution the parser never
+                -- sets, or a lost sidecar) must never wipe a value the backfill
+                -- or an earlier ingest already stored. A later non-null end
+                -- reading still lands (EXCLUDED non-null wins).
+                ica_key=COALESCE(EXCLUDED.ica_key, sessions.ica_key),
+                ica_spend_start=COALESCE(EXCLUDED.ica_spend_start, sessions.ica_spend_start),
+                ica_spend_end=COALESCE(EXCLUDED.ica_spend_end, sessions.ica_spend_end),
+                ica_spend_delta=COALESCE(EXCLUDED.ica_spend_delta, sessions.ica_spend_delta),
+                ica_spend_attribution=COALESCE(EXCLUDED.ica_spend_attribution, sessions.ica_spend_attribution)
             WHERE sessions.workspace_id = EXCLUDED.workspace_id
         """
         _conn = _pg_conn if _pg_conn is not None else self.db
@@ -234,6 +246,14 @@ class PostgresSessionRepository:
             # The parser (T1-002) sets these together or not at all.
             session_data.get("sessionName"),
             session_data.get("sessionNameSource"),
+            # ica-key-and-spend-capture (v51). icaKey + raw readings from the
+            # sidecar; delta/attribution are None here (filled post-upsert by
+            # backfill_ica_spend_attribution).
+            session_data.get("icaKey"),
+            session_data.get("icaSpendStart"),
+            session_data.get("icaSpendEnd"),
+            session_data.get("icaSpendDelta"),
+            session_data.get("icaSpendAttribution"),
         )
 
     async def backfill_skill_name_inheritance(self, project_id: str) -> dict[str, int]:
@@ -293,6 +313,85 @@ class PostgresSessionRepository:
         session_name_rows = await self._backfill_session_name_inheritance(project_id)
 
         return {"rows": rows, "session_name_rows": session_name_rows}
+
+    async def backfill_ica_spend_attribution(self, project_id: str) -> dict[str, int]:
+        """Derive ``ica_spend_delta`` + ``ica_spend_attribution`` (v51, idempotent).
+
+        Postgres mirror of the SQLite method of the same name -- see that
+        docstring for the full contract. The ``x-litellm-key-spend`` header is a
+        cumulative-per-key total shared across every session using that ICA key,
+        so a session's delta is honest only when no other session used the key in
+        its window. Contaminated windows yield ``concurrent_shared_key`` with a
+        NULL delta ("never silently divided", AC3). Idempotent: recomputed from
+        the raw readings each pass.
+        """
+        rows = await self.db.fetch(
+            """
+            SELECT id, ica_key, started_at, ended_at,
+                   ica_spend_start, ica_spend_end,
+                   ica_spend_delta, ica_spend_attribution
+            FROM sessions
+            WHERE project_id = $1 AND ica_key IS NOT NULL
+            """,
+            project_id,
+        )
+
+        by_key: dict[str, list] = {}
+        for r in rows:
+            by_key.setdefault(r["ica_key"], []).append(r)
+
+        def _iso(value) -> str | None:
+            # started_at/ended_at are stored as TEXT in both backends today, so
+            # this branch is a defence-in-depth passthrough: fall through the
+            # string branch, and only normalise if a future schema change moves
+            # to TIMESTAMPTZ and hands datetime objects back through asyncpg.
+            # windows_overlap compares normalised ISO-8601 strings lexicographically.
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            try:
+                return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except Exception:
+                return str(value)
+
+        updates: list[tuple] = []
+        for r in rows:
+            start_reading = r["ica_spend_start"]
+            end_reading = r["ica_spend_end"]
+            if start_reading is None or end_reading is None:
+                continue
+            r_start, r_end = _iso(r["started_at"]), _iso(r["ended_at"])
+            overlap = False
+            for other in by_key.get(r["ica_key"], ()):
+                if other["id"] == r["id"]:
+                    continue
+                if windows_overlap(r_start, r_end, _iso(other["started_at"]), _iso(other["ended_at"])):
+                    overlap = True
+                    break
+            verdict = decide_attribution(
+                start_reading=start_reading,
+                end_reading=end_reading,
+                shared_key_overlap=overlap,
+            )
+            new_delta = verdict.delta_str
+            new_attr = verdict.attribution
+            if r["ica_spend_delta"] == new_delta and r["ica_spend_attribution"] == new_attr:
+                continue
+            updates.append((new_delta, new_attr, project_id, r["id"]))
+
+        if not updates:
+            return {"rows": 0}
+
+        await self.db.executemany(
+            """
+            UPDATE sessions
+            SET ica_spend_delta = $1, ica_spend_attribution = $2
+            WHERE project_id = $3 AND id = $4
+            """,
+            updates,
+        )
+        return {"rows": len(updates)}
 
     async def _backfill_session_name_inheritance(self, project_id: str) -> int:
         """One-hop subagent -> parent ``session_name`` inheritance (T2-001).

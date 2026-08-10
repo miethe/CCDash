@@ -305,6 +305,19 @@ class AgentSession(BaseModel):
     # None == provenance unknown (row predates the column, or effortTier is None).
     effortTierSource: Optional[str] = None
     modelVariant: Optional[str] = None
+    # ica-key-and-spend-capture (v51). Written for ICA-launched sessions.
+    # icaKey is the ICA key NAME (CC1..CC6), never secret bytes; None == not an
+    # ICA session (never defaulted to CC1). icaSpendStart/End are the raw
+    # x-litellm-key-spend readings (cumulative-per-key dollars) at session
+    # start/end. icaSpendDelta is end-start ONLY when attributable (else None,
+    # never silently divided); icaSpendAttribution is the reason token (closed
+    # vocab -- backend/parsers/ica_spend.py). Delta+attribution are derived
+    # post-ingest by backfill_ica_spend_attribution, not at parse time.
+    icaKey: Optional[str] = None
+    icaSpendStart: Optional[str] = None
+    icaSpendEnd: Optional[str] = None
+    icaSpendDelta: Optional[str] = None
+    icaSpendAttribution: Optional[str] = None
     # Worktree attribution (worktree-as-first-class). When this session was
     # recorded in a git worktree of its project, this holds the worktree's label
     # (e.g. "run-01ABC", "plan-colorwork-bilateral"). The session's projectId

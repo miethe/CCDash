@@ -5,6 +5,11 @@ Schema version history (keep in lockstep with sqlite_migrations.py):
          (nullable TEXT) + session_name_source (nullable TEXT, closed
          vocabulary -- see backend/parsers/session_name_provenance.py).
          Additive, no backfill in the migration itself.
+  v51 — ica-key-and-spend-capture: sessions table gains ica_key,
+         ica_spend_start, ica_spend_end, ica_spend_delta, ica_spend_attribution
+         (all nullable TEXT). Mirrors sqlite_migrations.py v51. Key identity +
+         per-session ICA dollar spend (raw start/end + attributable delta; delta
+         NULL unless exclusivity provable). Additive, no in-migration backfill.
   v49 — subagent-skill-inheritance: sessions table gains skill_name_source
          (nullable TEXT, closed vocabulary — see
          backend/parsers/skill_provenance.py). Distinguishes a directly
@@ -53,7 +58,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 50
+SCHEMA_VERSION = 51
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -234,6 +239,19 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- in backend/parsers/effort_provenance.py. NULL == provenance unknown (row
     -- written before this column, or effort_tier itself NULL). No backfill.
     effort_tier_source TEXT,
+    -- ica-key-and-spend-capture (v51). All nullable TEXT. ica_key is the ICA
+    -- key NAME (CC1..CC6), NEVER secret bytes; NULL == not an ICA-launched
+    -- session (never defaulted to CC1). ica_spend_start/end are raw
+    -- x-litellm-key-spend readings. ica_spend_delta is end-minus-start ONLY when
+    -- exclusivity is provable, else NULL -- never silently divided.
+    -- ica_spend_attribution is the reason token, closed vocab in
+    -- backend/parsers/ica_spend.py. Delta+attribution derived post-upsert by
+    -- backfill_ica_spend_attribution, not by the parser.
+    ica_key                TEXT,
+    ica_spend_start        TEXT,
+    ica_spend_end          TEXT,
+    ica_spend_delta        TEXT,
+    ica_spend_attribution  TEXT,
     -- subagent-skill-inheritance (v49). Nullable; records whether skill_name
     -- was directly detected on this session's own transcript or inherited
     -- (one hop) from the parent session's skill_name. Token vocabulary lives
@@ -4133,6 +4151,20 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
             "sessions.session_name_source added (nullable, no default, no "
             "backfill in this migration -- see "
             "backend/parsers/session_name_provenance.py)."
+        )
+
+    if current_version < 51:
+        # ica-key-and-spend-capture (v51). Nullable; no in-migration backfill.
+        # Mirror of the SQLite v51 block.
+        await _ensure_column(db, "sessions", "ica_key", "TEXT")
+        await _ensure_column(db, "sessions", "ica_spend_start", "TEXT")
+        await _ensure_column(db, "sessions", "ica_spend_end", "TEXT")
+        await _ensure_column(db, "sessions", "ica_spend_delta", "TEXT")
+        await _ensure_column(db, "sessions", "ica_spend_attribution", "TEXT")
+        logger.info(
+            "v51 migrations complete: sessions.ica_key + ica_spend_start/end/"
+            "delta/attribution added (nullable, no default, no backfill -- delta/"
+            "attribution derived by backfill_ica_spend_attribution)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

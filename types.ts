@@ -621,6 +621,21 @@ export interface AgentSession {
   // Treat an unrecognised token as unknown rather than failing — vocabulary may grow.
   effortTierSource?: string | null;
   modelVariant?: string | null; // launch-time model id (e.g. "claude-opus-4-8[1m]")
+  // ica-key-and-spend-capture (v51). Two dimensions the launch sidecar could
+  // not carry before. All null == "Not captured" (contract state, never
+  // defaulted -- FE renders an explicit fallback per AC4).
+  //   icaKey                — ICA key NAME (CC1..CC6), never a token.
+  //   icaSpendStart / End   — raw x-litellm-key-spend gateway readings.
+  //   icaSpendDelta         — end-start ONLY when attributable (else null).
+  //   icaSpendAttribution   — closed vocab: "attributed" |
+  //                           "concurrent_shared_key" | "key_changed" |
+  //                           "incomplete_readings". Unrecognised token ->
+  //                           treat as unknown rather than fail.
+  icaKey?: string | null;
+  icaSpendStart?: string | null;
+  icaSpendEnd?: string | null;
+  icaSpendDelta?: string | null;
+  icaSpendAttribution?: string | null;
   modelDisplayName?: string;
   modelProvider?: string;
   modelFamily?: string;

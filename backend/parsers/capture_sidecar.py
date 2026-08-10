@@ -26,12 +26,16 @@ logger = logging.getLogger("ccdash.parsers.capture_sidecar")
 
 # Schema versions this parser accepts. Bump when the sidecar schema changes.
 #
+# v2 → v3 (v51) added the optional ``icaKey`` / ``icaSpendStart`` / ``icaSpendEnd``
+# keys for ICA-launched sessions. As with v1→v2, ALL prior versions stay
+# accepted: an older sidecar simply parses those fields as ``None``.
+#
 # v1 → v2 (Gap 4) added the optional ``effortTierSource`` key.  BOTH versions
 # stay accepted deliberately: every sidecar already on disk is v1, and rejecting
 # them would blind the whole capture lane to win a cosmetic version check.  A v1
 # sidecar parses with ``effort_tier_source=None`` — "provenance unknown", which
 # is exactly the truth for a value written before the source was recorded.
-_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3})
 
 
 @dataclass
@@ -57,6 +61,13 @@ class CaptureSidecar:
     #: ``effort_tier`` itself is ``None``.
     effort_tier_source: Optional[str] = None
     model_variant: Optional[str] = None
+    #: ICA key NAME (CC1..CC6) for ICA-launched sessions (v51). NEVER secret
+    #: bytes. ``None`` == not captured / not an ICA session (never defaulted).
+    ica_key: Optional[str] = None
+    #: Raw ``x-litellm-key-spend`` gateway readings (cumulative-per-key dollars)
+    #: at session start / end, stored verbatim. ``None`` == probe absent/failed.
+    ica_spend_start: Optional[str] = None
+    ica_spend_end: Optional[str] = None
     schema_version: Optional[int] = None
     captured_at: Optional[str] = None
 
@@ -122,6 +133,9 @@ def parse_capture_sidecar(path: Path) -> Optional[CaptureSidecar]:
         effort_tier=effort_tier,
         effort_tier_source=effort_tier_source,
         model_variant=_opt_str("modelVariant"),
+        ica_key=_opt_str("icaKey"),
+        ica_spend_start=_opt_str("icaSpendStart"),
+        ica_spend_end=_opt_str("icaSpendEnd"),
         schema_version=int(schema_version),
         captured_at=_opt_str("capturedAt"),
     )

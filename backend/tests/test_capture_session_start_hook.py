@@ -121,7 +121,9 @@ class TestWriteCaptureSidecar:
         data = json.loads(result.read_text())
 
         # Required structure
-        assert data["schemaVersion"] == 1
+        # v51: writer emits schemaVersion 3 (ica-key-and-spend-capture). The
+        # reader still accepts v1/v2 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
+        assert data["schemaVersion"] == 3
         assert data["sessionId"] == _ICA_SESSION_ID
 
         # ica-delegate profile MUST be present
@@ -135,10 +137,13 @@ class TestWriteCaptureSidecar:
         assert isinstance(captured_at, str)
         assert captured_at.endswith("Z")
 
-        # No extra top-level keys beyond the seven schema fields
+        # No extra top-level keys beyond the current schema fields. v51 added
+        # effortTierSource (Gap 4) and ica-key-and-spend-capture fields; older
+        # sidecars on disk keep parsing via _SUPPORTED_SCHEMA_VERSIONS.
         schema_keys = {
             "schemaVersion", "sessionId", "launcher", "profile",
-            "effortTier", "modelVariant", "capturedAt",
+            "effortTier", "effortTierSource", "modelVariant",
+            "icaKey", "icaSpendStart", "icaSpendEnd", "capturedAt",
         }
         assert set(data.keys()) == schema_keys
 
@@ -155,7 +160,9 @@ class TestWriteCaptureSidecar:
         assert result is not None
         data = json.loads(result.read_text())
 
-        assert data["schemaVersion"] == 1
+        # v51: writer emits schemaVersion 3 (ica-key-and-spend-capture). The
+        # reader still accepts v1/v2 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
+        assert data["schemaVersion"] == 3
         assert data["sessionId"] == _ICA_SESSION_ID
         assert data["launcher"] is None
         assert data["profile"] is None
@@ -545,11 +552,18 @@ class TestSettingsEffortLevelFallback:
             dict(os.environ),
         )
         data = json.loads(result.read_text())
+        # v51: writer emits effortTierSource + icaKey / icaSpendStart / icaSpendEnd
+        # in addition to the earlier keys. Order is deterministic (dict-insertion
+        # order in the writer). If a future version adds another field, extend
+        # this list in the same insertion position the writer uses.
         assert list(data.keys()) == [
             "schemaVersion", "sessionId", "launcher", "profile",
-            "effortTier", "modelVariant", "capturedAt",
+            "effortTier", "effortTierSource", "modelVariant",
+            "icaKey", "icaSpendStart", "icaSpendEnd", "capturedAt",
         ]
-        assert data["schemaVersion"] == 1
+        # v51: writer emits schemaVersion 3 (ica-key-and-spend-capture). The
+        # reader still accepts v1/v2 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
+        assert data["schemaVersion"] == 3
 
 
 class TestMainEntrypoint:

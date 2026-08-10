@@ -3312,6 +3312,15 @@ class SyncEngine:
                 skill_inherit_stats = await self.session_repo.backfill_skill_name_inheritance(project.id)
                 stats["skill_name_inherited"] = int(skill_inherit_stats.get("rows", 0))
                 stats["session_name_inherited"] = int(skill_inherit_stats.get("session_name_rows", 0))
+                # ica-key-and-spend-capture (v51): derive per-session ICA dollar
+                # delta + attribution once the whole project's rows are present,
+                # so the cross-session concurrency guard sees every sibling that
+                # shares an ICA key. Runs every pass (not gated on
+                # backfill_session_intelligence) because it is the derive step
+                # for the raw readings the ordinary upsert just wrote, and it is
+                # idempotent (recomputes from the stored readings).
+                ica_spend_stats = await self.session_repo.backfill_ica_spend_attribution(project.id)
+                stats["ica_spend_attributed"] = int(ica_spend_stats.get("rows", 0))
                 if backfill_session_intelligence:
                     usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
                     stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))

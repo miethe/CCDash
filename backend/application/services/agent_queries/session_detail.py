@@ -277,8 +277,9 @@ def _apply_launch_capture(session_payload: dict[str, Any]) -> None:
     """Surface Phase 11 launch-time capture fields on the session DTO (T11-005).
 
     The DB row exposes these columns in **snake_case** (``launcher``, ``profile``,
-    ``effort_tier``, ``model_variant``) while the API/TS contract uses
-    **camelCase** (``launcher``, ``profile``, ``effortTier``, ``modelVariant``).
+    ``effort_tier``, ``model_variant``, ``ica_key``, ``ica_spend_*``) while the
+    API/TS contract uses **camelCase** (``launcher``, ``profile``, ``effortTier``,
+    ``modelVariant``, ``icaKey``, ``icaSpend*``).
     Mirror the existing ``_extract_token_telemetry`` snake→camel idiom so none of
     the four is dropped on the wire.  Each value is passed through verbatim:
     ``None``/absent == "not captured" (a contract state, never defaulted), and
@@ -296,6 +297,16 @@ def _apply_launch_capture(session_payload: dict[str, Any]) -> None:
     # the worktree's identity ("run-01ABC", "plan-colorwork-bilateral") into the
     # session detail so the UI can badge/filter it without a second join.
     session_payload["worktreeName"] = session_payload.get("worktree_name")
+    # ica-key-and-spend-capture (v51). snake_case columns -> camelCase contract.
+    # Each value passes through verbatim: None/absent == "Not captured" (a
+    # contract state, never defaulted), rendered as a fallback by the frontend
+    # (AC4). ica_spend_delta is intentionally None whenever attribution is not
+    # "attributed" -- the UI must show the attribution reason, not a zero.
+    session_payload["icaKey"] = session_payload.get("ica_key")
+    session_payload["icaSpendStart"] = session_payload.get("ica_spend_start")
+    session_payload["icaSpendEnd"] = session_payload.get("ica_spend_end")
+    session_payload["icaSpendDelta"] = session_payload.get("ica_spend_delta")
+    session_payload["icaSpendAttribution"] = session_payload.get("ica_spend_attribution")
 
 
 def _classify_links(

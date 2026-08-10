@@ -1026,6 +1026,12 @@ def _collect_capture_sidecar(
         "effortTier": None,
         "effortTierSource": None,
         "modelVariant": None,
+        # ica-key-and-spend-capture (v51). ica_spend_delta / attribution are
+        # NOT parser-derived (they need the cross-session ledger); the parser
+        # only carries the sidecar's key name + raw readings.
+        "icaKey": None,
+        "icaSpendStart": None,
+        "icaSpendEnd": None,
     }
 
     if is_subagent or not raw_session_id:
@@ -1069,6 +1075,10 @@ def _collect_capture_sidecar(
         # Gap 4: null on v1 sidecars (key predates them) — provenance unknown.
         "effortTierSource": sidecar.effort_tier_source,
         "modelVariant": sidecar.model_variant,  # snake_case → camelCase for AgentSession
+        # ica-key-and-spend-capture (v51): key NAME + raw spend readings only.
+        "icaKey": sidecar.ica_key,
+        "icaSpendStart": sidecar.ica_spend_start,
+        "icaSpendEnd": sidecar.ica_spend_end,
     }
 
 
@@ -4855,6 +4865,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
         # Gap 4: which lane supplied effortTier (launch_env vs claude_settings).
         effortTierSource=capture_sidecar.get("effortTierSource"),
         modelVariant=capture_sidecar.get("modelVariant"),
+        # ica-key-and-spend-capture (v51). Delta/attribution stay None here and
+        # are filled by backfill_ica_spend_attribution after the upsert.
+        icaKey=capture_sidecar.get("icaKey"),
+        icaSpendStart=capture_sidecar.get("icaSpendStart"),
+        icaSpendEnd=capture_sidecar.get("icaSpendEnd"),
     )
 
 

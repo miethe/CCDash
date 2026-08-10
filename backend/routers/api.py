@@ -906,6 +906,12 @@ async def list_sessions(
             # (row predates the column) — FE renders an explicit fallback.
             effortTierSource=s.get("effort_tier_source"),
             modelVariant=s.get("model_variant"),
+            # ica-key-and-spend-capture (v51). None == not captured.
+            icaKey=s.get("ica_key"),
+            icaSpendStart=s.get("ica_spend_start"),
+            icaSpendEnd=s.get("ica_spend_end"),
+            icaSpendDelta=s.get("ica_spend_delta"),
+            icaSpendAttribution=s.get("ica_spend_attribution"),
             # Worktree attribution: None == main-repo session; a non-null label
             # (e.g. "run-01ABC") means the row's projectId is the PARENT repo.
             worktreeName=s.get("worktree_name"),
@@ -1336,6 +1342,12 @@ async def get_session(
         # (row predates the column) — FE renders an explicit fallback.
         effortTierSource=s.get("effort_tier_source"),
         modelVariant=s.get("model_variant"),
+        # ica-key-and-spend-capture (v51). None == not captured.
+        icaKey=s.get("ica_key"),
+        icaSpendStart=s.get("ica_spend_start"),
+        icaSpendEnd=s.get("ica_spend_end"),
+        icaSpendDelta=s.get("ica_spend_delta"),
+        icaSpendAttribution=s.get("ica_spend_attribution"),
         # Worktree attribution: None == main-repo session (see AgentSession).
         worktreeName=s.get("worktree_name"),
         modelDisplayName=model_identity["modelDisplayName"],
