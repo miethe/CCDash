@@ -14,6 +14,28 @@ Both functions operate on data the caller has already fetched via
 ``session_detail.get_session_detail`` (which runs every transcript entry
 through ``agent_queries.redaction.redact_entries`` before returning it) --
 this module never reads a transcript itself and has no I/O of its own.
+
+P1 (TextCompletionPort seam) DEVIATION -- ``build_prompt_text`` still returns
+``str``, not ``PromptEnvelope``, though the P1 scope line called for the
+retype. Recorded here deliberately so a later phase does not read the seam as
+accidentally inconsistent:
+
+1. This function returns the transcript *excerpt*, not the prompt. Each
+   backend wraps that excerpt in its own instruction template, and it is the
+   wrapped ``instruction`` string that is actually sent. An envelope built
+   here would therefore carry the wrong text -- provenance would describe the
+   excerpt while the adapter transmitted something else.
+2. ``PromptEnvelope.redaction_events`` is not derivable from this signature
+   (``items`` alone). Threading a real count out of ``get_session_detail`` is
+   P2/P3 scope; inventing one here would be worse than passing 0.
+
+So the envelope is constructed at each call site instead, and the two lanes
+differ ON PURPOSE: Lane B (hosted, off-box egress) goes through
+``envelope_from_redacted_transcript``'s fail-closed redaction gate, while
+Lane A (local Ollama, loopback-only, zero egress by construction) builds the
+envelope directly -- it never consulted that flag before P1, so gating it
+would be an untested behaviour change, which P1 forbids. Revisit in P3, where
+the redaction-count thread and a third (Anthropic/ICA) lane both land.
 """
 from __future__ import annotations
 
