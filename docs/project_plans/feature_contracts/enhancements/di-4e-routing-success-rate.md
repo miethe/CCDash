@@ -290,18 +290,24 @@ Backend-only, no UI surface. Behavior is specified by the emitted envelope:
 
 (Verbatim from IntentTree node `node_01KZ4AKJZ27M2648AKGN00WCJ7`; do not paraphrase.)
 
-- [ ] **AC1**: `success_rate` populated only for keys with genuine tool-usage attribution;
+- [x] **AC1**: `success_rate` populated only for keys with genuine tool-usage attribution;
   `null` (never a fabricated constant) otherwise, with coverage counters emitted.
-- [ ] **AC2**: Family split verified non-skewed post-DI-4d **before any row is emitted** —
+- [x] **AC2**: Family split verified non-skewed post-DI-4d **before any row is emitted** —
   run the D-b4 live verification query against the current window and record the result
   (pass/HALT) in the Completion Report before proceeding to implementation.
-- [ ] **AC3**: Skill-dimension coverage (~40–45% of `min_sample`-clearing keys) documented
+  → **HALT on 2026-08-10 (three independent runs: 21.4%, 21.4%, 28.6% informative keys for
+  gpt/codex vs claude-family's ~90%), then CLEARED the same day** once the backfill
+  precondition landed. Post-backfill: **25/28 = 89.3% informative, err_rate 0.87%** against
+  claude-family 90.1% / 4.01% — a 0.8pp informative gap, down from 99.3pp pre-DI-4d and
+  10.1pp post-DI-4d. Records: `.claude/worknotes/di-4e-routing-success-rate/backfill-dry-run-2026-08-10.md`,
+  `routing-feedback-router-merge-handoff.md` §0a.
+- [x] **AC3**: Skill-dimension coverage (~40–45% of `min_sample`-clearing keys) documented
   in the envelope (new response-level counters) **and** in the consumer-facing handoff spec
   — a consumer must be able to tell a skill-aware key from a `(project × model)` key
   without reading CCDash source.
-- [ ] **AC4**: `regression_rate` remains `null` with a code comment citing the DI-4b
+- [x] **AC4**: `regression_rate` remains `null` with a code comment citing the DI-4b
   closure.
-- [ ] **AC5**: `live_consumption` remains disabled; no router-side change in this task.
+- [x] **AC5**: `live_consumption` remains disabled; no router-side change in this task.
 
 **Additional engineering ACs:**
 - [ ] Determinism: two invocations over a frozen fixture row-set produce field-identical

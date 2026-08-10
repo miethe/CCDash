@@ -43,7 +43,7 @@ shipped v1 producer, **all three are null-or-constant for every row, by delibera
 
 | Field | v1 emitted value | Why (producer's own rationale) |
 |-------|------------------|--------------------------------|
-| `success_rate` | ~~`None`, always~~ — **DI-4e real for Claude-family keys; HALTED (forced `null`) for gpt/codex-family keys via a mechanical gate, 2026-08-10 (see §0a below).** Compute logic (per-key tool-error-rate complement, `null` on zero attribution) is correct for every provider; a separate, config-driven stale-provider gate (`CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`) unconditionally withholds `success_rate` for the gpt/codex family until a backfill precondition clears and D-b4 re-verifies clean — enforced at both compute time and read time, so REST/MCP/CLI never serve a stale-family value. | Was: `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
+| `success_rate` | ~~`None`, always~~ — **DI-4e real for EVERY provider as of 2026-08-10** (the gpt/codex HALT was lifted once the Codex `session_tool_usage` backfill ran and D-b4 re-verified clean at 89.3% informative keys; see §0a). Per-key tool-error-rate complement, `null` on zero attribution — never a fabricated constant. The config-driven stale-provider gate (`CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`, enforced at both compute and read time) is retained but **defaults to empty**; it is the sanctioned response to a newly measured skew, not an active suppression. | Was: `sessions.status` carries only `active`/`completed` — not a success/failure signal. Fabricating one "would be actively misleading to a consuming router." |
 | `regression_rate` | `None`, always — **still true, permanently.** CLOSED per DI-4b (2026-08-03): no `test_results`/`test_runs` signal exists anywhere in this schema. Not revisited by DI-4e. | No genuine regression signal available to that module, and none is being built. |
 | `cost_index` | ~~`1.0`, fixed (`_COST_INDEX_BASELINE`)~~ — **SUPERSEDED 2026-08-03: now real.** DI-4a shipped; the node serves 261/346 rows non-null across 249 distinct values. | Was: per-key cost normalization is "a real design surface of its own," deliberately not gold-plated into a provisional payload. |
 | `sample_count` | real | — |
@@ -133,6 +133,35 @@ independently re-ran the D-b4 query (not merely re-reading fix cycle 1's self-re
 against the same live node Postgres and reproduced the finding: **21.4% of gpt/codex-family keys
 informative, 0.04% error rate** — unchanged from fix cycle 1's measurement, confirming the window
 is still stale.
+
+**RESOLVED 2026-08-10 — the backfill ran and the gate is lifted. `success_rate` is now real for
+every provider.** The precondition landed as
+`.claude/worknotes/di-4e-routing-success-rate/backfill_codex_tool_usage.py`
+(node `node_01KZP9FBMYNB6BE8EFPAZFYVJ0`): it re-parses `~/.codex/sessions/**/*.jsonl` through the
+current parser and overwrites the stale rows via `PostgresSessionRepository.upsert_tool_usage`
+(`DELETE` + `INSERT ... ON CONFLICT` in one transaction, so it is atomic and idempotent).
+**1,239 of 1,242** in-window Codex sessions were re-parsed (99.8% coverage); the 3 with no local
+JSONL retain their historical rows rather than being zeroed.
+
+The same D-b4 query was then re-run against the same live Postgres, before and after:
+
+| | gpt/codex-family informative | err_rate | claude-family informative | err_rate |
+|---|---|---|---|---|
+| before backfill | 8/28 (**28.6%**) | 0.11% | 146/162 (90.1%) | 4.01% |
+| after backfill | 25/28 (**89.3%**) | 0.87% | 146/162 (90.1%) | 4.01% |
+
+The informative-key gap between families is now **0.8pp** — down from 99.3pp pre-DI-4d and 10.1pp
+post-DI-4d — landing exactly on the 89.2% the re-parse projection demonstrated was achievable. The
+window is no longer skewed, so `CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` now defaults
+to **empty** and no provider is withheld. The gate mechanism itself is retained (both enforcement
+points, both test layers) as the sanctioned response to any *newly measured* skew.
+
+⚠️ One residual worth a consumer's attention: the two families' informative fractions now agree
+(89.3% vs 90.1%), but their *error rates* still differ ~4.6x (0.87% vs 4.01%). That is a difference
+in measured tool-failure rate, not in coverage, and is plausibly a genuine property of the different
+tool mixes (Codex's `exec`/`wait` vs Claude's tool set) rather than a residual parser artifact — but
+it has **not** been independently attributed, so do not read the cross-family `success_rate` spread
+as purely behavioural until it has been.
 
 DI-4 does **not** decompose evenly. A signal-source audit against the node Postgres
 (2026-08-01, 18,762 sessions) found the three fields have completely different feasibility:

@@ -184,7 +184,7 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
 | `model` | string | The model identifier as captured from the session (e.g., `"claude-sonnet-5"`, `"gpt-5.6-terra"`). Verbatim; no cross-repo canonicalization yet. |
 | `provider` | string | Derived from `model` via `derive_model_identity()` (`"anthropic"`, `"openai"`, etc.). Never an independent routing dimension. |
 | `sample_count` | int | Number of sessions aggregated in this `(source_skill_name, model)` key within the rolling window. |
-| `success_rate` (DI-4e) | float \| null | The key's tool-error-rate complement — `1 - (sum(tool_errors) / sum(tool_calls))`, call-volume-weighted across every tool-usage-attributed session in the key (never a mean of per-session rates). `null` (never a fabricated constant) for a key with zero tool-usage-attributed sessions. Compute logic implemented 2026-08-10, superseding the permanent-`null` v1 placeholder. **The D-b4 live gate HALTed at ship time for the Codex/GPT family, and this is now enforced mechanically, not just documented**: `config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` (default `("openai",)`) unconditionally forces `success_rate: null` for any matching `provider`, at both compute time and the persisted-read path — so a Codex/GPT-family key is *always* `null` here today, never merely "untrustworthy." This stays `null` until a Codex `session_tool_usage` backfill/resync follow-up runs and a re-check of the D-b4 query passes, at which point an operator clears the flag; see `routing-feedback-router-merge-handoff.md` §0a. |
+| `success_rate` (DI-4e) | float \| null | The key's tool-error-rate complement — `1 - (sum(tool_errors) / sum(tool_calls))`, call-volume-weighted across every tool-usage-attributed session in the key (never a mean of per-session rates). `null` (never a fabricated constant) for a key with zero tool-usage-attributed sessions. Compute logic implemented 2026-08-10, superseding the permanent-`null` v1 placeholder. **Real for every provider**: the D-b4 live gate initially HALTed the Codex/GPT family on stale stored rows, the Codex `session_tool_usage` backfill ran the same day (1,239/1,242 sessions, 99.8%), and the gate re-verified clean at 89.3% informative keys — so `config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` now defaults to empty and no provider is withheld. The mechanism is retained (compute time + persisted-read path) for any newly measured skew; see `routing-feedback-router-merge-handoff.md` §0a. |
 | `success_rate_coverage_fraction` (DI-4e) | float \| null | `tool_usage_covered_count / sample_count` for this key — mirrors `cost_coverage_fraction`'s shape. **Compute-layer/response-DTO only** (no persisted column) — always `null` on the persisted `/api/v1/routing/rollup` read path; recoverable only from a live `RoutingRollupQueryService.compute_metrics()` call. |
 | `cost_index` (DI-4a) | float \| null | This key's mean cost-per-covered-session divided by its own `task_class`'s mean cost-per-covered-session — **never a global baseline**: an orchestration key's cost is not comparable to a mechanical key's. A key at its class's baseline reads `~1.0`; twice as expensive reads `~2.0`. `null` when the key has zero cost-attributed sessions, or when its entire `task_class` has none to normalize against — never a fabricated `1.0`. |
 | `cost_coverage_fraction` (DI-4a) | float \| null | `cost_covered_count / sample_count` for this key — the fraction of sessions that actually carried cost attribution, letting a router discount a `cost_index` computed from a small covered subset. Computed directly via `RoutingRollupQueryService.compute_metrics`, it is always a real float (`0.0` at zero coverage, never `null`). As of schema v47 it IS persisted (`routing_rollup.cost_coverage_fraction`), so the persisted `/api/v1/routing/rollup` read path returns its true value; `null` on that path means no column value yet (a row written before v47, or never re-swept since), kept distinguishable from a genuinely computed `0.0`. |
@@ -343,39 +343,55 @@ export CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS=true
 
 ---
 
-### `success_rate` Stale-Provider HALT Gate (DI-4e fix cycle 2)
+### `success_rate` Stale-Provider Gate (DI-4e) — armed, default empty
 
 One config flag withholds `success_rate` for providers whose `session_tool_usage` window is
-confirmed stale, per the D-b4 live-verification gate
+measured stale, per the D-b4 live-verification gate
 (`docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md` AC2):
 
 | Variable | Default | Notes |
 |---|---|---|
-| `CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` | `openai` | Comma-separated, case-insensitive list of `provider` values (`derive_model_identity()["modelProvider"]`) whose `success_rate`/`success_rate_coverage_fraction` are unconditionally forced `null`/`0.0`. |
+| `CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` | *(empty)* | Comma-separated, case-insensitive list of `provider` values (`derive_model_identity()["modelProvider"]`) whose `success_rate`/`success_rate_coverage_fraction` are unconditionally forced `null`/`0.0`. |
 
 **Interpretation**: A key whose `provider` matches this list has `success_rate` withheld
 regardless of how much genuine tool-usage attribution it has — enforced both at compute time
-(so no future worker sweep persists a stale-family value) and at the persisted-read path (so an
-already-persisted row is never served with one either, across REST/MCP/CLI). This is the
-mechanism, not merely the documentation, behind the D-b4 HALT recorded 2026-08-10: the
-gpt/codex-family's `session_tool_usage` window is still measurably dominated by stale
-pre-`b51de27` rows (21.4% informative-key fraction / 0.04% error rate, independently re-confirmed
-against the live node Postgres in fix cycle 2, vs. the fixed-parser 89.2% / 1.48% baseline). See
-`routing-feedback-router-merge-handoff.md` §0a for the full record.
+(so no worker sweep persists a stale-family value) and at the persisted-read path (so an
+already-persisted row is never served with one either, across REST/MCP/CLI).
 
-**Do not clear this flag as a workaround.** It is lifted only once the Codex
-`session_tool_usage` backfill/resync follow-up (tracked separately — see the feature contract's
-Follow-Up Recommendations) has run AND the D-b4 query has been re-run against the live window and
-shown clean.
+**Current posture: nothing is withheld.** The default was `openai` between 2026-08-10's DI-4e fix
+cycle 2 and the backfill later that day, because the gpt/codex-family's window was dominated by
+stale pre-`b51de27` parser rows (21.4%, then 28.6%, informative keys vs claude-family's ~90%) — a
+parser fix does not retroactively rewrite stored counts. The backfill re-parsed 1,239 of 1,242
+in-window Codex sessions (99.8%) and the D-b4 query then re-verified clean: **25/28 = 89.3%
+informative, err_rate 0.87%**, a 0.8pp informative gap to claude-family's 90.1%. The gate was
+therefore lifted. Full record: `routing-feedback-router-merge-handoff.md` §0a.
+
+**Re-adding a provider is a measurement-backed decision, never a workaround** for a failing test or
+an impatient re-run. Re-run the D-b4 query first
+(`.claude/worknotes/di-4e-routing-success-rate/run_db4_verify.py`) and record the numbers alongside
+the change. Likewise, if you ever set this, keep the entries lowercase — the read path normalizes
+the row side and trusts configured entries to already be lower.
 
 ```bash
-# Default posture -- withhold success_rate for the gpt/codex family (do not change without
-# re-running the D-b4 query first).
-export CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS=openai
-
-# Post-backfill, once D-b4 has been re-run and shown clean -- lift the gate.
+# Current posture -- gate armed, nothing withheld.
 export CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS=
+
+# Only on a NEW measured skew, with the D-b4 numbers recorded.
+export CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS=openai
 ```
+
+#### Re-running the D-b4 gate
+
+```bash
+# Read-only: one SELECT against the operative Postgres. Sources the DSN from .env so
+# the credential is never materialized into a shell variable or a file.
+backend/.venv/bin/python .claude/worknotes/di-4e-routing-success-rate/run_db4_verify.py
+```
+
+Read the **informative-key fraction per family**, not the raw error rate: a column that is present
+but constant is coverage without information. A family sitting far below its peers (e.g. 21% vs 90%)
+indicates stale stored rows, and the fix is a re-parse backfill
+(`backfill_codex_tool_usage.py`, `--dry-run` by default), not a gate.
 
 ---
 

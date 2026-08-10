@@ -500,11 +500,16 @@ class TestSuccessRateDeterminism(_ServiceTestBase):
 
 
 class TestSuccessRateStaleProviderGate(_ServiceTestBase):
-    def test_fully_covered_openai_row_is_still_withheld_by_default(self) -> None:
+    def test_fully_covered_row_is_withheld_when_its_provider_is_gated(self) -> None:
         """A fully-covered row would otherwise compute a real success_rate --
-        confirm the default stale-provider gate (config default: "openai")
-        withholds it anyway, since provider is the gpt/codex family the
-        live D-b4 query found still confirmed-stale."""
+        confirm a gated provider has it withheld anyway.
+
+        The config default no longer names "openai" (the backfill landed and
+        D-b4 re-verified clean, 2026-08-10 -- see the config comment), so this
+        drives the gate through `config` explicitly rather than relying on the
+        default. That keeps the MECHANISM under test: the assertion that
+        matters is "a gated provider is withheld", not "openai specifically is
+        gated today"."""
         row = _provider_row(
             provider="OpenAI",  # exact derive_model_identity() casing
             session_count=10,
@@ -513,21 +518,30 @@ class TestSuccessRateStaleProviderGate(_ServiceTestBase):
             tool_usage_covered_count=10,
         )
 
-        [dto] = self.service.compute_metrics([row])
+        with mock.patch.object(
+            config, "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
+        ):
+            [dto] = self.service.compute_metrics([row])
 
         self.assertIsNone(dto.success_rate)
         self.assertEqual(dto.success_rate_coverage_fraction, 0.0)
 
     def test_gate_matches_case_insensitively(self) -> None:
+        """Row provider is "OpenAI", configured gate entry is "openai" --
+        the match must not be casing-dependent, or a provider string whose
+        casing changes upstream would silently escape the gate."""
         row = _provider_row(
-            provider="openai",
+            provider="OpenAI",
             session_count=10,
             tool_call_sum=100,
             tool_success_sum=95,
             tool_usage_covered_count=10,
         )
 
-        [dto] = self.service.compute_metrics([row])
+        with mock.patch.object(
+            config, "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
+        ):
+            [dto] = self.service.compute_metrics([row])
 
         self.assertIsNone(dto.success_rate)
 
@@ -566,13 +580,51 @@ class TestSuccessRateStaleProviderGate(_ServiceTestBase):
         self.assertIsNone(gated[0].success_rate)
         self.assertAlmostEqual(cleared[0].success_rate, 0.95)
 
-    def test_config_default_includes_openai(self) -> None:
-        self.assertIn("openai", config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS)
+    def test_config_default_is_empty_after_the_backfill_cleared_d_b4(self) -> None:
+        """The default gate set is EMPTY.
 
-    def test_build_response_honors_the_default_gate_too(self) -> None:
+        It defaulted to ("openai",) while the gpt/codex-family's
+        `session_tool_usage` window was dominated by stale pre-b51de27 parser
+        output (21.4%/28.6% informative keys vs claude-family's ~90%). The
+        backfill ran 2026-08-10 (node_01KZP9FBMYNB6BE8EFPAZFYVJ0, 1,239/1,242
+        sessions re-parsed) and D-b4 re-verified clean at 25/28 = 89.3%
+        informative, err_rate 0.87% -- a 0.8pp gap to claude-family, so
+        nothing is withheld by default any more.
+
+        This test pins the default so re-adding a provider is a deliberate,
+        visible act backed by a fresh measurement -- never a quiet default."""
+        self.assertEqual(tuple(config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS), ())
+
+    def test_build_response_honors_the_config_gate_too(self) -> None:
         """build_response delegates to compute_metrics without overriding
         stale_providers -- confirm the gate is not accidentally bypassed at
-        the response-assembly entry point real callers use."""
+        the response-assembly entry point real callers use.
+
+        Driven through `config` so it proves build_response RESOLVES the
+        config default rather than ignoring it; with the default now empty,
+        asserting on the bare default could not distinguish "gate honored"
+        from "gate absent"."""
+        row = _provider_row(
+            provider="OpenAI",
+            session_count=10,
+            tool_call_sum=100,
+            tool_success_sum=95,
+            tool_usage_covered_count=10,
+        )
+        coverage = CoverageCounters(mapped_count=10, unclassified_count=0, distinct_unmapped_skill_names=[])
+
+        with mock.patch.object(
+            config, "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ("openai",)
+        ):
+            response = self.service.build_response([row], coverage)
+
+        self.assertIsNone(response.keys[0].success_rate)
+
+    def test_build_response_emits_a_real_rate_for_that_provider_by_default(self) -> None:
+        """The other side of the gate, and the actual DI-4e deliverable: with
+        the default empty, the very row the HALT gate used to withhold now
+        carries a real success_rate end-to-end. Two-sided with the test above,
+        so a gate stuck permanently ON cannot pass both."""
         row = _provider_row(
             provider="OpenAI",
             session_count=10,
@@ -584,7 +636,7 @@ class TestSuccessRateStaleProviderGate(_ServiceTestBase):
 
         response = self.service.build_response([row], coverage)
 
-        self.assertIsNone(response.keys[0].success_rate)
+        self.assertAlmostEqual(response.keys[0].success_rate, 0.95)
 
 
 # ---------------------------------------------------------------------------
