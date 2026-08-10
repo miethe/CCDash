@@ -427,13 +427,35 @@ class RoutingRollupKeyDTO(BaseModel):
     ``routing_rollup.py::MappedRollupRow.is_coverage_only``'s docstring for
     the hard contract this DTO's producer must honor.
 
-    ``success_rate``/``regression_rate`` are ``None`` in this v1 -- no
-    genuine per-session success/failure/regression signal exists yet in the
-    ``sessions`` table for this module to compute from (``status`` carries
-    only ``'active'``/``'completed'`` values, never an outcome judgment);
-    the ``routing_rollup`` DDL (Phase 2) already declares both columns
-    nullable for exactly this reason. This is a named, documented v1 design
-    gap for D9 socialization, not a bug -- see
+    ``success_rate`` (DI-4e) is the per-key tool-error-rate complement,
+    call-volume-weighted across every tool-usage-attributed session in the
+    key (D-b1) -- ``None`` (D-b2, never a fabricated constant) when the key
+    has zero tool-usage-attributed sessions, the same null-over-fabrication
+    principle ``cost_index`` codifies (D-a2). ``success_rate_coverage_fraction``
+    is the per-key coverage companion, mirroring ``cost_coverage_fraction``'s
+    shape -- but it is compute-layer/response-DTO ONLY (this task adds no
+    persisted column), so it always reads back ``None`` on the
+    persisted-table read path (``_client_v1_routing_rollup.py``); recoverable
+    only from a live ``RoutingRollupQueryService.compute_metrics()`` call.
+
+    **DI-4e fix-cycle-2 HALT gate**: ``success_rate`` is ALSO unconditionally
+    ``None`` for any key whose ``provider`` matches (case-insensitively)
+    ``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`` (default
+    ``("openai",)``) -- regardless of tool-usage coverage. This is the D-b4
+    live-verification gate's enforcement mechanism (AC2 of
+    ``docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md``):
+    the gpt/codex-family's ``session_tool_usage`` window is confirmed to
+    still be dominated by stale pre-b51de27 rows, so its ``success_rate`` is
+    withheld from every transport (REST/MCP/CLI) until a backfill/resync
+    precondition lands and the gate is cleared. Enforced both at compute
+    time (``routing_rollup.py::_success_rate_and_coverage``) and at read
+    time (``_client_v1_routing_rollup.py::_row_to_key_dto``).
+
+    ``regression_rate`` remains permanently ``None`` -- CLOSED per DI-4b (no
+    ``test_results``/``test_runs`` signal exists anywhere in this schema);
+    the ``routing_rollup`` DDL (Phase 2) already declares the column nullable
+    for exactly this reason. Unlike ``success_rate`` before DI-4e, this is a
+    decided non-goal, not a deferred gap -- see
     ``routing_rollup.py::RoutingRollupQueryService.compute_metrics``'s
     docstring.
 
@@ -496,6 +518,10 @@ class RoutingRollupKeyDTO(BaseModel):
     provider: str
     sample_count: int
     success_rate: float | None = None
+    #: DI-4e coverage companion, mirrors cost_coverage_fraction's shape.
+    #: Compute-layer/response-DTO only -- see this class's docstring's
+    #: DI-4e paragraph; always None on the persisted-table read path.
+    success_rate_coverage_fraction: float | None = None
     cost_index: float | None = None
     cost_coverage_fraction: float | None = None
     regression_rate: float | None = None
@@ -525,6 +551,17 @@ class RoutingRollupResponseDTO(BaseModel):
     -> ``enabled=False``, ``generated_at=None``, zero counters, empty
     ``keys``) is a transport/worker-level short-circuit (D6), constructed by
     a later phase, not by this compute-layer DTO's own defaults.
+
+    ``skill_attributed_key_count``/``skill_unattributed_key_count`` (DI-4e,
+    D-b3) are additive response-level counters distinguishing a genuinely
+    skill-aware key (non-empty ``source_skill_name``) from a
+    ``(project_id x model)`` key wearing a three-part key's clothes --
+    scoped to the SAME ``min_sample_size``-clearing population the
+    routing-key-skill-attribution feasibility brief's ~40-45% coverage
+    figure describes. Count/fraction only (a consumer computes its own
+    fraction from the two counts) -- deliberately NOT a per-row
+    router-discounting algorithm, the same "evidence-only producer" posture
+    ``cost_coverage_fraction`` (D-a3) already codifies.
     """
 
     enabled: bool = True
@@ -540,6 +577,8 @@ class RoutingRollupResponseDTO(BaseModel):
     mapped_count: int = 0
     unclassified_count: int = 0
     distinct_unmapped_skill_names: list[str] = Field(default_factory=list)
+    skill_attributed_key_count: int = 0
+    skill_unattributed_key_count: int = 0
     keys: list[RoutingRollupKeyDTO] = Field(default_factory=list)
 
 

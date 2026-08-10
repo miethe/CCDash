@@ -47,6 +47,18 @@ row write. Freshness is instead handled at the write site: the P4 sweep
 worker (``backend/adapters/jobs/routing_rollup_sweep_job.py``) calls
 ``aclear_project_cache`` whenever it persists rows -- mirrors
 ``_client_v1_aar_review.py``'s identical caching note.
+
+DI-4e fix-cycle-2 success_rate HALT gate
+-----------------------------------------
+``_row_to_key_dto`` withholds ``success_rate`` (forces ``None``) for any
+persisted row whose ``provider`` matches, case-insensitively,
+``config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS`` (default
+``("openai",)``) -- the D-b4 live-verification gate's mechanism, per
+``docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md``
+AC2. This is a read-time backstop on top of the compute-time gate in
+``routing_rollup.py::_success_rate_and_coverage`` -- it never trusts the
+persisted column's value for a gated provider, regardless of when or by
+which binary that row was written.
 """
 from __future__ import annotations
 
@@ -149,7 +161,27 @@ def _row_to_key_dto(row: Mapping[str, Any]) -> RoutingRollupKeyDTO:
         model=str(row.get("model") or ""),
         provider=str(row.get("provider") or ""),
         sample_count=int(row.get("sample_count") or 0),
-        success_rate=row.get("success_rate"),
+        # DI-4e fix-cycle-2 (reviewer finding #1): the D-b4 HALT gate applies
+        # on this read path too, not only at compute time -- a row whose
+        # persisted `provider` matches (case-insensitively)
+        # `config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` has
+        # `success_rate` withheld unconditionally, regardless of what value
+        # is already sitting in the persisted column. This is the backstop
+        # that makes the gate real for REST/MCP/CLI: even a row a stale-gate
+        # worker sweep already wrote (or a future sweep run with an
+        # unpatched binary) is never served with a stale-family value.
+        success_rate=(
+            None
+            if str(row.get("provider") or "").strip().lower()
+            in config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS
+            else row.get("success_rate")
+        ),
+        # DI-4e: success_rate_coverage_fraction is compute-layer/response-DTO
+        # ONLY -- this task adds no persisted column (see RoutingRollupKeyDTO's
+        # docstring). Always None on this read path; recoverable only from a
+        # live RoutingRollupQueryService.compute_metrics() call, never from a
+        # persisted row.
+        success_rate_coverage_fraction=None,
         # DI-4a: never fabricate a baseline for a persisted NULL -- a
         # zero-coverage key means it, per the same null-over-fabrication
         # principle success_rate/regression_rate already honor below. A
@@ -203,6 +235,14 @@ def _build_response_from_rows(rows: list[Mapping[str, Any]]) -> RoutingRollupRes
     ``unclassified_count`` (keyed strictly off the row's persisted
     ``task_class``, mirroring ``compute_coverage_counters``'s FR-7 policy),
     so the two counters always sum to the total persisted ``sample_count``.
+
+    DI-4e/D-b3: also reassembles ``skill_attributed_key_count``/
+    ``skill_unattributed_key_count`` from the persisted rows -- a row (not a
+    session total, unlike ``mapped_count``/``unclassified_count`` above)
+    counts iff its persisted ``sample_count >= CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE``,
+    mirroring ``routing_rollup.py::_skill_dimension_coverage``'s population
+    definition exactly (every key at the raw grain clearing the sample-size
+    bar, regardless of ``task_class``).
     """
     if not rows:
         return _empty_response(enabled=True, generated_at=None)
@@ -212,15 +252,24 @@ def _build_response_from_rows(rows: list[Mapping[str, Any]]) -> RoutingRollupRes
     mapped_count = 0
     unclassified_count = 0
     unmapped_skill_names: set[str] = set()
+    skill_attributed_key_count = 0
+    skill_unattributed_key_count = 0
+    min_sample_size = int(config.CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE)
     freshness_values: list[str] = []
     for row in rows:
         sample_count = int(row.get("sample_count") or 0)
         task_class = str(row.get("task_class") or "")
+        source_skill_name = str(row.get("source_skill_name") or "")
         if task_class == UNCLASSIFIED_TASK_CLASS:
             unclassified_count += sample_count
-            unmapped_skill_names.add(str(row.get("source_skill_name") or ""))
+            unmapped_skill_names.add(source_skill_name)
         else:
             mapped_count += sample_count
+        if sample_count >= min_sample_size:
+            if source_skill_name.strip():
+                skill_attributed_key_count += 1
+            else:
+                skill_unattributed_key_count += 1
         freshness_ts = row.get("freshness_ts")
         if freshness_ts:
             freshness_values.append(str(freshness_ts))
@@ -241,6 +290,8 @@ def _build_response_from_rows(rows: list[Mapping[str, Any]]) -> RoutingRollupRes
         mapped_count=mapped_count,
         unclassified_count=unclassified_count,
         distinct_unmapped_skill_names=sorted(unmapped_skill_names),
+        skill_attributed_key_count=skill_attributed_key_count,
+        skill_unattributed_key_count=skill_unattributed_key_count,
         keys=key_dtos,
     )
 

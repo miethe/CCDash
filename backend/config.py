@@ -37,6 +37,18 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_csv_lower(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Parse a comma-separated env var into a tuple of lowercased, stripped
+    tokens. Missing env var falls back to *default* verbatim (never an empty
+    tuple by omission) -- a caller that wants "gate disabled" must set the
+    env var to an explicit empty string, not merely leave it unset.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return tuple(part.strip().lower() for part in value.split(",") if part.strip())
+
+
 def _env_bool_from(environ: Mapping[str, str], name: str, default: bool = False) -> bool:
     value = environ.get(name)
     if value is None:
@@ -164,6 +176,41 @@ CCDASH_ROUTING_FEEDBACK_WINDOW_DAYS = _env_int("CCDASH_ROUTING_FEEDBACK_WINDOW_D
 # this flag only controls the additional protected-class rows.
 CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS = _env_bool(
     "CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS", True
+)
+# DI-4e's D-b4 live verification gate
+# (docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md
+# AC2). Any provider named here has its
+# `success_rate`/`success_rate_coverage_fraction` withheld (forced null, same
+# shape as zero-attribution) both at compute time
+# (`routing_rollup.py::_success_rate_and_coverage`, so no worker sweep
+# persists a stale-family value) and at read time
+# (`_client_v1_routing_rollup.py::_row_to_key_dto`, so an already-persisted
+# row is never served with one either) -- independent of
+# `CCDASH_ROUTING_FEEDBACK_ENABLED`. Matches
+# `derive_model_identity()["modelProvider"]` case-insensitively.
+#
+# HISTORY -- why this defaulted to ("openai",) and why it no longer does:
+# fix cycle 2 measured the gpt/codex-family's `session_tool_usage` window as
+# still dominated by stale pre-b51de27 parser output (21.4% informative-key
+# fraction / 0.04% error rate, against the 89.2% / 1.48% fixed-parser
+# baseline in `di-4d-remeasurement.md`), because a parser fix does not
+# retroactively rewrite stored rows. The contract's D-b4 ratification made
+# that a hard "do not ship" for the family until a backfill landed.
+#
+# The backfill ran 2026-08-10 (node_01KZP9FBMYNB6BE8EFPAZFYVJ0,
+# `.claude/worknotes/di-4e-routing-success-rate/backfill_codex_tool_usage.py`,
+# 1,239 of 1,242 in-window Codex sessions re-parsed, 99.8% coverage) and the
+# gate re-verified clean on the same query: gpt/codex-family 8/28 -> 25/28
+# informative (28.6% -> 89.3%), err_rate 0.11% -> 0.87%, against
+# claude-family 90.1% / 4.01%. The informative-key gap is 0.8pp, down from
+# 99.3pp pre-DI-4d and 10.1pp post-DI-4d -- non-skewed, so the family is no
+# longer withheld and the default is empty.
+#
+# Re-adding a provider here is the correct response to a NEW measured skew,
+# never a workaround for a failing test or an impatient re-run. Re-measure
+# with `run_db4_verify.py` first and record the numbers.
+CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS = _env_csv_lower(
+    "CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS", ()
 )
 # proof-to-routing-loop Phase 4 (T4-002): RoutingRollupSweepJob -- the
 # default-off (per CCDASH_ROUTING_FEEDBACK_ENABLED above) background worker

@@ -121,6 +121,8 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
     "mapped_count": 767,
     "unclassified_count": 13632,
     "distinct_unmapped_skill_names": ["skill-x", "skill-y"],
+    "skill_attributed_key_count": 82,
+    "skill_unattributed_key_count": 106,
     "keys": [
       {
         "producer": "ccdash",
@@ -138,6 +140,7 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
         "provider": "anthropic",
         "sample_count": 68,
         "success_rate": 0.91,
+        "success_rate_coverage_fraction": null,
         "cost_index": 1.12,
         "cost_coverage_fraction": 0.94,
         "regression_rate": 0.03,
@@ -152,6 +155,11 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
   "meta": { ... }
 }
 ```
+
+> **`success_rate_coverage_fraction` note (DI-4e):** unlike `cost_coverage_fraction`, this field is
+> compute-layer/response-DTO only — no persisted column was added. It always reads back `null` on
+> `/api/v1/routing/rollup` (and every other transport, since all three read the persisted table),
+> shown as `null` above deliberately rather than a numeric placeholder.
 
 **Field Definitions — Pinned Join Envelope** (aos.routing.feedback v1.0.0):
 
@@ -176,10 +184,11 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
 | `model` | string | The model identifier as captured from the session (e.g., `"claude-sonnet-5"`, `"gpt-5.6-terra"`). Verbatim; no cross-repo canonicalization yet. |
 | `provider` | string | Derived from `model` via `derive_model_identity()` (`"anthropic"`, `"openai"`, etc.). Never an independent routing dimension. |
 | `sample_count` | int | Number of sessions aggregated in this `(source_skill_name, model)` key within the rolling window. |
-| `success_rate` | float \| null | Fraction of sessions in this key that completed without error (0.0–1.0). `null` in v1 — no genuine per-session outcome signal exists yet (DI-4b, tracked separately). |
+| `success_rate` (DI-4e) | float \| null | The key's tool-error-rate complement — `1 - (sum(tool_errors) / sum(tool_calls))`, call-volume-weighted across every tool-usage-attributed session in the key (never a mean of per-session rates). `null` (never a fabricated constant) for a key with zero tool-usage-attributed sessions. Compute logic implemented 2026-08-10, superseding the permanent-`null` v1 placeholder. **Real for every provider**: the D-b4 live gate initially HALTed the Codex/GPT family on stale stored rows, the Codex `session_tool_usage` backfill ran the same day (1,239/1,242 sessions, 99.8%), and the gate re-verified clean at 89.3% informative keys — so `config.CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` now defaults to empty and no provider is withheld. The mechanism is retained (compute time + persisted-read path) for any newly measured skew; see `routing-feedback-router-merge-handoff.md` §0a. |
+| `success_rate_coverage_fraction` (DI-4e) | float \| null | `tool_usage_covered_count / sample_count` for this key — mirrors `cost_coverage_fraction`'s shape. **Compute-layer/response-DTO only** (no persisted column) — always `null` on the persisted `/api/v1/routing/rollup` read path; recoverable only from a live `RoutingRollupQueryService.compute_metrics()` call. |
 | `cost_index` (DI-4a) | float \| null | This key's mean cost-per-covered-session divided by its own `task_class`'s mean cost-per-covered-session — **never a global baseline**: an orchestration key's cost is not comparable to a mechanical key's. A key at its class's baseline reads `~1.0`; twice as expensive reads `~2.0`. `null` when the key has zero cost-attributed sessions, or when its entire `task_class` has none to normalize against — never a fabricated `1.0`. |
 | `cost_coverage_fraction` (DI-4a) | float \| null | `cost_covered_count / sample_count` for this key — the fraction of sessions that actually carried cost attribution, letting a router discount a `cost_index` computed from a small covered subset. Computed directly via `RoutingRollupQueryService.compute_metrics`, it is always a real float (`0.0` at zero coverage, never `null`). As of schema v47 it IS persisted (`routing_rollup.cost_coverage_fraction`), so the persisted `/api/v1/routing/rollup` read path returns its true value; `null` on that path means no column value yet (a row written before v47, or never re-swept since), kept distinguishable from a genuinely computed `0.0`. |
-| `regression_rate` | float \| null | Fraction of sessions in this key that regressed (introduced errors or quality loss) relative to the previous task (0.0–1.0). `null` in v1 — no genuine regression signal exists yet (DI-4b, tracked separately). |
+| `regression_rate` | float \| null | Fraction of sessions in this key that regressed (introduced errors or quality loss) relative to the previous task (0.0–1.0). `null`, permanently — CLOSED per DI-4b: no `test_results`/`test_runs` signal exists anywhere in this schema. Unlike `success_rate`, this is a decided non-goal, not a deferred gap. |
 | `confidence` | float | Producer confidence in the metrics (0.0–1.0), derived from sample density and stability. Higher = more reliable. |
 | `eligible_for_adjustment` | bool | `true` if `sample_count >= CCDASH_ROUTING_FEEDBACK_MIN_SAMPLE_SIZE`; `false` for `_unclassified`, `orchestration`, `mode_d`. Router may apply its own secondary threshold; this field is advisory. |
 | `window_start` | string | ISO 8601 start of the rolling aggregation window. |
@@ -195,6 +204,8 @@ GET /api/v1/routing/rollup?project_id={project_id}&bypass_cache={bool}
 | `mapped_count` | int | Total number of rollup keys where `source_skill_name` mapped successfully to a `task_class`. |
 | `unclassified_count` | int | Total number of rollup keys where `source_skill_name` could not be mapped (emitted as `task_class: "_unclassified"`, coverage-only, never addressable). |
 | `distinct_unmapped_skill_names` | array | Full list of distinct `source_skill_name` values that failed mapping. Operator visibility for integration debugging. |
+| `skill_attributed_key_count` (DI-4e, AC3) | int | Count of `min_sample_size`-clearing keys (evaluated at the raw grain, before mapping) with a non-empty `source_skill_name` — a genuinely skill-aware key. |
+| `skill_unattributed_key_count` (DI-4e, AC3) | int | Count of `min_sample_size`-clearing keys with an empty `source_skill_name` — a `(project × model)` key wearing a three-part key's clothes. Per the routing-key-skill-attribution feasibility brief, this cohort is expected to be the **majority** (~55-60%) of the eligible population; count/fraction only, a consumer computes its own discounting — CCDash does not build a per-consumer weighting algorithm here. |
 | `keys` | array | Array of per-key rollup rows (self-describing, above). Empty array if disabled. |
 
 **Disabled Envelope** (flag off):
@@ -218,6 +229,8 @@ When `CCDASH_ROUTING_FEEDBACK_ENABLED=false`, the response is deterministic acro
     "mapped_count": 0,
     "unclassified_count": 0,
     "distinct_unmapped_skill_names": [],
+    "skill_attributed_key_count": 0,
+    "skill_unattributed_key_count": 0,
     "keys": []
   },
   "meta": { ... }
@@ -327,6 +340,58 @@ export CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS=false
 # Include them (operator debugging, full transparency)
 export CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS=true
 ```
+
+---
+
+### `success_rate` Stale-Provider Gate (DI-4e) — armed, default empty
+
+One config flag withholds `success_rate` for providers whose `session_tool_usage` window is
+measured stale, per the D-b4 live-verification gate
+(`docs/project_plans/feature_contracts/enhancements/di-4e-routing-success-rate.md` AC2):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS` | *(empty)* | Comma-separated, case-insensitive list of `provider` values (`derive_model_identity()["modelProvider"]`) whose `success_rate`/`success_rate_coverage_fraction` are unconditionally forced `null`/`0.0`. |
+
+**Interpretation**: A key whose `provider` matches this list has `success_rate` withheld
+regardless of how much genuine tool-usage attribution it has — enforced both at compute time
+(so no worker sweep persists a stale-family value) and at the persisted-read path (so an
+already-persisted row is never served with one either, across REST/MCP/CLI).
+
+**Current posture: nothing is withheld.** The default was `openai` between 2026-08-10's DI-4e fix
+cycle 2 and the backfill later that day, because the gpt/codex-family's window was dominated by
+stale pre-`b51de27` parser rows (21.4%, then 28.6%, informative keys vs claude-family's ~90%) — a
+parser fix does not retroactively rewrite stored counts. The backfill re-parsed 1,239 of 1,242
+in-window Codex sessions (99.8%) and the D-b4 query then re-verified clean: **25/28 = 89.3%
+informative, err_rate 0.87%**, a 0.8pp informative gap to claude-family's 90.1%. The gate was
+therefore lifted. Full record: `routing-feedback-router-merge-handoff.md` §0a.
+
+**Re-adding a provider is a measurement-backed decision, never a workaround** for a failing test or
+an impatient re-run. Re-run the D-b4 query first
+(`.claude/worknotes/di-4e-routing-success-rate/run_db4_verify.py`) and record the numbers alongside
+the change. Likewise, if you ever set this, keep the entries lowercase — the read path normalizes
+the row side and trusts configured entries to already be lower.
+
+```bash
+# Current posture -- gate armed, nothing withheld.
+export CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS=
+
+# Only on a NEW measured skew, with the D-b4 numbers recorded.
+export CCDASH_ROUTING_FEEDBACK_SUCCESS_RATE_STALE_PROVIDERS=openai
+```
+
+#### Re-running the D-b4 gate
+
+```bash
+# Read-only: one SELECT against the operative Postgres. Sources the DSN from .env so
+# the credential is never materialized into a shell variable or a file.
+backend/.venv/bin/python .claude/worknotes/di-4e-routing-success-rate/run_db4_verify.py
+```
+
+Read the **informative-key fraction per family**, not the raw error rate: a column that is present
+but constant is coverage without information. A family sitting far below its peers (e.g. 21% vs 90%)
+indicates stale stored rows, and the fix is a re-parse backfill
+(`backfill_codex_tool_usage.py`, `--dry-run` by default), not a gate.
 
 ---
 

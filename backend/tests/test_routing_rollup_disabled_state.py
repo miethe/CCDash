@@ -197,6 +197,7 @@ def _make_seed_row(**overrides: Any) -> dict[str, Any]:
         "sample_count": 12,
         "success_rate": None,
         "cost_index": 1.0,
+        "cost_coverage_fraction": 1.0,
         "regression_rate": None,
         # DI-4c (v45): unambiguous-or-null tier + provenance + the
         # authoritative-fraction trust companion.
