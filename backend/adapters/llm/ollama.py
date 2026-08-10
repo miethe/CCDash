@@ -9,11 +9,15 @@ fail-open wrapping.
 """
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from backend.application.ports.llm import PromptEnvelope
 
 __all__ = ["OllamaTextCompletionAdapter"]
+
+logger = logging.getLogger("ccdash.adapters.llm.ollama")
 
 
 class OllamaTextCompletionAdapter:
@@ -36,8 +40,21 @@ class OllamaTextCompletionAdapter:
             "stream": False,
         }
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-            resp = await client.post(f"{self._base_url}/api/generate", json=payload)
-            resp.raise_for_status()
+            try:
+                resp = await client.post(f"{self._base_url}/api/generate", json=payload)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # Log the status code only -- never ``exc.response.text`` /
+                # ``.content`` / a parsed body.
+                logger.warning(
+                    "ollama adapter: provider returned a non-2xx response "
+                    "(status=%s)",
+                    exc.response.status_code,
+                )
+                raise
+            except httpx.HTTPError:
+                logger.warning("ollama adapter: transport error calling provider")
+                raise
             data = resp.json()
         response_text = data.get("response") if isinstance(data, dict) else None
         return str(response_text) if response_text else None

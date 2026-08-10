@@ -174,6 +174,57 @@ class TestAIInsightRouterKeySet(unittest.TestCase):
         self.assertIn("Error connecting", data["error"])
 
 
+class TestAIInsightRouterErrorBodyNeverLogged(unittest.TestCase):
+    """M1 (hosted-llm-anthropic-ica-lane-v1, egress-path hardening): a
+
+    provider error-response body must never reach a log record -- only the
+    status code plus a fixed message. Mirrors the
+    ``ProviderErrorBodyNeverLoggedTests`` shape added for the gemini adapter
+    in ``test_session_naming_hosted_backend.py``.
+    """
+
+    def setUp(self) -> None:
+        self.app = _make_app()
+        self.client = TestClient(self.app, raise_server_exceptions=True)
+
+    def test_http_error_body_is_absent_from_every_log_record(self) -> None:
+        import httpx as _httpx
+
+        secret_marker = "UPSTREAM_ERROR_BODY_MARKER_ai_insight_9f31"
+        mock_http_err_resp = MagicMock()
+        mock_http_err_resp.status_code = 503
+        mock_http_err_resp.text = secret_marker
+        exc = _httpx.HTTPStatusError(
+            secret_marker,
+            request=MagicMock(),
+            response=mock_http_err_resp,
+        )
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post = AsyncMock(side_effect=exc)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("backend.config.CCDASH_GEMINI_API_KEY", "test-key-000"), \
+             patch(
+                 "backend.services.ai_insight.httpx.AsyncClient",
+                 return_value=mock_client_instance,
+             ), \
+             self.assertLogs("backend.services.ai_insight", level="WARNING") as captured:
+            resp = self.client.post("/api/ai/insight", json={"metrics": [], "tasks": []})
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertFalse(data["disabled"])
+        self.assertIn("503", data["error"])
+
+        joined = "\n".join(captured.output)
+        self.assertNotIn(secret_marker, joined)
+        # The status code IS expected to be present -- "fixed message plus
+        # status code," not a blanket "log nothing."
+        self.assertIn("503", joined)
+
+
 class TestAIInsightRouterAuth(unittest.TestCase):
     """``/api/ai`` is gated by the SAME ``require_v1_auth`` dependency as /api/v1.
 

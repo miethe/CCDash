@@ -111,6 +111,29 @@ def _mock_gemini_client(
     return mock_client_instance
 
 
+def _mock_gemini_error_client(status_code: int, body_text: str) -> MagicMock:
+    """A mock ``httpx.AsyncClient`` whose response's ``raise_for_status()``
+
+    raises ``httpx.HTTPStatusError`` -- carrying a distinctive ``body_text``
+    the adapter/backend must never place in a log record (M1: no provider
+    error body may reach a log).
+    """
+    mock_client_instance = AsyncMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = status_code
+    mock_resp.text = body_text
+    mock_resp.content = body_text.encode()
+    mock_resp.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError(
+            f"{status_code} error", request=MagicMock(), response=mock_resp
+        )
+    )
+    mock_client_instance.post = AsyncMock(return_value=mock_resp)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+    return mock_client_instance
+
+
 # ── Both-conditions-required gate ────────────────────────────────────────────
 
 class BothConditionsRequiredGateTests(unittest.TestCase):
@@ -370,7 +393,13 @@ class DeriveNameTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(secret, sent_prompt)
         self.assertIn("[REDACTED]", sent_prompt)
 
-    async def test_uses_configured_model_and_api_key_in_url(self) -> None:
+    async def test_uses_configured_model_and_sends_api_key_as_a_header(self) -> None:
+        """M1 (egress-path hardening): the credential travels as the
+
+        ``x-goog-api-key`` request header, never in the URL query string --
+        a URL lands in access logs, proxy logs, and browser history, so a
+        credential there is a leak surface a header is not.
+        """
         fake_logs = [_make_fake_log(1, "Please help me fix the login bug")]
         mock_client = _mock_gemini_client(response_text="Fix the login bug")
         with patch(
@@ -387,8 +416,13 @@ class DeriveNameTests(unittest.IsolatedAsyncioTestCase):
             await backend.derive_name({"id": SESSION_A1, "project_id": PROJ_A})
 
         called_url = mock_client.post.await_args.args[0]
+        called_kwargs = mock_client.post.await_args.kwargs
         self.assertIn("gemini-2.0-flash", called_url)
-        self.assertIn("fake-key-123", called_url)
+        self.assertNotIn("key=", called_url)
+        self.assertNotIn("fake-key-123", called_url)
+        self.assertEqual(
+            called_kwargs.get("headers", {}).get("x-goog-api-key"), "fake-key-123"
+        )
 
 
 # ── derive_name_fail_open integration with the sweep job's own wrapper ──────
@@ -411,6 +445,58 @@ class SweepJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         result = await derive_name_fail_open(backend, {"id": SESSION_A1, "project_id": PROJ_A})
         self.assertIsNone(result)
+
+
+# ── M1: no provider error body ever reaches a log ───────────────────────────
+
+class ProviderErrorBodyNeverLoggedTests(unittest.IsolatedAsyncioTestCase):
+    """M1 (egress-path hardening) -- a non-2xx provider response's body
+
+    must never appear in any log record. ``backend/adapters/llm/gemini.py``
+    logs the status code plus a fixed message on a non-2xx/transport error;
+    it never logs ``response.text``/``.content``/a parsed body. This is
+    asserted end-to-end through ``HostedGeminiNamingBackend.derive_name``
+    (the real egress call site), not just against the adapter in isolation.
+    """
+
+    async def asyncSetUp(self) -> None:
+        self.db = await aiosqlite.connect(":memory:")
+        self.db.row_factory = aiosqlite.Row
+        await run_migrations(self.db)
+        self.ports = FakeCorePortsFactory(self.db)
+        self.session_repo = SqliteSessionRepository(self.db)
+        await self.session_repo.upsert(_session(SESSION_A1), PROJ_A)
+        await self.db.commit()
+
+    async def asyncTearDown(self) -> None:
+        await self.db.close()
+
+    async def test_non_2xx_response_body_is_absent_from_every_log_record(self) -> None:
+        secret_marker = "UPSTREAM_ERROR_BODY_MARKER_9f31a2"
+        fake_logs = [_make_fake_log(1, "Please help me fix the login bug")]
+        mock_client = _mock_gemini_error_client(status_code=403, body_text=secret_marker)
+        with patch(
+            "backend.application.services.agent_queries.session_detail"
+            "._transcript_service.list_session_logs",
+            new=AsyncMock(return_value=fake_logs),
+        ), patch(
+            "backend.services.session_naming_hosted_backend.httpx.AsyncClient",
+            return_value=mock_client,
+        ), self.assertLogs("ccdash.adapters.llm.gemini", level="WARNING") as captured:
+            backend = HostedGeminiNamingBackend(ports=self.ports, api_key="fake-key")
+            result = await backend.derive_name({"id": SESSION_A1, "project_id": PROJ_A})
+
+        # Fail-open: the caller still gets a clean None, never a raised
+        # exception or a partially-persisted name.
+        self.assertIsNone(result)
+        row = await self.session_repo.get_by_id(SESSION_A1, project_id=PROJ_A)
+        self.assertIsNone(row["session_name"])
+
+        joined = "\n".join(captured.output)
+        self.assertNotIn(secret_marker, joined)
+        # The status code IS expected to be present -- that's the "fixed
+        # message plus status code" contract, not a blanket "log nothing."
+        self.assertIn("403", joined)
 
 
 if __name__ == "__main__":

@@ -92,7 +92,15 @@ async def generate_dashboard_insight(
         text = await adapter.complete(envelope)
         return AIInsightResult(text=text or "Could not generate insight.")
     except httpx.HTTPStatusError as exc:
-        logger.warning("Gemini API HTTP error: %s %s", exc.response.status_code, exc.response.text)
+        # Log the status code plus a fixed message only -- never
+        # ``exc.response.text`` / ``.content`` / a parsed body, which may
+        # echo request/provider diagnostic detail into the log stream (M1,
+        # hosted-llm-anthropic-ica-lane-v1).
+        logger.warning(
+            "Gemini API HTTP error: provider returned a non-2xx response "
+            "(status=%s)",
+            exc.response.status_code,
+        )
         return AIInsightResult(error=f"Gemini API error: {exc.response.status_code}")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Gemini API call failed: %s", exc)

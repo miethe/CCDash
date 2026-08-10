@@ -13,11 +13,15 @@ fail-open wrapping and its own response-shape handling
 """
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from backend.application.ports.llm import PromptEnvelope
 
 __all__ = ["GeminiTextCompletionAdapter"]
+
+logger = logging.getLogger("ccdash.adapters.llm.gemini")
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -45,13 +49,36 @@ class GeminiTextCompletionAdapter:
         ``httpx.HTTPStatusError``) -- the caller is responsible for the
         fail-open wrapping and any error-message formatting (see the port
         module's docstring).
+
+        The API key travels as the ``x-goog-api-key`` request header (Google
+        supports this header as an alternative to the ``?key=`` query-string
+        form) -- never in the URL, which would otherwise land the credential
+        in access logs, proxy logs, and browser history. See
+        ``docs/project_plans/implementation_plans/features/hosted-llm-anthropic-ica-lane-v1.md``
+        M1.
         """
-        url = f"{self._base_url}/{self._model}:generateContent?key={self._api_key}"
+        url = f"{self._base_url}/{self._model}:generateContent"
+        headers = {"x-goog-api-key": self._api_key}
         payload = {"contents": [{"parts": [{"text": envelope.text}]}]}
 
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
+            try:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # Log the status code only -- never ``exc.response.text`` /
+                # ``.content`` / a parsed body, which may echo the request
+                # (including the credential-bearing header) or provider-side
+                # diagnostic detail back into the log stream.
+                logger.warning(
+                    "gemini adapter: provider returned a non-2xx response "
+                    "(status=%s)",
+                    exc.response.status_code,
+                )
+                raise
+            except httpx.HTTPError:
+                logger.warning("gemini adapter: transport error calling provider")
+                raise
             data = resp.json()
 
         candidates = data.get("candidates") or [] if isinstance(data, dict) else []
