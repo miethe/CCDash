@@ -1203,6 +1203,33 @@ def log_aar_review_candidate(
     logger.info("aar review candidate observability event", extra=extra)
 
 
+def log_llm_egress_event(*, lane: str, model: str, project_id: str) -> None:
+    """Emit a structured, per-tick "an egress-shaped LLM call is active" log event.
+
+    hosted-llm-anthropic-ica-lane-v1 M2 (per-tick egress observability AC):
+    a **log event only** -- never a DB row, never an outbound HTTP push/queue
+    -- mirroring ``log_aar_review_candidate``'s scope boundary exactly.
+    Called from ``SessionNamingSweepJob``'s fan-out loop
+    (``backend/adapters/jobs/session_naming_sweep_job.py``) once per tick,
+    per project, ONLY when that tick's naming backend is egress-shaped
+    (``EGRESS = True``) and the project has consented -- i.e. exactly the
+    ticks where a real off-box call may happen.
+
+    Carries only ``lane`` (the resolved backend name, e.g. ``"hosted"``),
+    ``model`` (the model id the backend is configured to serve -- never a
+    credential), and ``project_id`` -- deliberately NOT a prompt, a
+    transcript excerpt, or any provider credential/response body, consistent
+    with the redaction posture applied elsewhere in this module.
+    """
+    extra = {
+        "event": "llm_egress_tick",
+        "lane": lane or "unknown",
+        "model": model or "unknown",
+        "project_id": project_id or "",
+    }
+    logger.info("llm egress observability event", extra=extra)
+
+
 def record_auth_login_failure(
     *,
     provider: str,

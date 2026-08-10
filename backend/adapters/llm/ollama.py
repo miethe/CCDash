@@ -21,7 +21,18 @@ logger = logging.getLogger("ccdash.adapters.llm.ollama")
 
 
 class OllamaTextCompletionAdapter:
-    """``TextCompletionPort`` adapter for a local Ollama ``/api/generate`` endpoint."""
+    """``TextCompletionPort`` adapter for a local Ollama ``/api/generate`` endpoint.
+
+    hosted-llm-anthropic-ica-lane-v1 M2: this is NOT an egress adapter --
+    ``base_url`` is a loopback address by construction/default
+    (``CCDASH_OLLAMA_BASE_URL``), so a successful call never leaves the
+    box. ``EGRESS = False`` is the explicit marker other modules
+    (``SessionNamingSweepJob``'s per-project consent gate) use to tell this
+    apart from an egress-shaped adapter (``GeminiTextCompletionAdapter``,
+    ``EGRESS = True``) -- consent gating never applies to this lane.
+    """
+
+    EGRESS: bool = False
 
     def __init__(self, *, base_url: str, model: str, timeout_seconds: float) -> None:
         self._base_url = base_url

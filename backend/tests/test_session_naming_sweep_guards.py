@@ -58,6 +58,14 @@ class DefaultFlagValueTests(unittest.TestCase):
         """Zero-egress-by-default: "hosted" is opt-in only, never the default."""
         self.assertEqual(config.CCDASH_SESSION_NAMING_BACKEND, "local")
 
+    def test_llm_egress_consent_defaults_false(self) -> None:
+        """hosted-llm-anthropic-ica-lane-v1 M2: the GLOBAL egress consent
+
+        kill-switch -- fail-closed by default, same polarity as
+        ``CCDASH_SESSION_NAMING_ENABLED`` above (opt-in, never opt-out).
+        """
+        self.assertFalse(config.CCDASH_LLM_EGRESS_CONSENT)
+
 
 class DeriveNameFailOpenTests(unittest.IsolatedAsyncioTestCase):
     """Pure unit coverage of the fail-open primitive itself."""

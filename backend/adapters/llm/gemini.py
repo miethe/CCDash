@@ -17,7 +17,7 @@ import logging
 
 import httpx
 
-from backend.application.ports.llm import PromptEnvelope
+from backend.application.ports.llm import PromptEnvelope, enforce_egress_provenance
 
 __all__ = ["GeminiTextCompletionAdapter"]
 
@@ -27,7 +27,18 @@ DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 class GeminiTextCompletionAdapter:
-    """``TextCompletionPort`` adapter for the Gemini REST ``generateContent`` endpoint."""
+    """``TextCompletionPort`` adapter for the Gemini REST ``generateContent`` endpoint.
+
+    hosted-llm-anthropic-ica-lane-v1 M2: this is an EGRESS adapter -- a
+    successful call sends ``envelope.text`` to a third-party host over the
+    network. ``EGRESS = True`` is the explicit, checkable marker other
+    modules (``SessionNamingSweepJob``'s per-project consent gate) use to
+    tell this apart from a local-loopback adapter (``OllamaTextCompletionAdapter``,
+    ``EGRESS = False``) without inspecting behaviour or guessing from the
+    class name.
+    """
+
+    EGRESS: bool = True
 
     def __init__(
         self,
@@ -57,6 +68,11 @@ class GeminiTextCompletionAdapter:
         ``docs/project_plans/implementation_plans/features/hosted-llm-anthropic-ica-lane-v1.md``
         M1.
         """
+        # Provenance gate FIRST, before any URL/payload construction or
+        # connection -- see ``enforce_egress_provenance``'s own docstring.
+        # A wrong-provenance envelope never gets far enough to be sent.
+        enforce_egress_provenance(envelope)
+
         url = f"{self._base_url}/{self._model}:generateContent"
         headers = {"x-goog-api-key": self._api_key}
         payload = {"contents": [{"parts": [{"text": envelope.text}]}]}

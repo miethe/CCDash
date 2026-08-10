@@ -137,17 +137,22 @@ def _mock_gemini_error_client(status_code: int, body_text: str) -> MagicMock:
 # ── Both-conditions-required gate ────────────────────────────────────────────
 
 class BothConditionsRequiredGateTests(unittest.TestCase):
-    """The headline AC for this task: hosted is reachable ONLY when BOTH
+    """The headline AC for this task: hosted is reachable ONLY when ALL of
 
-    ``CCDASH_SESSION_NAMING_BACKEND=hosted`` AND
+    ``CCDASH_SESSION_NAMING_BACKEND=hosted``,
+    ``CCDASH_LLM_EGRESS_CONSENT`` (hosted-llm-anthropic-ica-lane-v1 M2 --
+    the GLOBAL egress consent gate, added here), AND
     ``CCDASH_REDACTION_PATTERNS_ENABLED`` are true. Each condition is
-    tested absent independently.
+    tested absent independently. Every test in this class now explicitly
+    patches ``CCDASH_LLM_EGRESS_CONSENT`` (rather than relying on its
+    default) so this file's own assertions stay legible about which gate
+    each test is targeting.
     """
 
     def test_both_conditions_present_constructs_hosted_backend(self) -> None:
-        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.dict(
-            "os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}
-        ):
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.object(
+            config, "CCDASH_LLM_EGRESS_CONSENT", True
+        ), patch.dict("os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}):
             backend = resolve_naming_backend(ports=object())
         self.assertIsInstance(backend, HostedGeminiNamingBackend)
 
@@ -157,7 +162,9 @@ class BothConditionsRequiredGateTests(unittest.TestCase):
         the hosted path is never reached regardless of the redaction gate.
         """
         self.assertEqual(config.CCDASH_SESSION_NAMING_BACKEND, "local")
-        with patch.dict("os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}):
+        with patch.object(config, "CCDASH_LLM_EGRESS_CONSENT", True), patch.dict(
+            "os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}
+        ):
             backend = resolve_naming_backend(ports=object())
         self.assertIsInstance(backend, LocalOllamaNamingBackend)
 
@@ -165,24 +172,43 @@ class BothConditionsRequiredGateTests(unittest.TestCase):
         """``CCDASH_REDACTION_PATTERNS_ENABLED=false`` -- the hosted path is
 
         unreachable even though the operator explicitly opted into
-        "hosted". The job must fall back to a structural no-op
-        (``None``), never to sending unredacted content.
+        "hosted" and consented to egress globally. The job must fall back
+        to a structural no-op (``None``), never to sending unredacted
+        content.
         """
-        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.dict(
-            "os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "false"}
-        ):
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.object(
+            config, "CCDASH_LLM_EGRESS_CONSENT", True
+        ), patch.dict("os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "false"}):
             backend = resolve_naming_backend(ports=object())
         self.assertIsNone(backend)
 
-    def test_naming_egress_hosted_requires_both_flags(self) -> None:
+    def test_consent_gate_absent_is_unreachable_even_with_backend_hosted_and_redaction_on(
+        self,
+    ) -> None:
+        """``CCDASH_LLM_EGRESS_CONSENT=false`` (its default) -- the hosted
+
+        path is unreachable even though the operator explicitly opted into
+        "hosted" AND redaction is on. This is the leg-defining gate
+        (hosted-llm-anthropic-ica-lane-v1 M2) -- see
+        ``test_session_naming_local_backend.py``'s
+        ``GlobalEgressConsentGateTests`` for the negative-construction
+        version of this same assertion.
+        """
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.object(
+            config, "CCDASH_LLM_EGRESS_CONSENT", False
+        ), patch.dict("os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}):
+            backend = resolve_naming_backend(ports=object())
+        self.assertIsNone(backend)
+
+    def test_naming_egress_hosted_requires_all_flags(self) -> None:
         """Named for the plan's AC->command row (``pytest -k "naming_egress"``)."""
-        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.dict(
-            "os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "false"}
-        ):
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.object(
+            config, "CCDASH_LLM_EGRESS_CONSENT", True
+        ), patch.dict("os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "false"}):
             self.assertIsNone(resolve_naming_backend(ports=object()))
-        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.dict(
-            "os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}
-        ):
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.object(
+            config, "CCDASH_LLM_EGRESS_CONSENT", True
+        ), patch.dict("os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}):
             self.assertIsInstance(resolve_naming_backend(ports=object()), HostedGeminiNamingBackend)
 
 
@@ -497,6 +523,83 @@ class ProviderErrorBodyNeverLoggedTests(unittest.IsolatedAsyncioTestCase):
         # The status code IS expected to be present -- that's the "fixed
         # message plus status code" contract, not a blanket "log nothing."
         self.assertIn("403", joined)
+
+
+# ── M2: egress marker + provenance enforcement ──────────────────────────────
+
+class EgressMarkerAndProvenanceEnforcementTests(unittest.IsolatedAsyncioTestCase):
+    """hosted-llm-anthropic-ica-lane-v1 M2 -- the explicit, checkable egress
+
+    marker this feature introduces, and the fail-closed provenance check
+    every egress adapter must apply before any network call.
+    """
+
+    def test_gemini_adapter_is_marked_egress(self) -> None:
+        from backend.adapters.llm.gemini import GeminiTextCompletionAdapter
+
+        self.assertTrue(GeminiTextCompletionAdapter.EGRESS)
+
+    def test_hosted_backend_egress_property_delegates_to_its_adapter(self) -> None:
+        """``HostedGeminiNamingBackend.EGRESS`` is what
+
+        ``SessionNamingSweepJob``'s per-project consent gate actually reads
+        -- it must reflect the underlying adapter's marker, not a
+        hand-copied duplicate that could drift.
+        """
+        backend = HostedGeminiNamingBackend(ports=object(), api_key="fake-key")
+        self.assertTrue(backend.EGRESS)
+
+    async def test_wrong_provenance_envelope_is_rejected_before_any_network_call(
+        self,
+    ) -> None:
+        """The provenance vocabulary this feature enforces:
+
+        ``PromptProvenance`` has exactly two members (``AGGREGATE``,
+        ``TRANSCRIPT_REDACTED``) -- both cleared to egress. A caller that
+        constructs a :class:`PromptEnvelope` with anything else (a bug, a
+        future refactor bypassing every earlier gate) must be rejected by
+        the adapter itself, BEFORE it ever opens a connection -- asserted
+        here by patching ``httpx.AsyncClient`` and proving it is never
+        constructed.
+        """
+        from backend.adapters.llm.gemini import GeminiTextCompletionAdapter
+        from backend.application.ports.llm import PromptEnvelope
+
+        adapter = GeminiTextCompletionAdapter(
+            api_key="fake-key", model="gemini-2.0-flash", timeout_seconds=5
+        )
+        bad_envelope = PromptEnvelope(text="hello", provenance="raw_transcript")  # type: ignore[arg-type]
+
+        with patch(
+            "backend.adapters.llm.gemini.httpx.AsyncClient"
+        ) as mock_client_cls:
+            with self.assertRaises(ValueError):
+                await adapter.complete(bad_envelope)
+
+        mock_client_cls.assert_not_called()
+
+    async def test_allowed_provenance_values_are_not_rejected(self) -> None:
+        """Sanity check the enforcement is not accidentally over-broad --
+
+        both real ``PromptProvenance`` members must still reach the
+        network call (mocked here) rather than being rejected.
+        """
+        from backend.adapters.llm.gemini import GeminiTextCompletionAdapter
+        from backend.application.ports.llm import PromptProvenance, envelope_from_aggregate
+
+        adapter = GeminiTextCompletionAdapter(
+            api_key="fake-key", model="gemini-2.0-flash", timeout_seconds=5
+        )
+        good_envelope = envelope_from_aggregate("hello")
+        self.assertEqual(good_envelope.provenance, PromptProvenance.AGGREGATE)
+
+        mock_client = _mock_gemini_client(response_text="A title")
+        with patch(
+            "backend.adapters.llm.gemini.httpx.AsyncClient", return_value=mock_client
+        ):
+            result = await adapter.complete(good_envelope)
+
+        self.assertEqual(result, "A title")
 
 
 if __name__ == "__main__":

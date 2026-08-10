@@ -232,6 +232,22 @@ CCDASH_SESSION_NAMING_SWEEP_INTERVAL_SECONDS = _env_int(
 # An unrecognized value is treated by T3-002/T3-003 as "local"
 # (fail toward zero egress, never toward an unintended hosted call).
 CCDASH_SESSION_NAMING_BACKEND = os.getenv("CCDASH_SESSION_NAMING_BACKEND", "local").strip().lower() or "local"
+# hosted-llm-anthropic-ica-lane-v1 M2: the GLOBAL egress consent switch.
+# Defaults False -- fail-closed. Every hosted/egress-shaped naming backend
+# (today: Lane B / HostedGeminiNamingBackend; M3 adds an anthropic adapter
+# behind this SAME switch, no new gate) is reachable only when this flag is
+# explicitly true, regardless of CCDASH_SESSION_NAMING_BACKEND's own value
+# or CCDASH_REDACTION_PATTERNS_ENABLED. Checked structurally by
+# ``resolve_naming_backend`` (backend/services/session_naming_local_backend.py)
+# BEFORE it ever imports/constructs an egress-shaped backend class -- never
+# at the call site -- so a reviewer can see the fail-closed property by
+# reading that resolver alone, without tracing call sites. A project's own
+# `projects.llm_egress_consent` (v52 migration) is the SECOND, per-project
+# gate this flag composes with -- checked separately, per sweep tick, inside
+# SessionNamingSweepJob's fan-out loop (never here; this flag is
+# deployment-wide and read once at process start, same as every other
+# env-var flag in this module).
+CCDASH_LLM_EGRESS_CONSENT = _env_bool("CCDASH_LLM_EGRESS_CONSENT", False)
 # automatic-session-naming-v1 M3 (T3-002): Lane A local backend -- the
 # zero-egress-by-default HTTP client target. Talks to a local Ollama
 # daemon; localhost-only by construction (a homelab/dev-box loopback

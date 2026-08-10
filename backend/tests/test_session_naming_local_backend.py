@@ -119,15 +119,20 @@ class BackendResolutionTests(unittest.TestCase):
     def test_hosted_flag_alone_is_unreachable_without_redaction_gate_check(self) -> None:
         """The opt-in flag by itself is not sufficient to inspect --
 
-        this resolver additionally consults the redaction gate (T3-003).
-        With the default redaction gate ON (the secure default), opting
-        into "hosted" DOES construct a real backend -- see
+        this resolver additionally consults the redaction gate (T3-003) AND
+        (hosted-llm-anthropic-ica-lane-v1 M2) the GLOBAL egress consent gate
+        -- see ``GlobalEgressConsentGateTests`` below for that gate tested in
+        isolation. With the default redaction gate ON (the secure default)
+        and egress consent explicitly opted into for this test, opting into
+        "hosted" DOES construct a real backend -- see
         ``test_session_naming_hosted_backend.py`` for the full
-        both-conditions-required matrix. This test only pins that the
+        all-conditions-required matrix. This test only pins that the
         resolver no longer hardcodes ``None`` for "hosted" now that Lane B
         has landed.
         """
-        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"):
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.object(
+            config, "CCDASH_LLM_EGRESS_CONSENT", True
+        ):
             backend = resolve_naming_backend(ports=object())
         self.assertIsNotNone(backend)
         self.assertNotIsInstance(backend, LocalOllamaNamingBackend)
@@ -156,7 +161,9 @@ class BackendResolutionTests(unittest.TestCase):
         the moment ``resolve_naming_backend`` actually constructs the hosted
         backend.
         """
-        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), self.assertLogs(
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.object(
+            config, "CCDASH_LLM_EGRESS_CONSENT", True
+        ), self.assertLogs(
             "ccdash.services.session_naming_local_backend", level="WARNING"
         ) as captured:
             backend = resolve_naming_backend(ports=object())
@@ -177,6 +184,85 @@ class BackendResolutionTests(unittest.TestCase):
             backend.base_url.startswith("http://localhost")
             or backend.base_url.startswith("http://127.0.0.1")
         )
+
+    def test_local_backend_egress_marker_is_false(self) -> None:
+        """The explicit, checkable egress marker (M2) -- local/loopback
+
+        never requires per-project consent, and this is how
+        ``SessionNamingSweepJob`` tells the two backends apart.
+        """
+        backend = LocalOllamaNamingBackend(ports=object())
+        self.assertFalse(backend.EGRESS)
+
+        from backend.adapters.llm.ollama import OllamaTextCompletionAdapter
+
+        self.assertFalse(OllamaTextCompletionAdapter.EGRESS)
+
+
+# ── Global egress consent gate (hosted-llm-anthropic-ica-lane-v1 M2) ────────
+
+class GlobalEgressConsentGateTests(unittest.TestCase):
+    """The headline AC for this leg: consent false => no egress adapter
+
+    is EVER constructed, verified by reading the resolver alone (a
+    reviewer should not need to trace call sites).
+    """
+
+    def test_consent_defaults_false(self) -> None:
+        self.assertFalse(config.CCDASH_LLM_EGRESS_CONSENT)
+
+    def test_consent_false_keeps_hosted_unreachable_even_with_redaction_on(self) -> None:
+        """Global consent is checked FIRST and independently of the
+
+        redaction gate -- redaction being on (the secure default) does NOT
+        make the hosted lane reachable while consent is false.
+        """
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.dict(
+            "os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}
+        ), patch.object(config, "CCDASH_LLM_EGRESS_CONSENT", False):
+            backend = resolve_naming_backend(ports=object())
+        self.assertIsNone(backend)
+
+    def test_consent_true_with_hosted_and_redaction_constructs_backend(self) -> None:
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.dict(
+            "os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}
+        ), patch.object(config, "CCDASH_LLM_EGRESS_CONSENT", True):
+            backend = resolve_naming_backend(ports=object())
+        self.assertIsNotNone(backend)
+        self.assertNotIsInstance(backend, LocalOllamaNamingBackend)
+
+    def test_negative_construction_hosted_backend_never_constructed_when_consent_false(
+        self,
+    ) -> None:
+        """Fails LOUDLY (an ``AssertionError`` from the patched constructor,
+
+        not a quiet assertion mismatch) if ``resolve_naming_backend`` EVER
+        reaches the point of importing/constructing
+        ``HostedGeminiNamingBackend`` while global consent is false --
+        modeled on ``test_aar_review_no_llm_imports.py``'s house pattern of
+        asserting a structural "this can never happen" property rather than
+        merely a return-value expectation. ``CCDASH_SESSION_NAMING_BACKEND``
+        is "hosted" and redaction is explicitly on -- i.e. every OTHER gate
+        is wide open -- so only the consent gate stands between this call
+        and construction.
+        """
+        import backend.services.session_naming_hosted_backend as hosted_module
+
+        def _explode(*args: object, **kwargs: object) -> None:
+            raise AssertionError(
+                "HostedGeminiNamingBackend was constructed while "
+                "CCDASH_LLM_EGRESS_CONSENT was false -- the global egress "
+                "consent gate has a silent-fail-open regression."
+            )
+
+        with patch.object(config, "CCDASH_SESSION_NAMING_BACKEND", "hosted"), patch.dict(
+            "os.environ", {"CCDASH_REDACTION_PATTERNS_ENABLED": "true"}
+        ), patch.object(config, "CCDASH_LLM_EGRESS_CONSENT", False), patch.object(
+            hosted_module, "HostedGeminiNamingBackend", side_effect=_explode
+        ):
+            backend = resolve_naming_backend(ports=object())
+
+        self.assertIsNone(backend)
 
 
 # ── Output sanitization ──────────────────────────────────────────────────────

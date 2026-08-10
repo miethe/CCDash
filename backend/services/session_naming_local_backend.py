@@ -138,6 +138,20 @@ class LocalOllamaNamingBackend:
             timeout_seconds=self.timeout_seconds,
         )
 
+    @property
+    def EGRESS(self) -> bool:
+        """Whether a call from this backend can leave the box.
+
+        hosted-llm-anthropic-ica-lane-v1 M2: delegates to
+        ``self._adapter.EGRESS`` -- the adapter is the single source of
+        truth (``OllamaTextCompletionAdapter.EGRESS = False``); this
+        property exists purely so ``SessionNamingSweepJob``'s per-project
+        consent gate can check ``getattr(naming_backend, "EGRESS", False)``
+        on the backend object it actually holds, without reaching into a
+        private ``_adapter`` attribute.
+        """
+        return bool(getattr(self._adapter, "EGRESS", False))
+
     async def derive_name(self, candidate: dict[str, Any]) -> str | None:
         """Derive and persist a name for ``candidate``, or return ``None``.
 
@@ -314,19 +328,33 @@ def resolve_naming_backend(ports: Any) -> Any | None:
     ``CCDASH_SESSION_NAMING_BACKEND``'s own module-level contract in
     ``backend/config.py``) -- constructs :class:`LocalOllamaNamingBackend`.
 
-    ``"hosted"`` (T3-003, Lane B) is reachable ONLY when BOTH of the
+    ``"hosted"`` (T3-003, Lane B) is reachable ONLY when ALL of the
     following hold, checked here (not inside the hosted backend itself, so
     an unreachable path never even gets constructed):
 
       1. ``CCDASH_SESSION_NAMING_BACKEND`` resolves to ``"hosted"`` (this
          function's own selector, above).
-      2. ``CCDASH_REDACTION_PATTERNS_ENABLED`` reads ``True`` (checked via
+      2. ``CCDASH_LLM_EGRESS_CONSENT`` reads ``True`` (hosted-llm-anthropic-
+         ica-lane-v1 M2 -- the GLOBAL egress consent switch, defaults
+         ``False``/fail-closed; checked FIRST, before condition 3, and
+         before the module below is even imported).
+      3. ``CCDASH_REDACTION_PATTERNS_ENABLED`` reads ``True`` (checked via
          :func:`redaction.redaction_patterns_enabled`, the exact same
          env-parsing logic ``redact_entries`` uses internally -- never a
          re-derived duplicate).
 
+    A per-project gate (``projects.llm_egress_consent``) composes with all
+    three of the above but is deliberately NOT checked here -- this
+    function resolves one backend object for the whole process, while
+    per-project consent must be re-evaluated every sweep tick against
+    whichever project the tick is currently processing (see
+    ``SessionNamingSweepJob.execute``'s fan-out loop,
+    ``backend/adapters/jobs/session_naming_sweep_job.py``). Folding it in
+    here would capture a single project's consent at construction time,
+    which is exactly the asymmetry this feature's rubric forbids.
+
     SECURITY-REVIEW NOTE (M3 T3-006, 2026-08-05) -- read this before treating
-    "BOTH conditions" as "an operator must take two deliberate actions."
+    "ALL conditions" as "an operator must take several deliberate actions."
     ``CCDASH_REDACTION_PATTERNS_ENABLED`` defaults ``True``
     (``agent_queries/redaction.py``'s fail-closed default, shared with every
     OTHER read path's Layer-1 secret scrub -- it is not a flag introduced by
@@ -348,7 +376,7 @@ def resolve_naming_backend(ports: Any) -> Any | None:
     one lane's messaging; the fix here is this corrected docstring plus the
     reachability WARNING logged below, not a changed default.
 
-    Either condition absent makes the hosted path unreachable, and this
+    Any condition absent makes the hosted path unreachable, and this
     resolver returns ``None`` -- the SAME structural no-op
     ``SessionNamingSweepJob`` already treats as "no backend injected" (its
     derive loop is skipped entirely; ``sessions_named`` stays 0;
@@ -357,6 +385,24 @@ def resolve_naming_backend(ports: Any) -> Any | None:
     """
     backend_name = str(getattr(config, "CCDASH_SESSION_NAMING_BACKEND", "local") or "local").strip().lower()
     if backend_name == "hosted":
+        # hosted-llm-anthropic-ica-lane-v1 M2: the GLOBAL egress consent
+        # gate, checked FIRST and structurally -- this `if not ...: return
+        # None` runs before the redaction check below, and both run before
+        # the lazy `from ... import HostedGeminiNamingBackend` a few lines
+        # down. A reviewer can see, by reading this function alone (no call-
+        # site tracing required), that false consent makes it IMPOSSIBLE to
+        # reach the `HostedGeminiNamingBackend(...)` constructor call at the
+        # bottom -- the import itself is never executed, let alone the
+        # construction. Defaults False (fail-closed): an operator must set
+        # CCDASH_LLM_EGRESS_CONSENT=true explicitly; there is no fallback to
+        # any other flag that could accidentally satisfy this condition.
+        if not bool(getattr(config, "CCDASH_LLM_EGRESS_CONSENT", False)):
+            logger.info(
+                "session_naming: CCDASH_SESSION_NAMING_BACKEND=hosted requested but "
+                "CCDASH_LLM_EGRESS_CONSENT is off -- hosted (egress) backend is "
+                "unreachable; naming sweep will no-op (never falls back to sending)."
+            )
+            return None
         if not redaction_patterns_enabled():
             logger.info(
                 "session_naming: CCDASH_SESSION_NAMING_BACKEND=hosted requested but "

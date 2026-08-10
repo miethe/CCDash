@@ -66,6 +66,14 @@ HARD INVARIANTS this module upholds and later tasks must preserve:
   - Worker-only: constructed for the ``worker``/``worker-watch`` profiles
     only (``backend/runtime/container.py``'s ``_WORKER_JOB_PROFILES`` gate);
     the ``api`` profile never constructs this job.
+  - Fail-closed on consent (hosted-llm-anthropic-ica-lane-v1 M2): when
+    ``self.naming_backend`` is egress-shaped (``EGRESS = True``), a project
+    whose ``llm_egress_consent`` reads false is skipped for the whole tick
+    -- no candidate-count query, no transcript fetch, no egress attempt --
+    and this is re-evaluated from the FRESH project row returned by
+    ``ports.workspace_registry.list_projects()`` every single tick, never
+    cached. A local-only backend (``EGRESS`` absent/False) is unaffected by
+    this check regardless of any project's consent value.
 """
 from __future__ import annotations
 
@@ -75,6 +83,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from backend import config
+from backend.observability import otel as observability
 
 logger = logging.getLogger("ccdash.jobs.session_naming_sweep")
 
@@ -193,10 +202,50 @@ class SessionNamingSweepJob:
             getattr(config, "SYNC_COALESCING_ENABLED", True)
         )
 
+        # hosted-llm-anthropic-ica-lane-v1 M2: is THIS tick's naming backend
+        # egress-shaped? A static fact about which backend
+        # ``resolve_naming_backend`` resolved at process start (see that
+        # function's own docstring for why per-project consent is
+        # deliberately NOT folded in there) -- read once per tick, outside
+        # the per-project loop, purely as a cheap gate for whether the
+        # per-project consent check below even applies. Local-only backends
+        # (``EGRESS`` absent or False) never require per-project consent.
+        backend_requires_consent = self.naming_backend is not None and bool(
+            getattr(self.naming_backend, "EGRESS", False)
+        )
+
         project_results: dict[str, SessionNamingSweepRunResult] = {}
         for project in projects:
             project_id = str(getattr(project, "id", "") or "")
             if not project_id:
+                continue
+
+            # hosted-llm-anthropic-ica-lane-v1 M2: the PER-PROJECT consent
+            # gate. ``project`` comes fresh from ``self._resolve_projects_to_sweep()``
+            # -- called once per ``execute()`` invocation, i.e. once per
+            # sweep tick -- via ``ports.workspace_registry.list_projects()``
+            # (ADR-006), which re-reads the registry from the DB every tick.
+            # `llm_egress_consent` is therefore read fresh here every tick,
+            # never cached on ``self`` or captured at job construction: a
+            # consent flip in the DB between ticks changes this check's
+            # outcome on the very next tick, with no restart of this job
+            # instance required. A declined project is recorded (never
+            # silently dropped -- same "no silent drop" posture as the
+            # coalescing branch below) with outcome="consent_declined" and
+            # is never touched by ``_execute_inner`` this tick -- no
+            # candidate-count query, no transcript fetch, no egress attempt.
+            if backend_requires_consent and not bool(
+                getattr(project, "llm_egress_consent", False)
+            ):
+                logger.info(
+                    "session_naming_sweep: project_id=%s has not consented to LLM "
+                    "egress (llm_egress_consent=false) -- skipping this tick "
+                    "(the active naming backend is egress-shaped).",
+                    project_id,
+                )
+                project_results[project_id] = SessionNamingSweepRunResult(
+                    success=True, outcome="consent_declined"
+                )
                 continue
 
             coal_key = (project_id, trigger or "scheduled")
@@ -213,6 +262,16 @@ class SessionNamingSweepJob:
                     continue
                 self._in_flight.add(coal_key)
             try:
+                if backend_requires_consent:
+                    # Reaching here means this project consented (the check
+                    # above did not skip it) -- per-tick egress
+                    # observability AC: log lane/model/project_id, never a
+                    # credential/prompt/transcript.
+                    observability.log_llm_egress_event(
+                        lane=str(getattr(config, "CCDASH_SESSION_NAMING_BACKEND", "") or ""),
+                        model=str(getattr(self.naming_backend, "model", "") or "unknown"),
+                        project_id=project_id,
+                    )
                 project_results[project_id] = await self._execute_inner(project, project_id)
             finally:
                 if coalescing_enabled:
