@@ -170,6 +170,67 @@ Both gates are independent and additive — `CCDASH_LLM_EGRESS_CONSENT=true`
 with a project's `llm_egress_consent` left `false` (the default) still sends
 that project's sessions through the local, zero-egress naming backend only.
 
+### Granting the per-project half
+
+A brand-new project is registered with `llm_egress_consent` **false** — there
+is no inheritance from any other project and no "default on" path.  Granting it
+is an explicit write:
+
+```bash
+# grant (per-project half only — the env flag is still independently required)
+ccdash-cli project consent <project-id> --grant
+
+# revoke
+ccdash-cli project consent <project-id> --revoke
+```
+
+Exactly one of `--grant` / `--revoke` is required; passing both or neither is a
+usage error (exit 2) rather than a silent default.  On `--grant` the CLI prints
+a reminder that `CCDASH_LLM_EGRESS_CONSENT` must also be true.
+
+The transport-neutral equivalent — for agents, scripts, and any non-CLI caller:
+
+```bash
+curl -sS -X POST "http://<host>:8000/api/projects/<project-id>/egress-consent" \
+  -H 'Content-Type: application/json' \
+  -d '{"granted": true}'
+```
+
+The request body carries the single required boolean `granted`.  The response is
+the full updated `Project` object (HTTP 200), or HTTP 404 when the project id is
+unknown.  Read the current state back off any project payload — the field is
+`llm_egress_consent` on the `Project` model:
+
+```bash
+# every project's current state (reads only — no write involved)
+ccdash-cli project list --output json \
+  | jq -r '.[] | "\(.id)\t\(.name)\t\(.llm_egress_consent)"'
+
+# same, over raw REST
+curl -sS "http://<host>:8000/api/projects" \
+  | jq -r '.[] | "\(.id)\t\(.name)\t\(.llm_egress_consent)"'
+```
+
+`ccdash-cli project consent ... --json` also emits the full updated project, so
+a grant/revoke can be verified in the same call that performs it — but prefer the
+list above when you only want to *read* the current state.
+
+Operationally fail-closed facts worth restating:
+
+- A brand-new project **always** defaults to no consent; registration never
+  grants it.
+- **Both** levels are required.  Granting the per-project half on a deployment
+  where `CCDASH_LLM_EGRESS_CONSENT` is unset (or false) changes nothing
+  observable — that project's sessions still go through the local, zero-egress
+  naming backend.
+- **Revoking either level stops egress.**  `--revoke` on the project, or
+  flipping the env flag off (plus the restart/rebuild the compose allowlist note
+  below requires), is sufficient on its own.
+- The per-project flag is re-read **every sweep tick** inside
+  `SessionNamingSweepJob`'s fan-out loop, so a revoke takes effect on the next
+  tick without a restart.  The env flag is read at construction time and does
+  need a restart.
+
 ### Same compose-allowlist gap as `CCDASH_API_TOKEN`
 
 Both `CCDASH_LLM_EGRESS_CONSENT` and the anthropic-lane credential vars

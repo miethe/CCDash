@@ -1,7 +1,8 @@
 """Tests for the ``ccdash project`` command group.
 
 Covers: add (success, idempotent no-op, --force, --active), list (table and JSON),
-use (success, not-found), and unreachable-target error paths.
+use (success, not-found), consent (grant, revoke, flag-combination rejection,
+404 handling), and unreachable-target error paths.
 
 Mocking strategy mirrors test_commands.py:
 - resolve_target is patched to return a known TargetConfig.
@@ -619,3 +620,157 @@ class TestCLIRegistration:
         assert "add" in result.output
         assert "list" in result.output
         assert "use" in result.output
+
+
+# ---------------------------------------------------------------------------
+# project consent (hosted-LLM egress gate)
+# ---------------------------------------------------------------------------
+
+CONSENT_GRANTED_PROJECT: dict[str, Any] = {
+    "id": "proj-aaa",
+    "name": "Alpha",
+    "path": "/srv/alpha",
+    "llm_egress_consent": True,
+}
+
+CONSENT_REVOKED_PROJECT: dict[str, Any] = {
+    "id": "proj-aaa",
+    "name": "Alpha",
+    "path": "/srv/alpha",
+    "llm_egress_consent": False,
+}
+
+
+class TestProjectConsent:
+    def test_grant_posts_granted_true(self):
+        """consent --grant POSTs {"granted": true} to the egress-consent endpoint."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_GRANTED_PROJECT},
+        )
+        result = _invoke("project", "consent", "proj-aaa", "--grant", client=client)
+        assert result.exit_code == 0, result.output
+        call_path = client.post.call_args[0][0]
+        assert call_path == "/api/projects/proj-aaa/egress-consent"
+        _, kwargs = client.post.call_args
+        assert kwargs.get("json_body") == {"granted": True}
+
+    def test_grant_reports_project_and_new_state(self):
+        """Success output names the project and the new consent state plainly."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_GRANTED_PROJECT},
+        )
+        result = _invoke("project", "consent", "proj-aaa", "--grant", client=client)
+        assert result.exit_code == 0, result.output
+        assert "Alpha" in result.output
+        assert "proj-aaa" in result.output
+        assert "GRANTED" in result.output
+
+    def test_grant_reminds_about_global_flag(self):
+        """--grant must remind the operator the global env flag is still required."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_GRANTED_PROJECT},
+        )
+        result = _invoke("project", "consent", "proj-aaa", "--grant", client=client)
+        assert "CCDASH_LLM_EGRESS_CONSENT" in result.output
+
+    def test_revoke_posts_granted_false(self):
+        """consent --revoke POSTs {"granted": false}."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_REVOKED_PROJECT},
+        )
+        result = _invoke("project", "consent", "proj-aaa", "--revoke", client=client)
+        assert result.exit_code == 0, result.output
+        _, kwargs = client.post.call_args
+        assert kwargs.get("json_body") == {"granted": False}
+        assert "REVOKED" in result.output
+
+    def test_revoke_does_not_emit_global_flag_reminder(self):
+        """The global-flag reminder is a grant-path message only."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_REVOKED_PROJECT},
+        )
+        result = _invoke("project", "consent", "proj-aaa", "--revoke", client=client)
+        assert "zero-egress" in result.output
+
+    def test_both_flags_rejected(self):
+        """--grant and --revoke together is a clean usage error, not a silent default."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_GRANTED_PROJECT},
+        )
+        result = _invoke(
+            "project", "consent", "proj-aaa", "--grant", "--revoke", client=client
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+        assert "Traceback" not in result.output
+        client.post.assert_not_called()
+
+    def test_neither_flag_rejected(self):
+        """Omitting both flags is a clean usage error — consent is never implicit."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_GRANTED_PROJECT},
+        )
+        result = _invoke("project", "consent", "proj-aaa", client=client)
+        assert result.exit_code != 0
+        assert "required" in result.output
+        assert "Traceback" not in result.output
+        client.post.assert_not_called()
+
+    def test_unknown_project_404_exits_1(self):
+        """A 404 from the endpoint exits 1 with a clear message and no traceback."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": NotFoundError("Project not found")},
+        )
+        result = _invoke("project", "consent", "nope", "--grant", client=client)
+        assert result.exit_code == 1
+        assert "not found" in result.output
+        assert "Traceback" not in result.output
+
+    def test_json_output_emits_updated_project(self):
+        """consent --json emits the updated Project object."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_GRANTED_PROJECT},
+        )
+        result = _invoke("project", "consent", "proj-aaa", "--grant", "--json", client=client)
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["llm_egress_consent"] is True
+
+    def test_server_state_is_authoritative(self):
+        """When the server disagrees with the request, its value wins and is flagged."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": CONSENT_REVOKED_PROJECT},
+        )
+        result = _invoke("project", "consent", "proj-aaa", "--grant", client=client)
+        assert result.exit_code == 0, result.output
+        assert "REVOKED" in result.output
+        assert "Warning" in result.output
+
+    def test_missing_consent_field_is_contract_state(self):
+        """A server response without a consent field is reported, not defaulted silently."""
+        client = _make_client(
+            post_side_effects={"/egress-consent": {"id": "proj-aaa", "name": "Alpha"}},
+        )
+        result = _invoke("project", "consent", "proj-aaa", "--grant", client=client)
+        assert result.exit_code == 0, result.output
+        assert "did not report a consent field" in result.output
+
+    def test_unreachable_exits_code_4(self):
+        """consent exits 4 when the server is unreachable."""
+        client = _make_client(post_exception=ConnectionError("Connection refused"))
+        result = _invoke("project", "consent", "proj-aaa", "--grant", client=client)
+        assert result.exit_code == 4
+        assert "Traceback" not in result.output
+
+    def test_auth_failure_exits_code_2(self):
+        """consent exits 2 on HTTP 401."""
+        client = _make_client(post_exception=AuthenticationError("Unauthorized"))
+        result = _invoke("project", "consent", "proj-aaa", "--grant", client=client)
+        assert result.exit_code == 2
+        assert "Traceback" not in result.output
+
+    def test_consent_appears_in_project_help(self):
+        """'consent' is listed in ccdash-cli project --help."""
+        result = runner.invoke(app, ["project", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "consent" in result.output

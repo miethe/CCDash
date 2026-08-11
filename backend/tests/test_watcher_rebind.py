@@ -562,5 +562,91 @@ class WatcherRebindRouterTests(unittest.TestCase):
         self.assertIsNone(body.get("watcherRebound"))
 
 
+# ---------------------------------------------------------------------------
+# Router-level: POST /api/projects/{project_id}/egress-consent
+# ---------------------------------------------------------------------------
+
+
+class EgressConsentRouterTests(unittest.TestCase):
+    """Router coverage for the hosted-LLM egress consent write path.
+
+    Uses a REAL ``DbProjectManager`` as the workspace registry (not a MagicMock)
+    so the endpoint is exercised end-to-end through the model_dump upsert -- the
+    exact path where a naive implementation silently revokes consent.
+    """
+
+    def _build_app(self, registry):
+        from fastapi import FastAPI
+
+        from backend.request_scope import get_core_ports
+        from backend.routers.projects import projects_router
+        from backend.runtime import dependencies as runtime_deps
+
+        app = FastAPI()
+        app.include_router(projects_router)
+
+        core_ports = MagicMock()
+        core_ports.workspace_registry = registry
+
+        request_context = MagicMock()
+        request_context.principal = MagicMock()
+        request_context.principal.provider = MagicMock()
+        request_context.principal.provider.hosted = False
+
+        app.dependency_overrides[get_core_ports] = lambda: core_ports
+        app.dependency_overrides[runtime_deps.get_request_context] = lambda: request_context
+        app.dependency_overrides[runtime_deps.get_runtime_container] = lambda: MagicMock()
+        return app
+
+    def _make_registry(self, tmpdir: str):
+        from backend.project_manager import DbProjectManager
+
+        json_path = Path(tmpdir) / "projects.json"
+        db_path = Path(tmpdir) / "registry.db"
+
+        async def _migrate() -> None:
+            async with aiosqlite.connect(str(db_path)) as db:
+                db.row_factory = aiosqlite.Row
+                await run_migrations(db)
+
+        asyncio.run(_migrate())
+        return DbProjectManager(json_path, db_path=str(db_path), db_backend="sqlite")
+
+    def test_grant_then_revoke_round_trips_through_endpoint(self) -> None:
+        from backend.models import Project
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = self._make_registry(tmpdir)
+            registry.add_project(Project(id="p-http", name="HTTP Project", path=tmpdir))
+            client = TestClient(self._build_app(registry), raise_server_exceptions=True)
+
+            granted = client.post("/api/projects/p-http/egress-consent", json={"granted": True})
+            self.assertEqual(granted.status_code, 200)
+            self.assertTrue(granted.json()["llm_egress_consent"])
+
+            revoked = client.post("/api/projects/p-http/egress-consent", json={"granted": False})
+            self.assertEqual(revoked.status_code, 200)
+            self.assertFalse(revoked.json()["llm_egress_consent"])
+
+    def test_unknown_project_returns_404(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = self._make_registry(tmpdir)
+            client = TestClient(self._build_app(registry), raise_server_exceptions=False)
+
+            response = client.post("/api/projects/nope/egress-consent", json={"granted": True})
+            self.assertEqual(response.status_code, 404)
+
+    def test_missing_granted_field_is_rejected(self) -> None:
+        from backend.models import Project
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = self._make_registry(tmpdir)
+            registry.add_project(Project(id="p-422", name="Needs Granted", path=tmpdir))
+            client = TestClient(self._build_app(registry), raise_server_exceptions=False)
+
+            response = client.post("/api/projects/p-422/egress-consent", json={})
+            self.assertEqual(response.status_code, 422, "granted is required -- empty body must not imply a revoke")
+
+
 if __name__ == "__main__":
     unittest.main()

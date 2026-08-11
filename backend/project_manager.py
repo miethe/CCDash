@@ -746,6 +746,23 @@ class DbProjectManager:
             raise ValueError(f"Project {project_id} not found")
         project.id = project_id
         normalize_project_test_config(project, legacy_test_results_dir=config.TEST_RESULTS_DIR)
+
+        # hosted-llm-anthropic-ica-lane-v1: `llm_egress_consent` is a
+        # fail-closed consent decision whose model default is False.  The
+        # repository upsert binds EVERY column by name, so a caller that
+        # rebuilt a Project without carrying the field forward would silently
+        # REVOKE a previously granted consent.  Carry the stored value forward
+        # whenever the incoming model did not explicitly set the field.
+        # (`model_dump(exclude_unset=True)` is deliberately NOT used here --
+        # the upsert SQL requires the full column set.)
+        stored = self._projects.get(project_id)
+        if stored is not None and "llm_egress_consent" not in project.model_fields_set:
+            project.llm_egress_consent = stored.llm_egress_consent
+            logger.info(
+                "Preserved existing llm_egress_consent for project %s (field absent from update payload)",
+                project_id,
+            )
+
         self._projects[project_id] = project
         row = project.model_dump()
         row["is_active"] = (project_id == self._active_project_id)

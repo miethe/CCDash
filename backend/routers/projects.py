@@ -1,7 +1,10 @@
 """API router for project management."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from backend.adapters.jobs.runtime import WatcherRebindError
 from backend.application.context import RequestContext
@@ -10,7 +13,19 @@ from backend.models import Project, ProjectResolvedPathDTO, ProjectResolvedPaths
 from backend.request_scope import get_core_ports
 from backend.runtime.dependencies import get_request_context
 
+logger = logging.getLogger(__name__)
+
 projects_router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+class EgressConsentRequest(BaseModel):
+    """Body for the per-project hosted-LLM egress consent write path.
+
+    ``granted`` is required -- there is deliberately no default, so an empty
+    body is a 422 rather than an implicit revoke.
+    """
+
+    granted: bool = Field(..., description="True grants hosted-LLM egress consent for this project; False revokes it.")
 
 
 @projects_router.get("", response_model=list[Project])
@@ -59,6 +74,46 @@ def add_project(project: Project, core_ports: CorePorts = Depends(get_core_ports
     try:
         core_ports.workspace_registry.add_project(project)
         return project
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@projects_router.post("/{project_id}/egress-consent", response_model=Project)
+def set_project_egress_consent(
+    project_id: str,
+    payload: EgressConsentRequest,
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    """Grant or revoke hosted-LLM egress consent for a single project.
+
+    ``projects.llm_egress_consent`` is the per-project half of a two-level
+    fail-closed consent gate for off-box (hosted) LLM egress.  This is the
+    only supported write path -- it exists so granting consent never requires
+    a raw DB write.  The transition is logged at INFO because it is a consent
+    decision and must be legible in the operator log.
+    """
+    try:
+        project = core_ports.workspace_registry.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+        project.llm_egress_consent = payload.granted
+        core_ports.workspace_registry.update_project(project_id, project)
+
+        updated = core_ports.workspace_registry.get_project(project_id)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Project not found after consent update")
+
+        logger.info(
+            "llm_egress_consent set to %s for project %s",
+            payload.granted,
+            project_id,
+        )
+        return updated
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

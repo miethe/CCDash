@@ -1,18 +1,21 @@
 """Project management sub-commands for the CCDash standalone CLI.
 
 Commands in this module register, list, and switch projects on a running
-CCDash instance without hand-editing ``projects.json``.
+CCDash instance without hand-editing ``projects.json``, and flip the
+per-project hosted-LLM egress consent gate.
 
-API endpoints used (all existing, no new server endpoints):
+API endpoints used:
     GET  /api/projects             -- list projects (list command + idempotency)
     POST /api/projects             -- create project (add command)
     POST /api/projects/active/{id} -- set active project (add --active, use command)
     GET  /api/projects/active      -- get active project (list command active marker)
+    POST /api/projects/{id}/egress-consent -- grant/revoke per-project hosted-LLM
+                                              egress consent (consent command)
 
 Exit code contract (mirrors existing CLI patterns):
     0 -- success
     1 -- server / not-found error
-    2 -- HTTP 401 authentication failure
+    2 -- HTTP 401 authentication failure, or a usage error (bad flag combination)
     4 -- network / connection failure
 """
 from __future__ import annotations
@@ -344,3 +347,138 @@ def project_use(
         _handle_client_error(exc, target.url)
 
     typer.echo(f"Active project set to '{project_id}'.")
+
+
+# ---------------------------------------------------------------------------
+# consent (hosted-LLM egress)
+# ---------------------------------------------------------------------------
+
+
+def _read_consent_flag(project: dict[str, Any]) -> bool | None:
+    """Extract the per-project egress-consent flag from a Project payload.
+
+    Accepts the canonical snake_case field and a camelCase spelling so the CLI
+    keeps working if the wire shape is ever aliased.  Returns None when the
+    server response carries no consent field at all (older server) — absence is
+    a contract state, not a bug, and must not be reported as ``false``.
+    """
+    for key in ("llm_egress_consent", "llmEgressConsent"):
+        if key in project:
+            return bool(project[key])
+    return None
+
+
+@project_app.command("consent")
+def project_consent(
+    project_id: str = typer.Argument(
+        ..., help="Project ID whose hosted-LLM egress consent should change."
+    ),
+    grant: bool = typer.Option(
+        False, "--grant", help="Grant hosted-LLM egress consent for this project."
+    ),
+    revoke: bool = typer.Option(
+        False, "--revoke", help="Revoke hosted-LLM egress consent for this project."
+    ),
+    output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
+    json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
+) -> None:
+    """Grant or revoke a project's hosted-LLM egress consent.
+
+    This flips a data-egress gate: it is the per-project half of a two-level
+    fail-closed consent model.  The deployment-wide ``CCDASH_LLM_EGRESS_CONSENT``
+    env flag must ALSO be true before any of this project's sessions can reach
+    a hosted model.  Exactly one of ``--grant`` / ``--revoke`` is required —
+    there is deliberately no default.
+    """
+    if grant and revoke:
+        typer.echo(
+            "Error: --grant and --revoke are mutually exclusive; pass exactly one.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if not grant and not revoke:
+        typer.echo(
+            "Error: one of --grant or --revoke is required "
+            "(consent changes are never implicit).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    granted = grant
+
+    target = resolve_target(target_flag=app_state.TARGET_FLAG)
+
+    try:
+        mode = resolve_output_mode(
+            output=output,
+            json_output=json_output,
+            default=app_state.OUTPUT_MODE,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    updated: dict[str, Any] = {}
+
+    try:
+        with build_client(target) as client:
+            try:
+                result = client.post(
+                    f"/api/projects/{project_id}/egress-consent",
+                    json_body={"granted": granted},
+                )
+            except NotFoundError:
+                typer.echo(
+                    f"Error: project '{project_id}' not found. "
+                    f"Check the ID with: ccdash-cli project list",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            except CCDashClientError as exc:
+                _handle_client_error(exc, target.url)
+
+            if isinstance(result, dict):
+                updated = result
+    except typer.Exit:
+        raise
+    except CCDashClientError as exc:
+        _handle_client_error(exc, target.url)
+
+    if mode == OutputMode.json:
+        typer.echo(get_formatter(mode).render(updated, title="Project"))
+        return
+
+    project_name = str(updated.get("name") or project_id)
+    server_state = _read_consent_flag(updated)
+    effective = granted if server_state is None else server_state
+    state_word = "GRANTED" if effective else "REVOKED"
+
+    typer.echo(
+        f"Hosted-LLM egress consent {state_word} for project "
+        f"'{project_name}' ({project_id})."
+    )
+    if server_state is None:
+        typer.echo(
+            "Note: the server response did not report a consent field; "
+            "the state above reflects the request that was sent.",
+            err=True,
+        )
+    elif server_state != granted:
+        typer.echo(
+            f"Warning: requested granted={granted} but the server reports "
+            f"{server_state}. The server's value is authoritative.",
+            err=True,
+        )
+
+    if effective:
+        typer.echo(
+            "Reminder: this is only the per-project half of the gate. "
+            "The deployment-wide CCDASH_LLM_EGRESS_CONSENT env flag must ALSO "
+            "be true before any of this project's sessions egress to a hosted "
+            "model. Both levels are required; revoking either one stops egress."
+        )
+    else:
+        typer.echo(
+            "This project's sessions now stay on the local, zero-egress "
+            "naming backend regardless of CCDASH_LLM_EGRESS_CONSENT."
+        )

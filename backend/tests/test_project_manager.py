@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import unittest
@@ -7,7 +8,30 @@ from pydantic import ValidationError
 
 from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
 from backend.models import Project, ProjectPathConfig
-from backend.project_manager import ProjectManager
+from backend.project_manager import DbProjectManager, ProjectManager
+
+
+async def _run_migrations_async(db_path: str) -> None:
+    import aiosqlite
+
+    from backend.db.sqlite_migrations import run_migrations
+
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        await run_migrations(db)
+
+
+def _make_db_manager(tmpdir: str) -> DbProjectManager:
+    """Build a DbProjectManager over a fresh migrated SQLite DB in *tmpdir*.
+
+    Mirrors the fixture in ``test_db_project_registry.py``: migrations must
+    have run before instantiation because ``ensure_table()`` only guards, it
+    does not create.
+    """
+    json_path = Path(tmpdir) / "projects.json"
+    db_path = Path(tmpdir) / "registry.db"
+    asyncio.run(_run_migrations_async(str(db_path)))
+    return DbProjectManager(json_path, db_path=str(db_path), db_backend="sqlite")
 
 
 class ProjectManagerTests(unittest.TestCase):
@@ -253,6 +277,78 @@ class ProjectManagerTests(unittest.TestCase):
             self.assertEqual(manager.get_active_project().id, "project-two")
             stored = json.loads(storage_path.read_text())
             self.assertEqual(stored["activeProjectId"], "project-two")
+
+
+class DbProjectManagerEgressConsentTests(unittest.TestCase):
+    """hosted-llm-anthropic-ica-lane-v1: consent must never be silently revoked.
+
+    ``DbProjectManager.update_project`` upserts ``project.model_dump()``, and
+    ``Project.llm_egress_consent`` defaults to False.  Any caller that rebuilds
+    a Project without carrying the field forward would therefore wipe a
+    previously granted consent -- these tests lock that behaviour down.
+    """
+
+    def test_update_project_preserves_consent_when_field_not_set(self) -> None:
+        """THE regression test: an unrelated update must not revoke consent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _make_db_manager(tmpdir)
+            mgr.add_project(
+                Project(
+                    id="p-consent-carry",
+                    name="Consented",
+                    path=tmpdir,
+                    llm_egress_consent=True,
+                )
+            )
+            self.assertTrue(mgr.get_project("p-consent-carry").llm_egress_consent)
+
+            # A caller that rebuilds the model from scratch, changing only an
+            # unrelated field and never mentioning llm_egress_consent.
+            incoming = Project(id="p-consent-carry", name="Renamed", path=tmpdir)
+            self.assertNotIn("llm_egress_consent", incoming.model_fields_set)
+
+            mgr.update_project("p-consent-carry", incoming)
+
+            result = mgr.get_project("p-consent-carry")
+            self.assertEqual(result.name, "Renamed", "unrelated field must still be updated")
+            self.assertTrue(
+                result.llm_egress_consent,
+                "llm_egress_consent must be preserved when the update payload does not set it",
+            )
+
+            # And it must be persisted, not just in-memory.
+            mgr2 = _make_db_manager(tmpdir)
+            self.assertTrue(
+                mgr2.get_project("p-consent-carry").llm_egress_consent,
+                "preserved consent must survive a fresh manager instance",
+            )
+
+    def test_new_project_defaults_to_consent_false(self) -> None:
+        """add_project stays fail-closed: never carry/assume consent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _make_db_manager(tmpdir)
+            project = Project(id="p-brand-new", name="Brand New", path=tmpdir)
+            self.assertNotIn("llm_egress_consent", project.model_fields_set)
+
+            mgr.add_project(project)
+
+            self.assertIs(mgr.get_project("p-brand-new").llm_egress_consent, False)
+
+    def test_explicit_grant_then_revoke_round_trips(self) -> None:
+        """An explicit False must still revoke -- preservation is not a lock."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _make_db_manager(tmpdir)
+            mgr.add_project(Project(id="p-toggle", name="Toggle", path=tmpdir))
+
+            granted = mgr.get_project("p-toggle")
+            granted.llm_egress_consent = True
+            mgr.update_project("p-toggle", granted)
+            self.assertTrue(mgr.get_project("p-toggle").llm_egress_consent, "grant must persist")
+
+            revoked = mgr.get_project("p-toggle")
+            revoked.llm_egress_consent = False
+            mgr.update_project("p-toggle", revoked)
+            self.assertFalse(mgr.get_project("p-toggle").llm_egress_consent, "explicit revoke must persist")
 
 
 if __name__ == "__main__":
