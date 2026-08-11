@@ -203,17 +203,21 @@ unknown.  Read the current state back off any project payload — the field is
 
 ```bash
 # every project's current state (reads only — no write involved)
-ccdash-cli project list --output json \
-  | jq -r '.[] | "\(.id)\t\(.name)\t\(.llm_egress_consent)"'
-
-# same, over raw REST
 curl -sS "http://<host>:8000/api/projects" \
   | jq -r '.[] | "\(.id)\t\(.name)\t\(.llm_egress_consent)"'
 ```
 
+Use the REST form above for read-back, not `ccdash-cli project list`: that command
+currently crashes on any array-returning endpoint (`AttributeError: 'list' object
+has no attribute 'get'` in the shared client's envelope unwrap), in both human and
+`--output json` modes. Tracked separately as `node_01KZRSSP4MM8V8FTT7KPST56A1`; it
+is a pre-existing client bug, unrelated to the consent surface. The
+`project consent` verb itself is unaffected — it receives a single object, not an
+array.
+
 `ccdash-cli project consent ... --json` also emits the full updated project, so
 a grant/revoke can be verified in the same call that performs it — but prefer the
-list above when you only want to *read* the current state.
+REST read-back above when you only want to *read* the current state.
 
 Operationally fail-closed facts worth restating:
 
