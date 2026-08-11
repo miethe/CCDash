@@ -990,10 +990,21 @@ class RuntimeContainer:
                     else:
                         watcher_check_status = "warn"
                 else:
-                    # Every registered project resolves to non-existent paths —
-                    # nothing to watch yet (fresh registry, or only the seed
-                    # example).  Degraded, not a hard failure.
-                    watcher_check_status = "warn"
+                    # Every bound project resolves to non-existent paths.  When the
+                    # watcher is REQUIRED (worker-watch) there is genuinely nothing
+                    # to watch, so the runtime is not ready — this restores the
+                    # T0-003 contract, which was otherwise unreachable: the
+                    # per-project branch above always wins because
+                    # _watcher_probe_detail populates `projects` for every
+                    # registered project, even in single-project env-pin mode
+                    # (fanOutMode=false).  The T3-fix protection is preserved by
+                    # scope: a single pathless project ALONGSIDE real watchable
+                    # ones lands in the `watchable_states` branch and still only
+                    # warns.  Only the all-pathless case fails.
+                    watcher_check_status = "fail" if watcher_runtime_required else "warn"
+                    # Surface the state on the summary line, mirroring the scalar
+                    # T0-003 path below.
+                    watcher_state = "configured_no_paths"
             elif watcher_state == "running":
                 watcher_check_status = "pass"
             elif watch_path_count == 0 and watcher_runtime_required:

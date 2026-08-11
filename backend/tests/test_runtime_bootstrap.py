@@ -1002,6 +1002,181 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(watcher_check["status"], "fail")
         self.assertEqual(watcher_check["data"]["state"], "configured_no_paths")
 
+    def _worker_watch_container_with_project_states(
+        self,
+        project_states: dict[str, str],
+        *,
+        top_level_state: str = "running",
+    ) -> types.SimpleNamespace:
+        """Build a worker-watch container whose watcher probe carries a per-project map.
+
+        ``top_level_state`` intentionally defaults to ``running`` so the tests prove the
+        per-project aggregation branch — not the scalar ``watcher_state`` fallback — is
+        what drives ``watcher_runtime``.
+        """
+        project = _active_project()
+        container = build_worker_runtime()
+        container.profile = get_runtime_profile("worker-watch")
+        container.storage_profile = _enterprise_storage_profile()
+        container.migration_status = "applied"
+        container.project_binding = _project_binding(project, source="explicit")
+        container.job_adapter = types.SimpleNamespace(
+            status_snapshot=lambda: {
+                "watcher": top_level_state,
+                "watcherDetail": {
+                    "state": top_level_state,
+                    "expected": True,
+                    "enabled": True,
+                    "configured": True,
+                    "running": top_level_state == "running",
+                    "watchPathCount": 0,
+                    "watchPaths": [],
+                    "lastChangeSyncAt": None,
+                    "lastChangeCount": None,
+                    "lastSyncStatus": None,
+                    "lastSyncError": None,
+                    "projects": {
+                        pid: {"state": state, "watchPathCount": 0, "lastChangeSyncAt": None}
+                        for pid, state in project_states.items()
+                    },
+                    "lastReconcileAt": None,
+                    "lastReconcileError": None,
+                },
+                "startupSync": "idle",
+                "syncProvisioned": True,
+                "analyticsSnapshots": "idle",
+                "telemetryExports": "idle",
+                "cacheWarming": "idle",
+                "jobsEnabled": True,
+            }
+        )
+        return container
+
+    def test_worker_watch_readyz_fails_when_every_bound_project_has_no_watch_paths(self) -> None:
+        """All-pathless per-project map + required watcher => NOT ready (T0-003 restored).
+
+        Owner decision: when every bound project resolves to non-existent paths there is
+        genuinely nothing to watch, so a required-watcher runtime (worker-watch) must hard
+        fail rather than warn.  Previously this case was unreachable — ``_probe_watcher_detail``
+        populates ``projects`` for every registered project (even in single-project env-pin
+        mode), so the per-project branch always won and the scalar T0-003 rule never fired.
+        """
+        container = self._worker_watch_container_with_project_states(
+            {"p1": "configured_no_paths"}
+        )
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id="project-1"),
+            ),
+        ):
+            client = TestClient(build_worker_probe_app(container))
+            response = client.get("/readyz")
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["runtimeProfile"], "worker-watch")
+        self.assertEqual(payload["ready"]["state"], "not_ready")
+        self.assertEqual(payload["ready"]["status"], "fail")
+        self.assertFalse(payload["ready"]["ready"])
+        self.assertIn(
+            "watcher_runtime", [reason["code"] for reason in payload["ready"]["reasons"]]
+        )
+        watcher_check = next(
+            check for check in payload["ready"]["checks"] if check["code"] == "watcher_runtime"
+        )
+        self.assertEqual(watcher_check["status"], "fail")
+        # The synthesised ``configured_no_paths`` watcher state must reach the summary
+        # line, mirroring the scalar T0-003 path (top-level state was "running").
+        self.assertEqual(
+            watcher_check["summary"], "Watcher is configured but no watch paths exist."
+        )
+
+    def test_worker_watch_readyz_stays_ready_with_one_pathless_project_beside_a_running_one(
+        self,
+    ) -> None:
+        """REGRESSION GUARD for the T3-fix intent.
+
+        A single pathless registry entry (removed repo, seed example) alongside real
+        watchable projects must NOT poison worker readiness — it lands in the
+        ``watchable_states`` branch, which ignores ``configured_no_paths`` entries.
+        """
+        container = self._worker_watch_container_with_project_states(
+            {"p1": "configured_no_paths", "p2": "running"}
+        )
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id="project-1"),
+            ),
+        ):
+            client = TestClient(build_worker_probe_app(container))
+            response = client.get("/readyz")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["runtimeProfile"], "worker-watch")
+        self.assertTrue(payload["ready"]["ready"])
+        watcher_check = next(
+            check for check in payload["ready"]["checks"] if check["code"] == "watcher_runtime"
+        )
+        self.assertNotEqual(watcher_check["status"], "fail")
+        self.assertEqual(watcher_check["status"], "pass")
+        self.assertNotIn(
+            "watcher_runtime", [reason["code"] for reason in payload["ready"]["reasons"]]
+        )
+
+    def test_local_detail_probe_warns_when_every_bound_project_has_no_watch_paths(self) -> None:
+        """Optional-watcher profile (local): all-pathless is degraded, never a hard fail."""
+        app = build_local_app()
+        app.state.runtime_container.storage_profile = _local_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+        app.state.runtime_container.job_adapter = types.SimpleNamespace(
+            status_snapshot=lambda: {
+                "watcher": "running",
+                "watcherDetail": {
+                    "state": "running",
+                    "expected": True,
+                    "enabled": True,
+                    "configured": True,
+                    "running": True,
+                    "watchPathCount": 0,
+                    "watchPaths": [],
+                    "lastChangeSyncAt": None,
+                    "lastChangeCount": None,
+                    "lastSyncStatus": None,
+                    "lastSyncError": None,
+                    "projects": {
+                        "p1": {"state": "configured_no_paths", "watchPathCount": 0, "lastChangeSyncAt": None},
+                    },
+                    "lastReconcileAt": None,
+                    "lastReconcileError": None,
+                },
+                "startupSync": "idle",
+                "analyticsSnapshots": "idle",
+                "telemetryExports": "idle",
+                "cacheWarming": "idle",
+                "jobsEnabled": True,
+            }
+        )
+
+        with patch.object(connection, "_connection", object()):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["runtimeProfile"], "local")
+        self.assertEqual(payload["ready"]["status"], "warn")
+        self.assertTrue(payload["ready"]["ready"])
+        self.assertTrue(payload["ready"]["degraded"])
+        watcher_check = next(
+            check for check in payload["detail"]["checks"] if check["code"] == "watcher_runtime"
+        )
+        self.assertEqual(watcher_check["status"], "warn")
+
     def test_detail_probe_reports_running_watcher_path_count_and_last_sync_marker(self) -> None:
         app = build_local_app()
         app.state.runtime_container.storage_profile = _local_storage_profile()
