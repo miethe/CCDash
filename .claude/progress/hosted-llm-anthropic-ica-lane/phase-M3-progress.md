@@ -147,8 +147,8 @@ blocked_tasks: 0
 pending_tasks: 0
 progress: 100
 overall_progress: 100
-live_egress_smoke: skipped
-live_egress_smoke_reason: "Requires operator-held ICA key and outbound call to ICA gateway; open question in plan: which ICA_KEY (CC1–CC6) the deployed adapter should use. Deferred to operator."
+live_egress_smoke: passed
+live_egress_smoke_reason: "RUN 2026-08-11 under explicit operator authorization, using the default ~/.dotfiles/ICA_CLAUDE key (the key the SPIKE already probed, so not a guess). The shipped AnthropicTextCompletionAdapter completed a real prompt against the ICA gateway and returned 'ok'. Raw probe on the same key: HTTP 200, id msg_bdrk_01Cy81qtPXAFRRMC9NjnrdpY, model echoed back as the bare id claude-haiku-4-5, stop_reason end_turn, usage 14 in / 4 out. Negative side reproduced 3/3: claude-haiku-4-5[1m] -> HTTP 403 team_model_access_denied, each attempt paired with a bare-id control returning 200, which excludes a general gateway outage. The adapter also raises ValueError on a [1m] id before any network call. EGRESS POSTURE: the prompt was a SYNTHETIC string carrying AGGREGATE provenance, so ZERO session content (redacted or otherwise) left the box. STILL NOT RUN: the end-to-end worker sweep that names a real session -- that is a different claim from this AC and would mutate session names."
 ---
 
 # Milestone M3 — The Anthropic/ICA lane serves a session name
