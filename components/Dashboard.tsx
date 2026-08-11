@@ -198,7 +198,7 @@ export const Dashboard: React.FC = () => {
       value: Number(point.cost || 0),
       unit: '$',
     }));
-    const result = await generateDashboardInsight(insightMetrics, tasks);
+    const result = await generateDashboardInsight(insightMetrics, tasks, activeProject?.id);
     setInsight(result);
     setLoadingInsight(false);
   };

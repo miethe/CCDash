@@ -152,23 +152,40 @@ new behaviour takes effect on a running deployment.
 
 ## Hosted LLM egress consent (`CCDASH_LLM_EGRESS_CONSENT`)
 
-The derived-session-naming sweep's hosted/anthropic lanes (Lane B / the
-anthropic-ICA lane) send session-derived text to an off-box endpoint
-(Gemini, Anthropic direct, or an ICA gateway). CCDash gates that egress with
-a **two-level consent model** — both levels must be true, or nothing egresses:
+CCDash has **two** hosted-LLM egress lanes, and both are gated by the **same
+two-level consent model** — both levels must be true, or nothing egresses:
 
 1. **Deployment-wide switch** — `CCDASH_LLM_EGRESS_CONSENT` (env var).
    Defaults `false`; fail-closed. Setting it `true` merely *permits* the
    hosted/anthropic backends to be constructed at all — it does not, by
-   itself, cause any project's sessions to be sent off-box.
-2. **Per-project switch** — the `projects.llm_egress_consent` DB column
-   (per-project, checked once per sweep tick inside
-   `SessionNamingSweepJob`'s fan-out loop). A project defaults to no consent;
-   an operator must explicitly opt that project in.
+   itself, cause anything to be sent off-box.
+2. **Per-project switch** — the `projects.llm_egress_consent` DB column.
+   A project defaults to no consent; an operator must explicitly opt that
+   project in (see *Granting the per-project half* below).
 
 Both gates are independent and additive — `CCDASH_LLM_EGRESS_CONSENT=true`
-with a project's `llm_egress_consent` left `false` (the default) still sends
-that project's sessions through the local, zero-egress naming backend only.
+with a project's `llm_egress_consent` left `false` (the default) egresses
+nothing for that project on either lane.
+
+### Per-lane consent shape
+
+There is **no per-lane exception**: every hosted-LLM egress path requires both
+dimensions. The lanes differ only in *where* the project comes from and in what
+happens when there isn't one.
+
+| Lane | Global flag | Per-project flag | Project comes from | No project available |
+|---|---|---|---|---|
+| Derived-session-naming sweep (Lane B / anthropic-ICA) | required | required | the registry fan-out — one project per unit of work | n/a; the sweep always has a project row, and re-reads consent **every tick** |
+| Dashboard insight (`POST /api/ai/insight`) | required | required | `project_id` on the request body (the FE sends `activeProject.id`) | **REFUSED** — returns the `disabled` contract state |
+
+The insight lane's refusal on a missing `project_id` is a **decision, not a
+default**: falling back to the global flag alone was considered and rejected,
+because it would restore a one-dimension egress path through a side door. With
+no project selected the dashboard has no project-scoped data to summarise
+anyway, so nothing is lost. Refusal covers every case where consent cannot be
+*confirmed* — absent `project_id`, unknown project, or an unreadable registry —
+and is always the route's normal `200` + `disabled`, never a `404` or a `500`,
+so a caller that only checks the `disabled` flag still behaves correctly.
 
 ### Granting the per-project half
 
@@ -234,6 +251,13 @@ Operationally fail-closed facts worth restating:
   `SessionNamingSweepJob`'s fan-out loop, so a revoke takes effect on the next
   tick without a restart.  The env flag is read at construction time and does
   need a restart.
+- On the **insight lane** the per-project flag is read **per request**, so a
+  revoke takes effect on the very next call — no tick to wait for, no restart.
+- Granting the per-project half enables *both* lanes for that project. There is
+  no way to consent to the sweep but not the dashboard insight (or vice versa);
+  consent is per-project, not per-project-per-lane. If you need that split,
+  treat it as a contract change rather than assuming the column already carries
+  it.
 
 ### Same compose-allowlist gap as `CCDASH_API_TOKEN`
 

@@ -1,12 +1,14 @@
 """AI insight service — proxies Gemini REST API server-side.
 
 This is an EGRESS path: the assembled prompt leaves the box. It is gated on
-the GLOBAL ``CCDASH_LLM_EGRESS_CONSENT`` flag (default false, fail-closed)
-in addition to the credential ``CCDASH_GEMINI_API_KEY``. With either absent
-the service returns a graceful DISABLED result instead of raising — and
-under false consent no egress adapter is constructed at all (the adapter
-import itself is below the gate). Uses httpx (already a project dependency)
-— no new Python SDK is added.
+BOTH consent dimensions — the GLOBAL ``CCDASH_LLM_EGRESS_CONSENT`` flag
+(default false, fail-closed) AND the named project's per-project
+``projects.llm_egress_consent`` — in addition to the credential
+``CCDASH_GEMINI_API_KEY``. With any of the three absent the service returns a
+graceful DISABLED result instead of raising, and no egress adapter is
+constructed at all (the adapter import itself is below every gate). A request
+that names no project is REFUSED rather than falling back to the global flag
+alone. Uses httpx (already a project dependency) — no new Python SDK is added.
 """
 from __future__ import annotations
 
@@ -66,6 +68,8 @@ async def generate_dashboard_insight(
     *,
     metrics: list[dict[str, Any]],
     tasks: list[dict[str, Any]],
+    project_id: str | None = None,
+    project_consent: bool = False,
 ) -> AIInsightResult:
     """Call the Gemini REST API and return an insight string.
 
@@ -83,14 +87,28 @@ async def generate_dashboard_insight(
          that could accidentally satisfy it.
       2. ``CCDASH_GEMINI_API_KEY`` is set.
 
-    SCOPE, stated exactly: this lane has ONE consent dimension, not two.
-    The per-project ``projects.llm_egress_consent`` column composes with the
-    global flag only for the session-naming sweep, which fans out over
-    registered projects and therefore HAS a project to consult per unit of
-    work. This endpoint's request carries no project id (see
-    ``AIInsightRequest`` -- ``metrics`` and ``tasks`` only), so there is no
-    project whose consent could be read here; the global flag is the whole
-    gate. Do not describe this path as "opt in twice".
+      3. ``project_id`` names a project, AND
+      4. ``project_consent`` (that project's ``projects.llm_egress_consent``,
+         read by the router -- the service layer has no registry port) is
+         True.
+
+    SCOPE, stated exactly: this lane has TWO consent dimensions, the same two
+    as the session-naming sweep. Egress requires the deployment-wide
+    ``CCDASH_LLM_EGRESS_CONSENT`` **and** the specific project's stored
+    ``llm_egress_consent``. There is no per-lane exception left to remember:
+    every hosted-LLM egress path in this codebase is two-level consented.
+    (Historical note: this lane WAS global-only, because ``AIInsightRequest``
+    carried no project id. It now carries one -- the dashboard payload is
+    provably single-project, since every query feeding it keys off
+    ``activeProject.id`` -- so per-project consent is the correct unit here.)
+
+    ``project_id is None`` REFUSES, by decision and not by accident. The
+    alternative -- falling back to the global flag alone when the caller names
+    no project -- was considered and rejected: it would reintroduce the
+    one-dimension lane through a side door, and with no active project the
+    dashboard has no project-scoped data to summarise anyway. Both new
+    parameters therefore default to their fail-closed values, so a caller that
+    has not been updated degrades to DISABLED and never to sending.
     """
     # hosted-llm-anthropic-ica-lane-v1: the GLOBAL egress consent gate,
     # checked FIRST and structurally -- this plain `if not ...: return` runs
@@ -106,6 +124,38 @@ async def generate_dashboard_insight(
             "ai_insight: CCDASH_LLM_EGRESS_CONSENT is off -- the hosted "
             "insight lane is unreachable; returning the DISABLED contract "
             "state (never falls back to sending)."
+        )
+        return AIInsightResult(disabled=True)
+
+    # The PER-PROJECT half of the gate, checked here rather than at the call
+    # site for the same reason the global flag is: a reviewer must be able to
+    # prove the fail-closed property by reading THIS function alone. Both
+    # checks sit above the credential read, above prompt assembly, and above
+    # the lazy adapter import further down, so no denial can reach the
+    # EGRESS-marked constructor. Mirrors SessionNamingSweepJob's per-tick
+    # `getattr(project, "llm_egress_consent", False)` check
+    # (backend/adapters/jobs/session_naming_sweep_job.py) so the two egress
+    # entry points now fail closed on the SAME two dimensions.
+    #
+    # Distinct branches, deliberately: "no project named" and "that project
+    # said no" are different operator situations and must be distinguishable
+    # in the log, the same way the sweep separates consent_unconfirmed from
+    # consent_declined. Both refuse.
+    if not project_id:
+        logger.info(
+            "ai_insight: no project_id on the request -- the per-project "
+            "llm_egress_consent gate cannot be satisfied, so egress is "
+            "refused (fail-closed BY DECISION, never a fallback to the "
+            "global flag alone)."
+        )
+        return AIInsightResult(disabled=True)
+
+    if not project_consent:
+        logger.info(
+            "ai_insight: project_id=%s has not consented to LLM egress "
+            "(llm_egress_consent=false, or consent could not be confirmed) "
+            "-- returning the DISABLED contract state.",
+            project_id,
         )
         return AIInsightResult(disabled=True)
 

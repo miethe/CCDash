@@ -14,15 +14,24 @@ interface AIInsightResponse {
   error: string;
 }
 
+/**
+ * `projectId` is the project whose data `metrics`/`tasks` describe. The server
+ * requires that project's `llm_egress_consent` before any prompt leaves the
+ * box — the per-project half of a two-level egress consent gate. Omitting it
+ * is not a shortcut: the server REFUSES (returns `disabled: true`) rather than
+ * falling back to the global flag alone, so a caller with no active project
+ * gets the disabled degrade, which is the intended behaviour.
+ */
 export const generateDashboardInsight = async (
   metrics: AnalyticsMetric[],
-  tasks: ProjectTask[]
+  tasks: ProjectTask[],
+  projectId?: string
 ): Promise<string> => {
   try {
     const response = await fetch("/api/ai/insight", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ metrics, tasks }),
+      body: JSON.stringify({ metrics, tasks, project_id: projectId ?? null }),
     });
 
     if (!response.ok) {
@@ -33,8 +42,17 @@ export const generateDashboardInsight = async (
     const data: AIInsightResponse = await response.json();
 
     if (data.disabled) {
-      // Server has no API key configured — degrade gracefully
-      console.warn("AI insight is disabled (no API key configured server-side).");
+      // `disabled` is the server's single graceful-refusal state and it now has
+      // several causes, so this message must NOT name only one of them: no
+      // Gemini key, the global CCDASH_LLM_EGRESS_CONSENT flag off, or this
+      // project's `llm_egress_consent` not granted (including the
+      // no-project-selected case, which refuses by design). The server does not
+      // report which — deliberately, so a refusal reveals nothing about
+      // deployment config to a caller.
+      console.warn(
+        "AI insight is disabled server-side (missing API key, or hosted-LLM " +
+          "egress consent not granted for this project).",
+      );
       return (
         "Analysis (Simulated): Cost efficiency has improved by 15% over the last 3 days. " +
         "'Refactor Authentication' is currently the main cost driver due to high token usage " +
