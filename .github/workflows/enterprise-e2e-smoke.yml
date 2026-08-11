@@ -17,11 +17,13 @@ name: Enterprise E2E Smoke Gate
 # Without this, a broken enterprise profile or regressed live-data flow can merge to main.
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "deploy/runtime/**"
       - "backend/runtime/**"
       - "backend/**"
+      - ".github/workflows/enterprise-e2e-smoke.yml"
   push:
     branches:
       - main
@@ -29,6 +31,7 @@ on:
       - "deploy/runtime/**"
       - "backend/runtime/**"
       - "backend/**"
+      - ".github/workflows/enterprise-e2e-smoke.yml"
 
 concurrency:
   group: enterprise-e2e-smoke-${{ github.ref }}
@@ -324,9 +327,9 @@ jobs:
         run: |
           mkdir -p /tmp/ccdash-nopath
 
-          # The registry contains "other-project" but CCDASH_WORKER_WATCH_PROJECT_ID
-          # is set to "nonexistent-project". worker-watch resolves zero watch paths
-          # and must return 503 with reason "configured_no_paths".
+          # The registry contains "other-project" (so the watcher binding resolves)
+          # but none of its watch dirs exist on disk. worker-watch resolves zero
+          # watch paths and must return 503 with reason "configured_no_paths".
           cat > /tmp/ccdash-nopath/projects.json <<'JSON'
           {
             "activeProjectId": "other-project",
@@ -411,22 +414,32 @@ jobs:
           }
           JSON
 
-          mkdir -p /tmp/ccdash-nopath/workspace/other
+          # Only the mount ROOT exists — the project root /workspace/other is
+          # deliberately absent so its project_root-relative plans/ and progress/
+          # dirs (and the unmounted sessionsPath) resolve to zero watch paths.
+          mkdir -p /tmp/ccdash-nopath/workspace
           mkdir -p /tmp/ccdash-nopath/claude-home
           mkdir -p /tmp/ccdash-nopath/codex-home
-          mkdir -p /tmp/ccdash-nopath/sessions
 
           echo "No-paths registry written:"
           cat /tmp/ccdash-nopath/projects.json
 
       - name: Start enterprise stack (misconfigured watcher — zero paths)
         run: |
+          # Wait only on postgres + api; worker-watch is INTENTIONALLY unhealthy
+          # (503 configured_no_paths is the condition under test), so we must not
+          # gate stack startup on its health.
           docker compose \
             -f deploy/runtime/compose.yaml \
             --profile enterprise \
             --profile postgres \
-            up -d --wait \
-            --wait-timeout 120
+            up -d --wait --wait-timeout 120 postgres api
+          # Bring worker-watch up without waiting on its (expected-unhealthy) probe.
+          docker compose \
+            -f deploy/runtime/compose.yaml \
+            --profile enterprise \
+            --profile postgres \
+            up -d worker-watch
         env:
           CCDASH_PROJECTS_FILE: /tmp/ccdash-nopath/projects.json
 
@@ -438,13 +451,11 @@ jobs:
           CCDASH_CODEX_HOME: /tmp/ccdash-nopath/codex-home
           CCDASH_CODEX_CONTAINER_HOME: /home/ccdash/.codex
 
-          CCDASH_EXTRA_MOUNT_1_HOST: /tmp/ccdash-nopath/sessions
-          CCDASH_EXTRA_MOUNT_1_CONTAINER: /mnt/ccdash/no-such-sessions
-
-          # Intentionally mismatched: registry has "other-project" but watcher
-          # binds to "nonexistent-project" → worker-watch resolves 0 paths → 503.
+          # Registry has "other-project" (binding resolves) but its watch dirs do
+          # not exist on disk → worker-watch resolves 0 paths → readyz 503
+          # configured_no_paths.
           CCDASH_WORKER_PROJECT_ID: other-project
-          CCDASH_WORKER_WATCH_PROJECT_ID: nonexistent-project
+          CCDASH_WORKER_WATCH_PROJECT_ID: other-project
 
           WATCHFILES_FORCE_POLLING: "true"
 
@@ -464,17 +475,28 @@ jobs:
 
       - name: Assert worker-watch readyz returns 503 configured_no_paths
         run: |
-          # Allow a short window for worker-watch to finish startup and publish readyz.
-          deadline=$(( $(date +%s) + 60 ))
+          # Allow a window for worker-watch to finish startup and publish readyz.
+          # worker-watch is started without --wait (it is intentionally unhealthy
+          # here), so this poll is the only synchronisation point.
+          deadline=$(( $(date +%s) + 120 ))
+          http_code="000"
           while true; do
             now=$(date +%s)
             if (( now >= deadline )); then
-              echo "FAIL: timed out waiting for worker-watch readyz to stabilise"
+              echo "FAIL: timed out waiting for worker-watch readyz to stabilise (last code: ${http_code})"
+              docker compose -f deploy/runtime/compose.yaml ps || true
               exit 1
             fi
+            # curl PRINTS "000" and ALSO exits non-zero when it cannot connect, so a
+            # `|| echo "000"` here would concatenate a second "000" ("000000"), which
+            # is != "000" and broke out of this retry loop on the first attempt.
+            # Normalise instead of appending.
             http_code=$(curl -s -o /tmp/nopath_readyz.json -w "%{http_code}" \
               --max-time 10 \
-              http://localhost:9466/readyz 2>/dev/null || echo "000")
+              http://localhost:9466/readyz 2>/dev/null) || true
+            if [[ -z "${http_code}" ]]; then
+              http_code="000"
+            fi
             if [[ "${http_code}" != "000" ]]; then
               break
             fi
@@ -485,6 +507,7 @@ jobs:
           echo "worker-watch readyz HTTP code: ${http_code}"
           echo "worker-watch readyz body:"
           cat /tmp/nopath_readyz.json || true
+          echo
 
           [[ "${http_code}" == "503" ]] || {
             echo "FAIL: expected HTTP 503, got ${http_code}"
