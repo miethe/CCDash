@@ -475,17 +475,28 @@ jobs:
 
       - name: Assert worker-watch readyz returns 503 configured_no_paths
         run: |
-          # Allow a short window for worker-watch to finish startup and publish readyz.
-          deadline=$(( $(date +%s) + 60 ))
+          # Allow a window for worker-watch to finish startup and publish readyz.
+          # worker-watch is started without --wait (it is intentionally unhealthy
+          # here), so this poll is the only synchronisation point.
+          deadline=$(( $(date +%s) + 120 ))
+          http_code="000"
           while true; do
             now=$(date +%s)
             if (( now >= deadline )); then
-              echo "FAIL: timed out waiting for worker-watch readyz to stabilise"
+              echo "FAIL: timed out waiting for worker-watch readyz to stabilise (last code: ${http_code})"
+              docker compose -f deploy/runtime/compose.yaml ps || true
               exit 1
             fi
+            # curl PRINTS "000" and ALSO exits non-zero when it cannot connect, so a
+            # `|| echo "000"` here would concatenate a second "000" ("000000"), which
+            # is != "000" and broke out of this retry loop on the first attempt.
+            # Normalise instead of appending.
             http_code=$(curl -s -o /tmp/nopath_readyz.json -w "%{http_code}" \
               --max-time 10 \
-              http://localhost:9466/readyz 2>/dev/null || echo "000")
+              http://localhost:9466/readyz 2>/dev/null) || true
+            if [[ -z "${http_code}" ]]; then
+              http_code="000"
+            fi
             if [[ "${http_code}" != "000" ]]; then
               break
             fi
@@ -496,6 +507,7 @@ jobs:
           echo "worker-watch readyz HTTP code: ${http_code}"
           echo "worker-watch readyz body:"
           cat /tmp/nopath_readyz.json || true
+          echo
 
           [[ "${http_code}" == "503" ]] || {
             echo "FAIL: expected HTTP 503, got ${http_code}"
