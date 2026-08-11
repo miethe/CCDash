@@ -32,7 +32,7 @@ acceptance_criteria:
   - "The anthropic adapter reaches ICA and Anthropic direct by base URL alone, sending bare model ids and anthropic-version: 2023-06-01."
   - "No provider credential appears in a URL query string, and no provider error body is logged."
 open_questions:
-  - "Which ICA key the deployed adapter uses — the default ~/.dotfiles/ICA_CLAUDE key was the only one probed; a named ICA_KEY block may scope models differently (per the SPIKE's Empirical Addendum)."
+  - "PARTIALLY ANSWERED 2026-08-11: the default ~/.dotfiles/ICA_CLAUDE key is confirmed working end-to-end through the shipped adapter for bare claude-haiku-4-5 (HTTP 200, msg_bdrk_ id). STILL OPEN: whether a named ICA_KEY block scopes models differently — that remains unprobed, so a deployment pinned to a named key is still an unverified configuration."
   - "Whether CCDASH_LLM_ANTHROPIC_MODEL should have a default at all. The SPIKE deliberately gives it none; a wrong default is a silent cost decision."
 decisions:
   - decision: "Gate before lane: consent machinery lands and is proven against the EXISTING gemini egress lane in M2, before the anthropic adapter exists in M3."
@@ -193,14 +193,19 @@ falls back to the legacy var; absent key or unreachable provider degrades per th
 `{disabled:true}` / `None` contract rather than failing the surface; CHANGELOG `[Unreleased]` entry;
 ADR-017 + ADR-018 accepted.
 
-> **Deliberately NOT an acceptance criterion:** "a real ICA call names one session end-to-end."
-> It was listed here in the original draft but is absent from the frontmatter `acceptance_criteria`
-> (the machine-readable contract), and it was never obtained — it needs an operator-held ICA key, and
-> `open_questions[0]` (which ICA key the deployed adapter uses) is still open, so an agent selecting
-> one would be guessing at a cost and model-scope decision. The adapter's wire contract is separately
-> verified by `test_anthropic_adapter.py` against four live probes recorded in `spike_ref`; what
-> remains is this deployment's key scope and endpoint liveness. See the evidence table below, which
-> marks it NOT OBTAINED rather than asserting evidence that does not exist.
+> **Two claims here, and only one of them is done. Do not conflate them.**
+>
+> 1. **"The adapter completes a real prompt against ICA with bare model ids" — DONE, verified live
+>    2026-08-11.** See the evidence table below (`HTTP 200`, `msg_bdrk_01Cy81qtPXAFRRMC9NjnrdpY`,
+>    bare `claude-haiku-4-5` echoed; `[1m]` → `403` reproduced 3×). This is the frontmatter AC, and
+>    it is closed.
+> 2. **"A real ICA call NAMES ONE SESSION end-to-end" — still NOT done, and deliberately not an
+>    acceptance criterion.** It appeared in this plan's original draft but is absent from the
+>    frontmatter `acceptance_criteria` (the machine-readable contract). The live verification above
+>    exercised the adapter directly with a SYNTHETIC AGGREGATE-provenance prompt, precisely so that
+>    no session content egressed and no session name was mutated. Running the full worker sweep is
+>    now *feasible* — the per-project consent write path landed in `13f8c23` — but it is a separate,
+>    data-mutating act that nobody has asked for.
 
 ## AC -> command -> evidence
 
@@ -213,7 +218,7 @@ ADR-017 + ADR-018 accepted.
 | M2 — postgres migration actually applies | `npm run docker:hosted:smoke:seeded-pg` | Re-run 2026-08-10 AFTER the renumber to v53 (see the close-out ledger entry): seeded at v29, `Migration result: applied (reached SCHEMA_VERSION=53)`, `/api/health/ready` returned `migrationStatus=="applied"`, `UndefinedColumnError` ABSENT from both the postgres and api container logs, script exit 0. This is the run that matters — it exercises the in-place upgrade with BOTH this feature's `projects.llm_egress_consent` and the concurrently-landed provider/channel/credential tables present |
 | M3 — provenance enforced on egress | `backend/.venv/bin/python -m pytest backend/tests/test_session_naming_read_path_no_model_client.py -v` | Guard green; wrong-provenance envelope raises |
 | M3 — bare model ids, base-URL-only routing, version header | `backend/.venv/bin/python -m pytest backend/tests/test_anthropic_adapter.py -v` | Green. Pins the URL, the ICA default base, `anthropic-version: 2023-06-01`, credential-as-header (asserts no `key=` in the URL), the frozen payload key-set, and `[1m]`-id rejection before the wire |
-| M3 — live reachability against ICA | `backend/.venv/bin/ccdash` naming run against ICA with `CCDASH_LLM_ANTHROPIC_BASE_URL` set | **NOT OBTAINED — deferred to the operator.** Needs an operator-held ICA key and a real outbound call, and `open_questions[0]` (which ICA key the deployed adapter uses) is still open, so an agent cannot pick one. The wire contract itself was measured by four live probes on 2026-08-07 (`spike_ref`, Empirical Addendum); what remains unverified is this deployment's key scope and endpoint liveness — operational facts no test can hold |
+| M3 — live reachability against ICA | Direct invocation of `AnthropicTextCompletionAdapter` against the ICA gateway with the default `~/.dotfiles/ICA_CLAUDE` key, plus a raw `POST {base}/v1/messages` on the same key to capture the response envelope | **OBTAINED 2026-08-11** (operator-authorized). Adapter returned `'ok'`. Raw probe: `HTTP 200`, id `msg_bdrk_01Cy81qtPXAFRRMC9NjnrdpY`, model echoed back as bare `claude-haiku-4-5`, `stop_reason end_turn`, 14 in / 4 out. Negative side 3/3: `claude-haiku-4-5[1m]` → `HTTP 403 team_model_access_denied`, each paired with a bare-id control at 200 (excludes a gateway outage). Adapter also raises `ValueError` on a `[1m]` id pre-network. Prompt was SYNTHETIC with AGGREGATE provenance — **zero session content egressed**. NOTE: the first suffixed-id attempt returned a transient `502`; re-probing 3× showed a stable `403`, so the SPIKE's recorded finding holds |
 
 ## Sequencing (load-bearing)
 

@@ -454,3 +454,39 @@ trade; the third construction site is unbypassED, not unbypassABLE, and the node
 
 Post-correction test state: 202 passed, exit 0 across the adapter, consent-gate, sweep, registry and
 provider-schema suites.
+
+## 2026-08-11 — The live ICA call: RUN, and the AC is closed
+
+Operator authorized it directly ("run 4 now"), which supersedes the deferral. Two judgment calls were
+resolved by investigation rather than by asking, per the standing rule:
+
+WHICH KEY. The plan's open question is whether a *named* `ICA_KEY` block scopes models differently.
+That does not block using the key which already has recorded evidence: the default
+`~/.dotfiles/ICA_CLAUDE` key, the one the SPIKE probed on 2026-08-07. Using it is not a guess. The
+named-key question stays open, now recorded as PARTIALLY ANSWERED rather than answered.
+
+WHAT SCOPE. The AC says "the ADAPTER completes a real prompt against ICA with bare model ids" -- not
+"names one session end-to-end" (that phrasing was removed from the prose earlier precisely because it
+was never the machine-readable AC). So the probe invoked the shipped adapter directly with a SYNTHETIC
+prompt carrying AGGREGATE provenance. That exercises the real egress-enforcement path while
+transmitting ZERO session content, and mutates nothing. The full worker sweep would have been a
+materially larger, data-mutating act for a claim the AC does not make.
+
+RESULT -- all four checks passed:
+- Shipped `AnthropicTextCompletionAdapter.complete()` returned `'ok'`.
+- Raw probe, same key: `HTTP 200`, id `msg_bdrk_01Cy81qtPXAFRRMC9NjnrdpY`, model echoed back as the
+  bare `claude-haiku-4-5`, `stop_reason end_turn`, 14 in / 4 out.
+- `claude-haiku-4-5[1m]` -> `HTTP 403 team_model_access_denied`.
+- Adapter raises `ValueError` on a `[1m]` id before any network call, as designed.
+
+THE NEAR-MISS WORTH RECORDING. The FIRST suffixed-id attempt returned `HTTP 502` with a non-JSON body,
+not the recorded `403`. Written up as-is that would have become a finding reading "the SPIKE's 403
+finding no longer holds" -- a false finding about a live gateway. Re-probing three times, each paired
+with a bare-id CONTROL call, produced a stable `403 team_model_access_denied` with the exact recorded
+message and 200 on every control. So: transient blip, recorded finding HOLDS. The control call is what
+made the difference -- without it, three 403s could equally have been a gateway-wide failure.
+
+The credential was never printed; the probe reports only a character count. The probe scripts live in
+/tmp and were deliberately NOT committed, because they read a secret from `~/.dotfiles`. A committable
+version would read `CCDASH_LLM_ANTHROPIC_API_KEY` from the environment instead -- worth doing if this
+verification should be repeatable, but that is new surface and was not in scope here.
