@@ -101,7 +101,7 @@ class MappingDigestParityTests(unittest.TestCase):
         """
         real_bytes = routing_feedback_contract.MAPPING_JSON_PATH.read_bytes()
         corrupted_bytes = real_bytes.replace(
-            b'"mapping_version": "1.1.0"', b'"mapping_version": "1.1.1"', 1
+            b'"mapping_version": "1.2.0"', b'"mapping_version": "1.2.1"', 1
         )
 
         # Sanity: the targeted replace must have actually changed something,
