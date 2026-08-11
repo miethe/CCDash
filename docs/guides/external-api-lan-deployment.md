@@ -224,13 +224,12 @@ curl -sS "http://<host>:8000/api/projects" \
   | jq -r '.[] | "\(.id)\t\(.name)\t\(.llm_egress_consent)"'
 ```
 
-Use the REST form above for read-back, not `ccdash-cli project list`: that command
-currently crashes on any array-returning endpoint (`AttributeError: 'list' object
-has no attribute 'get'` in the shared client's envelope unwrap), in both human and
-`--output json` modes. Tracked separately as `node_01KZRSSP4MM8V8FTT7KPST56A1`; it
-is a pre-existing client bug, unrelated to the consent surface. The
-`project consent` verb itself is unaffected — it receives a single object, not an
-array.
+`ccdash-cli project list` also works for read-back. It previously crashed on any
+array-returning endpoint (`AttributeError: 'list' object has no attribute 'get'`
+in the shared client's envelope unwrap, in both human and `--output json` modes);
+that was a pre-existing client bug unrelated to the consent surface, fixed in
+`3558bea` (`node_01KZRSSP4MM8V8FTT7KPST56A1`, closed). If you are running a build
+older than that commit, prefer the REST form above.
 
 `ccdash-cli project consent ... --json` also emits the full updated project, so
 a grant/revoke can be verified in the same call that performs it — but prefer the
