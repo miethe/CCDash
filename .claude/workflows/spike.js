@@ -11,8 +11,28 @@
 // [x] phase() titles match meta.phases exactly
 // [x] Budget guard present in completenessCritic call
 //
+// P3 offload wiring (provider_routing_enabled=true required to activate):
+//   - Exploration legs: gemini-executor (only when resume_active=false, stochastic exclusion guard)
+//   - Completeness critic: gemini-executor (budget-guarded, only when resume_active=false)
+//   - Adversarial skeptic votes: ica-executor (Pattern A — internal agentType; stochastic exclusion)
+//   P5 runtime-failure fallback (generalizes the P4 Bob null→claude pattern):
+//     every offloaded call above is wrapped by agentWithPrimaryFallback() — a null return OR a
+//     thrown error (rate-limit / timeout / binary-absent / structuring miss) triggers a SINGLE
+//     re-dispatch of the same task to the primary claude agentType (the agentType the leg/skeptic/
+//     critic would use with routing OFF), recording actual_provider_used + fallback_applied:true +
+//     a log() line. No retry loop, no backoff (constraint 4: no timers).
+//   MUST-stay (never offloaded under any flag — fallback target is always primary claude):
+//   - Synthesis: implementation-planner (on-primary)
+//   - Verdict sign-off: always returns needs_opus (never self-approved)
+//
 // Verdict sign-off boundary: script always returns { status: 'needs_opus', reason: 'verdict_signoff' }.
 // Opus + human review synthesis.verdict and sign off. Never self-approved inside this workflow.
+//
+// Phase 1 Tier A nesting pilot (leg_recursion_enabled, DEFAULT FALSE):
+//   When true (and the leg is NOT offloaded — claude-primary-only nesting, §5.2), each read-only
+//   research leg may spawn a single depth-capped layer of read-only child investigators for bounded
+//   decomposition. Governed inline: depth=1, <15 tool uses/child, Mode-D-at-depth bubble-up,
+//   children write nothing to git. Pilot-gated, never auto-promoted. See subagent-nesting plan §6.
 //
 // Read-only leg agentType: 'codebase-explorer' and 'search-specialist' — their agent definitions
 // carry disallowedTools that prevents Write/Edit/MultiEdit (constraint 3).
@@ -38,6 +58,14 @@ export const meta = {
 // Defensive parse: args may arrive as a JSON string from the Workflow tool.
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
 
+// CF-E §E.4 (Context Fabric E — auto-injection at every call boundary): every agent()
+// prompt below opens with the pre-truncated delegation-context slice the dispatching
+// orchestrator threads via args.contextSlice (resolved outside the sandbox with
+// `cf_context_resolve.py --print-slice --agent-type <legType>`). Optional and fail-open:
+// an absent slice degrades to the empty string, leaving every prompt byte-identical to the
+// pre-CF-E behaviour. args may arrive JSON-stringified (see the defensive parse above), so
+// call sites reference parsedArgs.contextSlice — the post-parse view of the same value.
+
 const {
   charter_ref,
   spike_slug,
@@ -52,6 +80,17 @@ const {
   skip_completeness_critic = false,
   sequential = false,
   seeded_findings = [],
+  // Phase 1 Tier A nesting pilot — DEFAULT FALSE. When false, leg prompts are
+  // byte-for-byte identical to the pre-pilot behaviour. When true, read-only legs MAY
+  // spawn a single depth-capped layer of read-only child investigators (governed:
+  // depth=1, bounded tool budget, Mode-D-at-depth bubble-up). Pilot-gated — never
+  // auto-promoted. See .claude/plans/subagent-nesting-orchestration-strategy-v1.md §6 Phase 1.
+  leg_recursion_enabled = false,
+  // P3: provider routing feature flag — DEFAULT FALSE. When off, existing agentType
+  // selections are preserved byte-for-byte. When true, eligible stages route to
+  // external providers (gemini-executor, ica-executor). resume_active guards stochastic stages.
+  provider_routing_enabled = false,
+  resume_active = false,
 } = parsedArgs
 
 // ---------------------------------------------------------------------------
@@ -113,9 +152,89 @@ if (runningAsLeg) {
 // Phase 1: Exploration — parallel research legs (read-only agentType).
 // All results needed before deep-read begins; parallel barrier is intentional.
 // Leg prompts vary by index to produce diverse research angles without Math.random().
+//
+// P3 offload: when provider_routing_enabled=true AND resume_active=false, legs route
+// to gemini-executor. Stochastic exclusion guard: resume_active=true blocks offload
+// because Gemini responses are not deterministic across replays — cached leg results
+// from a previous run would be replaced with different content on resume.
+// When flag is off or resume is active: existing agentType preserved (leg.agentType
+// or 'codebase-explorer') — byte-for-byte identical to pre-P3 behaviour.
 // ---------------------------------------------------------------------------
 phase('Exploration')
 log(`Spike: spike_slug=${spike_slug}, legs=${legs.length}, depth=${depth}${runningAsLeg ? ', leg_of=' + leg_of : ''}`)
+
+// P3: resolve leg agentType for this run. Offload only when flag on AND not resuming.
+const offloadLegsToGemini = provider_routing_enabled && !resume_active
+if (provider_routing_enabled) {
+  log(`P3 routing: provider_routing_enabled=true, resume_active=${resume_active}, offloadLegsToGemini=${offloadLegsToGemini}`)
+}
+// Phase 1 Tier A nesting pilot: legs may spawn depth-1 read-only child investigators.
+// Suppressed when the leg is offloaded — an external shell-out leg cannot nest
+// (claude-primary-only nesting, §5.2).
+const legRecursion = leg_recursion_enabled && !offloadLegsToGemini
+if (leg_recursion_enabled) {
+  log(`Tier A nesting pilot: leg_recursion_enabled=true, effective=${legRecursion} (suppressed when offloaded — claude-primary-only nesting).`)
+}
+
+// ---------------------------------------------------------------------------
+// Runtime-failure fallback helper (P5 generalization of the P4 Bob null→claude pattern).
+// When an offloaded leg/skeptic/critic is dispatched to a non-primary executor
+// (gemini/ica), a null return OR a thrown error (rate-limit / timeout / binary-absent /
+// structuring miss) triggers a SINGLE re-dispatch of the same task to the primary claude
+// agentType — the agentType that stage would have used with routing OFF. No retry loop,
+// no backoff (constraint 4: no timers). Records actual_provider_used + fallback_applied:true
+// on the fallback call and emits a log() line, matching the Bob fix-cycle fallback template.
+//
+// `offloaded` is true only when routing actually selected a non-primary executor; when false
+// the call runs exactly as the flag-off path would (no wrapping behaviour change).
+async function agentWithPrimaryFallback({ prompt, label, phase, offloaded, offloadAgentType, primaryAgentType, model, schema, chosenPluginId }) {
+  if (!offloaded) {
+    // Flag-off / on-primary: byte-identical to the pre-P5 direct call (the CF-E preamble
+    // resolves to '' when no contextSlice is threaded — see the CF-E note above).
+    return await agent(`${parsedArgs.contextSlice ? parsedArgs.contextSlice + '\n\n' : ''}${prompt}`, { label, phase, agentType: primaryAgentType, model, schema })
+  }
+  let result = null
+  let failed = false
+  try {
+    result = await agent(`${parsedArgs.contextSlice ? parsedArgs.contextSlice + '\n\n' : ''}${prompt}`, {
+      label,
+      phase,
+      agentType: offloadAgentType,
+      model,
+      schema,
+      _routing_log: {
+        chosen_plugin_id: chosenPluginId,
+        actual_provider_used: chosenPluginId,
+        fallback_applied: false,
+        reason: `offload ${label} to ${offloadAgentType}`,
+      },
+    })
+    if (!result) {
+      failed = true
+      log(`P5 fallback: ${offloadAgentType} returned null for ${label}. Falling back to primary claude (${primaryAgentType}).`)
+    }
+  } catch (offloadErr) {
+    failed = true
+    log(`P5 fallback: ${offloadAgentType} threw for ${label}: ${offloadErr && offloadErr.message ? offloadErr.message : offloadErr}. Falling back to primary claude (${primaryAgentType}).`)
+  }
+  if (failed) {
+    log(`P5 fallback: actual_provider_used='claude', fallback_applied=true for ${label}.`)
+    result = await agent(`${parsedArgs.contextSlice ? parsedArgs.contextSlice + '\n\n' : ''}${prompt}`, {
+      label: `${label}-fallback`,
+      phase,
+      agentType: primaryAgentType,
+      model,
+      schema,
+      _routing_log: {
+        chosen_plugin_id: chosenPluginId,
+        actual_provider_used: 'claude',
+        fallback_applied: true,
+        reason: `${offloadAgentType} failed (rate-limit / timeout / binary absent / structuring error); escalated to primary claude immediately (no retry)`,
+      },
+    })
+  }
+  return result
+}
 
 let legResults
 
@@ -124,29 +243,31 @@ if (sequential) {
   legResults = []
   for (let i = 0; i < legs.length; i++) {
     const leg = legs[i]
-    const result = await agent(
-      buildLegPrompt(leg, i, charter_ref, research_questions, depth, leg_of, timestamp),
-      {
-        label: `leg-${leg.id}`,
-        phase: 'Exploration',
-        agentType: leg.agentType || 'codebase-explorer',
-        model: leg.model || 'sonnet',
-      }
-    )
+    const result = await agentWithPrimaryFallback({
+      prompt: buildLegPrompt(leg, i, charter_ref, research_questions, depth, leg_of, timestamp, legRecursion),
+      label: `leg-${leg.id}`,
+      phase: 'Exploration',
+      offloaded: offloadLegsToGemini,
+      offloadAgentType: 'gemini-executor',
+      primaryAgentType: leg.agentType || 'codebase-explorer',
+      model: leg.model || 'sonnet',
+      chosenPluginId: 'gemini',
+    })
     legResults.push(result)
   }
 } else {
   legResults = await parallel(
     legs.map((leg, i) => () =>
-      agent(
-        buildLegPrompt(leg, i, charter_ref, research_questions, depth, leg_of, timestamp),
-        {
-          label: `leg-${leg.id}`,
-          phase: 'Exploration',
-          agentType: leg.agentType || 'codebase-explorer',
-          model: leg.model || 'sonnet',
-        }
-      )
+      agentWithPrimaryFallback({
+        prompt: buildLegPrompt(leg, i, charter_ref, research_questions, depth, leg_of, timestamp, legRecursion),
+        label: `leg-${leg.id}`,
+        phase: 'Exploration',
+        offloaded: offloadLegsToGemini,
+        offloadAgentType: 'gemini-executor',
+        primaryAgentType: leg.agentType || 'codebase-explorer',
+        model: leg.model || 'sonnet',
+        chosenPluginId: 'gemini',
+      })
     )
   )
 }
@@ -173,7 +294,7 @@ log(`Deep read: structuring ${validLegResults.length} leg result(s)...`)
 const deepResults = await pipeline(
   validLegResults,
   async (legText) => agent(
-    buildDeepReadPrompt(legText, depth),
+    `${parsedArgs.contextSlice ? parsedArgs.contextSlice + '\n\n' : ''}${buildDeepReadPrompt(legText, depth)}`,
     {
       phase: 'Deep read',
       agentType: 'codebase-explorer',
@@ -196,35 +317,46 @@ if (validDeepResults.length === 0) {
 // ---------------------------------------------------------------------------
 // Phase 3: Adversarial verify — N skeptics per finding; majority-refute drops it.
 // Skeptic count: 2 (standard/shallow) or 3 (deep or conflicting findings).
-// Skeptic agentType 'senior-code-reviewer' is edit-less by agent definition (constraint 3).
+//
+// P3 offload: when provider_routing_enabled=true AND resume_active=false, skeptic votes
+// route to ica-executor (Pattern A — internal agentType auto-classifies; ICA free-tier).
+// Stochastic exclusion guard: resume_active=true keeps skeptics on-primary (senior-code-reviewer)
+// because ICA response content is non-deterministic and cannot be safely replayed on resume.
+// When flag is off or resume is active: senior-code-reviewer preserved (on-primary, edit-less).
+// MUST-STAY: synthesis and verdict sign-off are NEVER offloaded regardless of flag.
 // ---------------------------------------------------------------------------
 phase('Adversarial verify')
 
 const skepticCount = depth === 'deep' ? 3 : 2
-log(`Adversarial verify: ${validDeepResults.length} finding(s), ${skepticCount} skeptic(s) each...`)
+
+// P3: resolve skeptic agentType. Offload to ica-executor only when flag on AND not resuming.
+// ica-executor is an internal agentType with disallowedTools covering Write/Edit (constraint 3).
+const offloadSkepticsToIca = provider_routing_enabled && !resume_active
+log(`Adversarial verify: ${validDeepResults.length} finding(s), ${skepticCount} skeptic(s) each (agentType=${offloadSkepticsToIca ? 'ica-executor' : 'senior-code-reviewer'})...`)
 
 const verifiedFindings = await parallel(
   validDeepResults.map((finding, i) => async () => {
     const votes = await parallel(
       // Vary by both finding index and skeptic index (no Math.random()).
       Array.from({ length: skepticCount }, (_, j) => () =>
-        agent(
-          buildSkepticPrompt(finding, i, j),
-          {
-            label: `skeptic-${i}-${j}`,
-            phase: 'Adversarial verify',
-            agentType: 'senior-code-reviewer',
-            model: 'sonnet',
-            schema: {
-              type: 'object',
-              properties: {
-                refuted: { type: 'boolean' },
-                reason: { type: 'string' },
-              },
-              required: ['refuted', 'reason'],
+        agentWithPrimaryFallback({
+          prompt: buildSkepticPrompt(finding, i, j),
+          label: `skeptic-${i}-${j}`,
+          phase: 'Adversarial verify',
+          offloaded: offloadSkepticsToIca,
+          offloadAgentType: 'ica-executor',
+          primaryAgentType: 'senior-code-reviewer',
+          model: 'sonnet',
+          chosenPluginId: 'ica',
+          schema: {
+            type: 'object',
+            properties: {
+              refuted: { type: 'boolean' },
+              reason: { type: 'string' },
             },
-          }
-        )
+            required: ['refuted', 'reason'],
+          },
+        })
       )
     )
 
@@ -311,7 +443,7 @@ const FEASIBILITY_BRIEF_RESULT_SCHEMA = {
   },
 }
 
-const synthesis = await agent(synthesisPromptText, {
+const synthesis = await agent(`${parsedArgs.contextSlice ? parsedArgs.contextSlice + '\n\n' : ''}${synthesisPromptText}`, {
   phase: 'Synthesis',
   agentType: 'implementation-planner',
   model: 'sonnet',
@@ -329,37 +461,45 @@ if (!synthesis) {
 
 // ---------------------------------------------------------------------------
 // Completeness critic — budget-guarded; optional; single extra round only.
-// Critic agentType 'senior-code-reviewer' is edit-less (constraint 3).
+// P3 offload: completeness critic routes to gemini-executor when
+//   provider_routing_enabled=true AND resume_active=false.
+// When flag is off or resume is active: senior-code-reviewer preserved (on-primary).
+// Critic is edit-less by agentType definition (constraint 3).
 // ---------------------------------------------------------------------------
 let finalSynthesis = synthesis
 
-if (!skip_completeness_critic && budget.remaining() > 80_000) {
-  log('Running completeness critic...')
+// P3: resolve completeness critic agentType. Offload only when flag on AND not resuming.
+const offloadCriticToGemini = provider_routing_enabled && !resume_active
 
-  const critique = await agent(
-    `Review this SPIKE feasibility brief synthesis and identify what is missing, incomplete, or under-specified.
+if (!skip_completeness_critic && budget.remaining() > 80_000) {
+  log(`Running completeness critic (agentType=${offloadCriticToGemini ? 'gemini-executor' : 'senior-code-reviewer'})...`)
+
+  const critique = await agentWithPrimaryFallback({
+    prompt: `Review this SPIKE feasibility brief synthesis and identify what is missing, incomplete, or under-specified.
 Return { gaps: string[], severity: 'minor' | 'major' }.
 
 Synthesis:
 ${JSON.stringify(synthesis, null, 2)}`,
-    {
-      phase: 'Synthesis',
-      agentType: 'senior-code-reviewer',
-      model: 'sonnet',
-      schema: {
-        type: 'object',
-        properties: {
-          gaps: { type: 'array', items: { type: 'string' } },
-          severity: { type: 'string', enum: ['minor', 'major'] },
-        },
-        required: ['gaps', 'severity'],
+    label: 'completeness-critic',
+    phase: 'Synthesis',
+    offloaded: offloadCriticToGemini,
+    offloadAgentType: 'gemini-executor',
+    primaryAgentType: 'senior-code-reviewer',
+    model: 'sonnet',
+    chosenPluginId: 'gemini',
+    schema: {
+      type: 'object',
+      properties: {
+        gaps: { type: 'array', items: { type: 'string' } },
+        severity: { type: 'string', enum: ['minor', 'major'] },
       },
-    }
-  )
+      required: ['gaps', 'severity'],
+    },
+  })
 
   if (critique?.gaps?.length && budget.remaining() > 60_000) {
     const improved = await agent(
-      buildGapFillPrompt(synthesis, critique.gaps, charter_ref, synthesis_output, timestamp),
+      `${parsedArgs.contextSlice ? parsedArgs.contextSlice + '\n\n' : ''}${buildGapFillPrompt(synthesis, critique.gaps, charter_ref, synthesis_output, timestamp)}`,
       {
         phase: 'Synthesis',
         agentType: 'implementation-planner',
@@ -403,7 +543,7 @@ return {
 // Varied by index for pseudo-randomness without Math.random().
 // ---------------------------------------------------------------------------
 
-function buildLegPrompt(leg, index, charterRef, researchQuestions, depth, legOf, timestamp) {
+function buildLegPrompt(leg, index, charterRef, researchQuestions, depth, legOf, timestamp, legRecursionEnabled) {
   const depthInstructions = {
     shallow: 'Extract key claims only. Be concise — 3–5 bullet points maximum.',
     standard: 'Extract key claims with supporting evidence. Include confidence signals.',
@@ -444,8 +584,31 @@ Timestamp (for reference): ${timestamp}
 Output: Write your findings to ${leg.output_path}
 Include a confidence score (0.0–1.0) in your findings frontmatter.
 If you are operating under a timebox from a parent charter, respect it — mark findings as partial with a one-line reason if you run out of time.
-
+${buildLegRecursionClause(legRecursionEnabled)}
 Do NOT git add/commit/push/stash.`
+}
+
+// Phase 1 Tier A nesting pilot. Returns a governed recursion clause when enabled,
+// or an empty string (byte-for-byte preservation) when off. Read-only enforcement
+// lives in the child agentType definition (codebase-explorer / search-specialist
+// carry disallowedTools), NOT in this prompt text — Phase 0 proved permissionMode
+// propagates to depth, so prompt text alone cannot make a child read-only.
+function buildLegRecursionClause(enabled) {
+  if (!enabled) return ''
+  return `
+BOUNDED RECURSIVE DECOMPOSITION (Tier A nesting pilot — depth-capped, read-only):
+If this research question splits into a narrow sub-question you cannot resolve inline, you MAY
+spawn at most 3 child investigators via the Agent tool to decompose it. Rules:
+  - Each child MUST use subagent_type 'codebase-explorer' or 'search-specialist' (read-only by
+    definition — their disallowedTools forbid Write/Edit/MultiEdit).
+  - Depth cap = 1: children MUST NOT spawn their own children. Do not grant them recursion rights.
+  - Each child is bounded to fewer than 15 tool uses; keep sub-questions narrow and mechanical.
+  - Mode-D-at-depth: if a sub-question touches auth / payments / migrations / deletion /
+    force-push / secret-rotation, do NOT investigate it via a child — STOP that thread and record
+    'needs_opus / mode_d' in your findings for Opus to handle.
+  - Children write nothing to git. You remain the single author of this leg's findings file and
+    are responsible for consolidating their results into it.
+This is a decomposition aid, not a throughput tool — prefer answering inline when feasible.`
 }
 
 function buildDeepReadPrompt(legText, depth) {
