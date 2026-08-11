@@ -254,6 +254,19 @@ UNCLASSIFIED_TASK_CLASS = "_unclassified"
 #: -- unlike ``UNCLASSIFIED_TASK_CLASS``, which bypasses that gate entirely.
 PROTECTED_TASK_CLASSES: frozenset[str] = frozenset({"orchestration", "mode_d"})
 
+# --- DI-1 node 1: role discriminator constants ------------------------------
+
+#: ``source_role`` for a session that parents at least one subagent (i.e. it
+#: is referenced as some other session's ``subagent_parent_id``). Matches the
+#: vendored mapping file's ``role_discriminator.predicate`` exactly.
+ROLE_ORCHESTRATOR = "orchestrator"
+
+#: ``source_role`` for every other session of a role-split skill -- the
+#: mapping file's ``role_discriminator.default_role``. Role coverage is TOTAL:
+#: a session of a role-split skill is always exactly one of these two, so no
+#: row is left roleless and there is no remainder bucket.
+ROLE_IMPLEMENTER = "implementer"
+
 # --- T3-004 / DI-4a: D5 metric payload constants ----------------------------
 
 #: Saturation constant for ``_confidence_for_sample_count``. Fixed and
@@ -548,6 +561,14 @@ class RawRollupRow:
     #: row (i.e. "has tool-usage attribution") -- the numerator of
     #: ``success_rate_coverage_fraction``.
     tool_usage_covered_count: int = 0
+    #: DI-1 node 1: the role discriminator for a DUAL-ROLE skill --
+    #: ``ROLE_ORCHESTRATOR`` / ``ROLE_IMPLEMENTER`` for a skill the pinned
+    #: mapping declares ``roles`` for, and ``None`` for EVERY other skill
+    #: (whose grain is therefore byte-identical to the pre-split grain). An
+    #: INTERNAL pipeline dimension only: it splits the aggregation grain and
+    #: steers ``_resolve_task_class``, but is never persisted to
+    #: ``routing_rollup`` and never emitted on the DTO/envelope.
+    source_role: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -587,6 +608,10 @@ class MappedRollupRow:
     tool_call_sum: int = 0
     tool_success_sum: int = 0
     tool_usage_covered_count: int = 0
+    #: DI-1 node 1: passed through verbatim from ``RawRollupRow`` -- see its
+    #: docstring. Carried so downstream stages can attribute a row to the
+    #: role that produced its ``task_class``; never persisted or emitted.
+    source_role: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -624,6 +649,9 @@ class ProviderRollupRow:
     tool_call_sum: int = 0
     tool_success_sum: int = 0
     tool_usage_covered_count: int = 0
+    #: DI-1 node 1: passed through verbatim from ``MappedRollupRow`` -- see
+    #: ``RawRollupRow``'s docstring. Never persisted or emitted.
+    source_role: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -652,8 +680,35 @@ class CoverageCounters:
     distinct_unmapped_skill_names: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class SkillTaskClassMapping:
+    """The parsed, cached form of the pinned v1 mapping file (DI-1 node 1).
+
+    Three views over the SAME vendored rules, never three independently
+    maintained sources:
+
+      - ``by_skill`` -- the original flat ``skill_name -> task_class`` dict.
+        Its semantics are UNCHANGED by the role split: it is still each
+        rule's own ``task_class`` value, i.e. the role-blind fallback, and it
+        is what a role-less lookup resolves against.
+      - ``by_skill_role`` -- ``(skill_name, role) -> task_class`` for the
+        subset of rules that declare a ``roles`` object. Only these keys
+        exist; a ``(skill, role)`` pair for a non-role-split skill is
+        deliberately absent so ``_resolve_task_class`` falls back to
+        ``by_skill``.
+      - ``role_split_skills`` -- exactly the skill names appearing in
+        ``by_skill_role``. This is the set the aggregation SQL discriminates
+        a ``source_role`` for; every other skill yields ``source_role IS
+        NULL`` and its grain is byte-identical to the pre-split grain.
+    """
+
+    by_skill: dict[str, str]
+    by_skill_role: dict[tuple[str, str], str]
+    role_split_skills: frozenset[str]
+
+
 @functools.lru_cache(maxsize=1)
-def _load_skill_to_task_class_mapping() -> dict[str, str]:
+def _load_skill_to_task_class_mapping() -> SkillTaskClassMapping:
     """Load and cache the pinned ``skill_name -> task_class`` mapping.
 
     Reads ONLY ``routing_feedback_contract.MAPPING_JSON_PATH`` -- this
@@ -664,15 +719,73 @@ def _load_skill_to_task_class_mapping() -> dict[str, str]:
     never changes at runtime; ``test_routing_feedback_contract_parity.py``
     (T1-005) is the CI guard against silent byte-level drift of the file
     this cache reads exactly once per process.
+
+    DI-1 node 1: a rule MAY additionally declare an optional ``roles``
+    object (``{role_name: task_class}``) for a DUAL-ROLE skill --
+    ``dev-execution`` is loaded both by the orchestrator (/dev:execute-phase)
+    and by the implementer legs it dispatches, so a skill-only key folds
+    MUST-stay orchestration spend into the demotable ``implementation``
+    class. The rule's own ``task_class`` stays the role-blind fallback.
+
+    **Load-time contract guard.** For any rule declaring ``roles``, AT MOST
+    ONE role target may be a non-protected class (i.e. not in
+    ``PROTECTED_TASK_CLASSES``); a rule declaring two demotable role targets
+    raises ``ValueError`` naming that rule. This is not stylistic: the
+    persisted ``routing_rollup`` natural key is
+    ``(project_id, source_skill_name, model)`` and does NOT carry
+    ``source_role``, so exactly one of a role-split key's rows may survive
+    the protected-class emission gate. Two non-protected role targets would
+    produce two surviving rows for one natural key -- a silent write
+    collision. Enforcing it here means the invariant fails loudly at load
+    time, on the mapping file, instead of at the DB write.
     """
     raw = json.loads(routing_feedback_contract.MAPPING_JSON_PATH.read_text(encoding="utf-8"))
-    return {
-        str(rule["source_skill_name"]): str(rule["task_class"])
-        for rule in raw.get("rules", [])
-    }
+
+    by_skill: dict[str, str] = {}
+    by_skill_role: dict[tuple[str, str], str] = {}
+    role_split_skills: set[str] = set()
+
+    for rule in raw.get("rules", []):
+        skill_name = str(rule["source_skill_name"])
+        by_skill[skill_name] = str(rule["task_class"])
+
+        roles = rule.get("roles")
+        if not roles:
+            continue
+
+        role_targets = {str(role): str(task_class) for role, task_class in roles.items()}
+        non_protected = sorted(
+            {
+                task_class
+                for task_class in role_targets.values()
+                if task_class not in PROTECTED_TASK_CLASSES
+            }
+        )
+        if len(non_protected) > 1:
+            raise ValueError(
+                f"routing mapping rule {skill_name!r} declares {len(non_protected)} "
+                f"non-protected role targets ({', '.join(non_protected)}); at most one "
+                "is permitted because the persisted routing_rollup natural key "
+                "(project_id, source_skill_name, model) does not carry source_role, "
+                "so only one role's row may survive the protected-class emission gate"
+            )
+
+        for role, task_class in role_targets.items():
+            by_skill_role[(skill_name, role)] = task_class
+        role_split_skills.add(skill_name)
+
+    return SkillTaskClassMapping(
+        by_skill=by_skill,
+        by_skill_role=by_skill_role,
+        role_split_skills=frozenset(role_split_skills),
+    )
 
 
-def _resolve_task_class(source_skill_name: str, mapping: dict[str, str]) -> str:
+def _resolve_task_class(
+    source_skill_name: str,
+    mapping: SkillTaskClassMapping,
+    role: str | None = None,
+) -> str:
     """Exact dict lookup only -- never fuzzy-matched (phase-3 risk
     mitigation table: "Mapping is applied via exact dict lookup ... never
     fuzzy-matched").
@@ -683,8 +796,20 @@ def _resolve_task_class(source_skill_name: str, mapping: dict[str, str]) -> str:
     caller must never distinguish "no entry" from "entry resolves to
     _unclassified" (D3/FR-7); both paths return ``UNCLASSIFIED_TASK_CLASS``
     from this single lookup.
+
+    DI-1 node 1: when *role* is supplied AND ``(source_skill_name, role)``
+    has a role-split entry, that entry wins. Every other case -- *role* is
+    ``None`` (a non-role-split skill, whose ``source_role`` the SQL emits as
+    NULL), or a role token the rule does not declare -- falls back to the
+    role-blind ``by_skill`` lookup, then to ``UNCLASSIFIED_TASK_CLASS``. The
+    role lane is additive: it can never make a previously-classified skill
+    unclassified.
     """
-    resolved = mapping.get(source_skill_name)
+    if role is not None:
+        role_resolved = mapping.by_skill_role.get((source_skill_name, role))
+        if role_resolved:
+            return role_resolved
+    resolved = mapping.by_skill.get(source_skill_name)
     return resolved or UNCLASSIFIED_TASK_CLASS
 
 
@@ -730,6 +855,16 @@ async def _fetch_raw_aggregate_rows(
     Implementation Notes flags explicitly). Still exactly one query -- the
     join is folded into the same ``GROUP BY`` this function already issues,
     no second DB round-trip.
+
+    DI-1 node 1: the same statement additionally derives a ``source_role``
+    dimension and adds it to the ``GROUP BY``, again with no extra round-trip.
+    Only skills the pinned mapping declares a ``roles`` object for are
+    discriminated (``orchestrator`` iff the session is referenced as some
+    other session's ``subagent_parent_id``, ``implementer`` otherwise); every
+    other skill yields a constant ``NULL`` and exactly one group per
+    ``(project_id, skill_name, model)`` -- the pre-split grain, unchanged. When
+    NO rule declares ``roles`` the ``session_parents`` CTE and its join are
+    omitted entirely rather than emitting an invalid ``IN ()``.
     """
     window_start_iso = _iso(window_start)
     window_end_iso = _iso(window_end)
@@ -781,55 +916,136 @@ async def _fetch_raw_aggregate_rows(
                 COALESCE(SUM(tu.successes), 0) AS tool_success_sum,
                 SUM(CASE WHEN tu.calls IS NOT NULL THEN 1 ELSE 0 END) AS tool_usage_covered_count"""
 
+    # DI-1 node 1: distinct (project_id, parent_id) pairs -- DISTINCT is load-
+    # bearing, not cosmetic: sessions' PK is the composite (project_id, id), and
+    # a parent with N subagents has N rows referencing it, so a non-distinct
+    # LEFT JOIN would fan out and multiply COUNT(*)/the cost sums in the outer
+    # GROUP BY. Deliberately NOT window-filtered: parenting a subagent is a
+    # property of the session itself, so a parent whose children fall outside
+    # the rolling window still reads as an orchestrator.
+    _SESSION_PARENTS_CTE = """
+        session_parents AS (
+            SELECT DISTINCT project_id, subagent_parent_id AS parent_id
+            FROM sessions
+            WHERE subagent_parent_id IS NOT NULL
+        )"""
+    _SESSION_PARENTS_JOIN = """
+            LEFT JOIN session_parents sp
+                ON sp.parent_id = s.id AND sp.project_id = s.project_id"""
+
+    # DI-1 node 1: only skills the pinned mapping declares a `roles` object for
+    # are role-discriminated; every other skill's source_role is a constant
+    # NULL and its grain stays exactly what it was pre-split. The role names
+    # are inlined (they are OUR OWN module constants, never user input -- the
+    # same reasoning as _COST_EXPR/_AUTHORITATIVE_LIST) but the skill names are
+    # bound parameters because they come from a data file. sorted() keeps the
+    # emitted SQL byte-stable across runs (frozenset order is not), which the
+    # determinism test depends on.
+    role_split_skills = sorted(_load_skill_to_task_class_mapping().role_split_skills)
+
+    def _role_select(placeholders: str) -> str:
+        """Nested-CASE so the IN-list is bound exactly ONCE.
+
+        The `IN` test is the OUTER condition on purpose: a session with a NULL
+        `skill_name` yields NULL from `IN`, falls to `ELSE`, and gets
+        `source_role = NULL` -- it can never be classified `orchestrator` just
+        because it happens to parent a subagent.
+        """
+        return f"""
+                CASE WHEN s.skill_name IN ({placeholders})
+                     THEN CASE WHEN sp.parent_id IS NOT NULL
+                               THEN '{ROLE_ORCHESTRATOR}' ELSE '{ROLE_IMPLEMENTER}' END
+                     ELSE NULL END AS source_role,"""
+
     if isinstance(db, aiosqlite.Connection):
-        params: list[Any] = [window_start_iso, window_end_iso]
+        params: list[Any] = []
+        # The role CASE sits in the SELECT list, i.e. AHEAD of the WHERE clause
+        # in the statement text, so its positional `?` params must be bound
+        # first.
+        if role_split_skills:
+            role_select_sql = _role_select(",".join("?" * len(role_split_skills)))
+            params.extend(role_split_skills)
+            cte_sql = f"{_TOOL_USAGE_CTE},{_SESSION_PARENTS_CTE}"
+            role_join_sql = _SESSION_PARENTS_JOIN
+            role_group_by_sql = ", source_role"
+        else:
+            # No role-split rule in the mapping: never emit an invalid `IN ()`.
+            # A constant NULL keeps the column present and the grain identical.
+            role_select_sql = "\n                NULL AS source_role,"
+            cte_sql = _TOOL_USAGE_CTE
+            role_join_sql = ""
+            role_group_by_sql = ""
+        params.extend([window_start_iso, window_end_iso])
         project_filter_sql = ""
         if project_ids:
             project_filter_sql = f" AND s.project_id IN ({','.join('?' * len(project_ids))})"
             params.extend(project_ids)
 
         sql = f"""
-            WITH {_TOOL_USAGE_CTE}
+            WITH {cte_sql}
             SELECT
                 s.project_id AS project_id,
                 s.skill_name AS source_skill_name,
-                s.model AS model,
+                s.model AS model,{role_select_sql}
                 COUNT(*) AS session_count,
                 SUM(CASE WHEN {_COST_EXPR} > 0 THEN {_COST_EXPR} ELSE 0 END) AS cost_sum,
                 SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count,{_EFFORT_AGGREGATES}{_TOOL_AGGREGATES}
             FROM sessions s
             LEFT JOIN tool_usage_per_session tu
-                ON tu.session_id = s.id AND tu.project_id = s.project_id
+                ON tu.session_id = s.id AND tu.project_id = s.project_id{role_join_sql}
             WHERE s.updated_at >= ? AND s.updated_at <= ?
               {project_filter_sql}
-            GROUP BY s.project_id, s.skill_name, s.model
+            GROUP BY s.project_id, s.skill_name, s.model{role_group_by_sql}
         """  # noqa: S608
         async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
         raw_rows = [dict(row) for row in rows]
     else:
-        params = [window_start_iso, window_end_iso]
+        params = []
+        next_index = 1
+        if role_split_skills:
+            role_placeholders = ",".join(
+                f"${i}" for i in range(next_index, next_index + len(role_split_skills))
+            )
+            role_select_sql = _role_select(role_placeholders)
+            params.extend(role_split_skills)
+            next_index += len(role_split_skills)
+            cte_sql = f"{_TOOL_USAGE_CTE},{_SESSION_PARENTS_CTE}"
+            role_join_sql = _SESSION_PARENTS_JOIN
+            role_group_by_sql = ", source_role"
+        else:
+            role_select_sql = "\n                NULL AS source_role,"
+            cte_sql = _TOOL_USAGE_CTE
+            role_join_sql = ""
+            role_group_by_sql = ""
+        window_start_placeholder = f"${next_index}"
+        window_end_placeholder = f"${next_index + 1}"
+        params.extend([window_start_iso, window_end_iso])
+        next_index += 2
         project_filter_sql = ""
         if project_ids:
-            placeholders = ",".join(f"${i}" for i in range(3, 3 + len(project_ids)))
+            placeholders = ",".join(
+                f"${i}" for i in range(next_index, next_index + len(project_ids))
+            )
             project_filter_sql = f" AND s.project_id = ANY(ARRAY[{placeholders}]::text[])"
             params.extend(project_ids)
 
         sql = f"""
-            WITH {_TOOL_USAGE_CTE}
+            WITH {cte_sql}
             SELECT
                 s.project_id AS project_id,
                 s.skill_name AS source_skill_name,
-                s.model AS model,
+                s.model AS model,{role_select_sql}
                 COUNT(*) AS session_count,
                 SUM(CASE WHEN {_COST_EXPR} > 0 THEN {_COST_EXPR} ELSE 0 END) AS cost_sum,
                 SUM(CASE WHEN {_COST_EXPR} > 0 THEN 1 ELSE 0 END) AS cost_covered_count,{_EFFORT_AGGREGATES}{_TOOL_AGGREGATES}
             FROM sessions s
             LEFT JOIN tool_usage_per_session tu
-                ON tu.session_id = s.id AND tu.project_id = s.project_id
-            WHERE s.updated_at >= $1 AND s.updated_at <= $2
+                ON tu.session_id = s.id AND tu.project_id = s.project_id{role_join_sql}
+            WHERE s.updated_at >= {window_start_placeholder}
+              AND s.updated_at <= {window_end_placeholder}
               {project_filter_sql}
-            GROUP BY s.project_id, s.skill_name, s.model
+            GROUP BY s.project_id, s.skill_name, s.model{role_group_by_sql}
         """  # noqa: S608
         pg_rows = await db.fetch(sql, *params)
         raw_rows = [dict(row) for row in pg_rows]
@@ -854,6 +1070,12 @@ async def _fetch_raw_aggregate_rows(
             tool_call_sum=int(row.get("tool_call_sum") or 0),
             tool_success_sum=int(row.get("tool_success_sum") or 0),
             tool_usage_covered_count=int(row.get("tool_usage_covered_count") or 0),
+            # DI-1 node 1: NULL (non-role-split skill) must stay None, never be
+            # coerced to "" -- `_resolve_task_class` keys its role lookup on
+            # `role is not None`.
+            source_role=(
+                str(row["source_role"]) if row.get("source_role") is not None else None
+            ),
         )
         for row in raw_rows
     ]
@@ -952,6 +1174,35 @@ class RoutingRollupQueryService:
         flag to hardcode ``eligible_for_adjustment=False``, never
         re-deriving coverage-only status by re-checking ``task_class``
         membership itself.
+
+        DI-1 node 1 adds ONE narrow exception to the protected-class gate: a
+        protected row whose ``source_role`` is not ``None`` is dropped even when
+        *include_protected_rows* is ``True``.
+
+          - ``source_role is not None`` holds if and only if the row came from a
+            role-split skill -- the aggregation SQL emits a constant ``NULL``
+            for every other skill -- so the exception is exactly scoped to the
+            rows the role split itself created and cannot touch any other
+            protected skill.
+          - For such a skill the implementer-role row already occupies
+            ``(project_id, source_skill_name, model)``. Emitting the
+            orchestrator-role sibling would collide with it on
+            ``_NATURAL_KEY_COLUMNS``, and ``routing_rollup``'s writer is an
+            UPSERT on that key -- with no ``ORDER BY`` in ``fetch_raw_rows``,
+            which of the two survives is not even deterministic. The sibling is
+            a natural-key DUPLICATE, not new coverage.
+          - It carries no feedback value either way: ``orchestration`` is
+            ``must_stay_primary``, permanently ineligible for adjustment, and
+            its cost is *deliberately* excluded from ``implementation`` -- that
+            exclusion is the entire point of this node.
+
+        Rejected alternatives: adding ``task_class``/``source_role`` to
+        ``_NATURAL_KEY_COLUMNS`` (needs a DDL migration in both backends, out of
+        scope, and not required to keep orchestration spend out of
+        ``implementation``); and flipping or overriding
+        ``CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS`` (blast radius across
+        every non-role-split protected skill, which must keep emitting its
+        coverage-only row).
         """
         resolved_include_protected = (
             include_protected_rows
@@ -962,13 +1213,29 @@ class RoutingRollupQueryService:
 
         mapped_rows: list[MappedRollupRow] = []
         for row in rows:
-            task_class = _resolve_task_class(row.source_skill_name, mapping)
+            task_class = _resolve_task_class(
+                row.source_skill_name, mapping, role=row.source_role
+            )
             is_unclassified = task_class == UNCLASSIFIED_TASK_CLASS
             is_protected = task_class in PROTECTED_TASK_CLASSES
 
-            if is_protected and not resolved_include_protected:
+            if is_protected and (not resolved_include_protected or row.source_role is not None):
                 # Gated out entirely -- _unclassified rows never reach this
                 # branch (is_protected is always False for them).
+                #
+                # DI-1 node 1: the `source_role is not None` disjunct suppresses a
+                # role-split skill's protected sibling REGARDLESS of the flag.
+                # `source_role` is non-NULL only for role-split skills, so this
+                # is exactly scoped: the implementer-role row already holds
+                # (project_id, source_skill_name, model), and emitting the
+                # orchestrator-role row too would collide on that natural key in
+                # an UPSERT -- non-deterministically, since fetch_raw_rows has no
+                # ORDER BY -- overwriting the `implementation` row the feedback
+                # loop consumes. It is a duplicate key, not added coverage, and
+                # `orchestration` is must_stay_primary so it could never be
+                # adjusted anyway. A NON-role-split protected skill
+                # (planning/release/...) still emits its coverage-only row under
+                # the default flag, unchanged.
                 continue
 
             mapped_rows.append(
@@ -989,6 +1256,7 @@ class RoutingRollupQueryService:
                     tool_call_sum=row.tool_call_sum,
                     tool_success_sum=row.tool_success_sum,
                     tool_usage_covered_count=row.tool_usage_covered_count,
+                    source_role=row.source_role,
                 )
             )
         return mapped_rows
@@ -1023,6 +1291,7 @@ class RoutingRollupQueryService:
                     tool_call_sum=row.tool_call_sum,
                     tool_success_sum=row.tool_success_sum,
                     tool_usage_covered_count=row.tool_usage_covered_count,
+                    source_role=row.source_role,
                 )
             )
         return provider_rows
@@ -1263,10 +1532,13 @@ class RoutingRollupQueryService:
 
 __all__ = [
     "PROTECTED_TASK_CLASSES",
+    "ROLE_IMPLEMENTER",
+    "ROLE_ORCHESTRATOR",
     "UNCLASSIFIED_TASK_CLASS",
     "CoverageCounters",
     "MappedRollupRow",
     "ProviderRollupRow",
     "RawRollupRow",
     "RoutingRollupQueryService",
+    "SkillTaskClassMapping",
 ]

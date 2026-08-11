@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "mapping_id": "ccdash.skill_name_to_aos.routing.task_class",
-  "mapping_version": "1.1.0",
+  "mapping_version": "1.2.0",
   "producer": "ccdash",
   "source_field": "sessions.skill_name",
   "taxonomy": {
@@ -11,6 +11,15 @@
   },
   "unmapped_policy": "_unclassified",
   "external_identifier_policy": "canonical_only",
+  "role_discriminator": {
+    "field": "sessions.subagent_parent_id",
+    "roles": ["orchestrator", "implementer"],
+    "predicate": "orchestrator iff the session is referenced as some other session's subagent_parent_id (it parents at least one subagent); implementer otherwise",
+    "default_role": "implementer",
+    "applies_to": "only rules that declare a `roles` object; every other rule stays keyed on source_field alone and its grain is unchanged",
+    "coverage": "total — every session resolves to exactly one role, so no row is left unclassified and there is no remainder bucket. A genuine orchestrator whose child sessions were never ingested reads as implementer; that is the pre-existing attribution for those rows, never a new mis-demotion.",
+    "rationale": "source_field alone cannot separate a dual-role skill. Parenting a subagent is the discriminator because it is already recorded per session and is Opus-exclusive in practice."
+  },
   "rules": [
     {
       "source_skill_name": "aos-operator",
@@ -80,7 +89,11 @@
     {
       "source_skill_name": "dev-execution",
       "task_class": "implementation",
-      "rationale": "Plan execution and code implementation workflow."
+      "roles": {
+        "orchestrator": "orchestration",
+        "implementer": "implementation"
+      },
+      "rationale": "DUAL-ROLE. The orchestrator loads dev-execution (/dev:execute-phase, /dev:execute-plan) and so do the implementer legs it dispatches, so a skill-only key folds MUST-stay orchestration spend into a demotable class. Measured 2026-08-11: 164 orchestrator-role Opus sessions (8.4% of them) carried 62.4% of all Opus dev-execution cost, avg $178/session against $9-13 for the other roles. Orchestrator-role rows now resolve to `orchestration`, which is protected and therefore dropped from the rollup; only implementer-role rows feed `implementation`. `task_class` remains the role-blind fallback and the only class this rule can emit into feedback."
     },
     {
       "source_skill_name": "enterprise-demo-deploy",
