@@ -153,6 +153,30 @@ class TestEnvelopeErrors:
                 client.get("/api/v1/features/MISSING")
         assert "NOT_FOUND" in exc_info.value.message
 
+    def test_array_body_is_returned_without_envelope_check(self):
+        """A bare JSON array body round-trips instead of crashing.
+
+        Regression: ``_parse_body`` used to call ``body.get("status")``
+        unconditionally, so array-returning endpoints (e.g. GET /api/projects,
+        which backs ``ccdash-cli project list``) raised
+        ``AttributeError: 'list' object has no attribute 'get'``.
+        """
+        body = [
+            {"id": "proj-1", "name": "Alpha"},
+            {"id": "proj-2", "name": "Beta"},
+        ]
+        transport = _make_transport(lambda req: httpx.Response(200, json=body))
+        with _client_with_transport(transport) as client:
+            result = client.get("/api/projects")
+        assert isinstance(result, list)
+        assert [p["id"] for p in result] == ["proj-1", "proj-2"]
+
+    def test_empty_array_body_is_returned(self):
+        """An empty array is a valid body, not an error."""
+        transport = _make_transport(lambda req: httpx.Response(200, json=[]))
+        with _client_with_transport(transport) as client:
+            assert client.get("/api/projects") == []
+
     def test_invalid_json_response_raises_server_error(self):
         """Non-JSON response body raises ServerError, not a raw decode error."""
         transport = _make_transport(

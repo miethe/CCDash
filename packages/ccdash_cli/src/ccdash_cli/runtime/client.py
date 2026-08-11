@@ -406,33 +406,41 @@ class CCDashClient:
             )
 
     @staticmethod
-    def _parse_body(response: httpx.Response, url: str) -> dict[str, Any]:
+    def _parse_body(
+        response: httpx.Response, url: str
+    ) -> dict[str, Any] | list[Any]:
         """Parse the JSON response and surface envelope-level errors.
 
-        The CCDash API always returns a JSON envelope.  If the ``status``
-        field equals ``"error"``, the error details are extracted and a
-        :class:`ServerError` is raised even when the HTTP status was 2xx.
+        Most CCDash endpoints return a JSON *object* envelope, and when its
+        ``status`` field equals ``"error"`` the error details are extracted and
+        a :class:`ServerError` is raised even though the HTTP status was 2xx.
+        Some endpoints (notably ``GET /api/projects``) return a bare JSON
+        *array* instead; an array carries no envelope, so the error check is
+        skipped and the list is returned as-is.  Callers that hit an
+        array-returning endpoint must narrow the result themselves — see
+        ``commands/project.py`` for the ``isinstance(body, list)`` pattern.
 
         Args:
             response: The raw httpx response (HTTP status already checked).
             url:      The request path (used in error messages).
 
         Returns:
-            The full parsed response dict.
+            The parsed response body: a dict for envelope endpoints, a list for
+            array endpoints.
 
         Raises:
             ServerError: When the envelope ``status`` is ``"error"``.
             ServerError: When the response body is not valid JSON.
         """
         try:
-            body: dict[str, Any] = response.json()
+            body: dict[str, Any] | list[Any] = response.json()
         except (json.JSONDecodeError, ValueError) as exc:
             raise ServerError(
                 f"Invalid JSON response from {url}: {exc}; "
                 f"body={response.text[:200]!r}"
             ) from exc
 
-        if body.get("status") == "error":
+        if isinstance(body, dict) and body.get("status") == "error":
             try:
                 envelope = ClientV1ErrorEnvelope.model_validate(body)
                 err = envelope.error
