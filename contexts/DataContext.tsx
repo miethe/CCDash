@@ -16,7 +16,7 @@
  * ([], null, false). No consumer breaks when a query has not yet loaded.
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Project, TaskStatus } from '../types';
 import { AppRuntimeProvider, useAppRuntime } from './AppRuntimeContext';
@@ -42,6 +42,113 @@ import { useProjectsQuery } from '../services/queries/projects';
 
 export type { SessionFetchOptions, SessionFilters } from './dataContextShared';
 export { hasSessionDetail, mergeSessionDetail } from './dataContextShared';
+
+// ─── Session filters (shared client-state) ────────────────────────────────────
+//
+// Session filters MUST live in a provider, not in useData() local state: useData()
+// is a hook (not a context), so a useState inside it would give every caller its
+// own private copy and the filter panel could never drive the list's fetch.
+//
+// Default is `include_subagents: true` so subagent sessions are visible on
+// /sessions without the operator having to opt in (the backend default is false).
+
+export const DEFAULT_SESSION_FILTERS: Readonly<SessionFilters> = Object.freeze({
+  include_subagents: true,
+});
+
+/**
+ * Drops absent/blank values so a filter object has one canonical shape.
+ *
+ * Resilience: every field may be missing; a blank string means "no filter", not
+ * an error. Normalizing keeps the TQ query key (and therefore the fetch) stable
+ * when the panel re-emits an equivalent payload.
+ */
+export function normalizeSessionFilters(filters: SessionFilters | null | undefined): SessionFilters {
+  const source = filters ?? {};
+  const normalized: SessionFilters = {};
+  (Object.keys(source) as Array<keyof SessionFilters>).forEach(key => {
+    const value = source[key];
+    if (value === undefined || value === null) return;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) (normalized as Record<string, unknown>)[key] = trimmed;
+      return;
+    }
+    if (typeof value === 'number' && !Number.isFinite(value)) return;
+    (normalized as Record<string, unknown>)[key] = value;
+  });
+  return normalized;
+}
+
+/** Content equality over the normalized shape (key order independent). */
+export function sessionFiltersEqual(
+  left: SessionFilters | null | undefined,
+  right: SessionFilters | null | undefined,
+): boolean {
+  const a = normalizeSessionFilters(left);
+  const b = normalizeSessionFilters(right);
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key, idx) => (
+    bKeys[idx] === key
+    && (a as Record<string, unknown>)[key] === (b as Record<string, unknown>)[key]
+  ));
+}
+
+interface SessionFiltersContextValue {
+  sessionFilters: SessionFilters;
+  setSessionFilters: (filters: SessionFilters) => void;
+}
+
+const SessionFiltersContext = createContext<SessionFiltersContextValue | null>(null);
+
+const SessionFiltersProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [sessionFilters, setSessionFiltersState] = useState<SessionFilters>(
+    () => normalizeSessionFilters(DEFAULT_SESSION_FILTERS),
+  );
+
+  const setSessionFilters = useCallback((filters: SessionFilters) => {
+    setSessionFiltersState(prev => (
+      sessionFiltersEqual(prev, filters) ? prev : normalizeSessionFilters(filters)
+    ));
+  }, []);
+
+  const value = useMemo<SessionFiltersContextValue>(
+    () => ({ sessionFilters, setSessionFilters }),
+    [sessionFilters, setSessionFilters],
+  );
+
+  return (
+    <SessionFiltersContext.Provider value={value}>{children}</SessionFiltersContext.Provider>
+  );
+};
+
+let warnedMissingSessionFiltersProvider = false;
+const INERT_SESSION_FILTERS: SessionFiltersContextValue = {
+  sessionFilters: normalizeSessionFilters(DEFAULT_SESSION_FILTERS),
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  setSessionFilters: () => {},
+};
+
+/**
+ * Reads the shared session-filter state.
+ *
+ * A missing provider is a contract state (the data providers are gated on auth),
+ * so this degrades to inert defaults instead of crashing — but it warns once so
+ * the wiring can never silently rot back into a no-op stub.
+ */
+export function useSessionFilters(): SessionFiltersContextValue {
+  const ctx = useContext(SessionFiltersContext);
+  if (!ctx) {
+    if (!warnedMissingSessionFiltersProvider) {
+      warnedMissingSessionFiltersProvider = true;
+      console.warn('[DataContext] useSessionFilters used outside SessionFiltersProvider — filters are inert.');
+    }
+    return INERT_SESSION_FILTERS;
+  }
+  return ctx;
+}
 
 // ─── Provider gate ────────────────────────────────────────────────────────────
 
@@ -83,7 +190,9 @@ const AppDataProviderGate: React.FC<{ children: React.ReactNode }> = ({ children
 const ComposedDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <DataClientProvider>
     <AuthSessionProvider>
-      <AppDataProviderGate>{children}</AppDataProviderGate>
+      <SessionFiltersProvider>
+        <AppDataProviderGate>{children}</AppDataProviderGate>
+      </SessionFiltersProvider>
     </AuthSessionProvider>
   </DataClientProvider>
 );
@@ -141,6 +250,10 @@ export function useData(): DataContextValue {
   // ── T4-003: Reactive TQ hooks (re-render on background refetch) ─────────────
 
   // Sessions: infinite query; flatten pages here so components stay unchanged.
+  // Deliberately UNFILTERED: useData().sessions feeds cross-page consumers
+  // (dashboard rollups, etc.) that must not be reshaped by the /sessions filter
+  // panel. The Session Inspector passes sessionFilters to its own
+  // useSessionsQuery call, which is a distinct cache entry by query key.
   const sessionsQuery = useSessionsQuery({ projectId: projectId || null, enabled: !!projectId });
   const sessions = useMemo<AgentSession[]>(
     () => sessionsQuery.data?.pages.flatMap(p => p.items) ?? [],
@@ -281,11 +394,10 @@ export function useData(): DataContextValue {
     }
   }, [client, queryClient, projectId]);
 
-  // ── Session filters (client-state) ─────────────────────────────────────────
-  // Session filters are client-state; keep a stable empty default for shim.
-  const sessionFilters: SessionFilters = {};
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  const setSessionFilters = useCallback((_filters: SessionFilters) => {}, []);
+  // ── Session filters (shared client-state) ──────────────────────────────────
+  // Backed by SessionFiltersProvider so the filter panel and the session list
+  // read/write the SAME state (a useState here would be per-caller and inert).
+  const { sessionFilters, setSessionFilters } = useSessionFilters();
 
   return {
     sessions,
