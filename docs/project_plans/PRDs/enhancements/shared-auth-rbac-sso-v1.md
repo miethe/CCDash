@@ -3,13 +3,13 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: pending
+status: completed
 category: enhancements
 title: "PRD: Shared Auth, RBAC, and SSO V1"
 description: "Add shared identity, hierarchical role-based access control, and modular hosted auth across CCDash and SkillMeat using a shared provider abstraction."
 summary: "Introduce modular hosted auth with Local, Clerk, and generic OIDC providers plus user/team/enterprise RBAC while preserving a deliberate local no-auth mode."
 created: 2026-03-11
-updated: 2026-03-24
+updated: 2026-08-12
 priority: critical
 risk_level: high
 complexity: High

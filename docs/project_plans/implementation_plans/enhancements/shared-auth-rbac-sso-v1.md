@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: enhancements
 title: "Implementation Plan: Shared Auth, RBAC, and SSO V1"
 description: "Implement modular shared auth with local, Clerk, and generic OIDC providers, hierarchical RBAC, and SkillMeat trust alignment while preserving an explicit local no-auth runtime."
@@ -15,7 +15,7 @@ owners: [platform-engineering, security-engineering, fullstack-engineering]
 contributors: [ai-agents]
 audience: [ai-agents, developers, platform-engineering, security-engineering]
 created: 2026-03-20
-updated: 2026-05-02
+updated: 2026-08-12
 tags: [implementation, auth, oidc, rbac, sso, security, skillmeat]
 priority: critical
 risk_level: high

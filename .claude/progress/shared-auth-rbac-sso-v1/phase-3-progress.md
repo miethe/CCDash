@@ -9,16 +9,16 @@ plan_ref: docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-
 execution_model: batch-parallel
 phase: 3
 title: Authorization Policy and 3-Tier RBAC Matrix
-status: in_progress
+status: completed
 started: '2026-05-03'
-completed: null
+completed: 2026-05-04
 commit_refs:
 - ebb75eb
 - 262d036
 - fd7af48
 pr_refs: []
 overall_progress: 100
-completion_estimate: at-risk
+completion_estimate: on-track
 total_tasks: 4
 completed_tasks: 4
 in_progress_tasks: 0
@@ -136,6 +136,7 @@ success_criteria:
 - id: SC-4
   description: User/team/enterprise inheritance rules are explicit enough to implement without reopening the model mid-build.
   status: completed
+updated: 2026-08-12
 ---
 
 # Phase 3 Progress: Authorization Policy and 3-Tier RBAC Matrix

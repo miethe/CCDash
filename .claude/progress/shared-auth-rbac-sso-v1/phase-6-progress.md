@@ -11,7 +11,7 @@ phase: 6
 title: Frontend Session UX and Protected Shell
 status: completed
 started: '2026-05-03'
-completed: null
+completed: 2026-05-04
 commit_refs:
 - b8b96c1
 - 52e231d
@@ -142,7 +142,7 @@ success_criteria:
 - Enterprise/team/user context is visible and switchable where appropriate without
   becoming the source of truth for authorization.
 progress: 100
-updated: '2026-05-03'
+updated: '2026-08-12'
 ---
 
 # Phase 6 Progress
