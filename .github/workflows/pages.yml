@@ -1,9 +1,17 @@
 name: Deploy documentation site
 
+# Manual-dispatch only. GitHub Pages has never been enabled for this repo with
+# source "GitHub Actions", so `actions/configure-pages` cannot find a Pages site
+# and the job died at that step on every push to main (red across 6+ consecutive
+# runs as of 2026-08-12). A permanently-red check trains reviewers to merge over
+# red and makes a genuine docs-build regression indistinguishable from the
+# standing failure.
+#
+# The build steps themselves pass, so this workflow still has value on demand:
+# dispatch it to prove `npm run build:docs` is not broken. To publish for real,
+# enable Pages (Settings -> Pages -> Source = "GitHub Actions", or add
+# `enablement: true` to the Configure Pages step) and restore the push trigger.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
