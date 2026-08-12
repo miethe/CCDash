@@ -59,6 +59,27 @@ AC2. This is a read-time backstop on top of the compute-time gate in
 ``routing_rollup.py::_success_rate_and_coverage`` -- it never trusts the
 persisted column's value for a gated provider, regardless of when or by
 which binary that row was written.
+
+Mapping-identity certification (read-path withhold)
+---------------------------------------------------
+``mapping_version`` is the ONLY one of the three mapping-identity fields that
+is persisted per row; ``mapping_id`` and ``mapping_digest`` are always supplied
+from the current in-code constants. So the moment ``MAPPING_VERSION`` /
+``MAPPING_DIGEST`` are bumped in code, any row persisted under the previous
+mapping would be served as ``(old mapping_version, new mapping_digest)`` -- an
+identity triple that never existed at any point in time. The external
+delegation-router join validator requires ``mapping_id`` + ``mapping_version``
++ ``mapping_digest`` to ALL match its pinned producer contract, so such rows
+are rejected as ``mapping_mismatch`` and the feedback channel goes silently
+inert.
+
+There is no historical-digest table, so a stale row's true digest is
+unrecoverable -- the row cannot be served honestly under either identity.
+``_row_certifiable`` therefore withholds it from the read path entirely
+(``_build_response_from_rows`` partitions before doing anything else), so a
+superseded-mapping row contributes to nothing -- not ``keys``, not the FR-7
+counters, not ``generated_at`` -- exactly as if it had not been swept yet. The
+next sweep recomputes it under the current mapping and it returns naturally.
 """
 from __future__ import annotations
 
@@ -132,6 +153,29 @@ def _disabled_envelope() -> RoutingRollupResponseDTO:
     return _empty_response(enabled=False, generated_at=None)
 
 
+def _row_certifiable(row: Mapping[str, Any]) -> bool:
+    """Can this persisted row be certified under the CURRENT mapping contract?
+
+    True iff the row's persisted ``mapping_version`` equals
+    ``routing_feedback_contract.MAPPING_VERSION``.
+
+    A row whose persisted ``mapping_version`` differs was computed under a
+    superseded mapping, so its ``task_class`` cannot be certified under the
+    current contract -- and because ``mapping_digest`` is never persisted
+    per-row, that row's TRUE digest is unrecoverable. Serving it would force a
+    choice between two lies: pairing its old ``mapping_version`` with the
+    current ``mapping_digest`` constant (fabricating an identity triple that
+    never existed -- the bug this predicate closes) or restamping it with the
+    current version (asserting stale data is current). Withholding is the only
+    honest option; the next sweep recomputes the row under the current mapping.
+
+    A row with an EMPTY ``mapping_version`` is likewise not certifiable: it
+    carries no evidence of which mapping produced it, and ``_row_to_key_dto``'s
+    empty-column fallback would silently restamp it as current.
+    """
+    return str(row.get("mapping_version") or "") == routing_feedback_contract.MAPPING_VERSION
+
+
 def _row_to_key_dto(row: Mapping[str, Any]) -> RoutingRollupKeyDTO:
     """Deserialise one persisted ``routing_rollup`` row into a
     ``RoutingRollupKeyDTO``, verbatim.
@@ -145,6 +189,15 @@ def _row_to_key_dto(row: Mapping[str, Any]) -> RoutingRollupKeyDTO:
     faithfully reflects the contract version in effect when the row was
     written, falling back to the current constants only if a column is
     unexpectedly empty.
+
+    The verbatim ``mapping_version`` read is now provably CONSISTENT with the
+    ``mapping_id``/``mapping_digest`` constants beside it: only rows that pass
+    ``_row_certifiable`` reach this function via ``_build_response_from_rows``,
+    and passing that predicate means the persisted value already equals
+    ``MAPPING_VERSION``. The mixed-identity triple is structurally unreachable
+    on the served path rather than merely unlikely. (Called directly -- as unit
+    tests do -- this function still echoes whatever the row holds; the
+    certification guarantee belongs to the reassembly entrypoint.)
     """
     return RoutingRollupKeyDTO(
         producer=routing_feedback_contract.PRODUCER,
@@ -234,7 +287,19 @@ def _build_response_from_rows(rows: list[Mapping[str, Any]]) -> RoutingRollupRes
     ``sessions``. Every row lands in exactly one of ``mapped_count`` /
     ``unclassified_count`` (keyed strictly off the row's persisted
     ``task_class``, mirroring ``compute_coverage_counters``'s FR-7 policy),
-    so the two counters always sum to the total persisted ``sample_count``.
+    so the two counters always sum to the total ``sample_count`` of the
+    CERTIFIED population -- see the mapping-identity note below. The
+    counter-sum invariant holds over certified rows, NOT over all persisted
+    rows: a superseded-mapping row's ``sample_count`` is absent from both
+    counters by design, the same way a not-yet-swept key's is.
+
+    Mapping-identity certification (see the module docstring): rows are
+    partitioned through ``_row_certifiable`` FIRST, before any other work.
+    Rows carrying a superseded ``mapping_version`` are withheld entirely --
+    they contribute to no field of the response (not ``keys``, not the FR-7
+    counters, not the skill-dimension counts, not ``generated_at``). If nothing
+    certifies, the documented degradation envelope is returned, identical to
+    the "no persisted rows yet" shape.
 
     DI-4e/D-b3: also reassembles ``skill_attributed_key_count``/
     ``skill_unattributed_key_count`` from the persisted rows -- a row (not a
@@ -246,6 +311,26 @@ def _build_response_from_rows(rows: list[Mapping[str, Any]]) -> RoutingRollupRes
     """
     if not rows:
         return _empty_response(enabled=True, generated_at=None)
+
+    # Mapping-identity partition -- FIRST, before any counter or DTO work, so
+    # a superseded-mapping row can never leak into any served field.
+    certified_rows = [row for row in rows if _row_certifiable(row)]
+    withheld_count = len(rows) - len(certified_rows)
+    if withheld_count:
+        logger.warning(
+            "routing_rollup: withheld %d persisted row(s) whose mapping_version "
+            "does not match the current MAPPING_VERSION=%s -- they were computed "
+            "under a superseded mapping and their true mapping_digest is "
+            "unrecoverable; awaiting the next sweep",
+            withheld_count,
+            routing_feedback_contract.MAPPING_VERSION,
+        )
+    if not certified_rows:
+        # Everything on hand is superseded -- report the documented "nothing to
+        # report yet" degradation shape rather than a new envelope variant.
+        return _empty_response(enabled=True, generated_at=None)
+
+    rows = certified_rows
 
     key_dtos = [_row_to_key_dto(row) for row in rows]
 
