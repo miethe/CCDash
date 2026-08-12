@@ -1,6 +1,15 @@
 """PostgreSQL database schema creation and versioning.
 
 Schema version history (keep in lockstep with sqlite_migrations.py):
+  v54 — routing_rollup PK widened to
+         (project_id, source_skill_name, model, task_class). Mirrors
+         sqlite_migrations.py v54. A role-split skill resolves TWO task_classes
+         for one (project, skill, model), and under the old 3-column key those
+         rows collided in the repository's UPSERT non-deterministically,
+         silently overwriting the `implementation` row the routing-feedback loop
+         consumes. Table-level constraint change only -- no new column, so no
+         column-parity entry. Postgres does this as DROP/ADD CONSTRAINT;
+         SQLite needs a table rebuild. Widening cannot collide.
   v53 — hosted-llm-anthropic-ica-lane-v1 M2: projects table gains
          llm_egress_consent (NOT NULL, DEFAULT FALSE). Mirrors
          sqlite_migrations.py v53. Per-project consent gate for sending
@@ -68,7 +77,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 53
+SCHEMA_VERSION = 54
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1620,7 +1629,14 @@ CREATE TABLE IF NOT EXISTS routing_rollup (
     mapping_version            TEXT NOT NULL,
     created_at                  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at                  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (project_id, source_skill_name, model)
+    -- v54: task_class joined the key. A role-split skill resolves TWO
+    -- task_classes for one (project, skill, model) -- implementation for the
+    -- implementer role, orchestration for the orchestrator role -- and under
+    -- the old 3-column key those two rows collided in the repository's UPSERT,
+    -- non-deterministically (fetch_raw_rows has no ORDER BY). Kept in sync with
+    -- _NATURAL_KEY_COLUMNS in backend/db/repositories/routing_rollup.py and
+    -- with the SQLite block; see the v54 migration below for existing DBs.
+    PRIMARY KEY (project_id, source_skill_name, model, task_class)
 );
 
 CREATE INDEX IF NOT EXISTS idx_routing_rollup_project ON routing_rollup(project_id);
@@ -4330,6 +4346,61 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
             "(NOT NULL DEFAULT FALSE -- fail-closed; existing projects do not "
             "consent to egress by default)."
         )
+
+    if current_version < 54:
+        # routing_rollup PK widened to include task_class so a role-split
+        # skill's implementation and orchestration rows stop colliding in the
+        # repository UPSERT. Mirror of the SQLite v54 block -- Postgres can
+        # DROP/ADD the constraint in place, so no table rebuild is needed.
+        #
+        # Widening cannot collide (rows unique on 3 columns are unique on 4),
+        # and no table carries a foreign key into routing_rollup, so there is
+        # no dependent constraint to drop first. Idempotent: the PK's actual
+        # column set is inspected first, and the table's absence is a no-op
+        # (the _TABLES DDL above creates it already widened).
+        pk_columns = await db.fetch(
+            """
+            SELECT a.attname
+            FROM pg_constraint c
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+            WHERE c.contype = 'p' AND c.conrelid = to_regclass('routing_rollup')
+            """
+        )
+        existing_pk = {r["attname"] for r in pk_columns}
+        if not existing_pk:
+            logger.info(
+                "v54: routing_rollup has no primary key to widen (table absent, "
+                "or already created by the _TABLES DDL). Skipping."
+            )
+        elif "task_class" in existing_pk:
+            logger.info("v54: routing_rollup task_class PK already present; skipping.")
+        else:
+            pk_name_row = await db.fetchrow(
+                "SELECT conname FROM pg_constraint "
+                "WHERE contype = 'p' AND conrelid = to_regclass('routing_rollup')"
+            )
+            if pk_name_row is None:
+                # The PK disappeared between the two catalog reads. Do not guess
+                # a constraint name -- leave the table alone and say so; the next
+                # startup re-runs this block.
+                logger.warning(
+                    "v54: routing_rollup primary key vanished between catalog "
+                    "reads; leaving the table unchanged. Re-run migrations."
+                )
+            else:
+                pk_name = pk_name_row["conname"]
+                # conname comes from the catalog, not from user input; quote it anyway.
+                await db.execute(f'ALTER TABLE routing_rollup DROP CONSTRAINT "{pk_name}"')
+                await db.execute(
+                    "ALTER TABLE routing_rollup ADD PRIMARY KEY "
+                    "(project_id, source_skill_name, model, task_class)"
+                )
+                logger.info(
+                    "v54 migrations complete: routing_rollup PK widened to "
+                    "(project_id, source_skill_name, model, task_class) "
+                    "(dropped %s).",
+                    pk_name,
+                )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
     # Databases that already had schema_version >= SCHEMA_VERSION skip the

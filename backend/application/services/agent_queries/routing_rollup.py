@@ -1175,34 +1175,27 @@ class RoutingRollupQueryService:
         re-deriving coverage-only status by re-checking ``task_class``
         membership itself.
 
-        DI-1 node 1 adds ONE narrow exception to the protected-class gate: a
-        protected row whose ``source_role`` is not ``None`` is dropped even when
-        *include_protected_rows* is ``True``.
+        There is deliberately NO ``source_role`` exception to the
+        protected-class gate. DI-1 node 1 originally added one -- a protected
+        row whose ``source_role`` was not ``None`` was dropped even when
+        *include_protected_rows* was ``True`` -- purely because the two rows a
+        role-split skill produces (implementer -> ``implementation``,
+        orchestrator -> ``orchestration``) collided on the then-3-column
+        ``_NATURAL_KEY_COLUMNS`` ``(project_id, source_skill_name, model)``.
+        That collision was real and non-deterministic (``fetch_raw_rows`` has no
+        ``ORDER BY``), and it silently overwrote the ``implementation`` row the
+        feedback loop consumes.
 
-          - ``source_role is not None`` holds if and only if the row came from a
-            role-split skill -- the aggregation SQL emits a constant ``NULL``
-            for every other skill -- so the exception is exactly scoped to the
-            rows the role split itself created and cannot touch any other
-            protected skill.
-          - For such a skill the implementer-role row already occupies
-            ``(project_id, source_skill_name, model)``. Emitting the
-            orchestrator-role sibling would collide with it on
-            ``_NATURAL_KEY_COLUMNS``, and ``routing_rollup``'s writer is an
-            UPSERT on that key -- with no ``ORDER BY`` in ``fetch_raw_rows``,
-            which of the two survives is not even deterministic. The sibling is
-            a natural-key DUPLICATE, not new coverage.
-          - It carries no feedback value either way: ``orchestration`` is
-            ``must_stay_primary``, permanently ineligible for adjustment, and
-            its cost is *deliberately* excluded from ``implementation`` -- that
-            exclusion is the entire point of this node.
+        Schema v54 widened the key to include ``task_class``, so the two rows no
+        longer collide and the suppression was deleted. That is what makes
+        per-role rollup telemetry persistable at all: under the suppression the
+        orchestrator row was computed and then dropped, so "what did
+        orchestration actually cost" was structurally unanswerable.
 
-        Rejected alternatives: adding ``task_class``/``source_role`` to
-        ``_NATURAL_KEY_COLUMNS`` (needs a DDL migration in both backends, out of
-        scope, and not required to keep orchestration spend out of
-        ``implementation``); and flipping or overriding
-        ``CCDASH_ROUTING_FEEDBACK_INCLUDE_PROTECTED_ROWS`` (blast radius across
-        every non-role-split protected skill, which must keep emitting its
-        coverage-only row).
+        Orchestration remains ``must_stay_primary`` and permanently ineligible
+        for adjustment, and its cost is still excluded from ``implementation``
+        -- that separation is now a property of the KEY rather than of a
+        dropped row.
         """
         resolved_include_protected = (
             include_protected_rows
@@ -1219,23 +1212,16 @@ class RoutingRollupQueryService:
             is_unclassified = task_class == UNCLASSIFIED_TASK_CLASS
             is_protected = task_class in PROTECTED_TASK_CLASSES
 
-            if is_protected and (not resolved_include_protected or row.source_role is not None):
+            if is_protected and not resolved_include_protected:
                 # Gated out entirely -- _unclassified rows never reach this
                 # branch (is_protected is always False for them).
                 #
-                # DI-1 node 1: the `source_role is not None` disjunct suppresses a
-                # role-split skill's protected sibling REGARDLESS of the flag.
-                # `source_role` is non-NULL only for role-split skills, so this
-                # is exactly scoped: the implementer-role row already holds
-                # (project_id, source_skill_name, model), and emitting the
-                # orchestrator-role row too would collide on that natural key in
-                # an UPSERT -- non-deterministically, since fetch_raw_rows has no
-                # ORDER BY -- overwriting the `implementation` row the feedback
-                # loop consumes. It is a duplicate key, not added coverage, and
-                # `orchestration` is must_stay_primary so it could never be
-                # adjusted anyway. A NON-role-split protected skill
-                # (planning/release/...) still emits its coverage-only row under
-                # the default flag, unchanged.
+                # The flag is the ONLY gate here. A role-split skill's
+                # orchestrator-role row used to be suppressed on top of it (see
+                # the docstring) because it collided with its implementer-role
+                # sibling on the old 3-column natural key; schema v54 added
+                # `task_class` to that key, so both rows now persist side by side
+                # and the suppression is gone.
                 continue
 
             mapped_rows.append(

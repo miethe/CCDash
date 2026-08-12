@@ -122,15 +122,24 @@ class RoutingRollupMigrationGovernanceTests(unittest.TestCase):
             self.assertIn(col, pg_cols, msg=f"ROUTING_ROLLUP_COLUMNS entry '{col}' missing from Postgres DDL")
 
     def test_routing_rollup_primary_key_matches_natural_grain(self) -> None:
-        """PRIMARY KEY must be (project_id, source_skill_name, model) in both DDLs, never
-        (task_class, model), and never include window_start/window_end."""
+        """PRIMARY KEY must be (project_id, source_skill_name, model, task_class) in both
+        DDLs -- schema v54 added ``task_class`` so a role-split skill's implementation and
+        orchestration rows no longer collide. It must still never be keyed
+        (task_class, model) first, and must never include window_start/window_end (those
+        are UPDATE-in-place window columns; keying on them would grow the table
+        unboundedly)."""
         from backend.db import postgres_migrations, sqlite_migrations
         from backend.db.migration_governance import _backend_table_blocks
 
         for module in (sqlite_migrations, postgres_migrations):
             body = _backend_table_blocks(module)["routing_rollup"]
-            self.assertIn("PRIMARY KEY (project_id, source_skill_name, model)", body)
+            self.assertIn(
+                "PRIMARY KEY (project_id, source_skill_name, model, task_class)", body
+            )
             self.assertNotIn("PRIMARY KEY (task_class", body)
+            pk_clause = body[body.index("PRIMARY KEY ("):]
+            self.assertNotIn("window_start", pk_clause)
+            self.assertNotIn("window_end", pk_clause)
 
 
 # ── 2. Row fixture -- plain dicts, ROUTING_ROLLUP_COLUMNS-shaped ────────────

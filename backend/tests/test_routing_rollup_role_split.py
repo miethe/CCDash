@@ -15,8 +15,12 @@ carried 62.4% of all Opus ``dev-execution`` cost). This file covers the fix:
     group per ``(project_id, skill_name, model)``: the pre-split grain,
     byte-identical.
   - An orchestrator-role row resolves to ``orchestration`` (protected), so its
-    cost and sample_count never reach the ``implementation`` row that survives
-    for the same key. Implementer-role rows still resolve to ``implementation``.
+    cost and sample_count never reach the ``implementation`` row for the same
+    ``(project, skill, model)``. Implementer-role rows still resolve to
+    ``implementation``. Since schema v54 added ``task_class`` to the persisted
+    natural key, both rows PERSIST side by side (they are no longer UPSERT
+    duplicates), so per-role telemetry is durable -- the AC1 guarantee comes
+    from the role GROUPING, not from suppressing the orchestrator row.
   - The ``session_parents`` LEFT JOIN never fans out (``DISTINCT`` on
     ``(project_id, parent_id)``) -- a parent with N subagents is still counted
     exactly once.
@@ -26,7 +30,9 @@ carried 62.4% of all Opus ``dev-execution`` cost). This file covers the fix:
     previously resolved.
   - A load-time contract guard rejects a mapping rule whose ``roles`` declare
     more than one NON-protected target, because the persisted natural key
-    ``(project_id, source_skill_name, model)`` does not carry ``source_role``.
+    (``(project_id, source_skill_name, model, task_class)`` since schema v54)
+    does not carry ``source_role`` -- two roles resolving to the SAME
+    non-protected ``task_class`` would still collide.
   - ``source_role`` is an internal pipeline dimension only: it is absent from
     the persisted column tuple and from the emitted DTO/envelope.
   - The zero-N+1 invariant holds: still exactly ONE SQL statement.
@@ -298,37 +304,57 @@ class TestOrchestratorSpendExcludedFromImplementation(_DbBase):
             "the drop must come from the EXISTING protected-class gate, not a role special case",
         )
 
-    async def test_orchestrator_row_dropped_even_when_protected_rows_included(self) -> None:
-        """The role-split exception to the protected-class gate.
+    async def test_both_role_rows_are_emitted_when_protected_rows_included(self) -> None:
+        """Under ``include_protected_rows=True`` BOTH role rows survive.
 
-        ``include_protected_rows`` defaults to ``True``, so without this
-        exception the orchestrator row WOULD be emitted -- and would then
-        collide with the implementer row on
-        ``(project_id, source_skill_name, model)``, which is an UPSERT key.
-        A role-split skill's protected sibling is therefore suppressed
-        regardless of the flag: it is a natural-key duplicate, not coverage.
+        ``include_protected_rows`` defaults to ``True``, and since schema v54
+        widened the persisted natural key to
+        ``(project_id, source_skill_name, model, task_class)`` the orchestrator
+        row is no longer an UPSERT duplicate of its implementer sibling -- so
+        the protected-class gate is the ONLY gate, and a role-split skill now
+        persists per-role telemetry: ``implementation`` (routable) alongside
+        ``orchestration`` (coverage-only). AC1 is unaffected: the split is what
+        keeps the orchestrator's cost and samples out of the implementation row,
+        and that is asserted here on the same numbers as before.
         """
         await self._mixed_fixture()
         raw = await self.service.fetch_raw_rows(_context(), self.ports)
 
         mapped = self.service.apply_mapping(raw, include_protected_rows=True)
 
-        self.assertEqual([row.task_class for row in mapped], [IMPLEMENTER_TASK_CLASS])
-        self.assertEqual(mapped[0].cost_sum, 33.0)
-        self.assertEqual(mapped[0].session_count, 3)
-        self.assertFalse(mapped[0].is_coverage_only)
+        by_class = {row.task_class: row for row in mapped}
+        self.assertEqual(
+            set(by_class), {IMPLEMENTER_TASK_CLASS, ORCHESTRATOR_TASK_CLASS}
+        )
+        self.assertEqual(len(mapped), 2, f"one row per role, got {mapped}")
 
-    async def test_orchestrator_row_dropped_under_shipped_default_config(self) -> None:
+        implementation = by_class[IMPLEMENTER_TASK_CLASS]
+        self.assertEqual(implementation.cost_sum, 33.0)
+        self.assertEqual(implementation.session_count, 3)
+        self.assertFalse(implementation.is_coverage_only)
+        self.assertEqual(implementation.source_role, ROLE_IMPLEMENTER)
+
+        orchestration = by_class[ORCHESTRATOR_TASK_CLASS]
+        self.assertEqual(orchestration.cost_sum, 178.0, "orchestrator spend, kept separate")
+        self.assertEqual(orchestration.session_count, 1)
+        self.assertTrue(orchestration.is_coverage_only, "protected class is coverage-only")
+        self.assertEqual(orchestration.source_role, ROLE_ORCHESTRATOR)
+
+    async def test_both_role_rows_are_emitted_under_shipped_default_config(self) -> None:
         """Same assertion via the no-kwarg call the sweep job actually makes,
-        so the guard cannot be satisfied by a test-only flag override.
+        so the contract cannot be satisfied by a test-only flag override.
         """
         await self._mixed_fixture()
         raw = await self.service.fetch_raw_rows(_context(), self.ports)
 
         mapped = self.service.apply_mapping(raw)
 
-        self.assertEqual([row.task_class for row in mapped], [IMPLEMENTER_TASK_CLASS])
-        self.assertEqual(mapped[0].cost_sum, 33.0)
+        by_class = {row.task_class: row for row in mapped}
+        self.assertEqual(
+            set(by_class), {IMPLEMENTER_TASK_CLASS, ORCHESTRATOR_TASK_CLASS}
+        )
+        self.assertEqual(by_class[IMPLEMENTER_TASK_CLASS].cost_sum, 33.0)
+        self.assertEqual(by_class[ORCHESTRATOR_TASK_CLASS].cost_sum, 178.0)
 
     async def test_implementer_rows_still_resolve_to_implementation(self) -> None:
         """No orchestrator anywhere in the fixture: the skill behaves exactly
@@ -353,12 +379,17 @@ class TestOrchestratorSpendExcludedFromImplementation(_DbBase):
 
         provider_rows = self.service.apply_provider(mapped)
 
-        self.assertEqual([row.source_role for row in provider_rows], [ROLE_IMPLEMENTER])
+        self.assertEqual(
+            {row.task_class: row.source_role for row in provider_rows},
+            {
+                IMPLEMENTER_TASK_CLASS: ROLE_IMPLEMENTER,
+                ORCHESTRATOR_TASK_CLASS: ROLE_ORCHESTRATOR,
+            },
+        )
 
     def test_apply_provider_passes_any_source_role_through(self) -> None:
-        """The pass-through itself, exercised on a hand-built row so it is not
-        masked by the emission gate (which now never lets an orchestrator row
-        reach ``apply_provider``).
+        """The pass-through itself, exercised on a hand-built row so it holds
+        even for a row shape the pipeline does not currently produce.
         """
         now = _now_utc()
         rows = [
@@ -774,21 +805,23 @@ class TestRoleSplitProjectFilterBinding(_DbBase):
 # ---------------------------------------------------------------------------
 
 
-class TestNaturalKeyUniquenessUnderDefaultFlag(_DbBase):
-    """No two emitted rows may share ``_NATURAL_KEY_COLUMNS``.
+class TestNaturalKeyUniquenessIncludesTaskClass(_DbBase):
+    """No two emitted rows may share ``_NATURAL_KEY_COLUMNS``, which since
+    schema v54 is ``(project_id, source_skill_name, model, task_class)``.
 
-    ``routing_rollup``'s writer is an UPSERT on
-    ``(project_id, source_skill_name, model)`` and ``fetch_raw_rows`` has no
-    ``ORDER BY``, so two rows sharing that key would non-deterministically
-    overwrite one another. The role split makes this reachable for the first
-    time -- one skill can now produce two rows -- and the exception in
-    ``apply_mapping``'s protected-class gate is what keeps it unreachable.
+    ``routing_rollup``'s writer is an UPSERT on that key and ``fetch_raw_rows``
+    has no ``ORDER BY``, so two rows sharing it would non-deterministically
+    overwrite one another. ``task_class`` joined the key precisely so a
+    role-split skill's two rows -- which DO share the first three columns --
+    are distinct keys rather than duplicates. Both halves are asserted here:
+    the three-column prefix collides (that is the new, correct shape) while the
+    full four-column key does not.
 
     Asserted through the no-kwarg ``apply_mapping(raw_rows)`` call the sweep job
     actually makes, so a regression cannot hide behind a test-only flag value.
     """
 
-    async def test_at_most_one_row_per_natural_key_reaches_the_writer(self) -> None:
+    async def test_uniqueness_holds_at_the_four_column_grain(self) -> None:
         await self._insert_session(session_id="orchestrator", total_cost=178.0)
         await self._insert_session(
             session_id="leg", subagent_parent_id="orchestrator", total_cost=9.0
@@ -800,12 +833,28 @@ class TestNaturalKeyUniquenessUnderDefaultFlag(_DbBase):
         # Exactly how RoutingRollupSweepJob._run_for_project calls it.
         mapped = self.service.apply_mapping(raw)
 
-        natural_keys = [(row.project_id, row.source_skill_name, row.model) for row in mapped]
+        natural_keys = [
+            (row.project_id, row.source_skill_name, row.model, row.task_class)
+            for row in mapped
+        ]
         self.assertEqual(
             len(set(natural_keys)),
             len(natural_keys),
             f"rows collide on the persisted natural key: {natural_keys}",
         )
+
+        # The role split is exactly what makes the 3-column prefix insufficient:
+        # the role-split skill contributes two rows that share it.
+        prefixes = [key[:3] for key in natural_keys]
+        role_split_prefixes = [
+            prefix for prefix in prefixes if prefix[1] == ROLE_SPLIT_SKILL
+        ]
+        self.assertEqual(
+            len(role_split_prefixes),
+            2,
+            "the role-split skill must emit two rows on one (project, skill, model)",
+        )
+        self.assertEqual(len(set(role_split_prefixes)), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -814,9 +863,10 @@ class TestNaturalKeyUniquenessUnderDefaultFlag(_DbBase):
 
 
 class TestNonRoleSplitProtectedSkillUnaffected(_DbBase):
-    """The gate exception is scoped by ``source_role is not None``, which the SQL
-    emits only for role-split skills. Every other protected skill must keep
-    emitting its coverage-only row exactly as before.
+    """A role-split skill adds a second row of its own; it must not perturb any
+    other skill. Every other protected skill keeps emitting exactly one
+    coverage-only row, gated only by ``include_protected_rows``, exactly as
+    before the role split existed.
     """
 
     async def test_protected_control_skill_still_emitted_under_default_flag(self) -> None:
@@ -857,16 +907,24 @@ class TestNonRoleSplitProtectedSkillUnaffected(_DbBase):
 
         mapped = self.service.apply_mapping(raw)
 
-        by_skill = {row.source_skill_name: row for row in mapped}
-        self.assertEqual(set(by_skill), {ROLE_SPLIT_SKILL, PROTECTED_CONTROL_SKILL})
-        # Role-split skill: orchestrator suppressed, implementer survives.
-        self.assertEqual(by_skill[ROLE_SPLIT_SKILL].task_class, IMPLEMENTER_TASK_CLASS)
-        self.assertEqual(by_skill[ROLE_SPLIT_SKILL].cost_sum, 5.0)
-        # Non-role-split protected skill: coverage row untouched.
+        by_key = {(row.source_skill_name, row.task_class): row for row in mapped}
         self.assertEqual(
-            by_skill[PROTECTED_CONTROL_SKILL].task_class, PROTECTED_CONTROL_TASK_CLASS
+            set(by_key),
+            {
+                (ROLE_SPLIT_SKILL, IMPLEMENTER_TASK_CLASS),
+                (ROLE_SPLIT_SKILL, ORCHESTRATOR_TASK_CLASS),
+                (PROTECTED_CONTROL_SKILL, PROTECTED_CONTROL_TASK_CLASS),
+            },
         )
-        self.assertTrue(by_skill[PROTECTED_CONTROL_SKILL].is_coverage_only)
+        # Role-split skill: implementer row carries only the leg's cost.
+        self.assertEqual(by_key[(ROLE_SPLIT_SKILL, IMPLEMENTER_TASK_CLASS)].cost_sum, 5.0)
+        self.assertEqual(
+            by_key[(ROLE_SPLIT_SKILL, ORCHESTRATOR_TASK_CLASS)].cost_sum, 100.0
+        )
+        # Non-role-split protected skill: coverage row untouched.
+        protected = by_key[(PROTECTED_CONTROL_SKILL, PROTECTED_CONTROL_TASK_CLASS)]
+        self.assertTrue(protected.is_coverage_only)
+        self.assertIsNone(protected.source_role, "control skill must carry no role")
 
     async def test_unclassified_rows_still_always_emitted(self) -> None:
         """``_unclassified`` bypasses the protected gate entirely (FR-7) and is
@@ -905,11 +963,14 @@ class TestPersistedRowEndToEnd(_DbBase):
 
         async with self.db.execute(
             "SELECT project_id, source_skill_name, model, task_class, sample_count "
-            "FROM routing_rollup ORDER BY source_skill_name, model"
+            "FROM routing_rollup ORDER BY source_skill_name, model, task_class"
         ) as cursor:
             return [dict(row) for row in await cursor.fetchall()]
 
-    async def test_persisted_role_split_row_is_the_implementation_row_only(self) -> None:
+    async def test_persisted_role_split_rows_are_split_by_task_class(self) -> None:
+        """Both role rows reach the table (schema v54's 4-column key), and the
+        ``implementation`` row still counts only the implementer legs.
+        """
         await self._insert_session(session_id="orchestrator", total_cost=178.0)
         for index in range(6):
             await self._insert_session(
@@ -918,11 +979,18 @@ class TestPersistedRowEndToEnd(_DbBase):
 
         persisted = await self._sweep()
 
-        self.assertEqual(len(persisted), 1, f"expected exactly one row, got {persisted}")
-        row = persisted[0]
-        self.assertEqual(row["source_skill_name"], ROLE_SPLIT_SKILL)
-        self.assertEqual(row["task_class"], IMPLEMENTER_TASK_CLASS)
-        self.assertEqual(row["sample_count"], 6, "only the implementer legs")
+        self.assertEqual(len(persisted), 2, f"expected one row per role, got {persisted}")
+        self.assertEqual({row["source_skill_name"] for row in persisted}, {ROLE_SPLIT_SKILL})
+        by_class = {row["task_class"]: row for row in persisted}
+        self.assertEqual(
+            set(by_class), {IMPLEMENTER_TASK_CLASS, ORCHESTRATOR_TASK_CLASS}
+        )
+        self.assertEqual(
+            by_class[IMPLEMENTER_TASK_CLASS]["sample_count"], 6, "only the implementer legs"
+        )
+        self.assertEqual(
+            by_class[ORCHESTRATOR_TASK_CLASS]["sample_count"], 1, "only the orchestrator"
+        )
 
     async def test_persisted_row_cost_index_excludes_orchestrator_cost(self) -> None:
         """The orchestrator's $178 must not reach the persisted key. Asserted on
@@ -931,6 +999,11 @@ class TestPersistedRowEndToEnd(_DbBase):
         class the implementer-only mean makes it exactly 1.0. Were the
         orchestrator's cost folded in, the mean would shift and the DTO's
         ``sample_count`` above would not be 6 either.
+
+        Since schema v54 the orchestrator's cost is not merely absent from the
+        implementation row -- it is PERSISTED SEPARATELY on the ``orchestration``
+        row, which is the per-role telemetry this change unlocked. Both halves
+        are asserted.
         """
         await self._insert_session(session_id="orchestrator", total_cost=178.0)
         for index in range(6):
@@ -940,10 +1013,27 @@ class TestPersistedRowEndToEnd(_DbBase):
         raw = await self.service.fetch_raw_rows(_context(), self.ports, project_ids=["proj-1"])
         provider_rows = self.service.apply_provider(self.service.apply_mapping(raw))
 
-        self.assertEqual(len(provider_rows), 1)
-        self.assertEqual(provider_rows[0].cost_sum, 60.0, "6 legs x $10, no orchestrator")
-        self.assertEqual(provider_rows[0].cost_covered_count, 6)
-        self.assertNotEqual(provider_rows[0].cost_sum, 238.0, "orchestrator cost folded in")
+        by_class = {row.task_class: row for row in provider_rows}
+        self.assertEqual(
+            set(by_class), {IMPLEMENTER_TASK_CLASS, ORCHESTRATOR_TASK_CLASS}
+        )
+
+        implementation = by_class[IMPLEMENTER_TASK_CLASS]
+        self.assertEqual(implementation.cost_sum, 60.0, "6 legs x $10, no orchestrator")
+        self.assertEqual(implementation.cost_covered_count, 6)
+        self.assertNotEqual(implementation.cost_sum, 238.0, "orchestrator cost folded in")
+
+        orchestration = by_class[ORCHESTRATOR_TASK_CLASS]
+        self.assertEqual(
+            orchestration.cost_sum, 178.0, "orchestrator spend now has its own row"
+        )
+        self.assertEqual(orchestration.cost_covered_count, 1)
+
+        # Each class has exactly one key, so both cost_index values are 1.0
+        # against their OWN baseline -- the two means never mix.
+        dtos = {dto.task_class: dto for dto in self.service.compute_metrics(provider_rows)}
+        self.assertEqual(dtos[IMPLEMENTER_TASK_CLASS].cost_index, 1.0)
+        self.assertEqual(dtos[ORCHESTRATOR_TASK_CLASS].cost_index, 1.0)
 
     async def test_sweep_keeps_non_role_split_protected_coverage_row(self) -> None:
         await self._insert_session(session_id="orchestrator", total_cost=178.0)
@@ -956,13 +1046,16 @@ class TestPersistedRowEndToEnd(_DbBase):
 
         persisted = await self._sweep()
 
-        by_skill = {row["source_skill_name"]: row for row in persisted}
-        self.assertEqual(set(by_skill), {ROLE_SPLIT_SKILL, PROTECTED_CONTROL_SKILL})
-        self.assertEqual(by_skill[ROLE_SPLIT_SKILL]["task_class"], IMPLEMENTER_TASK_CLASS)
-        self.assertEqual(by_skill[ROLE_SPLIT_SKILL]["sample_count"], 1)
+        by_key = {(row["source_skill_name"], row["task_class"]): row for row in persisted}
         self.assertEqual(
-            by_skill[PROTECTED_CONTROL_SKILL]["task_class"], PROTECTED_CONTROL_TASK_CLASS
+            set(by_key),
+            {
+                (ROLE_SPLIT_SKILL, IMPLEMENTER_TASK_CLASS),
+                (ROLE_SPLIT_SKILL, ORCHESTRATOR_TASK_CLASS),
+                (PROTECTED_CONTROL_SKILL, PROTECTED_CONTROL_TASK_CLASS),
+            },
         )
+        self.assertEqual(by_key[(ROLE_SPLIT_SKILL, IMPLEMENTER_TASK_CLASS)]["sample_count"], 1)
 
     async def test_repeat_sweep_is_idempotent_on_the_role_split_key(self) -> None:
         await self._insert_session(session_id="orchestrator", total_cost=178.0)
@@ -974,7 +1067,7 @@ class TestPersistedRowEndToEnd(_DbBase):
         second = await self._sweep()
 
         self.assertEqual(first, second)
-        self.assertEqual(len(second), 1)
+        self.assertEqual(len(second), 2, "one row per role, upserted in place")
 
 
 if __name__ == "__main__":  # pragma: no cover

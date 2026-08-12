@@ -4,6 +4,16 @@ All CREATE TABLE statements for the caching layer.
 Uses IF NOT EXISTS for idempotent runs.
 
 Schema version history (keep in lockstep with postgres_migrations.py):
+  v54 — routing_rollup PK widened to
+         (project_id, source_skill_name, model, task_class). A role-split skill
+         resolves TWO task_classes for one (project, skill, model), and under
+         the old 3-column key those rows collided in the repository's UPSERT
+         non-deterministically, silently overwriting the `implementation` row
+         the routing-feedback loop consumes. No new column, so no column-parity
+         entry: this is a table-level constraint change only (SQLite needs a
+         table rebuild, Postgres a DROP/ADD CONSTRAINT). Widening cannot
+         collide -- rows unique on 3 columns are unique on 4 -- and
+         routing_rollup is a derived rollup the sweep repopulates.
   v53 — hosted-llm-anthropic-ica-lane-v1 M2: projects table gains
          llm_egress_consent (NOT NULL, DEFAULT FALSE/0). Per-project consent
          gate for sending session data to a hosted LLM provider. The FALSE
@@ -94,7 +104,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 53
+SCHEMA_VERSION = 54
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1609,7 +1619,14 @@ CREATE TABLE IF NOT EXISTS routing_rollup (
     mapping_version           TEXT NOT NULL,
     created_at                TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (project_id, source_skill_name, model)
+    -- v54: task_class joined the key. A role-split skill resolves TWO
+    -- task_classes for one (project, skill, model) -- implementation for the
+    -- implementer role, orchestration for the orchestrator role -- and under
+    -- the old 3-column key those two rows collided in the repository's UPSERT,
+    -- non-deterministically (fetch_raw_rows has no ORDER BY). Kept in sync with
+    -- _NATURAL_KEY_COLUMNS in backend/db/repositories/routing_rollup.py and
+    -- with the Postgres block; see the v54 migration below for existing DBs.
+    PRIMARY KEY (project_id, source_skill_name, model, task_class)
 );
 
 CREATE INDEX IF NOT EXISTS idx_routing_rollup_project ON routing_rollup(project_id);
@@ -3096,6 +3113,112 @@ async def _migrate_v30_sessions_composite_pk(db: aiosqlite.Connection) -> None:
         raise
     finally:
         await db.execute("PRAGMA foreign_keys=ON")
+
+
+async def _migrate_v54_routing_rollup_task_class_pk(db: aiosqlite.Connection) -> None:
+    """v54: widen ``routing_rollup``'s PK to include ``task_class``.
+
+    A role-split skill (dev-execution is the first) resolves TWO task_classes
+    for one ``(project_id, source_skill_name, model)`` -- ``implementation`` for
+    the implementer role, ``orchestration`` for the orchestrator role. Under the
+    old 3-column PK those two rows collided in the repository's UPSERT, and
+    because ``fetch_raw_rows`` has no ``ORDER BY``, WHICH row survived was not
+    even deterministic; measured, the ``implementation`` row the feedback loop
+    consumes was silently overwritten by the ``orchestration`` coverage row.
+
+    SQLite cannot alter a primary key in place, so this uses the same
+    create-new / copy / drop / rename pattern as
+    ``_migrate_v30_sessions_composite_pk``. Mirror of the Postgres v54 block
+    (which can simply DROP/ADD the constraint).
+
+    No collision pre-check is needed, unlike v30: this WIDENS the key, and rows
+    already unique on three columns are necessarily unique on four. Nothing can
+    be lost. ``routing_rollup`` is also a derived rollup the sweep repopulates,
+    and no table carries a foreign key into it, so the swap is local.
+    """
+    # ── Idempotency: already widened (fresh DB, or a re-run) ─────────────────
+    async with db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='routing_rollup'"
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        logger.info("v54: routing_rollup absent; _TABLES will create it widened. Skipping.")
+        return
+    existing_sql = row[0] or ""
+    if "PRIMARY KEY (project_id, source_skill_name, model, task_class)" in existing_sql:
+        logger.info("v54: routing_rollup task_class PK already present; skipping.")
+        return
+
+    # Copy only columns the live table actually has, so a DB that predates
+    # v45/v47's _ensure_column additions still migrates cleanly.
+    async with db.execute("PRAGMA table_info(routing_rollup)") as cur:
+        live_cols = [r[1] for r in await cur.fetchall()]
+    declared = [
+        "project_id", "source_skill_name", "model", "window_start", "window_end",
+        "task_class", "provider", "sample_count", "success_rate", "cost_index",
+        "cost_coverage_fraction", "regression_rate", "effort_tier",
+        "effort_tier_source", "authoritative_effort_fraction", "confidence",
+        "eligible_for_adjustment", "freshness_ts", "contract_version",
+        "taxonomy_version", "mapping_version", "created_at", "updated_at",
+    ]
+    copied = [c for c in declared if c in live_cols]
+    col_list = ", ".join(copied)
+
+    try:
+        await db.execute("DROP TABLE IF EXISTS routing_rollup_new")
+        await db.execute(
+            """
+            CREATE TABLE routing_rollup_new (
+                project_id                TEXT NOT NULL,
+                source_skill_name         TEXT NOT NULL,
+                model                     TEXT NOT NULL,
+                window_start              TEXT NOT NULL,
+                window_end                TEXT NOT NULL,
+                task_class                TEXT NOT NULL,
+                provider                  TEXT NOT NULL,
+                sample_count              INTEGER NOT NULL DEFAULT 0,
+                success_rate              REAL,
+                cost_index                REAL,
+                cost_coverage_fraction    REAL,
+                regression_rate           REAL,
+                effort_tier               TEXT,
+                effort_tier_source        TEXT,
+                authoritative_effort_fraction REAL,
+                confidence                REAL,
+                eligible_for_adjustment   INTEGER NOT NULL DEFAULT 0,
+                freshness_ts              TEXT NOT NULL,
+                contract_version          TEXT NOT NULL,
+                taxonomy_version          TEXT NOT NULL,
+                mapping_version           TEXT NOT NULL,
+                created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (project_id, source_skill_name, model, task_class)
+            )
+            """
+        )
+        await db.execute(
+            f"INSERT INTO routing_rollup_new ({col_list}) "  # noqa: S608 - names from a fixed allowlist
+            f"SELECT {col_list} FROM routing_rollup"
+        )
+        await db.execute("DROP TABLE routing_rollup")
+        await db.execute("ALTER TABLE routing_rollup_new RENAME TO routing_rollup")
+        # The old table's indexes went with it; recreate all three.
+        for stmt in (
+            "CREATE INDEX IF NOT EXISTS idx_routing_rollup_project ON routing_rollup(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_routing_rollup_task_class ON routing_rollup(task_class)",
+            "CREATE INDEX IF NOT EXISTS idx_routing_rollup_skill_model "
+            "ON routing_rollup(source_skill_name, model)",
+        ):
+            await _ensure_index(db, stmt)
+        await db.commit()
+        logger.info(
+            "v54: routing_rollup PK widened to "
+            "(project_id, source_skill_name, model, task_class); %d column(s) copied.",
+            len(copied),
+        )
+    except Exception:
+        logger.exception("v54: routing_rollup task_class PK migration failed; rolling back.")
+        raise
 
 
 async def _migrate_v30_detail_tables_project_id(db: aiosqlite.Connection) -> None:
@@ -4791,6 +4914,18 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
             "v53 migrations complete: projects.llm_egress_consent added "
             "(NOT NULL DEFAULT 0 -- fail-closed; existing projects do not "
             "consent to egress by default)."
+        )
+
+    if current_version < 54:
+        # routing_rollup PK widened to include task_class so a role-split
+        # skill's implementation and orchestration rows stop colliding in the
+        # repository UPSERT. Self-guarding + idempotent: the helper inspects
+        # sqlite_master and returns early when the PK is already widened.
+        # Mirror of the Postgres v54 block.
+        await _migrate_v54_routing_rollup_task_class_pk(db)
+        logger.info(
+            "v54 migrations complete: routing_rollup PK widened to "
+            "(project_id, source_skill_name, model, task_class)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

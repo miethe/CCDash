@@ -97,11 +97,34 @@ ROUTING_ROLLUP_COLUMNS: tuple[str, ...] = (
     "mapping_version",
 )
 
-# Natural grain key -- the upsert conflict target. Never
-# ``(task_class, model)`` and never including ``window_start``/``window_end``
-# (see module docstring + DDL header comment for the unbounded-row-growth
-# rationale).
-_NATURAL_KEY_COLUMNS: tuple[str, ...] = ("project_id", "source_skill_name", "model")
+# Natural grain key -- the upsert conflict target. Never including
+# ``window_start``/``window_end`` (see module docstring + DDL header comment
+# for the unbounded-row-growth rationale).
+#
+# ``task_class`` joined the key in v54. Before that the key was
+# ``(project_id, source_skill_name, model)``, and a role-split skill --
+# dev-execution is the first -- resolves TWO task_classes for one
+# ``(project, skill, model)``: ``implementation`` for the implementer role and
+# ``orchestration`` for the orchestrator role. Under the narrower key those two
+# rows COLLIDED in this UPSERT, and because ``fetch_raw_rows`` has no
+# ``ORDER BY``, which one survived was not even deterministic -- measured: the
+# ``implementation`` row the feedback loop consumes was silently overwritten by
+# the ``orchestration`` coverage row. That was worked around upstream in
+# ``agent_queries/routing_rollup.py::apply_mapping`` by suppressing the
+# protected sibling, which made per-role telemetry structurally unpersistable;
+# widening the grain here is what let that suppression be deleted.
+#
+# ``task_class`` and NOT ``source_role``: ``source_role`` is contractually an
+# internal pipeline dimension that is never persisted and never emitted
+# (``test_source_role_absent_from_persisted_columns``), whereas ``task_class``
+# is already a persisted column and already part of the consumer-facing
+# envelope.
+_NATURAL_KEY_COLUMNS: tuple[str, ...] = (
+    "project_id",
+    "source_skill_name",
+    "model",
+    "task_class",
+)
 
 # Columns updated on conflict (everything except the natural key itself).
 # ``window_start``/``window_end`` ARE included here -- they are ordinary,
@@ -168,7 +191,10 @@ class SqliteRoutingRollupRepository:
         """Project-scoped read, for the REST/CLI transports (Phase 5) and operator debugging."""
         cursor = await self.db.execute(
             "SELECT * FROM routing_rollup WHERE project_id = ? "
-            "ORDER BY source_skill_name, model LIMIT ? OFFSET ?",
+            # task_class joined the natural key in v54, so (skill, model) is no
+            # longer a total order -- a role-split skill has two rows sharing
+            # it. Sorting by it too keeps paging stable.
+            "ORDER BY source_skill_name, model, task_class LIMIT ? OFFSET ?",
             (project_id, limit, offset),
         )
         rows = await cursor.fetchall()
@@ -181,7 +207,8 @@ class SqliteRoutingRollupRepository:
         """
         cursor = await self.db.execute(
             "SELECT * FROM routing_rollup "
-            "ORDER BY project_id, source_skill_name, model LIMIT ? OFFSET ?",
+            # task_class joined the natural key in v54 (see get_by_project).
+            "ORDER BY project_id, source_skill_name, model, task_class LIMIT ? OFFSET ?",
             (limit, offset),
         )
         rows = await cursor.fetchall()
@@ -242,7 +269,8 @@ class PostgresRoutingRollupRepository:
     ) -> list[dict[str, Any]]:
         rows = await self.db.fetch(
             "SELECT * FROM routing_rollup WHERE project_id = $1 "
-            "ORDER BY source_skill_name, model LIMIT $2 OFFSET $3",
+            # task_class joined the natural key in v54 (see the SQLite reader).
+            "ORDER BY source_skill_name, model, task_class LIMIT $2 OFFSET $3",
             project_id,
             limit,
             offset,
@@ -252,7 +280,8 @@ class PostgresRoutingRollupRepository:
     async def get_all(self, *, limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
         rows = await self.db.fetch(
             "SELECT * FROM routing_rollup "
-            "ORDER BY project_id, source_skill_name, model LIMIT $1 OFFSET $2",
+            # task_class joined the natural key in v54 (see the SQLite reader).
+            "ORDER BY project_id, source_skill_name, model, task_class LIMIT $1 OFFSET $2",
             limit,
             offset,
         )
