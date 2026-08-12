@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-12
 ### Added
 
 - **Effort-tier provenance (`sessions.effort_tier_source`, Gap 4)** — A new nullable column records WHICH lane supplied `effort_tier`, since those lanes differ in trustworthiness by a wide margin (harness-authoritative Codex `payload.effort` vs a possibly-stale Claude Code `settings.json` snapshot vs a derived inheritance). Without it, a rollup could not tell an authoritative value from a stale one. Token vocabulary is canonical in `backend/parsers/effort_provenance.py`: `launch_env`, `codex_payload_effort`, `codex_collaboration_mode`, `claude_settings`, and `inherited_parent` (reserved for Gap 2). Provenance is written **iff** `effort_tier` is; a non-null tier with a null source means the row predates the column (no backfill — the original provenance is unrecoverable, and guessing it would defeat the point). Consumers MUST treat unrecognised tokens as "unknown provenance" and never hard-fail.
