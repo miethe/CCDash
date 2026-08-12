@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentSession } from '../../types';
-import { hasSessionDetail, mergeSessionDetail, shouldMountAppDataProviders } from '../DataContext';
+import {
+    DEFAULT_SESSION_FILTERS,
+    hasSessionDetail,
+    mergeSessionDetail,
+    normalizeSessionFilters,
+    sessionFiltersEqual,
+    shouldMountAppDataProviders,
+} from '../DataContext';
 
 const buildSession = (overrides: Partial<AgentSession> = {}): AgentSession => ({
     id: 'session-1',
@@ -108,6 +115,32 @@ describe('DataContext session detail helpers', () => {
         const merged = mergeSessionDetail(existing, buildSession({ id: 'missing' }));
 
         expect(merged).toBe(existing);
+    });
+});
+
+describe('DataContext session filters (shared client-state)', () => {
+    it('defaults to include_subagents=true so subagents are visible on /sessions', () => {
+        // The backend default is include_subagents=False, which silently excluded
+        // every subagent row; the FE default must opt in explicitly.
+        expect(DEFAULT_SESSION_FILTERS.include_subagents).toBe(true);
+        expect(normalizeSessionFilters(DEFAULT_SESSION_FILTERS)).toEqual({ include_subagents: true });
+    });
+
+    it('is a frozen default that a caller cannot mutate out from under the provider', () => {
+        expect(Object.isFrozen(DEFAULT_SESSION_FILTERS)).toBe(true);
+    });
+
+    it('normalizes an equivalent payload to a stable shape (no needless refetch)', () => {
+        const applied = normalizeSessionFilters({ include_subagents: true, status: '  active ', model: '' });
+        expect(applied).toEqual({ include_subagents: true, status: 'active' });
+        expect(sessionFiltersEqual(applied, { status: 'active', include_subagents: true })).toBe(true);
+    });
+
+    it('detects a real filter change', () => {
+        expect(sessionFiltersEqual(
+            DEFAULT_SESSION_FILTERS,
+            { include_subagents: true, thread_kind: 'subagent' },
+        )).toBe(false);
     });
 });
 

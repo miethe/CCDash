@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
-import { useSessionsQuery, useSessionDetailQuery } from '../services/queries/sessions';
+import { useSessionsQuery, useSessionDetailQuery, useLiveSessionsQuery } from '../services/queries/sessions';
 import { useFeaturesQuery } from '../services/queries/features';
 import { useDocumentsQuery } from '../services/queries/documents';
 import { useModelColors } from '../contexts/ModelColorsContext';
@@ -183,7 +183,7 @@ const sessionLastActivityEpoch = (session: AgentSession): number => {
     return 0;
 };
 
-const isSessionLiveInFlight = (session: AgentSession, nowMs: number): boolean => {
+export const isSessionLiveInFlight = (session: AgentSession, nowMs: number): boolean => {
     if ((session.status || '').toLowerCase() !== 'active') return false;
     const activityEpoch = sessionLastActivityEpoch(session);
     if (activityEpoch <= 0) return false;
@@ -1142,12 +1142,62 @@ const dedupePhaseTasks = (tasks: ProjectTask[]): ProjectTask[] => {
     return Array.from(byIdentity.values());
 };
 
-interface SessionThreadNode {
+export interface SessionThreadNode {
     session: AgentSession;
     children: SessionThreadNode[];
+    /**
+     * True when this node stands in for a parent/root session that is NOT in the
+     * loaded window. Its `session` is a synthetic stub built from the id alone —
+     * never a row returned by the API. Rendered as a clearly-marked placeholder.
+     */
+    placeholder?: boolean;
 }
 
-const threadNodeHasLiveSession = (node: SessionThreadNode, nowMs: number): boolean => {
+export const PLACEHOLDER_THREAD_TITLE = 'Parent thread (not in loaded window)';
+
+/**
+ * The row to fall back to when a thread node is clicked and the detail fetch
+ * returns nothing.
+ *
+ * A placeholder MUST never supply one: its `session` is a synthetic stub with a
+ * blank `startedAt`/`model` and `logs: []`, so handing it to openSession as a
+ * fallback would render a full, plausible-looking Session Detail view built from
+ * nothing instead of the correct "Unable to load session" error state. ~0.7% of
+ * subagent parent references are genuinely dangling, and any transient fetch
+ * error takes the same branch.
+ */
+export const threadNodeOpenFallback = (node: SessionThreadNode): AgentSession | undefined => (
+    node.placeholder ? undefined : node.session
+);
+
+/**
+ * Minimal stand-in row for an unloaded parent/root session.
+ *
+ * Only the id is real. Every other field is an explicit neutral default so no
+ * consumer reads `undefined`; the node is flagged `placeholder` so the renderer
+ * can mark it instead of pretending it is an indexed session.
+ */
+const createPlaceholderThreadSession = (sessionId: string): AgentSession => ({
+    id: sessionId,
+    title: PLACEHOLDER_THREAD_TITLE,
+    taskId: '',
+    status: 'completed',
+    model: '',
+    sessionType: 'root',
+    threadKind: 'root',
+    rootSessionId: sessionId,
+    parentSessionId: null,
+    forkParentSessionId: null,
+    durationSeconds: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    totalCost: 0,
+    startedAt: '',
+    toolsUsed: [],
+    logs: [],
+});
+
+export const threadNodeHasLiveSession = (node: SessionThreadNode, nowMs: number): boolean => {
     if (isSessionLiveInFlight(node.session, nowMs)) return true;
     return node.children.some(child => threadNodeHasLiveSession(child, nowMs));
 };
@@ -1161,15 +1211,9 @@ const normalizedThreadKind = (session: AgentSession): string => {
     return 'root';
 };
 
-const isForkThread = (session: AgentSession): boolean => {
+export const isForkThread = (session: AgentSession): boolean => {
     if (session.forkParentSessionId) return true;
     return normalizedThreadKind(session) === 'fork';
-};
-
-const isSubthread = (session: AgentSession): boolean => {
-    if (isForkThread(session)) return true;
-    if (session.parentSessionId) return true;
-    return (session.sessionType || '').toLowerCase() === 'subagent';
 };
 
 const sessionTimeValue = (session: AgentSession): number => {
@@ -1199,42 +1243,199 @@ const threadToggleLabelForChildren = (children: SessionThreadNode[]): string => 
     return 'Sub-Threads';
 };
 
-const buildSessionThreadForest = (sessions: AgentSession[]): SessionThreadNode[] => {
+/**
+ * Direct-parent candidates, strongest link first. Blank/self references dropped.
+ * Every field is optional on the wire — absence is a contract state.
+ */
+const threadParentCandidates = (session: AgentSession): string[] => {
+    const selfId = String(session?.id || '').trim();
+    const ordered = isForkThread(session)
+        ? [session.forkParentSessionId, session.parentSessionId, session.subagentParentId]
+        : [session.parentSessionId, session.subagentParentId, session.forkParentSessionId];
+    const seen = new Set<string>();
+    const candidates: string[] = [];
+    ordered.forEach(raw => {
+        const id = String(raw || '').trim();
+        if (!id || id === selfId || seen.has(id)) return;
+        seen.add(id);
+        candidates.push(id);
+    });
+    return candidates;
+};
+
+/** The family root id, when it is a real pointer at another session. */
+const threadFamilyRootId = (session: AgentSession): string => {
+    const selfId = String(session?.id || '').trim();
+    const rootId = String(session?.rootSessionId || '').trim();
+    return rootId && rootId !== selfId ? rootId : '';
+};
+
+/**
+ * True when the session declares that something else owns it. Such a session may
+ * NEVER be promoted to a top-level root, even when its parent is not loaded.
+ */
+export const hasThreadParentLink = (session: AgentSession): boolean => (
+    threadParentCandidates(session).length > 0 || !!threadFamilyRootId(session)
+);
+
+/**
+ * Newest start time in a subtree; also back-fills placeholder timestamps so a
+ * synthetic root sorts in the same era as the thread it stands for.
+ */
+const hydratePlaceholderTimestamps = (node: SessionThreadNode): number => {
+    let newest = node.placeholder ? 0 : sessionTimeValue(node.session);
+    node.children.forEach(child => {
+        const childNewest = hydratePlaceholderTimestamps(child);
+        if (childNewest > newest) newest = childNewest;
+    });
+    if (node.placeholder && newest > 0) {
+        const iso = new Date(newest).toISOString();
+        node.session = { ...node.session, startedAt: iso, updatedAt: iso };
+    }
+    return newest;
+};
+
+/**
+ * Groups sessions into thread trees.
+ *
+ * Contract (see .claude/worknotes/sessions-live-and-subagent-threading/context.md):
+ *   1. Real multi-level nesting is preserved whenever the declared parent
+ *      (`forkParentSessionId` / `parentSessionId` / `subagentParentId`) IS loaded.
+ *   2. When the parent is NOT loaded, the child attaches under its family root
+ *      (`rootSessionId`, populated on 100% of rows) so it still renders as a
+ *      child. The list is `started_at desc` and a parent is routinely hours away
+ *      from its children, so this is the common case, not the edge case.
+ *   3. When the family root is not loaded either, a clearly-marked placeholder
+ *      root is synthesised for it.
+ *   4. Therefore a session carrying ANY parent/fork/root pointer never becomes a
+ *      top-level root — it can only be a child of a real or placeholder node.
+ */
+export const buildSessionThreadForest = (sessions: AgentSession[]): SessionThreadNode[] => {
     const nodes = new Map<string, SessionThreadNode>();
-    sessions.forEach(session => {
-        nodes.set(session.id, { session, children: [] });
+    (sessions || []).forEach(session => {
+        const id = String(session?.id || '').trim();
+        if (!id || nodes.has(id)) return;
+        nodes.set(id, { session, children: [] });
     });
 
-    const attached = new Set<string>();
-    sessions.forEach(session => {
-        if (!isSubthread(session)) return;
-        const candidateParents = isForkThread(session)
-            ? [
-                session.forkParentSessionId || '',
-                session.parentSessionId || '',
-                session.rootSessionId && session.rootSessionId !== session.id ? session.rootSessionId : '',
-            ]
-            : [
-                session.parentSessionId || '',
-                session.rootSessionId && session.rootSessionId !== session.id ? session.rootSessionId : '',
-            ];
-        const parentId = candidateParents.find(id => !!id && nodes.has(id));
-        if (!parentId || parentId === session.id) return;
+    // Pass 1 — resolve at most one parent per session. May name an id that is not
+    // loaded, in which case a placeholder is materialised below.
+    const parentById = new Map<string, string>();
+    const placeholderIds = new Set<string>();
+    nodes.forEach(node => {
+        const session = node.session;
+        const sessionId = node.session.id;
+        const candidates = threadParentCandidates(session);
+        const familyRootId = threadFamilyRootId(session);
+
+        const loadedParentId = candidates.find(id => nodes.has(id));
+        if (loadedParentId) {
+            parentById.set(sessionId, loadedParentId);
+            return;
+        }
+        if (familyRootId && nodes.has(familyRootId)) {
+            parentById.set(sessionId, familyRootId);
+            return;
+        }
+        // Prefer the family root id for the placeholder: it is the server-side
+        // grouping key and is populated far more reliably than a direct parent id.
+        const placeholderId = familyRootId || candidates[0] || '';
+        if (!placeholderId) return; // genuinely top-level
+        placeholderIds.add(placeholderId);
+        parentById.set(sessionId, placeholderId);
+    });
+
+    placeholderIds.forEach(placeholderId => {
+        if (nodes.has(placeholderId)) return;
+        nodes.set(placeholderId, {
+            session: createPlaceholderThreadSession(placeholderId),
+            children: [],
+            placeholder: true,
+        });
+    });
+
+    // Pass 2 — break cycles. Corrupt lineage data must degrade to a flat root,
+    // never hang the renderer.
+    const visitState = new Map<string, 'visiting' | 'done'>();
+    const droppedEdges = new Set<string>();
+    nodes.forEach(node => {
+        const path: string[] = [];
+        let cursor: string | undefined = node.session.id;
+        while (cursor && visitState.get(cursor) !== 'done') {
+            if (visitState.get(cursor) === 'visiting') {
+                droppedEdges.add(cursor);
+                break;
+            }
+            visitState.set(cursor, 'visiting');
+            path.push(cursor);
+            cursor = droppedEdges.has(cursor) ? undefined : parentById.get(cursor);
+        }
+        path.forEach(id => visitState.set(id, 'done'));
+    });
+
+    // Pass 3 — attach children, then collect whatever is left as roots.
+    const attachedIds = new Set<string>();
+    nodes.forEach(node => {
+        const sessionId = node.session.id;
+        if (droppedEdges.has(sessionId)) return;
+        const parentId = parentById.get(sessionId);
+        if (!parentId || parentId === sessionId) return;
         const parentNode = nodes.get(parentId);
-        const node = nodes.get(session.id);
-        if (!parentNode || !node) return;
+        if (!parentNode) return;
         parentNode.children.push(node);
-        attached.add(session.id);
+        attachedIds.add(sessionId);
     });
 
     const roots: SessionThreadNode[] = [];
-    sessions.forEach(session => {
-        if (!attached.has(session.id)) {
-            const node = nodes.get(session.id);
-            if (node) roots.push(node);
-        }
+    nodes.forEach(node => {
+        if (!attachedIds.has(node.session.id)) roots.push(node);
     });
+    roots.forEach(hydratePlaceholderTimestamps);
     return sortSessionThreadNodes(roots);
+};
+
+/**
+ * Union of two session lists, deduped by id, sorted `startedAt` desc to match the
+ * server sort. `overrides` wins on collision (the live slice is fresher than a
+ * page fetched earlier). Rows without an id are passed through untouched.
+ */
+export const mergeSessionsById = (
+    primary: AgentSession[],
+    overrides: AgentSession[],
+): AgentSession[] => {
+    const primaryList = primary || [];
+    const overrideList = overrides || [];
+    if (overrideList.length === 0) return primaryList;
+
+    const overrideById = new Map<string, AgentSession>();
+    overrideList.forEach(session => {
+        const id = String(session?.id || '').trim();
+        if (id) overrideById.set(id, session);
+    });
+
+    const merged: AgentSession[] = [];
+    const seen = new Set<string>();
+    primaryList.forEach(session => {
+        const id = String(session?.id || '').trim();
+        if (!id) {
+            merged.push(session);
+            return;
+        }
+        if (seen.has(id)) return;
+        seen.add(id);
+        merged.push(overrideById.get(id) ?? session);
+    });
+    overrideList.forEach(session => {
+        const id = String(session?.id || '').trim();
+        if (!id) {
+            merged.push(session);
+            return;
+        }
+        if (seen.has(id)) return;
+        seen.add(id);
+        merged.push(session);
+    });
+    return merged.sort(compareSessionsByTime);
 };
 
 const ArtifactDetailsModal: React.FC<{
@@ -4122,7 +4323,12 @@ const areSessionFiltersEqual = (left: Partial<SessionFilters>, right: Partial<Se
 
 const SessionFilterBar = React.memo(() => {
     const { sessionFilters, setSessionFilters, activeProject } = useData();
-    const { data: sessionsData } = useSessionsQuery({ projectId: activeProject?.id });
+    // Same (projectId, filters) pair as SessionInspector below → same TQ cache
+    // entry, so the panel's fallback facets describe the list actually rendered.
+    const { data: sessionsData } = useSessionsQuery({
+        projectId: activeProject?.id,
+        filters: sessionFilters,
+    });
     const sessions = sessionsData?.pages.flatMap(p => p.items) ?? [];
     const [localFilters, setLocalFilters] = useState<SessionFilters>(() => buildSessionFilterPayload(sessionFilters));
     const [modelFacets, setModelFacets] = useState<SessionModelFacet[]>([]);
@@ -5773,17 +5979,32 @@ const SESSION_LIST_FALLBACK_CAP = 200;
 const SESSION_LIST_CONTAINER_HEIGHT_PX = 600;
 
 export const SessionInspector: React.FC = () => {
-    const { activeProject, getSessionById, loading } = useData();
+    const { activeProject, getSessionById, loading, sessionFilters } = useData();
     const queryClient = useQueryClient();
     const {
         data: sessionsData,
         fetchNextPage,
         hasNextPage,
-    } = useSessionsQuery({ projectId: activeProject?.id });
+    } = useSessionsQuery({ projectId: activeProject?.id, filters: sessionFilters });
+    // Dedicated live slice: the paginated list is started_at desc, so a
+    // long-running orchestrator ages off the loaded window while still running,
+    // and live subagents are invisible whenever include_subagents is not sent.
+    // Still freshness-gated below — status='active' alone is untrustworthy.
+    const { data: liveSessionsData } = useLiveSessionsQuery({ projectId: activeProject?.id });
     // Mount useDocumentsQuery so documents are fetched on cold load (T4-003).
     // SessionInspectorPanels.ActivityView/FilesView read useData().documents — no fetch without this.
     useDocumentsQuery({ projectId: activeProject?.id });
-    const sessions = sessionsData?.pages.flatMap(p => p.items) ?? [];
+    const pagedSessions = useMemo(
+        () => sessionsData?.pages.flatMap(p => p.items) ?? [],
+        [sessionsData],
+    );
+    const liveSessions = useMemo(() => liveSessionsData?.items ?? [], [liveSessionsData]);
+    // Merged, deduped by id: the live slice wins on collision (it is fresher), so a
+    // live subagent nests under its parent instead of being absent.
+    const sessions = useMemo(
+        () => mergeSessionsById(pagedSessions, liveSessions),
+        [pagedSessions, liveSessions],
+    );
     const loadMoreSessions = fetchNextPage;
     const hasMoreSessions = Boolean(hasNextPage);
     const [searchParams, setSearchParams] = useSearchParams();
@@ -5792,6 +6013,9 @@ export const SessionInspector: React.FC = () => {
     const [activeSessionTab, setActiveSessionTab] = useState<SessionInspectorTab>('transcript');
     const [sessionOpenLoading, setSessionOpenLoading] = useState(false);
     const [sessionOpenError, setSessionOpenError] = useState<string | null>(null);
+    // Session id of the in-flight/failed open attempt, so a click (not just a
+    // deep link) can reach the error view.
+    const [openTargetSessionId, setOpenTargetSessionId] = useState<string | null>(null);
     const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
     const [analyticsModalSession, setAnalyticsModalSession] = useState<AgentSession | null>(null);
     const [analyticsModalLoading, setAnalyticsModalLoading] = useState(false);
@@ -5846,6 +6070,10 @@ export const SessionInspector: React.FC = () => {
 
         setSessionOpenError(null);
         setSessionOpenLoading(true);
+        // Remember the target so a click-initiated failure can render the error
+        // state too — previously only URL-driven opens could surface it, so a
+        // failed click set an error nobody ever saw.
+        setOpenTargetSessionId(normalizedSessionId);
         const requestId = openSessionRequestRef.current + 1;
         openSessionRequestRef.current = requestId;
 
@@ -5858,6 +6086,7 @@ export const SessionInspector: React.FC = () => {
             setSelectedSession(full);
             setActiveSessionTab(nextTab);
             setSessionOpenLoading(false);
+            setOpenTargetSessionId(null);
             if (options?.syncUrl !== false) {
                 updateSessionSearchParams(normalizedSessionId, nextTab, { replace: options?.replaceUrl });
             }
@@ -5868,6 +6097,7 @@ export const SessionInspector: React.FC = () => {
             setSelectedSession(fallback);
             setActiveSessionTab(nextTab);
             setSessionOpenLoading(false);
+            setOpenTargetSessionId(null);
             if (options?.syncUrl !== false) {
                 updateSessionSearchParams(normalizedSessionId, nextTab, { replace: options?.replaceUrl });
             }
@@ -6047,6 +6277,7 @@ export const SessionInspector: React.FC = () => {
             setSessionBackStack([]);
             setSessionOpenError(null);
             setSessionOpenLoading(false);
+            setOpenTargetSessionId(null);
             updateSessionSearchParams(null, 'transcript');
             return;
         }
@@ -6056,6 +6287,7 @@ export const SessionInspector: React.FC = () => {
         setSelectedSession(parent);
         setSessionOpenError(null);
         setSessionOpenLoading(false);
+        setOpenTargetSessionId(null);
         updateSessionSearchParams(parent.id, activeSessionTab);
     }, [activeSessionTab, sessionBackStack, updateSessionSearchParams]);
 
@@ -6117,6 +6349,37 @@ export const SessionInspector: React.FC = () => {
         [sessionThreadRoots, liveNowMs]
     );
 
+    // Auto-expand (once per node) any thread whose CHILD is live, otherwise the
+    // live subagent that Live In-Flight exists to surface stays behind a collapsed
+    // toggle. The ref makes it one-shot so a manual collapse is never overridden.
+    //
+    // Keyed off sessionThreadRoots, NOT activeSessionThreadRoots: the latter's memo
+    // depends on the per-render liveNowMs, so it gets a fresh identity every render
+    // and this tree walk would run on every render for no benefit. sessionThreadRoots
+    // only changes when the session data does.
+    const autoExpandedLiveThreadIdsRef = useRef<Set<string>>(new Set());
+    useEffect(() => {
+        const nowMs = Date.now();
+        const idsToExpand: string[] = [];
+        const visit = (nodes: SessionThreadNode[]) => {
+            nodes.forEach(node => {
+                const hasLiveChild = node.children.some(child => threadNodeHasLiveSession(child, nowMs));
+                if (hasLiveChild && !autoExpandedLiveThreadIdsRef.current.has(node.session.id)) {
+                    idsToExpand.push(node.session.id);
+                }
+                visit(node.children);
+            });
+        };
+        visit(sessionThreadRoots);
+        if (idsToExpand.length === 0) return;
+        idsToExpand.forEach(id => autoExpandedLiveThreadIdsRef.current.add(id));
+        setExpandedThreadSessionIds(prev => {
+            const next = new Set(prev);
+            idsToExpand.forEach(id => next.add(id));
+            return next;
+        });
+    }, [sessionThreadRoots]);
+
     // T6-001: Refs for virtualizer scroll containers (past sessions — threaded + cards modes).
     const pastThreadsContainerRef = useRef<HTMLDivElement>(null);
     const pastCardsContainerRef = useRef<HTMLDivElement>(null);
@@ -6165,6 +6428,18 @@ export const SessionInspector: React.FC = () => {
         setSessionBackStack([]);
         setActiveSessionTab('transcript');
         void openSession(session.id, session, {
+            syncUrl: true,
+            tab: 'transcript',
+        });
+    }, [openSession]);
+
+    // Thread-node click path. Placeholder nodes contribute NO fallback row, so a
+    // dangling parent/root id lands on the error state instead of rendering a
+    // Session Detail view synthesised from a stub.
+    const openSessionFromThreadNode = useCallback((node: SessionThreadNode) => {
+        setSessionBackStack([]);
+        setActiveSessionTab('transcript');
+        void openSession(node.session.id, threadNodeOpenFallback(node), {
             syncUrl: true,
             tab: 'transcript',
         });
@@ -6242,18 +6517,49 @@ export const SessionInspector: React.FC = () => {
 
         return (
             <div key={node.session.id} className="space-y-2">
-                <SessionSummaryCard
-                    session={node.session}
-                    statusOverride={displayStatus}
-                    threadToggle={hasChildren ? {
-                        expanded,
-                        childCount: countSessionThreadNodes(node.children),
-                        onToggle: () => toggleThreadChildren(node.session.id),
-                        label: threadToggleLabelForChildren(node.children),
-                    } : undefined}
-                    onOpenAnalytics={openSessionAnalyticsModal}
-                    onClick={() => openSessionFromList(node.session)}
-                />
+                {node.placeholder ? (
+                    /* Synthetic stand-in for a parent/root session outside the loaded
+                       window. Only its id is real — never dressed up as an indexed
+                       session. Clicking opens it by id (it exists server-side). */
+                    <div className="rounded-xl border border-dashed border-panel-border bg-panel/20 px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <GitBranch size={14} className="text-muted-foreground shrink-0" />
+                        <div className="min-w-0">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                                {PLACEHOLDER_THREAD_TITLE}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => openSessionFromThreadNode(node)}
+                                className="font-mono text-[11px] text-indigo-300 hover:text-indigo-200 truncate max-w-full"
+                                title={`Open ${node.session.id}`}
+                            >
+                                {node.session.id}
+                            </button>
+                        </div>
+                        {hasChildren && (
+                            <button
+                                type="button"
+                                onClick={() => toggleThreadChildren(node.session.id)}
+                                className="ml-auto text-[11px] text-muted-foreground hover:text-panel-foreground border border-panel-border rounded-md px-2 py-1"
+                            >
+                                {expanded ? 'Hide' : 'Show'} {countSessionThreadNodes(node.children)} {threadToggleLabelForChildren(node.children)}
+                            </button>
+                        )}
+                    </div>
+                ) : (
+                    <SessionSummaryCard
+                        session={node.session}
+                        statusOverride={displayStatus}
+                        threadToggle={hasChildren ? {
+                            expanded,
+                            childCount: countSessionThreadNodes(node.children),
+                            onToggle: () => toggleThreadChildren(node.session.id),
+                            label: threadToggleLabelForChildren(node.children),
+                        } : undefined}
+                        onOpenAnalytics={openSessionAnalyticsModal}
+                        onClick={() => openSessionFromThreadNode(node)}
+                    />
+                )}
 
                 {hasChildren && expanded && (
                     <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-panel-border/90 space-y-3`}>
@@ -6267,7 +6573,7 @@ export const SessionInspector: React.FC = () => {
                 )}
             </div>
         );
-    }, [expandedThreadSessionIds, liveNowMs, openSessionAnalyticsModal, openSessionFromList, toggleThreadChildren]);
+    }, [expandedThreadSessionIds, liveNowMs, openSessionAnalyticsModal, openSessionFromThreadNode, toggleThreadChildren]);
 
     if (selectedSession) {
         return (
@@ -6291,7 +6597,12 @@ export const SessionInspector: React.FC = () => {
         );
     }
 
-    if (!selectedSession && requestedSessionId && sessionOpenError) {
+    // The failed open may have come from a CLICK, not a deep link — in that case the
+    // URL was never synced (openSession only syncs on success), so fall back to the
+    // tracked target id. Without this a dangling placeholder click set an error state
+    // that nothing ever rendered.
+    const failedSessionId = requestedSessionId || openTargetSessionId || '';
+    if (!selectedSession && failedSessionId && sessionOpenError) {
         return (
             <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-6">
                 <div className="text-sm text-rose-300">{sessionOpenError}</div>
@@ -6299,8 +6610,10 @@ export const SessionInspector: React.FC = () => {
                     onClick={() => {
                         const tabParam = searchParams.get('tab');
                         const requestedTab = isSessionInspectorTab(tabParam) ? tabParam : 'transcript';
-                        const fallback = sessions.find(session => session.id === requestedSessionId);
-                        void openSession(requestedSessionId, fallback, {
+                        // Never resurrect a placeholder here either: only a real row
+                        // from the loaded list may act as a fallback.
+                        const fallback = sessions.find(session => session.id === failedSessionId);
+                        void openSession(failedSessionId, fallback, {
                             syncUrl: false,
                             tab: requestedTab,
                         });

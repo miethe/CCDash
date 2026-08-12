@@ -22,9 +22,14 @@ describe('data architecture guardrails', () => {
     // T4-005: AppEntityDataProvider is deleted
     expect(source).not.toContain('<AppEntityDataProvider>');
 
-    // T4-007: DataContext must not hold server-state arrays in createContext()
-    // DataContext no longer calls createContext() — it is a pure function shim
-    expect(source).not.toContain('createContext(');
+    // T4-007: DataContext must not hold SERVER state in a React context — server
+    // state lives in TanStack Query. Client-state contexts are allowed (the
+    // session-filter panel state must be shared across consumers, so it cannot
+    // live in the useData() hook body).
+    expect(source).not.toContain('createContext<AgentSession');
+    expect(source).not.toContain('createContext<PlanDocument');
+    expect(source).not.toContain('createContext<ProjectTask');
+    expect(source).not.toContain('createContext<Feature');
 
     // T4-007: No direct fetch() for domain data in DataContext
     // (fetch for health is in the health query hook, not DataContext)
@@ -47,8 +52,13 @@ describe('data architecture guardrails', () => {
 
   it('DataContext has no createContext() holding server arrays (T4-007)', () => {
     const source = readFileSync(dataContextPath, 'utf-8');
-    // The useData() shim is a plain function — it does not need a React context
-    expect(source).not.toContain('createContext(');
+    // The useData() shim reads server state from TQ hooks — never from a context.
+    // Only client state (session filters) may be held in a context here.
+    const contextGenerics = Array.from(source.matchAll(/createContext<([^>]*)>/g)).map(m => m[1]);
+    expect(contextGenerics.length).toBeLessThanOrEqual(1);
+    contextGenerics.forEach(generic => {
+      expect(generic).toContain('SessionFiltersContextValue');
+    });
   });
 
   it('AppEntityDataContext.tsx is deleted (T4-005)', () => {
