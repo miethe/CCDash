@@ -46,31 +46,85 @@ _PG_SELECT_ALL = """
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _parse_iso(raw: str | None) -> datetime | None:
-    """Parse an ISO 8601 timestamp stored in the DB to a UTC datetime.
+def parse_iso(raw: Any) -> datetime | None:
+    """Parse a stored ``last_ingest_at`` value to a UTC datetime.
+
+    The production writer (``backend/db/repositories/ingest_cursors.py``) is
+    ``datetime.now(timezone.utc).isoformat()``, which produces an
+    OFFSET-BEARING ISO-8601 string (e.g. ``2026-08-13T19:07:18.250600+00:00``).
+    That is the canonical production form. A handful of legacy naive-form
+    values (no offset, produced before that writer existed) may still be
+    present in an older DB, so both forms are accepted.
+
+    Accepts:
+      - A ``datetime`` instance directly (defensive: the column is TEXT
+        today, but a driver returning a real datetime must not silently
+        become "idle").
+      - Any ISO-8601 string ``datetime.fromisoformat`` understands on
+        Python 3.12+ — offset-bearing, trailing ``Z``, space-separated,
+        variable-width fractional seconds.
+      - The four legacy naive ``strptime`` formats, as a fallback, for
+        values already stored before the writer emitted offsets.
+
+    The result is always normalized to UTC: a naive result is treated as
+    already-UTC (``tzinfo=timezone.utc``); an aware result is converted via
+    ``astimezone(timezone.utc)``.
 
     Returns ``None`` when *raw* is None/empty or unparseable.
     """
-    if not raw:
+    if raw is None:
         return None
-    raw = str(raw).strip().rstrip("Z")
-    if not raw:
+    if isinstance(raw, datetime):
+        if raw.tzinfo is None:
+            return raw.replace(tzinfo=timezone.utc)
+        return raw.astimezone(timezone.utc)
+
+    raw_str = str(raw).strip()
+    if not raw_str:
         return None
-    for fmt in (
-        "%Y-%m-%dT%H:%M:%S.%f",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M:%S.%f",
-        "%Y-%m-%d %H:%M:%S",
-    ):
-        try:
-            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    logger.debug("ingest_sources: unparseable last_ingest_at %r", raw)
-    return None
+
+    # Try the production (offset-bearing) form first. Do NOT strip a
+    # trailing "Z" before this attempt — fromisoformat() parses "Z" natively
+    # on Python 3.12+, and rstrip("Z") is also wrong in principle (it would
+    # strip a run of trailing "Z" characters, not one suffix).
+    try:
+        parsed = datetime.fromisoformat(raw_str)
+    except ValueError:
+        parsed = None
+
+    if parsed is None:
+        # Fall back to the legacy naive strptime formats for values stored
+        # before the production writer emitted UTC offsets.
+        legacy_str = raw_str.rstrip("Z")
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S",
+        ):
+            try:
+                parsed = datetime.strptime(legacy_str, fmt)
+                break
+            except ValueError:
+                continue
+
+    if parsed is None:
+        logger.debug("ingest_sources: unparseable last_ingest_at %r", raw_str)
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
-def _derive_state(lag_seconds: float | None) -> str:
+# Backward-compatible alias — the function was renamed from a private name
+# (`_parse_iso`) to a public one (`parse_iso`) so `backend/runtime/bootstrap.py`
+# can import it without reaching into a private module member. Existing
+# internal call sites in this module keep using the private alias.
+_parse_iso = parse_iso
+
+
+def derive_state(lag_seconds: float | None) -> str:
     """Map a lag in seconds to a source state string."""
     if lag_seconds is None:
         return "idle"
@@ -81,6 +135,10 @@ def _derive_state(lag_seconds: float | None) -> str:
     if lag_seconds < stale:
         return "backed_up"
     return "disconnected"
+
+
+# Backward-compatible alias (see `parse_iso` above for rationale).
+_derive_state = derive_state
 
 
 def _row_to_status(row: Any) -> dict[str, Any] | None:

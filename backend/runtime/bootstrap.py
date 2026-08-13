@@ -16,7 +16,9 @@ logger = logging.getLogger("ccdash.runtime.bootstrap")
 
 from backend.application.context import RequestContext
 from backend.application.services.agent_queries.ingest_sources import (
+    derive_state,
     get_ingest_sources_health,
+    parse_iso,
 )
 from backend import config
 from backend.db import connection
@@ -596,37 +598,16 @@ def _build_ingest_sources_detail() -> list[dict[str, Any]]:
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc)
-    fresh_s = float(getattr(config, "CCDASH_INGEST_SOURCE_FRESH_SECONDS", 300))
-    stale_s = float(getattr(config, "CCDASH_INGEST_SOURCE_STALE_SECONDS", 900))
 
     results: list[dict[str, Any]] = []
     for row in rows:
         try:
             raw_ts = row["last_ingest_at"]
-            lag_seconds: float | None = None
-            if raw_ts:
-                raw_str = str(raw_ts).strip().rstrip("Z")
-                for fmt in (
-                    "%Y-%m-%dT%H:%M:%S.%f",
-                    "%Y-%m-%dT%H:%M:%S",
-                    "%Y-%m-%d %H:%M:%S.%f",
-                    "%Y-%m-%d %H:%M:%S",
-                ):
-                    try:
-                        dt = datetime.strptime(raw_str, fmt).replace(tzinfo=timezone.utc)
-                        lag_seconds = (now - dt).total_seconds()
-                        break
-                    except ValueError:
-                        continue
-
-            if lag_seconds is None:
-                state = "idle"
-            elif lag_seconds < fresh_s:
-                state = "connected"
-            elif lag_seconds < stale_s:
-                state = "backed_up"
-            else:
-                state = "disconnected"
+            parsed_dt = parse_iso(raw_ts)
+            lag_seconds: float | None = (
+                (now - parsed_dt).total_seconds() if parsed_dt is not None else None
+            )
+            state = derive_state(lag_seconds)
 
             results.append({
                 "source_id": str(row["source_id"]),
