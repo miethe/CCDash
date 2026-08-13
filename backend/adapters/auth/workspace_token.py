@@ -37,6 +37,7 @@ import time
 from collections.abc import Callable, Awaitable
 from typing import Any
 
+import aiosqlite
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError, VerifyMismatchError
 from cachetools import TTLCache
@@ -245,19 +246,42 @@ class WorkspaceTokenAuthBackend:
         await self._reload_snapshot()
 
     async def _reload_snapshot(self) -> None:
+        """Reload the in-memory token snapshot from the DB.
+
+        Dual-backend: ``db`` is either an ``aiosqlite.Connection`` (SQLite —
+        uses the ``async with db.execute(...) as cur`` cursor idiom) or an
+        ``asyncpg.Pool`` (Postgres — ``pool.execute()`` returns a status
+        string, not a cursor context manager, so the aiosqlite idiom raises
+        AttributeError/TypeError on that backend; use ``pool.fetch()``
+        instead). Mirrors the branch used by
+        ``agent_queries/ingest_sources.py::get_ingest_sources_health``.
+        """
         db = await self._get_db()
+        query = """
+            SELECT workspace_id, token_id, project_id, scope, hashed_token
+            FROM   workspace_tokens
+            WHERE  revoked_at IS NULL
+            ORDER  BY created_at ASC
+            """
         try:
-            async with db.execute(
-                """
-                SELECT workspace_id, token_id, project_id, scope, hashed_token
-                FROM   workspace_tokens
-                WHERE  revoked_at IS NULL
-                ORDER  BY created_at ASC
-                """
-            ) as cur:
-                rows = await cur.fetchall()
+            if isinstance(db, aiosqlite.Connection):
+                async with db.execute(query) as cur:
+                    rows = await cur.fetchall()
+            else:
+                # asyncpg Pool/Connection: fetch() returns a list of Records
+                # directly — no cursor context manager.
+                rows = await db.fetch(query)
         except Exception:  # noqa: BLE001
-            logger.exception("auth.workspace_token: failed to reload token snapshot")
+            # Loud failure: a snapshot-load error must never be
+            # indistinguishable from "0 active tokens" (see the 0-row branch
+            # below). We keep the snapshot as-is (fail closed — never widen
+            # what verify() will accept) and let SNAPSHOT_TTL_SECONDS retry.
+            logger.exception(
+                "auth.workspace_token: failed to reload token snapshot "
+                "(snapshot NOT updated; every bearer request will keep "
+                "failing against the last-known-good snapshot until this "
+                "clears)"
+            )
             return
 
         self._snapshot = [
@@ -265,9 +289,23 @@ class WorkspaceTokenAuthBackend:
             for r in rows
         ]
         self._snapshot_loaded_at = time.monotonic()
-        logger.debug(
-            "auth.workspace_token: snapshot refreshed (%d active tokens)", len(self._snapshot)
-        )
+        if self._snapshot:
+            logger.debug(
+                "auth.workspace_token: snapshot refreshed (%d active tokens)",
+                len(self._snapshot),
+            )
+        else:
+            # Distinct from the exception path above: the query SUCCEEDED
+            # and genuinely returned zero rows. This is a legitimate state
+            # (no tokens minted yet) but it is also exactly what a swallowed
+            # backend-mismatch error looks like from the outside — every
+            # bearer request will 401. Log loudly so it is never silent.
+            logger.warning(
+                "auth.workspace_token: snapshot refreshed with 0 active "
+                "tokens (query succeeded) — every workspace-token bearer "
+                "request will 401 until a non-revoked token exists in "
+                "workspace_tokens"
+            )
 
     async def _is_token_active(self, token_id: str) -> bool:
         """Fast indexed lookup — returns True iff the token exists and is not revoked.
@@ -276,14 +314,24 @@ class WorkspaceTokenAuthBackend:
         revocation re-check causes the method to return False, treating the token
         as inactive.  This prevents a revoked token from being accepted when the
         database is temporarily unavailable.
+
+        Dual-backend: see ``_reload_snapshot`` for the aiosqlite-vs-asyncpg
+        rationale. Postgres uses ``pool.fetchrow()`` (single-row fetch) with
+        ``$1`` positional placeholders instead of aiosqlite's ``?``.
         """
         db = await self._get_db()
         try:
-            async with db.execute(
-                "SELECT 1 FROM workspace_tokens WHERE token_id = ? AND revoked_at IS NULL",
-                (token_id,),
-            ) as cur:
-                row = await cur.fetchone()
+            if isinstance(db, aiosqlite.Connection):
+                async with db.execute(
+                    "SELECT 1 FROM workspace_tokens WHERE token_id = ? AND revoked_at IS NULL",
+                    (token_id,),
+                ) as cur:
+                    row = await cur.fetchone()
+            else:
+                row = await db.fetchrow(
+                    "SELECT 1 FROM workspace_tokens WHERE token_id = $1 AND revoked_at IS NULL",
+                    token_id,
+                )
             return row is not None
         except Exception:  # noqa: BLE001
             logger.exception(
@@ -296,14 +344,29 @@ class WorkspaceTokenAuthBackend:
             return False
 
     async def _update_last_used(self, token_id: str) -> None:
-        """Asynchronous fire-and-forget update of last_used_at."""
+        """Asynchronous fire-and-forget update of last_used_at.
+
+        Dual-backend: see ``_reload_snapshot``. Postgres has no ``datetime('now')``
+        SQL function (that is a SQLite builtin) and asyncpg's ``pool.execute()``
+        auto-commits per statement (no explicit ``commit()`` method on the Pool),
+        so the Postgres branch uses ``CURRENT_TIMESTAMP::text`` — the same
+        text-timestamp convention already used for ``workspace_tokens``/``workspaces``
+        elsewhere in the v37 Postgres migration (see
+        ``backend/db/postgres_migrations.py``) — and skips ``commit()``.
+        """
         db = await self._get_db()
         try:
-            await db.execute(
-                "UPDATE workspace_tokens SET last_used_at = datetime('now') WHERE token_id = ?",
-                (token_id,),
-            )
-            await db.commit()
+            if isinstance(db, aiosqlite.Connection):
+                await db.execute(
+                    "UPDATE workspace_tokens SET last_used_at = datetime('now') WHERE token_id = ?",
+                    (token_id,),
+                )
+                await db.commit()
+            else:
+                await db.execute(
+                    "UPDATE workspace_tokens SET last_used_at = CURRENT_TIMESTAMP::text WHERE token_id = $1",
+                    token_id,
+                )
         except Exception:  # noqa: BLE001
             logger.warning(
                 "auth.workspace_token: failed to update last_used_at for token_id=%s",

@@ -391,6 +391,138 @@ class TestAuthContextProjectIdAssertion(unittest.IsolatedAsyncioTestCase):
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# asyncpg (Postgres) path — WorkspaceTokenAuthBackend must not assume         #
+# aiosqlite's `async with db.execute(...) as cur` cursor idiom; on an        #
+# asyncpg Pool, `execute()` returns a status string, not a cursor context    #
+# manager. Fake asyncpg Pool below exposes fetch/fetchrow/execute as plain    #
+# coroutines returning tuple-like "Records" (asyncpg Records support         #
+# positional indexing like a tuple, which is all the production code uses).  #
+# --------------------------------------------------------------------------- #
+
+
+class _FakeAsyncpgPool:
+    """Minimal stand-in for asyncpg.Pool: fetch/fetchrow/execute only.
+
+    Deliberately NOT an aiosqlite.Connection subclass/instance, so
+    `isinstance(db, aiosqlite.Connection)` is False for it — exactly like the
+    real asyncpg.Pool returned by backend/db/connection.py on the Postgres
+    backend.
+    """
+
+    def __init__(self, tokens: list[dict]) -> None:
+        self._tokens = tokens
+        self.fetch_calls = 0
+        self.fetchrow_calls = 0
+        self.execute_calls: list[tuple[str, tuple]] = []
+
+    async def fetch(self, query: str, *args):
+        self.fetch_calls += 1
+        return [
+            (t["workspace_id"], t["token_id"], t["project_id"], t["scope"], t["hashed_token"])
+            for t in self._tokens
+            if not t.get("revoked_at")
+        ]
+
+    async def fetchrow(self, query: str, *args):
+        self.fetchrow_calls += 1
+        token_id = args[0] if args else None
+        for t in self._tokens:
+            if t["token_id"] == token_id and not t.get("revoked_at"):
+                return (1,)
+        return None
+
+    async def execute(self, query: str, *args):
+        self.execute_calls.append((query, args))
+        if args:
+            token_id = args[0]
+            for t in self._tokens:
+                if t["token_id"] == token_id:
+                    t["last_used_at"] = "updated"
+        return "UPDATE 1"
+
+
+class TestWorkspaceTokenAuthBackendAsyncpgPath(unittest.IsolatedAsyncioTestCase):
+    """Drives all three DB-touching methods against a fake asyncpg-style Pool.
+
+    Regression coverage for the asyncpg-vs-aiosqlite duality bug: the OLD code
+    used `async with db.execute(...) as cur` unconditionally, which raises
+    AttributeError/TypeError against a fake pool exposing only
+    fetch/fetchrow/execute coroutines (no async-context-manager `execute`) —
+    swallowed by the bare `except Exception` in `_reload_snapshot`, leaving
+    `_snapshot` permanently empty and every verify() call returning None.
+    A test that merely asserts "verify() is called" would pass against that
+    broken code too (it would just always return None); these tests assert
+    the ACTUAL AuthContext fields, so a permanently-empty snapshot fails them.
+    """
+
+    async def asyncSetUp(self) -> None:
+        ph = PasswordHasher()
+        self.tokens = [
+            {
+                "token_id": "tok-pg-alpha",
+                "workspace_id": "ws-pg-alpha",
+                "project_id": "proj-pg-alpha",
+                "scope": "admin",
+                "hashed_token": ph.hash("secret-pg-alpha"),
+                "revoked_at": None,
+            }
+        ]
+        self.pool = _FakeAsyncpgPool(self.tokens)
+
+        async def get_db():
+            return self.pool
+
+        self.backend = WorkspaceTokenAuthBackend(get_db=get_db)
+
+    async def test_verify_populates_snapshot_via_asyncpg_fetch(self) -> None:
+        """_reload_snapshot must use pool.fetch(), not the aiosqlite cursor idiom."""
+        ctx = await self.backend.verify("secret-pg-alpha")
+        self.assertIsNotNone(ctx, "verify() returned None — snapshot likely never loaded")
+        assert ctx is not None
+        self.assertEqual(ctx.token_id, "tok-pg-alpha")
+        self.assertEqual(ctx.workspace_id, "ws-pg-alpha")
+        self.assertEqual(ctx.project_id, "proj-pg-alpha")
+        self.assertEqual(ctx.scope, "admin")
+        self.assertGreaterEqual(self.pool.fetch_calls, 1)
+        self.assertEqual(
+            len(self.backend._snapshot), 1, "snapshot should contain the one active token"
+        )
+
+    async def test_revoked_token_returns_none_via_asyncpg_fetch(self) -> None:
+        """A revoked row must be excluded by the WHERE clause on the asyncpg path too."""
+        self.tokens[0]["revoked_at"] = "2026-01-01T00:00:00Z"
+        ctx = await self.backend.verify("secret-pg-alpha")
+        self.assertIsNone(ctx)
+
+    async def test_revoke_between_two_calls_invalidates_cache_via_asyncpg_fetchrow(self) -> None:
+        """_is_token_active must use pool.fetchrow(), not the aiosqlite cursor idiom."""
+        ctx1 = await self.backend.verify("secret-pg-alpha")
+        self.assertIsNotNone(ctx1)
+
+        self.tokens[0]["revoked_at"] = "2026-01-01T00:00:00Z"
+
+        # Second call hits the LRU cache, which re-checks revocation via
+        # _is_token_active (pool.fetchrow) before returning the cached ctx.
+        ctx2 = await self.backend.verify("secret-pg-alpha")
+        self.assertIsNone(ctx2, "revoked token must be rejected even from the LRU-hit path")
+        self.assertGreaterEqual(self.pool.fetchrow_calls, 1)
+
+    async def test_last_used_updated_via_asyncpg_execute(self) -> None:
+        """_update_last_used must use pool.execute() with $1, not aiosqlite ? + commit()."""
+        ctx = await self.backend.verify("secret-pg-alpha")
+        self.assertIsNotNone(ctx)
+
+        # Allow the fire-and-forget asyncio.create_task(...) to complete.
+        await asyncio.sleep(0.05)
+
+        matching = [c for c in self.pool.execute_calls if c[1] == ("tok-pg-alpha",)]
+        self.assertTrue(
+            matching, "expected an UPDATE ... WHERE token_id = $1 call for tok-pg-alpha"
+        )
+        self.assertIn("$1", matching[0][0], "Postgres branch must use $1, not aiosqlite's ?")
+
+
 @pytest.mark.slow
 class TestArgon2VerifyCostSanity(unittest.IsolatedAsyncioTestCase):
     """Argon2 verify cost sanity benchmark.
