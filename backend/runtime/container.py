@@ -486,17 +486,15 @@ class RuntimeContainer:
                 )
             from backend.application.services.ingest.session_ingest import RemoteSessionIngestService
             from backend.db.repositories.sessions import SqliteSessionRepository
-            from backend.db.repositories.ingest_cursors import SqliteIngestCursorRepository
+            from backend.db.factory import get_ingest_cursor_repository
             import aiosqlite
             if isinstance(self.db, aiosqlite.Connection):
                 session_repo = SqliteSessionRepository(self.db)
-                cursor_repo = SqliteIngestCursorRepository(self.db)
             else:
-                # Postgres path — use the factory to get the right implementations.
+                # Postgres path — use the factory to get the right implementation.
                 from backend.db.factory import get_session_repository
-                from backend.db.repositories.ingest_cursors import PostgresIngestCursorRepository
                 session_repo = get_session_repository(self.db)
-                cursor_repo = PostgresIngestCursorRepository(self.db)
+            cursor_repo = get_ingest_cursor_repository(self.db)
             self._remote_ingest_service = RemoteSessionIngestService(
                 session_repo,
                 cursor_repo,
@@ -525,22 +523,19 @@ class RuntimeContainer:
                     "RuntimeContainer.db is unavailable; cannot build RfEventsIngestService."
                 )
             from backend.application.services.ingest.rf_events_ingest import RfEventsIngestService
-            from backend.db.factory import get_entity_link_repository
+            from backend.db.factory import get_entity_link_repository, get_ingest_cursor_repository
             from backend.db.repositories.rf_events import SqliteRfEventsRepository
-            from backend.db.repositories.ingest_cursors import SqliteIngestCursorRepository
             from backend.db.repositories.research_runs import SqliteResearchRunsRepository
             import aiosqlite
             if isinstance(self.db, aiosqlite.Connection):
                 rf_events_repo = SqliteRfEventsRepository(self.db)
-                cursor_repo = SqliteIngestCursorRepository(self.db)
                 research_runs_repo = SqliteResearchRunsRepository(self.db)
             else:
                 from backend.db.repositories.rf_events import PostgresRfEventsRepository
-                from backend.db.repositories.ingest_cursors import PostgresIngestCursorRepository
                 from backend.db.repositories.research_runs import PostgresResearchRunsRepository
                 rf_events_repo = PostgresRfEventsRepository(self.db)
-                cursor_repo = PostgresIngestCursorRepository(self.db)
                 research_runs_repo = PostgresResearchRunsRepository(self.db)
+            cursor_repo = get_ingest_cursor_repository(self.db)
             entity_link_repo = get_entity_link_repository(self.db)
             self._rf_events_ingest_service = RfEventsIngestService(
                 rf_events_repo,

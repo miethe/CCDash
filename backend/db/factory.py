@@ -213,3 +213,11 @@ def get_worktree_context_repository(db: Any):
         return SqliteWorktreeContextRepository(db)
     from backend.db.repositories.postgres.worktree_contexts import PostgresWorktreeContextRepository
     return PostgresWorktreeContextRepository(db)
+
+
+def get_ingest_cursor_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        from backend.db.repositories.ingest_cursors import SqliteIngestCursorRepository
+        return SqliteIngestCursorRepository(db)
+    from backend.db.repositories.ingest_cursors import PostgresIngestCursorRepository
+    return PostgresIngestCursorRepository(db)

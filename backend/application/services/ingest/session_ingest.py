@@ -16,6 +16,8 @@ import logging
 from collections import OrderedDict
 from typing import Any
 
+import aiosqlite
+
 from backend.application.models.ingest import IngestSessionEvent
 from backend.db.repositories.sessions import SqliteSessionRepository, compute_source_ref
 from backend.db.repositories.ingest_cursors import SqliteIngestCursorRepository
@@ -188,13 +190,29 @@ class RemoteSessionIngestService:
     # ── Internals ─────────────────────────────────────────────────────────────
 
     async def _source_ref_exists(self, source_ref: str) -> bool:
-        """Return True if a sessions row with this source_ref already exists."""
+        """Return True if a sessions row with this source_ref already exists.
+
+        Dual-backend: ``self._session_repo.db`` is an ``aiosqlite.Connection``
+        on the SQLite path and an asyncpg ``Pool``/``Connection`` on the
+        Postgres path (see ``backend/application/services/agent_queries/
+        ingest_sources.py`` for the canonical isinstance-dispatch pattern used
+        elsewhere in the ingest lane). asyncpg has no async-context-manager
+        ``execute()`` — it returns a coroutine — so the two backends need
+        distinct query idioms here.
+        """
         db = self._session_repo.db
-        async with db.execute(
-            "SELECT 1 FROM sessions WHERE source_ref = ? LIMIT 1",
-            (source_ref,),
-        ) as cur:
-            row = await cur.fetchone()
+        if isinstance(db, aiosqlite.Connection):
+            async with db.execute(
+                "SELECT 1 FROM sessions WHERE source_ref = ? LIMIT 1",
+                (source_ref,),
+            ) as cur:
+                row = await cur.fetchone()
+            return row is not None
+
+        row = await db.fetchrow(
+            "SELECT 1 FROM sessions WHERE source_ref = $1 LIMIT 1",
+            source_ref,
+        )
         return row is not None
 
     def _lru_put(self, key: tuple[str, str], value: str) -> None:
