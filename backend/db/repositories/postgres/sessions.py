@@ -1359,7 +1359,7 @@ class PostgresSessionRepository:
                      linked_session_id, tool_args, tool_output, tool_status, metadata_json,
                      project_id)
                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-                   ON CONFLICT ON CONSTRAINT idx_logs_source_log_unique DO NOTHING""",
+                   ON CONFLICT (session_id, source_log_id) WHERE source_log_id != '' DO NOTHING""",
                 records
             )
 

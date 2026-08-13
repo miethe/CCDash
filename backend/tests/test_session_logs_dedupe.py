@@ -195,9 +195,13 @@ class TestPostgresUpsertLogsDedupe(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.conn.executemany_calls), 1)
         _query, records = self.conn.executemany_calls[0]
         self.assertEqual(len(records), 1, "Duplicate source_log_id must be collapsed before executemany")
-        # Confirm ON CONFLICT clause is present in the query
+        # Confirm ON CONFLICT uses index-inference (session_id, source_log_id) with the
+        # partial predicate repeated verbatim — NOT "ON CONSTRAINT idx_logs_source_log_unique",
+        # which names a partial unique INDEX, not a real constraint, and errors in real Postgres.
         self.assertIn("ON CONFLICT", _query)
-        self.assertIn("idx_logs_source_log_unique", _query)
+        self.assertIn("ON CONFLICT (session_id, source_log_id)", _query)
+        self.assertIn("WHERE source_log_id != ''", _query)
+        self.assertNotIn("ON CONSTRAINT", _query)
 
     async def test_duplicate_source_log_id_logs_warning(self) -> None:
         duplicate_id = "log-pg-warn"
