@@ -80,3 +80,7 @@ def _global_options(
 def version() -> None:
     """Show CLI version."""
     typer.echo(f"ccdash-cli {_cli_version()}")
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised via subprocess tests
+    app()
