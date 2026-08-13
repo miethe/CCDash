@@ -85,3 +85,15 @@ app.add_typer(
     name="research-run",
     help="Research Foundry run intelligence commands.",
 )
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised via subprocess
+    # Without this guard ``python -m backend.cli.main <cmd>`` imports the module,
+    # registers every sub-app, and exits 0 having printed NOTHING — a silent
+    # no-op indistinguishable from success. That is how an operator following a
+    # doc that named this module path concluded the CLI was absent from the api
+    # image and hand-wrote INSERTs against a live schema instead
+    # (node_01KZYAE1FSD20RC38HFY9TD40Y). ``backend/cli/__main__.py`` already
+    # makes ``python -m backend.cli`` work; this makes the deeper module path
+    # behave identically rather than failing quietly.
+    app()

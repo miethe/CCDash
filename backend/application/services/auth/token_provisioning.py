@@ -6,6 +6,30 @@ logic that used to live inline in
 deprecated shim over this module) and is the implementation behind
 ``ccdash token mint``.
 
+How to reach it (node_01KZYAE1FSD20RC38HFY9TD40Y)
+-------------------------------------------------
+"ONE place" describes the *implementation*, not a single spelling of the
+command. Three invocations reach this module, and which ones are available
+depends on where you are:
+
+  * ``ccdash token mint`` — the console script from ``pyproject.toml``. Present
+    in a checkout's venv (``backend/.venv/bin/ccdash``); **absent inside the
+    runtime image**, which copies ``backend/`` in rather than ``pip install``ing
+    the project, so the entry point is never generated.
+  * ``python -m backend.cli token mint`` — via ``backend/cli/__main__.py``.
+    Works everywhere, including ``podman exec`` into the api container. This is
+    the documented container route.
+  * ``python -m backend.cli.main token mint`` — the deeper module path. Works
+    only where ``backend/cli/main.py`` carries its ``__name__ == "__main__"``
+    guard; before that guard existed this spelling exited 0 having printed
+    nothing, which is how an operator concluded the CLI was missing from the
+    image and hand-wrote INSERTs against a live schema — the exact failure mode
+    this module was extracted to prevent.
+
+Operator guidance, including the container invocation and the host-venv DSN
+override, lives in ``docs/guides/external-api-lan-deployment.md``
+(§ "minting a workspace token inside the api container").
+
 Why it exists (node_01KZVXWY2CR9V2GG04PQNFZ1EM)
 -----------------------------------------------
 The old script used the aiosqlite cursor idiom (``async with db.execute(...)``),

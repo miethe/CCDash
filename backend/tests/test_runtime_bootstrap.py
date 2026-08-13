@@ -6,6 +6,7 @@ Do NOT run with a dev server active — causes a segfault/hang.
 """
 import asyncio
 from contextlib import ExitStack
+import inspect
 import json
 import types
 import unittest
@@ -166,14 +167,32 @@ def _auth_provider_config(provider: config.AuthProviderName, **overrides: object
     return config.AuthProviderConfig(**values)
 
 
+def _call_endpoint(endpoint: object, *args: object) -> object:
+    """Invoke a route endpoint, driving it to completion if it is a coroutine.
+
+    Health/probe endpoints migrate between ``def`` and ``async def`` as they gain
+    awaited measurements (e.g. 40c60de made ``/api/health/detail`` async so it
+    could await ``_build_ingest_sources_detail_async``). Calling an ``async def``
+    endpoint synchronously yields a coroutine, so the very next attribute access
+    (``.status_code``) raises ``AttributeError`` and the assertions below never
+    run — the failure looks like a probe bug rather than a harness bug. Resolving
+    the coroutine here keeps every caller agnostic to the endpoint's sync/async
+    flavour.
+    """
+    result = endpoint(*args)
+    if inspect.iscoroutine(result):
+        return asyncio.run(result)
+    return result
+
+
 def _health_payload(app: object) -> dict[str, object]:
     health_route = next(route for route in app.routes if getattr(route, "path", None) == "/api/health")
-    return health_route.endpoint(types.SimpleNamespace(), None)
+    return _call_endpoint(health_route.endpoint, types.SimpleNamespace(), None)
 
 
 def _probe_payload(app: object, path: str) -> tuple[int, dict[str, object]]:
     probe_route = next(route for route in app.routes if getattr(route, "path", None) == path)
-    response = probe_route.endpoint(types.SimpleNamespace(), None)
+    response = _call_endpoint(probe_route.endpoint, types.SimpleNamespace(), None)
     return response.status_code, json.loads(response.body.decode("utf-8"))
 
 

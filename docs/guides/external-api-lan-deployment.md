@@ -148,6 +148,60 @@ source changes. Any change to `backend/` or to the compose files themselves
 requires a **rebuild** (`docker compose build` / `up -d --build`) before the
 new behaviour takes effect on a running deployment.
 
+### Operator note — minting a workspace token inside the api container
+
+`ccdash token mint` is the single supported provisioning path (ADR-008;
+`backend/application/services/auth/token_provisioning.py`). In a containerised
+deployment the token must be minted **in the container that holds the Postgres
+connection**, and the invocation there is **not** the bare `ccdash` script:
+
+```bash
+# Reachable route (verified on rocket-fedora against the node's Postgres, 2026-08-13).
+# CCDASH_AUTH_TOKEN is NOT part of the compose env allowlist, so pass it explicitly;
+# source it from a 0600 file rather than typing the secret on the command line.
+set -a; . ~/.config/aos/secrets.env; set +a
+podman exec -e CCDASH_AUTH_TOKEN="$CCDASH_TOKEN" ccdash_api_1 \
+    python -m backend.cli token mint --project <project-id>
+```
+
+Two details make the obvious invocations fail, both **silently**:
+
+- **`ccdash` is not on `PATH` inside the image.** `pyproject.toml` declares the
+  console script (`ccdash = "backend.cli.main:app"`), but the runtime image
+  **copies** `backend/` in rather than `pip install`ing the project, so the
+  entry point is never generated. `which ccdash` → not found. `typer` itself
+  **is** present (it is in `backend/requirements.txt`; measured 0.27.1 in
+  `ccdash_api_1`) — a `ModuleNotFoundError: No module named 'typer'` therefore
+  means the image predates that requirement and needs a **rebuild**, not that
+  the CLI is unavailable in containers.
+- **`python -m backend.cli.main` used to exit 0 printing nothing.** The module
+  had no `if __name__ == "__main__"` guard, so `-m` imported it, registered every
+  sub-app, and exited successfully having done nothing — indistinguishable from
+  success. The guard is now present, so `python -m backend.cli.main` and
+  `python -m backend.cli` are equivalent. On an image built before that fix, use
+  `python -m backend.cli`.
+
+Verified behaviour of the reachable route against the node's Postgres:
+
+```
+SUCCESS: minted token_id=<uuid>      # first run — writes one workspace_tokens row
+NO-OP: token already present as token_id=<uuid>   # re-run, same plaintext — writes nothing
+```
+
+**Host-venv alternative** (equally supported, for work done from a checkout
+rather than inside the container) — repoint the DSN at the published Postgres
+port and use the repo venv, which does have the console script installed:
+
+```bash
+CCDASH_DB_BACKEND=postgres \
+CCDASH_DATABASE_URL=postgresql+asyncpg://<user>:<pw>@127.0.0.1:5440/ccdash \
+backend/.venv/bin/ccdash token mint --project <project-id>
+```
+
+Provisioning **never runs migrations** — it asserts the schema is present and
+aborts with an actionable error if `workspace_tokens` is missing. Bring the
+schema up by starting the `api`/`worker` runtime once before minting.
+
 ---
 
 ## Hosted LLM egress consent (`CCDASH_LLM_EGRESS_CONSENT`)

@@ -143,6 +143,13 @@ ccdash token mint --project my-project
 > now delegates to the same backend-aware path as `ccdash token mint`. Prefer the
 > CLI.
 
+> **In a containerised deployment**, `ccdash` is not on `PATH` inside the runtime
+> image (the image copies `backend/` in rather than `pip install`ing it, so the
+> console script is never generated). Use
+> `podman exec -e CCDASH_AUTH_TOKEN=... <api-container> python -m backend.cli token mint --project <id>`
+> instead. See `docs/guides/external-api-lan-deployment.md`
+> § "minting a workspace token inside the api container".
+
 On success, you will see:
 
 ```

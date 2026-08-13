@@ -33,6 +33,8 @@ it ever fails, the api profile can no longer start.
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import types
 import unittest
@@ -83,6 +85,13 @@ def _auth_provider_config() -> config.AuthProviderConfig:
 def _probe_payload(app: object, path: str) -> tuple[int, dict]:
     route = next(r for r in app.routes if getattr(r, "path", None) == path)
     response = route.endpoint(types.SimpleNamespace(), None)
+    if inspect.iscoroutine(response):
+        # 40c60de made /api/health/detail `async def` so it could await the
+        # ingest-sources measurement. Calling it synchronously yields a coroutine,
+        # so `.status_code` below raises AttributeError and this file's assertions
+        # never run — the fail-closed-snapshot guard it exists to provide goes
+        # silent, which is the exact class of invisibility it was written against.
+        response = asyncio.run(response)
     return response.status_code, json.loads(response.body.decode("utf-8"))
 
 
