@@ -286,8 +286,32 @@ services:
     ports:
       - "${CCDASH_WORKER_PROBE_PORT:-9465}:${CCDASH_WORKER_PROBE_PORT:-9465}"
 
-  # Start watcher ingest with:
-  #   docker compose --profile enterprise --profile postgres --profile live-watch up
+  # worker-watch — the filesystem watcher / live-ingest worker.
+  #
+  # ⚠️ It is in BOTH profiles below: ["enterprise", "live-watch"]. P0-001 folded it into the default
+  # enterprise topology deliberately ("defaults are the contract" — a plain
+  #   docker compose --profile enterprise --profile postgres up
+  # must ingest live data with no extra flags; see
+  # docs/project_plans/planning/ccdash-enterprise-edition-v1/05-target-architecture-proposal.md P7).
+  # So `--profile live-watch` is an explicit ALIAS for this service, not a requirement, and
+  # OMITTING it does NOT remove the container — the enterprise profile still starts it.
+  #
+  # To actually suppress worker-watch on a deployment where filesystem watching cannot work (e.g.
+  # the registry's session paths are not visible inside the container, so /readyz answers a truthful
+  # 503 watcher_runtime / "no watch paths exist" forever), add a service-level `scale: 0` override:
+  #   # compose.override.yaml, passed as an extra -f
+  #   services:
+  #     worker-watch:
+  #       scale: 0
+  # Measured on the rocket-fedora node 2026-08-13, podman-compose 1.6.0 + podman 4.4.2:
+  #   scale: 0 (service level)      → SUPPRESSED  ✅ preferred (it is a Compose Spec service key, so
+  #                                    it also rides along on docker compose v2 — spec-based, not
+  #                                    measured here)
+  #   --scale worker-watch=0 (CLI)  → SUPPRESSED  ✅ works, but must be repeated at EVERY call site
+  #   deploy.replicas: 0            → IGNORED, starts anyway
+  #   re-declaring profiles: in an override → APPENDS, never replaces (so an override can NOT take
+  #                                           "enterprise" back off this service)
+  #
   # Registry-driven fan-out: when CCDASH_WORKER_WATCH_PROJECT_ID is empty,
   # worker-watch derives watch targets from DB registry (all registered projects;
   # is_active is a UI signal, not an ingest gate).

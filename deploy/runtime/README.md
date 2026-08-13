@@ -5,9 +5,15 @@ This directory contains repo-shipped operator examples for the canonical contain
 The compose file at `deploy/runtime/compose.yaml` is the primary deployment manifest. It defines these composable profiles:
 
 - `local` for the single-container SQLite path
-- `enterprise` for split API and worker containers
+- `enterprise` for split API and worker containers — this **includes** the `worker-watch` watcher
 - `postgres` for the bundled `postgres:17-alpine` service layered on top of `enterprise`
-- `live-watch` for an opt-in watcher worker layered on top of `enterprise`
+- `live-watch` an explicit **alias** for `worker-watch` only; it adds nothing on top of `enterprise`
+
+> ⚠️ `worker-watch` declares `profiles: ["enterprise", "live-watch"]`. P0-001 folded it into the
+> default enterprise topology on purpose (a plain enterprise deploy must ingest live data with no
+> extra flags), so **omitting `--profile live-watch` does not remove the watcher container.** To
+> suppress it on a host where filesystem watching cannot work, use a `scale: 0` override — see
+> [Suppressing `worker-watch`](#suppressing-worker-watch).
 
 These examples are operator-focused, not a full deployment product. They do not provision TLS, secrets distribution, registry publication automation, or external supervision beyond the example units and compose file shown here.
 
@@ -18,9 +24,29 @@ For hosted auth provider rollout, RBAC bootstrap expectations, lockout preventio
 | Profile | Services | Typical command |
 | --- | --- | --- |
 | `local` | backend + frontend | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile local up --build` |
-| `enterprise` | api + worker + frontend | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise up --build` |
-| `enterprise` + `postgres` | api + worker + frontend + postgres | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres up --build` |
-| `enterprise` + `postgres` + `live-watch` | api + worker + worker-watch + frontend + postgres | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch up --build` |
+| `enterprise` | api + worker + **worker-watch** + frontend | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise up --build` |
+| `enterprise` + `postgres` | api + worker + **worker-watch** + frontend + postgres | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres up --build` |
+| `enterprise` + `postgres` + `live-watch` | identical to the row above — `live-watch` adds nothing | `docker compose --env-file deploy/runtime/.env -f deploy/runtime/compose.yaml --profile enterprise --profile postgres --profile live-watch up --build` |
+
+### Suppressing `worker-watch`
+
+On a host where the registry's session paths are not visible inside the container, `worker-watch`
+answers a truthful `503` on `/readyz` (`watcher_runtime` / "Watcher is configured but no watch paths
+exist") forever and shows as `(unhealthy)`. Dropping `--profile live-watch` will **not** remove it.
+Suppress it with a service-level `scale: 0` in an override passed as an extra `-f`:
+
+```yaml
+# compose.override.yaml
+services:
+  worker-watch:
+    scale: 0
+```
+
+Measured on podman-compose 1.6.0 / podman 4.4.2 (2026-08-13): service-level `scale: 0` suppresses
+the service; `deploy.replicas: 0` is **ignored**; and re-declaring `profiles:` in an override
+**appends** rather than replaces, so an override cannot take `enterprise` back off the service.
+`--scale worker-watch=0` on the CLI also works but must be repeated at every call site, which is why
+the override file is preferred.
 
 The backend image is built from `deploy/runtime/Dockerfile` and honors `BUILD_UID` / `BUILD_GID` for rootless runs. The frontend image is built from `deploy/runtime/frontend/Dockerfile` and consumes `VITE_CCDASH_API_BASE_URL`, `CCDASH_API_UPSTREAM`, and `CCDASH_FRONTEND_PORT`.
 
