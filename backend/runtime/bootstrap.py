@@ -15,6 +15,9 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger("ccdash.runtime.bootstrap")
 
 from backend.application.context import RequestContext
+from backend.application.services.agent_queries.ingest_sources import (
+    get_ingest_sources_health,
+)
 from backend import config
 from backend.db import connection
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
@@ -217,13 +220,14 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
         )
 
     @app.get("/api/health/detail")
-    def health_detail(
+    async def health_detail(
         _: Request,
         _request_context: RequestContext = Depends(get_request_context),
     ) -> JSONResponse:
         runtime_status = container.runtime_status()
+        ingest_sources = await _build_ingest_sources_detail_async()
         return JSONResponse(
-            _build_detail_probe_payload(runtime_status),
+            _build_detail_probe_payload(runtime_status, ingest_sources=ingest_sources),
             status_code=_probe_response_status_code(runtime_status),
         )
 
@@ -557,17 +561,20 @@ def _build_ingest_sources_detail() -> list[dict[str, Any]]:
     ``_build_db_detail()`` pattern) so this helper can remain a plain
     ``def`` like the other health sub-builders.
 
-    For PostgreSQL deployments the shared DB is async-only; we return ``[]``
-    gracefully — the caller treats missing rows as a contract state, not an
-    error, and the FE falls back to "ingest health unavailable".
+    The ``/api/health/detail`` route no longer calls this directly — it awaits
+    ``_build_ingest_sources_detail_async()`` instead, which covers both
+    backends via the shared transport-neutral ``get_ingest_sources_health()``.
+    This sync path remains as the fallback for synchronous callers/tests that
+    invoke ``_build_detail_probe_payload()`` without an ``ingest_sources``
+    override, and it stays SQLite-only by design.
 
     Resilience: any exception → returns ``[]`` (never raises).
     """
     backend: str = str(getattr(config, "DB_BACKEND", "sqlite")).lower() or "sqlite"
     if backend != "sqlite":
-        # PostgreSQL detail is not available from a synchronous context here.
-        # The transport-neutral get_ingest_sources_health() async function can
-        # be called from async endpoints / CLI / MCP directly.
+        # Non-SQLite backends are not queried from this synchronous path.
+        # Use _build_ingest_sources_detail_async() (or get_ingest_sources_health()
+        # directly) from an async endpoint / CLI / MCP context instead.
         return []
     try:
         db_path = config.DB_PATH
@@ -638,6 +645,30 @@ def _build_ingest_sources_detail() -> list[dict[str, Any]]:
     return results
 
 
+async def _build_ingest_sources_detail_async() -> list[dict[str, Any]]:
+    """Return per-source ingest health status via the shared async connection.
+
+    Backend-agnostic counterpart to ``_build_ingest_sources_detail()``: reuses
+    the shared ``connection._connection`` singleton (the same object
+    ``_readyz_check_db()`` probes) and delegates to the transport-neutral
+    ``get_ingest_sources_health()``, which branches on ``aiosqlite.Connection``
+    vs asyncpg ``Pool`` internally. This is what makes ``ingest_sources`` a
+    real measurement on PostgreSQL deployments instead of a structural ``[]``.
+
+    Resilience: a missing connection or any exception → returns ``[]``
+    (never raises) — a health probe must not 500.
+    """
+    try:
+        db = connection._connection
+        if db is None:
+            # Connection not yet established; observe state, don't create one.
+            return []
+        return await get_ingest_sources_health(db)
+    except Exception:  # noqa: BLE001
+        logger.debug("_build_ingest_sources_detail_async: query failed", exc_info=True)
+        return []
+
+
 def _build_live_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:
     probe_contract = _require_probe_contract(runtime_status)
     live = _probe_contract_section(probe_contract, "live")
@@ -673,7 +704,11 @@ def _build_ready_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:
+def _build_detail_probe_payload(
+    runtime_status: dict[str, Any],
+    *,
+    ingest_sources: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     probe_contract = _require_probe_contract(runtime_status)
     live = _probe_contract_section(probe_contract, "live")
     ready = _probe_contract_section(probe_contract, "ready")
@@ -718,8 +753,15 @@ def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any
         "registry": _build_registry_detail(),
         "db": _build_db_detail(),
         "retention": _build_retention_detail(runtime_status),
-        # Phase 6: ingest-source health rollup (additive, resilient — never raises)
-        "ingest_sources": _build_ingest_sources_detail(),
+        # Phase 6: ingest-source health rollup (additive, resilient — never raises).
+        # Callers that already resolved a backend-agnostic list (e.g. the async
+        # route below, via _build_ingest_sources_detail_async()) pass it through
+        # here; sync callers/tests fall back to the SQLite-only sync builder.
+        "ingest_sources": (
+            _build_ingest_sources_detail()
+            if ingest_sources is None
+            else list(ingest_sources)
+        ),
     }
 
 
