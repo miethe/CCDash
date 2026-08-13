@@ -110,7 +110,7 @@ The migration plan to RLS in v2 is independent of this ADR; the explicit-filter 
 1. **Schema migration**: add `workspaces`, `workspace_tokens`, plus a non-null `workspace_id` column on every scoped table (`sessions`, `documents`, `tasks`, `features`, `links`, `progress_files`, `ingest_cursors` from ADR-009).
 2. **Backfill**: insert one workspace `default-local` and one token row equivalent to the existing `CCDASH_AUTH_TOKEN`. Backfill `workspace_id = 'default-local'` on every existing row.
 3. **Auth flag flip**: in `api`/`worker` profiles, switch the dependency from `SingleBearerAuthBackend` to `WorkspaceTokenAuthBackend`. `local` profile keeps the legacy backend (no auth) for backwards compatibility.
-4. **Operator action**: deploy ⇒ run `backend/scripts/migrate_bearer_to_workspace_token.py` once ⇒ verify health endpoint returns `auth_mode: workspace_token`.
+4. **Operator action**: deploy ⇒ bring the schema up (start the runtime once / run the migration runner) ⇒ `ccdash token mint --project <id>` once ⇒ verify the health endpoint returns `auth_mode: workspace_token`. (Provisioning moved to the CLI in node_01KZVXWY2CR9V2GG04PQNFZ1EM; the old `backend/scripts/migrate_bearer_to_workspace_token.py` remains as a deprecated shim and no longer runs migrations as a side effect.)
 
 The migration is reversible: drop the new tables, revert the auth backend swap, the `workspace_id` columns become unused (forward-tolerable).
 

@@ -127,16 +127,21 @@ cat projects.json | jq '.projects[0].id'
 # Example: "my-project"
 ```
 
-### Step 2: Run Migration Script
+### Step 2: Mint the Workspace Token
 
-With the server stopped, run the one-shot migration script:
+First bring the schema up (start the `api`/`worker` runtime once, or run the
+migration runner) — token provisioning does **not** run migrations. Then, with
+the server stopped:
 
 ```bash
 export CCDASH_AUTH_TOKEN=<your-current-bearer-token>
-cd backend
-python -m backend.scripts.migrate_bearer_to_workspace_token \
-    --project my-project
+ccdash token mint --project my-project
 ```
+
+> The legacy `python -m backend.scripts.migrate_bearer_to_workspace_token
+> --project my-project` still works but is **deprecated** and prints a notice; it
+> now delegates to the same backend-aware path as `ccdash token mint`. Prefer the
+> CLI.
 
 On success, you will see:
 
@@ -189,7 +194,7 @@ If the output is `"workspace_token"`, migration is complete.
 To issue a new workspace-scoped token (e.g., for a daemon):
 
 ```bash
-python -m backend.scripts.migrate_bearer_to_workspace_token \
+ccdash token mint \
     --project my-project \
     --workspace my-workspace \
     --token <new-secret> \
@@ -342,6 +347,6 @@ If you need to revert to single-bearer auth:
 
 - **ADR-008**: Architecture decision on workspace-scoped tokens — design rationale, hard gates, consequences. See `docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md`.
 - **ADR-010**: Multi-project routing with request-scoped binding — how a single `api` process routes requests to the correct project based on `AuthContext.project_id`. See `docs/project_plans/adrs/adr-010-multi-project-routing-single-process-with-request-scoped-binding.md`.
-- **Migration script**: `backend/scripts/migrate_bearer_to_workspace_token.py`
+- **Token provisioning**: `ccdash token mint` (repo-local CLI) → `backend/application/services/auth/token_provisioning.py`. The legacy `backend/scripts/migrate_bearer_to_workspace_token.py` is a deprecated shim over the same path.
 - **Auth backend**: `backend/adapters/auth/workspace_token.py`
 - **Rollback script**: `backend/scripts/rollback.sql`

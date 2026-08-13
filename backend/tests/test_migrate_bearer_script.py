@@ -79,10 +79,25 @@ class TestMigrateBearerScript(unittest.IsolatedAsyncioTestCase):
         project: str = "test-project",
         description: str = "Test migration",
     ) -> int:
-        """Call _run_migration() directly (async) to avoid asyncio.run() nesting."""
-        from backend.scripts.migrate_bearer_to_workspace_token import _run_migration
+        """Provision schema, then drive the deprecated shim's async _run().
 
-        return await _run_migration(
+        The shim now delegates to the shared, backend-aware provisioning path
+        (node_01KZVXWY2CR9V2GG04PQNFZ1EM), which NEVER runs migrations — so the
+        test must bring the schema up first, exactly as an operator now does
+        before `ccdash token mint`.
+        """
+        import backend.db.connection as _dbc
+        from backend.db.sqlite_migrations import run_migrations
+        from backend.scripts.migrate_bearer_to_workspace_token import _run
+
+        _dbc._connection = None
+        db = await _dbc.get_connection()
+        await run_migrations(db)
+        await db.commit()
+        await _dbc.close_connection()
+        _dbc._connection = None
+
+        return await _run(
             token=token,
             workspace_id=workspace,
             project_id=project,

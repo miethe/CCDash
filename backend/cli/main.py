@@ -15,6 +15,7 @@ from backend.cli.commands.routing import routing_app
 from backend.cli.commands.session import session_app
 from backend.cli.commands.status import status_app
 from backend.cli.commands.system import system_app
+from backend.cli.commands.token import token_app
 from backend.cli.commands.workflow import workflow_app
 from backend.cli.output import OutputMode
 
@@ -78,6 +79,7 @@ app.add_typer(system_app, name="system", help="System-wide metrics across all pr
 app.add_typer(session_app, name="session", help="Session intelligence commands.")
 app.add_typer(persona_app, name="persona", help="Persona extraction from session logs.")
 app.add_typer(provider_app, name="provider", help="Provider dimension commands.")
+app.add_typer(token_app, name="token", help="Workspace-token provisioning.")
 app.add_typer(
     research_run_app,
     name="research-run",
