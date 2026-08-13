@@ -551,6 +551,10 @@ class StorageProfileConfigTests(unittest.TestCase):
                 "migration_governance",
                 "schema_migrations",
                 "auth_contract",
+                # AC3 of node_01KZVXW3ES7ED0EAS8J0MZHRQY: a workspace-token
+                # snapshot that can never load makes every bearer request 401,
+                # so it degrades api readiness instead of only logging.
+                "token_snapshot",
             ),
         )
         self.assertEqual(
@@ -565,6 +569,10 @@ class StorageProfileConfigTests(unittest.TestCase):
                 "migration_governance",
                 "schema_migrations",
                 "auth_contract",
+                # AC3 of node_01KZVXW3ES7ED0EAS8J0MZHRQY: a workspace-token
+                # snapshot that can never load makes every bearer request 401,
+                # so it degrades api readiness instead of only logging.
+                "token_snapshot",
             ),
         )
         self.assertEqual(

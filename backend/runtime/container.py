@@ -58,6 +58,7 @@ from backend.project_manager import db_project_manager
 from backend.runtime_ports import build_core_ports, build_runtime_metadata, build_workspace_registry
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
 from backend.services.session_naming_local_backend import resolve_naming_backend
+from backend.adapters.auth.workspace_token import get_snapshot_health
 
 logger = logging.getLogger("ccdash.runtime")
 
@@ -942,6 +943,9 @@ class RuntimeContainer:
         startup_sync_state = str(status.get("startupSync", "idle"))
         startup_sync_enabled = bool(status.get("startupSyncEnabled", getattr(config, "STARTUP_SYNC_ENABLED", True)))
         required_checks = set(runtime_contract.readiness_checks)
+        # Process-local, DB-free read (see SnapshotHealth): the readiness probe
+        # must never issue its own query, or the probe becomes a failure mode.
+        snapshot_health = get_snapshot_health()
         worker_binding_required = self.profile.name in {"worker", "worker-watch"}
         watcher_runtime_required = "watcher_runtime" in required_checks
         startup_sync_required = "startup_sync" in required_checks
@@ -1110,6 +1114,72 @@ class RuntimeContainer:
                     "configured": auth_configured,
                     "missingRequiredVariables": list(auth_state["missingRequiredVariables"]),
                 },
+            ),
+            self._probe_check(
+                code="token_snapshot",
+                category="auth",
+                # AC3 of node_01KZVXW3ES7ED0EAS8J0MZHRQY. A workspace-token
+                # snapshot that cannot load is fail-CLOSED (every bearer request
+                # 401s) but used to be entirely silent — on Postgres the
+                # aiosqlite-idiom bug meant it never loaded at all and nothing
+                # here said so.
+                #
+                # The ladder below is deliberately NOT "fail if not loaded".
+                # The snapshot loads LAZILY, on the first authenticated request
+                # (WorkspaceTokenAuthBackend is a per-process singleton behind a
+                # FastAPI Depends). Readiness gates `compose up --wait`, the
+                # Docker healthcheck and /redeploy's health gate — so failing on
+                # "not yet loaded" would deadlock: ready needs a request, and a
+                # request needs ready. "Never attempted" therefore passes; only
+                # "attempted and never once succeeded" fails.
+                status=(
+                    "not_applicable"
+                    if not self.profile.capabilities.auth
+                    else "pass"
+                    if snapshot_health.last_attempt_at is None
+                    else "pass"
+                    if snapshot_health.ever_loaded
+                    and snapshot_health.last_error_class is None
+                    else "warn"
+                    if snapshot_health.ever_loaded
+                    else "fail"
+                ),
+                required="token_snapshot" in required_checks,
+                summary=(
+                    "This runtime does not serve authenticated HTTP traffic."
+                    if not self.profile.capabilities.auth
+                    else "Token snapshot has not been loaded yet (loads lazily on the first authenticated request)."
+                    if snapshot_health.last_attempt_at is None
+                    else "Workspace-token snapshot is loaded ({} active token(s)).".format(
+                        snapshot_health.active_token_count
+                    )
+                    if snapshot_health.ever_loaded
+                    and snapshot_health.last_error_class is None
+                    else "Workspace-token snapshot reload is FAILING; serving the last-known-good snapshot."
+                    if snapshot_health.ever_loaded
+                    else "Workspace-token snapshot has NEVER loaded successfully — every bearer token will be rejected."
+                ),
+                detail=(
+                    "auth is not served by this runtime profile."
+                    if not self.profile.capabilities.auth
+                    else "No authenticated request has been served yet, so no load has been attempted."
+                    if snapshot_health.last_attempt_at is None
+                    else "active_token_count={} (0 is legitimate but means every bearer request 401s until a token is minted).".format(
+                        snapshot_health.active_token_count
+                    )
+                    if snapshot_health.ever_loaded
+                    and snapshot_health.last_error_class is None
+                    else "last_error_class={} consecutive_failures={}; the previous good snapshot is still being served.".format(
+                        snapshot_health.last_error_class,
+                        snapshot_health.consecutive_failures,
+                    )
+                    if snapshot_health.ever_loaded
+                    else "last_error_class={} consecutive_failures={}. Workspace-token auth cannot work in this state; check the DB backend and the workspace_tokens table.".format(
+                        snapshot_health.last_error_class,
+                        snapshot_health.consecutive_failures,
+                    )
+                ),
+                data=snapshot_health.as_dict(),
             ),
             self._probe_check(
                 code="worker_binding",
@@ -1320,6 +1390,9 @@ class RuntimeContainer:
                     "missingRequiredVariables": list(status.get("authProviderMissingRequiredVariables", ())),
                     "behavior": status.get("runtimeAuthBehavior"),
                     "guardrail": auth_guardrail,
+                    # AC3: snapshot-load health, so a fail-closed auth backend is
+                    # visible in /api/health/detail and not only in a log line.
+                    "tokenSnapshot": snapshot_health.as_dict(),
                 },
                 "binding": {
                     "projectId": self.project_binding.project.id if self.project_binding is not None else None,

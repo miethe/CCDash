@@ -35,6 +35,7 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable, Awaitable
+from dataclasses import dataclass
 from typing import Any
 
 import aiosqlite
@@ -67,6 +68,96 @@ def _secret_prefix(secret: str) -> str:
 def _fingerprint(secret: str) -> str:
     """SHA-256 fingerprint of the plaintext secret for LRU keying."""
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+# --------------------------------------------------------------------------- #
+# Snapshot health (process-local, read by the readiness/health surface)         #
+# --------------------------------------------------------------------------- #
+@dataclass
+class SnapshotHealth:
+    """Process-local record of how the last token-snapshot load went.
+
+    Why this exists (AC3 of node_01KZVXW3ES7ED0EAS8J0MZHRQY): a snapshot-load
+    failure is fail-CLOSED — every bearer request 401s — but it used to be
+    entirely SILENT, observable only as one log line. On the Postgres backend
+    the aiosqlite-idiom bug meant the snapshot was never populated at all, so
+    workspace-token auth could not work, and nothing in ``/api/health/detail``
+    or ``/readyz`` said so. Fail-closed must not be indistinguishable from
+    healthy.
+
+    Deliberately process-local and synchronous: the health/readiness surface
+    must never issue its own DB query to answer "is auth working" (that would
+    add a failure mode to the probe itself, and readiness gates
+    ``compose up --wait``). ``_reload_snapshot`` writes here; the probe reads.
+
+    ``last_error_class`` holds the exception CLASS NAME only — never the
+    message. A DSN, password or host can appear in a DB driver's exception
+    text, and this record is serialised into an HTTP health payload.
+    """
+
+    ever_loaded: bool = False
+    """True once a snapshot load has SUCCEEDED at least once this process."""
+
+    last_success_at: float | None = None
+    """Wall-clock (``time.time()``) of the last successful load; None if never."""
+
+    last_attempt_at: float | None = None
+    """Wall-clock of the last load attempt, successful or not."""
+
+    last_error_class: str | None = None
+    """Exception class name of the most recent failure; None if the last
+    attempt succeeded. NEVER the exception message — see class docstring."""
+
+    consecutive_failures: int = 0
+    """Failures since the last success. 0 when healthy."""
+
+    active_token_count: int | None = None
+    """Rows in the last successful snapshot. 0 is legitimate (no tokens minted)
+    and is NOT an error — but it also means every bearer request will 401, so
+    the probe reports it distinctly rather than conflating it with a failure."""
+
+    def record_success(self, token_count: int) -> None:
+        now = time.time()
+        self.ever_loaded = True
+        self.last_success_at = now
+        self.last_attempt_at = now
+        self.last_error_class = None
+        self.consecutive_failures = 0
+        self.active_token_count = token_count
+
+    def record_failure(self, exc: BaseException) -> None:
+        self.last_attempt_at = time.time()
+        self.last_error_class = type(exc).__name__
+        self.consecutive_failures += 1
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialise for the health payload (camelCase, matching that surface)."""
+        return {
+            "everLoaded": self.ever_loaded,
+            "lastSuccessAt": self.last_success_at,
+            "lastAttemptAt": self.last_attempt_at,
+            "lastErrorClass": self.last_error_class,
+            "consecutiveFailures": self.consecutive_failures,
+            "activeTokenCount": self.active_token_count,
+        }
+
+
+_SNAPSHOT_HEALTH = SnapshotHealth()
+
+
+def get_snapshot_health() -> SnapshotHealth:
+    """Return the process-local snapshot-health record.
+
+    Synchronous and DB-free by design so the readiness probe cannot itself
+    become a source of failure.
+    """
+    return _SNAPSHOT_HEALTH
+
+
+def reset_snapshot_health() -> None:
+    """Reset the record. For tests only — never call from runtime code."""
+    global _SNAPSHOT_HEALTH
+    _SNAPSHOT_HEALTH = SnapshotHealth()
 
 
 # --------------------------------------------------------------------------- #
@@ -271,11 +362,16 @@ class WorkspaceTokenAuthBackend:
                 # asyncpg Pool/Connection: fetch() returns a list of Records
                 # directly — no cursor context manager.
                 rows = await db.fetch(query)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             # Loud failure: a snapshot-load error must never be
             # indistinguishable from "0 active tokens" (see the 0-row branch
             # below). We keep the snapshot as-is (fail closed — never widen
             # what verify() will accept) and let SNAPSHOT_TTL_SECONDS retry.
+            #
+            # AC3: a log line alone is not enough — this also degrades the
+            # readiness/health surface via the process-local health record, so
+            # fail-closed is observable rather than silent.
+            _SNAPSHOT_HEALTH.record_failure(exc)
             logger.exception(
                 "auth.workspace_token: failed to reload token snapshot "
                 "(snapshot NOT updated; every bearer request will keep "
@@ -289,6 +385,7 @@ class WorkspaceTokenAuthBackend:
             for r in rows
         ]
         self._snapshot_loaded_at = time.monotonic()
+        _SNAPSHOT_HEALTH.record_success(len(self._snapshot))
         if self._snapshot:
             logger.debug(
                 "auth.workspace_token: snapshot refreshed (%d active tokens)",

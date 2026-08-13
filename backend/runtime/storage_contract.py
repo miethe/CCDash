@@ -16,6 +16,7 @@ ProbeCheckCode = Literal[
     "migration_governance",
     "schema_migrations",
     "auth_contract",
+    "token_snapshot",
     "worker_binding",
     "watcher_runtime",
     "startup_sync",
@@ -145,6 +146,13 @@ _RUNTIME_STORAGE_CONTRACTS: dict[str, RuntimeStorageContract] = {
             "migration_governance",
             "schema_migrations",
             "auth_contract",
+            # AC3: workspace-token auth silently dead on Postgres was invisible
+            # to readiness. Required on api only — this is the profile that
+            # serves authenticated HTTP, so a permanently-unloadable token
+            # snapshot here means real clients get 401s. The worker profile has
+            # auth_behavior="request_auth_not_expected", so it is not required
+            # there even though it shares the backend.
+            "token_snapshot",
         ),
         live_probe_interval_seconds=15,
         ready_probe_interval_seconds=20,
