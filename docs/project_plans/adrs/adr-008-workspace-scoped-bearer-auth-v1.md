@@ -22,7 +22,7 @@ Today's auth is a single static bearer (`backend/adapters/auth/bearer.py:22, 74-
 
 **v1 ships workspace-scoped static bearer tokens.** The existing single-tenant bearer guard is extended (not replaced) with a `workspace_tokens` table that resolves an inbound `Authorization: Bearer <token>` to a `(workspace_id, project_id)` pair. The auth dependency injects an `AuthContext{workspace_id, project_id, token_id}` into every authenticated request. All repository queries that touch session/document/task/feature data become **workspace-scoped** by passing `workspace_id` from `AuthContext` as an explicit predicate.
 
-The legacy single-bearer mode (`CCDASH_AUTH_TOKEN`) continues to work in `local` runtime profile. In `api`/`worker` profiles, it is deprecated; a one-shot migration script (`backend/scripts/migrate_bearer_to_workspace_token.py`) creates a single workspace + token equivalent to today's single-bearer setup.
+The legacy single-bearer mode (`CCDASH_AUTH_TOKEN`) continues to work in `local` runtime profile. In `api`/`worker` profiles, it is deprecated; provisioning moved to the CLI via `ccdash token mint --project <project-id>` (which reads `CCDASH_AUTH_TOKEN` or accepts `--token <plaintext>`) and creates a single workspace + token equivalent to today's single-bearer setup. The old `backend/scripts/migrate_bearer_to_workspace_token.py` is retained as a deprecated shim.
 
 OIDC, mTLS, and git-identity are deferred to post-v1 (see Non-Goals in design-spec §7).
 
