@@ -1,0 +1,17 @@
+[
+  {
+    "plan_ref": "docs/project_plans/implementation_plans/context-fabric-program-v1.md",
+    "node_id": "node_01KYWWZVSMZQ0NSGSTHAZ7BSMW",
+    "_label": "CF program work_package"
+  },
+  {
+    "plan_ref": "docs/project_plans/implementation_plans/context-fabric-program-v1.md",
+    "node_id": "node_01KYWWZ832QW2Q79PATCG7B66D",
+    "_label": "CF program work_area (parent)"
+  },
+  {
+    "plan_ref": "docs/project_plans/implementation_plans/cross-harness-self-state-v1.md",
+    "node_id": "node_01KY69N3K553RTX7MP679GMKNP",
+    "_label": "BP-5 - Cross-harness self-state & open-intent continuity"
+  }
+]

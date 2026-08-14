@@ -1,0 +1,114 @@
+# .claude/aos-artifacts.yaml — artifact manifest for CCDash
+#
+# Why this file exists (it was missing, and that was half the root cause):
+#   The provisioning gate (.claude/rules/artifact-provisioning.md) is BINDING-GATED — a true no-op
+#   unless this manifest exists or a plan declares `required_artifacts`. CCDash had neither, AND its
+#   .claude/{skills,agents,commands} were TRACKED SYMLINKS into skillmeat/.claude/, so:
+#     • every artifact CCDash appeared to own was actually skillmeat's, editable only by committing
+#       to that repo, and `git add .claude/skills/...` failed with "pathspec is beyond a symbolic
+#       link" — the files could never be committed from the repo that appeared to own them;
+#     • per .claude/rules/artifact-registration.md clause 1 a symlink is an UNRECORDED deployment,
+#       so .claude/.skillmeat-deployed.toml listed exactly ONE artifact (add-animation, 2026-02-22,
+#       predating the symlinks) while ~100 artifacts were reachable;
+#     • fleet tooling counted CCDash and skillmeat as one repo, because
+#       realpath(.claude/skills/dev-execution/hooks) resolved into skillmeat.
+#
+#   Symlinks broken and this curated set deployed 2026-08-14 (node_01M00QZAK13HDZVFFEWGM88MRE).
+#   Nick's decision: a SkillMeat-deployed CURATED set, not a full 100-artifact mirror.
+#
+# The set below is derived from what CCDash's OWN (non-symlinked) files reference —
+# .claude/workflows/*.js, .claude/settings*.json, CLAUDE.md, docs/ — plus the command→skill
+# closure. Every entry was verified present in the enterprise catalog by name before being
+# declared, because a declared-but-absent artifact makes the gate exit 2.
+#
+# Schema + semantics: agentic_meta_dev/templates/aos-artifacts.yaml.tmpl.
+
+schema_version: 1
+project: "CCDash"
+
+policy:
+  # auto = deploy in-catalog gaps automatically. CCDash runs execution workflows locally, so a
+  # missing artifact should be repaired rather than merely reported.
+  mode: auto
+
+artifacts:
+  # --- Skills ---------------------------------------------------------------------------
+  # `ccdash` is special: its UPSTREAM is this repo (skills/ccdash/, outside .claude/). The copy the
+  # gate deploys here is a DEPLOYED COPY of the enterprise artifact published from that upstream.
+  # Never edit .claude/skills/ccdash/ — edit skills/ccdash/ and re-publish
+  # (`skillmeat enterprise add ./skills/ccdash/ --type skill`).
+  - {name: ccdash,               type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "upstream is THIS repo at skills/ccdash/ — see docs/ARTIFACT-UPSTREAM-REGISTRY.md in agentic_meta_dev"}
+  - {name: dev-execution,        type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "execution engine; owns the hooks tree fleet tooling resolves"}
+  - {name: planning,             type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "PRD/plan authoring"}
+  - {name: artifact-tracking,    type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "progress/frontmatter tracking"}
+  - {name: plan-status,          type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "cross-feature plan visibility"}
+  - {name: debugging,            type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "referenced by /fix:debug, whose Step 0 is MANDATORY"}
+  - {name: council-review,       type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "ARC adversarial review; NOTE the SKILL exists but agent:council-review does NOT — see node_01M00NVT1S5WGY8T6W71TB676D"}
+  - {name: delegation-router,    type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "routing decisions for delegated legs"}
+  - {name: workflow-authoring,   type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "governs .claude/workflows/*.js in this repo"}
+  - {name: changelog-sync,       type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "release-adjacent"}
+  - {name: release,              type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "release workflow"}
+  - {name: meatycapture-capture, type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "reached via command closure (/mc), not a direct file reference"}
+  - {name: op,                   type: skill, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "Operator route skill"}
+
+  # --- Agents -------------------------------------------------------------------------------
+  # The set .claude/workflows/*.js dispatch by agentType, plus the provider-routing executors.
+  # ⚠️ agent:council-review is DELIBERATELY ABSENT from this list: it does not exist in the
+  # catalog. execute-contract.js hands the council-review SKILL name to agent() as an agentType,
+  # so a Tier-1 contract with review_intensity:'council' silently gets no council. That is tracked
+  # as node_01M00NVT1S5WGY8T6W71TB676D — declaring a nonexistent artifact here would make the
+  # provisioning gate exit 2 and would not fix the dispatch bug.
+  - {name: task-completion-validator, type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "mandatory reviewer gate"}
+  - {name: karen,                     type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "whole-tree reality check"}
+  - {name: code-reviewer,             type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "reviewer lens"}
+  - {name: senior-code-reviewer,      type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "reviewer lens"}
+  - {name: codebase-explorer,         type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "read-only exploration"}
+  - {name: search-specialist,         type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "research fan-out"}
+  - {name: implementation-planner,    type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "plan decomposition"}
+  - {name: feature-sprint-executor,   type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "Mode C Tier 1 sprint"}
+  - {name: phase-owner,               type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "per-phase orchestration"}
+  - {name: artifact-tracker,          type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "progress writes"}
+  - {name: ica-executor,              type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "provider-routing lane; inert unless provider_routing_enabled=true"}
+  - {name: codex-executor,            type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "provider-routing lane"}
+  - {name: gemini-executor,           type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "provider-routing lane"}
+  - {name: bob-delegate-executor,     type: agent, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "provider-routing lane"}
+
+  # --- Commands -----------------------------------------------------------------------------
+  # ⚠️ READ THIS BEFORE ADDING A COMMAND HERE. Commands deploy FLAT into .claude/commands/, but the
+  # namespaced ones CCDash's docs invoke — /dev:autopilot, /plan:plan-feature, /fix:debug,
+  # /review:code-review — resolve from a SUBDIRECTORY (.claude/commands/dev/autopilot.md). Before
+  # the symlink break they resolved through skillmeat/.claude/commands/, which HAS dev/, plan/,
+  # fix/ and review/ subdirs. A flat deploy therefore does NOT restore /dev:autopilot; it creates a
+  # differently-named /autopilot alongside it.
+  #
+  # That is fine, because /dev:* and /plan:* are GLOBALLY symlinked into the launchpad
+  # (~/.claude/commands/{dev,plan,itt} -> agentic_meta_dev/.claude/commands/...), are self-updating,
+  # and per docs/ARTIFACT-UPSTREAM-REGISTRY.md "commands have no relative-path hook contract, so a
+  # global-only project is fully functional". The flat copies below are recorded deployments; the
+  # namespaced slash-commands keep coming from the global lane. Do NOT try to fix this by
+  # hand-copying skillmeat's dev/ and plan/ subdirs in — that is the unrecorded-deployment
+  # antipattern this whole node exists to remove.
+  #
+  # FOUR names were deployed and then withdrawn: execute-plan, execute-contract, spike, explore.
+  # The catalog serves those as `.js` WORKFLOW SCRIPTS under type `command`, so they landed as
+  # .claude/commands/execute-plan.js — a .js file is never a Claude Code command, and CCDash already
+  # carries those scripts correctly in .claude/workflows/. Their files were removed by hand because
+  # `skillmeat undeploy` in enterprise mode reports {"status":"success"} and removes NOTHING (no
+  # file deleted, no ledger row dropped) — so .claude/.skillmeat-deployed.toml still carries stale
+  # rows for those four. Do not read those rows as live deployments.
+  - {name: autopilot,            type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat /autopilot; the namespaced /dev:autopilot resolves globally"}
+  - {name: quick-feature,        type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat"}
+  - {name: execute-phase,        type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat"}
+  - {name: create-feature,       type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat"}
+  - {name: implement-story,      type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat"}
+  - {name: complete-user-story,  type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat"}
+  - {name: plan-feature,         type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat; /plan:plan-feature resolves globally"}
+  - {name: debug,                type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat; /fix:debug resolves globally"}
+  - {name: code-review,          type: command, lifecycle: permanent, status: active, source: catalog, tuned: false, scope: null, version: null, note: "flat; /review:code-review resolves globally"}
+  # add-animation is the ONE pre-existing project deployment (ledger row dated 2026-02-22, predating
+  # the symlinks). Its file was being served through the .claude/commands symlink, so breaking that
+  # symlink removed it. It could NOT be re-deployed: the enterprise bundle for add-animation has no
+  # file members at all, and the deploy guard correctly refused rather than write an empty tree.
+  # Restored by copying the bytes the symlink had been serving — identical content, now a real file.
+  # `tuned: true` so the provisioning gate does not try to overwrite it from that hollow record.
+  - {name: add-animation,        type: command, lifecycle: permanent, status: active, source: project-local, tuned: true, scope: null, version: null, note: "enterprise bundle is EMPTY (no file members) so this cannot be deploy-managed; restored from the bytes the old symlink served"}

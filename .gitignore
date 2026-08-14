@@ -70,3 +70,7 @@ deploy/local-streaming/stream.env
 
 # AOS Operator local run records (file-canonical, machine-local)
 .operator/
+
+# SkillMeat transient deploy locks (zero-byte; no repo in the fleet tracks these)
+.claude/**/*.skillmeat-lock
+.claude/*.skillmeat-lock

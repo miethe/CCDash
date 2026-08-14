@@ -11,3 +11,852 @@ deployment_profile_id = "claude"
 platform = "claude_code"
 profile_root_dir = ".claude"
 collection_sha = "5c0a200ddc01b3afe14bcd5f4ea20522efb479309c9fe761b94ad0455ecf4a0d"
+
+[[deployed]]
+artifact_name = "ccdash"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:36:53.031482+00:00"
+artifact_path = "skills/ccdash"
+content_hash = "3e0d09a9a77c09d7734b3ca708a4a43f4bcc8b15a3f4e8af51bc0e1d39ed6880"
+collection_sha = "3e0d09a9a77c09d7734b3ca708a4a43f4bcc8b15a3f4e8af51bc0e1d39ed6880"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "skills/ccdash/CHANGELOG.md",
+    "skills/ccdash/LICENSE",
+    "skills/ccdash/SKILL.md",
+    "skills/ccdash/SPEC.md",
+    "skills/ccdash/recipes/blog-retrospective-research.md",
+    "skills/ccdash/recipes/container-project-onboarding.md",
+    "skills/ccdash/recipes/feature-retrospective.md",
+    "skills/ccdash/recipes/project-triage.md",
+    "skills/ccdash/recipes/session-cluster-investigation.md",
+    "skills/ccdash/recipes/target-onboarding.md",
+    "skills/ccdash/recipes/task-attribution.md",
+    "skills/ccdash/recipes/unreachable-server.md",
+    "skills/ccdash/recipes/workflow-failure-rootcause.md",
+    "skills/ccdash/references/cli-overview.md",
+    "skills/ccdash/references/command-doctor.md",
+    "skills/ccdash/references/command-feature.md",
+    "skills/ccdash/references/command-report.md",
+    "skills/ccdash/references/command-session.md",
+    "skills/ccdash/references/command-status.md",
+    "skills/ccdash/references/command-target.md",
+    "skills/ccdash/references/command-workflow.md",
+    "skills/ccdash/references/container-project-onboarding.md",
+    "skills/ccdash/references/eval-scenarios.md",
+    "skills/ccdash/references/install-setup.md",
+    "skills/ccdash/references/output-modes.md",
+    "skills/ccdash/references/provenance.md",
+    "skills/ccdash/scripts/preflight.sh",
+    "skills/ccdash/scripts/router-table.json",
+]
+
+[[deployed]]
+artifact_name = "dev-execution"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:37:34.718240+00:00"
+artifact_path = "skills/dev-execution"
+content_hash = "673e5f892293ff4531f4446504c679d5d732636cdf58e9cf276ab13b355719e2"
+collection_sha = "673e5f892293ff4531f4446504c679d5d732636cdf58e9cf276ab13b355719e2"
+local_modifications = false
+enterprise_version = "cas-8c445dd5"
+enterprise_files = [
+    "skills/dev-execution/CHANGELOG.md",
+    "skills/dev-execution/README.md",
+    "skills/dev-execution/SKILL.md",
+    "skills/dev-execution/git-worktree-pr-protocol.md",
+    "skills/dev-execution/hooks/bundle-drift-check.sh",
+    "skills/dev-execution/hooks/finding-sweep.sh",
+    "skills/dev-execution/hooks/finding_sweep.py",
+    "skills/dev-execution/hooks/mode-d-scan.sh",
+    "skills/dev-execution/hooks/mode_d_scan.py",
+    "skills/dev-execution/hooks/phase-complete-capsule.sh",
+    "skills/dev-execution/hooks/post-merge-evidence.sh",
+    "skills/dev-execution/hooks/post_merge_evidence.py",
+    "skills/dev-execution/hooks/pre-commit-sdlc-sync.sh",
+    "skills/dev-execution/hooks/provision-artifacts.sh",
+    "skills/dev-execution/hooks/provision_artifacts.py",
+    "skills/dev-execution/hooks/publish-report.sh",
+    "skills/dev-execution/hooks/publish_report_hook.py",
+    "skills/dev-execution/hooks/sdlc-sync.sh",
+    "skills/dev-execution/hooks/seed-dossier.sh",
+    "skills/dev-execution/hooks/seed_dossier.py",
+    "skills/dev-execution/hooks/tests/test_finding_sweep.sh",
+    "skills/dev-execution/hooks/tests/test_mode_d_scan.sh",
+    "skills/dev-execution/hooks/tests/test_post_merge_evidence.sh",
+    "skills/dev-execution/hooks/tests/test_publish_report_hook.sh",
+    "skills/dev-execution/hooks/tests/test_sdlc_sync.sh",
+    "skills/dev-execution/hooks/tests/test_sdlc_sync_drift.sh",
+    "skills/dev-execution/hooks/tests/test_seed_dossier.sh",
+    "skills/dev-execution/hooks/tests/test_verify_delivery_report.sh",
+    "skills/dev-execution/hooks/tests/test_verify_skillmeat_writeback.sh",
+    "skills/dev-execution/hooks/update-dossier.sh",
+    "skills/dev-execution/hooks/verify-delivery-report.sh",
+    "skills/dev-execution/hooks/verify-skillmeat-writeback.sh",
+    "skills/dev-execution/hooks/verify-writeback.sh",
+    "skills/dev-execution/integrations/artifact-tracking.md",
+    "skills/dev-execution/integrations/request-log-workflow.md",
+    "skills/dev-execution/modes/phase-execution.md",
+    "skills/dev-execution/modes/plan-execution.md",
+    "skills/dev-execution/modes/plan-optimization.md",
+    "skills/dev-execution/modes/quick-execution.md",
+    "skills/dev-execution/modes/scaffold-execution.md",
+    "skills/dev-execution/modes/story-execution.md",
+    "skills/dev-execution/orchestration/agent-assignments.md",
+    "skills/dev-execution/orchestration/batch-delegation.md",
+    "skills/dev-execution/orchestration/parallel-patterns.md",
+    "skills/dev-execution/orchestration/workflow-patterns.md",
+    "skills/dev-execution/references/execution-doctrine.md",
+    "skills/dev-execution/references/gate-risk-classes.md",
+    "skills/dev-execution/references/next-actions-table.md",
+    "skills/dev-execution/references/worktree-isolation-lane.md",
+    "skills/dev-execution/scripts/audit-agent-skills.py",
+    "skills/dev-execution/scripts/complete-phase.py",
+    "skills/dev-execution/scripts/complete-task.py",
+    "skills/dev-execution/validation/completion-criteria.md",
+    "skills/dev-execution/validation/milestone-checks.md",
+    "skills/dev-execution/validation/quality-gates.md",
+    "skills/dev-execution/validation/visual-fidelity.md",
+]
+
+[[deployed]]
+artifact_name = "planning"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:37:43.598338+00:00"
+artifact_path = "skills/planning"
+content_hash = "a3600fa671eb0fd67c9c447b16e4c34c5d9d8e42512731062cdd8387a923df00"
+collection_sha = "a3600fa671eb0fd67c9c447b16e4c34c5d9d8e42512731062cdd8387a923df00"
+local_modifications = false
+enterprise_version = "cas-f1db4689996d"
+enterprise_files = [
+    "skills/planning/CHANGELOG.md",
+    "skills/planning/README.md",
+    "skills/planning/SKILL.md",
+    "skills/planning/references/ac-schema.md",
+    "skills/planning/references/deferred-items-and-findings.md",
+    "skills/planning/references/doc-finalization-guidance.md",
+    "skills/planning/references/estimation-heuristics.md",
+    "skills/planning/references/exploration-legs-catalog.md",
+    "skills/planning/references/file-structure.md",
+    "skills/planning/references/multi-model-guidance.md",
+    "skills/planning/references/optimization-patterns.md",
+    "skills/planning/references/plan-doctrine.md",
+    "skills/planning/references/plan-frontmatter-schema.md",
+    "skills/planning/references/planning-review-board.md",
+    "skills/planning/references/required-artifacts-guidance.md",
+    "skills/planning/references/subagent-assignments.md",
+    "skills/planning/references/ui-extraction-guidance.md",
+    "skills/planning/references/wave-plan-guidance.md",
+    "skills/planning/scripts/README.md",
+    "skills/planning/scripts/enrich_frontmatter.py",
+    "skills/planning/templates/decisions-block-template.md",
+    "skills/planning/templates/exploration-charter-template.md",
+    "skills/planning/templates/feasibility-brief-template.md",
+    "skills/planning/templates/feature-contract-template.md",
+    "skills/planning/templates/human-brief-template.md",
+    "skills/planning/templates/implementation-plan-template.md",
+    "skills/planning/templates/milestone-plan-template.md",
+    "skills/planning/templates/phase-breakdown-template.md",
+    "skills/planning/templates/prd-template.md",
+]
+
+[[deployed]]
+artifact_name = "artifact-tracking"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:37:51.001600+00:00"
+artifact_path = "skills/artifact-tracking"
+content_hash = "866d733b2651f36f0de5cebd41656f622f553684026c34da2ca303210ab21d42"
+collection_sha = "866d733b2651f36f0de5cebd41656f622f553684026c34da2ca303210ab21d42"
+local_modifications = false
+enterprise_version = "cas-f96c5279"
+enterprise_files = [
+    "skills/artifact-tracking/CHANGELOG.md",
+    "skills/artifact-tracking/SKILL.md",
+    "skills/artifact-tracking/SUMMARY.md",
+    "skills/artifact-tracking/TEMPLATES-INDEX.md",
+    "skills/artifact-tracking/agents/artifact-query.md",
+    "skills/artifact-tracking/agents/artifact-tracker-full.md",
+    "skills/artifact-tracking/agents/artifact-tracker.md",
+    "skills/artifact-tracking/agents/artifact-validator.md",
+    "skills/artifact-tracking/best-practices.md",
+    "skills/artifact-tracking/common-patterns.md",
+    "skills/artifact-tracking/creating-artifacts.md",
+    "skills/artifact-tracking/format-specification.md",
+    "skills/artifact-tracking/intenttree-sync.md",
+    "skills/artifact-tracking/migration-guide.md",
+    "skills/artifact-tracking/orchestration-reference.md",
+    "skills/artifact-tracking/plan-status-management.md",
+    "skills/artifact-tracking/query-patterns.md",
+    "skills/artifact-tracking/querying-artifacts.md",
+    "skills/artifact-tracking/recovery-optimized-schema.md",
+    "skills/artifact-tracking/schemas/DELIVERY-SUMMARY.md",
+    "skills/artifact-tracking/schemas/EXAMPLE-FRONTMATTER.md",
+    "skills/artifact-tracking/schemas/README.md",
+    "skills/artifact-tracking/schemas/SCHEMAS-INDEX.md",
+    "skills/artifact-tracking/schemas/VALIDATION-REFERENCE.md",
+    "skills/artifact-tracking/schemas/bug-fix.schema.yaml",
+    "skills/artifact-tracking/schemas/context.schema.yaml",
+    "skills/artifact-tracking/schemas/design-spec.schema.yaml",
+    "skills/artifact-tracking/schemas/envelope.schema.yaml",
+    "skills/artifact-tracking/schemas/feature-contract.schema.yaml",
+    "skills/artifact-tracking/schemas/field-reference.md",
+    "skills/artifact-tracking/schemas/implementation-plan.schema.yaml",
+    "skills/artifact-tracking/schemas/meta-plan.schema.yaml",
+    "skills/artifact-tracking/schemas/observation.schema.yaml",
+    "skills/artifact-tracking/schemas/phase-plan.schema.yaml",
+    "skills/artifact-tracking/schemas/prd.schema.yaml",
+    "skills/artifact-tracking/schemas/progress.schema.yaml",
+    "skills/artifact-tracking/schemas/quick-feature.schema.yaml",
+    "skills/artifact-tracking/schemas/report.schema.yaml",
+    "skills/artifact-tracking/schemas/spike.schema.yaml",
+    "skills/artifact-tracking/scripts/README.md",
+    "skills/artifact-tracking/scripts/_evidence_refs.py",
+    "skills/artifact-tracking/scripts/_frontmatter_edit.py",
+    "skills/artifact-tracking/scripts/_itt_client.py",
+    "skills/artifact-tracking/scripts/_slug_resolution.py",
+    "skills/artifact-tracking/scripts/_status_aliases.py",
+    "skills/artifact-tracking/scripts/ac-coverage-report.py",
+    "skills/artifact-tracking/scripts/backfill-node-evidence.py",
+    "skills/artifact-tracking/scripts/check-plan-authoring.py",
+    "skills/artifact-tracking/scripts/convert_to_hybrid.py",
+    "skills/artifact-tracking/scripts/intenttree_capture.py",
+    "skills/artifact-tracking/scripts/intenttree_sync.py",
+    "skills/artifact-tracking/scripts/manage-exploration-status.py",
+    "skills/artifact-tracking/scripts/manage-plan-status.py",
+    "skills/artifact-tracking/scripts/migrate-frontmatter.py",
+    "skills/artifact-tracking/scripts/migrate-plan-layout.py",
+    "skills/artifact-tracking/scripts/migrate_all.py",
+    "skills/artifact-tracking/scripts/plan-node-drift.py",
+    "skills/artifact-tracking/scripts/query_artifacts.py",
+    "skills/artifact-tracking/scripts/requirements.txt",
+    "skills/artifact-tracking/scripts/stamp-node-slug.py",
+    "skills/artifact-tracking/scripts/stamp-plan-binding.py",
+    "skills/artifact-tracking/scripts/tests/__init__.py",
+    "skills/artifact-tracking/scripts/tests/test_backfill_node_evidence.py",
+    "skills/artifact-tracking/scripts/tests/test_check_plan_authoring.py",
+    "skills/artifact-tracking/scripts/tests/test_delivery_quality_scripts.py",
+    "skills/artifact-tracking/scripts/tests/test_evidence_refs.py",
+    "skills/artifact-tracking/scripts/tests/test_frontmatter_edit.py",
+    "skills/artifact-tracking/scripts/tests/test_intenttree_capture.py",
+    "skills/artifact-tracking/scripts/tests/test_intenttree_capture_slug.py",
+    "skills/artifact-tracking/scripts/tests/test_manage_exploration_status.py",
+    "skills/artifact-tracking/scripts/tests/test_migrate_plan_layout.py",
+    "skills/artifact-tracking/scripts/tests/test_plan_node_drift.py",
+    "skills/artifact-tracking/scripts/tests/test_stamp_node_slug.py",
+    "skills/artifact-tracking/scripts/tests/test_stamp_plan_binding.py",
+    "skills/artifact-tracking/scripts/tests/test_update_field.py",
+    "skills/artifact-tracking/scripts/tests/test_update_status.py",
+    "skills/artifact-tracking/scripts/tests/test_validate_plan_frontmatter.py",
+    "skills/artifact-tracking/scripts/tests/test_what_shipped.py",
+    "skills/artifact-tracking/scripts/tracked-plan-node-bindings.json",
+    "skills/artifact-tracking/scripts/update-batch.py",
+    "skills/artifact-tracking/scripts/update-field.py",
+    "skills/artifact-tracking/scripts/update-status.py",
+    "skills/artifact-tracking/scripts/validate-phase-completion.py",
+    "skills/artifact-tracking/scripts/validate-plan-frontmatter.py",
+    "skills/artifact-tracking/scripts/validate_artifact.py",
+    "skills/artifact-tracking/scripts/verify-slug-roundtrip.py",
+    "skills/artifact-tracking/scripts/what-shipped.py",
+    "skills/artifact-tracking/templates/README.md",
+    "skills/artifact-tracking/templates/bug-fix-template.md",
+    "skills/artifact-tracking/templates/context-template.md",
+    "skills/artifact-tracking/templates/observation-template.md",
+    "skills/artifact-tracking/templates/progress-template.md",
+    "skills/artifact-tracking/updating-artifacts.md",
+    "skills/artifact-tracking/validating-artifacts.md",
+]
+
+[[deployed]]
+artifact_name = "plan-status"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:37:57.569913+00:00"
+artifact_path = "skills/plan-status"
+content_hash = "54d511bf0cd2723f0a6aecb32aeb31bb85de682b9125bd230e003de52bd73af9"
+collection_sha = "54d511bf0cd2723f0a6aecb32aeb31bb85de682b9125bd230e003de52bd73af9"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "skills/plan-status/SKILL.md",
+    "skills/plan-status/scripts/plan-status-report.py",
+]
+
+[[deployed]]
+artifact_name = "debugging"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:38:04.587383+00:00"
+artifact_path = "skills/debugging"
+content_hash = "65a34781672df82678747dd95bd06053b36e5240b718fa47a2a91685db2b2f86"
+collection_sha = "65a34781672df82678747dd95bd06053b36e5240b718fa47a2a91685db2b2f86"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "skills/debugging/SKILL.md",
+    "skills/debugging/modes/comprehensive-remediation.md",
+    "skills/debugging/modes/post-incident-retrospective.md",
+    "skills/debugging/modes/quick-fix.md",
+    "skills/debugging/modes/triage.md",
+    "skills/debugging/references/agent-routing.md",
+    "skills/debugging/references/prd-discovery.md",
+    "skills/debugging/references/remediation-planning.md",
+    "skills/debugging/references/severity-assessment.md",
+    "skills/debugging/references/troubleshooting/api-backend.md",
+    "skills/debugging/references/troubleshooting/cross-layer.md",
+    "skills/debugging/references/troubleshooting/database.md",
+    "skills/debugging/references/troubleshooting/frontend-react.md",
+]
+
+[[deployed]]
+artifact_name = "council-review"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:38:11.899239+00:00"
+artifact_path = "skills/council-review"
+content_hash = "335967513a961c3435b572050b78c1f52028523feff69d73a11da2e7bce1b8e6"
+collection_sha = "335967513a961c3435b572050b78c1f52028523feff69d73a11da2e7bce1b8e6"
+local_modifications = false
+enterprise_version = "cas-7293fa5c"
+enterprise_files = [
+    "skills/council-review/SKILL.md",
+    "skills/council-review/references/external-reviewers.md",
+    "skills/council-review/references/output-contract.md",
+    "skills/council-review/references/run-workflow.md",
+]
+
+[[deployed]]
+artifact_name = "delegation-router"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:38:20.040100+00:00"
+artifact_path = "skills/delegation-router"
+content_hash = "d4be352ea6e761f739a775fe8aa3f665e3e6dba088e4249c4b740aa10a5d956b"
+collection_sha = "d4be352ea6e761f739a775fe8aa3f665e3e6dba088e4249c4b740aa10a5d956b"
+local_modifications = false
+enterprise_version = "cas-fbeafd36"
+enterprise_files = [
+    "skills/delegation-router/CHANGELOG.md",
+    "skills/delegation-router/LICENSE",
+    "skills/delegation-router/README.md",
+    "skills/delegation-router/SKILL.md",
+    "skills/delegation-router/SPEC.md",
+    "skills/delegation-router/audit-log.js",
+    "skills/delegation-router/entry-key.js",
+    "skills/delegation-router/feedback-cli.js",
+    "skills/delegation-router/hooks/routing-log-sink.py",
+    "skills/delegation-router/log-cli.js",
+    "skills/delegation-router/model-registry.generated.json",
+    "skills/delegation-router/model-registry.yaml",
+    "skills/delegation-router/recipe.toml",
+    "skills/delegation-router/references/bootstrap.md",
+    "skills/delegation-router/references/di1-feedback-driver-decision.md",
+    "skills/delegation-router/references/model-registry.md",
+    "skills/delegation-router/references/use-case-rankings.md",
+    "skills/delegation-router/references/workflow-walkthrough.md",
+    "skills/delegation-router/resolve-cli.js",
+    "skills/delegation-router/resolver.js",
+    "skills/delegation-router/routing-feedback-contract.v1.json",
+    "skills/delegation-router/routing-feedback.js",
+    "skills/delegation-router/routing-record.js",
+    "skills/delegation-router/routing-record.test.js",
+    "skills/delegation-router/scripts/build-model-registry.py",
+    "skills/delegation-router/scripts/check-registry-fresh.py",
+    "skills/delegation-router/scripts/probe-ica-models.sh",
+    "skills/delegation-router/scripts/sync-to-global.sh",
+    "skills/delegation-router/task-class-vocabulary.js",
+    "skills/delegation-router/task-class-vocabulary.v1.json",
+    "skills/delegation-router/tests/fixtures/ccdash-routing-rollup.live.json",
+    "skills/delegation-router/tests/fixtures/real-run-wf_2908b911-58f.report.json",
+    "skills/delegation-router/tests/test-audit-log-blocked.js",
+    "skills/delegation-router/tests/test-audit-log-realization.js",
+    "skills/delegation-router/tests/test-context-class.js",
+    "skills/delegation-router/tests/test-entry-key.js",
+    "skills/delegation-router/tests/test-feedback-cli.js",
+    "skills/delegation-router/tests/test-local-overrides.js",
+    "skills/delegation-router/tests/test-p3-dry-run.js",
+    "skills/delegation-router/tests/test-p4-mode-d-injection.js",
+    "skills/delegation-router/tests/test-registry-resolver.js",
+    "skills/delegation-router/tests/test-resolve-cli.js",
+    "skills/delegation-router/tests/test-resolver.js",
+    "skills/delegation-router/tests/test-routing-feedback.js",
+    "skills/delegation-router/tests/test-routing-log-run-drain.js",
+    "skills/delegation-router/tests/test-task-class-vocabulary.js",
+    "skills/delegation-router/tests/test-workflow-routing-log-shape.js",
+    "skills/delegation-router/use-case-rankings.yaml",
+]
+
+[[deployed]]
+artifact_name = "workflow-authoring"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:38:24.735138+00:00"
+artifact_path = "skills/workflow-authoring"
+content_hash = "9478dd92dc4244f484ca0d00ede138c81536dbac4fdabec141b608c5166871e0"
+collection_sha = "9478dd92dc4244f484ca0d00ede138c81536dbac4fdabec141b608c5166871e0"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "skills/workflow-authoring/README.md",
+    "skills/workflow-authoring/SKILL.md",
+    "skills/workflow-authoring/per-workflow-spec-template.md",
+    "skills/workflow-authoring/syntax-check-helper.js",
+]
+
+[[deployed]]
+artifact_name = "changelog-sync"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:38:29.532916+00:00"
+artifact_path = "skills/changelog-sync"
+content_hash = "d4b8e9f8332919374c75ce17383f68773dcc4b41577d56e35fd1e94a84fc1db8"
+collection_sha = "d4b8e9f8332919374c75ce17383f68773dcc4b41577d56e35fd1e94a84fc1db8"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "skills/changelog-sync/SKILL.md",
+    "skills/changelog-sync/SPEC.md",
+    "skills/changelog-sync/scripts/audit-coverage.py",
+    "skills/changelog-sync/workflows/audit-workflow.md",
+]
+
+[[deployed]]
+artifact_name = "release"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:38:36.274705+00:00"
+artifact_path = "skills/release"
+content_hash = "9e79c53bb7c2458f7cd8a865d0ddd4694451cd814452e45d4f31209933aff6fa"
+collection_sha = "9e79c53bb7c2458f7cd8a865d0ddd4694451cd814452e45d4f31209933aff6fa"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "skills/release/SKILL.md",
+    "skills/release/SPEC.md",
+    "skills/release/scripts/rollover-changelog.py",
+    "skills/release/workflows/release-orchestration.md",
+]
+
+[[deployed]]
+artifact_name = "meatycapture-capture"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:38:41.206902+00:00"
+artifact_path = "skills/meatycapture-capture"
+content_hash = "5fa39bd6370b0d07e70edb6f1beae89b2a290494db5fd7865b5658149b0d79ae"
+collection_sha = "5fa39bd6370b0d07e70edb6f1beae89b2a290494db5fd7865b5658149b0d79ae"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "skills/meatycapture-capture/SKILL.md",
+    "skills/meatycapture-capture/integration-spec.md",
+    "skills/meatycapture-capture/references/field-options.md",
+    "skills/meatycapture-capture/references/json-schemas.md",
+    "skills/meatycapture-capture/references/troubleshooting.md",
+    "skills/meatycapture-capture/scripts/mc-quick.sh",
+    "skills/meatycapture-capture/scripts/validate-items.ts",
+    "skills/meatycapture-capture/skill-config.yaml",
+    "skills/meatycapture-capture/templates/batch-capture.json",
+    "skills/meatycapture-capture/templates/quick-capture.json",
+    "skills/meatycapture-capture/usage-specs/mc-quick-script.md",
+    "skills/meatycapture-capture/workflows/capturing.md",
+    "skills/meatycapture-capture/workflows/managing.md",
+    "skills/meatycapture-capture/workflows/updating.md",
+    "skills/meatycapture-capture/workflows/viewing.md",
+]
+
+[[deployed]]
+artifact_name = "op"
+artifact_type = "skill"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:38:47.385476+00:00"
+artifact_path = "skills/op"
+content_hash = "f5fc3723b5b113a55fe8f12fc8d76ea4d0c1f2aacd496262f706dc6bd6f25a00"
+collection_sha = "f5fc3723b5b113a55fe8f12fc8d76ea4d0c1f2aacd496262f706dc6bd6f25a00"
+local_modifications = false
+enterprise_version = "cas-350ba56b"
+enterprise_files = [
+    "skills/op/SKILL.md",
+]
+
+[[deployed]]
+artifact_name = "task-completion-validator"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:04.590365+00:00"
+artifact_path = "agents/task-completion-validator.md"
+content_hash = "3422f24ce8c135c4362fedec6f92099ab4b9f7e3d4deca91b060935db6d86ba9"
+collection_sha = "3422f24ce8c135c4362fedec6f92099ab4b9f7e3d4deca91b060935db6d86ba9"
+local_modifications = false
+enterprise_version = "cas-4ad5208b"
+enterprise_files = [
+    "agents/task-completion-validator.md",
+]
+
+[[deployed]]
+artifact_name = "karen"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:08.294437+00:00"
+artifact_path = "agents/karen.md"
+content_hash = "20e14cecbfc6d8c6a72eacc4aeb86871a7be62f765aaa34632d35033cc67aa01"
+collection_sha = "20e14cecbfc6d8c6a72eacc4aeb86871a7be62f765aaa34632d35033cc67aa01"
+local_modifications = false
+enterprise_version = "cas-2616ad165436"
+enterprise_files = [
+    "agents/karen.md",
+]
+
+[[deployed]]
+artifact_name = "code-reviewer"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:11.493064+00:00"
+artifact_path = "agents/code-reviewer.md"
+content_hash = "bf2cc1bda2da30d26bf5127fa0652a861c0059e800bff17bc47a577e4a485ab3"
+collection_sha = "bf2cc1bda2da30d26bf5127fa0652a861c0059e800bff17bc47a577e4a485ab3"
+local_modifications = false
+enterprise_version = "cas-166e81fd159b"
+enterprise_files = [
+    "agents/code-reviewer.md",
+]
+
+[[deployed]]
+artifact_name = "senior-code-reviewer"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:14.147879+00:00"
+artifact_path = "agents/senior-code-reviewer.md"
+content_hash = "bf282141b350f3856d1ac8f01669e15fa44835ab8815ca5f851373c658a39b17"
+collection_sha = "bf282141b350f3856d1ac8f01669e15fa44835ab8815ca5f851373c658a39b17"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "agents/senior-code-reviewer.md",
+]
+
+[[deployed]]
+artifact_name = "codebase-explorer"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:19.170914+00:00"
+artifact_path = "agents/codebase-explorer.md"
+content_hash = "bbe3ccdba8516eb79c664d2e050fb67bf4607815cf9b2698a22751f4b4ba7737"
+collection_sha = "bbe3ccdba8516eb79c664d2e050fb67bf4607815cf9b2698a22751f4b4ba7737"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "agents/codebase-explorer.md",
+]
+
+[[deployed]]
+artifact_name = "search-specialist"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:23.630012+00:00"
+artifact_path = "agents/search-specialist.md"
+content_hash = "d74f9e7d3368d74672a24968e6e0e11e7ef050c88214554ef9fefec7cb3a999c"
+collection_sha = "d74f9e7d3368d74672a24968e6e0e11e7ef050c88214554ef9fefec7cb3a999c"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "agents/search-specialist.md",
+]
+
+[[deployed]]
+artifact_name = "implementation-planner"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:28.145586+00:00"
+artifact_path = "agents/implementation-planner.md"
+content_hash = "d5c37f693f5c2bb20047157dd280c3af65e457db5144f6c13285240a633673da"
+collection_sha = "d5c37f693f5c2bb20047157dd280c3af65e457db5144f6c13285240a633673da"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "agents/implementation-planner.md",
+]
+
+[[deployed]]
+artifact_name = "feature-sprint-executor"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:32.841414+00:00"
+artifact_path = "agents/feature-sprint-executor.md"
+content_hash = "0bef292e653f804474f0e26aee3d5964625793c16f8aba1b3e307667e09d7a29"
+collection_sha = "0bef292e653f804474f0e26aee3d5964625793c16f8aba1b3e307667e09d7a29"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "agents/feature-sprint-executor.md",
+]
+
+[[deployed]]
+artifact_name = "phase-owner"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:36.826558+00:00"
+artifact_path = "agents/phase-owner.md"
+content_hash = "6a4798d7233b6a8e9c8cae024008586a5074fd7930530c8267335496b756d939"
+collection_sha = "6a4798d7233b6a8e9c8cae024008586a5074fd7930530c8267335496b756d939"
+local_modifications = false
+enterprise_version = "cas-fc648b654557"
+enterprise_files = [
+    "agents/phase-owner.md",
+]
+
+[[deployed]]
+artifact_name = "artifact-tracker"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:40.541573+00:00"
+artifact_path = "agents/artifact-tracker.md"
+content_hash = "879af6867f79421becdf6c5d935e03a779cf782e28a56ef2b2ecba0fe675a4c2"
+collection_sha = "879af6867f79421becdf6c5d935e03a779cf782e28a56ef2b2ecba0fe675a4c2"
+local_modifications = false
+enterprise_version = "cas-bc7909f37bb7"
+enterprise_files = [
+    "agents/artifact-tracker.md",
+]
+
+[[deployed]]
+artifact_name = "ica-executor"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:45.672889+00:00"
+artifact_path = "agents/ica-executor.md"
+content_hash = "62ea3d5e6ded430a562b636c46eaca270f2af33ce9b712e39f1e6f2ccd5852a8"
+collection_sha = "62ea3d5e6ded430a562b636c46eaca270f2af33ce9b712e39f1e6f2ccd5852a8"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "agents/ica-executor.md",
+]
+
+[[deployed]]
+artifact_name = "codex-executor"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:39:55.180377+00:00"
+artifact_path = "agents/codex-executor.md"
+content_hash = "c5134604370577d6eb10e4aaa12b62f60ecdb9f5206feb75d479d6c22b24c2ca"
+collection_sha = "c5134604370577d6eb10e4aaa12b62f60ecdb9f5206feb75d479d6c22b24c2ca"
+local_modifications = false
+enterprise_version = "cas-75fd78247979"
+enterprise_files = [
+    "agents/codex-executor.md",
+]
+
+[[deployed]]
+artifact_name = "gemini-executor"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:00.812884+00:00"
+artifact_path = "agents/gemini-executor.md"
+content_hash = "f999786f1b0da7a6266a0bf0064bbbd1b11a287eae25d88efd6dc1b1cc0ada9c"
+collection_sha = "f999786f1b0da7a6266a0bf0064bbbd1b11a287eae25d88efd6dc1b1cc0ada9c"
+local_modifications = false
+enterprise_version = "cas-765554e8"
+enterprise_files = [
+    "agents/gemini-executor.md",
+]
+
+[[deployed]]
+artifact_name = "bob-delegate-executor"
+artifact_type = "agent"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:03.819532+00:00"
+artifact_path = "agents/bob-delegate-executor.md"
+content_hash = "e91d2eae00ee09fbc8db310ce50233019ee5d349009d09e9b7ae9ed6feb61971"
+collection_sha = "e91d2eae00ee09fbc8db310ce50233019ee5d349009d09e9b7ae9ed6feb61971"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "agents/bob-delegate-executor.md",
+]
+
+[[deployed]]
+artifact_name = "autopilot"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:06.220621+00:00"
+artifact_path = "commands/autopilot.md"
+content_hash = "3e806bbb8e0a3912cfe5f016da56bf7ef9c86365369fd32c0bfa9dab3920bdf5"
+collection_sha = "3e806bbb8e0a3912cfe5f016da56bf7ef9c86365369fd32c0bfa9dab3920bdf5"
+local_modifications = false
+enterprise_version = "cas-4714efc00713"
+enterprise_files = [
+    "commands/autopilot.md",
+]
+
+[[deployed]]
+artifact_name = "quick-feature"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:08.275075+00:00"
+artifact_path = "commands/quick-feature.md"
+content_hash = "c688c4a304ba848fc1d3db9378fdc1c3e0248ff023d9b108e8566cae3e44a239"
+collection_sha = "c688c4a304ba848fc1d3db9378fdc1c3e0248ff023d9b108e8566cae3e44a239"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "commands/quick-feature.md",
+]
+
+[[deployed]]
+artifact_name = "execute-plan"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:11.534099+00:00"
+artifact_path = "commands/execute-plan.js"
+content_hash = "27787d3900f2e11b7675c1062dfb8763d87c92c7be10e2d7afde1051db55dd5b"
+collection_sha = "27787d3900f2e11b7675c1062dfb8763d87c92c7be10e2d7afde1051db55dd5b"
+local_modifications = false
+enterprise_version = "cas-3e016675"
+enterprise_files = [
+    "commands/execute-plan.js",
+]
+
+[[deployed]]
+artifact_name = "execute-contract"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:17.740535+00:00"
+artifact_path = "commands/execute-contract.js"
+content_hash = "977fab96c26b0850f788de88079b8b242a0f9896287b8740ee96957633a9d5f1"
+collection_sha = "977fab96c26b0850f788de88079b8b242a0f9896287b8740ee96957633a9d5f1"
+local_modifications = false
+enterprise_version = "cas-e72202e3"
+enterprise_files = [
+    "commands/execute-contract.js",
+]
+
+[[deployed]]
+artifact_name = "execute-phase"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:22.040665+00:00"
+artifact_path = "commands/execute-phase.md"
+content_hash = "25b9aef7b071de5760f4e8987f0c6f41853606ecdae79c0ddd464e522331b473"
+collection_sha = "25b9aef7b071de5760f4e8987f0c6f41853606ecdae79c0ddd464e522331b473"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "commands/execute-phase.md",
+]
+
+[[deployed]]
+artifact_name = "create-feature"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:26.129515+00:00"
+artifact_path = "commands/create-feature.md"
+content_hash = "7017565a81ee7874f8b1ef2593589175b7c0b71db3cbf5a6d968b5f03d2f672c"
+collection_sha = "7017565a81ee7874f8b1ef2593589175b7c0b71db3cbf5a6d968b5f03d2f672c"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "commands/create-feature.md",
+]
+
+[[deployed]]
+artifact_name = "implement-story"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:29.479429+00:00"
+artifact_path = "commands/implement-story.md"
+content_hash = "c57fabc4dc2b942cfe3596086343ee35b1b34c4f6a01b78c4424426902771599"
+collection_sha = "c57fabc4dc2b942cfe3596086343ee35b1b34c4f6a01b78c4424426902771599"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "commands/implement-story.md",
+]
+
+[[deployed]]
+artifact_name = "complete-user-story"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:32.571564+00:00"
+artifact_path = "commands/complete-user-story.md"
+content_hash = "63f9f3d00793a9867d74315ae5f80d803e3174b63893aaa3e4fc6b00a72e90ad"
+collection_sha = "63f9f3d00793a9867d74315ae5f80d803e3174b63893aaa3e4fc6b00a72e90ad"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "commands/complete-user-story.md",
+]
+
+[[deployed]]
+artifact_name = "plan-feature"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:36.338439+00:00"
+artifact_path = "commands/plan-feature.md"
+content_hash = "79452b75c7ee2d596bb747489e367fd24a3d3b410eb8e174dbafdd339ea49dec"
+collection_sha = "79452b75c7ee2d596bb747489e367fd24a3d3b410eb8e174dbafdd339ea49dec"
+local_modifications = false
+enterprise_version = "cas-c566b01ca007"
+enterprise_files = [
+    "commands/plan-feature.md",
+]
+
+[[deployed]]
+artifact_name = "spike"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:40.636196+00:00"
+artifact_path = "commands/spike.js"
+content_hash = "7e3c7d3dc1738500b1d35dabb062980613a26b56e23b71345ac9de367675ec01"
+collection_sha = "7e3c7d3dc1738500b1d35dabb062980613a26b56e23b71345ac9de367675ec01"
+local_modifications = false
+enterprise_version = "cas-9578b78e"
+enterprise_files = [
+    "commands/spike.js",
+]
+
+[[deployed]]
+artifact_name = "explore"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:45.094414+00:00"
+artifact_path = "commands/explore.js"
+content_hash = "97349e015eae9fff1fb592a1ce8d8c017f123d88f51bfb5f773e38615805591c"
+collection_sha = "97349e015eae9fff1fb592a1ce8d8c017f123d88f51bfb5f773e38615805591c"
+local_modifications = false
+enterprise_version = "cas-281fa87b"
+enterprise_files = [
+    "commands/explore.js",
+]
+
+[[deployed]]
+artifact_name = "debug"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:49.142795+00:00"
+artifact_path = "commands/debug.md"
+content_hash = "a1b08c53e02f25bceb33cc415cdd7ef2aeca8389f24a034e4a518b5144dbde29"
+collection_sha = "a1b08c53e02f25bceb33cc415cdd7ef2aeca8389f24a034e4a518b5144dbde29"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "commands/debug.md",
+]
+
+[[deployed]]
+artifact_name = "code-review"
+artifact_type = "command"
+from_collection = "enterprise"
+deployed_at = "2026-08-14T19:40:52.668245+00:00"
+artifact_path = "commands/code-review.md"
+content_hash = "35a0e40cc71018a791f802b87d3201d0769d32a25ccfb0148d0072fcb26335b9"
+collection_sha = "35a0e40cc71018a791f802b87d3201d0769d32a25ccfb0148d0072fcb26335b9"
+local_modifications = false
+enterprise_version = "1.0.0"
+enterprise_files = [
+    "commands/code-review.md",
+]
