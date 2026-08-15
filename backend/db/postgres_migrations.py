@@ -1,6 +1,11 @@
 """PostgreSQL database schema creation and versioning.
 
 Schema version history (keep in lockstep with sqlite_migrations.py):
+  v56 — are-we-winning-dashboard-v1 M2 part B: intent_tree_reopened_events +
+         intent_tree_self_caught_buckets tables. Mirrors sqlite_migrations.py
+         v56. Derived-on-ingestion caches for the reopened trendline and the
+         closed 3-bucket self-caught ratio; never written by the query-service
+         render path. New tables, no column-parity entry needed.
   v55 — are-we-winning-dashboard-v1 M1: intent_tree_events table. Mirrors
          sqlite_migrations.py v55. Caches IntentTree lifecycle events
          (node.created, node.completed) ingested from the IntentTree API's
@@ -81,7 +86,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 55
+SCHEMA_VERSION = 56
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1473,6 +1478,32 @@ CREATE TABLE IF NOT EXISTS intent_tree_events (
 CREATE INDEX IF NOT EXISTS idx_intent_tree_events_occurred_at ON intent_tree_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_intent_tree_events_event_type ON intent_tree_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_intent_tree_events_node_id ON intent_tree_events(node_id);
+
+-- are-we-winning-dashboard-v1 M2 part B: derived-on-ingestion caches. Mirror
+-- of the SQLite DDL (backend/db/sqlite_migrations.py) -- same column names/
+-- types/nullability so column_parity_diff() is {} by construction. `bucket`
+-- is a closed vocabulary enforced in code, never a CHECK constraint (mirrors
+-- ica_spend_attribution's convention -- see backend/parsers/ica_spend.py).
+CREATE TABLE IF NOT EXISTS intent_tree_reopened_events (
+    id            TEXT PRIMARY KEY,
+    node_id       TEXT NOT NULL,
+    from_status   TEXT NOT NULL,
+    to_status     TEXT NOT NULL,
+    occurred_at   TEXT NOT NULL,
+    derived_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_tree_reopened_events_occurred_at ON intent_tree_reopened_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_intent_tree_reopened_events_node_id ON intent_tree_reopened_events(node_id);
+
+CREATE TABLE IF NOT EXISTS intent_tree_self_caught_buckets (
+    node_id       TEXT PRIMARY KEY,
+    bucket        TEXT NOT NULL,
+    reason        TEXT,
+    derived_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_tree_self_caught_buckets_bucket ON intent_tree_self_caught_buckets(bucket);
 
 -- ── RF Run Telemetry: research_runs derived rollup (T2-001) ──────────────
 -- One row per Research Foundry run, derived/upserted from rf_events (D6 —
@@ -4464,6 +4495,51 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         logger.info(
             "v55 migrations complete: intent_tree_events table added "
             "(are-we-winning-dashboard-v1 M1)."
+        )
+
+    if current_version < 56:
+        # are-we-winning-dashboard-v1 M2 part B: derived-cache tables for
+        # pre-existing databases (fresh DBs get these from _TABLES above).
+        # CREATE TABLE IF NOT EXISTS keeps this idempotent (v55 precedent).
+        # Mirror of the SQLite v56 block.
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS intent_tree_reopened_events (
+                id            TEXT PRIMARY KEY,
+                node_id       TEXT NOT NULL,
+                from_status   TEXT NOT NULL,
+                to_status     TEXT NOT NULL,
+                occurred_at   TEXT NOT NULL,
+                derived_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_reopened_events_occurred_at"
+            " ON intent_tree_reopened_events(occurred_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_reopened_events_node_id"
+            " ON intent_tree_reopened_events(node_id)"
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS intent_tree_self_caught_buckets (
+                node_id       TEXT PRIMARY KEY,
+                bucket        TEXT NOT NULL,
+                reason        TEXT,
+                derived_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_self_caught_buckets_bucket"
+            " ON intent_tree_self_caught_buckets(bucket)"
+        )
+        logger.info(
+            "v56 migrations complete: intent_tree_reopened_events + "
+            "intent_tree_self_caught_buckets tables added "
+            "(are-we-winning-dashboard-v1 M2 part B)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

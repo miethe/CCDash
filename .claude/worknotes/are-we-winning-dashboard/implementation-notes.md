@@ -227,6 +227,169 @@ component even with `persistToUrl` defaulted false, so any test rendering `AreWe
 populated ratio must wrap it in a `MemoryRouter` -- even though this tab never itself reads or
 writes search params.
 
+## M2 part B - reopened derivation + the 3-bucket self-caught ratio (claude-primary)
+
+Terminal-status set chosen: `TERMINAL_STATUSES = frozenset({"completed"})` -- completed only,
+deliberately NOT the broader set (archived, deferred) a first pass might reach for. Ground-truthed
+against the live IntentTree source at `~/dev/homelab/development/intenttree/backend/src/intenttree/
+models/enums.py` (`NodeStatus`, confirmed exactly 15 values, matching the brief's stated count:
+not_started, ready, in_progress, blocked, waiting_review, completed, deferred, archived, inbox,
+backlog, side_quest, active, running, waiting_human, reviewing). Rationale, in order of weight:
+(1) the derivation's own candidate-set gate is explicitly "ever emitted node.completed" -- using a
+different set to decide *reopens* than the set used to decide *eligibility* would be an unstated
+inconsistency; (2) `archived` is genuinely ambiguous (can mean "done and shelved" OR "abandoned
+without finishing"), so treating it as terminal risks a false-positive reopen when a *cancelled* node
+is later un-archived and resumed -- that is "shelved work resumed", not "completed work regressed",
+and counting it would be the exact silently-plausible wrong boundary the plan's routing_constraints
+name; (3) deferred/backlog/inbox are parking states for work never done in the first place. Recorded
+as a named constant (`TERMINAL_STATUSES`, `backend/application/services/ingest/
+intenttree_reopened_derivation.py`), pinned by a dedicated test
+(`test_terminal_statuses_constant_is_completed_only`), never an inline literal.
+
+Ever-completed scope bound -- enforcement AND assertion. Enforced structurally: the reopened
+derivation's only entry point into "which nodes to examine" is `distinct_node_ids_for_event_type(db,
+"node.completed")`, a single choke-point query against CCDash's own already-ingested
+`intent_tree_events` table (never "all nodes", never a live IntentTree node-list call). Asserted (not
+merely true by accident) by `DerivationScopeTests::test_candidate_set_is_exactly_the_ever_completed_set`,
+which seeds 3 completed nodes + 2 created-only nodes and asserts BOTH `result.candidate_node_ids`
+AND the fake HTTP getter's actual recorded call list equal the completed-only set exactly (a widened
+scope would fail this test loudly, per the task's explicit instruction).
+
+Self-caught ratio -- why the shipped default resolves every node to `unknown` today, and why that
+is evidence-backed rather than merely cautious. Cloned and grepped the live IntentTree source
+(`~/dev/homelab/development/intenttree/backend/src/intenttree/`) rather than guessing field shapes:
+confirmed `NodeRead.tags: list[str]` and `NodeRead.meta: dict` exist exactly as the worknote implies
+(verified against a real captured `get_node` MCP tool-result JSON, not just the source), and found
+`meta.origin`'s actual value vocabulary in `services/work_item_sync.py`'s `derive_default_origin` +
+seed data: `meta_plan`, `implementation_plan`, `human_gate`, `decision`, `bug`, `deferred`,
+`imported_plan`, `source_artifact`. These are node-*provenance* labels -- which kind of artifact
+synthesized the node during an import/sync -- not a "who caught this" attribution field, and the
+worknote itself already disqualifies the `finding` tag on the same grounds ("marks THAT something is
+a finding, not WHO caught it"). Given neither confirmed proxy signal discriminates self vs.
+other-caught, `decide_self_caught_bucket` (mirrors `decide_attribution`'s closed-vocab, single-pass
+shape) ships with `_DEFAULT_ORIGIN_BUCKET_MAP = {}` -- deliberately empty, so every node resolves to
+`unknown` today. This is the honest rendering of the measured reality (plan rubric, verbatim), not a
+placeholder to "fix" by inflating a bucket. The function still accepts an injectable
+`origin_bucket_map` so the closed-vocabulary machinery is real and testable
+(`ClosedVocabularyTests::test_recognized_origin_value_resolves_correctly_when_a_map_is_injected`
+proves genuine self_caught/other_caught branching, not just "always unknown") and so that IF
+IntentTree's origin vocabulary is later confirmed to carry a real attribution signal, wiring it in is
+a one-line change to the map, not a new code path. Fixture fraction bucketing to `unknown`: **100%**
+in every fixture in `test_are_we_winning_derivations.py` (by design -- the shipped default map is
+empty), confirmed explicitly by
+`SelfCaughtUnknownBucketTests::test_100_percent_undiscriminated_population_yields_all_unknown_no_reduced_denominator`.
+
+Both derivations run on the ingestion side only, per the architectural constraint. Two new services,
+`IntentTreeReopenedDerivationService` / `IntentTreeSelfCaughtDerivationService`
+(`backend/application/services/ingest/intenttree_reopened_derivation.py` /
+`intenttree_self_caught_derivation.py`), read CCDash's own cached `intent_tree_events` for their
+candidate sets and make live IntentTree HTTP calls (`GET .../nodes/{id}/history?field=status`,
+`GET .../nodes/{id}`) ONLY from there -- never from the query service. The query service
+(`are_we_winning.py`) gained `compute_reopened_trendline`/`compute_self_caught_ratio` as pure cache
+readers (new tables `intent_tree_reopened_events`/`intent_tree_self_caught_buckets`, SCHEMA_VERSION
+55 -> 56 in both backends, zero column-parity drift, verified the same way M1 was: static
+`column_parity_diff`, not a live Postgres boot -- same Mode-D-scoped local-SQLite-only verification
+as M1/part A, not repeated here). Part A's two zero-render-path-egress tests (the client-patched-to-
+raise tests in `test_are_we_winning_rollups.py`) still pass unmodified; three more were added in the
+new file covering the new surfaces (`get_summary` with real derived data present,
+`get_reopened_drill_through`, `get_self_caught_drill_through`).
+
+Never-run-yet vs. ran-and-empty, the AC4-preserving design choice. A table with zero rows is
+ambiguous on its own. `get_summary` distinguishes them via a new pure-SQL, read-only helper,
+`_derivation_has_ever_run(db, source_id)`, checking `ingest_cursors.last_ingest_at IS NOT NULL` for
+that derivation's source_id (`intenttree:reopened_derivation` / `intenttree:self_caught_derivation`,
+reusing the same `ingest_cursors` table + sentinel-project-id convention M1 established) -- a
+row only gets that watermark set on a FULLY clean derivation pass (mirrors M1's per-event-type
+cursor-advance-on-success-only contract exactly). This is why the pre-existing part-A test
+(`AbsentNotZeroTests::test_reopened_and_self_caught_ratio_serialize_as_null_never_zero`) passes
+UNMODIFIED: it never runs a derivation pass, so no cursor watermark exists, so both fields correctly
+stay `None`. `AbsentUntilDerivedTests` in the new file generalizes this explicitly and adds the
+converse case (watermark set, tables genuinely empty -> fields populate for real, e.g.
+`reopened.points == []`, never stay `None`).
+
+Incremental design differs deliberately between the two derivations, both recorded in the module
+docstrings, not just here. Reopened: full re-walk of the entire candidate set every pass (a node can
+complete/reopen/re-complete more than once; skipping "already-seen" nodes would silently miss a new
+reopen on a previously-examined node) -- `insert_if_not_exists` keyed on the upstream IntentTree
+NodeHistory row id keeps a full re-walk idempotent and cheap. Self-caught: incremental
+(candidate set = `distinct(node.created ids) - already_bucketed_ids`) -- a bucket verdict is a
+point-in-time tags/meta snapshot, and once written is never re-derived; trade-off recorded explicitly
+(a node's tags/meta changing after bucketing won't retroactively update its stored bucket), judged
+zero-impact today given the confirmed absence of any discriminating signal.
+
+Fail-soft mirrors M1 exactly, extended to a per-candidate-node loop rather than per-page: a transport
+failure on any one node stops the whole sweep, records the error on the cursor, and does NOT advance
+the watermark, while rows already committed for nodes processed before the failure are NOT rolled
+back. Covered by `ReopenedDerivationServiceIntegrationTests`/`SelfCaughtDerivationServiceIntegrationTests`'s
+fail-soft tests, which assert both the not-rolled-back real data AND the non-advanced watermark in the
+same test.
+
+Cross-cutting gap found and fixed (not merely noted): M3's frontend (already committed in this
+worktree ahead of this task, `22f97f7`) wires its "Nodes Reopened" `TrendChart` click handler through
+the SAME generic `/api/agent/are-we-winning/drill-through?event_type=...` endpoint used for
+created/completed (`trendline.event_type` round-trips verbatim -- see
+`lib/areWeWinning.ts`'s `trendlineToChartPoints` and `components/Analytics/AreWeWinningTab.tsx`'s
+`openTrendPointDrillThrough`), NOT a new dedicated endpoint. Left as originally scoped, that click
+would have silently returned an empty page the instant `reopened` stopped being `None` -- a
+textbook decorative click target, which the plan's rubric names explicitly as an AC failure. Fixed
+in the backend, not the frontend (in scope): `get_drill_through` now also accepts
+`event_type="node.reopened"` and internally dispatches to the pre-derived reopened cache; regression-
+pinned by `DrillThroughParityTests::test_generic_get_drill_through_also_serves_node_reopened`, whose
+docstring cites the exact FE call path this protects. A SEPARATE dedicated
+`get_reopened_drill_through`/`GET /are-we-winning/reopened-drill-through` was also added (API
+completeness/transport-neutral-CLI-MCP-future-use), but the generic-endpoint fix is the one that was
+load-bearing for the shipped FE.
+
+Self-caught ratio drill-through: genuinely new capability, not a gap in already-shipped FE code. The
+already-shipped `SelfCaughtRatioWidget` in `AreWeWinningTab.tsx` explicitly renders "Per-bucket
+drill-through is not yet available -- the current backend contract (SelfCaughtRatioBucketDTO)
+reports only a bucket + count, with no underlying-row coordinates" -- i.e. M3 correctly did NOT wire
+a click handler for a capability that did not exist yet, so there is no decorative-click-target bug
+here today. This task adds that capability (`get_self_caught_drill_through` /
+`GET /are-we-winning/self-caught-drill-through`, backed by `intent_tree_self_caught_buckets` +
+`reason`), but wiring the FE's bucket rows to call it is frontend work and is explicitly out of this
+task's scope (M3/a follow-up must add the click handler + drill-through modal invocation for the
+ratio legend).
+
+REST wiring beyond the two new query-service methods: both new endpoints were added to
+`backend/routers/agent.py` following the exact existing pattern (same `_require_are_we_winning_enabled`
+dependency gate, same otel span convention) -- CLI/MCP transport exposure (per CLAUDE.md's
+transport-neutral convention) was judged out of scope for this task and is not yet done.
+
+Deliberately NOT wired into the periodic scheduler (`backend/adapters/jobs/runtime.py` /
+`backend/runtime/container.py`'s `_construct_intenttree_events_ingest_job`-sibling construction +
+task-loop registration). The two derivation *services* and their fail-soft/idempotency/cursor
+behavior are fully implemented and unit-tested exactly like M1's ingestion job. What's missing is a
+`IntentTreeDerivationJob` wrapper class + its periodic-task registration, mirroring
+`intenttree_events_ingest_job.py`'s shape. Reason for stopping short: that wiring touches
+`RuntimeJobAdapter`/`RuntimeContainer` state, which is exercised by
+`backend/tests/test_runtime_bootstrap.py` -- a test file this repo's own operator memory documents as
+hanging at import/collection time (unkillable), so I have no way to verify a runtime-bootstrap change
+is correct. Per the boundary against weakening/skipping tests and the general principle of not
+touching code I cannot verify, I left this as an explicit, named follow-up rather than making an
+unverified edit to shared runtime bootstrap code. The derivation job needs to run periodically for
+the feature to self-refresh in production; until that wiring lands, `derive_all()` on both services
+would need to be invoked manually/out-of-band (e.g. a one-off script or a future job wrapper) to
+populate the cache in a live deployment.
+
+Pre-existing, unrelated test failure observed, not introduced. Ran
+`backend/tests/test_migration_governance.py` alongside the new suite:
+`MigrationGovernanceTests::test_column_parity_all_shared_tables` fails on `documents`/`entity_links`/
+`features`/`tasks` `workspace_id` drift (a Postgres-side default the SQLite side lacks). Confirmed via
+`git diff --stat` that this milestone's diff touches only `backend/application/services/agent_queries/
+are_we_winning.py`, `backend/application/services/ingest/intenttree_reopened_derivation.py`,
+`intenttree_self_caught_derivation.py`, `backend/db/repositories/intent_tree_derivations.py`,
+`backend/db/factory.py`, `backend/db/{sqlite,postgres}_migrations.py`, `backend/models.py`,
+`backend/routers/agent.py`, and the new test file -- none of which touch those four tables' DDL. Left
+untouched per the task's instruction not to weaken/fix unrelated failing tests; the two new tables
+are independently confirmed parity-clean (`column_parity_diff` returns `{}` for both, verified
+directly in a REPL, matching the v55 precedent).
+
+Environment note: `backend/.venv` did not resolve inside this worktree (consistent with prior
+milestones' notes above); ran the full suite via the absolute main-repo venv path
+(`/Users/miethe/dev/homelab/development/CCDash/backend/.venv/bin/python`) per the task brief's
+explicit instruction, not a disposable local venv.
+
 VERIFICATION GAP, closed by the orchestrator rather than waved through. The executor could not run
 `npx tsc --noEmit`, `npm run typecheck`, or `npx vitest run` -- all three returned "This command
 requires approval" with no interactive approval channel in a `-p` session, and unlike the Python

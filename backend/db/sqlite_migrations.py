@@ -4,6 +4,17 @@ All CREATE TABLE statements for the caching layer.
 Uses IF NOT EXISTS for idempotent runs.
 
 Schema version history (keep in lockstep with postgres_migrations.py):
+  v56 — are-we-winning-dashboard-v1 M2 part B: intent_tree_reopened_events +
+         intent_tree_self_caught_buckets tables. Derived-on-ingestion caches
+         for the reopened trendline (one row per detected "left a terminal
+         status" transition, keyed on the upstream IntentTree NodeHistory row
+         id) and the closed 3-bucket self-caught ratio (one row per node,
+         bucket in {self_caught, other_caught, unknown} enforced in code, a
+         `reason` column recording which proxy signal fired or none). Both
+         are populated by a derivation pass over CCDash's own already-cached
+         `intent_tree_events` candidate sets (never a live call from the
+         query-service render path). New tables, no column-parity entry
+         needed (same precedent as v55).
   v55 — are-we-winning-dashboard-v1 M1: intent_tree_events table. Caches
          IntentTree lifecycle events (node.created, node.completed) ingested
          from the IntentTree API's event log. New table, no column-parity
@@ -108,7 +119,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 55
+SCHEMA_VERSION = 56
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1469,6 +1480,37 @@ CREATE TABLE IF NOT EXISTS intent_tree_events (
 CREATE INDEX IF NOT EXISTS idx_intent_tree_events_occurred_at ON intent_tree_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_intent_tree_events_event_type ON intent_tree_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_intent_tree_events_node_id ON intent_tree_events(node_id);
+
+-- are-we-winning-dashboard-v1 M2 part B: derived-on-ingestion caches. Never
+-- written by the query-service render path -- only by the derivation job
+-- (backend/application/services/ingest/intenttree_reopened_derivation.py,
+-- intenttree_self_caught_derivation.py). `id` on the reopened table is the
+-- upstream IntentTree NodeHistory row id verbatim (idempotency key, exactly
+-- like intent_tree_events.id above). `bucket` on the self-caught table is a
+-- closed vocabulary (self_caught | other_caught | unknown) enforced in code,
+-- never a CHECK constraint (mirrors ica_spend_attribution's convention of
+-- code-side closed vocab so a forward-compatible new token never 500s a
+-- write -- see backend/parsers/ica_spend.py's module docstring).
+CREATE TABLE IF NOT EXISTS intent_tree_reopened_events (
+    id            TEXT PRIMARY KEY,
+    node_id       TEXT NOT NULL,
+    from_status   TEXT NOT NULL,
+    to_status     TEXT NOT NULL,
+    occurred_at   TEXT NOT NULL,
+    derived_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_tree_reopened_events_occurred_at ON intent_tree_reopened_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_intent_tree_reopened_events_node_id ON intent_tree_reopened_events(node_id);
+
+CREATE TABLE IF NOT EXISTS intent_tree_self_caught_buckets (
+    node_id       TEXT PRIMARY KEY,
+    bucket        TEXT NOT NULL,
+    reason        TEXT,
+    derived_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_tree_self_caught_buckets_bucket ON intent_tree_self_caught_buckets(bucket);
 
 -- ── RF Run Telemetry: research_runs derived rollup (T2-001) ──────────────
 -- One row per Research Foundry run, derived/upserted from rf_events (D6 —
@@ -4999,6 +5041,55 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v55 migrations complete: intent_tree_events table added "
             "(are-we-winning-dashboard-v1 M1)."
+        )
+
+    if current_version < 56:
+        # are-we-winning-dashboard-v1 M2 part B: derived-cache tables for
+        # pre-existing databases (fresh DBs get these from _TABLES above).
+        # CREATE TABLE IF NOT EXISTS keeps this idempotent (v55 precedent).
+        # Mirror of the Postgres v56 block.
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS intent_tree_reopened_events (
+                id            TEXT PRIMARY KEY,
+                node_id       TEXT NOT NULL,
+                from_status   TEXT NOT NULL,
+                to_status     TEXT NOT NULL,
+                occurred_at   TEXT NOT NULL,
+                derived_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_reopened_events_occurred_at"
+            " ON intent_tree_reopened_events(occurred_at)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_reopened_events_node_id"
+            " ON intent_tree_reopened_events(node_id)",
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS intent_tree_self_caught_buckets (
+                node_id       TEXT PRIMARY KEY,
+                bucket        TEXT NOT NULL,
+                reason        TEXT,
+                derived_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_self_caught_buckets_bucket"
+            " ON intent_tree_self_caught_buckets(bucket)",
+        )
+        await db.commit()
+        logger.info(
+            "v56 migrations complete: intent_tree_reopened_events + "
+            "intent_tree_self_caught_buckets tables added "
+            "(are-we-winning-dashboard-v1 M2 part B)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

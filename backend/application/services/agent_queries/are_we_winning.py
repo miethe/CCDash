@@ -1,31 +1,40 @@
-"""Are-We-Winning dashboard query service (are-we-winning-dashboard-v1, M2 part A).
+"""Are-We-Winning dashboard query service (are-we-winning-dashboard-v1, M2).
 
-Computes weekly created/completed rollups and their drill-through row lookup
-**entirely from CCDash's own `intent_tree_events` cache** (M1 — see
-``backend/application/services/ingest/intenttree_events_ingest.py``). Zero
-live IntentTree calls, zero model calls, on this module's render path.
+Computes weekly created/completed/reopened rollups and the 3-bucket
+self-caught ratio, plus their drill-through row lookups, **entirely from
+CCDash's own cache** — ``intent_tree_events`` (M1 — see
+``backend/application/services/ingest/intenttree_events_ingest.py``) and the
+two M2-part-B derived-cache tables, ``intent_tree_reopened_events`` /
+``intent_tree_self_caught_buckets`` (see
+``backend/application/services/ingest/intenttree_reopened_derivation.py`` /
+``intenttree_self_caught_derivation.py``). Zero live IntentTree calls, zero
+model calls, on this module's render path — the derivation passes that
+populate the two part-B tables run only from a scheduled job, never from
+here.
 
-Scope boundary (binding, per the M2-part-A task)
---------------------------------------------------
+Scope boundary
+----------------
 This module implements:
-  - weekly created/completed trendlines, bucketed by **ISO calendar week**
-    (Monday-Sunday, OQ-2 decision — a stable cache key, never a rolling
-    7-day window)
-  - drill-through: the exact underlying ``intent_tree_events`` rows behind
-    any rendered (event_type, iso_year, iso_week) bucket, cursor-paginated
+  - weekly created/completed trendlines (M2 part A), bucketed by **ISO
+    calendar week** (Monday-Sunday, OQ-2 decision — a stable cache key,
+    never a rolling 7-day window)
+  - the weekly reopened trendline (M2 part B), read from the pre-derived
+    ``intent_tree_reopened_events`` cache
+  - the 3-bucket self-caught ratio (M2 part B: self_caught/other_caught/
+    unknown), read from the pre-derived ``intent_tree_self_caught_buckets``
+    cache
+  - drill-through: the exact underlying node rows behind any rendered count
+    (per-week bucket for created/completed/reopened; per-bucket for the
+    self-caught ratio), cursor-paginated
 
-This module deliberately does **not** implement:
-  - the ``reopened`` trendline (bounded per-node status-history derivation)
-  - the 3-bucket self-caught ratio (self_caught/other_caught/unknown)
-
-Those two are part B — a separate, deliberately claude-primary execution
-lane per the plan's ``routing_constraints`` (a wrong terminal-status
-transition boundary, or a misrouted self-caught/other-caught bucket, is
-*silently plausible* and would misreport regression/attribution, not just
-render wrong). ``compute_reopened_trendline`` and ``compute_self_caught_ratio``
-below are the marked extension points part B plugs into — this module never
-calls them, and ``get_summary`` always sets ``reopened``/``self_caught_ratio``
-to ``None`` (never a fabricated ``0``).
+``compute_reopened_trendline`` and ``compute_self_caught_ratio`` are pure
+cache readers — they never call IntentTree, never re-derive, and never
+invent a value for a field the derivation job hasn't populated yet.
+``get_summary`` only populates ``reopened``/``self_caught_ratio`` once the
+corresponding derivation pass has completed at least one successful sweep
+(checked via the ``ingest_cursors`` watermark, never inferred from table
+row-count alone — an empty-but-*derived* result must be distinguishable from
+"never derived"); until then both stay ``None`` (never a fabricated ``0``).
 
 Caching hazard (named in the plan's risk list)
 -----------------------------------------------
@@ -50,12 +59,25 @@ import aiosqlite
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
+from backend.application.services.ingest.intenttree_reopened_derivation import (
+    SOURCE_ID as REOPENED_DERIVATION_SOURCE_ID,
+)
+from backend.application.services.ingest.intenttree_self_caught_derivation import (
+    OTHER_CAUGHT_BUCKET,
+    SELF_CAUGHT_BUCKET,
+    SOURCE_ID as SELF_CAUGHT_DERIVATION_SOURCE_ID,
+    UNKNOWN_BUCKET,
+)
 from backend.models import (
     AreWeWinningDrillThroughPageDTO,
     AreWeWinningDrillThroughRowDTO,
+    AreWeWinningSelfCaughtDrillThroughPageDTO,
+    AreWeWinningSelfCaughtDrillThroughRowDTO,
     AreWeWinningSummaryDTO,
     AreWeWinningTrendlineDTO,
     AreWeWinningWeeklyPointDTO,
+    SelfCaughtRatioBucketDTO,
+    SelfCaughtRatioDTO,
 )
 from backend.observability import otel
 
@@ -69,6 +91,10 @@ __all__ = [
     "compute_reopened_trendline",
     "compute_self_caught_ratio",
 ]
+
+#: Canonical, closed-vocabulary iteration order for self-caught-ratio buckets
+#: (mirrors the ``decide_attribution`` never-silently-divide convention).
+_SELF_CAUGHT_BUCKET_ORDER: tuple[str, ...] = (SELF_CAUGHT_BUCKET, OTHER_CAUGHT_BUCKET, UNKNOWN_BUCKET)
 
 # The two event types M1 ingests and this module reads. Kept in sync with
 # ``backend.application.services.ingest.intenttree_events_ingest.EVENT_TYPES``
@@ -84,35 +110,127 @@ _MAX_DRILL_THROUGH_LIMIT = 200
 # ── Part B extension points — NOT implemented here ──────────────────────────
 
 
-def compute_reopened_trendline(*_args: Any, **_kwargs: Any) -> None:
-    """Extension point for the M2 part-B reopened-derivation task.
+async def _derivation_has_ever_run(db: Any, source_id: str) -> bool:
+    """True iff the derivation job identified by *source_id* has completed a
+    successful pass at least once (``ingest_cursors.last_ingest_at`` set on
+    any row for that source, regardless of which IntentTree workspace it
+    ran against — this deployment binds to exactly one workspace).
 
-    Deliberately raises: this module never calls it. Walking per-node status
-    history to detect a terminal-status regression is silently plausible to
-    get wrong (see the plan's ``routing_constraints``), so it is reserved for
-    a separate claude-primary execution lane rather than implemented here.
+    This is the never-run-yet vs. ran-and-empty distinguisher: a table with
+    zero rows is ambiguous on its own (could mean "job never ran" or "job
+    ran, found nothing"), but the ``ingest_cursors`` watermark is not — a row
+    with ``last_ingest_at IS NOT NULL`` only ever gets written by
+    ``IntentTreeReopenedDerivationService``/``IntentTreeSelfCaughtDerivationService``
+    on a fully clean pass (see those modules' fail-soft contracts). A read-
+    only SELECT — this is the render path and must never write.
     """
-    raise NotImplementedError(
-        "M2-part-B: reopened-trendline derivation is reserved for a separate "
-        "execution lane. Do not implement it here — see the plan's "
-        "routing_constraints."
+    sqlite_sql = (
+        "SELECT 1 FROM ingest_cursors WHERE source_id = ? "
+        "AND last_ingest_at IS NOT NULL LIMIT 1"  # noqa: S608
     )
+    pg_sql = (
+        "SELECT 1 FROM ingest_cursors WHERE source_id = $1 "
+        "AND last_ingest_at IS NOT NULL LIMIT 1"  # noqa: S608
+    )
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(sqlite_sql, (source_id,)) as cur:
+            row = await cur.fetchone()
+    else:
+        row = await db.fetchrow(pg_sql, source_id)
+    return row is not None
 
 
-def compute_self_caught_ratio(*_args: Any, **_kwargs: Any) -> None:
-    """Extension point for the M2 part-B self-caught-ratio task.
+async def _fetch_reopened_events(db: Any) -> list[tuple[Any, ...]]:
+    """Return every ``intent_tree_reopened_events`` row, oldest first.
 
-    Deliberately raises: this module never calls it. Misrouting a node into
-    self_caught/other_caught instead of unknown when the proxy signal is
-    absent is silently plausible and would violate the never-silently-divide
-    requirement, so it is reserved for a separate claude-primary execution
-    lane rather than implemented here.
+    Row shape: ``(id, node_id, from_status, to_status, occurred_at)``. Pure
+    cache read — never touches IntentTree.
     """
-    raise NotImplementedError(
-        "M2-part-B: self-caught-ratio bucketing is reserved for a separate "
-        "execution lane. Do not implement it here — see the plan's "
-        "routing_constraints."
+    sqlite_sql = (
+        "SELECT id, node_id, from_status, to_status, occurred_at "
+        "FROM intent_tree_reopened_events ORDER BY occurred_at ASC"  # noqa: S608
     )
+    pg_sql = sqlite_sql
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(sqlite_sql) as cur:
+            rows = await cur.fetchall()
+    else:
+        rows = await db.fetch(pg_sql)
+    return [tuple(row) for row in rows]
+
+
+async def _fetch_self_caught_buckets(db: Any) -> list[tuple[Any, ...]]:
+    """Return every ``intent_tree_self_caught_buckets`` row.
+
+    Row shape: ``(node_id, bucket, reason)``. Pure cache read — never
+    touches IntentTree.
+    """
+    sqlite_sql = "SELECT node_id, bucket, reason FROM intent_tree_self_caught_buckets"  # noqa: S608
+    pg_sql = sqlite_sql
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(sqlite_sql) as cur:
+            rows = await cur.fetchall()
+    else:
+        rows = await db.fetch(pg_sql)
+    return [tuple(row) for row in rows]
+
+
+async def compute_reopened_trendline(db: Any) -> AreWeWinningTrendlineDTO:
+    """Weekly reopened trendline, read entirely from the pre-derived cache.
+
+    A pure cache reader — never calls IntentTree, never re-derives. Buckets
+    each ``intent_tree_reopened_events`` row's ``occurred_at`` (the terminal-
+    status-leaving transition timestamp) by ISO calendar week, identically to
+    ``_weekly_rollup``'s created/completed bucketing (same OQ-2 convention).
+    """
+    rows = await _fetch_reopened_events(db)
+    buckets: dict[tuple[int, int], dict[str, Any]] = {}
+    for _id, _node_id, _from_status, _to_status, occurred_at in rows:
+        dt = _parse_occurred_at(occurred_at)
+        if dt is None:
+            continue
+        iso_year, iso_week, week_start = _iso_week_bucket(dt)
+        key = (iso_year, iso_week)
+        bucket = buckets.setdefault(key, {"week_start_date": week_start, "count": 0})
+        bucket["count"] += 1
+
+    points = [
+        AreWeWinningWeeklyPointDTO(
+            iso_year=iso_year,
+            iso_week=iso_week,
+            week_start_date=bucket["week_start_date"].isoformat(),
+            count=bucket["count"],
+        )
+        for (iso_year, iso_week), bucket in sorted(buckets.items())
+    ]
+    return AreWeWinningTrendlineDTO(event_type="node.reopened", points=points)
+
+
+async def compute_self_caught_ratio(db: Any) -> SelfCaughtRatioDTO:
+    """3-bucket self-caught ratio, read entirely from the pre-derived cache.
+
+    A pure cache reader — never calls IntentTree, never re-derives, never
+    re-decides a bucket (that is ``decide_self_caught_bucket``'s job, at
+    derivation time only). Counts every bucket, including ``unknown`` — the
+    total is the sum of all three, never a denominator with ``unknown``
+    removed (never-silently-divide, structural: there is no branch here that
+    skips a bucket).
+    """
+    rows = await _fetch_self_caught_buckets(db)
+    counts: dict[str, int] = {bucket: 0 for bucket in _SELF_CAUGHT_BUCKET_ORDER}
+    for _node_id, bucket, _reason in rows:
+        # Forward-compat: an unrecognized token in the cache (should never
+        # happen -- the derivation service only ever writes the closed
+        # vocabulary) is treated as unknown rather than raising or being
+        # silently dropped from the total.
+        key = bucket if bucket in counts else UNKNOWN_BUCKET
+        counts[key] = counts.get(key, 0) + 1
+
+    buckets = [
+        SelfCaughtRatioBucketDTO(bucket=bucket, count=counts[bucket])
+        for bucket in _SELF_CAUGHT_BUCKET_ORDER
+    ]
+    return SelfCaughtRatioDTO(buckets=buckets, total=sum(counts.values()))
 
 
 # ── Cursor helpers (opaque base64 JSON, mirrors session_detail.py) ─────────
@@ -299,6 +417,57 @@ async def _drill_through_rows(
     return matched
 
 
+async def _reopened_drill_through_rows(
+    db: Any,
+    *,
+    iso_year: int,
+    iso_week: int,
+) -> list[dict[str, Any]]:
+    """Return every ``intent_tree_reopened_events`` row matching (iso_year, iso_week).
+
+    Mirrors ``_drill_through_rows`` exactly, reading the pre-derived reopened
+    cache instead of the raw ingested event log -- the M2-part-B drill-
+    through parity requirement (any rendered count returns its exact
+    underlying node rows, including the reopened trendline).
+    """
+    week_start = date.fromisocalendar(iso_year, iso_week, 1)
+    week_end = week_start + timedelta(days=7)
+
+    rows = await _fetch_reopened_events(db)
+    matched: list[dict[str, Any]] = []
+    for row_id, node_id, from_status, to_status, occurred_at in rows:
+        dt = _parse_occurred_at(occurred_at)
+        if dt is None:
+            continue
+        if not (week_start <= dt.date() < week_end):
+            continue
+        matched.append(
+            {
+                "id": row_id,
+                "node_id": node_id,
+                "event_type": "node.reopened",
+                "occurred_at": str(occurred_at),
+                "from_status": from_status,
+                "to_status": to_status,
+            }
+        )
+    return matched
+
+
+async def _self_caught_drill_through_rows(db: Any, *, bucket: str) -> list[dict[str, Any]]:
+    """Return every ``intent_tree_self_caught_buckets`` row for *bucket*.
+
+    Unlike the trendline drill-throughs, there is no week coordinate here --
+    a self-caught bucket is a per-node, non-time-bucketed verdict.
+    """
+    rows = await _fetch_self_caught_buckets(db)
+    return [
+        {"node_id": node_id, "bucket": row_bucket, "reason": reason}
+        for node_id, row_bucket, reason in rows
+        if row_bucket == bucket
+    ]
+
+
 # ── Cache param extractors ──────────────────────────────────────────────────
 
 
@@ -337,6 +506,44 @@ def _drill_through_params(
     }
 
 
+def _reopened_drill_through_params(
+    self: Any,  # noqa: ARG001
+    context: RequestContext,  # noqa: ARG001
+    ports: CorePorts,  # noqa: ARG001
+    *,
+    iso_year: int,
+    iso_week: int,
+    cursor: str | None = None,
+    limit: int = _DEFAULT_DRILL_THROUGH_LIMIT,
+    **_: Any,
+) -> dict[str, Any]:
+    return {
+        "project_id": "",
+        "iso_year": iso_year,
+        "iso_week": iso_week,
+        "cursor": cursor or "",
+        "limit": limit,
+    }
+
+
+def _self_caught_drill_through_params(
+    self: Any,  # noqa: ARG001
+    context: RequestContext,  # noqa: ARG001
+    ports: CorePorts,  # noqa: ARG001
+    *,
+    bucket: str,
+    cursor: str | None = None,
+    limit: int = _DEFAULT_DRILL_THROUGH_LIMIT,
+    **_: Any,
+) -> dict[str, Any]:
+    return {
+        "project_id": "",
+        "bucket": bucket,
+        "cursor": cursor or "",
+        "limit": limit,
+    }
+
+
 # ── Service ──────────────────────────────────────────────────────────────────
 
 
@@ -355,23 +562,33 @@ class AreWeWinningQueryService:
         context: RequestContext,
         ports: CorePorts,
     ) -> AreWeWinningSummaryDTO:
-        """Return the weekly created/completed trendlines (+ absent part-B fields).
+        """Return the weekly created/completed/reopened trendlines + self-caught ratio.
 
-        ``reopened`` and ``self_caught_ratio`` are always ``None`` here — see
-        the module docstring's scope boundary. Never call
-        ``compute_reopened_trendline``/``compute_self_caught_ratio`` from
-        this method; that is part B's job, in a separate change.
+        ``reopened``/``self_caught_ratio`` are populated from the pre-derived
+        M2-part-B cache tables **only if** that derivation's ``ingest_cursors``
+        watermark shows at least one completed pass (``_derivation_has_ever_run``)
+        — otherwise they stay ``None`` (never a fabricated ``0``/empty-shape).
+        This method never calls IntentTree and never re-derives; it is a pure
+        cache read exactly like the created/completed rollups above.
         """
         with otel.start_span("ccdash.are_we_winning.get_summary", {}):
             db = ports.storage.db
             created_points = await _weekly_rollup(db, "node.created")
             completed_points = await _weekly_rollup(db, "node.completed")
 
+            reopened: AreWeWinningTrendlineDTO | None = None
+            if await _derivation_has_ever_run(db, REOPENED_DERIVATION_SOURCE_ID):
+                reopened = await compute_reopened_trendline(db)
+
+            self_caught_ratio: SelfCaughtRatioDTO | None = None
+            if await _derivation_has_ever_run(db, SELF_CAUGHT_DERIVATION_SOURCE_ID):
+                self_caught_ratio = await compute_self_caught_ratio(db)
+
             return AreWeWinningSummaryDTO(
                 created=AreWeWinningTrendlineDTO(event_type="node.created", points=created_points),
                 completed=AreWeWinningTrendlineDTO(event_type="node.completed", points=completed_points),
-                reopened=None,
-                self_caught_ratio=None,
+                reopened=reopened,
+                self_caught_ratio=self_caught_ratio,
                 generated_at=datetime.now(timezone.utc),
             )
 
@@ -387,14 +604,24 @@ class AreWeWinningQueryService:
         cursor: str | None = None,
         limit: int = _DEFAULT_DRILL_THROUGH_LIMIT,
     ) -> AreWeWinningDrillThroughPageDTO:
-        """Return the exact ``intent_tree_events`` rows behind one rendered bucket.
+        """Return the exact node rows behind one rendered (event_type, iso_year, iso_week) bucket.
 
-        Takes the same (event_type, iso_year, iso_week) coordinates
-        ``get_summary``'s trendline points emit. Paginated in the repo's
+        Takes the same coordinates ``get_summary``'s trendline points emit,
+        for **any** of the three trendlines -- ``event_type`` may be
+        ``node.created``/``node.completed`` (read from the raw ``intent_tree_
+        events`` cache) or ``node.reopened`` (M2 part B: read from the
+        pre-derived ``intent_tree_reopened_events`` cache). This single
+        generic endpoint is what the already-shipped M3 frontend calls for
+        every trendline's click handler (``trendline.event_type`` round-
+        trips verbatim into this parameter) -- ``node.reopened`` support was
+        added here, not as a frontend change, specifically so that surface
+        does not silently start returning a decorative empty page the
+        moment ``reopened`` stops being ``None`` (the plan's rubric: "a
+        decorative click target is an AC failure"). Paginated in the repo's
         ``{items, cursor, limit, nextCursor}`` envelope shape (mirrors
         ``session_detail.py``'s transcript pagination).
         """
-        if event_type not in EVENT_TYPES:
+        if event_type not in EVENT_TYPES and event_type != "node.reopened":
             return AreWeWinningDrillThroughPageDTO(
                 items=[],
                 total=0,
@@ -411,9 +638,12 @@ class AreWeWinningQueryService:
             {"event_type": event_type, "iso_year": iso_year, "iso_week": iso_week},
         ):
             db = ports.storage.db
-            all_rows = await _drill_through_rows(
-                db, event_type=event_type, iso_year=iso_year, iso_week=iso_week
-            )
+            if event_type == "node.reopened":
+                all_rows = await _reopened_drill_through_rows(db, iso_year=iso_year, iso_week=iso_week)
+            else:
+                all_rows = await _drill_through_rows(
+                    db, event_type=event_type, iso_year=iso_year, iso_week=iso_week
+                )
             total = len(all_rows)
             page_rows = all_rows[offset : offset + eff_limit]
 
@@ -434,6 +664,126 @@ class AreWeWinningQueryService:
             next_cursor = _encode_cursor(offset + eff_limit) if has_more else None
 
             return AreWeWinningDrillThroughPageDTO(
+                items=items,
+                total=total,
+                limit=eff_limit,
+                cursor=_encode_cursor(offset),
+                next_cursor=next_cursor,
+            )
+
+    @memoized_query("are_we_winning_reopened_drill_through", param_extractor=_reopened_drill_through_params)
+    async def get_reopened_drill_through(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        iso_year: int,
+        iso_week: int,
+        cursor: str | None = None,
+        limit: int = _DEFAULT_DRILL_THROUGH_LIMIT,
+    ) -> AreWeWinningDrillThroughPageDTO:
+        """Return the exact ``intent_tree_reopened_events`` rows behind one rendered week bucket.
+
+        Same (iso_year, iso_week) coordinates ``get_summary``'s ``reopened``
+        trendline points emit -- M2-part-B drill-through parity with the
+        created/completed trendlines. Pure cache read.
+        """
+        eff_limit = max(1, min(limit, _MAX_DRILL_THROUGH_LIMIT))
+        offset = _decode_cursor(cursor)
+
+        with otel.start_span(
+            "ccdash.are_we_winning.get_reopened_drill_through",
+            {"iso_year": iso_year, "iso_week": iso_week},
+        ):
+            db = ports.storage.db
+            all_rows = await _reopened_drill_through_rows(db, iso_year=iso_year, iso_week=iso_week)
+            total = len(all_rows)
+            page_rows = all_rows[offset : offset + eff_limit]
+
+            node_ids = {str(r["node_id"]) for r in page_rows if r.get("node_id")}
+            title_map = await _build_title_map(db, node_ids)
+
+            items = [
+                AreWeWinningDrillThroughRowDTO(
+                    node_id=(str(r["node_id"]) if r.get("node_id") else None),
+                    event_type=str(r["event_type"]),
+                    occurred_at=str(r["occurred_at"]),
+                    title=title_map.get(str(r["node_id"])) if r.get("node_id") else None,
+                )
+                for r in page_rows
+            ]
+
+            has_more = offset + eff_limit < total
+            next_cursor = _encode_cursor(offset + eff_limit) if has_more else None
+
+            return AreWeWinningDrillThroughPageDTO(
+                items=items,
+                total=total,
+                limit=eff_limit,
+                cursor=_encode_cursor(offset),
+                next_cursor=next_cursor,
+            )
+
+    @memoized_query(
+        "are_we_winning_self_caught_drill_through", param_extractor=_self_caught_drill_through_params
+    )
+    async def get_self_caught_drill_through(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        bucket: str,
+        cursor: str | None = None,
+        limit: int = _DEFAULT_DRILL_THROUGH_LIMIT,
+    ) -> AreWeWinningSelfCaughtDrillThroughPageDTO:
+        """Return the exact ``intent_tree_self_caught_buckets`` rows behind one rendered ratio bucket.
+
+        *bucket* must be one of the closed vocabulary
+        (self_caught/other_caught/unknown); an unrecognized value returns an
+        empty page rather than raising -- mirrors ``get_drill_through``'s
+        unknown-``event_type`` handling. Pure cache read.
+        """
+        from backend.application.services.ingest.intenttree_self_caught_derivation import (
+            SELF_CAUGHT_RATIO_VOCAB,
+        )
+
+        if bucket not in SELF_CAUGHT_RATIO_VOCAB:
+            return AreWeWinningSelfCaughtDrillThroughPageDTO(
+                items=[],
+                total=0,
+                limit=limit,
+                cursor=_encode_cursor(0),
+                next_cursor=None,
+            )
+
+        eff_limit = max(1, min(limit, _MAX_DRILL_THROUGH_LIMIT))
+        offset = _decode_cursor(cursor)
+
+        with otel.start_span(
+            "ccdash.are_we_winning.get_self_caught_drill_through", {"bucket": bucket}
+        ):
+            db = ports.storage.db
+            all_rows = await _self_caught_drill_through_rows(db, bucket=bucket)
+            total = len(all_rows)
+            page_rows = all_rows[offset : offset + eff_limit]
+
+            node_ids = {str(r["node_id"]) for r in page_rows if r.get("node_id")}
+            title_map = await _build_title_map(db, node_ids)
+
+            items = [
+                AreWeWinningSelfCaughtDrillThroughRowDTO(
+                    node_id=str(r["node_id"]),
+                    bucket=r["bucket"],
+                    reason=r.get("reason"),
+                    title=title_map.get(str(r["node_id"])),
+                )
+                for r in page_rows
+            ]
+
+            has_more = offset + eff_limit < total
+            next_cursor = _encode_cursor(offset + eff_limit) if has_more else None
+
+            return AreWeWinningSelfCaughtDrillThroughPageDTO(
                 items=items,
                 total=total,
                 limit=eff_limit,
