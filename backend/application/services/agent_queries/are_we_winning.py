@@ -53,7 +53,7 @@ import base64
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 import aiosqlite
 
@@ -92,9 +92,36 @@ __all__ = [
     "compute_self_caught_ratio",
 ]
 
+#: The closed 3-value vocabulary for self-caught-ratio buckets, mirrored from
+#: ``SelfCaughtRatioBucketDTO.bucket``'s own ``Literal`` type (backend/models.py).
+SelfCaughtBucket = Literal["self_caught", "other_caught", "unknown"]
+
+
+def _narrow_self_caught_bucket(value: str) -> SelfCaughtBucket:
+    """Narrow an arbitrary DB-stored bucket token to the closed vocabulary.
+
+    This is the boundary where a stored value leaves the database and enters
+    a ``Literal["self_caught", "other_caught", "unknown"]``-typed surface
+    (``SelfCaughtRatioBucketDTO.bucket``). An unrecognized token -- which
+    should never happen since the derivation service only ever writes the
+    closed vocabulary, but a stored value is never trustworthy by
+    construction -- maps to ``"unknown"`` rather than raising or passing a
+    bare ``str`` through un-narrowed. This is the one check that makes the
+    closed-vocabulary guarantee real rather than merely documented.
+    """
+    if value == SELF_CAUGHT_BUCKET:
+        return "self_caught"
+    if value == OTHER_CAUGHT_BUCKET:
+        return "other_caught"
+    return "unknown"
+
+
 #: Canonical, closed-vocabulary iteration order for self-caught-ratio buckets
 #: (mirrors the ``decide_attribution`` never-silently-divide convention).
-_SELF_CAUGHT_BUCKET_ORDER: tuple[str, ...] = (SELF_CAUGHT_BUCKET, OTHER_CAUGHT_BUCKET, UNKNOWN_BUCKET)
+_SELF_CAUGHT_BUCKET_ORDER: tuple[SelfCaughtBucket, ...] = tuple(
+    _narrow_self_caught_bucket(value)
+    for value in (SELF_CAUGHT_BUCKET, OTHER_CAUGHT_BUCKET, UNKNOWN_BUCKET)
+)
 
 # The two event types M1 ingests and this module reads. Kept in sync with
 # ``backend.application.services.ingest.intenttree_events_ingest.EVENT_TYPES``
@@ -217,13 +244,13 @@ async def compute_self_caught_ratio(db: Any) -> SelfCaughtRatioDTO:
     skips a bucket).
     """
     rows = await _fetch_self_caught_buckets(db)
-    counts: dict[str, int] = {bucket: 0 for bucket in _SELF_CAUGHT_BUCKET_ORDER}
+    counts: dict[SelfCaughtBucket, int] = {bucket: 0 for bucket in _SELF_CAUGHT_BUCKET_ORDER}
     for _node_id, bucket, _reason in rows:
         # Forward-compat: an unrecognized token in the cache (should never
         # happen -- the derivation service only ever writes the closed
-        # vocabulary) is treated as unknown rather than raising or being
-        # silently dropped from the total.
-        key = bucket if bucket in counts else UNKNOWN_BUCKET
+        # vocabulary) is narrowed to unknown via _narrow_self_caught_bucket
+        # rather than raising or being silently dropped from the total.
+        key = _narrow_self_caught_bucket(bucket)
         counts[key] = counts.get(key, 0) + 1
 
     buckets = [

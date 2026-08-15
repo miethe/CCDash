@@ -53,7 +53,10 @@ from backend.application.context import (
     TraceContext,
 )
 from backend.application.ports import CorePorts
-from backend.application.services.agent_queries.are_we_winning import AreWeWinningQueryService
+from backend.application.services.agent_queries.are_we_winning import (
+    AreWeWinningQueryService,
+    compute_self_caught_ratio,
+)
 from backend.application.services.agent_queries.cache import clear_cache
 from backend.application.services.ingest.intenttree_reopened_derivation import (
     SOURCE_ID as REOPENED_SOURCE_ID,
@@ -896,6 +899,42 @@ class SelfCaughtDerivationServiceIntegrationTests(_AsyncSqliteHarness):
             source_id=SELF_CAUGHT_SOURCE_ID, project_id="global", workspace_id="ws-test"
         )
         self.assertIsNone(cursor.last_ingest_at)
+
+
+class SelfCaughtClosedVocabularyNarrowingTests(_AsyncSqliteHarness):
+    """M2 scheduler wiring task item 2: the closed vocabulary must be closed
+    at the boundary where a stored bucket value leaves the database, not
+    merely documented. A row with a bucket token outside the known 3-value
+    set (which should never happen -- the derivation service only ever
+    writes the closed vocabulary -- but a stored value is never trustworthy
+    by construction) must surface as ``unknown``, never raise, and never
+    become a 4th bucket in the returned DTO.
+    """
+
+    async def test_unexpected_stored_bucket_value_surfaces_as_unknown(self) -> None:
+        await self.buckets_repo.insert_if_not_exists(
+            {"node_id": "node-1", "bucket": "self_caught", "reason": "test fixture"}
+        )
+        await self.buckets_repo.insert_if_not_exists(
+            {"node_id": "node-2", "bucket": "some_future_bucket_token", "reason": "test fixture"}
+        )
+
+        result = await compute_self_caught_ratio(self.db)
+
+        self.assertEqual(result.total, 2)
+        by_bucket = {row.bucket: row.count for row in result.buckets}
+        self.assertEqual(
+            set(by_bucket.keys()),
+            {"self_caught", "other_caught", "unknown"},
+            "an unrecognized token must never introduce a 4th bucket",
+        )
+        self.assertEqual(by_bucket["self_caught"], 1)
+        self.assertEqual(by_bucket["other_caught"], 0)
+        self.assertEqual(
+            by_bucket["unknown"],
+            1,
+            "the unrecognized 'some_future_bucket_token' row must be narrowed to unknown",
+        )
 
 
 if __name__ == "__main__":

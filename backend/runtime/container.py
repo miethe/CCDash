@@ -19,6 +19,7 @@ from backend.adapters.live_updates.postgres_listener import PostgresLiveNotifica
 from backend.adapters.jobs import (
     AARReviewSweepJob,
     ArtifactRollupExportJob,
+    IntentTreeDerivationJob,
     IntentTreeEventsIngestJob,
     RoutingRollupSweepJob,
     RuntimeJobAdapter,
@@ -192,6 +193,65 @@ def _construct_intenttree_events_ingest_job(profile_name: str, db: Any) -> Inten
         page_size=int(getattr(config, "CCDASH_INTENTTREE_INGEST_PAGE_SIZE", 200)),
     )
     return IntentTreeEventsIngestJob(service)
+
+
+def _construct_intenttree_derivation_job(profile_name: str, db: Any) -> IntentTreeDerivationJob | None:
+    """are-we-winning-dashboard-v1 M2 scheduler wiring: the exact gate +
+    construction for ``IntentTreeDerivationJob``. Mirrors
+    ``_construct_intenttree_events_ingest_job`` verbatim (same
+    module-level-function shape, same profile/flag/config gate) -- the two
+    derivations (reopened trendline, self-caught ratio) were fully
+    implemented and tested in M2 part B but never registered with the
+    periodic scheduler; this is that registration's construction half.
+
+    Returns ``None`` unless ALL hold: ``profile_name`` is in
+    ``_WORKER_JOB_PROFILES`` (``api`` never constructs this job),
+    ``CCDASH_ARE_WE_WINNING_ENABLED`` is true, AND the required IntentTree
+    connection config (``CCDASH_INTENTTREE_API_URL``,
+    ``CCDASH_INTENTTREE_API_TOKEN``, ``CCDASH_INTENTTREE_WORKSPACE_ID``) is
+    fully present -- identical gate to the ingestion job's, since both
+    derivations need the same IntentTree HTTP connection (per-node history /
+    per-node read calls) that the ingestion job's sweep uses.
+    """
+    if profile_name not in _WORKER_JOB_PROFILES:
+        return None
+    if not bool(getattr(config, "CCDASH_ARE_WE_WINNING_ENABLED", False)):
+        return None
+    api_url = getattr(config, "CCDASH_INTENTTREE_API_URL", None)
+    api_token = getattr(config, "CCDASH_INTENTTREE_API_TOKEN", None)
+    workspace_id = getattr(config, "CCDASH_INTENTTREE_WORKSPACE_ID", None)
+    if not (api_url and api_token and workspace_id) or db is None:
+        return None
+
+    from backend.application.services.ingest.intenttree_reopened_derivation import (
+        IntentTreeReopenedDerivationService,
+    )
+    from backend.application.services.ingest.intenttree_self_caught_derivation import (
+        IntentTreeSelfCaughtDerivationService,
+    )
+    from backend.db.factory import (
+        get_ingest_cursor_repository,
+        get_intent_tree_reopened_events_repository,
+        get_intent_tree_self_caught_buckets_repository,
+    )
+
+    reopened_service = IntentTreeReopenedDerivationService(
+        db,
+        get_intent_tree_reopened_events_repository(db),
+        get_ingest_cursor_repository(db),
+        api_url=api_url,
+        api_token=api_token,
+        workspace_id=workspace_id,
+    )
+    self_caught_service = IntentTreeSelfCaughtDerivationService(
+        db,
+        get_intent_tree_self_caught_buckets_repository(db),
+        get_ingest_cursor_repository(db),
+        api_url=api_url,
+        api_token=api_token,
+        workspace_id=workspace_id,
+    )
+    return IntentTreeDerivationJob(reopened_service, self_caught_service)
 
 
 class RuntimeContainer:
@@ -396,6 +456,13 @@ class RuntimeContainer:
             # session_naming_sweep_job's extracted-function gating pattern
             # exactly.
             intenttree_events_ingest_job=_construct_intenttree_events_ingest_job(
+                self.profile.name, self.db
+            ),
+            # are-we-winning-dashboard-v1 M2 scheduler wiring: default-off
+            # IntentTree reopened + self-caught derivation sweep. Mirrors
+            # intenttree_events_ingest_job's extracted-function gating
+            # pattern exactly.
+            intenttree_derivation_job=_construct_intenttree_derivation_job(
                 self.profile.name, self.db
             ),
         )

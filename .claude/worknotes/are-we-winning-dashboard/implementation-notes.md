@@ -401,3 +401,45 @@ across 6 files, of which `lib/__tests__/areWeWinning.test.ts` contributes 10. Th
 traps were also statically confirmed: no keyed `ResponsiveContainer` anywhere in
 `components/Analytics/`, no `searchParams` write in the new tab, and `isAnimationActive={false}`
 present on the shared `<Pie>`.
+
+## M2 scheduler wiring + closed-vocabulary narrowing
+
+(Recorded by the orchestrator; the delegated ICA leg was blocked from running its own verification
+commands by a Bash approval gate and explicitly asked the orchestrator to run them rather than
+claiming success. The orchestrator ran all of them — results below.)
+
+The gap this closes: M2 part B implemented and tested both derivations but did not register them
+with the periodic scheduler. They existed, passed their tests, and would never have executed. In a
+real deployment the reopened trendline and the self-caught ratio would have stayed permanently
+empty while the UI rendered a clean "no data" state — the failure looks like a working feature with
+nothing to show, which is the hardest kind to notice.
+
+Ordering choice: the derivation sweep runs as its OWN task on its own interval
+(`CCDASH_INTENTTREE_DERIVE_INTERVAL_SECONDS`), rather than sequenced inside the ingestion tick.
+Both derivation services already treat an empty or partial `intent_tree_events` cache as a normal
+zero-work pass (an empty candidate set means the loop never runs and the sweep reports ok with zero
+processed), so a derivation tick racing ahead of — or between — ingestion ticks is harmless.
+Decoupling means a stalled ingestion sweep never blocks derivation and vice versa. Gating,
+circular-import discipline (TYPE_CHECKING at module scope, real import deferred into the
+`_construct_*` function) and worker-profile-only start all mirror M1's ingestion job verbatim.
+
+Closed-vocabulary narrowing: `are_we_winning.py` previously passed a plain `str` from the database
+into a parameter typed `Literal["self_caught", "other_caught", "unknown"]`. Fixed with a real
+narrowing function (`_narrow_self_caught_bucket`) rather than a `# type: ignore` — a suppression
+there would have silenced the one check that makes the vocabulary actually closed. An unrecognized
+stored token now maps to `unknown`; it never raises and never passes through. Pinned by
+`SelfCaughtClosedVocabularyNarrowingTests`, which inserts an unrecognized bucket token and asserts
+it surfaces as `unknown` with exactly three buckets in the result.
+
+Verification (run by the orchestrator with the real main-repo venv):
+- `backend.runtime.container` exposes `IntentTreeDerivationJob` and
+  `_construct_intenttree_derivation_job` alongside M1's ingestion pair.
+- `runtime.py` starts the periodic task in the run path (`_start_intenttree_derivation_task`), so
+  it is genuinely scheduled and not merely constructible.
+- `test_intenttree_derivation_job.py` → 9 passed.
+- `test_are_we_winning_derivations.py` + `test_are_we_winning_rollups.py` +
+  `test_intenttree_events_ingest.py` → 48 passed.
+
+`backend/tests/test_runtime_bootstrap.py` was deliberately NOT used to verify this: it hangs on
+import in this repo. The job-wrapper test file above exists specifically so this wiring has
+verification that does not depend on a hanging suite.
