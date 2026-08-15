@@ -486,12 +486,25 @@ async def _self_caught_drill_through_rows(db: Any, *, bucket: str) -> list[dict[
 
     Unlike the trendline drill-throughs, there is no week coordinate here --
     a self-caught bucket is a per-node, non-time-bucketed verdict.
+
+    Every stored bucket token is narrowed through
+    ``_narrow_self_caught_bucket`` before comparison AND before emission --
+    the same narrowing ``compute_self_caught_ratio`` applies to build the
+    summary counts. Without it, an unrecognized stored token would be
+    counted as ``unknown`` in the summary while being silently absent from
+    this drill-through's ``unknown`` page -- two surfaces disagreeing about
+    the same population, the exact "never silently divide" property this
+    feature exists to protect.
     """
     rows = await _fetch_self_caught_buckets(db)
     return [
-        {"node_id": node_id, "bucket": row_bucket, "reason": reason}
+        {
+            "node_id": node_id,
+            "bucket": _narrow_self_caught_bucket(row_bucket),
+            "reason": reason,
+        }
         for node_id, row_bucket, reason in rows
-        if row_bucket == bucket
+        if _narrow_self_caught_bucket(row_bucket) == bucket
     ]
 
 

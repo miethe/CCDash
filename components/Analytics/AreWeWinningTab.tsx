@@ -187,10 +187,10 @@ const SelfCaughtRatioWidget: React.FC<{
         ))}
       </ul>
       <p className="mt-3 text-xs text-muted-foreground">
-        Per-bucket drill-through is not yet available — the current backend
-        contract (<code>SelfCaughtRatioBucketDTO</code>) reports only a
-        bucket + count, with no underlying-row coordinates. See the
-        implementation notes for this gap.
+        Per-bucket drill-through is not yet wired up in this UI. The backend
+        already exposes a per-bucket drill-through endpoint
+        (<code>get_self_caught_drill_through</code>); this tab does not call
+        it yet. Tracked separately (node_01M01R99RTVZFGJT1708VT057M).
       </p>
     </Surface>
   );

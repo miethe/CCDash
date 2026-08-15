@@ -52,9 +52,43 @@ backlog, side_quest, active, running, waiting_human, reviewing):
   never done in the first place; a transition out of them is "starting/
   resuming," not "reopening completed work."
 
+Destination-status decision -- both ends of the transition are constrained
+------------------------------------------------------------------------------
+A reopen is a transition **from** a terminal status **to an ACTIVE status**
+-- constraining only the source (as an earlier pass did) silently counts
+``completed -> archived`` and ``completed -> deferred`` as reopens, which is
+wrong in the specific way this milestone was warned about: archiving or
+deferring a finished node is **disposal**, not "completed work regressed."
+Counting it would inflate the regression trendline with routine cleanup.
+
+``ACTIVE_DESTINATION_STATUSES`` is an explicit **allow-list**, deliberately
+not a deny-list: a status added upstream later defaults to "not a reopen"
+until someone explicitly adds it here, rather than silently becoming a
+reopen destination the moment IntentTree ships a new value. Ground-truthed
+against the same live enum as ``TERMINAL_STATUSES`` above
+(``intenttree.models.enums.NodeStatus``, 15 values: not_started, ready,
+in_progress, blocked, waiting_review, completed, deferred, archived, inbox,
+backlog, side_quest, active, running, waiting_human, reviewing):
+
+* **Active** (``ACTIVE_DESTINATION_STATUSES``): ``ready``, ``in_progress``,
+  ``blocked``, ``waiting_review``, ``active``, ``running``,
+  ``waiting_human``, ``reviewing`` -- every status that puts a node back
+  into the live execution pipeline (claimable, being worked, or paused
+  mid-work waiting on a gate). A transition into any of these from
+  ``completed`` is a genuine "this finished thing needs attention again."
+* **Not active** -- ``archived``/``deferred`` are disposal/parking (see the
+  ``TERMINAL_STATUSES`` rationale above -- the same reasoning that keeps
+  them out of the terminal set keeps them out of the active-destination
+  set too: they are "shelved," not "resumed"). ``not_started``/``inbox``/
+  ``backlog`` are pre-triage queue states for work that was never started
+  in the first place -- routing a finished node back into a queue bucket is
+  "re-parking," not "actively resuming." ``side_quest`` is an off-tree
+  capture bucket, not a work state. ``completed`` itself is excluded by
+  construction (staying/re-completing is not a reopen).
+
 A transition counts as a reopen iff a single ``NodeHistoryRead`` row for
 ``field=status`` has an unwrapped ``old_value`` in ``TERMINAL_STATUSES`` and
-an unwrapped ``new_value`` that is present and NOT in ``TERMINAL_STATUSES``.
+an unwrapped ``new_value`` in ``ACTIVE_DESTINATION_STATUSES``.
 
 Fail-soft (mirrors ``intenttree_events_ingest.py`` exactly)
 -------------------------------------------------------------
@@ -99,6 +133,23 @@ logger = logging.getLogger("ccdash.ingest.intenttree_reopened_derivation")
 #: purposes of detecting a reopen. See the module docstring for the full
 #: rationale on why ``archived``/``deferred`` are deliberately excluded.
 TERMINAL_STATUSES: Final[frozenset[str]] = frozenset({"completed"})
+
+#: The allow-list of destination statuses that count as "reopened" -- see
+#: the module docstring for the full ground-truthed rationale. Deliberately
+#: an allow-list, not a deny-list of disposal statuses: an unrecognized
+#: future status defaults to "not a reopen" rather than silently becoming one.
+ACTIVE_DESTINATION_STATUSES: Final[frozenset[str]] = frozenset(
+    {
+        "ready",
+        "in_progress",
+        "blocked",
+        "waiting_review",
+        "active",
+        "running",
+        "waiting_human",
+        "reviewing",
+    }
+)
 
 SOURCE_ID: Final[str] = "intenttree:reopened_derivation"
 
@@ -223,7 +274,24 @@ class IntentTreeReopenedDerivationService:
             nodes_processed += 1
             reopens_written += written
 
-        await self._cursor_advance()
+        cursor_advanced = await self._cursor_advance()
+        if not cursor_advanced:
+            # The success watermark itself is load-bearing here (unlike a
+            # purely-telemetry cursor): AreWeWinningQueryService gates
+            # ``reopened`` on this exact watermark via
+            # ``_derivation_has_ever_run``. Reporting ok=True while failing
+            # to record it would be a fail-soft claim about a failure that
+            # was never actually the remote being unavailable -- the same
+            # defect class the M1 ingestion service's fetch handler already
+            # guards against by never reporting success on an error it
+            # cannot characterize as remote-unavailability.
+            return ReopenedDerivationResult(
+                ok=False,
+                candidate_node_ids=candidate_node_ids,
+                nodes_processed=nodes_processed,
+                reopens_written=reopens_written,
+                error="failed to record derivation success watermark (ingest_cursors advance failed)",
+            )
         return ReopenedDerivationResult(
             ok=True,
             candidate_node_ids=candidate_node_ids,
@@ -268,7 +336,7 @@ class IntentTreeReopenedDerivationService:
                 history_id = item.get("id")
                 if not (old_status and new_status and changed_at and history_id):
                     continue
-                if old_status in TERMINAL_STATUSES and new_status not in TERMINAL_STATUSES:
+                if old_status in TERMINAL_STATUSES and new_status in ACTIVE_DESTINATION_STATUSES:
                     was_new = await retry_on_locked(
                         lambda r={
                             "id": history_id,
@@ -306,9 +374,17 @@ class IntentTreeReopenedDerivationService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("intenttree reopened derivation: cursor get_or_create failed: %s", exc)
 
-    async def _cursor_advance(self) -> None:
+    async def _cursor_advance(self) -> bool:
+        """Advance the success watermark. Returns False (never raises) on failure.
+
+        Unlike ``_cursor_get_or_create``/``_cursor_record_error`` (best-effort
+        bookkeeping), this return value is checked by ``derive_all`` -- the
+        watermark this call writes IS the "did a full clean pass complete"
+        signal the render path depends on, so a failure here must not be
+        reported as ``ok=True``.
+        """
         if self._cursor_repo is None:
-            return
+            return True
         try:
             await retry_on_locked(
                 lambda: self._cursor_repo.advance(
@@ -320,8 +396,10 @@ class IntentTreeReopenedDerivationService:
                 ),
                 repo="ingest_cursors",
             )
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.warning("intenttree reopened derivation: cursor advance failed: %s", exc)
+            return False
 
     async def _cursor_record_error(self, error_message: str) -> None:
         if self._cursor_repo is None:
@@ -370,6 +448,7 @@ async def distinct_node_ids_for_event_type(db: Any, event_type: str) -> set[str]
 
 __all__ = [
     "TERMINAL_STATUSES",
+    "ACTIVE_DESTINATION_STATUSES",
     "SOURCE_ID",
     "ReopenedDerivationResult",
     "IntentTreeReopenedDerivationService",

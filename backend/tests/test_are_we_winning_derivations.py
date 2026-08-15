@@ -59,6 +59,7 @@ from backend.application.services.agent_queries.are_we_winning import (
 )
 from backend.application.services.agent_queries.cache import clear_cache
 from backend.application.services.ingest.intenttree_reopened_derivation import (
+    ACTIVE_DESTINATION_STATUSES,
     SOURCE_ID as REOPENED_SOURCE_ID,
     TERMINAL_STATUSES,
     IntentTreeReopenedDerivationService,
@@ -351,6 +352,71 @@ class TerminalStatusBoundaryTests(_AsyncSqliteHarness):
         # the task. See intenttree_reopened_derivation.py's module docstring
         # for the full rationale (archived/deferred deliberately excluded).
         self.assertEqual(TERMINAL_STATUSES, frozenset({"completed"}))
+
+    async def test_completed_to_archived_is_disposal_not_a_reopen(self) -> None:
+        # Gate fix: constraining only the source status (a node must have
+        # been completed) silently counted completed -> archived as a
+        # reopen. Archiving a finished node is disposal, not "completed
+        # work regressed" -- it must not be persisted as a reopen row.
+        await _insert_event(
+            self.events_repo,
+            event_id="evt-completed-1",
+            event_type="node.completed",
+            occurred_at="2026-08-01T00:00:00.000000Z",
+            node_id="node-1",
+        )
+        history_by_node = {
+            "node-1": [
+                _history_item(
+                    item_id="hist-1",
+                    old_status="completed",
+                    new_status="archived",
+                    changed_at="2026-08-10T00:00:00.000000Z",
+                )
+            ]
+        }
+        http_get, _calls = _history_http_get(history_by_node)
+        result = await self._reopened_service(http_get).derive_all()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.reopens_written, 0)
+        rows = await self.reopened_repo.list_all()
+        self.assertEqual(rows, [], "completed -> archived must not be persisted as a reopen")
+
+    async def test_completed_to_deferred_is_disposal_not_a_reopen(self) -> None:
+        await _insert_event(
+            self.events_repo,
+            event_id="evt-completed-1",
+            event_type="node.completed",
+            occurred_at="2026-08-01T00:00:00.000000Z",
+            node_id="node-1",
+        )
+        history_by_node = {
+            "node-1": [
+                _history_item(
+                    item_id="hist-1",
+                    old_status="completed",
+                    new_status="deferred",
+                    changed_at="2026-08-10T00:00:00.000000Z",
+                )
+            ]
+        }
+        http_get, _calls = _history_http_get(history_by_node)
+        result = await self._reopened_service(http_get).derive_all()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.reopens_written, 0)
+        rows = await self.reopened_repo.list_all()
+        self.assertEqual(rows, [], "completed -> deferred must not be persisted as a reopen")
+
+    async def test_active_destination_statuses_excludes_disposal_values(self) -> None:
+        # Pin the exact allow-list this derivation uses for the destination
+        # side of the transition -- an allow-list, not a deny-list, so a
+        # future upstream status defaults to "not a reopen".
+        self.assertNotIn("archived", ACTIVE_DESTINATION_STATUSES)
+        self.assertNotIn("deferred", ACTIVE_DESTINATION_STATUSES)
+        self.assertNotIn("completed", ACTIVE_DESTINATION_STATUSES)
+        self.assertIn("in_progress", ACTIVE_DESTINATION_STATUSES)
 
 
 # ── AC2: derivation scope (ever-completed set only) ─────────────────────────
@@ -935,6 +1001,97 @@ class SelfCaughtClosedVocabularyNarrowingTests(_AsyncSqliteHarness):
             1,
             "the unrecognized 'some_future_bucket_token' row must be narrowed to unknown",
         )
+
+    async def test_drill_through_unknown_total_matches_summary_unknown_count(self) -> None:
+        # Gate fix: compute_self_caught_ratio narrows stored bucket values
+        # through _narrow_self_caught_bucket, but the drill-through path
+        # previously compared/emitted the raw stored token -- so an
+        # unrecognized token was counted as "unknown" in the summary while
+        # being absent from the "unknown" drill-through page. Both surfaces
+        # must agree about the same population.
+        await self.buckets_repo.insert_if_not_exists(
+            {"node_id": "node-1", "bucket": "self_caught", "reason": "test fixture"}
+        )
+        await self.buckets_repo.insert_if_not_exists(
+            {"node_id": "node-2", "bucket": "some_future_bucket_token", "reason": "test fixture"}
+        )
+        await self.buckets_repo.insert_if_not_exists(
+            {"node_id": "node-3", "bucket": "unknown", "reason": "test fixture"}
+        )
+
+        with patch.object(config, "CCDASH_QUERY_CACHE_TTL_SECONDS", 0):
+            summary_ratio = await compute_self_caught_ratio(self.db)
+            unknown_page = await self.service.get_self_caught_drill_through(
+                _context(), self.ports, bucket=UNKNOWN_BUCKET
+            )
+
+        summary_unknown_count = next(
+            b.count for b in summary_ratio.buckets if b.bucket == "unknown"
+        )
+        self.assertEqual(summary_unknown_count, 2)
+        self.assertEqual(
+            unknown_page.total,
+            summary_unknown_count,
+            "the unknown drill-through total must match the summary's unknown count",
+        )
+        drilled_node_ids = {item.node_id for item in unknown_page.items}
+        self.assertEqual(drilled_node_ids, {"node-2", "node-3"})
+
+
+class ReopenedCursorAdvanceFailureTests(_AsyncSqliteHarness):
+    """Gate fix: cursor creation/advance previously caught every Exception,
+    after which derive_all() still reported ok=True -- a programming or
+    storage-contract error while recording the success watermark was
+    swallowed while the watermark itself was never written. Mirrors the
+    M1 ingestion service's principle: fail-soft must mean "the remote is
+    unavailable", never "our code is wrong".
+    """
+
+    async def test_unexpected_exception_during_cursor_advance_does_not_produce_ok_true(
+        self,
+    ) -> None:
+        await _insert_event(
+            self.events_repo,
+            event_id="evt-completed-1",
+            event_type="node.completed",
+            occurred_at="2026-08-01T00:00:00.000000Z",
+            node_id="node-1",
+        )
+        http_get, _calls = _history_http_get({"node-1": []})
+        service = self._reopened_service(http_get)
+
+        async def _broken_advance(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("simulated programming/storage-contract error")
+
+        with patch.object(self.cursor_repo, "advance", _broken_advance):
+            result = await service.derive_all()
+
+        self.assertFalse(result.ok)
+        self.assertIsNotNone(result.error)
+
+
+class SelfCaughtCursorAdvanceFailureTests(_AsyncSqliteHarness):
+    async def test_unexpected_exception_during_cursor_advance_does_not_produce_ok_true(
+        self,
+    ) -> None:
+        await _insert_event(
+            self.events_repo,
+            event_id="evt-created-1",
+            event_type="node.created",
+            occurred_at="2026-08-01T00:00:00.000000Z",
+            node_id="node-1",
+        )
+        http_get, _calls = _node_read_http_get({"node-1": {"tags": [], "meta": {}}})
+        service = self._self_caught_service(http_get)
+
+        async def _broken_advance(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("simulated programming/storage-contract error")
+
+        with patch.object(self.cursor_repo, "advance", _broken_advance):
+            result = await service.derive_all()
+
+        self.assertFalse(result.ok)
+        self.assertIsNotNone(result.error)
 
 
 if __name__ == "__main__":

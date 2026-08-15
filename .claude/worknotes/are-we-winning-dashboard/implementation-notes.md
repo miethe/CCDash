@@ -509,3 +509,57 @@ to `git status`), and the dev script picked it up over the main-repo venv. Repla
 to the main repo's venv, which is the project's documented convention anyway. Worth knowing: a
 delegated executor working around a sandboxed path can leave behind an environment that silently
 shadows the real one.
+
+## M2/M3 gate fixes (reviewer gate -> CHANGES_REQUESTED, then re-passed)
+
+The M2/M3 gate (Codex gpt-5.6-terra, read-only, adversarial) returned CHANGES_REQUESTED with three
+defects plus one stale-disclosure observation. All four addressed; backend suites 48 -> 63 tests,
+frontend 52 -> 59.
+
+**1. A disposal was being reported as a regression.** The reopened derivation constrained the
+transition's SOURCE (must have been `completed`) but not its DESTINATION, so `completed -> archived`
+and `completed -> deferred` counted as reopens. Archiving or deferring a finished node is disposal,
+not "completed work regressed" -- it inflates the regression trendline with routine cleanup, and
+nothing about the output looks wrong. This is exactly the silently-plausible boundary error the
+plan's routing_constraints reserved to the primary lane.
+
+Fixed by constraining BOTH ends: a reopen is now `old_status in TERMINAL_STATUSES and new_status in
+ACTIVE_DESTINATION_STATUSES`. `ACTIVE_DESTINATION_STATUSES` is an explicit **allow-list** (not a
+deny-list) so a status added upstream later defaults to "not a reopen" rather than silently becoming
+one. The set was ground-truthed against the live IntentTree `NodeStatus` enum, not guessed.
+
+Worth recording the reasoning for `archived` specifically, because it is the non-obvious half:
+`archived` is ambiguous -- it can mean "done and put away" OR "abandoned without ever finishing",
+since a cancelled node can also be archived. Treating it as terminal would produce a false-positive
+reopen when a *cancelled* node is later un-archived and resumed, which is not completed work
+regressing. Covered by persisted-state tests (not just constant-pinning): `completed -> in_progress`
+counts; `completed -> archived` and `completed -> deferred` do not; a never-completed node is still
+never examined.
+
+**2. Summary and drill-through could disagree about the same population.** The drill-through path
+compared and emitted stored bucket values without narrowing them through
+`_narrow_self_caught_bucket()`, so an unrecognized stored token was counted as `unknown` in the
+summary while being absent from the `unknown` drill-through -- two surfaces disagreeing, which is
+the "never silently divide" property this feature exists to protect. Now narrowed on both the
+comparison and the emitted field, with a test asserting the drill-through `unknown` total equals the
+summary `unknown` count.
+
+**3. A swallowed error reported success.** Both derivation services' `_cursor_advance` caught every
+`Exception`, after which `derive_all()` still returned `ok=True`. Unlike `rf_events_ingest.py`'s
+cursor bookkeeping -- genuinely secondary telemetry -- this watermark is load-bearing:
+`AreWeWinningQueryService._derivation_has_ever_run` gates whether `reopened` and
+`self_caught_ratio` are exposed at all. `_cursor_advance` now returns a bool and `derive_all()`
+returns `ok=False` with an explanatory error when the watermark write fails. Same principle as M1's
+ingestion fix: fail-soft means "the remote is unavailable", never "our code is wrong".
+
+**4. The gap disclosure stated a false reason.** The ratio panel told the user per-bucket
+drill-through was unavailable because the backend "reports only a bucket + count, with no underlying
+-row coordinates". That went stale when `get_self_caught_drill_through` shipped. Corrected to state
+what is true -- the endpoint exists, the UI does not call it yet -- without wiring it (deferred,
+tracked as `node_01M01R99RTVZFGJT1708VT057M`). A disclosure that misstates its own reason is worse
+than none: it sends the next reader to fix the wrong layer.
+
+Verification: the delegated leg could not reach the absolute main-repo venv path (sandbox boundary)
+and could not run vitest at all (Bash approval wall); it said so rather than claiming a pass. The
+orchestrator ran both: 63 backend tests pass across the four named files, 59 frontend tests across 7
+files.

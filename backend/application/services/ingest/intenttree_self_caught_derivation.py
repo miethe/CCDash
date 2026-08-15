@@ -257,7 +257,19 @@ class IntentTreeSelfCaughtDerivationService:
             if was_new:
                 buckets_written[verdict.bucket] = buckets_written.get(verdict.bucket, 0) + 1
 
-        await self._cursor_advance()
+        cursor_advanced = await self._cursor_advance()
+        if not cursor_advanced:
+            # Same defect class as the reopened derivation (see that
+            # module's derive_all): the watermark this call writes is what
+            # AreWeWinningQueryService._derivation_has_ever_run gates on, so
+            # a failure to record it must not be reported as ok=True.
+            return SelfCaughtDerivationResult(
+                ok=False,
+                candidate_node_ids=candidate_node_ids,
+                nodes_processed=nodes_processed,
+                buckets_written=buckets_written,
+                error="failed to record derivation success watermark (ingest_cursors advance failed)",
+            )
         return SelfCaughtDerivationResult(
             ok=True,
             candidate_node_ids=candidate_node_ids,
@@ -282,9 +294,16 @@ class IntentTreeSelfCaughtDerivationService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("intenttree self-caught derivation: cursor get_or_create failed: %s", exc)
 
-    async def _cursor_advance(self) -> None:
+    async def _cursor_advance(self) -> bool:
+        """Advance the success watermark. Returns False (never raises) on failure.
+
+        See ``IntentTreeReopenedDerivationService._cursor_advance`` -- this
+        watermark is load-bearing (gates ``self_caught_ratio`` via
+        ``_derivation_has_ever_run``), so a failure here must not be
+        reported as ``ok=True`` by ``derive_all``.
+        """
         if self._cursor_repo is None:
-            return
+            return True
         from datetime import datetime, timezone
 
         try:
@@ -298,8 +317,10 @@ class IntentTreeSelfCaughtDerivationService:
                 ),
                 repo="ingest_cursors",
             )
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.warning("intenttree self-caught derivation: cursor advance failed: %s", exc)
+            return False
 
     async def _cursor_record_error(self, error_message: str) -> None:
         if self._cursor_repo is None:
