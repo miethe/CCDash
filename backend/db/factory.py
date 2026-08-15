@@ -221,3 +221,11 @@ def get_ingest_cursor_repository(db: Any):
         return SqliteIngestCursorRepository(db)
     from backend.db.repositories.ingest_cursors import PostgresIngestCursorRepository
     return PostgresIngestCursorRepository(db)
+
+
+def get_intent_tree_events_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        from backend.db.repositories.intent_tree_events import SqliteIntentTreeEventsRepository
+        return SqliteIntentTreeEventsRepository(db)
+    from backend.db.repositories.intent_tree_events import PostgresIntentTreeEventsRepository
+    return PostgresIntentTreeEventsRepository(db)

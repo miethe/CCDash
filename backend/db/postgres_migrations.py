@@ -77,7 +77,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 54
+SCHEMA_VERSION = 55
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1447,6 +1447,28 @@ CREATE TABLE IF NOT EXISTS rf_events (
 CREATE INDEX IF NOT EXISTS idx_rf_events_run_id ON rf_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_rf_events_project_created ON rf_events(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_rf_events_workspace ON rf_events(workspace_id);
+
+-- ── IntentTree lifecycle events (are-we-winning-dashboard-v1 M1) ─────────
+-- Mirror of the SQLite intent_tree_events DDL (backend/db/sqlite_migrations.py)
+-- -- same column names/types/nullability so column_parity_diff("intent_tree_events")
+-- is {} by construction (rf_events precedent: TEXT on both sides, and the
+-- already-suppressed timestamp-default nullability case for ingested_at).
+CREATE TABLE IF NOT EXISTS intent_tree_events (
+    id            TEXT PRIMARY KEY,
+    workspace_id  TEXT NOT NULL,
+    tree_id       TEXT,
+    node_id       TEXT,
+    event_type    TEXT NOT NULL,
+    actor_type    TEXT,
+    actor_id      TEXT,
+    occurred_at   TEXT NOT NULL,
+    payload_json  TEXT,
+    ingested_at   TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_tree_events_occurred_at ON intent_tree_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_intent_tree_events_event_type ON intent_tree_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_intent_tree_events_node_id ON intent_tree_events(node_id);
 
 -- ── RF Run Telemetry: research_runs derived rollup (T2-001) ──────────────
 -- One row per Research Foundry run, derived/upserted from rf_events (D6 —
@@ -4401,6 +4423,44 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
                     "(dropped %s).",
                     pk_name,
                 )
+
+    if current_version < 55:
+        # are-we-winning-dashboard-v1 M1: intent_tree_events table for
+        # pre-existing databases (fresh DBs get this from _TABLES above).
+        # CREATE TABLE IF NOT EXISTS keeps this idempotent (rf_events v40
+        # precedent, exactly). Mirror of the SQLite v55 block.
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS intent_tree_events (
+                id            TEXT PRIMARY KEY,
+                workspace_id  TEXT NOT NULL,
+                tree_id       TEXT,
+                node_id       TEXT,
+                event_type    TEXT NOT NULL,
+                actor_type    TEXT,
+                actor_id      TEXT,
+                occurred_at   TEXT NOT NULL,
+                payload_json  TEXT,
+                ingested_at   TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_events_occurred_at"
+            " ON intent_tree_events(occurred_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_events_event_type"
+            " ON intent_tree_events(event_type)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_events_node_id"
+            " ON intent_tree_events(node_id)"
+        )
+        logger.info(
+            "v55 migrations complete: intent_tree_events table added "
+            "(are-we-winning-dashboard-v1 M1)."
+        )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
     # Databases that already had schema_version >= SCHEMA_VERSION skip the

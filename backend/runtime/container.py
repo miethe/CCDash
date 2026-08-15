@@ -19,6 +19,7 @@ from backend.adapters.live_updates.postgres_listener import PostgresLiveNotifica
 from backend.adapters.jobs import (
     AARReviewSweepJob,
     ArtifactRollupExportJob,
+    IntentTreeEventsIngestJob,
     RoutingRollupSweepJob,
     RuntimeJobAdapter,
     RuntimeJobState,
@@ -151,6 +152,46 @@ def _construct_session_naming_sweep_job(profile_name: str, ports: Any) -> Sessio
         project=None,
         naming_backend=resolve_naming_backend(ports),
     )
+
+
+def _construct_intenttree_events_ingest_job(profile_name: str, db: Any) -> IntentTreeEventsIngestJob | None:
+    """are-we-winning-dashboard-v1 M1: the exact gate + construction for
+    ``IntentTreeEventsIngestJob``. Mirrors ``_construct_session_naming_sweep_job``'s
+    module-level-function shape exactly (directly unit-testable without a
+    live DB / full ``startup()`` lifecycle).
+
+    Returns ``None`` unless ALL hold: ``profile_name`` is in
+    ``_WORKER_JOB_PROFILES`` (``api`` never constructs this job),
+    ``CCDASH_ARE_WE_WINNING_ENABLED`` is true, AND the required IntentTree
+    connection config (``CCDASH_INTENTTREE_API_URL``,
+    ``CCDASH_INTENTTREE_API_TOKEN``, ``CCDASH_INTENTTREE_WORKSPACE_ID``) is
+    fully present -- an unset URL makes the whole feature inert by design
+    (config.py), so a flag flipped on with no config configured must still
+    construct nothing rather than crash at first tick.
+    """
+    if profile_name not in _WORKER_JOB_PROFILES:
+        return None
+    if not bool(getattr(config, "CCDASH_ARE_WE_WINNING_ENABLED", False)):
+        return None
+    api_url = getattr(config, "CCDASH_INTENTTREE_API_URL", None)
+    api_token = getattr(config, "CCDASH_INTENTTREE_API_TOKEN", None)
+    workspace_id = getattr(config, "CCDASH_INTENTTREE_WORKSPACE_ID", None)
+    if not (api_url and api_token and workspace_id) or db is None:
+        return None
+
+    from backend.application.services.ingest.intenttree_events_ingest import IntentTreeEventsIngestService
+    from backend.db.factory import get_ingest_cursor_repository, get_intent_tree_events_repository
+
+    service = IntentTreeEventsIngestService(
+        get_intent_tree_events_repository(db),
+        get_ingest_cursor_repository(db),
+        api_url=api_url,
+        api_token=api_token,
+        workspace_id=workspace_id,
+        tree_id=getattr(config, "CCDASH_INTENTTREE_TREE_ID", None),
+        page_size=int(getattr(config, "CCDASH_INTENTTREE_INGEST_PAGE_SIZE", 200)),
+    )
+    return IntentTreeEventsIngestJob(service)
 
 
 class RuntimeContainer:
@@ -350,6 +391,13 @@ class RuntimeContainer:
             session_naming_sweep_job=_construct_session_naming_sweep_job(
                 self.profile.name, self.require_ports()
             ),
+            # are-we-winning-dashboard-v1 M1: default-off IntentTree
+            # lifecycle-event ingestion sweep. Mirrors
+            # session_naming_sweep_job's extracted-function gating pattern
+            # exactly.
+            intenttree_events_ingest_job=_construct_intenttree_events_ingest_job(
+                self.profile.name, self.db
+            ),
         )
         self.lifecycle = await self.job_adapter.start()
         app.state.runtime_jobs = self.job_adapter
@@ -368,6 +416,8 @@ class RuntimeContainer:
             app.state.routing_rollup_sweep_task = self.lifecycle.routing_rollup_sweep_task
         if self.lifecycle.session_naming_sweep_task is not None:
             app.state.session_naming_sweep_task = self.lifecycle.session_naming_sweep_task
+        if self.lifecycle.intenttree_events_ingest_task is not None:
+            app.state.intenttree_events_ingest_task = self.lifecycle.intenttree_events_ingest_task
 
     async def shutdown(self, app: FastAPI) -> None:
         logger.info("CCDash backend shutting down (profile=%s)", self.profile.name)

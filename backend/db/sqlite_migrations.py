@@ -104,7 +104,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 54
+SCHEMA_VERSION = 55
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1438,6 +1438,33 @@ CREATE TABLE IF NOT EXISTS rf_events (
 CREATE INDEX IF NOT EXISTS idx_rf_events_run_id ON rf_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_rf_events_project_created ON rf_events(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_rf_events_workspace ON rf_events(workspace_id);
+
+-- ── IntentTree lifecycle events (are-we-winning-dashboard-v1 M1) ─────────
+-- Raw, append-only mirror of node.created/node.completed rows pulled from
+-- IntentTree's GET /api/v1/events domain event log (cursor-paginated,
+-- fail-soft ingest -- backend/application/services/ingest/
+-- intenttree_events_ingest.py). CCDash held zero IntentTree lifecycle-event
+-- data before this table. `id` is the IntentTree event id (PK) -- this is
+-- what makes ingestion idempotent across overlapping pages. payload_json is
+-- nullable (unknown == null, never a fabricated default): node.updated-style
+-- events on the live API carry no payload at all (measured 0/200 sampled),
+-- and even node.created/node.completed are not schema-guaranteed to.
+CREATE TABLE IF NOT EXISTS intent_tree_events (
+    id            TEXT PRIMARY KEY,
+    workspace_id  TEXT NOT NULL,
+    tree_id       TEXT,
+    node_id       TEXT,
+    event_type    TEXT NOT NULL,
+    actor_type    TEXT,
+    actor_id      TEXT,
+    occurred_at   TEXT NOT NULL,
+    payload_json  TEXT,
+    ingested_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_tree_events_occurred_at ON intent_tree_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_intent_tree_events_event_type ON intent_tree_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_intent_tree_events_node_id ON intent_tree_events(node_id);
 
 -- ── RF Run Telemetry: research_runs derived rollup (T2-001) ──────────────
 -- One row per Research Foundry run, derived/upserted from rf_events (D6 —
@@ -4926,6 +4953,48 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v54 migrations complete: routing_rollup PK widened to "
             "(project_id, source_skill_name, model, task_class)."
+        )
+
+    if current_version < 55:
+        # are-we-winning-dashboard-v1 M1: intent_tree_events table for
+        # pre-existing databases (fresh DBs get this from _TABLES above).
+        # CREATE TABLE IF NOT EXISTS keeps this idempotent (rf_events v40
+        # precedent, exactly). Mirror of the Postgres v55 block.
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS intent_tree_events (
+                id            TEXT PRIMARY KEY,
+                workspace_id  TEXT NOT NULL,
+                tree_id       TEXT,
+                node_id       TEXT,
+                event_type    TEXT NOT NULL,
+                actor_type    TEXT,
+                actor_id      TEXT,
+                occurred_at   TEXT NOT NULL,
+                payload_json  TEXT,
+                ingested_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_events_occurred_at"
+            " ON intent_tree_events(occurred_at)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_events_event_type"
+            " ON intent_tree_events(event_type)",
+        )
+        await _ensure_index(
+            db,
+            "CREATE INDEX IF NOT EXISTS idx_intent_tree_events_node_id"
+            " ON intent_tree_events(node_id)",
+        )
+        await db.commit()
+        logger.info(
+            "v55 migrations complete: intent_tree_events table added "
+            "(are-we-winning-dashboard-v1 M1)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────
