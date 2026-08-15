@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+
+- **Are-We-Winning dashboard (M3 — view)** — New "Are We Winning?" tab in the Analytics dashboard, extending the existing `TrendChart`/`InteractiveChartCard` chart stack (no parallel chart stack built). Renders the weekly created/completed trendlines from the M2 REST surface (`GET /api/agent/are-we-winning/summary`), with drill-through to the underlying IntentTree node rows on every trendline point (`GET /api/agent/are-we-winning/drill-through`), opened via a local-state modal — the route/state write happens only inside a click handler, never on render or in an effect. The `reopened` trendline and the closed-vocabulary self-caught ratio (`self_caught`/`other_caught`/`unknown`) render an explicit "not captured yet" panel while their backend derivation (M2 part B) is still in progress — absent, never a fabricated zero. The `unknown` bucket renders as a visually prominent, first-class legend row even when it is 100% of the sampled population, per the measured reality that most nodes carry no attribution discriminator today.
 
 ## [0.3.0] - 2026-08-12
 ### Added

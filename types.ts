@@ -4480,6 +4480,65 @@ export interface ResearchRunDetailResponse extends AgentQueryEnvelope {
   run: ResearchRunDetail | null;
 }
 
+// ─── Are-We-Winning Dashboard (are-we-winning-dashboard-v1, M3) ─────────────
+//
+// GET /api/agent/are-we-winning/summary + /are-we-winning/drill-through.
+// `reopened` and `selfCaughtRatio` are explicitly `AreWeWinningSummary`
+// fields that are `null` until the M2-part-B backend task lands (never a
+// fabricated trendline/ratio) — render "not captured yet", never 0/empty.
+
+export interface AreWeWinningWeeklyPoint {
+  isoYear: number;
+  isoWeek: number;
+  /** ISO 8601 date (YYYY-MM-DD) for the Monday of this ISO week. */
+  weekStartDate: string;
+  count: number;
+}
+
+export interface AreWeWinningTrendline {
+  eventType: string;
+  points: AreWeWinningWeeklyPoint[];
+}
+
+/** Closed 3-bucket vocabulary — mirrors backend/parsers/ica_spend.py's
+ * never-silently-divide pattern. `unknown` is expected to dominate. */
+export type SelfCaughtRatioBucketId = 'self_caught' | 'other_caught' | 'unknown';
+
+export interface SelfCaughtRatioBucket {
+  bucket: SelfCaughtRatioBucketId;
+  count: number;
+}
+
+export interface SelfCaughtRatio {
+  buckets: SelfCaughtRatioBucket[];
+  total: number;
+}
+
+export interface AreWeWinningSummary {
+  created: AreWeWinningTrendline;
+  completed: AreWeWinningTrendline;
+  /** Null until M2-part-B (reopened-derivation) lands — absent, not zero. */
+  reopened: AreWeWinningTrendline | null;
+  /** Null until M2-part-B (self-caught bucketing) lands — absent, not zero. */
+  selfCaughtRatio: SelfCaughtRatio | null;
+  generatedAt: string;
+}
+
+export interface AreWeWinningDrillThroughRow {
+  nodeId: string | null;
+  eventType: string;
+  occurredAt: string;
+  title: string | null;
+}
+
+export interface AreWeWinningDrillThroughPage {
+  items: AreWeWinningDrillThroughRow[];
+  total: number;
+  limit: number;
+  cursor: string;
+  nextCursor: string | null;
+}
+
 // ─── AAR Review (ccdash-automated-aar-review-v1, PRD §7.2, T4-001) ───────────
 //
 // Deterministic AAR-document-to-session triage read surface. Mirrors the

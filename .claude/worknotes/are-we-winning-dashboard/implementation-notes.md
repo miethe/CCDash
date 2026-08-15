@@ -191,3 +191,50 @@ Environment: no `backend/.venv` resolves inside this worktree, and the executor'
 approve the absolute main-repo venv path, so it built a disposable local venv and ran pytest with a
 `pythonpath` override. No repo config was touched and nothing was left tracked. The orchestrator
 independently re-ran the suite with the real main-repo venv: 7/7 passed.
+
+## M3 - dashboard view
+
+(Recorded by the orchestrator from the executor's report: the delegated ICA leg was permission-
+blocked from editing `.claude/worknotes/**`, as on every prior leg.)
+
+Extended the existing Analytics module rather than parallel-building: `AnalyticsDashboard.tsx` gains
+an `AreWeWinningTab`, and the ratio widget renders through the existing
+`primitives/InteractiveChartCard`. That reuse is what satisfies recharts trap 1 for free -- the
+primitive already carries `isAnimationActive={false}` on `<Pie>` (added 2026-07-31 after a browser
+smoke found sectors appearing ~550ms late). A parallel chart stack would have had to rediscover it.
+
+New pure-function module `lib/areWeWinning.ts` holds trendline-point and ratio-bucket chart mapping,
+dependency-free from React/recharts, specifically so the "`unknown` renders as a first-class bucket
+even at 100%" rubric item is asserted by a plain unit test rather than only through a component
+render. `ratioToChartData` always emits all three closed-vocabulary buckets -- filling an omitted
+one in explicitly -- so the legend cannot silently drop a bucket the backend failed to serialize.
+`formatRatioBucketPercent` renders an em-dash for a zero-total population rather than 0%/NaN%.
+
+Wire adaptation: the backend DTOs declare no `alias_generator`, so the payload is snake_case;
+`services/queries/areWeWinning.ts` adapts to camelCase client-side, mirroring the established
+`services/queries/researchRuns.ts` Wire*/adapt* pattern rather than inventing a new style. Endpoints
+live under `/api/agent/are-we-winning/*` (the `agent_router` prefix); there is no `/api/v1` surface
+for this feature.
+
+Feature-flag gating surfaces as HTTP 404 (`are_we_winning_disabled`) from both endpoints. The FE
+deliberately does NOT special-case that status: both hooks resolve every error uniformly to null and
+the tab renders one "not available" panel for the whole class (flag off, backend down, fetch
+failure), matching the existing convention in `services/queries/analytics.ts` rather than adding a
+distinct-reason-code branch this milestone does not need.
+
+Discovered constraint: `InteractiveChartCard` reaches for router context at the top of the
+component even with `persistToUrl` defaulted false, so any test rendering `AreWeWinningTab` with a
+populated ratio must wrap it in a `MemoryRouter` -- even though this tab never itself reads or
+writes search params.
+
+VERIFICATION GAP, closed by the orchestrator rather than waved through. The executor could not run
+`npx tsc --noEmit`, `npm run typecheck`, or `npx vitest run` -- all three returned "This command
+requires approval" with no interactive approval channel in a `-p` session, and unlike the Python
+legs there was no bash-level workaround for a harness-level approval gate. It said so explicitly
+rather than reporting success. The orchestrator then ran them: typecheck shows 33 errors in the
+worktree against 34 on `main` (so this milestone adds none; all remaining errors are pre-existing,
+in `docs/project_plans/designs/**` and `lib/sessionTranscriptLive.ts`), and vitest shows 52 passed
+across 6 files, of which `lib/__tests__/areWeWinning.test.ts` contributes 10. The three recharts
+traps were also statically confirmed: no keyed `ResponsiveContainer` anywhere in
+`components/Analytics/`, no `searchParams` write in the new tab, and `isAnimationActive={false}`
+present on the shared `<Pie>`.

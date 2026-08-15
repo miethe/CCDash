@@ -28,6 +28,7 @@ import {
     RefreshCcw,
     Sparkles,
     Shapes,
+    Target,
     Telescope,
     Trophy,
     Wrench,
@@ -45,6 +46,7 @@ import {
     YAxis,
 } from 'recharts';
 import { WorkflowEffectivenessSurface } from '../Workflows/WorkflowEffectivenessSurface';
+import { AreWeWinningTab } from './AreWeWinningTab';
 import { Badge, ModelBadge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { AlertSurface, Surface } from '../ui/surface';
@@ -60,7 +62,7 @@ import {
     type InteractiveChartDatum,
 } from './primitives/InteractiveChartCard';
 
-type AnalyticsTab = 'overview' | 'attribution' | 'artifact_rankings' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence' | 'research';
+type AnalyticsTab = 'overview' | 'attribution' | 'artifact_rankings' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence' | 'research' | 'are_we_winning';
 
 const TAB_LABELS: Array<{ id: AnalyticsTab; label: string; icon: any }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -73,6 +75,10 @@ const TAB_LABELS: Array<{ id: AnalyticsTab; label: string; icon: any }> = [
     { id: 'correlation', label: 'Correlation', icon: Wrench },
     // research-foundry-run-telemetry-v1, Phase 3: "Provider Economics" panel set.
     { id: 'research', label: 'Research', icon: Telescope },
+    // are-we-winning-dashboard-v1, M3: weekly created/completed/reopened
+    // trendlines + the self-caught ratio, sourced from CCDash's own
+    // IntentTree-event cache (M1/M2).
+    { id: 'are_we_winning', label: 'Are We Winning?', icon: Target },
 ];
 
 const TAB_IDS = new Set<AnalyticsTab>(TAB_LABELS.map(tab => tab.id));
@@ -1650,6 +1656,10 @@ export const AnalyticsDashboard: React.FC = () => {
                         </>
                     )}
                 </div>
+            )}
+
+            {!loading && !error && activeTab === 'are_we_winning' && (
+                <AreWeWinningTab />
             )}
         </div>
     );
