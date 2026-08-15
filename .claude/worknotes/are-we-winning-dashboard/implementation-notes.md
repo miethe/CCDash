@@ -154,3 +154,40 @@ every Edit against `.claude/worknotes/**` was auto-denied as a sensitive-file ed
 approval path available in a `-p` (non-interactive) session. This section was therefore written by
 the orchestrator from the executor's report. Worth knowing generally: a delegated leg cannot be
 relied on to write its own deviation log under `.claude/`, so the orchestrator must carry it.
+
+## M2 part A - weekly rollups, drill-through, REST surface
+
+(Recorded by the orchestrator from the executor's report: the delegated ICA leg was again
+permission-blocked from editing `.claude/worknotes/**`. Same constraint as the M1 fix pass.)
+
+Module shape follows `system_metrics.py` -- the sibling transport-neutral, cache-backed metrics
+service -- rather than inventing a layout. The service reads only CCDash's own `intent_tree_events`
+cache: zero live IntentTree calls, zero model calls, satisfied by construction rather than by
+convention. Two tests pin this by patching the integration client to RAISE on any call and then
+exercising both REST read paths.
+
+ISO-week bucketing per the OQ-2 decision (Monday-Sunday fixed boundaries, not a rolling 7-day
+window), chosen so weekly rollups have a stable cache key. During implementation the first draft of
+the boundary test disagreed with the implementation; the implementation was found correct and the
+test corrected -- noting it here because "fix the test until it passes" is the failure mode that
+looks identical from the outside, and it was not what happened: the Sunday-23:59 / Monday-00:00
+pair and the ISO week-1-vs-52/53 year-boundary case are both asserted against calendar truth.
+
+The full M2 response contract is defined here, but only half is implemented. `reopened` and
+`self_caught_ratio` are `Optional` and always `None` on this leg, with
+`compute_reopened_trendline` / `compute_self_caught_ratio` present as `NotImplementedError`
+extension points that are never called. This is deliberate: those two derivations are reserved to
+the claude-primary lane (plan `routing_constraints`) because their failure modes are silently
+plausible. A test asserts they serialize as null and never as `0` -- missing is a contract state,
+not a bug, and a fabricated zero would be indistinguishable from a real measurement of zero.
+
+Postgres `@memoized_query` hazard (a named plan risk): both memoized entry points return pydantic
+DTOs directly, matching `system_metrics.py`. This was checked rather than assumed -- the
+`PostgresCacheBackend.aset` unguarded-`json.dumps` defect (main `579aaf2`) is already shipped in
+this tree, and `cache.py` now guards non-JSON-native values via `_json_safe`, so no extra
+flattening was required.
+
+Environment: no `backend/.venv` resolves inside this worktree, and the executor's sandbox would not
+approve the absolute main-repo venv path, so it built a disposable local venv and ran pytest with a
+`pythonpath` override. No repo config was touched and nothing was left tracked. The orchestrator
+independently re-ran the suite with the real main-repo venv: 7/7 passed.

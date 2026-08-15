@@ -42,6 +42,7 @@ from backend.application.services.agent_queries import (
     WorkflowDiagnosticsQueryService,
 )
 from backend.application.services.agent_queries.system_metrics import SystemMetricsQueryService
+from backend.application.services.agent_queries.are_we_winning import AreWeWinningQueryService
 from backend.application.services.agent_queries.multi_project_planning_command_center import (
     MultiProjectPlanningCommandCenterQueryService,
 )
@@ -58,6 +59,8 @@ from backend.application.services.agent_queries.run_intelligence import (
 )
 from backend.models import (
     AggregateWorkItem,
+    AreWeWinningDrillThroughPageDTO,
+    AreWeWinningSummaryDTO,
     MultiProjectCommandCenterResponse,
     MultiProjectSessionBoardResponse,
     NextWorkResponse,
@@ -110,6 +113,18 @@ def _require_next_run_preview_enabled() -> None:
         )
 
 
+def _require_are_we_winning_enabled() -> None:
+    if not config.CCDASH_ARE_WE_WINNING_ENABLED:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "are_we_winning_disabled",
+                "message": "The are-we-winning dashboard surface is disabled.",
+                "hint": "Set CCDASH_ARE_WE_WINNING_ENABLED=true to enable.",
+            },
+        )
+
+
 project_status_query_service = ProjectStatusQueryService()
 feature_forensics_query_service = FeatureForensicsQueryService()
 feature_evidence_summary_service = FeatureEvidenceSummaryService()
@@ -135,6 +150,8 @@ multi_project_session_board_query_service = MultiProjectActiveSessionBoardQueryS
 next_work_query_service = NextWorkQueryService()
 # T2-004 (research-foundry-run-telemetry-v1): research_runs rollup query surface.
 run_intelligence_query_service = RunIntelligenceQueryService()
+# are-we-winning-dashboard-v1 M2: weekly rollups + drill-through query surface.
+are_we_winning_query_service = AreWeWinningQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -1372,3 +1389,65 @@ async def get_research_run_detail(
                 },
             )
         return result
+
+
+# ── are-we-winning-dashboard-v1 M2: weekly rollups + drill-through ─────────
+
+@agent_router.get(
+    "/are-we-winning/summary",
+    response_model=AreWeWinningSummaryDTO,
+    dependencies=[Depends(_require_are_we_winning_enabled)],
+)
+async def get_are_we_winning_summary(
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AreWeWinningSummaryDTO:
+    """Return the weekly created/completed trendlines from CCDash's own cache.
+
+    Computed entirely from the ``intent_tree_events`` cache (M1) — zero live
+    IntentTree calls, zero model calls, on this request path. ``reopened``
+    and ``self_caught_ratio`` are always ``None`` in this response (M2 part
+    B, not yet implemented) — absent, never a fabricated ``0``.
+    """
+    with otel.start_span("are_we_winning.get_summary_route", {}):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await are_we_winning_query_service.get_summary(
+            app_request.context,
+            app_request.ports,
+        )
+
+
+@agent_router.get(
+    "/are-we-winning/drill-through",
+    response_model=AreWeWinningDrillThroughPageDTO,
+    dependencies=[Depends(_require_are_we_winning_enabled)],
+)
+async def get_are_we_winning_drill_through(
+    event_type: str = Query(..., description="Event type to drill into, e.g. node.created."),
+    iso_year: int = Query(..., description="ISO calendar year of the week bucket."),
+    iso_week: int = Query(..., description="ISO calendar week number (1-53) of the bucket."),
+    cursor: str | None = Query(default=None, description="Opaque pagination cursor from a prior page."),
+    limit: int = Query(default=50, ge=1, le=200, description="Max rows per page."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AreWeWinningDrillThroughPageDTO:
+    """Return the exact node rows behind one rendered (event_type, iso_year, iso_week) bucket.
+
+    Takes the same bucket coordinates ``/are-we-winning/summary``'s trendline
+    points emit, so a UI click maps 1:1 onto this query. Paginated in the
+    repo's ``{items, cursor, limit, nextCursor}`` envelope shape.
+    """
+    with otel.start_span(
+        "are_we_winning.get_drill_through_route",
+        {"event_type": event_type, "iso_year": iso_year, "iso_week": iso_week},
+    ):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await are_we_winning_query_service.get_drill_through(
+            app_request.context,
+            app_request.ports,
+            event_type=event_type,
+            iso_year=iso_year,
+            iso_week=iso_week,
+            cursor=cursor,
+            limit=limit,
+        )
