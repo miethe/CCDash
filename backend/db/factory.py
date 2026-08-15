@@ -221,3 +221,35 @@ def get_ingest_cursor_repository(db: Any):
         return SqliteIngestCursorRepository(db)
     from backend.db.repositories.ingest_cursors import PostgresIngestCursorRepository
     return PostgresIngestCursorRepository(db)
+
+
+def get_intent_tree_events_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        from backend.db.repositories.intent_tree_events import SqliteIntentTreeEventsRepository
+        return SqliteIntentTreeEventsRepository(db)
+    from backend.db.repositories.intent_tree_events import PostgresIntentTreeEventsRepository
+    return PostgresIntentTreeEventsRepository(db)
+
+
+def get_intent_tree_reopened_events_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        from backend.db.repositories.intent_tree_derivations import (
+            SqliteIntentTreeReopenedEventsRepository,
+        )
+        return SqliteIntentTreeReopenedEventsRepository(db)
+    from backend.db.repositories.intent_tree_derivations import (
+        PostgresIntentTreeReopenedEventsRepository,
+    )
+    return PostgresIntentTreeReopenedEventsRepository(db)
+
+
+def get_intent_tree_self_caught_buckets_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        from backend.db.repositories.intent_tree_derivations import (
+            SqliteIntentTreeSelfCaughtBucketsRepository,
+        )
+        return SqliteIntentTreeSelfCaughtBucketsRepository(db)
+    from backend.db.repositories.intent_tree_derivations import (
+        PostgresIntentTreeSelfCaughtBucketsRepository,
+    )
+    return PostgresIntentTreeSelfCaughtBucketsRepository(db)

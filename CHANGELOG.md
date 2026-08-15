@@ -1,6 +1,62 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+
+- **Are-We-Winning dashboard** — CCDash now ingests the IntentTree lifecycle-event log into its own
+  cache and reports, in an extended Analytics tab, whether work is actually getting finished:
+  weekly created / completed / **reopened** trendlines and a closed-vocabulary self-caught ratio,
+  every count drillable to its underlying node rows. CCDash previously held no IntentTree
+  lifecycle-event data at all, so acquiring it is net-new.
+  - **Ingestion (dual DDL, `SCHEMA_VERSION` 54→56)** — New `intent_tree_events`,
+    `intent_tree_reopened_events` and `intent_tree_self_caught_buckets` tables in both the SQLite and
+    PostgreSQL paths (fresh-`CREATE TABLE` **and** version-gated migration blocks), parity-clean and
+    not allowlisted. A **cursor-paginated** ingestion job walks `GET /api/v1/events`: pagination is
+    mandatory rather than an optimisation, because the API caps `limit` at 200 server-side and
+    *silently truncates* a larger request. Ingestion is fail-soft by construction — an unreachable
+    IntentTree leaves cache state untouched and never blocks the render path — and idempotent on the
+    event id. The in-place v29→v56 Postgres upgrade was validated against a real seeded Postgres, not
+    SQLite alone.
+  - **Reopened is derived, not evented.** IntentTree has no `node.reopened` event type and
+    `node.updated` carries no payload, so the log records *that* a node changed and never *what*
+    changed. The derivation walks per-node status history over the **ever-completed candidate set
+    only** (745 nodes, not the 3,941-node tree), and a reopen requires **both** ends of the
+    transition: a terminal source **and** an active destination. `completed → archived` and
+    `completed → deferred` deliberately do **not** count — archiving or deferring a finished node is
+    disposal, not completed work regressing, and counting it would inflate the regression trendline
+    with routine cleanup. `archived` is excluded for a subtler reason too: it is ambiguous between
+    "done and put away" and "abandoned without finishing", so treating it as terminal would
+    false-positive when a cancelled node is later un-archived and resumed.
+  - **The self-caught ratio ships `unknown`-dominant, and that is the finding.** Every write reaches
+    IntentTree through one shared service token, so `actor_type` is `system` on 100% of
+    `node.created` events and `actor_id` is null on 199/200 sampled — the discriminator does not
+    exist in the data, and no backfill can ever recover it. Checking the only available proxy showed
+    `meta.origin`'s real vocabulary (`bug`, `imported_plan`, `decision`, `human_gate`, …) labels node
+    *provenance*, not actor attribution, so it is the wrong axis entirely rather than a weak signal.
+    The classifier therefore keeps the closed `self_caught` / `other_caught` / `unknown` vocabulary
+    and mirrors `decide_attribution` in `backend/parsers/ica_spend.py`: a bucket is assigned only
+    when a discriminator is actually present — never inferred, never defaulted, never redistributed
+    into the other two. The `unknown` bucket renders as a visually prominent, first-class legend row
+    even at 100% of the population, because that is the honest rendering of the measured reality.
+    The injectable `origin_bucket_map` ships empty but its branching is test-proven, so the day
+    per-actor tokens land upstream the consuming side needs a mapping, not a rebuild.
+  - **Read path is external-call-free by construction.** Both derivations run on the ingestion side
+    and persist to cache; the transport-neutral query service
+    (`backend/application/services/agent_queries/are_we_winning.py`, a sibling of
+    `system_metrics.py`) and its REST surface make **zero** live IntentTree calls and zero model
+    calls. Asserted rather than assumed: tests patch the HTTP client to *raise* on any call and then
+    exercise both REST read paths.
+  - **View** — Extends the existing `AnalyticsDashboard` / `TrendChart` / `InteractiveChartCard`
+    stack rather than building a parallel one, which is also how it inherits the shared
+    `isAnimationActive={false}` pie fix. Drill-through opens via a local-state modal whose
+    route/state write happens **only** inside a click handler — never on render or in an effect —
+    because a chart writing to `searchParams` on render previously broke `FeatureDetailShell` and
+    `SessionInspector`. Absent optional backend fields render as absent, never a fabricated zero.
+  - **Gated** behind `CCDASH_ARE_WE_WINNING_ENABLED` (default off) plus the `CCDASH_INTENTTREE_*`
+    connection config; an unset API URL makes the whole feature inert by design.
+  - **Known gap, disclosed in the UI:** per-bucket self-caught drill-through exists in the backend
+    but is not yet called by the frontend. The widget states this rather than shipping a dead click
+    target.
 
 ## [0.3.0] - 2026-08-12
 ### Added

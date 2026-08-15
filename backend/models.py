@@ -3935,6 +3935,124 @@ class SystemTokenRollupResponse(BaseModel):
     generated_at: Optional[datetime] = None
 
 
+# ── Are-We-Winning Dashboard (are-we-winning-dashboard-v1, M2) ──────────────
+# Weekly created/completed/reopened trendlines + the self-caught ratio, all
+# computed from CCDash's own `intent_tree_events` cache (M1) with zero live
+# IntentTree calls and zero model calls on the render path. This module
+# defines the FULL M2 response contract; `reopened` and `self_caught_ratio`
+# are a separate, deliberately claude-primary task (part B) — see
+# ``backend/application/services/agent_queries/are_we_winning.py`` for the
+# marked extension point. They are `None` (never a fabricated `0`) until
+# part B lands.
+
+class AreWeWinningWeeklyPointDTO(BaseModel):
+    """One ISO calendar week (Monday-Sunday) bucket in a trendline (OQ-2)."""
+
+    iso_year: int
+    iso_week: int
+    week_start_date: str
+    """ISO 8601 date string (YYYY-MM-DD) for the Monday of this ISO week."""
+    count: int
+
+
+class AreWeWinningTrendlineDTO(BaseModel):
+    """An ordered (oldest to newest) weekly trendline for one event type."""
+
+    event_type: str
+    points: list[AreWeWinningWeeklyPointDTO] = Field(default_factory=list)
+
+
+class SelfCaughtRatioBucketDTO(BaseModel):
+    """One bucket of the closed self-caught/other-caught/unknown vocabulary.
+
+    Mirrors the never-silently-divide pattern in
+    ``backend/parsers/ica_spend.py`` (``decide_attribution``) — a ratio
+    computed over an unattributable population renders as ``unknown``, not
+    as a number.
+    """
+
+    bucket: Literal["self_caught", "other_caught", "unknown"]
+    count: int
+
+
+class SelfCaughtRatioDTO(BaseModel):
+    """3-bucket self-caught ratio, populated by M2 part B's derivation pass.
+
+    ``total`` is the sum of every bucket's count, including ``unknown`` —
+    never a denominator that has ``unknown`` subtracted out of it. A rendered
+    percentage (if any) is a presentation-layer concern computed from these
+    counts, never a field this DTO itself carries — there is no fraction
+    field here to compute wrong.
+    """
+
+    buckets: list[SelfCaughtRatioBucketDTO] = Field(default_factory=list)
+    total: int = 0
+
+
+class AreWeWinningSummaryDTO(BaseModel):
+    """Full M2 response contract for the are-we-winning dashboard.
+
+    ``reopened`` and ``self_caught_ratio`` are explicitly ``Optional``.  Each
+    is ``None`` until its M2-part-B derivation pass has completed at least
+    once (a documented "not yet derived" contract state, never a fabricated
+    zero) — see ``are_we_winning.py``'s ``get_summary`` for the exact
+    never-run-yet check. Once a derivation pass has run, the field is always
+    populated (even with an empty/all-``unknown`` result), never withheld.
+    """
+
+    created: AreWeWinningTrendlineDTO
+    completed: AreWeWinningTrendlineDTO
+    reopened: Optional[AreWeWinningTrendlineDTO] = None
+    self_caught_ratio: Optional[SelfCaughtRatioDTO] = None
+    generated_at: datetime
+
+
+class AreWeWinningDrillThroughRowDTO(BaseModel):
+    """One underlying ``intent_tree_events`` row behind a rendered count."""
+
+    node_id: Optional[str] = None
+    event_type: str
+    occurred_at: str
+    title: Optional[str] = None
+    """Title from the node's ``node.created`` payload, when available."""
+
+
+class AreWeWinningDrillThroughPageDTO(BaseModel):
+    """Cursor-paginated drill-through page ({items, cursor, limit, nextCursor} shape)."""
+
+    items: list[AreWeWinningDrillThroughRowDTO] = Field(default_factory=list)
+    total: int
+    limit: int
+    cursor: str
+    next_cursor: Optional[str] = None
+
+
+class AreWeWinningSelfCaughtDrillThroughRowDTO(BaseModel):
+    """One underlying ``intent_tree_self_caught_buckets`` row behind a rendered bucket count.
+
+    Distinct from ``AreWeWinningDrillThroughRowDTO`` (which is keyed on
+    week/event_type) because a self-caught bucket has no week coordinate —
+    it is a per-node, non-time-bucketed verdict.
+    """
+
+    node_id: str
+    bucket: Literal["self_caught", "other_caught", "unknown"]
+    reason: Optional[str] = None
+    """Which proxy signal fired (or that none did) — see the derivation service."""
+    title: Optional[str] = None
+    """Title from the node's ``node.created`` payload, when available."""
+
+
+class AreWeWinningSelfCaughtDrillThroughPageDTO(BaseModel):
+    """Cursor-paginated drill-through page for one self-caught-ratio bucket."""
+
+    items: list[AreWeWinningSelfCaughtDrillThroughRowDTO] = Field(default_factory=list)
+    total: int
+    limit: int
+    cursor: str
+    next_cursor: Optional[str] = None
+
+
 class NextWorkItem(BaseModel):
     """Single next-work item in the next-work response (§7.2)."""
 

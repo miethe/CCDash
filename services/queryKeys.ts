@@ -315,6 +315,24 @@ export const capabilitiesKeys = {
   launch: () => ['capabilities', 'launch'] as const,
 };
 
+// ─── Are-We-Winning Dashboard (are-we-winning-dashboard-v1, M3) ──────────────
+// Workspace-scoped (IntentTree-derived), not CCDash-project-scoped — the
+// backend forces project_id="" into the cache-key slot for this surface
+// (are_we_winning.py's _summary_params), so there is no per-project
+// invalidation axis here. Sentinel 'are-we-winning' prefix, same pattern as
+// capabilitiesKeys.
+
+export const areWeWinningKeys = {
+  all: () => ['are-we-winning'] as const,
+  summary: () => ['are-we-winning', 'summary'] as const,
+  drillThrough: (eventType: string, isoYear: number, isoWeek: number, cursor?: string | null) =>
+    [
+      'are-we-winning',
+      'drill-through',
+      { eventType, isoYear, isoWeek, cursor: cursor ?? null },
+    ] as const,
+};
+
 // ─── Multi-Project Planning (aggregate / portfolio) ───────────────────────────
 // Aggregate queries span multiple projects so there is no single projectId.
 // The sentinel 'multi-project' prefix is used instead.  Project-level

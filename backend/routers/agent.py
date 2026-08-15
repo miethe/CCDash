@@ -42,6 +42,7 @@ from backend.application.services.agent_queries import (
     WorkflowDiagnosticsQueryService,
 )
 from backend.application.services.agent_queries.system_metrics import SystemMetricsQueryService
+from backend.application.services.agent_queries.are_we_winning import AreWeWinningQueryService
 from backend.application.services.agent_queries.multi_project_planning_command_center import (
     MultiProjectPlanningCommandCenterQueryService,
 )
@@ -58,6 +59,9 @@ from backend.application.services.agent_queries.run_intelligence import (
 )
 from backend.models import (
     AggregateWorkItem,
+    AreWeWinningDrillThroughPageDTO,
+    AreWeWinningSelfCaughtDrillThroughPageDTO,
+    AreWeWinningSummaryDTO,
     MultiProjectCommandCenterResponse,
     MultiProjectSessionBoardResponse,
     NextWorkResponse,
@@ -110,6 +114,18 @@ def _require_next_run_preview_enabled() -> None:
         )
 
 
+def _require_are_we_winning_enabled() -> None:
+    if not config.CCDASH_ARE_WE_WINNING_ENABLED:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "are_we_winning_disabled",
+                "message": "The are-we-winning dashboard surface is disabled.",
+                "hint": "Set CCDASH_ARE_WE_WINNING_ENABLED=true to enable.",
+            },
+        )
+
+
 project_status_query_service = ProjectStatusQueryService()
 feature_forensics_query_service = FeatureForensicsQueryService()
 feature_evidence_summary_service = FeatureEvidenceSummaryService()
@@ -135,6 +151,8 @@ multi_project_session_board_query_service = MultiProjectActiveSessionBoardQueryS
 next_work_query_service = NextWorkQueryService()
 # T2-004 (research-foundry-run-telemetry-v1): research_runs rollup query surface.
 run_intelligence_query_service = RunIntelligenceQueryService()
+# are-we-winning-dashboard-v1 M2: weekly rollups + drill-through query surface.
+are_we_winning_query_service = AreWeWinningQueryService()
 
 
 class AARReportRequest(BaseModel):
@@ -1372,3 +1390,133 @@ async def get_research_run_detail(
                 },
             )
         return result
+
+
+# ── are-we-winning-dashboard-v1 M2: weekly rollups + drill-through ─────────
+
+@agent_router.get(
+    "/are-we-winning/summary",
+    response_model=AreWeWinningSummaryDTO,
+    dependencies=[Depends(_require_are_we_winning_enabled)],
+)
+async def get_are_we_winning_summary(
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AreWeWinningSummaryDTO:
+    """Return the weekly created/completed/reopened trendlines + self-caught ratio.
+
+    Computed entirely from CCDash's own cache — ``intent_tree_events`` (M1)
+    plus the M2-part-B derived-cache tables — zero live IntentTree calls,
+    zero model calls, on this request path. ``reopened``/``self_caught_ratio``
+    are ``None`` until their derivation pass has completed at least once
+    (absent, never a fabricated ``0``); once derived, they are always
+    populated (even if empty/all-``unknown``).
+    """
+    with otel.start_span("are_we_winning.get_summary_route", {}):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await are_we_winning_query_service.get_summary(
+            app_request.context,
+            app_request.ports,
+        )
+
+
+@agent_router.get(
+    "/are-we-winning/drill-through",
+    response_model=AreWeWinningDrillThroughPageDTO,
+    dependencies=[Depends(_require_are_we_winning_enabled)],
+)
+async def get_are_we_winning_drill_through(
+    event_type: str = Query(..., description="Event type to drill into, e.g. node.created."),
+    iso_year: int = Query(..., description="ISO calendar year of the week bucket."),
+    iso_week: int = Query(..., description="ISO calendar week number (1-53) of the bucket."),
+    cursor: str | None = Query(default=None, description="Opaque pagination cursor from a prior page."),
+    limit: int = Query(default=50, ge=1, le=200, description="Max rows per page."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AreWeWinningDrillThroughPageDTO:
+    """Return the exact node rows behind one rendered (event_type, iso_year, iso_week) bucket.
+
+    Takes the same bucket coordinates ``/are-we-winning/summary``'s trendline
+    points emit, so a UI click maps 1:1 onto this query. Paginated in the
+    repo's ``{items, cursor, limit, nextCursor}`` envelope shape.
+    """
+    with otel.start_span(
+        "are_we_winning.get_drill_through_route",
+        {"event_type": event_type, "iso_year": iso_year, "iso_week": iso_week},
+    ):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await are_we_winning_query_service.get_drill_through(
+            app_request.context,
+            app_request.ports,
+            event_type=event_type,
+            iso_year=iso_year,
+            iso_week=iso_week,
+            cursor=cursor,
+            limit=limit,
+        )
+
+
+@agent_router.get(
+    "/are-we-winning/reopened-drill-through",
+    response_model=AreWeWinningDrillThroughPageDTO,
+    dependencies=[Depends(_require_are_we_winning_enabled)],
+)
+async def get_are_we_winning_reopened_drill_through(
+    iso_year: int = Query(..., description="ISO calendar year of the week bucket."),
+    iso_week: int = Query(..., description="ISO calendar week number (1-53) of the bucket."),
+    cursor: str | None = Query(default=None, description="Opaque pagination cursor from a prior page."),
+    limit: int = Query(default=50, ge=1, le=200, description="Max rows per page."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AreWeWinningDrillThroughPageDTO:
+    """Return the exact node rows behind one rendered week bucket of the reopened trendline.
+
+    Takes the same (iso_year, iso_week) coordinates the ``reopened``
+    trendline's points emit. Pure cache read of the pre-derived
+    ``intent_tree_reopened_events`` table (M2 part B) — never calls
+    IntentTree on this request path.
+    """
+    with otel.start_span(
+        "are_we_winning.get_reopened_drill_through_route",
+        {"iso_year": iso_year, "iso_week": iso_week},
+    ):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await are_we_winning_query_service.get_reopened_drill_through(
+            app_request.context,
+            app_request.ports,
+            iso_year=iso_year,
+            iso_week=iso_week,
+            cursor=cursor,
+            limit=limit,
+        )
+
+
+@agent_router.get(
+    "/are-we-winning/self-caught-drill-through",
+    response_model=AreWeWinningSelfCaughtDrillThroughPageDTO,
+    dependencies=[Depends(_require_are_we_winning_enabled)],
+)
+async def get_are_we_winning_self_caught_drill_through(
+    bucket: str = Query(..., description="Bucket to drill into: self_caught, other_caught, or unknown."),
+    cursor: str | None = Query(default=None, description="Opaque pagination cursor from a prior page."),
+    limit: int = Query(default=50, ge=1, le=200, description="Max rows per page."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> AreWeWinningSelfCaughtDrillThroughPageDTO:
+    """Return the exact node rows behind one rendered self-caught-ratio bucket.
+
+    ``bucket`` must be one of the closed vocabulary (self_caught/
+    other_caught/unknown); an unrecognized value returns an empty page
+    rather than a 400/500. Pure cache read of the pre-derived
+    ``intent_tree_self_caught_buckets`` table (M2 part B) — never calls
+    IntentTree on this request path.
+    """
+    with otel.start_span("are_we_winning.get_self_caught_drill_through_route", {"bucket": bucket}):
+        app_request = await _resolve_app_request(request_context, core_ports)
+        return await are_we_winning_query_service.get_self_caught_drill_through(
+            app_request.context,
+            app_request.ports,
+            bucket=bucket,
+            cursor=cursor,
+            limit=limit,
+        )

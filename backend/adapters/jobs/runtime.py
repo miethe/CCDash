@@ -17,6 +17,8 @@ from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob
 from backend.adapters.jobs.artifact_rollup_export_job import ArtifactRollupExportJob
+from backend.adapters.jobs.intenttree_derivation_job import IntentTreeDerivationJob
+from backend.adapters.jobs.intenttree_events_ingest_job import IntentTreeEventsIngestJob
 from backend.adapters.jobs.routing_rollup_sweep_job import RoutingRollupSweepJob
 from backend.adapters.jobs.session_naming_sweep_job import SessionNamingSweepJob
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
@@ -110,6 +112,15 @@ class RuntimeJobState:
     # automatic-session-naming-v1 M3 (T3-004): default-off derived
     # session-naming sweep. Mirrors aar_review_sweep_task's shape exactly.
     session_naming_sweep_task: asyncio.Task[None] | None = None
+    # are-we-winning-dashboard-v1 M1: default-off IntentTree lifecycle-event
+    # ingestion sweep. Mirrors routing_rollup_sweep_task's shape exactly.
+    intenttree_events_ingest_task: asyncio.Task[None] | None = None
+    # are-we-winning-dashboard-v1 M2 scheduler wiring: default-off IntentTree
+    # reopened + self-caught derivation sweep. Own interval, runs after the
+    # ingestion job's cache is populated (see IntentTreeDerivationJob's own
+    # docstring for the ordering rationale). Mirrors
+    # intenttree_events_ingest_task's shape exactly.
+    intenttree_derivation_task: asyncio.Task[None] | None = None
     cache_warming_task: asyncio.Task[None] | None = None
     retention_prune_task: asyncio.Task[None] | None = None
     reconcile_task: asyncio.Task[None] | None = None
@@ -155,6 +166,14 @@ class RuntimeJobAdapter:
         # aar_review_sweep_job's param shape and periodic-task wiring
         # exactly (see `_start_session_naming_sweep_task` below).
         session_naming_sweep_job: SessionNamingSweepJob | None = None,
+        # are-we-winning-dashboard-v1 M1: default-off IntentTree lifecycle-
+        # event ingestion sweep. Mirrors routing_rollup_sweep_job's param
+        # shape exactly.
+        intenttree_events_ingest_job: IntentTreeEventsIngestJob | None = None,
+        # are-we-winning-dashboard-v1 M2 scheduler wiring: default-off
+        # IntentTree reopened + self-caught derivation sweep. Mirrors
+        # intenttree_events_ingest_job's param shape exactly.
+        intenttree_derivation_job: IntentTreeDerivationJob | None = None,
         # P3-005 / P3-010: additive param — safe default keeps container.py unchanged
         workspace_registry: Any | None = None,
     ) -> None:
@@ -169,6 +188,8 @@ class RuntimeJobAdapter:
         self.aar_review_sweep_job = aar_review_sweep_job
         self.routing_rollup_sweep_job = routing_rollup_sweep_job
         self.session_naming_sweep_job = session_naming_sweep_job
+        self.intenttree_events_ingest_job = intenttree_events_ingest_job
+        self.intenttree_derivation_job = intenttree_derivation_job
         # P3-005: workspace_registry kwarg allows injecting a custom registry in
         # tests; falls back to ports.workspace_registry at runtime.
         self._workspace_registry_override = workspace_registry
@@ -230,6 +251,26 @@ class RuntimeJobAdapter:
                     backlog_count=0,
                     backlog_unit="sessions",
                     stale_threshold_seconds=7200,
+                ),
+                # are-we-winning-dashboard-v1 M1 (OQ-3): default-off IntentTree
+                # lifecycle-event ingestion sweep. Stale threshold is 4x the
+                # default 900s interval -- alarm only on a clearly stalled
+                # sweep, never on a single missed tick (mirrors
+                # routingRollupSweep/aarReviewSweep above).
+                "intentTreeEventsIngest": RuntimeJobObservation(
+                    backlog_count=0,
+                    backlog_unit="events",
+                    stale_threshold_seconds=3600,
+                ),
+                # are-we-winning-dashboard-v1 M2 scheduler wiring: default-off
+                # IntentTree reopened + self-caught derivation sweep. Stale
+                # threshold is 4x the default 900s interval -- alarm only on
+                # a clearly stalled sweep, never on a single missed tick
+                # (mirrors intentTreeEventsIngest above).
+                "intentTreeDerivation": RuntimeJobObservation(
+                    backlog_count=0,
+                    backlog_unit="nodes",
+                    stale_threshold_seconds=3600,
                 ),
                 "cacheWarming": RuntimeJobObservation(
                     backlog_count=0,
@@ -461,6 +502,12 @@ class RuntimeJobAdapter:
             session_naming_sweep_task = self._start_session_naming_sweep_task()
             if session_naming_sweep_task is not None:
                 self.state.session_naming_sweep_task = session_naming_sweep_task
+            intenttree_events_ingest_task = self._start_intenttree_events_ingest_task()
+            if intenttree_events_ingest_task is not None:
+                self.state.intenttree_events_ingest_task = intenttree_events_ingest_task
+            intenttree_derivation_task = self._start_intenttree_derivation_task()
+            if intenttree_derivation_task is not None:
+                self.state.intenttree_derivation_task = intenttree_derivation_task
             cache_warming_task = self._start_cache_warming_task()
             if cache_warming_task is not None:
                 self.state.cache_warming_task = cache_warming_task
@@ -2858,6 +2905,130 @@ class RuntimeJobAdapter:
         return self.ports.job_scheduler.schedule(
             _run_periodic_routing_rollup_sweeps(),
             name=f"ccdash:{self.profile.name}:routing-rollup-sweep",
+        )
+
+    def _start_intenttree_events_ingest_task(self) -> asyncio.Task[None] | None:
+        """are-we-winning-dashboard-v1 M1 (OQ-3): default-off IntentTree
+        lifecycle-event ingestion sweep worker.
+
+        Mirrors ``_start_routing_rollup_sweep_task`` verbatim: ``worker``-
+        profile-only, gated on both the injected job object being present
+        (``container.py`` only constructs it when
+        ``CCDASH_ARE_WE_WINNING_ENABLED`` is true AND the required IntentTree
+        config is present) and this method's own presence check. The job's
+        own ``execute()`` ALSO re-checks the flag (defense in depth). A
+        dedicated interval, per OQ-3's decision -- deliberately NOT hung off
+        the sync/watcher cadence, since IntentTree's event log is an
+        unrelated HTTP source with its own staleness tolerance.
+        """
+        if self.profile.name != "worker" or self.intenttree_events_ingest_job is None:
+            return None
+        interval_seconds = max(
+            60, int(getattr(config, "CCDASH_INTENTTREE_INGEST_INTERVAL_SECONDS", 900))
+        )
+        self.state.job_observations["intentTreeEventsIngest"].interval_seconds = interval_seconds
+
+        async def _run_periodic_intenttree_events_ingest() -> None:
+            while True:
+                started = self._mark_job_started("intentTreeEventsIngest")
+                try:
+                    result = await self.intenttree_events_ingest_job.execute(trigger="scheduled")
+                    self._mark_job_success(
+                        "intentTreeEventsIngest",
+                        started,
+                        outcome=str(getattr(result, "outcome", "success") or "success"),
+                        backlog_count=int(getattr(result, "rows_written", 0) or 0),
+                        details={
+                            "rowsWritten": int(getattr(result, "rows_written", 0) or 0),
+                            "rowsSeen": int(getattr(result, "rows_seen", 0) or 0),
+                            "error": getattr(result, "error", None),
+                        },
+                    )
+                except asyncio.CancelledError:
+                    self._mark_job_cancelled("intentTreeEventsIngest", started)
+                    raise
+                except Exception:
+                    self._mark_job_failure(
+                        "intentTreeEventsIngest",
+                        started,
+                        RuntimeError("intenttree_events_ingest_failed"),
+                    )
+                    logger.exception("Periodic IntentTree events ingest sweep failed")
+                await asyncio.sleep(interval_seconds)
+
+        logger.info(
+            "Started periodic IntentTree events ingest job (profile=%s interval=%ss)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_intenttree_events_ingest(),
+            name=f"ccdash:{self.profile.name}:intenttree-events-ingest",
+        )
+
+    def _start_intenttree_derivation_task(self) -> asyncio.Task[None] | None:
+        """are-we-winning-dashboard-v1 M2 scheduler wiring: default-off
+        IntentTree reopened + self-caught derivation sweep worker.
+
+        Mirrors ``_start_intenttree_events_ingest_task`` verbatim: ``worker``-
+        profile-only, gated on both the injected job object being present
+        (``container.py`` only constructs it when
+        ``CCDASH_ARE_WE_WINNING_ENABLED`` is true AND the required IntentTree
+        config is present) and this method's own presence check. The job's
+        own ``execute()`` ALSO re-checks the flag (defense in depth).
+
+        Runs on its OWN interval (``CCDASH_INTENTTREE_DERIVE_INTERVAL_SECONDS``),
+        not sequenced inside the ingestion task's tick above -- see
+        ``IntentTreeDerivationJob``'s own module docstring for why this is
+        safe: both derivation services treat an empty/partial
+        ``intent_tree_events`` cache as a normal zero-work pass, not an
+        error, so a derivation tick racing ahead of (or between) ingestion
+        ticks never crashes or corrupts state -- it simply derives whatever
+        candidate set exists at that moment.
+        """
+        if self.profile.name != "worker" or self.intenttree_derivation_job is None:
+            return None
+        interval_seconds = max(
+            60, int(getattr(config, "CCDASH_INTENTTREE_DERIVE_INTERVAL_SECONDS", 900))
+        )
+        self.state.job_observations["intentTreeDerivation"].interval_seconds = interval_seconds
+
+        async def _run_periodic_intenttree_derivation() -> None:
+            while True:
+                started = self._mark_job_started("intentTreeDerivation")
+                try:
+                    result = await self.intenttree_derivation_job.execute(trigger="scheduled")
+                    self._mark_job_success(
+                        "intentTreeDerivation",
+                        started,
+                        outcome=str(getattr(result, "outcome", "success") or "success"),
+                        backlog_count=int(getattr(result, "reopens_written", 0) or 0),
+                        details={
+                            "reopensWritten": int(getattr(result, "reopens_written", 0) or 0),
+                            "selfCaughtProcessed": int(getattr(result, "self_caught_processed", 0) or 0),
+                            "error": getattr(result, "error", None),
+                        },
+                    )
+                except asyncio.CancelledError:
+                    self._mark_job_cancelled("intentTreeDerivation", started)
+                    raise
+                except Exception:
+                    self._mark_job_failure(
+                        "intentTreeDerivation",
+                        started,
+                        RuntimeError("intenttree_derivation_failed"),
+                    )
+                    logger.exception("Periodic IntentTree derivation sweep failed")
+                await asyncio.sleep(interval_seconds)
+
+        logger.info(
+            "Started periodic IntentTree derivation job (profile=%s interval=%ss)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_intenttree_derivation(),
+            name=f"ccdash:{self.profile.name}:intenttree-derivation",
         )
 
     def _start_session_naming_sweep_task(self) -> asyncio.Task[None] | None:

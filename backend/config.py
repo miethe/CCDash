@@ -568,6 +568,36 @@ SIDECAR_CONTEXT_JOIN_ENABLED = _env_bool("CCDASH_SIDECAR_CONTEXT_JOIN_ENABLED", 
 # Phase 1 (T1-006) of research-foundry-run-telemetry-v1
 # (docs/project_plans/implementation_plans/features/research-foundry-run-telemetry-v1/phase-1-ingest.md).
 CCDASH_RF_TELEMETRY_ENABLED = _env_bool("CCDASH_RF_TELEMETRY_ENABLED", True)
+# ── are-we-winning-dashboard-v1 M1: IntentTree lifecycle-event ingestion ────
+# All unset by default -- an unset CCDASH_INTENTTREE_API_URL makes the whole
+# feature inert (no job constructed; see backend/runtime/container.py). Never
+# hardcode a URL or token here; these are read from the environment only.
+CCDASH_INTENTTREE_API_URL = os.getenv("CCDASH_INTENTTREE_API_URL", "").strip() or None
+CCDASH_INTENTTREE_API_TOKEN = os.getenv("CCDASH_INTENTTREE_API_TOKEN", "").strip() or None
+CCDASH_INTENTTREE_WORKSPACE_ID = os.getenv("CCDASH_INTENTTREE_WORKSPACE_ID", "").strip() or None
+# Optional filter -- when unset, ingestion sweeps the whole workspace.
+CCDASH_INTENTTREE_TREE_ID = os.getenv("CCDASH_INTENTTREE_TREE_ID", "").strip() or None
+# Kill-switch for the ingestion job and (later) REST surface. Default False --
+# this is net-new IntentTree-event ingestion and must be explicitly opted in.
+CCDASH_ARE_WE_WINNING_ENABLED = _env_bool("CCDASH_ARE_WE_WINNING_ENABLED", False)
+CCDASH_INTENTTREE_INGEST_INTERVAL_SECONDS = _env_int("CCDASH_INTENTTREE_INGEST_INTERVAL_SECONDS", 900)
+# M2 part B scheduler wiring: interval between IntentTreeDerivationJob ticks
+# (reopened-trendline + self-caught-ratio derivation). Own interval, separate
+# from CCDASH_INTENTTREE_INGEST_INTERVAL_SECONDS above -- ordering between the
+# two jobs is NOT enforced by a shared clock; it relies on both derivations
+# tolerating an empty/partial `intent_tree_events` cache cleanly (candidate
+# sets are computed live each tick via `distinct_node_ids_for_event_type`, and
+# an empty candidate set is a normal, non-error, zero-work pass -- see
+# `IntentTreeReopenedDerivationService.derive_all` /
+# `IntentTreeSelfCaughtDerivationService.derive_all`). Clamped to a 60s floor
+# in backend/adapters/jobs/runtime.py (mirrors every other sweep interval's
+# own floor clamp).
+CCDASH_INTENTTREE_DERIVE_INTERVAL_SECONDS = _env_int("CCDASH_INTENTTREE_DERIVE_INTERVAL_SECONDS", 900)
+# Server-capped at 200/page (measured against the live API,
+# .claude/worknotes/are-we-winning-dashboard/measured-data-availability.md) --
+# clamp defensively so a misconfigured larger value can never look like a
+# single uncapped call actually returned everything.
+CCDASH_INTENTTREE_INGEST_PAGE_SIZE = min(_env_int("CCDASH_INTENTTREE_INGEST_PAGE_SIZE", 200), 200)
 CCDASH_PROJECT_ROOT = os.getenv("CCDASH_PROJECT_ROOT", str(PROJECT_ROOT)).strip() or str(PROJECT_ROOT)
 TEST_RESULTS_DIR = os.getenv("CCDASH_TEST_RESULTS_DIR", "").strip()
 INTEGRATIONS_SETTINGS_FILE = Path(
