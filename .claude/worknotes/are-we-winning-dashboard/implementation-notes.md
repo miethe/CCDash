@@ -443,3 +443,69 @@ Verification (run by the orchestrator with the real main-repo venv):
 `backend/tests/test_runtime_bootstrap.py` was deliberately NOT used to verify this: it hangs on
 import in this repo. The job-wrapper test file above exists specifically so this wiring has
 verification that does not depend on a hanging suite.
+
+## Runtime browser smoke — runtime_smoke: passed (2026-08-15, orchestrator)
+
+Performed by the orchestrator, not delegated: the plan's `routing_constraints` state that frontend
+chart wiring is offload-eligible but "the runtime browser smoke verification itself is not — it must
+be performed and its evidence recorded, never skipped in favor of a unit-test pass."
+
+**Data was real, not fixtures.** The local SQLite cache was populated by the feature's own ingestion
+job, constructed through the container's real `_construct_intenttree_events_ingest_job("worker", db)`
+gate, against the live IntentTree API:
+
+- `intent_tree_events`: **4,005** `node.created` + **750** `node.completed` (schema v56).
+  Slightly above the worknote's measured 3,941 / 745 because more events exist now — including the
+  finding nodes filed during this run, which is a pleasing self-consistency check.
+- `intent_tree_reopened_events`: **33** rows derived by walking only the ever-completed candidate set.
+- `intent_tree_self_caught_buckets`: **4,005 `unknown`, and nothing else** — the predicted honest
+  outcome, reached without any bucket being inferred or redistributed.
+
+**Stack**: `npm run dev` (local profile), backend `/api/health` ok, frontend 200,
+`GET /api/agent/are-we-winning/summary` 200 with real ISO-week series.
+
+### The three recharts traps — all clean
+
+1. **Pie blank-flash**: the ratio pie was fully painted in the first screenshot after both a
+   tab-click entry and a direct-URL load. `isAnimationActive={false}` is present on the shared
+   `<Pie>` in `primitives/InteractiveChartCard.tsx` — inherited by extending the existing primitive
+   rather than parallel-building, which is exactly why "extend, don't parallel-build" was a
+   requirement and not a style note.
+2. **`ResponsiveContainer` key-loop**: no keyed `ResponsiveContainer` anywhere in
+   `components/Analytics/`. No page blanking across two loads, a drill-through open/close, and a
+   10-second idle. No "Maximum update depth exceeded" in console. Console output was 100%
+   recharts `width(-1)/height(-1)` sizing warnings, which are pre-existing in this repo (they also
+   appear in the existing `AnalyticsDashboardResearchResilience` vitest run) and did not accumulate
+   during the idle — the discriminator between a noisy render and an actual loop.
+3. **`searchParams` write-on-render**: opening the drill-through modal did **not** change the URL
+   (it stayed `#/analytics?tab=are_we_winning`). The navigation write happens in the click handler
+   only, per plan decision OQ-4.
+
+### Drill-through — real, with count parity
+
+Clicking the Nodes Created point for ISO week 33 opened a modal headed
+"Nodes Created — week of 2026-08-10 / ISO week 33, 2026 / **1013 row(s) total**", listing real
+IntentTree node rows (title, node id, occurred-at). The tooltip on the same point read
+"Nodes Created : 1,013". Modal row count == trendline count — the plan's "not a decorative click
+target" rubric item, verified rather than asserted.
+
+### The unknown bucket
+
+Rendered as a first-class legend entry, not a footnote:
+`Self-caught 0 (0.0%)` · `Other-caught 0 (0.0%)` · `Unknown 4,005 (100.0%)`, above the caption
+"`Unknown` is expected to dominate today — most nodes carry no attribution discriminator — and is
+never folded into the other buckets."
+
+The widget also carries an honest footnote that per-bucket drill-through is not yet available,
+naming the contract reason. That is the correct posture for a known gap — it declares itself rather
+than shipping a dead click target — and the gap is tracked in IntentTree as
+`node_01M01R99RTVZFGJT1708VT057M`.
+
+### Environment note
+
+`npm run dev` initially failed with `ModuleNotFoundError: No module named 'ccdash_contracts'`: a
+delegated leg had created a disposable `backend/.venv` INSIDE the worktree (gitignored, so invisible
+to `git status`), and the dev script picked it up over the main-repo venv. Replaced with a symlink
+to the main repo's venv, which is the project's documented convention anyway. Worth knowing: a
+delegated executor working around a sandboxed path can leave behind an environment that silently
+shadows the real one.
