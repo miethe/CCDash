@@ -4,8 +4,8 @@ schema_version: 2
 doc_type: implementation_plan
 feature_slug: are-we-winning-dashboard
 title: "Are-We-Winning Dashboard v1 — implementation plan"
-status: not_started
-planning_maturity: draft
+status: completed
+planning_maturity: shipped
 created: 2026-08-14
 updated: 2026-08-15
 tier: 2
@@ -69,6 +69,8 @@ wave_plan:
       gate_lens: [validator]
 pr_refs:
   - '#71'
+merge_commit: b506fb5
+merge_branch: main
 ---
 
 # Implementation Plan — Are-We-Winning Dashboard v1
