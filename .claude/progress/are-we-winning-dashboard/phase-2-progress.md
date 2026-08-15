@@ -7,14 +7,14 @@ feature_slug: are-we-winning-dashboard
 phase: 2
 milestone: M2
 title: M2 — Weekly rollups, reopened derivation, and the self-caught ratio are correct
-status: pending
+status: completed
 created: 2026-08-14
 updated: '2026-08-15'
 prd_ref: docs/project_plans/PRDs/features/are-we-winning-dashboard-v1.md
 plan_ref: docs/project_plans/implementation_plans/features/are-we-winning-dashboard-v1.md
 itt_node_id: node_01M009H6DGAKD5VCC8QCM0KP0K
 intenttree_tree: tree_01KVTH95F7P7CXK3QH9ZMECM5T
-commit_refs: []
+commit_refs: [6b0c0f4, 7b454db, fd6c953, '2314188']
 pr_refs: []
 depends_on:
 - 1
@@ -60,18 +60,26 @@ tasks:
 - id: T2-003
   title: AC validation gate (bucket boundary, derivation scope, unknown-bucket, no
     render-path egress)
-  status: pending
+  status: completed
   assigned_to:
   - codex-executor
   routing: codex / gpt-5.6-terra (read-only)
   dependencies:
   - T2-002
+  started: 2026-08-15T12:29Z
+  completed: 2026-08-15T13:10Z
+  evidence:
+  - gate: codex gpt-5.6-terra CHANGES_REQUESTED -> 3 fixes + 1 stale-disclosure correction
+  - commit: '2314188'
+  - reverify: 63 backend tests pass (orchestrator, main-repo venv)
+  verified_by:
+  - orchestrator-independent-reverify
 total_tasks: 3
-completed_tasks: 2
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 66
-overall_progress: 66
+progress: 100
+overall_progress: 100
 ---
 
 # M2 — Weekly rollups, reopened derivation, and the self-caught ratio are correct

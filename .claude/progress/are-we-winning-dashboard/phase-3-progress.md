@@ -14,7 +14,7 @@ prd_ref: docs/project_plans/PRDs/features/are-we-winning-dashboard-v1.md
 plan_ref: docs/project_plans/implementation_plans/features/are-we-winning-dashboard-v1.md
 itt_node_id: node_01M009H6DGAKD5VCC8QCM0KP0K
 intenttree_tree: tree_01KVTH95F7P7CXK3QH9ZMECM5T
-commit_refs: []
+commit_refs: [22f97f7, 317025f, '2314188']
 pr_refs: []
 depends_on:
 - 2
