@@ -7,7 +7,7 @@ title: "Are-We-Winning Dashboard v1 — implementation plan"
 status: not_started
 planning_maturity: draft
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-15
 tier: 2
 priority: high
 points: "8-13"
@@ -67,6 +67,8 @@ wave_plan:
       exit_criteria:
         - "The extended Analytics dashboard renders the trendlines and ratio widget with working drill-through; runtime browser smoke passes."
       gate_lens: [validator]
+pr_refs:
+  - '#71'
 ---
 
 # Implementation Plan — Are-We-Winning Dashboard v1
