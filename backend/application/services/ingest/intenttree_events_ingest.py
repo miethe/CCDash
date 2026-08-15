@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -150,6 +151,7 @@ class IntentTreeEventsIngestService:
     """
 
     MAX_PAGE_SIZE: int = 200
+    MAX_PAGES_PER_SWEEP: int = 500
 
     def __init__(
         self,
@@ -188,6 +190,7 @@ class IntentTreeEventsIngestService:
         pages_fetched = 0
         newest_id_seen: str | None = None
         cursor: str | None = None
+        seen_cursors: set[str] = set()
 
         while True:
             params: dict[str, Any] = {
@@ -207,7 +210,12 @@ class IntentTreeEventsIngestService:
                     {"Authorization": f"Bearer {self._api_token}"},
                     self._timeout_seconds,
                 )
-            except Exception as exc:  # fail-soft: connection error or non-2xx
+            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                # fail-soft: the remote is unreachable or returned a non-2xx
+                # status. Anything else (AttributeError, TypeError, KeyError,
+                # ...) is a bug in our own code, not a remote-availability
+                # problem, and must propagate to the runtime failure handler
+                # rather than be reported as a silent success.
                 logger.warning(
                     "intenttree events ingest: fetch failed for event_type=%s "
                     "after %d page(s) (rows_written=%d so far, not rolled back): %s",
@@ -244,6 +252,42 @@ class IntentTreeEventsIngestService:
             cursor = page.get("next_cursor")
             if not cursor:
                 break
+
+            if cursor in seen_cursors:
+                error_msg = (
+                    f"intenttree events ingest: stable/cyclic next_cursor "
+                    f"{cursor!r} detected for event_type={event_type} after "
+                    f"{pages_fetched} page(s) -- aborting sweep to avoid "
+                    f"looping forever"
+                )
+                logger.warning(error_msg)
+                await self._cursor_record_error(source_id, error_msg)
+                return EventTypeIngestResult(
+                    event_type=event_type,
+                    ok=False,
+                    rows_seen=rows_seen,
+                    rows_written=rows_written,
+                    pages_fetched=pages_fetched,
+                    error=error_msg,
+                )
+            seen_cursors.add(cursor)
+
+            if pages_fetched >= self.MAX_PAGES_PER_SWEEP:
+                error_msg = (
+                    f"intenttree events ingest: exceeded MAX_PAGES_PER_SWEEP "
+                    f"({self.MAX_PAGES_PER_SWEEP}) for event_type={event_type} "
+                    f"without pagination terminating -- aborting sweep"
+                )
+                logger.warning(error_msg)
+                await self._cursor_record_error(source_id, error_msg)
+                return EventTypeIngestResult(
+                    event_type=event_type,
+                    ok=False,
+                    rows_seen=rows_seen,
+                    rows_written=rows_written,
+                    pages_fetched=pages_fetched,
+                    error=error_msg,
+                )
 
         if newest_id_seen is not None:
             await self._cursor_advance(source_id, cursor_value=newest_id_seen)
@@ -292,7 +336,11 @@ class IntentTreeEventsIngestService:
                     project_id=SENTINEL_PROJECT_ID,
                     workspace_id=self._workspace_id,
                     cursor_value=cursor_value,
-                    occurred_at=cursor_value,
+                    # ``last_ingest_at`` is a timestamp column -- it records
+                    # when this sweep last succeeded, not an opaque event id.
+                    # The cursor value (an event id, not a time) belongs only
+                    # in ``cursor_value``/``last_cursor``.
+                    occurred_at=datetime.now(timezone.utc).isoformat(),
                 ),
                 repo="ingest_cursors",
             )

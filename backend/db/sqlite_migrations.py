@@ -4,6 +4,10 @@ All CREATE TABLE statements for the caching layer.
 Uses IF NOT EXISTS for idempotent runs.
 
 Schema version history (keep in lockstep with postgres_migrations.py):
+  v55 — are-we-winning-dashboard-v1 M1: intent_tree_events table. Caches
+         IntentTree lifecycle events (node.created, node.completed) ingested
+         from the IntentTree API's event log. New table, no column-parity
+         entry needed.
   v54 — routing_rollup PK widened to
          (project_id, source_skill_name, model, task_class). A role-split skill
          resolves TWO task_classes for one (project, skill, model), and under

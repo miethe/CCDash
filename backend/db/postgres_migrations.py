@@ -1,6 +1,10 @@
 """PostgreSQL database schema creation and versioning.
 
 Schema version history (keep in lockstep with sqlite_migrations.py):
+  v55 — are-we-winning-dashboard-v1 M1: intent_tree_events table. Mirrors
+         sqlite_migrations.py v55. Caches IntentTree lifecycle events
+         (node.created, node.completed) ingested from the IntentTree API's
+         event log. New table, no column-parity entry needed.
   v54 — routing_rollup PK widened to
          (project_id, source_skill_name, model, task_class). Mirrors
          sqlite_migrations.py v54. A role-split skill resolves TWO task_classes

@@ -36,6 +36,7 @@ import httpx
 from backend.application.services.ingest.intenttree_events_ingest import (
     EVENT_TYPES,
     IntentTreeEventsIngestService,
+    source_id_for,
 )
 from backend.db.migration_governance import (
     COLUMN_PARITY_DRIFT_ALLOWLIST,
@@ -154,11 +155,104 @@ class PaginationBeyondCapTests(_AsyncSqliteHarness):
         self.assertEqual([c.get("cursor") for c in created_calls], [None, "1", "2"])
 
 
+# ── Pagination loop guard: stable/cyclic next_cursor must terminate,
+#    non-success, rather than loop forever ──────────────────────────────────
+
+
+class PaginationLoopGuardTests(_AsyncSqliteHarness):
+    async def test_stable_cursor_forever_terminates_with_non_success_result(self) -> None:
+        """A server that returns the SAME next_cursor on every page (never
+        advancing) must not be trusted to eventually stop -- the guard must
+        detect the repeat and abort. The fake itself is bounded (raises past
+        a small call cap) so a regressed guard fails fast instead of hanging
+        the suite."""
+        calls = {"n": 0}
+
+        async def _http_get(url, params, headers, timeout):
+            if params["event_type"] != "node.created":
+                return {"items": [], "next_cursor": None, "total": 0}
+            calls["n"] += 1
+            if calls["n"] > 10:
+                raise AssertionError(
+                    "pagination loop guard regressed: stable cursor was not detected"
+                )
+            return {
+                "items": [_make_item(f"evt-stable-{calls['n']}", "node.created")],
+                "next_cursor": "same-cursor-forever",
+                "total": 999,
+            }
+
+        service = self._service(_http_get)
+
+        result = await service.ingest_all()  # must not raise, must not hang
+
+        created_result = next(r for r in result.per_event_type if r.event_type == "node.created")
+        self.assertFalse(result.ok)
+        self.assertFalse(created_result.ok)
+        self.assertIsNotNone(created_result.error)
+        self.assertLess(calls["n"], 10, "guard must abort well before the fake's hard cap")
+
+    async def test_empty_items_page_with_non_null_cursor_terminates_with_non_success_result(
+        self,
+    ) -> None:
+        """An empty ``items`` page that still carries a non-null next_cursor
+        has the same forever-loop hazard as a stable cursor -- no new rows
+        ever arrive, but pagination never naturally ends."""
+        calls = {"n": 0}
+
+        async def _http_get(url, params, headers, timeout):
+            if params["event_type"] != "node.created":
+                return {"items": [], "next_cursor": None, "total": 0}
+            calls["n"] += 1
+            if calls["n"] > 10:
+                raise AssertionError(
+                    "pagination loop guard regressed: empty-page-with-cursor was not detected"
+                )
+            return {"items": [], "next_cursor": "always-more-apparently", "total": 0}
+
+        service = self._service(_http_get)
+
+        result = await service.ingest_all()  # must not raise, must not hang
+
+        created_result = next(r for r in result.per_event_type if r.event_type == "node.created")
+        self.assertFalse(result.ok)
+        self.assertFalse(created_result.ok)
+        self.assertEqual(created_result.rows_written, 0)
+        self.assertIsNotNone(created_result.error)
+        self.assertLess(calls["n"], 10, "guard must abort well before the fake's hard cap")
+
+
 # ── AC2: fail-soft on unreachable IntentTree ────────────────────────────────
 
 
 class FailSoftTests(_AsyncSqliteHarness):
+    async def _seed_cursor(self, event_type: str, *, cursor_value: str, occurred_at: str) -> None:
+        """Pre-populate a real watermark so failure tests can prove it is
+        left byte-identical, not merely that nothing new was added."""
+        source_id = source_id_for(event_type)
+        await self.cursor_repo.get_or_create(
+            source_id=source_id, project_id="global", workspace_id="ws-test"
+        )
+        await self.cursor_repo.advance(
+            source_id=source_id,
+            project_id="global",
+            workspace_id="ws-test",
+            cursor_value=cursor_value,
+            occurred_at=occurred_at,
+        )
+
+    async def _cursor_snapshot(self, event_type: str):
+        return await self.cursor_repo.get_or_create(
+            source_id=source_id_for(event_type), project_id="global", workspace_id="ws-test"
+        )
+
     async def test_connection_error_leaves_cache_untouched_and_does_not_raise(self) -> None:
+        for event_type in EVENT_TYPES:
+            await self._seed_cursor(
+                event_type, cursor_value="evt-preexisting", occurred_at="2020-01-01T00:00:00+00:00"
+            )
+        before = {et: await self._cursor_snapshot(et) for et in EVENT_TYPES}
+
         service = self._service(_raising_http_get(httpx.ConnectError("connection refused")))
 
         result = await service.ingest_all()  # must not raise
@@ -169,8 +263,18 @@ class FailSoftTests(_AsyncSqliteHarness):
         for per_type in result.per_event_type:
             self.assertFalse(per_type.ok)
             self.assertIsNotNone(per_type.error)
+        for event_type in EVENT_TYPES:
+            after = await self._cursor_snapshot(event_type)
+            self.assertEqual(after.last_cursor, before[event_type].last_cursor)
+            self.assertEqual(after.last_ingest_at, before[event_type].last_ingest_at)
 
     async def test_non_2xx_status_leaves_cache_untouched_and_does_not_raise(self) -> None:
+        for event_type in EVENT_TYPES:
+            await self._seed_cursor(
+                event_type, cursor_value="evt-preexisting", occurred_at="2020-01-01T00:00:00+00:00"
+            )
+        before = {et: await self._cursor_snapshot(et) for et in EVENT_TYPES}
+
         request = httpx.Request("GET", "http://intenttree.example.invalid/api/v1/events")
         response = httpx.Response(500, request=request)
         exc = httpx.HTTPStatusError("server error", request=request, response=response)
@@ -181,6 +285,19 @@ class FailSoftTests(_AsyncSqliteHarness):
         self.assertFalse(result.ok)
         self.assertEqual(result.rows_written, 0)
         self.assertEqual(await self._count(), 0)
+        for event_type in EVENT_TYPES:
+            after = await self._cursor_snapshot(event_type)
+            self.assertEqual(after.last_cursor, before[event_type].last_cursor)
+            self.assertEqual(after.last_ingest_at, before[event_type].last_ingest_at)
+
+    async def test_unexpected_exception_type_propagates_instead_of_being_swallowed(self) -> None:
+        """Fail-soft must mean 'the remote is unavailable', never 'our code
+        is wrong' -- a programming-error exception type must not be caught
+        by the transport-error handler."""
+        service = self._service(_raising_http_get(AttributeError("boom: no such attribute")))
+
+        with self.assertRaises(AttributeError):
+            await service.ingest_all()
 
     async def test_failure_after_a_successful_page_still_does_not_raise(self) -> None:
         """A later-page failure is fail-soft too -- it just doesn't roll back

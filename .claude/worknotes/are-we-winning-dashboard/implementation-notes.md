@@ -117,3 +117,40 @@ booting a live Postgres container, which was outside this task's explicit
 scope (local SQLite + local test fixtures only). Flagging this so M2/M3 (or
 a follow-up) explicitly runs the seeded-Postgres smoke before relying on the
 Postgres path in production.
+
+## M1 fix pass (reviewer gate -> CHANGES_REQUESTED, then re-passed)
+
+The M1 gate (Codex gpt-5.6-terra, read-only, adversarial) returned CHANGES_REQUESTED with four
+file:line-backed defects. All four were fixed in a follow-up pass; the focused suite went 10 -> 13
+tests (three new regression tests, one per behavioural fix).
+
+1. Pagination could loop forever. The loop trusted next_cursor to eventually become null, so a
+   server returning a STABLE cursor -- or an empty items page still carrying a non-null cursor --
+   pinned the worker indefinitely. Now cycle-detected and terminated with a NON-success result
+   (a stalled sweep is a failed sweep, not a clean finish), plus a defensive page-count bound.
+   Both shapes are covered by PaginationLoopGuardTests, whose fakes self-bound so a regression
+   fails fast instead of hanging the suite.
+
+2. Fail-soft was swallowing programming errors. The blanket `except Exception` converted genuine
+   bugs (AttributeError/TypeError/...) into a reported-success no-op. Narrowed to
+   `except (httpx.TransportError, httpx.HTTPStatusError)`; unexpected exceptions now propagate to
+   the runtime failure handler. Fail-soft means "the remote is unavailable", never "our code is
+   wrong".
+
+3. An event id was being written into a timestamp column. `_cursor_advance` passed
+   occurred_at=cursor_value, putting an opaque event id into last_ingest_at -- a field that would
+   then lie to every future reader and to any staleness/lag reporting built on it. Now writes a
+   real success timestamp; the id stays in last_cursor where it belongs. The two fail-soft tests
+   were strengthened to seed an EXISTING cursor row first and assert both last_cursor and
+   last_ingest_at are unchanged after a failing sweep -- previously they only proved nothing was
+   added, not that nothing was corrupted.
+
+4. The v55 entry was missing from the lockstep schema-version history lists in both
+   sqlite_migrations.py and postgres_migrations.py, though SCHEMA_VERSION itself was bumped.
+   Added to both, matching the surrounding entries' style.
+
+Environment constraint discovered: the ICA-delegated executor could not append to this file --
+every Edit against `.claude/worknotes/**` was auto-denied as a sensitive-file edit with no
+approval path available in a `-p` (non-interactive) session. This section was therefore written by
+the orchestrator from the executor's report. Worth knowing generally: a delegated leg cannot be
+relied on to write its own deviation log under `.claude/`, so the orchestrator must carry it.
