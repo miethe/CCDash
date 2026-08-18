@@ -12,7 +12,12 @@ from typing import Any
 from backend import config
 from backend.application.ports import CorePorts
 from backend.application.ports.core import ProjectBinding
-from backend.db.file_watcher import file_watcher, file_watcher_registry, watcher_is_inert
+from backend.db.file_watcher import (
+    file_watcher,
+    file_watcher_registry,
+    has_recent_successful_dispatch,
+    watcher_is_inert,
+)
 from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob
@@ -1432,7 +1437,34 @@ class RuntimeJobAdapter:
             elif last_tick_at is None:
                 progress_status = "idle"
             else:
-                progress_status = "progressing"
+                # AC (gpt-5.6 review, 2026-08-18): a watcher with REAL work
+                # failing to dispatch would otherwise read "progressing" until
+                # consecutiveFailedDispatches climbs all the way to
+                # min_inert_ticks (default 10). "stalled" is a health-only
+                # early-warning status, distinct from "inert" — it must NEVER
+                # drive the self-heal restart (only watcher_is_inert does,
+                # via FileWatcherRegistry.dead_project_ids). It requires
+                # consecutiveFailedDispatches >= 1 (at least one REAL dispatch
+                # actually failed) so a churn-only project
+                # (consecutiveFailedDispatches == 0, nothing ever dispatched)
+                # stays "progressing" — that false-positive is exactly what
+                # the counter split exists to remove; do not relabel it here.
+                tick_age_seconds = _freshness_seconds(last_tick_at)
+                try:
+                    failed_dispatches = int(proj_snap.get("consecutiveFailedDispatches") or 0)
+                except (TypeError, ValueError):
+                    failed_dispatches = 0
+                if (
+                    tick_age_seconds is not None
+                    and tick_age_seconds <= progress_stale_seconds
+                    and failed_dispatches >= 1
+                    and not has_recent_successful_dispatch(
+                        proj_snap, now=now, stale_seconds=progress_stale_seconds
+                    )
+                ):
+                    progress_status = "stalled"
+                else:
+                    progress_status = "progressing"
 
             per_project[pid] = {
                 "state": proj_state,
@@ -1447,6 +1479,7 @@ class RuntimeJobAdapter:
                 "lastTickRawChangeCount": proj_snap.get("lastTickRawChangeCount"),
                 "lastTickClassifiedChangeCount": proj_snap.get("lastTickClassifiedChangeCount"),
                 "consecutiveTicksWithoutDispatch": proj_snap.get("consecutiveTicksWithoutDispatch"),
+                "consecutiveFailedDispatches": proj_snap.get("consecutiveFailedDispatches"),
                 "lastDispatchAgeSeconds": _freshness_seconds(proj_snap.get("lastChangeSyncAt")),
                 "progressStatus": progress_status,
             }

@@ -1501,10 +1501,13 @@ WATCHER_DISPATCH_TIMEOUT_SECONDS: int = max(5, min(3600, _env_int("CCDASH_WATCHE
 # NEVER flagged, no matter how old this window is. Default 900 (mirrors
 # CCDASH_INGEST_SOURCE_STALE_SECONDS); min 60, max 86400.
 WATCHER_PROGRESS_STALE_SECONDS: int = max(60, min(86400, _env_int("CCDASH_WATCHER_PROGRESS_STALE_SECONDS", 900)))
-# CCDASH_WATCHER_PROGRESS_MIN_INERT_TICKS — minimum consecutive no-dispatch ticks
-# (``FileWatcherSnapshot.consecutive_ticks_without_dispatch``) required, on top of
-# the staleness window above, before a ticking-but-not-progressing watcher is
-# flagged INERT. Guards against flagging a watcher on a single unlucky tick.
+# CCDASH_WATCHER_PROGRESS_MIN_INERT_TICKS — minimum consecutive FAILED dispatches
+# (``FileWatcherSnapshot.consecutive_failed_dispatches`` — ticks that had real
+# classified work and the dispatch it produced timed out or raised; NOT
+# ``consecutive_ticks_without_dispatch``, which also advances on ordinary
+# classifier-dropped churn) required, on top of the staleness window above,
+# before a ticking-but-not-progressing watcher is flagged INERT. Guards against
+# flagging a watcher on a single unlucky tick.
 # Default 10; min 1, max 10000.
 WATCHER_PROGRESS_MIN_INERT_TICKS: int = max(1, min(10_000, _env_int("CCDASH_WATCHER_PROGRESS_MIN_INERT_TICKS", 10)))
 # CCDASH_WATCHER_SELF_HEAL_COOLDOWN_SECONDS — minimum seconds between repeated

@@ -384,16 +384,46 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
 
     # -- pure predicate: watcher_is_inert -----------------------------------
 
-    def test_watcher_is_inert_true_for_ticking_but_never_dispatching(self):
-        """(a) REQUIRED: inert-but-alive IS flagged."""
+    def test_watcher_is_inert_true_for_ticking_with_repeated_failed_dispatches(self):
+        """(a) REQUIRED: inert-but-alive IS flagged. NOTE: this fabricates 50
+        FAILED dispatch attempts (consecutiveFailedDispatches=50) — that is
+        "ticking and repeatedly failing to dispatch", NOT "never dispatching"
+        (a dispatch was genuinely attempted every one of those 50 ticks; see
+        ``test_watcher_is_inert_false_for_churn_only_never_dispatched_at_all``
+        below for the actual never-attempted-a-dispatch shape, which must
+        stay HEALTHY)."""
         from backend.db.file_watcher import watcher_is_inert
 
         snapshot = {
             "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
             "lastChangeSyncAt": None,  # never dispatched successfully
-            "consecutiveTicksWithoutDispatch": 50,
+            "consecutiveFailedDispatches": 50,
         }
         self.assertTrue(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_for_churn_only_never_dispatched_at_all(self):
+        """The genuinely-never-dispatched (churn-only) shape at the pure
+        predicate level: recent ticks, no successful dispatch ever, and
+        ``consecutiveFailedDispatches == 0`` because no dispatch was ever
+        even ATTEMPTED (every tick classified nothing). This must read
+        HEALTHY — restarting a watcher whose classifier has nothing to
+        classify would not fix anything. (Covered end-to-end via the real
+        ``_watch_loop`` in
+        ``TestWatcherExceptionPathIncrementsInertCounter.test_churn_only_ticks_never_trip_inert_no_matter_how_many_accumulate``;
+        this is the direct plain-dict unit-test counterpart at the predicate
+        level.)"""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": None,
+            "lastSuccessfulDispatchAt": None,
+            "consecutiveFailedDispatches": 0,
+            "consecutiveTicksWithoutDispatch": 500,
+        }
+        self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
         )
 
@@ -404,7 +434,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
         snapshot = {
             "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
             "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=2000)),
-            "consecutiveTicksWithoutDispatch": 12,
+            "consecutiveFailedDispatches": 12,
         }
         self.assertTrue(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
@@ -417,7 +447,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
         snapshot = {
             "lastTickAt": None,
             "lastChangeSyncAt": None,
-            "consecutiveTicksWithoutDispatch": 0,
+            "consecutiveFailedDispatches": 0,
         }
         self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
@@ -430,20 +460,28 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
         snapshot = {
             "lastTickAt": self._iso(self.now - timedelta(seconds=3600)),
             "lastChangeSyncAt": None,
-            "consecutiveTicksWithoutDispatch": 999,
+            "consecutiveFailedDispatches": 999,
         }
         self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
         )
 
     def test_watcher_is_inert_false_when_dispatching_successfully(self):
-        """A watcher dispatching within the window is never flagged."""
+        """A watcher with a FRESH successful dispatch is never flagged — even
+        with a failure counter ABOVE min_inert_ticks. The counter is set
+        above threshold deliberately: this test must only be able to pass
+        via the ``has_recent_successful_dispatch`` short-circuit inside
+        ``watcher_is_inert``, not because the counter happens to be 0 (the
+        prior version of this test was vacuous — it never actually supplied
+        a successful-dispatch timestamp, so it passed via the below-threshold
+        branch instead of the success short-circuit it is named for)."""
         from backend.db.file_watcher import watcher_is_inert
 
         snapshot = {
             "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
             "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=10)),
-            "consecutiveTicksWithoutDispatch": 0,
+            "lastSuccessfulDispatchAt": self._iso(self.now - timedelta(seconds=10)),
+            "consecutiveFailedDispatches": 50,
         }
         self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
@@ -453,7 +491,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
         """A freshly-registered watcher with no lastTickAt yet is never flagged."""
         from backend.db.file_watcher import watcher_is_inert
 
-        snapshot = {"lastTickAt": None, "lastChangeSyncAt": None, "consecutiveTicksWithoutDispatch": 0}
+        snapshot = {"lastTickAt": None, "lastChangeSyncAt": None, "consecutiveFailedDispatches": 0}
         self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
         )
@@ -465,7 +503,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
         snapshot = {
             "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
             "lastChangeSyncAt": None,
-            "consecutiveTicksWithoutDispatch": 3,
+            "consecutiveFailedDispatches": 3,
         }
         self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
@@ -479,7 +517,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
         snapshot = {
             "lastTickAt": "not-a-timestamp",
             "lastChangeSyncAt": "also-garbage",
-            "consecutiveTicksWithoutDispatch": 999,
+            "consecutiveFailedDispatches": 999,
         }
         self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
@@ -509,7 +547,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
             "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=10)),
             "lastSyncStatus": "failed",
             "lastSuccessfulDispatchAt": None,
-            "consecutiveTicksWithoutDispatch": 12,
+            "consecutiveFailedDispatches": 12,
         }
         self.assertTrue(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
@@ -526,7 +564,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
             "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=5)),
             "lastSyncStatus": "failed",
             "lastSuccessfulDispatchAt": self._iso(self.now - timedelta(seconds=30)),
-            "consecutiveTicksWithoutDispatch": 1,
+            "consecutiveFailedDispatches": 1,
         }
         self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
@@ -545,7 +583,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
             "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=10)),
             "lastSyncStatus": "succeeded",
             # No "lastSuccessfulDispatchAt" key at all — legacy snapshot shape.
-            "consecutiveTicksWithoutDispatch": 0,
+            "consecutiveFailedDispatches": 0,
         }
         self.assertFalse(
             watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
@@ -562,7 +600,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
         inert_snapshot = {
             "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
             "lastChangeSyncAt": None,
-            "consecutiveTicksWithoutDispatch": 50,
+            "consecutiveFailedDispatches": 50,
         }
         inert_watcher = types.SimpleNamespace(is_running=True, snapshot=lambda: inert_snapshot)
         reg._entries["inert-proj"] = _WatcherEntry(
@@ -587,7 +625,7 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
         idle_snapshot = {
             "lastTickAt": None,
             "lastChangeSyncAt": None,
-            "consecutiveTicksWithoutDispatch": 0,
+            "consecutiveFailedDispatches": 0,
         }
         idle_watcher = types.SimpleNamespace(is_running=True, snapshot=lambda: idle_snapshot)
         reg._entries["idle-proj"] = _WatcherEntry(
@@ -620,9 +658,9 @@ class TestWatcherProgressAwareLiveness(unittest.TestCase):
 
 class TestWatcherExceptionPathIncrementsInertCounter(unittest.IsolatedAsyncioTestCase):
     """Closes the gap left after DEFECT 1: a dispatch that RAISES (not just
-    times out) must also count toward ``consecutive_ticks_without_dispatch``,
-    or ``watcher_is_inert`` stays blind to a watcher that is failing every
-    single tick.
+    times out) must also count toward ``consecutive_failed_dispatches``, or
+    ``watcher_is_inert`` stays blind to a watcher that is failing every single
+    tick.
 
     This drives the real ``FileWatcher._watch_loop`` end to end (scripted
     ``awatch`` + a ``sync_changed_files`` that raises on every tick) rather
@@ -634,9 +672,16 @@ class TestWatcherExceptionPathIncrementsInertCounter(unittest.IsolatedAsyncioTes
 
     Incident shape: the 2026-08-13 storm logged 128 "File watcher change sync
     failed" lines — i.e. EXCEPTIONS from a broken connection pool, not
-    timeouts. Before this fix, ``consecutive_ticks_without_dispatch`` never
-    moved off 0 on that path, so ``watcher_is_inert`` never tripped despite
-    every dispatch failing for hours.
+    timeouts. Before this fix, ``consecutive_failed_dispatches`` never moved
+    off 0 on that path, so ``watcher_is_inert`` never tripped despite every
+    dispatch failing for hours.
+
+    Note the FAILURE-driven counter is the one this test asserts on
+    (``consecutiveFailedDispatches``), NOT ``consecutiveTicksWithoutDispatch``
+    — every tick here has classified changes and a genuinely attempted
+    dispatch, so the weak "nothing to classify" counter must stay at 0
+    throughout; see the churn-vs-failure split documented on
+    ``FileWatcherSnapshot``.
     """
 
     async def asyncSetUp(self) -> None:
@@ -703,7 +748,10 @@ class TestWatcherExceptionPathIncrementsInertCounter(unittest.IsolatedAsyncioTes
         self.assertEqual(snapshot["lastTickClassifiedChangeCount"], 1)
         self.assertEqual(snapshot["lastSyncStatus"], "failed")
         self.assertIsNone(snapshot["lastSuccessfulDispatchAt"])
-        self.assertEqual(snapshot["consecutiveTicksWithoutDispatch"], n_ticks)
+        self.assertEqual(snapshot["consecutiveFailedDispatches"], n_ticks)
+        # The weak "nothing classified" counter must stay untouched — every
+        # tick here HAD classified work; it just failed to dispatch.
+        self.assertEqual(snapshot["consecutiveTicksWithoutDispatch"], 0)
 
         # And the watchdog can now actually see it: age lastSuccessfulDispatchAt
         # (here, absent entirely) past the freshness window and confirm
@@ -713,6 +761,89 @@ class TestWatcherExceptionPathIncrementsInertCounter(unittest.IsolatedAsyncioTes
         aged_snapshot["lastTickAt"] = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
         self.assertTrue(
             watcher_is_inert(aged_snapshot, now=now, stale_seconds=900, min_inert_ticks=3)
+        )
+
+    async def test_churn_only_ticks_never_trip_inert_no_matter_how_many_accumulate(self) -> None:
+        """Regression guard for this whole change: a project whose watched
+        dirs churn ONLY in files ``_classify_changes`` drops (editor swap
+        files, ``.DS_Store``, ``__pycache__/*.pyc``, rotating ``.log``/
+        ``.tmp``) ticks forever, classifies nothing, and — before this split
+        — tripped the inert verdict via ``consecutive_ticks_without_dispatch``
+        despite the watcher being perfectly healthy. That counter is still
+        allowed to advance (it is health-visible-only, and
+        ``test_empty_classification_tick_advances_progress_fields_only`` in
+        test_file_watcher.py legitimately asserts it does); the load-bearing
+        assertion here is that ``watcher_is_inert`` never trips on it, even
+        run well past ``min_inert_ticks``.
+        """
+        from backend.db.file_watcher import watcher_is_inert
+
+        n_ticks = 20
+        junk_names = [".DS_Store", "foo.pyc", "scratch.session.jsonl.swp", "note.tmp"]
+        ticks = [
+            {(self._Change.modified, str(self.sessions_dir / junk_names[i % len(junk_names)]))}
+            for i in range(n_ticks)
+        ]
+        scripted = self._ScriptedAwatch(ticks)
+        self._file_watcher_module.awatch = scripted
+
+        dispatch_calls: list[object] = []
+
+        async def _record(project_id, classified, *args, **kwargs):
+            dispatch_calls.append(classified)
+
+        sync_engine = types.SimpleNamespace(sync_changed_files=_record)
+
+        watcher = self._FileWatcher()
+        watcher._running = True
+        await watcher._watch_loop(
+            sync_engine,
+            "proj-churn-only",
+            self.sessions_dir,
+            self.docs_dir,
+            self.progress_dir,
+            [self.sessions_dir],
+        )
+
+        snapshot = watcher.snapshot()
+
+        self.assertEqual(dispatch_calls, [], "junk-only ticks must never dispatch")
+        self.assertEqual(snapshot["consecutiveTicksWithoutDispatch"], n_ticks)
+        self.assertEqual(snapshot["consecutiveFailedDispatches"], 0)
+
+        now = datetime(2026, 8, 18, 12, 0, 0, tzinfo=timezone.utc)
+        aged_snapshot = dict(snapshot)
+        aged_snapshot["lastTickAt"] = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        # Well past min_inert_ticks (n_ticks=20 >> 3) on the OLD counter —
+        # if the predicate still read consecutiveTicksWithoutDispatch this
+        # would incorrectly trip.
+        self.assertFalse(
+            watcher_is_inert(aged_snapshot, now=now, stale_seconds=900, min_inert_ticks=3)
+        )
+
+
+class TestWatcherIsInertFailSafeOnMissingFailureCounter(unittest.TestCase):
+    """``watcher_is_inert`` must fail SAFE (never inert) on a snapshot that
+    cannot distinguish churn from failure — i.e. one lacking
+    ``consecutiveFailedDispatches`` entirely (an older/partial snapshot
+    shape). Falling back to ``consecutiveTicksWithoutDispatch`` here would
+    resurrect the exact false-positive-on-churn defect this split exists to
+    close, so the fallback must NOT exist.
+    """
+
+    def test_missing_failure_counter_is_never_treated_as_inert(self) -> None:
+        from backend.db.file_watcher import watcher_is_inert
+
+        now = datetime(2026, 8, 18, 12, 0, 0, tzinfo=timezone.utc)
+        snapshot = {
+            "lastTickAt": (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
+            "lastChangeSyncAt": None,
+            "lastSuccessfulDispatchAt": None,
+            # No "consecutiveFailedDispatches" key at all.
+            "consecutiveTicksWithoutDispatch": 999,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=now, stale_seconds=900, min_inert_ticks=1)
         )
 
 
