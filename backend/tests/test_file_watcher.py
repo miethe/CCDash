@@ -38,7 +38,13 @@ class RuntimeWatcherContractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_job_adapter_does_not_resolve_binding_or_start_watcher_for_api_profile(self) -> None:
         workspace_registry = types.SimpleNamespace(resolve_project_binding=Mock())
-        ports = types.SimpleNamespace(workspace_registry=workspace_registry)
+        # job_scheduler=None: _maybe_start_drain_loop (backend/adapters/jobs/runtime.py)
+        # only starts the durable drain loop when
+        # isinstance(ports.job_scheduler, DurableJobScheduler); any other value
+        # (including None, the memory-backend default) makes that check False and
+        # the method returns early as a no-op, which is exactly the api-profile
+        # behaviour this test is asserting.
+        ports = types.SimpleNamespace(workspace_registry=workspace_registry, job_scheduler=None)
         adapter = RuntimeJobAdapter(
             profile=get_runtime_profile("api"),
             ports=ports,
