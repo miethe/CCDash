@@ -1489,6 +1489,24 @@ WATCHER_RECONCILE_INTERVAL_SECONDS: int = max(10, min(3600, _env_int("CCDASH_WAT
 # alive while silently observing nothing. On timeout the tick is recorded as a FAILURE and
 # the loop continues to the next awatch iteration. Default 120; min 5, max 3600.
 WATCHER_DISPATCH_TIMEOUT_SECONDS: int = max(5, min(3600, _env_int("CCDASH_WATCHER_DISPATCH_TIMEOUT_SECONDS", 120)))
+# CCDASH_WATCHER_PROGRESS_STALE_SECONDS — staleness window (seconds) used by the
+# watcher progress-aware liveness predicate (``file_watcher.watcher_is_inert`` /
+# ``FileWatcherRegistry.dead_project_ids``). Incident: the 2026-08-13..17 macOS
+# relay watcher stayed ``_running=True`` (so the boolean is_running() liveness
+# check never flagged it) for ~44h while ticking with zero successful dispatches
+# — activity without progress. A watcher is only eligible to be flagged INERT
+# when it has ticked within this window (i.e. it is genuinely alive right now)
+# AND its last successful dispatch is older than this window (or has never
+# happened). A watcher with no recent ticks at all is legitimately idle and is
+# NEVER flagged, no matter how old this window is. Default 900 (mirrors
+# CCDASH_INGEST_SOURCE_STALE_SECONDS); min 60, max 86400.
+WATCHER_PROGRESS_STALE_SECONDS: int = max(60, min(86400, _env_int("CCDASH_WATCHER_PROGRESS_STALE_SECONDS", 900)))
+# CCDASH_WATCHER_PROGRESS_MIN_INERT_TICKS — minimum consecutive no-dispatch ticks
+# (``FileWatcherSnapshot.consecutive_ticks_without_dispatch``) required, on top of
+# the staleness window above, before a ticking-but-not-progressing watcher is
+# flagged INERT. Guards against flagging a watcher on a single unlucky tick.
+# Default 10; min 1, max 10000.
+WATCHER_PROGRESS_MIN_INERT_TICKS: int = max(1, min(10_000, _env_int("CCDASH_WATCHER_PROGRESS_MIN_INERT_TICKS", 10)))
 
 # Startup sync tuning
 STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)

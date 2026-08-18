@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -356,6 +357,196 @@ class TestDeadProjectIdsPredicate(unittest.IsolatedAsyncioTestCase):
         self.assertIn("never-registered", dead)   # expected-but-absent detected
         self.assertNotIn("alive", dead)            # running watcher not flagged
         self.assertNotIn("", dead)                 # empty id ignored
+
+
+class TestWatcherProgressAwareLiveness(unittest.TestCase):
+    """AC4: activity-without-progress is UNHEALTHY; legitimate idle is HEALTHY.
+
+    Incident: the 2026-08-13..17 macOS relay watcher stayed ``_running=True``
+    (is_running()-only liveness never flagged it) for ~44h while ticking with
+    zero successful dispatches. ``watcher_is_inert`` is the pure predicate
+    that closes that gap; ``dead_project_ids`` wires it into the existing
+    self-heal path.
+    """
+
+    @staticmethod
+    def _iso(moment: datetime) -> str:
+        return moment.isoformat().replace("+00:00", "Z")
+
+    def setUp(self) -> None:
+        self.now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=timezone.utc)
+
+    # -- pure predicate: watcher_is_inert -----------------------------------
+
+    def test_watcher_is_inert_true_for_ticking_but_never_dispatching(self):
+        """(a) REQUIRED: inert-but-alive IS flagged."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": None,  # never dispatched successfully
+            "consecutiveTicksWithoutDispatch": 50,
+        }
+        self.assertTrue(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_true_when_last_dispatch_older_than_window(self):
+        """(a) REQUIRED: same, but with a stale (not None) last dispatch."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=2000)),
+            "consecutiveTicksWithoutDispatch": 12,
+        }
+        self.assertTrue(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_for_legitimately_idle_quiet_project(self):
+        """(b) REQUIRED: no recent ticks at all -> never flagged."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": None,
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 0,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_when_tick_itself_is_stale(self):
+        """A watcher with no RECENT ticks is not 'alive right now' either."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=3600)),
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 999,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_when_dispatching_successfully(self):
+        """A watcher dispatching within the window is never flagged."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=10)),
+            "consecutiveTicksWithoutDispatch": 0,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_for_freshly_registered_watcher(self):
+        """A freshly-registered watcher with no lastTickAt yet is never flagged."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {"lastTickAt": None, "lastChangeSyncAt": None, "consecutiveTicksWithoutDispatch": 0}
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_below_min_inert_ticks(self):
+        """Ticking + no dispatch, but below the configured tick-count floor."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 3,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_never_raises_on_malformed_timestamp(self):
+        """A malformed/absent timestamp reads as 'no progress signal', never
+        as unhealthy, and never raises."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": "not-a-timestamp",
+            "lastChangeSyncAt": "also-garbage",
+            "consecutiveTicksWithoutDispatch": 999,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+        self.assertFalse(
+            watcher_is_inert(None, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    # -- integration: FileWatcherRegistry.dead_project_ids ------------------
+
+    def test_dead_project_ids_flags_inert_alive_watcher_and_logs_warning(self):
+        """(a) REQUIRED, wired end-to-end: dead_project_ids flags an
+        inert-but-alive watcher and logs at WARNING naming the project."""
+        from backend.db.file_watcher import FileWatcherRegistry, _WatcherEntry
+
+        reg = FileWatcherRegistry()
+        inert_snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 50,
+        }
+        inert_watcher = types.SimpleNamespace(is_running=True, snapshot=lambda: inert_snapshot)
+        reg._entries["inert-proj"] = _WatcherEntry(
+            watcher=inert_watcher,
+            sessions_dir=Path("/tmp/s"),
+            docs_dir=Path("/tmp/d"),
+            progress_dir=Path("/tmp/p"),
+        )
+
+        with self.assertLogs("ccdash.watcher", level="WARNING") as cm:
+            dead = reg.dead_project_ids(["inert-proj"], now=self.now)
+
+        self.assertIn("inert-proj", dead)
+        self.assertTrue(any("inert-proj" in line and "INERT" in line for line in cm.output))
+
+    def test_dead_project_ids_does_not_flag_legitimately_idle_watcher(self):
+        """(b) REQUIRED, wired end-to-end: a running-but-quiet watcher (no
+        ticks at all) must NOT be returned as dead."""
+        from backend.db.file_watcher import FileWatcherRegistry, _WatcherEntry
+
+        reg = FileWatcherRegistry()
+        idle_snapshot = {
+            "lastTickAt": None,
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 0,
+        }
+        idle_watcher = types.SimpleNamespace(is_running=True, snapshot=lambda: idle_snapshot)
+        reg._entries["idle-proj"] = _WatcherEntry(
+            watcher=idle_watcher,
+            sessions_dir=Path("/tmp/s"),
+            docs_dir=Path("/tmp/d"),
+            progress_dir=Path("/tmp/p"),
+        )
+
+        dead = reg.dead_project_ids(["idle-proj"], now=self.now)
+        self.assertNotIn("idle-proj", dead)
+
+    def test_dead_project_ids_does_not_flag_watcher_missing_snapshot_method(self):
+        """Defensive: a watcher stub with no ``snapshot`` callable (as used by
+        the pre-existing crashed/missing test) must never raise and must not
+        be flagged inert."""
+        from backend.db.file_watcher import FileWatcherRegistry, _WatcherEntry
+
+        reg = FileWatcherRegistry()
+        bare_alive = types.SimpleNamespace(is_running=True)
+        reg._entries["bare-alive"] = _WatcherEntry(
+            watcher=bare_alive,
+            sessions_dir=Path("/tmp/s"),
+            docs_dir=Path("/tmp/d"),
+            progress_dir=Path("/tmp/p"),
+        )
+        dead = reg.dead_project_ids(["bare-alive"], now=self.now)
+        self.assertNotIn("bare-alive", dead)
 
 
 if __name__ == "__main__":

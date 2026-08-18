@@ -1000,6 +1000,124 @@ class WatcherHealthDetailProjectsMapTests(unittest.TestCase):
         self.assertEqual(detail["lastReconcileAt"], "2026-06-13T10:01:00Z")
         self.assertIsNone(detail["lastReconcileError"])
 
+    def test_per_project_entry_surfaces_ac5_progress_fields_and_inert_status(self) -> None:
+        """AC5: adapter._watcher_probe_detail surfaces the new tick/progress
+        fields per project, and derives progressStatus='inert' for a
+        ticking-but-not-dispatching watcher (2026-08-13..17 relay incident)."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        recent_tick = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        snapshots = {
+            "proj-inert": {
+                "running": True,
+                "configured": True,
+                "watchPathCount": 4,
+                "lastChangeSyncAt": None,
+                "lastTickAt": recent_tick,
+                "lastTickRawChangeCount": 3,
+                "lastTickClassifiedChangeCount": 0,
+                "consecutiveTicksWithoutDispatch": 50,
+            },
+        }
+        adapter, restore = self._make_adapter_with_snapshots(snapshots)
+        try:
+            detail = adapter._watcher_probe_detail()
+        finally:
+            restore()
+
+        entry = detail["projects"]["proj-inert"]
+        self.assertEqual(entry["lastTickAt"], recent_tick)
+        self.assertEqual(entry["lastTickRawChangeCount"], 3)
+        self.assertEqual(entry["lastTickClassifiedChangeCount"], 0)
+        self.assertEqual(entry["consecutiveTicksWithoutDispatch"], 50)
+        self.assertIsNotNone(entry["lastTickAgeSeconds"])
+        self.assertIsNone(entry["lastDispatchAgeSeconds"])  # never dispatched
+        self.assertEqual(entry["progressStatus"], "inert")
+
+    def test_per_project_entry_progress_status_idle_for_quiet_project(self) -> None:
+        """AC5: a running-but-quiet project (no ticks at all) reads 'idle', not
+        'inert' — must never be conflated with the loop-dead case."""
+        snapshots = {
+            "proj-quiet": {
+                "running": True,
+                "configured": True,
+                "watchPathCount": 2,
+                "lastChangeSyncAt": None,
+                "lastTickAt": None,
+                "lastTickRawChangeCount": None,
+                "lastTickClassifiedChangeCount": None,
+                "consecutiveTicksWithoutDispatch": 0,
+            },
+        }
+        adapter, restore = self._make_adapter_with_snapshots(snapshots)
+        try:
+            detail = adapter._watcher_probe_detail()
+        finally:
+            restore()
+
+        entry = detail["projects"]["proj-quiet"]
+        self.assertEqual(entry["progressStatus"], "idle")
+
+    def test_container_probe_watcher_detail_passes_through_ac5_fields(self) -> None:
+        """AC5: the container-level normalizer (the one that actually feeds
+        /api/health/detail) must pass the new fields through rather than
+        stripping them, and default absent fields to a safe unknown state."""
+        from backend.runtime.container import RuntimeContainer
+        from backend.runtime.profiles import get_runtime_profile
+
+        container = RuntimeContainer(profile=get_runtime_profile("worker-watch"))
+
+        raw_status = {
+            "watcherDetail": {
+                "state": "running",
+                "expected": True,
+                "enabled": True,
+                "configured": True,
+                "running": True,
+                "watchPathCount": 5,
+                "watchPaths": [],
+                "lastChangeSyncAt": None,
+                "lastChangeCount": None,
+                "lastSyncStatus": None,
+                "lastSyncError": None,
+                "projects": {
+                    "proj-full": {
+                        "state": "running",
+                        "watchPathCount": 3,
+                        "lastChangeSyncAt": None,
+                        "lastTickAt": "2026-08-17T12:00:00Z",
+                        "lastTickAgeSeconds": 5,
+                        "lastTickRawChangeCount": 2,
+                        "lastTickClassifiedChangeCount": 1,
+                        "consecutiveTicksWithoutDispatch": 3,
+                        "lastDispatchAgeSeconds": 40,
+                        "progressStatus": "progressing",
+                    },
+                    "proj-legacy": {"watchPathCount": 1},  # older/partial entry
+                },
+                "lastReconcileAt": None,
+                "lastReconcileError": None,
+            }
+        }
+
+        detail = container._probe_watcher_detail(raw_status)
+        projects = detail["projects"]
+
+        full = projects["proj-full"]
+        self.assertEqual(full["lastTickAt"], "2026-08-17T12:00:00Z")
+        self.assertEqual(full["lastTickAgeSeconds"], 5)
+        self.assertEqual(full["consecutiveTicksWithoutDispatch"], 3)
+        self.assertEqual(full["lastDispatchAgeSeconds"], 40)
+        self.assertEqual(full["progressStatus"], "progressing")
+
+        # Resilience-by-default: a partial/legacy entry must not raise and
+        # must default the new fields rather than omitting them.
+        legacy = projects["proj-legacy"]
+        self.assertIsNone(legacy["lastTickAt"])
+        self.assertIsNone(legacy["consecutiveTicksWithoutDispatch"])
+        self.assertEqual(legacy["progressStatus"], "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 from watchfiles import awatch, Change
 
@@ -37,6 +37,87 @@ _CAPTURE_SIDECAR_SUFFIX = ".capture.json"
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso_ts(value: object) -> datetime | None:
+    """Parse an ISO-8601 timestamp string defensively.
+
+    ``last_tick_at`` / ``last_change_sync_at`` are ISO-8601 STRINGS on the
+    snapshot dict. A malformed or absent value must never raise inside the
+    reconcile loop — it reads as "no progress signal", never as "unhealthy"
+    on its own.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def watcher_is_inert(
+    snapshot: Mapping[str, object] | None,
+    *,
+    now: datetime,
+    stale_seconds: int,
+    min_inert_ticks: int,
+) -> bool:
+    """Pure predicate: is this watcher ALIVE but NOT PROGRESSING?
+
+    Incident (2026-08-13..17): the local macOS relay watcher stayed
+    ``_running=True`` and kept ticking (thousands of classify ticks/day)
+    while making ZERO successful sync dispatches for ~44h. ``is_running()``
+    only asks "is the asyncio task alive"; it has no notion of "is the task
+    making progress". This predicate is that missing second half.
+
+    Takes *snapshot* as the camelCase dict returned by ``FileWatcher.snapshot()``
+    (or the registry's per-project ``snapshot_all()`` entries) so it can be
+    exercised in isolation with a plain dict — no watcher, no event loop, no
+    sleeps.
+
+    UNHEALTHY (returns True) requires ALL of:
+      - ``lastTickAt`` is present and RECENT (age <= *stale_seconds*) — the
+        loop is turning right now, not merely alive-in-name;
+      - ``lastChangeSyncAt`` is absent, OR older than *stale_seconds* — no
+        dispatch has landed inside the window;
+      - ``consecutiveTicksWithoutDispatch`` >= *min_inert_ticks*.
+
+    HEALTHY (returns False), deliberately, covers:
+      - no recent ticks at all (``lastTickAt`` is ``None`` or itself stale) —
+        a genuinely quiet project produces no ``awatch`` events and must
+        NEVER be flagged; a watchdog that thrashes idle projects gets
+        switched off by the operator, which is worse than doing nothing;
+      - a freshly-registered watcher that has not yet had time to tick
+        (``lastTickAt`` is ``None``);
+      - a watcher that is dispatching successfully within the window.
+    """
+    if not isinstance(snapshot, Mapping):
+        return False
+
+    last_tick_at = _parse_iso_ts(snapshot.get("lastTickAt"))
+    if last_tick_at is None:
+        return False  # no tick signal at all -> healthy/idle, never flag
+
+    tick_age = (now - last_tick_at).total_seconds()
+    if tick_age > stale_seconds:
+        return False  # ticks themselves are stale -> not "alive right now"
+
+    last_dispatch_at = _parse_iso_ts(snapshot.get("lastChangeSyncAt"))
+    if last_dispatch_at is not None:
+        dispatch_age = (now - last_dispatch_at).total_seconds()
+        if dispatch_age <= stale_seconds:
+            return False  # dispatched inside the window -> progressing
+
+    consecutive_raw = snapshot.get("consecutiveTicksWithoutDispatch")
+    try:
+        consecutive = int(consecutive_raw) if consecutive_raw is not None else 0
+    except (TypeError, ValueError):
+        consecutive = 0
+
+    return consecutive >= min_inert_ticks
 
 
 @dataclass(slots=True)
@@ -547,7 +628,12 @@ class FileWatcherRegistry:
         entry = self._entries.get(project_id)
         return entry is not None and entry.watcher.is_running
 
-    def dead_project_ids(self, expected_ids: Iterable[str]) -> list[str]:
+    def dead_project_ids(
+        self,
+        expected_ids: Iterable[str],
+        *,
+        now: datetime | None = None,
+    ) -> list[str]:
         """Phase 8 (T8-003): liveness predicate for watcher self-heal.
 
         Returns every id in *expected_ids* whose watcher is NOT currently
@@ -557,13 +643,61 @@ class FileWatcherRegistry:
         case (post-boot project the reconcile tick should bind).  Pure read; no
         lock required.  The reconcile tick re-registers each returned id from
         the DB-authoritative registry binding.
+
+        AC4 (2026-08-13..17 relay incident) addition: ALSO returns any id whose
+        watcher IS running but is INERT — ticking without ever completing a
+        dispatch (see ``watcher_is_inert``). This is the progress-aware half of
+        liveness; the crashed/missing behaviour above is unchanged. A genuinely
+        idle/quiet watcher (no recent ticks) is never returned here.
         """
+        moment = now or datetime.now(timezone.utc)
+        stale_seconds = max(60, min(86400, int(getattr(config, "WATCHER_PROGRESS_STALE_SECONDS", 900))))
+        min_inert_ticks = max(1, min(10_000, int(getattr(config, "WATCHER_PROGRESS_MIN_INERT_TICKS", 10))))
+
         dead: list[str] = []
         for pid in expected_ids:
             pid_s = str(pid or "")
             if not pid_s:
                 continue
             if not self.is_running(pid_s):
+                dead.append(pid_s)
+                continue
+
+            entry = self._entries.get(pid_s)
+            snapshot_fn = getattr(entry.watcher, "snapshot", None) if entry is not None else None
+            if not callable(snapshot_fn):
+                continue
+            try:
+                snap = snapshot_fn()
+            except Exception:  # pragma: no cover — defensive; snapshot() never raises today
+                continue
+
+            if watcher_is_inert(
+                snap,
+                now=moment,
+                stale_seconds=stale_seconds,
+                min_inert_ticks=min_inert_ticks,
+            ):
+                last_dispatch_at = _parse_iso_ts(snap.get("lastChangeSyncAt")) if isinstance(snap, Mapping) else None
+                dispatch_age = (
+                    int((moment - last_dispatch_at).total_seconds()) if last_dispatch_at is not None else None
+                )
+                logger.warning(
+                    "Watcher for project '%s' is INERT: alive and ticking but no successful "
+                    "dispatch — consecutive_ticks_without_dispatch=%s, last_dispatch_age_seconds=%s "
+                    "— routing through self-heal restart",
+                    pid_s,
+                    snap.get("consecutiveTicksWithoutDispatch") if isinstance(snap, Mapping) else None,
+                    dispatch_age,
+                    extra={
+                        "project_id": pid_s,
+                        "consecutive_ticks_without_dispatch": (
+                            snap.get("consecutiveTicksWithoutDispatch") if isinstance(snap, Mapping) else None
+                        ),
+                        "last_dispatch_age_seconds": dispatch_age,
+                        "last_tick_at": snap.get("lastTickAt") if isinstance(snap, Mapping) else None,
+                    },
+                )
                 dead.append(pid_s)
         return dead
 

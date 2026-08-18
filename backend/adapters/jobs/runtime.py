@@ -12,7 +12,7 @@ from typing import Any
 from backend import config
 from backend.application.ports import CorePorts
 from backend.application.ports.core import ProjectBinding
-from backend.db.file_watcher import file_watcher, file_watcher_registry
+from backend.db.file_watcher import file_watcher, file_watcher_registry, watcher_is_inert
 from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob
@@ -1385,6 +1385,16 @@ class RuntimeJobAdapter:
 
         # T3-003: per-project health breakdown derived from the registry snapshot.
         # Shape per OQ-5: {project_id: {state, watchPathCount, lastChangeSyncAt}}
+        # AC5 (2026-08-13..17 relay incident): per-watcher tick/progress/staleness
+        # fields, surfaced so a loop-dead-but-"running" watcher is visible over
+        # HTTP without grepping a 134MB log.
+        now = _utc_now()
+        progress_stale_seconds = max(
+            60, min(86400, int(getattr(config, "WATCHER_PROGRESS_STALE_SECONDS", 900)))
+        )
+        progress_min_inert_ticks = max(
+            1, min(10_000, int(getattr(config, "WATCHER_PROGRESS_MIN_INERT_TICKS", 10)))
+        )
         per_project: dict[str, dict[str, Any]] = {}
         all_registry_snapshots = file_watcher_registry.snapshot_all()
         for pid, proj_snap in all_registry_snapshots.items():
@@ -1402,10 +1412,34 @@ class RuntimeJobAdapter:
             # Also honour fan-out health map if degraded.
             if self.state.fan_out_watcher_health.get(pid) == "degraded":
                 proj_state = "degraded"
+
+            last_tick_at = proj_snap.get("lastTickAt")
+            if not proj_running:
+                progress_status = "not_running"
+            elif watcher_is_inert(
+                proj_snap,
+                now=now,
+                stale_seconds=progress_stale_seconds,
+                min_inert_ticks=progress_min_inert_ticks,
+            ):
+                progress_status = "inert"
+            elif last_tick_at is None:
+                progress_status = "idle"
+            else:
+                progress_status = "progressing"
+
             per_project[pid] = {
                 "state": proj_state,
                 "watchPathCount": proj_wpc,
                 "lastChangeSyncAt": proj_snap.get("lastChangeSyncAt"),
+                # AC5: progress/staleness fields — absent-safe on older snapshots.
+                "lastTickAt": last_tick_at,
+                "lastTickAgeSeconds": _freshness_seconds(last_tick_at),
+                "lastTickRawChangeCount": proj_snap.get("lastTickRawChangeCount"),
+                "lastTickClassifiedChangeCount": proj_snap.get("lastTickClassifiedChangeCount"),
+                "consecutiveTicksWithoutDispatch": proj_snap.get("consecutiveTicksWithoutDispatch"),
+                "lastDispatchAgeSeconds": _freshness_seconds(proj_snap.get("lastChangeSyncAt")),
+                "progressStatus": progress_status,
             }
 
         return {
