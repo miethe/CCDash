@@ -1482,6 +1482,48 @@ WATCHER_SYNC_CONCURRENCY: int = max(1, min(200, _env_int("CCDASH_WATCHER_SYNC_CO
 # watched project set against the DB registry and idempotently adds/removes watchers. Allows
 # newly-registered projects to be picked up without a service restart. Default 60; min 10, max 3600.
 WATCHER_RECONCILE_INTERVAL_SECONDS: int = max(10, min(3600, _env_int("CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS", 60)))
+# CCDASH_WATCHER_DISPATCH_TIMEOUT_SECONDS — per-tick ceiling (seconds) on a single
+# ``sync_engine.sync_changed_files`` dispatch from the watcher hot path. A dispatch that
+# wedges (e.g. awaiting a DB pool whose connections were all reset by a Postgres restart)
+# would otherwise block the watch loop forever: the loop never exits, so the watcher looks
+# alive while silently observing nothing. On timeout the tick is recorded as a FAILURE and
+# the loop continues to the next awatch iteration. Default 120; min 5, max 3600.
+WATCHER_DISPATCH_TIMEOUT_SECONDS: int = max(5, min(3600, _env_int("CCDASH_WATCHER_DISPATCH_TIMEOUT_SECONDS", 120)))
+# CCDASH_WATCHER_PROGRESS_STALE_SECONDS — staleness window (seconds) used by the
+# watcher progress-aware liveness predicate (``file_watcher.watcher_is_inert`` /
+# ``FileWatcherRegistry.dead_project_ids``). Incident: the 2026-08-13..17 macOS
+# relay watcher stayed ``_running=True`` (so the boolean is_running() liveness
+# check never flagged it) for ~44h while ticking with zero successful dispatches
+# — activity without progress. A watcher is only eligible to be flagged INERT
+# when it has ticked within this window (i.e. it is genuinely alive right now)
+# AND its last successful dispatch is older than this window (or has never
+# happened). A watcher with no recent ticks at all is legitimately idle and is
+# NEVER flagged, no matter how old this window is. Default 900 (mirrors
+# CCDASH_INGEST_SOURCE_STALE_SECONDS); min 60, max 86400.
+WATCHER_PROGRESS_STALE_SECONDS: int = max(60, min(86400, _env_int("CCDASH_WATCHER_PROGRESS_STALE_SECONDS", 900)))
+# CCDASH_WATCHER_PROGRESS_MIN_INERT_TICKS — minimum consecutive no-dispatch ticks
+# (``FileWatcherSnapshot.consecutive_ticks_without_dispatch``) required, on top of
+# the staleness window above, before a ticking-but-not-progressing watcher is
+# flagged INERT. Guards against flagging a watcher on a single unlucky tick.
+# Default 10; min 1, max 10000.
+WATCHER_PROGRESS_MIN_INERT_TICKS: int = max(1, min(10_000, _env_int("CCDASH_WATCHER_PROGRESS_MIN_INERT_TICKS", 10)))
+# CCDASH_WATCHER_SELF_HEAL_COOLDOWN_SECONDS — minimum seconds between repeated
+# self-heal RESTARTS of the same project's watcher when the restart reason is
+# INERT (ticking but not progressing — see ``watcher_is_inert`` /
+# ``FileWatcherRegistry.dead_project_ids``). Reason: without a cooldown, a
+# project whose watched dirs churn only in classifier-IGNORED files (editor
+# swap files, .DS_Store, __pycache__, log rotation) ticks forever, classifies
+# nothing, never dispatches, and so trips the inert predicate again on every
+# reconcile pass — restarting its watcher every cycle indefinitely. That
+# thrash plus the accompanying WARNING log spam is what gets a watchdog
+# switched off by an operator, which would leave us worse off than having no
+# watchdog at all. Applies ONLY to the "inert" self-heal reason — a genuinely
+# crashed/missing watcher (reason "not_running") is re-registered on the very
+# next tick regardless of this cooldown, exactly as before this flag existed.
+# Default 900 (mirrors CCDASH_WATCHER_PROGRESS_STALE_SECONDS); min 60, max 86400.
+WATCHER_SELF_HEAL_COOLDOWN_SECONDS: int = max(
+    60, min(86400, _env_int("CCDASH_WATCHER_SELF_HEAL_COOLDOWN_SECONDS", 900))
+)
 
 # Startup sync tuning
 STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)

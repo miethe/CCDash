@@ -12,7 +12,7 @@ from typing import Any
 from backend import config
 from backend.application.ports import CorePorts
 from backend.application.ports.core import ProjectBinding
-from backend.db.file_watcher import file_watcher, file_watcher_registry
+from backend.db.file_watcher import file_watcher, file_watcher_registry, watcher_is_inert
 from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.adapters.jobs.aar_review_sweep_job import AARReviewSweepJob
@@ -136,6 +136,12 @@ class RuntimeJobState:
     # T3-001: per-project health state for fan-out watchers.
     # "running" | "degraded" | "stopped"
     fan_out_watcher_health: dict[str, str] = field(default_factory=dict)
+    # DEFECT 2 fix (watcher self-heal thrash): last-restart wall-clock
+    # (``time.monotonic()``) per project id, keyed by project_id. Consulted
+    # ONLY for the "inert" self-heal reason so a churning-but-idle project
+    # cannot be restarted every reconcile tick forever; the crashed/missing
+    # ("not_running") self-heal path never reads this and is unaffected.
+    watcher_self_heal_last_restart_at: dict[str, float] = field(default_factory=dict)
     job_observations: dict[str, RuntimeJobObservation] = field(default_factory=dict)
 
 
@@ -1385,6 +1391,16 @@ class RuntimeJobAdapter:
 
         # T3-003: per-project health breakdown derived from the registry snapshot.
         # Shape per OQ-5: {project_id: {state, watchPathCount, lastChangeSyncAt}}
+        # AC5 (2026-08-13..17 relay incident): per-watcher tick/progress/staleness
+        # fields, surfaced so a loop-dead-but-"running" watcher is visible over
+        # HTTP without grepping a 134MB log.
+        now = _utc_now()
+        progress_stale_seconds = max(
+            60, min(86400, int(getattr(config, "WATCHER_PROGRESS_STALE_SECONDS", 900)))
+        )
+        progress_min_inert_ticks = max(
+            1, min(10_000, int(getattr(config, "WATCHER_PROGRESS_MIN_INERT_TICKS", 10)))
+        )
         per_project: dict[str, dict[str, Any]] = {}
         all_registry_snapshots = file_watcher_registry.snapshot_all()
         for pid, proj_snap in all_registry_snapshots.items():
@@ -1402,10 +1418,37 @@ class RuntimeJobAdapter:
             # Also honour fan-out health map if degraded.
             if self.state.fan_out_watcher_health.get(pid) == "degraded":
                 proj_state = "degraded"
+
+            last_tick_at = proj_snap.get("lastTickAt")
+            if not proj_running:
+                progress_status = "not_running"
+            elif watcher_is_inert(
+                proj_snap,
+                now=now,
+                stale_seconds=progress_stale_seconds,
+                min_inert_ticks=progress_min_inert_ticks,
+            ):
+                progress_status = "inert"
+            elif last_tick_at is None:
+                progress_status = "idle"
+            else:
+                progress_status = "progressing"
+
             per_project[pid] = {
                 "state": proj_state,
                 "watchPathCount": proj_wpc,
                 "lastChangeSyncAt": proj_snap.get("lastChangeSyncAt"),
+                # AC5: progress/staleness fields — absent-safe on older snapshots.
+                # lastSuccessfulDispatchAt (DEFECT 1 fix): the SUCCESS-only
+                # signal, distinct from lastChangeSyncAt's attempted-at semantics.
+                "lastSuccessfulDispatchAt": proj_snap.get("lastSuccessfulDispatchAt"),
+                "lastTickAt": last_tick_at,
+                "lastTickAgeSeconds": _freshness_seconds(last_tick_at),
+                "lastTickRawChangeCount": proj_snap.get("lastTickRawChangeCount"),
+                "lastTickClassifiedChangeCount": proj_snap.get("lastTickClassifiedChangeCount"),
+                "consecutiveTicksWithoutDispatch": proj_snap.get("consecutiveTicksWithoutDispatch"),
+                "lastDispatchAgeSeconds": _freshness_seconds(proj_snap.get("lastChangeSyncAt")),
+                "progressStatus": progress_status,
             }
 
         return {
@@ -1736,7 +1779,27 @@ class RuntimeJobAdapter:
                 # Watcher liveness self-heal (T8-003).
                 if heal_enabled and can_watch and expected_ids:
                     dead = file_watcher_registry.dead_project_ids(expected_ids)
-                    for pid in dead:
+                    cooldown_seconds = max(
+                        60,
+                        min(86400, int(getattr(config, "WATCHER_SELF_HEAL_COOLDOWN_SECONDS", 900))),
+                    )
+                    for pid, reason in dead.items():
+                        # DEFECT 2: the restart-thrash cooldown applies ONLY to the
+                        # "inert" self-heal reason — a genuinely crashed/missing
+                        # ("not_running") watcher must still be re-registered on
+                        # the very next tick exactly as before this cooldown existed.
+                        if reason == "inert":
+                            last_restart_at = self.state.watcher_self_heal_last_restart_at.get(pid)
+                            if last_restart_at is not None:
+                                elapsed = time.monotonic() - last_restart_at
+                                if elapsed < cooldown_seconds:
+                                    logger.info(
+                                        "watcher self-heal: suppressing restart for project '%s' "
+                                        "(reason=inert) — cooldown active, %.0fs remaining",
+                                        pid,
+                                        cooldown_seconds - elapsed,
+                                    )
+                                    continue
                         try:
                             binding = workspace_registry.resolve_project_binding(
                                 pid, allow_active_fallback=False, refresh=True
@@ -1762,10 +1825,12 @@ class RuntimeJobAdapter:
                                 allow_writeback=(pid == active_project_id),
                             )
                             self.state.watcher_started = True
+                            self.state.watcher_self_heal_last_restart_at[pid] = time.monotonic()
                             healed += 1
                             logger.info(
-                                "watcher self-heal: re-bound project '%s' (reason=not_running)",
+                                "watcher self-heal: re-bound project '%s' (reason=%s)",
                                 pid,
+                                reason,
                             )
                         except asyncio.CancelledError:
                             self._mark_job_cancelled("reconcile", started, backlog_count=0)

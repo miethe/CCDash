@@ -1630,6 +1630,19 @@ class RuntimeContainer:
                 "state": str(entry.get("state", "unknown")),
                 "watchPathCount": int(entry.get("watchPathCount", 0) or 0),
                 "lastChangeSyncAt": entry.get("lastChangeSyncAt"),
+                # AC5 (2026-08-13..17 relay incident): per-watcher tick/progress
+                # fields. Absent-safe — missing is a contract state, not a bug;
+                # older adapter snapshots simply omit these keys.
+                # lastSuccessfulDispatchAt (DEFECT 1 fix): success-only signal,
+                # distinct from lastChangeSyncAt's attempted-at semantics.
+                "lastSuccessfulDispatchAt": entry.get("lastSuccessfulDispatchAt"),
+                "lastTickAt": entry.get("lastTickAt"),
+                "lastTickAgeSeconds": entry.get("lastTickAgeSeconds"),
+                "lastTickRawChangeCount": entry.get("lastTickRawChangeCount"),
+                "lastTickClassifiedChangeCount": entry.get("lastTickClassifiedChangeCount"),
+                "consecutiveTicksWithoutDispatch": entry.get("consecutiveTicksWithoutDispatch"),
+                "lastDispatchAgeSeconds": entry.get("lastDispatchAgeSeconds"),
+                "progressStatus": str(entry.get("progressStatus", "unknown")),
             }
 
         return {

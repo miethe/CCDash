@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import tempfile
@@ -10,6 +11,7 @@ import aiosqlite
 from watchfiles import Change
 
 from backend.adapters.jobs.runtime import RuntimeJobAdapter
+from backend.db import file_watcher as file_watcher_module
 from backend.db.file_watcher import FileWatcher
 from backend.db.sqlite_migrations import run_migrations
 from backend.db.sync_engine import SyncEngine
@@ -300,6 +302,190 @@ class JsonlAppendIncrementalSyncTests(unittest.IsolatedAsyncioTestCase):
         async with self.db.execute("SELECT source_file FROM sessions") as cur:
             rows = await cur.fetchall()
         return {str(row["source_file"]) for row in rows}
+
+
+class _ScriptedAwatch:
+    """Stand-in for ``watchfiles.awatch`` that replays a fixed tick script.
+
+    ``_watch_loop`` consumes ``awatch(*paths, stop_event=...)`` as an async
+    iterator, so a callable returning an async generator is a faithful
+    substitute. The generator ends after the scripted ticks, which lets
+    ``_watch_loop`` return normally instead of being cancelled — so a test can
+    await it directly and then inspect the resulting snapshot.
+    """
+
+    def __init__(self, ticks: list[set[tuple[Change, str]]]) -> None:
+        self.ticks = ticks
+        self.call_count = 0
+
+    def __call__(self, *paths, **kwargs):
+        self.call_count += 1
+        return self._iterate()
+
+    async def _iterate(self):
+        for tick in self.ticks:
+            yield tick
+            # Yield to the loop between ticks so any per-tick timeout the
+            # watcher installed gets a chance to fire.
+            await asyncio.sleep(0)
+
+
+class WatcherPerTickProgressTests(unittest.IsolatedAsyncioTestCase):
+    """Regression coverage for the 2026-08-13 loop-dead incident (AC1-AC3).
+
+    The Mac watcher stayed alive for ~44h while dispatching nothing: the loop
+    never exited, so ``is_running`` was True, and every snapshot field that
+    could have revealed the stall was written only inside ``if classified:``.
+    """
+
+    async def asyncSetUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.sessions_dir = root / "sessions"
+        self.docs_dir = root / "docs"
+        self.progress_dir = root / "progress"
+        for directory in (self.sessions_dir, self.docs_dir, self.progress_dir):
+            directory.mkdir()
+
+        self._orig_awatch = file_watcher_module.awatch
+        self._orig_timeout = file_watcher_module.config.WATCHER_DISPATCH_TIMEOUT_SECONDS
+
+    async def asyncTearDown(self) -> None:
+        file_watcher_module.awatch = self._orig_awatch
+        file_watcher_module.config.WATCHER_DISPATCH_TIMEOUT_SECONDS = self._orig_timeout
+        self._tmp.cleanup()
+
+    def _install_ticks(self, ticks: list[set[tuple[Change, str]]]) -> _ScriptedAwatch:
+        scripted = _ScriptedAwatch(ticks)
+        file_watcher_module.awatch = scripted
+        return scripted
+
+    async def _drain(self, watcher: FileWatcher, sync_engine) -> None:
+        watcher._running = True
+        await watcher._watch_loop(
+            sync_engine,
+            "proj-loop-dead",
+            self.sessions_dir,
+            self.docs_dir,
+            self.progress_dir,
+            [self.sessions_dir],
+        )
+
+    async def test_hung_dispatch_times_out_and_later_ticks_are_still_observed(self) -> None:
+        """AC1: a dispatch that never returns must not wedge the watch loop.
+
+        Mechanism B of the incident: ``sync_changed_files`` awaiting a DB pool
+        whose connections were all reset. Without the bounded dispatch the
+        first tick blocks forever and tick 2 is never seen at all.
+        """
+        # Short override — never the production default (120s).
+        file_watcher_module.config.WATCHER_DISPATCH_TIMEOUT_SECONDS = 1
+
+        dispatch_calls: list[int] = []
+
+        async def _never_returns(project_id, classified, *args, **kwargs):
+            dispatch_calls.append(len(classified))
+            await asyncio.sleep(999)
+
+        sync_engine = types.SimpleNamespace(sync_changed_files=_never_returns)
+
+        # Tick 1 carries one raw change, tick 2 carries two — so the tick
+        # counters prove WHICH tick was observed last, not merely that one was.
+        self._install_ticks([
+            {(Change.modified, str(self.sessions_dir / "one.jsonl"))},
+            {
+                (Change.modified, str(self.sessions_dir / "two.jsonl")),
+                (Change.modified, str(self.sessions_dir / "three.jsonl")),
+            },
+        ])
+
+        watcher = FileWatcher()
+        await self._drain(watcher, sync_engine)
+
+        snapshot = watcher.snapshot()
+
+        # The load-bearing assertion: the SECOND tick was dispatched at all.
+        self.assertEqual(len(dispatch_calls), 2, "second tick was never observed — loop wedged")
+        self.assertEqual(snapshot["lastTickRawChangeCount"], 2)
+        self.assertEqual(snapshot["lastTickClassifiedChangeCount"], 2)
+        self.assertEqual(snapshot["consecutiveTicksWithoutDispatch"], 2)
+        self.assertEqual(snapshot["lastSyncStatus"], "failed")
+        self.assertIn("timed out", str(snapshot["lastSyncError"]))
+        self.assertIsNotNone(snapshot["lastTickAt"])
+
+    async def test_empty_classification_tick_advances_progress_fields_only(self) -> None:
+        """AC2: mechanism A — classify returns empty forever.
+
+        The tick-level fields must advance (proving the loop is turning) while
+        ``lastChangeSyncAt`` stays untouched (proving nothing was dispatched).
+        Before the fix, both stayed None and an inert watcher was byte-for-byte
+        indistinguishable from a healthy idle one.
+        """
+        dispatch_calls: list[object] = []
+
+        async def _record(project_id, classified, *args, **kwargs):
+            dispatch_calls.append(classified)
+
+        sync_engine = types.SimpleNamespace(sync_changed_files=_record)
+
+        # ``.tmp`` is classified away, so ``classified`` is empty.
+        self._install_ticks([
+            {(Change.modified, str(self.sessions_dir / "scratch.tmp"))},
+            {(Change.modified, str(self.sessions_dir / "other.tmp"))},
+        ])
+
+        watcher = FileWatcher()
+        await self._drain(watcher, sync_engine)
+
+        snapshot = watcher.snapshot()
+
+        self.assertEqual(dispatch_calls, [], "empty classification must not dispatch")
+        # Tick-level progress advanced …
+        self.assertIsNotNone(snapshot["lastTickAt"])
+        self.assertEqual(snapshot["lastTickRawChangeCount"], 1)
+        self.assertEqual(snapshot["lastTickClassifiedChangeCount"], 0)
+        self.assertEqual(snapshot["consecutiveTicksWithoutDispatch"], 2)
+        # … while the dispatch-level fields did NOT.
+        self.assertIsNone(snapshot["lastChangeSyncAt"])
+        self.assertIsNone(snapshot["lastChangeCount"])
+        self.assertIsNone(snapshot["lastSyncStatus"])
+        self.assertIsNone(snapshot["lastSyncError"])
+
+    async def test_classified_changes_log_renders_counts_in_message_text(self) -> None:
+        """AC3: the counts must survive into the RENDERED message.
+
+        Asserting on ``record.raw_change_count`` would only test the ``extra=``
+        dict — invisible to every plain-text consumer (``podman logs``, a tail
+        over the relay), which is why the incident could not be diagnosed from
+        the log it had already written. So this asserts on
+        ``record.getMessage()``.
+        """
+        async def _noop(project_id, classified, *args, **kwargs):
+            return None
+
+        sync_engine = types.SimpleNamespace(sync_changed_files=_noop)
+
+        # 2 raw changes, 1 of which classifies (the ``.tmp`` is dropped).
+        self._install_ticks([
+            {
+                (Change.modified, str(self.sessions_dir / "kept.jsonl")),
+                (Change.modified, str(self.sessions_dir / "dropped.tmp")),
+            },
+        ])
+
+        watcher = FileWatcher()
+        with self.assertLogs("ccdash.watcher", level="INFO") as captured:
+            await self._drain(watcher, sync_engine)
+
+        rendered = [
+            record.getMessage()
+            for record in captured.records
+            if "classified changes" in record.getMessage()
+        ]
+        self.assertEqual(len(rendered), 1, f"expected one classified-changes line, got {rendered}")
+        message = rendered[0]
+        self.assertIn("raw=2", message)
+        self.assertIn("classified=1", message)
 
 
 if __name__ == "__main__":

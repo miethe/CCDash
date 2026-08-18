@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -166,7 +167,8 @@ class TestReconcileFreshness(unittest.IsolatedAsyncioTestCase):
         ):
             cfg.RECONCILE_INTERVAL_SECONDS = 300
             cfg.WATCHER_HEAL_ENABLED = True
-            mock_reg.dead_project_ids.return_value = []
+            cfg.WATCHER_SELF_HEAL_COOLDOWN_SECONDS = 900
+            mock_reg.dead_project_ids.return_value = {}
             mock_reg.register = AsyncMock()
             adapter._start_reconcile_task()
             await _drive_reconcile(adapter, captured, n_ticks=1)
@@ -194,7 +196,8 @@ class TestReconcileFreshness(unittest.IsolatedAsyncioTestCase):
         ):
             cfg.RECONCILE_INTERVAL_SECONDS = 300
             cfg.WATCHER_HEAL_ENABLED = True
-            mock_reg.dead_project_ids.return_value = []
+            cfg.WATCHER_SELF_HEAL_COOLDOWN_SECONDS = 900
+            mock_reg.dead_project_ids.return_value = {}
             mock_reg.register = AsyncMock()
             adapter._start_reconcile_task()
             await _drive_reconcile(adapter, captured, n_ticks=1)
@@ -227,7 +230,8 @@ class TestReconcileFreshness(unittest.IsolatedAsyncioTestCase):
         ):
             cfg.RECONCILE_INTERVAL_SECONDS = 300
             cfg.WATCHER_HEAL_ENABLED = True
-            mock_reg.dead_project_ids.return_value = []
+            cfg.WATCHER_SELF_HEAL_COOLDOWN_SECONDS = 900
+            mock_reg.dead_project_ids.return_value = {}
             mock_reg.register = AsyncMock()
             adapter._start_reconcile_task()
             await _drive_reconcile(adapter, captured, n_ticks=1)
@@ -250,7 +254,8 @@ class TestReconcileFreshness(unittest.IsolatedAsyncioTestCase):
         ):
             cfg.RECONCILE_INTERVAL_SECONDS = 300
             cfg.WATCHER_HEAL_ENABLED = True
-            mock_reg.dead_project_ids.return_value = ["proj-b"]  # proj-b watcher crashed
+            cfg.WATCHER_SELF_HEAL_COOLDOWN_SECONDS = 900
+            mock_reg.dead_project_ids.return_value = {"proj-b": "not_running"}  # proj-b watcher crashed
             mock_reg.register = AsyncMock()
             adapter._start_reconcile_task()
             await _drive_reconcile(adapter, captured, n_ticks=1)
@@ -271,7 +276,8 @@ class TestReconcileFreshness(unittest.IsolatedAsyncioTestCase):
         ):
             cfg.RECONCILE_INTERVAL_SECONDS = 300
             cfg.WATCHER_HEAL_ENABLED = False
-            mock_reg.dead_project_ids.return_value = ["proj-b"]
+            cfg.WATCHER_SELF_HEAL_COOLDOWN_SECONDS = 900
+            mock_reg.dead_project_ids.return_value = {"proj-b": "not_running"}
             mock_reg.register = AsyncMock()
             adapter._start_reconcile_task()
             await _drive_reconcile(adapter, captured, n_ticks=1)
@@ -304,7 +310,8 @@ class TestReconcileFreshness(unittest.IsolatedAsyncioTestCase):
         ):
             cfg.RECONCILE_INTERVAL_SECONDS = 300
             cfg.WATCHER_HEAL_ENABLED = True
-            mock_reg.dead_project_ids.return_value = []
+            cfg.WATCHER_SELF_HEAL_COOLDOWN_SECONDS = 900
+            mock_reg.dead_project_ids.return_value = {}
             mock_reg.register = AsyncMock()
             adapter._start_reconcile_task()
             await _drive_reconcile(adapter, captured, n_ticks=2)
@@ -356,6 +363,473 @@ class TestDeadProjectIdsPredicate(unittest.IsolatedAsyncioTestCase):
         self.assertIn("never-registered", dead)   # expected-but-absent detected
         self.assertNotIn("alive", dead)            # running watcher not flagged
         self.assertNotIn("", dead)                 # empty id ignored
+
+
+class TestWatcherProgressAwareLiveness(unittest.TestCase):
+    """AC4: activity-without-progress is UNHEALTHY; legitimate idle is HEALTHY.
+
+    Incident: the 2026-08-13..17 macOS relay watcher stayed ``_running=True``
+    (is_running()-only liveness never flagged it) for ~44h while ticking with
+    zero successful dispatches. ``watcher_is_inert`` is the pure predicate
+    that closes that gap; ``dead_project_ids`` wires it into the existing
+    self-heal path.
+    """
+
+    @staticmethod
+    def _iso(moment: datetime) -> str:
+        return moment.isoformat().replace("+00:00", "Z")
+
+    def setUp(self) -> None:
+        self.now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=timezone.utc)
+
+    # -- pure predicate: watcher_is_inert -----------------------------------
+
+    def test_watcher_is_inert_true_for_ticking_but_never_dispatching(self):
+        """(a) REQUIRED: inert-but-alive IS flagged."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": None,  # never dispatched successfully
+            "consecutiveTicksWithoutDispatch": 50,
+        }
+        self.assertTrue(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_true_when_last_dispatch_older_than_window(self):
+        """(a) REQUIRED: same, but with a stale (not None) last dispatch."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=2000)),
+            "consecutiveTicksWithoutDispatch": 12,
+        }
+        self.assertTrue(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_for_legitimately_idle_quiet_project(self):
+        """(b) REQUIRED: no recent ticks at all -> never flagged."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": None,
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 0,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_when_tick_itself_is_stale(self):
+        """A watcher with no RECENT ticks is not 'alive right now' either."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=3600)),
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 999,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_when_dispatching_successfully(self):
+        """A watcher dispatching within the window is never flagged."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=10)),
+            "consecutiveTicksWithoutDispatch": 0,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_for_freshly_registered_watcher(self):
+        """A freshly-registered watcher with no lastTickAt yet is never flagged."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {"lastTickAt": None, "lastChangeSyncAt": None, "consecutiveTicksWithoutDispatch": 0}
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_below_min_inert_ticks(self):
+        """Ticking + no dispatch, but below the configured tick-count floor."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 3,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_never_raises_on_malformed_timestamp(self):
+        """A malformed/absent timestamp reads as 'no progress signal', never
+        as unhealthy, and never raises."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": "not-a-timestamp",
+            "lastChangeSyncAt": "also-garbage",
+            "consecutiveTicksWithoutDispatch": 999,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+        self.assertFalse(
+            watcher_is_inert(None, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    # -- DEFECT 1 regression: attempted-at (lastChangeSyncAt) must never be
+    #    mistaken for succeeded-at. -----------------------------------------
+
+    def test_watcher_is_inert_true_when_every_recent_dispatch_is_failing(self):
+        """REGRESSION for the independently-confirmed DEFECT 1: a watcher that
+        is ticking, classifying changes, and dispatching — but EVERY recent
+        dispatch FAILS/times out — must still be judged INERT. The OLD logic
+        (reading ``lastChangeSyncAt`` alone as "dispatched inside the window
+        -> progressing") would have rescued this snapshot even though nothing
+        ever actually synced; this is exactly the 2026-08-13 storm shape (128
+        continuously-failing dispatches, refreshed every <=120s, all inside
+        the 900s window)."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            # Recent attempted-at — written on the FAILURE branch too. A
+            # recent value here must NOT count as progress.
+            "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=10)),
+            "lastSyncStatus": "failed",
+            "lastSuccessfulDispatchAt": None,
+            "consecutiveTicksWithoutDispatch": 12,
+        }
+        self.assertTrue(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_with_recent_successful_dispatch_at(self):
+        """A recent ``lastSuccessfulDispatchAt`` IS real progress -> not inert,
+        even if ``lastSyncStatus``/``lastChangeSyncAt`` look mixed (e.g. a
+        later failed tick after an earlier success within the window)."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastSyncStatus": "failed",
+            "lastSuccessfulDispatchAt": self._iso(self.now - timedelta(seconds=30)),
+            "consecutiveTicksWithoutDispatch": 1,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    def test_watcher_is_inert_false_legacy_snapshot_fallback_on_succeeded_status(self):
+        """Backward-compat fallback: a snapshot from BEFORE
+        ``lastSuccessfulDispatchAt`` existed (no such key at all) with a
+        recent ``lastChangeSyncAt`` AND ``lastSyncStatus == "succeeded"`` must
+        still read as progressing — the fallback path is legitimate only when
+        status is genuinely "succeeded"."""
+        from backend.db.file_watcher import watcher_is_inert
+
+        snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": self._iso(self.now - timedelta(seconds=10)),
+            "lastSyncStatus": "succeeded",
+            # No "lastSuccessfulDispatchAt" key at all — legacy snapshot shape.
+            "consecutiveTicksWithoutDispatch": 0,
+        }
+        self.assertFalse(
+            watcher_is_inert(snapshot, now=self.now, stale_seconds=900, min_inert_ticks=10)
+        )
+
+    # -- integration: FileWatcherRegistry.dead_project_ids ------------------
+
+    def test_dead_project_ids_flags_inert_alive_watcher_and_logs_warning(self):
+        """(a) REQUIRED, wired end-to-end: dead_project_ids flags an
+        inert-but-alive watcher and logs at WARNING naming the project."""
+        from backend.db.file_watcher import FileWatcherRegistry, _WatcherEntry
+
+        reg = FileWatcherRegistry()
+        inert_snapshot = {
+            "lastTickAt": self._iso(self.now - timedelta(seconds=5)),
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 50,
+        }
+        inert_watcher = types.SimpleNamespace(is_running=True, snapshot=lambda: inert_snapshot)
+        reg._entries["inert-proj"] = _WatcherEntry(
+            watcher=inert_watcher,
+            sessions_dir=Path("/tmp/s"),
+            docs_dir=Path("/tmp/d"),
+            progress_dir=Path("/tmp/p"),
+        )
+
+        with self.assertLogs("ccdash.watcher", level="WARNING") as cm:
+            dead = reg.dead_project_ids(["inert-proj"], now=self.now)
+
+        self.assertIn("inert-proj", dead)
+        self.assertTrue(any("inert-proj" in line and "INERT" in line for line in cm.output))
+
+    def test_dead_project_ids_does_not_flag_legitimately_idle_watcher(self):
+        """(b) REQUIRED, wired end-to-end: a running-but-quiet watcher (no
+        ticks at all) must NOT be returned as dead."""
+        from backend.db.file_watcher import FileWatcherRegistry, _WatcherEntry
+
+        reg = FileWatcherRegistry()
+        idle_snapshot = {
+            "lastTickAt": None,
+            "lastChangeSyncAt": None,
+            "consecutiveTicksWithoutDispatch": 0,
+        }
+        idle_watcher = types.SimpleNamespace(is_running=True, snapshot=lambda: idle_snapshot)
+        reg._entries["idle-proj"] = _WatcherEntry(
+            watcher=idle_watcher,
+            sessions_dir=Path("/tmp/s"),
+            docs_dir=Path("/tmp/d"),
+            progress_dir=Path("/tmp/p"),
+        )
+
+        dead = reg.dead_project_ids(["idle-proj"], now=self.now)
+        self.assertNotIn("idle-proj", dead)
+
+    def test_dead_project_ids_does_not_flag_watcher_missing_snapshot_method(self):
+        """Defensive: a watcher stub with no ``snapshot`` callable (as used by
+        the pre-existing crashed/missing test) must never raise and must not
+        be flagged inert."""
+        from backend.db.file_watcher import FileWatcherRegistry, _WatcherEntry
+
+        reg = FileWatcherRegistry()
+        bare_alive = types.SimpleNamespace(is_running=True)
+        reg._entries["bare-alive"] = _WatcherEntry(
+            watcher=bare_alive,
+            sessions_dir=Path("/tmp/s"),
+            docs_dir=Path("/tmp/d"),
+            progress_dir=Path("/tmp/p"),
+        )
+        dead = reg.dead_project_ids(["bare-alive"], now=self.now)
+        self.assertNotIn("bare-alive", dead)
+
+
+class TestWatcherExceptionPathIncrementsInertCounter(unittest.IsolatedAsyncioTestCase):
+    """Closes the gap left after DEFECT 1: a dispatch that RAISES (not just
+    times out) must also count toward ``consecutive_ticks_without_dispatch``,
+    or ``watcher_is_inert`` stays blind to a watcher that is failing every
+    single tick.
+
+    This drives the real ``FileWatcher._watch_loop`` end to end (scripted
+    ``awatch`` + a ``sync_changed_files`` that raises on every tick) rather
+    than a hand-built snapshot dict, so it proves the counter is actually
+    wired to the exception branch — not merely that ``watcher_is_inert``'s
+    predicate logic is correct in isolation (that is already covered by
+    ``test_watcher_is_inert_true_when_every_recent_dispatch_is_failing``
+    above, using a snapshot nothing in the loop produced).
+
+    Incident shape: the 2026-08-13 storm logged 128 "File watcher change sync
+    failed" lines — i.e. EXCEPTIONS from a broken connection pool, not
+    timeouts. Before this fix, ``consecutive_ticks_without_dispatch`` never
+    moved off 0 on that path, so ``watcher_is_inert`` never tripped despite
+    every dispatch failing for hours.
+    """
+
+    async def asyncSetUp(self) -> None:
+        import tempfile
+
+        from watchfiles import Change
+
+        from backend.db import file_watcher as file_watcher_module
+        from backend.db.file_watcher import FileWatcher
+        from backend.tests.test_file_watcher import _ScriptedAwatch
+
+        self._Change = Change
+        self._file_watcher_module = file_watcher_module
+        self._FileWatcher = FileWatcher
+        self._ScriptedAwatch = _ScriptedAwatch
+
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.sessions_dir = root / "sessions"
+        self.docs_dir = root / "docs"
+        self.progress_dir = root / "progress"
+        for directory in (self.sessions_dir, self.docs_dir, self.progress_dir):
+            directory.mkdir()
+
+        self._orig_awatch = file_watcher_module.awatch
+
+    async def asyncTearDown(self) -> None:
+        self._file_watcher_module.awatch = self._orig_awatch
+        self._tmp.cleanup()
+
+    async def test_dispatch_exception_on_every_tick_increments_counter_and_trips_inert(self) -> None:
+        from backend.db.file_watcher import watcher_is_inert
+
+        n_ticks = 4
+        ticks = [
+            {(self._Change.modified, str(self.sessions_dir / f"change-{i}.jsonl"))}
+            for i in range(n_ticks)
+        ]
+        scripted = self._ScriptedAwatch(ticks)
+        self._file_watcher_module.awatch = scripted
+
+        async def _always_raises(project_id, classified, *args, **kwargs):
+            raise RuntimeError("connection pool exhausted")
+
+        sync_engine = types.SimpleNamespace(sync_changed_files=_always_raises)
+
+        watcher = self._FileWatcher()
+        watcher._running = True
+        with self.assertLogs("ccdash.watcher", level="ERROR"):
+            await watcher._watch_loop(
+                sync_engine,
+                "proj-exception-storm",
+                self.sessions_dir,
+                self.docs_dir,
+                self.progress_dir,
+                [self.sessions_dir],
+            )
+
+        snapshot = watcher.snapshot()
+
+        # Every tick produced classified changes (the dispatch was genuinely
+        # attempted) and every dispatch raised, so BEFORE this fix the
+        # counter would have stayed 0 the whole time.
+        self.assertEqual(snapshot["lastTickClassifiedChangeCount"], 1)
+        self.assertEqual(snapshot["lastSyncStatus"], "failed")
+        self.assertIsNone(snapshot["lastSuccessfulDispatchAt"])
+        self.assertEqual(snapshot["consecutiveTicksWithoutDispatch"], n_ticks)
+
+        # And the watchdog can now actually see it: age lastSuccessfulDispatchAt
+        # (here, absent entirely) past the freshness window and confirm
+        # watcher_is_inert trips on this exact snapshot shape.
+        now = datetime(2026, 8, 18, 12, 0, 0, tzinfo=timezone.utc)
+        aged_snapshot = dict(snapshot)
+        aged_snapshot["lastTickAt"] = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        self.assertTrue(
+            watcher_is_inert(aged_snapshot, now=now, stale_seconds=900, min_inert_ticks=3)
+        )
+
+
+def _sleep_and_monotonic_for_ticks(n_ticks: int, times: list[float]):
+    """Like ``_sleep_for_ticks``, but pairs it with a ``time.monotonic`` fake
+    that returns a FIXED value per tick (regardless of how many times
+    ``time.monotonic()`` is called within that tick's body — e.g. once for
+    ``_mark_job_started``/``_mark_job_completed`` bookkeeping, once for the
+    self-heal cooldown check). ``times[i]`` is the wall-clock value used
+    during tick ``i + 1``. State is shared between the two fakes so they
+    always agree on "which tick are we in".
+    """
+    state = {"n": 0}
+
+    async def _fake_sleep(_secs):
+        state["n"] += 1
+        if state["n"] > n_ticks:
+            raise asyncio.CancelledError()
+        return None
+
+    def _fake_monotonic() -> float:
+        idx = max(0, state["n"] - 1)
+        return times[idx] if idx < len(times) else times[-1]
+
+    return _fake_sleep, _fake_monotonic
+
+
+class TestWatcherSelfHealCooldown(unittest.IsolatedAsyncioTestCase):
+    """DEFECT 2 regression: the restart-thrash cooldown applies ONLY to the
+    "inert" self-heal reason, never to "not_running" (crashed/missing)."""
+
+    def _registry_two_projects(self):
+        proj_a = _make_project("proj-a")
+        proj_b = _make_project("proj-b")
+        binding_a = _make_binding("proj-a", Path("/tmp/proj_a"))
+        binding_b = _make_binding("proj-b", Path("/tmp/proj_b"))
+        reg = MagicMock()
+        reg.list_projects.return_value = [proj_a, proj_b]
+        reg.reload_projects = MagicMock()
+
+        def _resolve(pid=None, *, allow_active_fallback=True, refresh=False):
+            return {"proj-a": binding_a, "proj-b": binding_b}.get(pid)
+
+        reg.resolve_project_binding.side_effect = _resolve
+        return reg
+
+    async def test_inert_watcher_restart_cooldown_suppresses_immediate_reregister(self):
+        """(4) REQUIRED: an INERT project restarted once is NOT re-registered
+        on the immediately following tick (cooldown active), and IS eligible
+        again once the cooldown has elapsed — no sleeps, time is injected."""
+        reg = self._registry_two_projects()
+        sync_engine = _make_sync_engine()
+        adapter, captured = _build_adapter(reg, sync_engine)
+
+        # tick1 @ t=1000 (restart) -> tick2 @ t=1010 (10s later, within the
+        # 900s cooldown -> suppressed) -> tick3 @ t=1950 (950s later, past
+        # the cooldown -> eligible again).
+        times = [1_000.0, 1_010.0, 1_950.0]
+        fake_sleep, fake_monotonic = _sleep_and_monotonic_for_ticks(3, times)
+
+        with (
+            patch("backend.adapters.jobs.runtime.config") as cfg,
+            patch("backend.adapters.jobs.runtime.file_watcher_registry") as mock_reg,
+            patch("backend.adapters.jobs.runtime._resolve_worknotes_dir", return_value=None),
+            patch("asyncio.sleep", new=fake_sleep),
+            patch("time.monotonic", new=fake_monotonic),
+        ):
+            cfg.RECONCILE_INTERVAL_SECONDS = 300
+            cfg.WATCHER_HEAL_ENABLED = True
+            cfg.WATCHER_SELF_HEAL_COOLDOWN_SECONDS = 900
+            mock_reg.dead_project_ids.return_value = {"proj-b": "inert"}
+            mock_reg.register = AsyncMock()
+            adapter._start_reconcile_task()
+
+            coros = [c for n, c in captured if "reconcile" in n]
+            assert coros, "expected a reconcile job to be scheduled"
+            with self.assertLogs("ccdash.runtime.jobs", level="INFO") as cm:
+                for coro in coros:
+                    try:
+                        await coro
+                    except asyncio.CancelledError:
+                        pass
+
+        # tick1 restarts (count=1), tick2 suppressed (still count=1), tick3
+        # restarts again once the cooldown has elapsed (count=2).
+        self.assertEqual(mock_reg.register.await_count, 2)
+        suppressed_lines = [
+            line for line in cm.output if "proj-b" in line and "cooldown" in line.lower()
+        ]
+        self.assertTrue(
+            suppressed_lines,
+            "expected an INFO log naming project 'proj-b' and the cooldown suppression",
+        )
+
+    async def test_cooldown_does_not_apply_to_crashed_or_missing_watcher(self):
+        """(5) REQUIRED: cooldown must NOT apply to reason="not_running" — a
+        genuinely crashed/missing watcher is re-registered on every tick,
+        exactly as before this cooldown existed (pre-existing behaviour)."""
+        reg = self._registry_two_projects()
+        sync_engine = _make_sync_engine()
+        adapter, captured = _build_adapter(reg, sync_engine)
+
+        with (
+            patch("backend.adapters.jobs.runtime.config") as cfg,
+            patch("backend.adapters.jobs.runtime.file_watcher_registry") as mock_reg,
+            patch("backend.adapters.jobs.runtime._resolve_worknotes_dir", return_value=None),
+        ):
+            cfg.RECONCILE_INTERVAL_SECONDS = 300
+            cfg.WATCHER_HEAL_ENABLED = True
+            cfg.WATCHER_SELF_HEAL_COOLDOWN_SECONDS = 900
+            mock_reg.dead_project_ids.return_value = {"proj-b": "not_running"}
+            mock_reg.register = AsyncMock()
+            adapter._start_reconcile_task()
+            await _drive_reconcile(adapter, captured, n_ticks=3)
+
+        # Every one of the 3 ticks re-registers — no cooldown suppression.
+        self.assertEqual(mock_reg.register.await_count, 3)
 
 
 if __name__ == "__main__":

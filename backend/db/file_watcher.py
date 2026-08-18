@@ -17,10 +17,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 from watchfiles import awatch, Change
 
+from backend import config
 from backend.services.test_config import ResolvedTestSource
 
 try:
@@ -38,6 +39,106 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _parse_iso_ts(value: object) -> datetime | None:
+    """Parse an ISO-8601 timestamp string defensively.
+
+    ``last_tick_at`` / ``last_change_sync_at`` are ISO-8601 STRINGS on the
+    snapshot dict. A malformed or absent value must never raise inside the
+    reconcile loop — it reads as "no progress signal", never as "unhealthy"
+    on its own.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def watcher_is_inert(
+    snapshot: Mapping[str, object] | None,
+    *,
+    now: datetime,
+    stale_seconds: int,
+    min_inert_ticks: int,
+) -> bool:
+    """Pure predicate: is this watcher ALIVE but NOT PROGRESSING?
+
+    Incident (2026-08-13..17): the local macOS relay watcher stayed
+    ``_running=True`` and kept ticking (thousands of classify ticks/day)
+    while making ZERO successful sync dispatches for ~44h. ``is_running()``
+    only asks "is the asyncio task alive"; it has no notion of "is the task
+    making progress". This predicate is that missing second half.
+
+    Takes *snapshot* as the camelCase dict returned by ``FileWatcher.snapshot()``
+    (or the registry's per-project ``snapshot_all()`` entries) so it can be
+    exercised in isolation with a plain dict — no watcher, no event loop, no
+    sleeps.
+
+    UNHEALTHY (returns True) requires ALL of:
+      - ``lastTickAt`` is present and RECENT (age <= *stale_seconds*) — the
+        loop is turning right now, not merely alive-in-name;
+      - ``lastSuccessfulDispatchAt`` is absent, OR older than *stale_seconds*
+        — no *successful* dispatch has landed inside the window. This reads
+        ``lastSuccessfulDispatchAt`` specifically, NOT ``lastChangeSyncAt`` —
+        the latter is written on EVERY dispatch outcome (success, timeout, or
+        exception; see the three write sites in ``_watch_loop``), so it is an
+        "attempted at" signal, not a "succeeded at" one. Confirmed defect
+        (2026-08-13 storm, 128 failures): a continuously-FAILING dispatch
+        refreshes ``lastChangeSyncAt`` every tick, which would make the old
+        ``lastChangeSyncAt``-only check see "progress" forever even though
+        nothing ever actually synced. For a snapshot produced by older code
+        that predates ``lastSuccessfulDispatchAt``, this falls back to
+        ``lastChangeSyncAt`` ONLY when ``lastSyncStatus == "succeeded"`` —
+        never when the last outcome was "failed";
+      - ``consecutiveTicksWithoutDispatch`` >= *min_inert_ticks*.
+
+    HEALTHY (returns False), deliberately, covers:
+      - no recent ticks at all (``lastTickAt`` is ``None`` or itself stale) —
+        a genuinely quiet project produces no ``awatch`` events and must
+        NEVER be flagged; a watchdog that thrashes idle projects gets
+        switched off by the operator, which is worse than doing nothing;
+      - a freshly-registered watcher that has not yet had time to tick
+        (``lastTickAt`` is ``None``);
+      - a watcher that is dispatching successfully within the window.
+    """
+    if not isinstance(snapshot, Mapping):
+        return False
+
+    last_tick_at = _parse_iso_ts(snapshot.get("lastTickAt"))
+    if last_tick_at is None:
+        return False  # no tick signal at all -> healthy/idle, never flag
+
+    tick_age = (now - last_tick_at).total_seconds()
+    if tick_age > stale_seconds:
+        return False  # ticks themselves are stale -> not "alive right now"
+
+    last_successful_dispatch_at = _parse_iso_ts(snapshot.get("lastSuccessfulDispatchAt"))
+    if last_successful_dispatch_at is None:
+        # Backward-compat fallback ONLY: a snapshot from before
+        # ``lastSuccessfulDispatchAt`` existed (or a partial/legacy dict from
+        # the health layer). A "failed"/"timeout" outcome must NEVER take
+        # this path — that would resurrect the exact defect this predicate
+        # exists to close.
+        if snapshot.get("lastSyncStatus") == "succeeded":
+            last_successful_dispatch_at = _parse_iso_ts(snapshot.get("lastChangeSyncAt"))
+    if last_successful_dispatch_at is not None:
+        dispatch_age = (now - last_successful_dispatch_at).total_seconds()
+        if dispatch_age <= stale_seconds:
+            return False  # a dispatch actually SUCCEEDED inside the window -> progressing
+
+    consecutive_raw = snapshot.get("consecutiveTicksWithoutDispatch")
+    try:
+        consecutive = int(consecutive_raw) if consecutive_raw is not None else 0
+    except (TypeError, ValueError):
+        consecutive = 0
+
+    return consecutive >= min_inert_ticks
+
+
 @dataclass(slots=True)
 class FileWatcherSnapshot:
     configured: bool = False
@@ -48,6 +149,39 @@ class FileWatcherSnapshot:
     last_change_count: int | None = None
     last_sync_status: str | None = None
     last_sync_error: str | None = None
+    # Written ONLY on a SUCCESSFUL dispatch (never on timeout/exception) —
+    # ``last_change_sync_at`` above is an "attempted at" signal (all three
+    # outcomes write it); this is the "succeeded at" signal the progress-aware
+    # liveness predicate (``watcher_is_inert``) actually needs. Kept as a
+    # separate field rather than inferred from ``last_sync_status`` so a
+    # future fourth outcome branch cannot silently desynchronise it.
+    last_successful_dispatch_at: str | None = None
+    # --- per-tick liveness (written on EVERY awatch iteration) ---------------
+    # The four fields above are only written when ``classified`` is non-empty,
+    # which makes an inert watcher (one that observes raw events but classifies
+    # none of them, or whose dispatch wedges) indistinguishable from a healthy
+    # idle one. These are written unconditionally, once per tick, so "the loop
+    # is turning but nothing is being dispatched" is externally observable.
+    last_tick_at: str | None = None
+    last_tick_raw_change_count: int | None = None
+    last_tick_classified_change_count: int | None = None
+    # Ticks since the last SUCCESSFUL dispatch — this is the only semantics the
+    # watchdog can use. Increments on EVERY tick that did not complete a
+    # dispatch successfully: classified empty, the dispatch timed out, OR the
+    # dispatch raised. Reset to 0 ONLY by a successful dispatch (the `else`
+    # branch below). A large and growing value is the loop-dead signal.
+    #
+    # A prior version of this field deliberately left the real-exception
+    # branch out of the increment, reasoning "a dispatch did complete, it just
+    # failed" — that is wrong: a dispatch that raises produced no successful
+    # sync, so it must count exactly like a timeout. Leaving it out hid a
+    # 44h outage: a broken connection pool makes every tick raise immediately,
+    # `last_successful_dispatch_at` freezes and eventually ages past the
+    # freshness window, but `consecutive_ticks_without_dispatch` stayed 0
+    # forever because nothing on the exception path touched it — so
+    # `watcher_is_inert` never tripped despite every single dispatch failing.
+    # Do not "helpfully" revert this to exclude the exception branch again.
+    consecutive_ticks_without_dispatch: int = 0
 
     @property
     def watch_path_count(self) -> int:
@@ -64,6 +198,11 @@ class FileWatcherSnapshot:
             "lastChangeCount": self.last_change_count,
             "lastSyncStatus": self.last_sync_status,
             "lastSyncError": self.last_sync_error,
+            "lastSuccessfulDispatchAt": self.last_successful_dispatch_at,
+            "lastTickAt": self.last_tick_at,
+            "lastTickRawChangeCount": self.last_tick_raw_change_count,
+            "lastTickClassifiedChangeCount": self.last_tick_classified_change_count,
+            "consecutiveTicksWithoutDispatch": self.consecutive_ticks_without_dispatch,
         }
 
 
@@ -114,6 +253,7 @@ class FileWatcher:
         self._snapshot.last_change_count = None
         self._snapshot.last_sync_status = None
         self._snapshot.last_sync_error = None
+        self._snapshot.last_successful_dispatch_at = None
 
         # T12-005: pre-register in the watcher-event-age gauge so the probe
         # emits the sentinel (-1.0) rather than omitting this project until
@@ -212,8 +352,14 @@ class FileWatcher:
                     test_sources,
                     sessions_dir=sessions_dir,
                 )
+                # AC3: the counts must be legible in the RENDERED message, not
+                # only in ``extra`` — plain-text log consumers (podman logs, a
+                # tail over the relay) never see structured fields.
                 logger.info(
-                    "File watcher classified changes",
+                    "File watcher classified changes: raw=%d classified=%d (project_id=%s)",
+                    len(changes),
+                    len(classified),
+                    project_id,
                     extra={
                         "project_id": project_id,
                         "raw_change_count": len(changes),
@@ -224,16 +370,64 @@ class FileWatcher:
                         ],
                     },
                 )
+                # AC2: per-tick liveness, written unconditionally.
+                self._snapshot.last_tick_at = _utc_now_iso()
+                self._snapshot.last_tick_raw_change_count = len(changes)
+                self._snapshot.last_tick_classified_change_count = len(classified)
+                # This branch covers only the "nothing to dispatch" case
+                # (classified empty). The timeout and real-exception branches
+                # below each increment the SAME counter for their own outcome
+                # — every non-success path must increment it, or the watchdog
+                # cannot distinguish "failing every tick" from "healthy idle".
+                if not classified:
+                    self._snapshot.consecutive_ticks_without_dispatch += 1
                 if classified:
                     _t0 = time.monotonic()
+                    dispatch_timeout = max(
+                        1,
+                        int(getattr(config, "WATCHER_DISPATCH_TIMEOUT_SECONDS", 120)),
+                    )
                     try:
-                        await sync_engine.sync_changed_files(
-                            project_id, classified,
-                            sessions_dir, docs_dir, progress_dir,
-                            test_results_dir=test_results_dir,
-                            test_sources=test_sources,
-                            allow_writeback=allow_writeback,
+                        # AC1: a dispatch that wedges (e.g. awaiting a DB pool whose
+                        # connections were all reset by a Postgres restart) must never
+                        # stall the watch loop forever — the loop would stay alive while
+                        # observing nothing, which is exactly the loop-dead failure mode.
+                        await asyncio.wait_for(
+                            sync_engine.sync_changed_files(
+                                project_id, classified,
+                                sessions_dir, docs_dir, progress_dir,
+                                test_results_dir=test_results_dir,
+                                test_sources=test_sources,
+                                allow_writeback=allow_writeback,
+                            ),
+                            timeout=dispatch_timeout,
                         )
+                    except asyncio.TimeoutError:
+                        if _otel is not None:
+                            _otel.record_watcher_sync_latency((time.monotonic() - _t0) * 1000.0)
+                            _otel.record_watcher_event(project_id)
+                        self._snapshot.last_change_sync_at = _utc_now_iso()
+                        self._snapshot.last_change_count = len(classified)
+                        self._snapshot.last_sync_status = "failed"
+                        self._snapshot.last_sync_error = (
+                            f"dispatch timed out after {dispatch_timeout}s "
+                            "(CCDASH_WATCHER_DISPATCH_TIMEOUT_SECONDS)"
+                        )
+                        self._snapshot.consecutive_ticks_without_dispatch += 1
+                        logger.error(
+                            "File watcher change sync TIMED OUT after %ds: "
+                            "classified=%d (project_id=%s) — continuing to next tick",
+                            dispatch_timeout,
+                            len(classified),
+                            project_id,
+                            extra={
+                                "project_id": project_id,
+                                "classified_change_count": len(classified),
+                                "dispatch_timeout_seconds": dispatch_timeout,
+                                "error": self._snapshot.last_sync_error,
+                            },
+                        )
+                        continue
                     except Exception as e:
                         if _otel is not None:
                             _otel.record_watcher_sync_latency((time.monotonic() - _t0) * 1000.0)
@@ -244,6 +438,13 @@ class FileWatcher:
                         self._snapshot.last_change_count = len(classified)
                         self._snapshot.last_sync_status = "failed"
                         self._snapshot.last_sync_error = str(e) or e.__class__.__name__
+                        # A dispatch that raised produced no successful sync —
+                        # it must count exactly like a timeout. See the field
+                        # docstring on FileWatcherSnapshot for why this matters:
+                        # omitting this line is what hid a 44h-outage shape
+                        # (every tick raising, counter frozen at 0) from
+                        # watcher_is_inert.
+                        self._snapshot.consecutive_ticks_without_dispatch += 1
                         logger.exception(
                             "File watcher change sync failed",
                             extra={
@@ -261,6 +462,11 @@ class FileWatcher:
                         self._snapshot.last_change_count = len(classified)
                         self._snapshot.last_sync_status = "succeeded"
                         self._snapshot.last_sync_error = None
+                        # DEFECT 1 fix: record the SUCCESS timestamp separately from
+                        # the attempted-at timestamp above — only this branch writes it.
+                        self._snapshot.last_successful_dispatch_at = self._snapshot.last_change_sync_at
+                        # AC2: a completed dispatch clears the loop-dead counter.
+                        self._snapshot.consecutive_ticks_without_dispatch = 0
                         logger.info(
                             "File watcher change sync succeeded",
                             extra={"project_id": project_id, "classified_change_count": len(classified)},
@@ -478,24 +684,86 @@ class FileWatcherRegistry:
         entry = self._entries.get(project_id)
         return entry is not None and entry.watcher.is_running
 
-    def dead_project_ids(self, expected_ids: Iterable[str]) -> list[str]:
+    def dead_project_ids(
+        self,
+        expected_ids: Iterable[str],
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, str]:
         """Phase 8 (T8-003): liveness predicate for watcher self-heal.
 
-        Returns every id in *expected_ids* whose watcher is NOT currently
-        running — covering both the registered-but-crashed case (entry exists
-        but ``watcher.is_running`` is False because ``_watch_loop`` set
-        ``_running=False`` on exception) and the expected-but-never-registered
-        case (post-boot project the reconcile tick should bind).  Pure read; no
-        lock required.  The reconcile tick re-registers each returned id from
-        the DB-authoritative registry binding.
+        Returns a ``{project_id: reason}`` mapping for every id in
+        *expected_ids* that needs re-binding. ``reason`` is one of:
+
+          - ``"not_running"`` — the watcher is NOT currently running, covering
+            both the registered-but-crashed case (entry exists but
+            ``watcher.is_running`` is False because ``_watch_loop`` set
+            ``_running=False`` on exception) and the expected-but-never-
+            registered case (post-boot project the reconcile tick should
+            bind). Pure read; no lock required.
+          - ``"inert"`` — AC4 (2026-08-13..17 relay incident): the watcher IS
+            running but is INERT — ticking without ever completing a
+            SUCCESSFUL dispatch (see ``watcher_is_inert``). A genuinely
+            idle/quiet watcher (no recent ticks) is never returned here.
+
+        Callers that only care about membership (not the reason) can still
+        use ``pid in dead_project_ids(...)`` — membership tests on a dict
+        check its keys. Callers that need the DEFECT-2 restart-cooldown
+        asymmetry (cooldown applies to ``"inert"`` only, never to
+        ``"not_running"``) read the reason via ``dead[pid]``.
+
+        The reconcile tick re-registers each returned id from the
+        DB-authoritative registry binding.
         """
-        dead: list[str] = []
+        moment = now or datetime.now(timezone.utc)
+        stale_seconds = max(60, min(86400, int(getattr(config, "WATCHER_PROGRESS_STALE_SECONDS", 900))))
+        min_inert_ticks = max(1, min(10_000, int(getattr(config, "WATCHER_PROGRESS_MIN_INERT_TICKS", 10))))
+
+        dead: dict[str, str] = {}
         for pid in expected_ids:
             pid_s = str(pid or "")
             if not pid_s:
                 continue
             if not self.is_running(pid_s):
-                dead.append(pid_s)
+                dead[pid_s] = "not_running"
+                continue
+
+            entry = self._entries.get(pid_s)
+            snapshot_fn = getattr(entry.watcher, "snapshot", None) if entry is not None else None
+            if not callable(snapshot_fn):
+                continue
+            try:
+                snap = snapshot_fn()
+            except Exception:  # pragma: no cover — defensive; snapshot() never raises today
+                continue
+
+            if watcher_is_inert(
+                snap,
+                now=moment,
+                stale_seconds=stale_seconds,
+                min_inert_ticks=min_inert_ticks,
+            ):
+                last_dispatch_at = _parse_iso_ts(snap.get("lastChangeSyncAt")) if isinstance(snap, Mapping) else None
+                dispatch_age = (
+                    int((moment - last_dispatch_at).total_seconds()) if last_dispatch_at is not None else None
+                )
+                logger.warning(
+                    "Watcher for project '%s' is INERT: alive and ticking but no successful "
+                    "dispatch — consecutive_ticks_without_dispatch=%s, last_dispatch_age_seconds=%s "
+                    "— routing through self-heal restart",
+                    pid_s,
+                    snap.get("consecutiveTicksWithoutDispatch") if isinstance(snap, Mapping) else None,
+                    dispatch_age,
+                    extra={
+                        "project_id": pid_s,
+                        "consecutive_ticks_without_dispatch": (
+                            snap.get("consecutiveTicksWithoutDispatch") if isinstance(snap, Mapping) else None
+                        ),
+                        "last_dispatch_age_seconds": dispatch_age,
+                        "last_tick_at": snap.get("lastTickAt") if isinstance(snap, Mapping) else None,
+                    },
+                )
+                dead[pid_s] = "inert"
         return dead
 
     def snapshot(self, project_id: str) -> dict[str, object] | None:
