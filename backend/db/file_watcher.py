@@ -21,6 +21,7 @@ from typing import Iterable, Optional
 
 from watchfiles import awatch, Change
 
+from backend import config
 from backend.services.test_config import ResolvedTestSource
 
 try:
@@ -48,6 +49,19 @@ class FileWatcherSnapshot:
     last_change_count: int | None = None
     last_sync_status: str | None = None
     last_sync_error: str | None = None
+    # --- per-tick liveness (written on EVERY awatch iteration) ---------------
+    # The four fields above are only written when ``classified`` is non-empty,
+    # which makes an inert watcher (one that observes raw events but classifies
+    # none of them, or whose dispatch wedges) indistinguishable from a healthy
+    # idle one. These are written unconditionally, once per tick, so "the loop
+    # is turning but nothing is being dispatched" is externally observable.
+    last_tick_at: str | None = None
+    last_tick_raw_change_count: int | None = None
+    last_tick_classified_change_count: int | None = None
+    # Increments on any tick that did NOT complete a dispatch (classified empty,
+    # or the dispatch timed out). Reset to 0 on a successful dispatch. A large
+    # and growing value is the loop-dead signal.
+    consecutive_ticks_without_dispatch: int = 0
 
     @property
     def watch_path_count(self) -> int:
@@ -64,6 +78,10 @@ class FileWatcherSnapshot:
             "lastChangeCount": self.last_change_count,
             "lastSyncStatus": self.last_sync_status,
             "lastSyncError": self.last_sync_error,
+            "lastTickAt": self.last_tick_at,
+            "lastTickRawChangeCount": self.last_tick_raw_change_count,
+            "lastTickClassifiedChangeCount": self.last_tick_classified_change_count,
+            "consecutiveTicksWithoutDispatch": self.consecutive_ticks_without_dispatch,
         }
 
 
@@ -212,8 +230,14 @@ class FileWatcher:
                     test_sources,
                     sessions_dir=sessions_dir,
                 )
+                # AC3: the counts must be legible in the RENDERED message, not
+                # only in ``extra`` — plain-text log consumers (podman logs, a
+                # tail over the relay) never see structured fields.
                 logger.info(
-                    "File watcher classified changes",
+                    "File watcher classified changes: raw=%d classified=%d (project_id=%s)",
+                    len(changes),
+                    len(classified),
+                    project_id,
                     extra={
                         "project_id": project_id,
                         "raw_change_count": len(changes),
@@ -224,16 +248,59 @@ class FileWatcher:
                         ],
                     },
                 )
+                # AC2: per-tick liveness, written unconditionally.
+                self._snapshot.last_tick_at = _utc_now_iso()
+                self._snapshot.last_tick_raw_change_count = len(changes)
+                self._snapshot.last_tick_classified_change_count = len(classified)
+                if not classified:
+                    self._snapshot.consecutive_ticks_without_dispatch += 1
                 if classified:
                     _t0 = time.monotonic()
+                    dispatch_timeout = max(
+                        1,
+                        int(getattr(config, "WATCHER_DISPATCH_TIMEOUT_SECONDS", 120)),
+                    )
                     try:
-                        await sync_engine.sync_changed_files(
-                            project_id, classified,
-                            sessions_dir, docs_dir, progress_dir,
-                            test_results_dir=test_results_dir,
-                            test_sources=test_sources,
-                            allow_writeback=allow_writeback,
+                        # AC1: a dispatch that wedges (e.g. awaiting a DB pool whose
+                        # connections were all reset by a Postgres restart) must never
+                        # stall the watch loop forever — the loop would stay alive while
+                        # observing nothing, which is exactly the loop-dead failure mode.
+                        await asyncio.wait_for(
+                            sync_engine.sync_changed_files(
+                                project_id, classified,
+                                sessions_dir, docs_dir, progress_dir,
+                                test_results_dir=test_results_dir,
+                                test_sources=test_sources,
+                                allow_writeback=allow_writeback,
+                            ),
+                            timeout=dispatch_timeout,
                         )
+                    except asyncio.TimeoutError:
+                        if _otel is not None:
+                            _otel.record_watcher_sync_latency((time.monotonic() - _t0) * 1000.0)
+                            _otel.record_watcher_event(project_id)
+                        self._snapshot.last_change_sync_at = _utc_now_iso()
+                        self._snapshot.last_change_count = len(classified)
+                        self._snapshot.last_sync_status = "failed"
+                        self._snapshot.last_sync_error = (
+                            f"dispatch timed out after {dispatch_timeout}s "
+                            "(CCDASH_WATCHER_DISPATCH_TIMEOUT_SECONDS)"
+                        )
+                        self._snapshot.consecutive_ticks_without_dispatch += 1
+                        logger.error(
+                            "File watcher change sync TIMED OUT after %ds: "
+                            "classified=%d (project_id=%s) — continuing to next tick",
+                            dispatch_timeout,
+                            len(classified),
+                            project_id,
+                            extra={
+                                "project_id": project_id,
+                                "classified_change_count": len(classified),
+                                "dispatch_timeout_seconds": dispatch_timeout,
+                                "error": self._snapshot.last_sync_error,
+                            },
+                        )
+                        continue
                     except Exception as e:
                         if _otel is not None:
                             _otel.record_watcher_sync_latency((time.monotonic() - _t0) * 1000.0)
@@ -261,6 +328,8 @@ class FileWatcher:
                         self._snapshot.last_change_count = len(classified)
                         self._snapshot.last_sync_status = "succeeded"
                         self._snapshot.last_sync_error = None
+                        # AC2: a completed dispatch clears the loop-dead counter.
+                        self._snapshot.consecutive_ticks_without_dispatch = 0
                         logger.info(
                             "File watcher change sync succeeded",
                             extra={"project_id": project_id, "classified_change_count": len(classified)},

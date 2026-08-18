@@ -1482,6 +1482,13 @@ WATCHER_SYNC_CONCURRENCY: int = max(1, min(200, _env_int("CCDASH_WATCHER_SYNC_CO
 # watched project set against the DB registry and idempotently adds/removes watchers. Allows
 # newly-registered projects to be picked up without a service restart. Default 60; min 10, max 3600.
 WATCHER_RECONCILE_INTERVAL_SECONDS: int = max(10, min(3600, _env_int("CCDASH_WATCHER_RECONCILE_INTERVAL_SECONDS", 60)))
+# CCDASH_WATCHER_DISPATCH_TIMEOUT_SECONDS — per-tick ceiling (seconds) on a single
+# ``sync_engine.sync_changed_files`` dispatch from the watcher hot path. A dispatch that
+# wedges (e.g. awaiting a DB pool whose connections were all reset by a Postgres restart)
+# would otherwise block the watch loop forever: the loop never exits, so the watcher looks
+# alive while silently observing nothing. On timeout the tick is recorded as a FAILURE and
+# the loop continues to the next awatch iteration. Default 120; min 5, max 3600.
+WATCHER_DISPATCH_TIMEOUT_SECONDS: int = max(5, min(3600, _env_int("CCDASH_WATCHER_DISPATCH_TIMEOUT_SECONDS", 120)))
 
 # Startup sync tuning
 STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)
