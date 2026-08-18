@@ -1507,6 +1507,23 @@ WATCHER_PROGRESS_STALE_SECONDS: int = max(60, min(86400, _env_int("CCDASH_WATCHE
 # flagged INERT. Guards against flagging a watcher on a single unlucky tick.
 # Default 10; min 1, max 10000.
 WATCHER_PROGRESS_MIN_INERT_TICKS: int = max(1, min(10_000, _env_int("CCDASH_WATCHER_PROGRESS_MIN_INERT_TICKS", 10)))
+# CCDASH_WATCHER_SELF_HEAL_COOLDOWN_SECONDS — minimum seconds between repeated
+# self-heal RESTARTS of the same project's watcher when the restart reason is
+# INERT (ticking but not progressing — see ``watcher_is_inert`` /
+# ``FileWatcherRegistry.dead_project_ids``). Reason: without a cooldown, a
+# project whose watched dirs churn only in classifier-IGNORED files (editor
+# swap files, .DS_Store, __pycache__, log rotation) ticks forever, classifies
+# nothing, never dispatches, and so trips the inert predicate again on every
+# reconcile pass — restarting its watcher every cycle indefinitely. That
+# thrash plus the accompanying WARNING log spam is what gets a watchdog
+# switched off by an operator, which would leave us worse off than having no
+# watchdog at all. Applies ONLY to the "inert" self-heal reason — a genuinely
+# crashed/missing watcher (reason "not_running") is re-registered on the very
+# next tick regardless of this cooldown, exactly as before this flag existed.
+# Default 900 (mirrors CCDASH_WATCHER_PROGRESS_STALE_SECONDS); min 60, max 86400.
+WATCHER_SELF_HEAL_COOLDOWN_SECONDS: int = max(
+    60, min(86400, _env_int("CCDASH_WATCHER_SELF_HEAL_COOLDOWN_SECONDS", 900))
+)
 
 # Startup sync tuning
 STARTUP_SYNC_ENABLED = _env_bool("CCDASH_STARTUP_SYNC_ENABLED", True)

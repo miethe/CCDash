@@ -1633,6 +1633,9 @@ class RuntimeContainer:
                 # AC5 (2026-08-13..17 relay incident): per-watcher tick/progress
                 # fields. Absent-safe — missing is a contract state, not a bug;
                 # older adapter snapshots simply omit these keys.
+                # lastSuccessfulDispatchAt (DEFECT 1 fix): success-only signal,
+                # distinct from lastChangeSyncAt's attempted-at semantics.
+                "lastSuccessfulDispatchAt": entry.get("lastSuccessfulDispatchAt"),
                 "lastTickAt": entry.get("lastTickAt"),
                 "lastTickAgeSeconds": entry.get("lastTickAgeSeconds"),
                 "lastTickRawChangeCount": entry.get("lastTickRawChangeCount"),

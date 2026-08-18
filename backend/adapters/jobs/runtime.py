@@ -136,6 +136,12 @@ class RuntimeJobState:
     # T3-001: per-project health state for fan-out watchers.
     # "running" | "degraded" | "stopped"
     fan_out_watcher_health: dict[str, str] = field(default_factory=dict)
+    # DEFECT 2 fix (watcher self-heal thrash): last-restart wall-clock
+    # (``time.monotonic()``) per project id, keyed by project_id. Consulted
+    # ONLY for the "inert" self-heal reason so a churning-but-idle project
+    # cannot be restarted every reconcile tick forever; the crashed/missing
+    # ("not_running") self-heal path never reads this and is unaffected.
+    watcher_self_heal_last_restart_at: dict[str, float] = field(default_factory=dict)
     job_observations: dict[str, RuntimeJobObservation] = field(default_factory=dict)
 
 
@@ -1433,6 +1439,9 @@ class RuntimeJobAdapter:
                 "watchPathCount": proj_wpc,
                 "lastChangeSyncAt": proj_snap.get("lastChangeSyncAt"),
                 # AC5: progress/staleness fields — absent-safe on older snapshots.
+                # lastSuccessfulDispatchAt (DEFECT 1 fix): the SUCCESS-only
+                # signal, distinct from lastChangeSyncAt's attempted-at semantics.
+                "lastSuccessfulDispatchAt": proj_snap.get("lastSuccessfulDispatchAt"),
                 "lastTickAt": last_tick_at,
                 "lastTickAgeSeconds": _freshness_seconds(last_tick_at),
                 "lastTickRawChangeCount": proj_snap.get("lastTickRawChangeCount"),
@@ -1770,7 +1779,27 @@ class RuntimeJobAdapter:
                 # Watcher liveness self-heal (T8-003).
                 if heal_enabled and can_watch and expected_ids:
                     dead = file_watcher_registry.dead_project_ids(expected_ids)
-                    for pid in dead:
+                    cooldown_seconds = max(
+                        60,
+                        min(86400, int(getattr(config, "WATCHER_SELF_HEAL_COOLDOWN_SECONDS", 900))),
+                    )
+                    for pid, reason in dead.items():
+                        # DEFECT 2: the restart-thrash cooldown applies ONLY to the
+                        # "inert" self-heal reason — a genuinely crashed/missing
+                        # ("not_running") watcher must still be re-registered on
+                        # the very next tick exactly as before this cooldown existed.
+                        if reason == "inert":
+                            last_restart_at = self.state.watcher_self_heal_last_restart_at.get(pid)
+                            if last_restart_at is not None:
+                                elapsed = time.monotonic() - last_restart_at
+                                if elapsed < cooldown_seconds:
+                                    logger.info(
+                                        "watcher self-heal: suppressing restart for project '%s' "
+                                        "(reason=inert) — cooldown active, %.0fs remaining",
+                                        pid,
+                                        cooldown_seconds - elapsed,
+                                    )
+                                    continue
                         try:
                             binding = workspace_registry.resolve_project_binding(
                                 pid, allow_active_fallback=False, refresh=True
@@ -1796,10 +1825,12 @@ class RuntimeJobAdapter:
                                 allow_writeback=(pid == active_project_id),
                             )
                             self.state.watcher_started = True
+                            self.state.watcher_self_heal_last_restart_at[pid] = time.monotonic()
                             healed += 1
                             logger.info(
-                                "watcher self-heal: re-bound project '%s' (reason=not_running)",
+                                "watcher self-heal: re-bound project '%s' (reason=%s)",
                                 pid,
+                                reason,
                             )
                         except asyncio.CancelledError:
                             self._mark_job_cancelled("reconcile", started, backlog_count=0)
