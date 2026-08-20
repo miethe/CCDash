@@ -1003,7 +1003,15 @@ class WatcherHealthDetailProjectsMapTests(unittest.TestCase):
     def test_per_project_entry_surfaces_ac5_progress_fields_and_inert_status(self) -> None:
         """AC5: adapter._watcher_probe_detail surfaces the new tick/progress
         fields per project, and derives progressStatus='inert' for a
-        ticking-but-not-dispatching watcher (2026-08-13..17 relay incident)."""
+        ticking-but-not-dispatching watcher (2026-08-13..17 relay incident).
+
+        Uses ``consecutiveFailedDispatches`` (real classified work whose
+        dispatch kept failing) as the inert driver, NOT
+        ``consecutiveTicksWithoutDispatch`` — that counter now also advances
+        on ordinary classifier-dropped churn and must never by itself trip
+        the inert verdict (see the churn-vs-failure split on
+        ``FileWatcherSnapshot``).
+        """
         from datetime import datetime, timedelta, timezone
 
         now = datetime.now(timezone.utc)
@@ -1016,8 +1024,9 @@ class WatcherHealthDetailProjectsMapTests(unittest.TestCase):
                 "lastChangeSyncAt": None,
                 "lastTickAt": recent_tick,
                 "lastTickRawChangeCount": 3,
-                "lastTickClassifiedChangeCount": 0,
-                "consecutiveTicksWithoutDispatch": 50,
+                "lastTickClassifiedChangeCount": 3,
+                "consecutiveTicksWithoutDispatch": 0,
+                "consecutiveFailedDispatches": 50,
             },
         }
         adapter, restore = self._make_adapter_with_snapshots(snapshots)
@@ -1029,11 +1038,114 @@ class WatcherHealthDetailProjectsMapTests(unittest.TestCase):
         entry = detail["projects"]["proj-inert"]
         self.assertEqual(entry["lastTickAt"], recent_tick)
         self.assertEqual(entry["lastTickRawChangeCount"], 3)
-        self.assertEqual(entry["lastTickClassifiedChangeCount"], 0)
-        self.assertEqual(entry["consecutiveTicksWithoutDispatch"], 50)
+        self.assertEqual(entry["lastTickClassifiedChangeCount"], 3)
+        self.assertEqual(entry["consecutiveTicksWithoutDispatch"], 0)
+        self.assertEqual(entry["consecutiveFailedDispatches"], 50)
         self.assertIsNotNone(entry["lastTickAgeSeconds"])
         self.assertIsNone(entry["lastDispatchAgeSeconds"])  # never dispatched
         self.assertEqual(entry["progressStatus"], "inert")
+
+    def test_per_project_entry_progress_status_not_inert_for_churn_only_ticking(self) -> None:
+        """Regression guard: a project ticking with raw changes but NOTHING
+        classified (pure churn — editor swap files, ``.DS_Store``, rotating
+        ``.tmp``) must NOT read progressStatus='inert', no matter how high
+        ``consecutiveTicksWithoutDispatch`` climbs. This is exactly the false
+        positive the churn-vs-failure counter split exists to close."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        recent_tick = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        snapshots = {
+            "proj-churn-only": {
+                "running": True,
+                "configured": True,
+                "watchPathCount": 4,
+                "lastChangeSyncAt": None,
+                "lastTickAt": recent_tick,
+                "lastTickRawChangeCount": 3,
+                "lastTickClassifiedChangeCount": 0,
+                "consecutiveTicksWithoutDispatch": 500,
+                "consecutiveFailedDispatches": 0,
+            },
+        }
+        adapter, restore = self._make_adapter_with_snapshots(snapshots)
+        try:
+            detail = adapter._watcher_probe_detail()
+        finally:
+            restore()
+
+        entry = detail["projects"]["proj-churn-only"]
+        self.assertNotEqual(entry["progressStatus"], "inert")
+
+    def test_per_project_entry_progress_status_stalled_for_failing_but_below_threshold(self) -> None:
+        """New health-only 'stalled' status (gpt-5.6 review, 2026-08-18): a
+        watcher with at least one REAL failed dispatch, no successful
+        dispatch inside the staleness window, and a recent tick — but BELOW
+        the inert threshold — must read 'stalled', not 'progressing'. This is
+        the observability gap the review flagged: during a DB outage on a
+        quiet project, real work is rare, so a failing watcher could read
+        'progressing' for a very long time while nothing lands."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        recent_tick = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        stale_dispatch = (now - timedelta(seconds=2000)).isoformat().replace("+00:00", "Z")
+        snapshots = {
+            "proj-stalled": {
+                "running": True,
+                "configured": True,
+                "watchPathCount": 4,
+                "lastChangeSyncAt": stale_dispatch,
+                "lastSuccessfulDispatchAt": stale_dispatch,
+                "lastSyncStatus": "failed",
+                "lastTickAt": recent_tick,
+                "lastTickRawChangeCount": 1,
+                "lastTickClassifiedChangeCount": 1,
+                "consecutiveTicksWithoutDispatch": 0,
+                "consecutiveFailedDispatches": 2,
+            },
+        }
+        adapter, restore = self._make_adapter_with_snapshots(snapshots)
+        try:
+            detail = adapter._watcher_probe_detail()
+        finally:
+            restore()
+
+        entry = detail["projects"]["proj-stalled"]
+        self.assertEqual(entry["progressStatus"], "stalled")
+
+    def test_per_project_entry_progress_status_stays_progressing_for_churn_only(self) -> None:
+        """Regression guard for the false-positive this whole change exists
+        to avoid: a churn-only project (consecutiveFailedDispatches == 0, no
+        successful dispatch ever, recent tick) must stay 'progressing', NOT
+        'stalled'. Relabelling churn into 'stalled' health would just move
+        the false-positive from the restart path into the health surface."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        recent_tick = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        snapshots = {
+            "proj-churn-progressing": {
+                "running": True,
+                "configured": True,
+                "watchPathCount": 4,
+                "lastChangeSyncAt": None,
+                "lastSuccessfulDispatchAt": None,
+                "lastTickAt": recent_tick,
+                "lastTickRawChangeCount": 3,
+                "lastTickClassifiedChangeCount": 0,
+                "consecutiveTicksWithoutDispatch": 500,
+                "consecutiveFailedDispatches": 0,
+            },
+        }
+        adapter, restore = self._make_adapter_with_snapshots(snapshots)
+        try:
+            detail = adapter._watcher_probe_detail()
+        finally:
+            restore()
+
+        entry = detail["projects"]["proj-churn-progressing"]
+        self.assertEqual(entry["progressStatus"], "progressing")
 
     def test_per_project_entry_progress_status_idle_for_quiet_project(self) -> None:
         """AC5: a running-but-quiet project (no ticks at all) reads 'idle', not
@@ -1091,6 +1203,7 @@ class WatcherHealthDetailProjectsMapTests(unittest.TestCase):
                         "lastTickRawChangeCount": 2,
                         "lastTickClassifiedChangeCount": 1,
                         "consecutiveTicksWithoutDispatch": 3,
+                        "consecutiveFailedDispatches": 7,
                         "lastDispatchAgeSeconds": 40,
                         "progressStatus": "progressing",
                     },
@@ -1108,6 +1221,9 @@ class WatcherHealthDetailProjectsMapTests(unittest.TestCase):
         self.assertEqual(full["lastTickAt"], "2026-08-17T12:00:00Z")
         self.assertEqual(full["lastTickAgeSeconds"], 5)
         self.assertEqual(full["consecutiveTicksWithoutDispatch"], 3)
+        # AC (gpt-5.6 review): the NEW failure-only counter must survive the
+        # probe-detail shaping end-to-end, not just the old weak counter.
+        self.assertEqual(full["consecutiveFailedDispatches"], 7)
         self.assertEqual(full["lastDispatchAgeSeconds"], 40)
         self.assertEqual(full["progressStatus"], "progressing")
 
@@ -1116,6 +1232,7 @@ class WatcherHealthDetailProjectsMapTests(unittest.TestCase):
         legacy = projects["proj-legacy"]
         self.assertIsNone(legacy["lastTickAt"])
         self.assertIsNone(legacy["consecutiveTicksWithoutDispatch"])
+        self.assertIsNone(legacy["consecutiveFailedDispatches"])
         self.assertEqual(legacy["progressStatus"], "unknown")
 
 

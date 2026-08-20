@@ -58,6 +58,44 @@ def _parse_iso_ts(value: object) -> datetime | None:
     return parsed
 
 
+def has_recent_successful_dispatch(
+    snapshot: Mapping[str, object],
+    *,
+    now: datetime,
+    stale_seconds: int,
+) -> bool:
+    """Pure helper: has a SUCCESSFUL dispatch landed within *stale_seconds*?
+
+    Reads ``lastSuccessfulDispatchAt`` specifically, NOT ``lastChangeSyncAt``
+    — the latter is written on EVERY dispatch outcome (success, timeout, or
+    exception), so it is an "attempted at" signal, not a "succeeded at" one.
+    For a snapshot produced by older code that predates
+    ``lastSuccessfulDispatchAt``, this falls back to ``lastChangeSyncAt``
+    ONLY when ``lastSyncStatus == "succeeded"`` — never when the last
+    outcome was "failed" or "timeout". See ``watcher_is_inert`` for the full
+    incident writeup (2026-08-13 storm, DEFECT 1).
+
+    Shared verbatim by ``watcher_is_inert`` (the restart-worthy verdict) and
+    the health-only ``stalled`` ``progressStatus`` classification in
+    ``backend/adapters/jobs/runtime.py`` — both must use identical freshness
+    semantics for "has progress actually landed", so this logic must never
+    be duplicated or reimplemented differently in either caller.
+    """
+    last_successful_dispatch_at = _parse_iso_ts(snapshot.get("lastSuccessfulDispatchAt"))
+    if last_successful_dispatch_at is None:
+        # Backward-compat fallback ONLY: a snapshot from before
+        # ``lastSuccessfulDispatchAt`` existed (or a partial/legacy dict from
+        # the health layer). A "failed"/"timeout" outcome must NEVER take
+        # this path — that would resurrect the exact defect this predicate
+        # exists to close.
+        if snapshot.get("lastSyncStatus") == "succeeded":
+            last_successful_dispatch_at = _parse_iso_ts(snapshot.get("lastChangeSyncAt"))
+    if last_successful_dispatch_at is None:
+        return False
+    dispatch_age = (now - last_successful_dispatch_at).total_seconds()
+    return dispatch_age <= stale_seconds
+
+
 def watcher_is_inert(
     snapshot: Mapping[str, object] | None,
     *,
@@ -94,7 +132,30 @@ def watcher_is_inert(
         that predates ``lastSuccessfulDispatchAt``, this falls back to
         ``lastChangeSyncAt`` ONLY when ``lastSyncStatus == "succeeded"`` —
         never when the last outcome was "failed";
-      - ``consecutiveTicksWithoutDispatch`` >= *min_inert_ticks*.
+      - ``consecutiveFailedDispatches`` >= *min_inert_ticks*.
+        This reads the FAILURE-only counter, NOT
+        ``consecutiveTicksWithoutDispatch``. The latter increments on EVERY
+        tick that classified nothing at all — including ticks whose raw
+        changes are entirely junk the classifier was always going to drop
+        (editor swap files, ``.DS_Store``, ``__pycache__/*.pyc``, rotating
+        ``.log``/``.tmp``). A project whose watched dirs churn ONLY in such
+        files ticks forever without ever having anything to dispatch, which
+        made ``consecutiveTicksWithoutDispatch`` trip this predicate despite
+        the watcher being perfectly healthy and fully synced (the self-heal
+        cooldown then re-registers it every
+        ``CCDASH_WATCHER_SELF_HEAL_COOLDOWN_SECONDS`` for no reason). A tick
+        with nothing to classify is not evidence of loop-death — restarting
+        the watcher would not fix a broken classifier anyway.
+        ``consecutiveFailedDispatches`` only advances when ``classified`` was
+        NON-EMPTY (real work existed) and the dispatch it produced timed out
+        or raised, so it is a true "we had work and it did not land" signal.
+        If ``consecutiveFailedDispatches`` is ABSENT from the snapshot (an
+        older snapshot shape that cannot make this distinction), this
+        predicate returns False rather than falling back to
+        ``consecutiveTicksWithoutDispatch`` — a snapshot that cannot tell
+        churn apart from failure must never be used to justify restarting a
+        watcher, because a thrashing watchdog is what gets switched off by an
+        operator.
 
     HEALTHY (returns False), deliberately, covers:
       - no recent ticks at all (``lastTickAt`` is ``None`` or itself stale) —
@@ -103,7 +164,11 @@ def watcher_is_inert(
         switched off by the operator, which is worse than doing nothing;
       - a freshly-registered watcher that has not yet had time to tick
         (``lastTickAt`` is ``None``);
-      - a watcher that is dispatching successfully within the window.
+      - a watcher that is dispatching successfully within the window;
+      - a watcher whose ticks classify nothing at all (churn-only, or a
+        classifier bug) — no dispatch was ever attempted, so there is
+        nothing a restart could fix;
+      - a snapshot lacking ``consecutiveFailedDispatches``.
     """
     if not isinstance(snapshot, Mapping):
         return False
@@ -116,23 +181,19 @@ def watcher_is_inert(
     if tick_age > stale_seconds:
         return False  # ticks themselves are stale -> not "alive right now"
 
-    last_successful_dispatch_at = _parse_iso_ts(snapshot.get("lastSuccessfulDispatchAt"))
-    if last_successful_dispatch_at is None:
-        # Backward-compat fallback ONLY: a snapshot from before
-        # ``lastSuccessfulDispatchAt`` existed (or a partial/legacy dict from
-        # the health layer). A "failed"/"timeout" outcome must NEVER take
-        # this path — that would resurrect the exact defect this predicate
-        # exists to close.
-        if snapshot.get("lastSyncStatus") == "succeeded":
-            last_successful_dispatch_at = _parse_iso_ts(snapshot.get("lastChangeSyncAt"))
-    if last_successful_dispatch_at is not None:
-        dispatch_age = (now - last_successful_dispatch_at).total_seconds()
-        if dispatch_age <= stale_seconds:
-            return False  # a dispatch actually SUCCEEDED inside the window -> progressing
+    if has_recent_successful_dispatch(snapshot, now=now, stale_seconds=stale_seconds):
+        return False  # a dispatch actually SUCCEEDED inside the window -> progressing
 
-    consecutive_raw = snapshot.get("consecutiveTicksWithoutDispatch")
+    consecutive_raw = snapshot.get("consecutiveFailedDispatches")
+    if consecutive_raw is None:
+        # Fail-safe: an older/partial snapshot that cannot distinguish
+        # "nothing to dispatch" from "dispatch attempted and failed" must
+        # never be treated as inert. Never fall back to
+        # ``consecutiveTicksWithoutDispatch`` here — that would resurrect the
+        # false-positive-on-churn defect this split exists to close.
+        return False
     try:
-        consecutive = int(consecutive_raw) if consecutive_raw is not None else 0
+        consecutive = int(consecutive_raw)
     except (TypeError, ValueError):
         consecutive = 0
 
@@ -165,23 +226,38 @@ class FileWatcherSnapshot:
     last_tick_at: str | None = None
     last_tick_raw_change_count: int | None = None
     last_tick_classified_change_count: int | None = None
-    # Ticks since the last SUCCESSFUL dispatch — this is the only semantics the
-    # watchdog can use. Increments on EVERY tick that did not complete a
-    # dispatch successfully: classified empty, the dispatch timed out, OR the
-    # dispatch raised. Reset to 0 ONLY by a successful dispatch (the `else`
-    # branch below). A large and growing value is the loop-dead signal.
-    #
-    # A prior version of this field deliberately left the real-exception
-    # branch out of the increment, reasoning "a dispatch did complete, it just
-    # failed" — that is wrong: a dispatch that raises produced no successful
-    # sync, so it must count exactly like a timeout. Leaving it out hid a
-    # 44h outage: a broken connection pool makes every tick raise immediately,
-    # `last_successful_dispatch_at` freezes and eventually ages past the
-    # freshness window, but `consecutive_ticks_without_dispatch` stayed 0
-    # forever because nothing on the exception path touched it — so
-    # `watcher_is_inert` never tripped despite every single dispatch failing.
-    # Do not "helpfully" revert this to exclude the exception branch again.
+    # Ticks since the last tick that had ANYTHING classified to dispatch —
+    # i.e. ``classified`` was empty. This is a WEAK, health-visible-only
+    # signal: it advances on ordinary churn (editor swap files, `.DS_Store`,
+    # `__pycache__/*.pyc`, rotating `.log`/`.tmp` that the classifier was
+    # always going to drop) just as readily as on a genuinely broken
+    # classifier, so it must NEVER by itself drive an auto-restart verdict —
+    # see ``consecutive_failed_dispatches`` below for the field
+    # ``watcher_is_inert`` actually reads. Reset to 0 by a successful
+    # dispatch. Deliberately does NOT increment on the timeout/exception
+    # branches — those ticks DID have something classified and DID attempt a
+    # dispatch, so they belong to ``consecutive_failed_dispatches`` instead.
     consecutive_ticks_without_dispatch: int = 0
+    # Ticks since the last SUCCESSFUL dispatch, counting ONLY ticks where a
+    # dispatch was actually attempted (``classified`` non-empty) and it timed
+    # out or raised. This is the STRONG, restart-worthy signal
+    # ``watcher_is_inert`` reads: "there was real work and it did not land",
+    # as opposed to "there was nothing to do this tick". Reset to 0 ONLY by a
+    # successful dispatch (the `else` branch in `_watch_loop`).
+    #
+    # This split exists because a prior single-counter design
+    # (`consecutive_ticks_without_dispatch` incrementing on ALL three
+    # non-success paths, including empty-classification) produced a false
+    # positive: a project whose watched dirs churn ONLY in classifier-dropped
+    # files ticks forever, classifies nothing, and trips the inert verdict
+    # despite being perfectly healthy — spamming logs and re-registering the
+    # watcher every `CCDASH_WATCHER_SELF_HEAL_COOLDOWN_SECONDS` for no reason.
+    # Restarting a watcher whose classifier has nothing to classify does not
+    # fix anything; only a failed dispatch on REAL work justifies a restart.
+    #
+    # Do not merge this back into the single-counter design and do not widen
+    # it to cover the empty-classification branch again.
+    consecutive_failed_dispatches: int = 0
 
     @property
     def watch_path_count(self) -> int:
@@ -203,6 +279,7 @@ class FileWatcherSnapshot:
             "lastTickRawChangeCount": self.last_tick_raw_change_count,
             "lastTickClassifiedChangeCount": self.last_tick_classified_change_count,
             "consecutiveTicksWithoutDispatch": self.consecutive_ticks_without_dispatch,
+            "consecutiveFailedDispatches": self.consecutive_failed_dispatches,
         }
 
 
@@ -374,11 +451,12 @@ class FileWatcher:
                 self._snapshot.last_tick_at = _utc_now_iso()
                 self._snapshot.last_tick_raw_change_count = len(changes)
                 self._snapshot.last_tick_classified_change_count = len(classified)
-                # This branch covers only the "nothing to dispatch" case
-                # (classified empty). The timeout and real-exception branches
-                # below each increment the SAME counter for their own outcome
-                # — every non-success path must increment it, or the watchdog
-                # cannot distinguish "failing every tick" from "healthy idle".
+                # Weak, health-visible-only signal: "nothing to dispatch this
+                # tick" (classified empty). Ordinary churn (editor swap files,
+                # `.DS_Store`, `.tmp`, etc.) advances this just as readily as
+                # a broken classifier would, so ``watcher_is_inert`` must NOT
+                # read it — see ``consecutive_failed_dispatches`` below for
+                # the counter that actually drives the restart verdict.
                 if not classified:
                     self._snapshot.consecutive_ticks_without_dispatch += 1
                 if classified:
@@ -413,7 +491,12 @@ class FileWatcher:
                             f"dispatch timed out after {dispatch_timeout}s "
                             "(CCDASH_WATCHER_DISPATCH_TIMEOUT_SECONDS)"
                         )
-                        self._snapshot.consecutive_ticks_without_dispatch += 1
+                        # Real work existed (classified non-empty) and the
+                        # dispatch it produced did not land — this is the
+                        # STRONG restart-worthy signal ``watcher_is_inert``
+                        # reads. See the field docstring on
+                        # ``FileWatcherSnapshot.consecutive_failed_dispatches``.
+                        self._snapshot.consecutive_failed_dispatches += 1
                         logger.error(
                             "File watcher change sync TIMED OUT after %ds: "
                             "classified=%d (project_id=%s) — continuing to next tick",
@@ -440,11 +523,12 @@ class FileWatcher:
                         self._snapshot.last_sync_error = str(e) or e.__class__.__name__
                         # A dispatch that raised produced no successful sync —
                         # it must count exactly like a timeout. See the field
-                        # docstring on FileWatcherSnapshot for why this matters:
-                        # omitting this line is what hid a 44h-outage shape
-                        # (every tick raising, counter frozen at 0) from
-                        # watcher_is_inert.
-                        self._snapshot.consecutive_ticks_without_dispatch += 1
+                        # docstring on
+                        # ``FileWatcherSnapshot.consecutive_failed_dispatches``
+                        # for why this matters: a broken connection pool that
+                        # makes every tick raise immediately is precisely the
+                        # 44h-outage shape this counter exists to catch.
+                        self._snapshot.consecutive_failed_dispatches += 1
                         logger.exception(
                             "File watcher change sync failed",
                             extra={
@@ -465,8 +549,9 @@ class FileWatcher:
                         # DEFECT 1 fix: record the SUCCESS timestamp separately from
                         # the attempted-at timestamp above — only this branch writes it.
                         self._snapshot.last_successful_dispatch_at = self._snapshot.last_change_sync_at
-                        # AC2: a completed dispatch clears the loop-dead counter.
+                        # AC2: a completed dispatch clears both loop-dead counters.
                         self._snapshot.consecutive_ticks_without_dispatch = 0
+                        self._snapshot.consecutive_failed_dispatches = 0
                         logger.info(
                             "File watcher change sync succeeded",
                             extra={"project_id": project_id, "classified_change_count": len(classified)},
@@ -749,13 +834,18 @@ class FileWatcherRegistry:
                 )
                 logger.warning(
                     "Watcher for project '%s' is INERT: alive and ticking but no successful "
-                    "dispatch — consecutive_ticks_without_dispatch=%s, last_dispatch_age_seconds=%s "
+                    "dispatch — consecutive_failed_dispatches=%s, "
+                    "consecutive_ticks_without_dispatch=%s, last_dispatch_age_seconds=%s "
                     "— routing through self-heal restart",
                     pid_s,
+                    snap.get("consecutiveFailedDispatches") if isinstance(snap, Mapping) else None,
                     snap.get("consecutiveTicksWithoutDispatch") if isinstance(snap, Mapping) else None,
                     dispatch_age,
                     extra={
                         "project_id": pid_s,
+                        "consecutive_failed_dispatches": (
+                            snap.get("consecutiveFailedDispatches") if isinstance(snap, Mapping) else None
+                        ),
                         "consecutive_ticks_without_dispatch": (
                             snap.get("consecutiveTicksWithoutDispatch") if isinstance(snap, Mapping) else None
                         ),

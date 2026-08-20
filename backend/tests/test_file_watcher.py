@@ -38,7 +38,13 @@ class RuntimeWatcherContractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_job_adapter_does_not_resolve_binding_or_start_watcher_for_api_profile(self) -> None:
         workspace_registry = types.SimpleNamespace(resolve_project_binding=Mock())
-        ports = types.SimpleNamespace(workspace_registry=workspace_registry)
+        # job_scheduler=None: _maybe_start_drain_loop (backend/adapters/jobs/runtime.py)
+        # only starts the durable drain loop when
+        # isinstance(ports.job_scheduler, DurableJobScheduler); any other value
+        # (including None, the memory-backend default) makes that check False and
+        # the method returns early as a no-op, which is exactly the api-profile
+        # behaviour this test is asserting.
+        ports = types.SimpleNamespace(workspace_registry=workspace_registry, job_scheduler=None)
         adapter = RuntimeJobAdapter(
             profile=get_runtime_profile("api"),
             ports=ports,
@@ -408,10 +414,62 @@ class WatcherPerTickProgressTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(dispatch_calls), 2, "second tick was never observed — loop wedged")
         self.assertEqual(snapshot["lastTickRawChangeCount"], 2)
         self.assertEqual(snapshot["lastTickClassifiedChangeCount"], 2)
-        self.assertEqual(snapshot["consecutiveTicksWithoutDispatch"], 2)
+        # Both ticks had real classified work and a genuinely attempted (but
+        # timed-out) dispatch, so this belongs to the FAILURE counter, not
+        # the "nothing to classify" counter — see the churn-vs-failure split
+        # documented on FileWatcherSnapshot.
+        self.assertEqual(snapshot["consecutiveFailedDispatches"], 2)
+        self.assertEqual(snapshot["consecutiveTicksWithoutDispatch"], 0)
         self.assertEqual(snapshot["lastSyncStatus"], "failed")
         self.assertIn("timed out", str(snapshot["lastSyncError"]))
         self.assertIsNotNone(snapshot["lastTickAt"])
+
+    async def test_repeated_timeouts_on_real_work_trip_watcher_is_inert(self) -> None:
+        """End-to-end TIMEOUT path THROUGH the threshold: the existing timeout
+        test above stops at 2 timed-out dispatches and never calls
+        ``watcher_is_inert`` at all. This drives ``_watch_loop`` with enough
+        timing-out dispatches on real classified work (one raw+classified
+        change per tick, never junk) to reach ``min_inert_ticks``, then feeds
+        the resulting real snapshot into the predicate and asserts it trips —
+        proving the wiring end-to-end, not just the predicate's logic on a
+        hand-built dict.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from backend.db.file_watcher import watcher_is_inert
+
+        file_watcher_module.config.WATCHER_DISPATCH_TIMEOUT_SECONDS = 1
+
+        min_inert_ticks = 5
+
+        async def _never_returns(project_id, classified, *args, **kwargs):
+            await asyncio.sleep(999)
+
+        sync_engine = types.SimpleNamespace(sync_changed_files=_never_returns)
+
+        self._install_ticks([
+            {(Change.modified, str(self.sessions_dir / f"real-{i}.jsonl"))}
+            for i in range(min_inert_ticks)
+        ])
+
+        watcher = FileWatcher()
+        await self._drain(watcher, sync_engine)
+
+        snapshot = watcher.snapshot()
+        self.assertEqual(snapshot["consecutiveFailedDispatches"], min_inert_ticks)
+        self.assertIsNone(snapshot["lastSuccessfulDispatchAt"])
+
+        now = datetime.now(timezone.utc)
+        aged_snapshot = dict(snapshot)
+        aged_snapshot["lastTickAt"] = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        self.assertTrue(
+            watcher_is_inert(
+                aged_snapshot,
+                now=now,
+                stale_seconds=900,
+                min_inert_ticks=min_inert_ticks,
+            )
+        )
 
     async def test_empty_classification_tick_advances_progress_fields_only(self) -> None:
         """AC2: mechanism A — classify returns empty forever.

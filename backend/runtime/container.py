@@ -1641,6 +1641,7 @@ class RuntimeContainer:
                 "lastTickRawChangeCount": entry.get("lastTickRawChangeCount"),
                 "lastTickClassifiedChangeCount": entry.get("lastTickClassifiedChangeCount"),
                 "consecutiveTicksWithoutDispatch": entry.get("consecutiveTicksWithoutDispatch"),
+                "consecutiveFailedDispatches": entry.get("consecutiveFailedDispatches"),
                 "lastDispatchAgeSeconds": entry.get("lastDispatchAgeSeconds"),
                 "progressStatus": str(entry.get("progressStatus", "unknown")),
             }
