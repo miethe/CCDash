@@ -29,6 +29,7 @@ from backend.observability import otel
 from backend.models import Project
 from backend.parsers.sessions import parse_session_file
 from backend.parsers.worktree_attribution import worktree_name_for_source
+from backend.services.project_paths.worktree_fanout import session_scan_roots
 from backend.parsers.workflow_sidecar import scan_workflow_sidecars
 from backend.db.repositories.provider_dimensions import get_provider_dimensions_repository
 from backend.ingestion.jsonl_adapter import jsonl_session_to_envelope
@@ -4358,6 +4359,16 @@ class SyncEngine:
             git_date_index, indexed_dirty = self._build_git_doc_dates(project_root, root_scopes)
             dirty_paths.update(indexed_dirty)
 
+        # Worktree fan-out: computed ONCE before the per-file loop below, not
+        # per-path -- `session_scan_roots` hits the filesystem (lists
+        # sessions_dir's parent) and this loop runs once per changed file.
+        # A changed `.jsonl` whose parent is a sibling worktree dir (not
+        # `sessions_dir` itself) must still be treated as in-scope on the
+        # watcher's incremental hot path, or it is silently skipped until the
+        # next full scan -- see `_sync_sessions`, which already fans out the
+        # same way for the full-walk path.
+        session_scan_root_set = set(session_scan_roots(sessions_dir))
+
         try:
             for index, (change_type, path) in enumerate(changed_files, start=1):
                 if change_type == "deleted":
@@ -4390,7 +4401,9 @@ class SyncEngine:
                             should_resync_features = True
                 else:
                     # Modified or added
-                    if path.suffix == ".jsonl" and sessions_dir in path.parents:
+                    if path.suffix == ".jsonl" and any(
+                        root in path.parents for root in session_scan_root_set
+                    ):
                         # Resilience-by-default: a single malformed/constraint-violating session
                         # must not abort the rest of the changed-files batch (and thus the watcher
                         # loop). Log, record a parser failure metric, and continue with the others.
@@ -4920,9 +4933,26 @@ class SyncEngine:
         if not sessions_dir.exists():
             return stats
 
-        # Light-mode: skip the full walk when manifest inode/mtime snapshot is unchanged.
-        resolved_roots = [sessions_dir]
-        manifest_key = str(sessions_dir)
+        # Worktree fan-out: Claude Code slugifies a session's cwd, not the
+        # repo root, so a session launched from
+        # `<repo>/.claude/worktrees/<name>` lands in a SIBLING Claude project
+        # dir that `sessions_dir` alone never reaches. `session_scan_roots`
+        # returns `sessions_dir` plus its worktree siblings (flag-gated by
+        # CCDASH_WORKTREE_SESSION_FANOUT_ENABLED, default on); files found
+        # under a sibling are still ingested under THIS project_id below, so
+        # the registry stays one row per repo.
+        resolved_roots = [root for root in session_scan_roots(sessions_dir) if root.exists()]
+        if not resolved_roots:
+            resolved_roots = [sessions_dir]
+
+        # Light-mode: skip the full walk when manifest inode/mtime snapshot is
+        # unchanged. The manifest key MUST include every fanned-out root, not
+        # just `sessions_dir` -- otherwise a new/changed file appearing only
+        # in a sibling worktree dir would be invisible to the diff and the
+        # walk would be wrongly skipped, silently re-hiding the exact bug
+        # this fan-out exists to fix. Joined with "|" to match the multi-root
+        # convention already used by `_sync_documents`.
+        manifest_key = "|".join(str(root) for root in resolved_roots)
         skipped = await self._light_mode_scan_skip(
             resolved_roots, "*.jsonl", manifest_key, force
         )
@@ -4941,8 +4971,13 @@ class SyncEngine:
         # ordering is preserved (no regression).
         # No silent caps: backfill_count is asserted == baseline_count;
         # discrepancies are surfaced as structured WARNING logs.
+        # Union of `_rglob` over every fanned-out root (sessions_dir + worktree
+        # siblings); `_rglob` stays the per-run memoized cache -- one call per
+        # root, never bypassed. The mtime-descending sort below then applies
+        # across the union, so a sibling's file competes for the recent-first
+        # window on equal footing with sessions_dir's own files.
         all_files = sorted(
-            self._rglob(sessions_dir, "*.jsonl"),
+            (f for root in resolved_roots for f in self._rglob(root, "*.jsonl")),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )

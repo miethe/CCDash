@@ -1777,6 +1777,29 @@ CCDASH_API_TOKEN: str = os.getenv("CCDASH_API_TOKEN", "").strip()
 # (enqueue_durable_idempotent) when JOB_QUEUE_BACKEND != memory.
 SYNC_COALESCING_ENABLED = _env_bool("CCDASH_SYNC_COALESCING_ENABLED", True)
 
+# CCDASH_WORKTREE_SESSION_FANOUT_ENABLED (default: true)
+# Claude Code slugifies a session's cwd, not the repo root, so a session
+# launched from `<repo>/.claude/worktrees/<name>` lands in a SIBLING Claude
+# project dir that the registered project's single `sessions_dir` never
+# reaches. When true, the watcher and full sync fan out to those sibling
+# dirs (backend/services/project_paths/worktree_fanout.py) and ingest their
+# files under the PARENT project's project_id. When false, scanning is
+# restricted to the single literal `sessions_dir` (legacy behaviour).
+WORKTREE_SESSION_FANOUT_ENABLED = _env_bool("CCDASH_WORKTREE_SESSION_FANOUT_ENABLED", True)
+
+# CCDASH_WORKTREE_SESSION_FANOUT_MAX_WATCH_ROOTS (default: 256)
+# Bounds how many sibling worktree dirs the file WATCHER adds to its watch
+# path list per project (a repo can accumulate hundreds of stale worktree
+# slug dirs over time; unbounded fan-out risks exhausting inotify/FSEvents
+# watch descriptors across every registered project and killing live
+# ingestion entirely). Applies ONLY to the watcher's watch paths -- the full
+# sync scan (`_sync_sessions`) is never capped, since it is the completeness
+# backstop that makes this cap safe: a sibling excluded from live watching
+# is still picked up by the next full scan.
+WORKTREE_SESSION_FANOUT_MAX_WATCH_ROOTS = _env_int(
+    "CCDASH_WORKTREE_SESSION_FANOUT_MAX_WATCH_ROOTS", 256
+)
+
 # CCDASH_SYNC_RECENT_FIRST_ENABLED (default: true)
 # Gates recent-first session parsing in SyncEngine._sync_sessions.  When true,
 # the N most-recently-modified JSONL files are processed first (making recent

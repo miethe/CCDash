@@ -22,6 +22,7 @@ from typing import Iterable, Mapping, Optional
 from watchfiles import awatch, Change
 
 from backend import config
+from backend.services.project_paths.worktree_fanout import session_scan_roots
 from backend.services.test_config import ResolvedTestSource
 
 try:
@@ -322,6 +323,7 @@ class FileWatcher:
             test_results_dir,
             test_sources,
             worknotes_dir=worknotes_dir,
+            project_id=project_id,
         )
         self._snapshot.configured = True
         self._snapshot.project_id = project_id
@@ -577,8 +579,51 @@ class FileWatcher:
         test_results_dir: Path | None = None,
         test_sources: list[ResolvedTestSource] | None = None,
         worknotes_dir: Path | None = None,
+        project_id: str | None = None,
     ) -> list[Path]:
-        watch_paths = [p for p in [sessions_dir, docs_dir, progress_dir] if p.exists()]
+        # Fan out `sessions_dir` across sibling git-worktree Claude project
+        # dirs (worktree_fanout.session_scan_roots) so a session launched
+        # from `<repo>/.claude/worktrees/<name>` -- which Claude Code writes
+        # to a SIBLING project dir, not this one -- is actually watched.
+        # Flag-gated; returns [sessions_dir] unchanged when disabled.
+        session_roots = session_scan_roots(sessions_dir)
+
+        # Bound how many sibling roots the WATCHER subscribes to (not the
+        # full-scan roots -- that list is left uncapped by `_sync_sessions`,
+        # which is the completeness backstop that makes this cap safe: a
+        # root excluded here is still picked up on the next full scan). A
+        # repo can accumulate hundreds of stale worktree slug dirs, and
+        # unbounded fan-out across ~35 registered projects risks exhausting
+        # inotify/FSEvents watch descriptors for the whole worker. No silent
+        # caps -- truncation is logged as a structured WARNING naming the
+        # project and both counts.
+        max_watch_roots = max(1, int(getattr(config, "WORKTREE_SESSION_FANOUT_MAX_WATCH_ROOTS", 256)))
+        sessions_dir_included = sessions_dir in session_roots
+        sibling_roots = [p for p in session_roots if p != sessions_dir] if sessions_dir_included else list(session_roots)
+        if len(sibling_roots) > max_watch_roots:
+            # Newest worktrees first: most-recent mtime is the most likely to
+            # still be actively producing sessions worth watching live.
+            def _mtime_desc(p: Path) -> float:
+                try:
+                    return p.stat().st_mtime
+                except OSError:
+                    return 0.0
+
+            sibling_roots = sorted(sibling_roots, key=_mtime_desc, reverse=True)
+            found = len(sibling_roots)
+            sibling_roots = sibling_roots[:max_watch_roots]
+            logger.warning(
+                "worktree fan-out: watch-root cap truncated sibling worktree dirs",
+                extra={
+                    "project_id": project_id,
+                    "sessions_dir": str(sessions_dir),
+                    "found": found,
+                    "watched": len(sibling_roots),
+                    "cap": max_watch_roots,
+                },
+            )
+        session_roots = [sessions_dir, *sibling_roots] if sessions_dir_included else sibling_roots
+        watch_paths = [p for p in [*session_roots, docs_dir, progress_dir] if p.exists()]
         if worknotes_dir is not None and worknotes_dir.exists():
             watch_paths.append(worknotes_dir)
         if test_results_dir and test_results_dir.exists():
@@ -614,9 +659,15 @@ class FileWatcher:
             # its sibling JSONL; the session path's unchanged-skip now folds the
             # sidecar's mtime into the freshness key, so the re-parse is admitted.
             if path.name.endswith(_CAPTURE_SIDECAR_SUFFIX):
-                in_sessions_scope = bool(
-                    sessions_dir
-                    and (path.parent == sessions_dir or sessions_dir in path.parents)
+                # A sidecar can land in a SIBLING worktree project dir just as
+                # readily as in `sessions_dir` itself -- Claude Code slugifies
+                # cwd, and a worktree session's cwd encodes to a different
+                # top-level dir. Widen the scope check to the full fan-out
+                # root set so worktree sessions don't silently lose
+                # launch-capture (launcher/profile/icaKey/icaSpend*).
+                session_roots = session_scan_roots(sessions_dir) if sessions_dir else []
+                in_sessions_scope = any(
+                    path.parent == root or root in path.parents for root in session_roots
                 )
                 if in_sessions_scope and change_type != Change.deleted:
                     stem = path.name[: -len(_CAPTURE_SIDECAR_SUFFIX)]
