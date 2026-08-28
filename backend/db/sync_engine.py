@@ -2598,6 +2598,15 @@ class SyncEngine:
             pass
         return normalize_ref_path(raw)
 
+    # Bounds every ``git`` subprocess this method shells out to. This
+    # function runs SYNCHRONOUSLY (see the ``asyncio.to_thread`` wrapping at
+    # every call site) precisely because ``subprocess.run`` blocks; a git
+    # command with no timeout under lock contention (e.g. a repo carrying
+    # many concurrent worktrees/agents) can wedge for minutes. Bounding it
+    # here keeps a single stalled git process from being able to exceed the
+    # dispatcher's own outer timeout (``WATCHER_DISPATCH_TIMEOUT_SECONDS``).
+    _GIT_SUBPROCESS_TIMEOUT_SECONDS = 20
+
     def _build_git_doc_dates(
         self,
         project_root: Path,
@@ -2621,6 +2630,7 @@ class SyncEngine:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=self._GIT_SUBPROCESS_TIMEOUT_SECONDS,
             )
             if repo_check.returncode != 0 or repo_check.stdout.strip().lower() != "true":
                 return {}, set()
@@ -2629,10 +2639,19 @@ class SyncEngine:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=self._GIT_SUBPROCESS_TIMEOUT_SECONDS,
             )
             if head.returncode != 0:
                 return {}, set()
             head_sha = head.stdout.strip()
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "git doc-date lookup timed out after %ds (project_root=%s) — "
+                "skipping this cycle's git-date enrichment",
+                self._GIT_SUBPROCESS_TIMEOUT_SECONDS,
+                project_root,
+            )
+            return {}, set()
         except Exception:
             return {}, set()
 
@@ -2654,7 +2673,13 @@ class SyncEngine:
                     "--",
                     *scope_tokens,
                 ]
-                result = subprocess.run(log_cmd, capture_output=True, text=True, check=False)
+                result = subprocess.run(
+                    log_cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=self._GIT_SUBPROCESS_TIMEOUT_SECONDS,
+                )
                 if result.returncode == 0:
                     current_epoch = ""
                     for raw_line in result.stdout.splitlines():
@@ -2675,6 +2700,14 @@ class SyncEngine:
                         if "updatedAt" not in row:
                             row["updatedAt"] = iso
                         row["createdAt"] = iso
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "git log doc-date scan timed out after %ds (project_root=%s) — "
+                    "skipping this cycle's git-date enrichment",
+                    self._GIT_SUBPROCESS_TIMEOUT_SECONDS,
+                    project_root,
+                )
+                return {}, set()
             except Exception:
                 return {}, set()
 
@@ -2693,7 +2726,13 @@ class SyncEngine:
                 "--",
                 *scope_tokens,
             ]
-            status_result = subprocess.run(status_cmd, capture_output=True, text=True, check=False)
+            status_result = subprocess.run(
+                status_cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=self._GIT_SUBPROCESS_TIMEOUT_SECONDS,
+            )
             if status_result.returncode == 0:
                 for raw_line in status_result.stdout.splitlines():
                     line = raw_line.rstrip()
@@ -4356,7 +4395,9 @@ class SyncEngine:
         git_date_index: dict[str, dict[str, str]] = {}
         dirty_paths: set[str] = set(dirty_overrides)
         if needs_doc_git_context and root_scopes:
-            git_date_index, indexed_dirty = self._build_git_doc_dates(project_root, root_scopes)
+            git_date_index, indexed_dirty = await asyncio.to_thread(
+                self._build_git_doc_dates, project_root, root_scopes
+            )
             dirty_paths.update(indexed_dirty)
 
         # Worktree fan-out: computed ONCE before the per-file loop below, not
@@ -5330,7 +5371,9 @@ class SyncEngine:
             return stats
 
         project_root = infer_project_root(docs_dir, progress_dir)
-        git_date_index, dirty_paths = self._build_git_doc_dates(project_root, roots)
+        git_date_index, dirty_paths = await asyncio.to_thread(
+            self._build_git_doc_dates, project_root, roots
+        )
 
         for root in roots:
             for md_file in sorted(self._rglob(root, "*.md")):
@@ -5551,7 +5594,9 @@ class SyncEngine:
             if progress_dir.exists():
                 roots.append(progress_dir)
             if roots:
-                resolved_git_date_index, indexed_dirty = self._build_git_doc_dates(project_root, roots)
+                resolved_git_date_index, indexed_dirty = await asyncio.to_thread(
+                    self._build_git_doc_dates, project_root, roots
+                )
                 resolved_dirty_paths.update(indexed_dirty)
             else:
                 resolved_git_date_index = {}
