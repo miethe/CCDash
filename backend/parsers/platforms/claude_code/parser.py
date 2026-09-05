@@ -1991,6 +1991,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
         "cacheCreationInputTokens": 0,
         "cacheReadInputTokens": 0,
     }
+    # Claude Code repeats cumulative usage once per content block for a logical
+    # assistant message. Keep the first physical occurrence for session totals.
+    seen_usage_message_ids: set[str] = set()
     relay_mirror_totals: dict[str, int] = {
         "excludedCount": 0,
         "inputTokens": 0,
@@ -3164,11 +3167,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     model = current_message_model
             usage = message.get("usage", {})
             if isinstance(usage, dict):
-                assistant_messages_with_usage += 1
                 message_usage_in = int(usage.get("input_tokens", 0) or 0)
                 message_usage_out = int(usage.get("output_tokens", 0) or 0)
-                usage_message_totals["inputTokens"] += message_usage_in
-                usage_message_totals["outputTokens"] += message_usage_out
                 for key in (
                     "cache_creation_input_tokens",
                     "cache_read_input_tokens",
@@ -3180,21 +3180,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         message_usage_extra[key] = value
                 cache_creation_input_tokens = _coerce_int(usage.get("cache_creation_input_tokens"), 0)
                 cache_read_input_tokens = _coerce_int(usage.get("cache_read_input_tokens"), 0)
-                usage_message_totals["cacheCreationInputTokens"] += cache_creation_input_tokens
-                usage_message_totals["cacheReadInputTokens"] += cache_read_input_tokens
                 service_tier = str(usage.get("service_tier") or "").strip()
-                if service_tier:
-                    usage_service_tier_counts[service_tier] += 1
                 inference_geo = str(usage.get("inference_geo") or "").strip()
-                if inference_geo:
-                    usage_inference_geo_counts[inference_geo] += 1
                 speed = str(usage.get("speed") or "").strip()
                 if speed:
-                    usage_speed_counts[speed] += 1
                     message_usage_extra["speed"] = speed
                 server_tool_use = usage.get("server_tool_use")
+                server_tool_payload: dict[str, int] = {}
                 if isinstance(server_tool_use, dict):
-                    server_tool_payload: dict[str, int] = {}
                     for key, value in server_tool_use.items():
                         amount = _coerce_int(value, 0)
                         if amount < 0:
@@ -3203,27 +3196,45 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         if not safe_key:
                             continue
                         server_tool_payload[safe_key] = amount
-                        usage_server_tool_use_totals[safe_key] += amount
                     if server_tool_payload:
                         message_usage_extra["server_tool_use"] = server_tool_payload
                 iterations = usage.get("iterations")
                 iteration_count = len(iterations) if isinstance(iterations, list) else _coerce_int(iterations, 0)
                 if iteration_count > 0:
-                    usage_iteration_count += iteration_count
                     message_usage_extra["iterationCount"] = iteration_count
                 nested_cache = usage.get("cache_creation")
+                cache_payload: dict[str, int] = {}
                 if isinstance(nested_cache, dict):
-                    cache_payload = {}
                     for key in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"):
                         value = nested_cache.get(key)
                         if isinstance(value, (int, float)):
                             amount = int(value)
                             cache_payload[key] = amount
-                            usage_cache_creation_totals[key] += amount
                     if cache_payload:
                         message_usage_extra["cache_creation"] = cache_payload
-                tokens_in += message_usage_in
-                tokens_out += message_usage_out
+                is_first_usage_occurrence = not current_message_id or current_message_id not in seen_usage_message_ids
+                if is_first_usage_occurrence:
+                    if current_message_id:
+                        seen_usage_message_ids.add(current_message_id)
+                    assistant_messages_with_usage += 1
+                    usage_message_totals["inputTokens"] += message_usage_in
+                    usage_message_totals["outputTokens"] += message_usage_out
+                    usage_message_totals["cacheCreationInputTokens"] += cache_creation_input_tokens
+                    usage_message_totals["cacheReadInputTokens"] += cache_read_input_tokens
+                    if service_tier:
+                        usage_service_tier_counts[service_tier] += 1
+                    if inference_geo:
+                        usage_inference_geo_counts[inference_geo] += 1
+                    if speed:
+                        usage_speed_counts[speed] += 1
+                    for key, amount in server_tool_payload.items():
+                        usage_server_tool_use_totals[key] += amount
+                    if iteration_count > 0:
+                        usage_iteration_count += iteration_count
+                    for key, amount in cache_payload.items():
+                        usage_cache_creation_totals[key] += amount
+                    tokens_in += message_usage_in
+                    tokens_out += message_usage_out
 
         if isinstance(message, str):
             content = message.strip()

@@ -362,6 +362,7 @@ class AgentSession(BaseModel):
     toolResultCacheCreationInputTokens: int = 0
     toolResultCacheReadInputTokens: int = 0
     cacheShare: float = 0.0
+    cacheHitRatio: float = 0.0
     outputShare: float = 0.0
     currentContextTokens: int = 0
     contextWindowSize: int = 0

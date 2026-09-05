@@ -155,6 +155,58 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(message_logs[0].metadata.get("outputTokens"), 34)
         self.assertEqual(message_logs[0].metadata.get("totalTokens"), 46)
 
+    def test_usage_summary_deduplicates_repeated_assistant_message_ids(self) -> None:
+        usage = {
+            "input_tokens": 12,
+            "output_tokens": 34,
+            "cache_creation_input_tokens": 56,
+            "cache_read_input_tokens": 78,
+        }
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-09-05T10:00:00Z",
+                    "message": {
+                        "id": "msg_repeated_usage",
+                        "role": "assistant",
+                        "model": "claude-sonnet",
+                        "usage": usage,
+                        "content": [{"type": "text", "text": "First content block."}],
+                    },
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-09-05T10:00:01Z",
+                    "message": {
+                        "id": "msg_repeated_usage",
+                        "role": "assistant",
+                        "model": "claude-sonnet",
+                        "usage": usage,
+                        "content": [{"type": "text", "text": "Second content block."}],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        usage_summary = session.sessionForensics["usageSummary"]
+        self.assertEqual(usage_summary["assistantMessagesWithUsage"], 1)
+        self.assertEqual(
+            usage_summary["messageTotals"],
+            {
+                "inputTokens": 12,
+                "outputTokens": 34,
+                "cacheCreationInputTokens": 56,
+                "cacheReadInputTokens": 78,
+                "allInputTokens": 146,
+                "allTokens": 180,
+            },
+        )
+
     def test_usage_summary_tracks_nested_usage_fields_and_tool_caller_metadata(self) -> None:
         path = self._write_jsonl(
             [
