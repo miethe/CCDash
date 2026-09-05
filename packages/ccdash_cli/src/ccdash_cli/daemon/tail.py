@@ -90,7 +90,12 @@ async def _mtime_poll(
 
     while True:
         try:
-            candidates = list(sessions_dir.glob("*.jsonl"))
+            # rglob, not glob: sessions_dir holds one subdirectory per
+            # project (Claude Code slugifies cwd into
+            # ~/.claude/projects/<slug>/*.jsonl) — a top-level-only glob
+            # silently misses every project's session files. See
+            # node_01M1S7WBNENWWQKETMAD6FHWQ4.
+            candidates = list(sessions_dir.rglob("*.jsonl"))
         except OSError:
             candidates = []
 
