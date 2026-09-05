@@ -89,6 +89,11 @@ async def run_daemon(
         # Replay any WAL segments from a previous run before starting the tail.
         await _replay_wal(wal, config, http_client, counters)
 
+        # One-time cold-start scan of every already-existing session file —
+        # see _backfill_existing_sessions docstring for why this is required
+        # even though the tail coroutine watches the same directory tree.
+        await _backfill_existing_sessions(config, wal, queue)
+
         tail_task = asyncio.create_task(
             _tail_coroutine(config, wal, queue),
             name="daemon-tail",
@@ -200,6 +205,129 @@ def _build_event(session: Any, batch_id: str) -> dict:
     }
 
 
+def _import_parse_session_file():
+    """Lazy cross-package import (backend.parsers.sessions) — see ADR-007.
+
+    Shared by both the cold-start backfill scan and the tail coroutine so
+    the two only ever diverge on *which paths* they feed in, never on how a
+    path becomes a session.
+    """
+    from backend.parsers.sessions import parse_session_file  # type: ignore[import]
+
+    return parse_session_file
+
+
+async def _enqueue_path(
+    path: Path,
+    *,
+    parse_session_file,
+    wal: WalBuffer,
+    queue: list[dict],
+    batch_id: str,
+) -> None:
+    """Parse *path* and, if it yields a session, WAL-append + enqueue it.
+
+    Single-file unit shared by the cold-start backfill scan and the live
+    tail coroutine — a file is handled identically regardless of which one
+    discovered it.
+    """
+    try:
+        session = await asyncio.to_thread(parse_session_file, path)
+    except Exception as exc:
+        _LOG.warning("Failed to parse session file %s: %s", path, exc)
+        return
+
+    if session is None:
+        return
+
+    event = _build_event(session, batch_id)
+
+    # WAL write first (durability before network).
+    try:
+        await asyncio.to_thread(wal.append, event)
+    except Exception as exc:
+        _LOG.error("WAL append failed: %s", exc)
+
+    queue.append(event)
+
+
+async def _backfill_existing_sessions(
+    config: DaemonConfig,
+    wal: WalBuffer,
+    queue: list[dict],
+) -> None:
+    """One-time cold-start scan of every ``*.jsonl`` already under *sessions_dir*.
+
+    Root cause (node_01M1S7WBNENWWQKETMAD6FHWQ4): ``iter_changed_files`` only
+    yields a path on a create/modify EVENT — ``watchfiles.awatch`` (the
+    daemon's primary backend, installed on the node) never replays files that
+    already existed and have not been touched since the watch started, and the
+    mtime-poll fallback's first pass only *seeds* ``last_seen`` for existing
+    files (also treating them as "already known", i.e. not re-yielded). A
+    session file last written before this process started is therefore
+    invisible forever, regardless of which of ``sessions_dir``'s project
+    subdirectories it lives in — this is what made a dormant
+    research-foundry-worktree session 404 from ``/api/v1/sessions/{id}``.
+
+    This is deliberately NOT a per-folder project_id fix: server-side project
+    attribution comes from the workspace TOKEN
+    (``AuthContext.project_id`` — "v1: 1 token -> 1 project", see
+    ``backend/adapters/auth/context.py``), never from the
+    ``x-ccdash-project-id`` header this daemon sends; ``backend/routers/
+    ingest.py`` reads ``auth.project_id`` unconditionally for every event in
+    a batch. So every file under ``sessions_dir`` --- across every project
+    subdirectory --- already attributes to this daemon's one configured
+    project by construction; the gap was never seeing the file at all.
+
+    Recurses via ``Path.rglob`` (unlike the mtime-poll fallback's top-level-
+    only ``glob``) so nested project subdirectories are covered. Every
+    discovered file is fed through the same ``_enqueue_path`` helper the tail
+    coroutine uses, so an already-ingested session is a no-op upsert
+    server-side (``ON CONFLICT(project_id, id) DO UPDATE``) rather than a
+    duplicate row. Runs to completion before the tail coroutine starts so the
+    initial queue drain and the live watch never race on the same WAL.
+    """
+    try:
+        parse_session_file = _import_parse_session_file()
+    except ImportError as exc:
+        _LOG.error(
+            "Cannot import backend.parsers.sessions: %s. "
+            "Skipping cold-start backfill scan.",
+            exc,
+        )
+        return
+
+    try:
+        paths = await asyncio.to_thread(
+            lambda: sorted(config.sessions_dir.rglob("*.jsonl"))
+        )
+    except OSError as exc:
+        _LOG.error("Cold-start backfill scan failed to list %s: %s", config.sessions_dir, exc)
+        return
+
+    _LOG.info(
+        "Cold-start backfill scan: found %d existing session file(s) under %s",
+        len(paths),
+        config.sessions_dir,
+    )
+
+    batch_id = uuid7()
+    scanned = 0
+    for path in paths:
+        await _enqueue_path(
+            path,
+            parse_session_file=parse_session_file,
+            wal=wal,
+            queue=queue,
+            batch_id=batch_id,
+        )
+        scanned += 1
+        if len(queue) >= config.max_batch_events:
+            batch_id = uuid7()
+
+    _LOG.info("Cold-start backfill scan complete: %d file(s) processed", scanned)
+
+
 async def _tail_coroutine(
     config: DaemonConfig,
     wal: WalBuffer,
@@ -213,9 +341,8 @@ async def _tail_coroutine(
     environments where the backend package is not installed (e.g. test
     environments that mock the parser).
     """
-    # Lazy cross-package import (backend.parsers.sessions) — see ADR-007.
     try:
-        from backend.parsers.sessions import parse_session_file  # type: ignore[import]
+        parse_session_file = _import_parse_session_file()
     except ImportError as exc:
         _LOG.error(
             "Cannot import backend.parsers.sessions: %s. "
@@ -229,24 +356,13 @@ async def _tail_coroutine(
 
     async for path in iter_changed_files(config.sessions_dir):
         _LOG.debug("Detected change: %s", path)
-        try:
-            session = await asyncio.to_thread(parse_session_file, path)
-        except Exception as exc:
-            _LOG.warning("Failed to parse session file %s: %s", path, exc)
-            continue
-
-        if session is None:
-            continue
-
-        event = _build_event(session, batch_id)
-
-        # WAL write first (durability before network).
-        try:
-            await asyncio.to_thread(wal.append, event)
-        except Exception as exc:
-            _LOG.error("WAL append failed: %s", exc)
-
-        queue.append(event)
+        await _enqueue_path(
+            path,
+            parse_session_file=parse_session_file,
+            wal=wal,
+            queue=queue,
+            batch_id=batch_id,
+        )
 
         # Rotate the batch_id on every accumulation window boundary.
         if len(queue) >= config.max_batch_events:
