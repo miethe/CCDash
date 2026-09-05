@@ -11,13 +11,39 @@ every line). The fix is PARSE-TIME ONLY: a session row already written to the
 ``sessions`` table by the old parser keeps its inflated totals until the row
 is re-derived from its source JSONL and re-written.
 
-This script re-parses each already-ingested session (identified by its stored
-``source_file`` path) with the now-fixed parser and re-upserts the row. The
-upsert is the SAME one every ingest path uses
+This script re-parses each already-ingested session with the now-fixed parser
+and re-upserts the row. The upsert is the SAME one every ingest path uses
 (``ON CONFLICT(project_id, id) DO UPDATE`` — see
 ``backend/db/repositories/{sessions.py,postgres/sessions.py}``), so a session
 whose totals were already correct (ingested after the fix, or never affected)
 is an idempotent no-op.
+
+IMPORTANT — the stored ``source_file`` column is NOT a reparseable filesystem
+path for most rows (verified live 2026-09-05): the local filesystem-ingestion
+worker (``backend/worker.py``, run from a laptop against the node's Postgres
+over the network — see ``deploy/local-streaming/``) writes a synthetic
+``ccdash-source:v1/<project>/session/opaque/<hash>`` identifier via
+``compute_source_ref``, not the real path; only the ~116 rows the node-local
+``ccdash-cli daemon`` (packages/ccdash_cli) ingests directly carry a blank
+``source_file``. Trusting ``source_file`` as a path would report ~99.6% of
+rows "unreachable" and re-parse nothing. Instead this script resolves each
+candidate's real file by REGISTRY, not by the stored column:
+
+  1. Read the project's ``sessions_path`` from the ``projects`` table.
+  2. Expand it through ``session_scan_roots`` (the SAME worktree-fan-out
+     helper CCDash's own scan path uses — ``backend/services/project_paths/
+     worktree_fanout.py``) so a session under a git-worktree sibling
+     directory is found too.
+  3. ``rglob`` each root for ``<session_id with its leading 'S-' stripped>.jsonl``
+     (Claude Code writes the file as ``<uuid>.jsonl`` / ``agent-<hash>.jsonl``;
+     CCDash's own session id is that stem with an ``S-`` prefix prepended).
+
+This only finds sessions whose source file still exists on THE MACHINE this
+script runs on — run it on the machine that machine's project sessions
+actually live on (this laptop for `/Users/miethe/...` projects; the node
+itself for the ``ccp-e9ae9bcf8f6b`` node-local project). A session whose
+source file has since been rotated/deleted is correctly reported unreachable,
+not guessed at.
 
 Deliberately mirrors ``backend/application/services/auth/token_provisioning.py``'s
 safety posture (see that module's docstring): this script NEVER runs
@@ -40,11 +66,20 @@ Usage
     # Scope to one project.
     python -m backend.scripts.reparse_usage_backfill --project ccp-e9ae9bcf8f6b --apply
 
-Run from inside the api container (same route as ``ccdash token mint`` — see
-token_provisioning.py's module docstring for the three ways to reach the CLI,
-and why ``python -m backend.cli.main`` requires the ``__main__`` guard):
+Run wherever the project's session files actually live and set
+``CCDASH_DATABASE_URL``/``CCDASH_DB_BACKEND=postgres`` to reach the node's
+Postgres directly (same pattern as ``deploy/local-streaming``'s
+``stream.env``), e.g. from this laptop:
 
-    podman exec -it ccdash_api_1 python -m backend.scripts.reparse_usage_backfill --since-days 7 --apply
+    CCDASH_DATABASE_URL=postgresql://ccdash:ccdash@10.42.10.76:5440/ccdash \\
+    CCDASH_DB_BACKEND=postgres \\
+    python -m backend.scripts.reparse_usage_backfill --since-days 7 --apply
+
+Or from inside the node's api container, for the node-local project only
+(same route as ``ccdash token mint`` — see token_provisioning.py's module
+docstring for the three ways to reach the CLI):
+
+    podman exec -it ccdash_api_1 python -m backend.scripts.reparse_usage_backfill --project ccp-e9ae9bcf8f6b --apply
 """
 from __future__ import annotations
 
@@ -61,6 +96,7 @@ from backend import config
 from backend.db import connection
 from backend.db.factory import get_session_repository
 from backend.parsers.sessions import parse_session_file
+from backend.services.project_paths.worktree_fanout import session_scan_roots
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 _LOG = logging.getLogger("reparse_usage_backfill")
@@ -103,13 +139,19 @@ async def _fetch_candidates(
     since_days: int | None,
     limit: int | None,
 ) -> list[dict]:
-    """Return [{id, project_id, workspace_id, source_file, usage fields...}]."""
+    """Return [{id, project_id, workspace_id, usage fields...}].
+
+    Deliberately does NOT filter on ``source_file`` — see module docstring
+    for why that column is not a reliable "this row has a reparseable
+    source" signal. Every row in scope is a candidate; local-path resolution
+    (``_resolve_local_path``) is what actually decides reachability.
+    """
     cutoff_iso: str | None = None
     if since_days is not None:
         cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
 
-    cols = "id, project_id, workspace_id, source_file, " + ", ".join(_USAGE_FIELDS)
-    where = ["source_file IS NOT NULL", "source_file != ''"]
+    cols = "id, project_id, workspace_id, " + ", ".join(_USAGE_FIELDS)
+    where: list[str] = []
     params: list[Any] = []
 
     if _is_sqlite(db):
@@ -119,7 +161,10 @@ async def _fetch_candidates(
         if cutoff_iso:
             params.append(cutoff_iso)
             where.append("COALESCE(NULLIF(updated_at, ''), created_at) >= ?")
-        sql = f"SELECT {cols} FROM sessions WHERE {' AND '.join(where)} ORDER BY id"
+        sql = f"SELECT {cols} FROM sessions"
+        if where:
+            sql += f" WHERE {' AND '.join(where)}"
+        sql += " ORDER BY id"
         if limit:
             sql += f" LIMIT {int(limit)}"
         async with db.execute(sql, params) as cur:
@@ -137,11 +182,63 @@ async def _fetch_candidates(
         where.append(f"COALESCE(NULLIF(updated_at, ''), created_at) >= ${idx}")
         params.append(cutoff_iso)
         idx += 1
-    sql = f"SELECT {cols} FROM sessions WHERE {' AND '.join(where)} ORDER BY id"
+    sql = f"SELECT {cols} FROM sessions"
+    if where:
+        sql += f" WHERE {' AND '.join(where)}"
+    sql += " ORDER BY id"
     if limit:
         sql += f" LIMIT {int(limit)}"
     rows = await db.fetch(sql, *params)
     return [dict(r) for r in rows]
+
+
+async def _project_sessions_paths(db: Any) -> dict[str, Path]:
+    """Return {project_id: sessions_path} for every project with a non-blank one."""
+    if _is_sqlite(db):
+        async with db.execute(
+            "SELECT id, sessions_path FROM projects WHERE sessions_path IS NOT NULL AND sessions_path != ''"
+        ) as cur:
+            rows = await cur.fetchall()
+        return {r[0]: Path(r[1]) for r in rows}
+
+    rows = await db.fetch(
+        "SELECT id, sessions_path FROM projects WHERE sessions_path IS NOT NULL AND sessions_path != ''"
+    )
+    return {r["id"]: Path(r["sessions_path"]) for r in rows}
+
+
+class _LocalResolver:
+    """Resolves a session_id to a local file path via the project registry.
+
+    Caches each project's expanded scan roots (``session_scan_roots`` —
+    sessions_path itself plus any git-worktree sibling directories) so an
+    N-session backfill costs one filesystem listing per PROJECT, not one per
+    session.
+    """
+
+    def __init__(self, project_paths: dict[str, Path]) -> None:
+        self._project_paths = project_paths
+        self._roots_cache: dict[str, list[Path]] = {}
+
+    def resolve(self, session_id: str, project_id: str) -> Path | None:
+        base = self._project_paths.get(project_id)
+        if base is None:
+            return None
+
+        roots = self._roots_cache.get(project_id)
+        if roots is None:
+            roots = session_scan_roots(base)
+            self._roots_cache[project_id] = roots
+
+        stem = session_id[2:] if session_id.startswith("S-") else session_id
+        target = f"{stem}.jsonl"
+        for root in roots:
+            try:
+                for candidate in root.rglob(target):
+                    return candidate
+            except OSError:
+                continue
+        return None
 
 
 async def _run(
@@ -160,13 +257,16 @@ async def _run(
         candidates = await _fetch_candidates(
             db, project_id=project_id, since_days=since_days, limit=limit
         )
+        project_paths = await _project_sessions_paths(db)
+        resolver = _LocalResolver(project_paths)
         _LOG.info(
-            "reparse_usage_backfill: %d session row(s) with a stored source_file "
-            "(project=%s, since_days=%s, limit=%s)",
+            "reparse_usage_backfill: %d session row(s) in scope "
+            "(project=%s, since_days=%s, limit=%s, %d project(s) with a resolvable sessions_path)",
             len(candidates),
             project_id or "ALL",
             since_days if since_days is not None else "ALL",
             limit if limit is not None else "none",
+            len(project_paths),
         )
 
         changed = 0
@@ -176,8 +276,8 @@ async def _run(
         shown = 0
 
         for row in candidates:
-            path = Path(str(row["source_file"]))
-            if not path.exists():
+            path = resolver.resolve(row["id"], row["project_id"])
+            if path is None or not path.exists():
                 unreachable += 1
                 continue
 
@@ -200,6 +300,23 @@ async def _run(
                 "cache_creation_input_tokens": payload.get("cacheCreationInputTokens", 0),
                 "cache_read_input_tokens": payload.get("cacheReadInputTokens", 0),
             }
+
+            # Guard (node_01M1S9RR6X6KWV7TB1T7T50W02): the parser never wires
+            # cacheCreationInputTokens/cacheReadInputTokens to the top-level
+            # AgentSession fields (they're only tracked in a diagnostic
+            # sidecar), so a fresh parse ALWAYS reports 0 for both —
+            # regardless of what the file actually contains. Never let that
+            # 0 overwrite an existing nonzero DB value: that would replace a
+            # wrong-but-nonzero number with a confidently-wrong zero, which
+            # is worse for a viewer than today's inflation. Re-parsing IS
+            # still correct and safe for tokens_in/tokens_out (verified: PR
+            # #79 wires those to real accumulators), so only the two cache
+            # columns get this floor.
+            for cache_field in ("cache_creation_input_tokens", "cache_read_input_tokens"):
+                if after[cache_field] == 0 and (before.get(cache_field) or 0) != 0:
+                    payload_key = "cacheCreationInputTokens" if cache_field == "cache_creation_input_tokens" else "cacheReadInputTokens"
+                    payload[payload_key] = before[cache_field]
+                    after[cache_field] = before[cache_field]
 
             if before == after:
                 unchanged += 1
