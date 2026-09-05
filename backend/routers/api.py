@@ -230,6 +230,7 @@ def _usage_ratio(numerator: Any, denominator: Any) -> float:
 
 
 def _session_usage_fields(row: dict[str, Any]) -> dict[str, Any]:
+    fresh_input_tokens = int(row.get("tokens_in") or 0)
     model_io_tokens = int(row.get("model_io_tokens") or 0)
     cache_creation_input_tokens = int(row.get("cache_creation_input_tokens") or 0)
     cache_read_input_tokens = int(row.get("cache_read_input_tokens") or 0)
@@ -256,7 +257,12 @@ def _session_usage_fields(row: dict[str, Any]) -> dict[str, Any]:
         "toolResultOutputTokens": tool_result_output_tokens,
         "toolResultCacheCreationInputTokens": tool_result_cache_creation_input_tokens,
         "toolResultCacheReadInputTokens": tool_result_cache_read_input_tokens,
+        # Input-token share of all tokens (including output), not a cache-hit rate.
         "cacheShare": _usage_ratio(cache_input_tokens, observed_tokens),
+        "cacheHitRatio": _usage_ratio(
+            cache_read_input_tokens,
+            fresh_input_tokens + cache_creation_input_tokens + cache_read_input_tokens,
+        ),
         "outputShare": _usage_ratio(row.get("tokens_out") or 0, model_io_tokens),
         "reportedCostUsd": row.get("reported_cost_usd"),
         "recalculatedCostUsd": row.get("recalculated_cost_usd"),

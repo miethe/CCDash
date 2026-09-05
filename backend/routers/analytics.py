@@ -232,7 +232,17 @@ def _session_usage_metrics(row: dict[str, Any]) -> dict[str, float | int]:
     if observed_tokens <= 0:
         observed_tokens = token_input + token_output
     tool_reported_tokens = _coerce_int(row.get("tool_reported_tokens") or row.get("toolReportedTokens"))
+    # Input-token share of all tokens (including output), not a cache-hit rate.
     cache_share = round(cache_input_tokens / observed_tokens, 4) if observed_tokens > 0 else 0.0
+    cache_hit_ratio = (
+        round(
+            cache_read_input_tokens
+            / (token_input + cache_creation_input_tokens + cache_read_input_tokens),
+            4,
+        )
+        if token_input + cache_creation_input_tokens + cache_read_input_tokens > 0
+        else 0.0
+    )
     output_share = round(token_output / model_io_tokens, 4) if model_io_tokens > 0 else 0.0
     return {
         "tokenInput": token_input,
@@ -244,6 +254,7 @@ def _session_usage_metrics(row: dict[str, Any]) -> dict[str, float | int]:
         "observedTokens": observed_tokens,
         "toolReportedTokens": tool_reported_tokens,
         "cacheShare": cache_share,
+        "cacheHitRatio": cache_hit_ratio,
         "outputShare": output_share,
         "totalTokens": observed_tokens,
     }

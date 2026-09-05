@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.routers import api as api_router
+from backend.routers import analytics as analytics_router
 
 
 class _FakeIdentityProvider:
@@ -733,6 +734,7 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].cacheInputTokens, 8)
         self.assertEqual(response.items[0].toolReportedTokens, 13)
         self.assertAlmostEqual(response.items[0].cacheShare, 0.8)
+        self.assertAlmostEqual(response.items[0].cacheHitRatio, 5 / 9)
         self.assertAlmostEqual(response.items[0].outputShare, 0.5)
 
     async def test_list_sessions_uses_canonical_logs_for_title_and_badges(self) -> None:
@@ -989,6 +991,25 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.toolResultCacheCreationInputTokens, 55)
         self.assertEqual(response.toolResultCacheReadInputTokens, 89)
         self.assertAlmostEqual(response.cacheShare, 0.8)
+        self.assertAlmostEqual(response.cacheHitRatio, 5 / 9)
+
+    def test_cache_hit_ratio_excludes_output_tokens(self) -> None:
+        row = {
+            "tokens_in": 20_000,
+            "tokens_out": 38_502,
+            "model_io_tokens": 58_502,
+            "cache_creation_input_tokens": 503_492,
+            "cache_read_input_tokens": 14_838_624,
+            "cache_input_tokens": 15_362_116,
+            "observed_tokens": 15_400_618,
+        }
+
+        api_metrics = api_router._session_usage_fields(row)
+        analytics_metrics = analytics_router._session_usage_metrics(row)
+
+        for metrics in (api_metrics, analytics_metrics):
+            self.assertAlmostEqual(metrics["cacheHitRatio"], 0.9659)
+            self.assertAlmostEqual(metrics["cacheShare"], 0.9975)
 
     async def test_get_session_includes_intelligence_summary_when_available(self) -> None:
         repo = _FakeFullSessionRepo()
