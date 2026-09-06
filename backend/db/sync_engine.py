@@ -3381,7 +3381,21 @@ class SyncEngine:
                 },
             ):
                 # Phase 1: Sessions
-                s_stats = await self._sync_sessions(project.id, sessions_dir, force)
+                # A worktree-child project owns a distinct Claude sessions dir,
+                # but its transcript rows belong to its registered parent. This
+                # preserves the flat projects API while parent session queries
+                # return every checkout's sessions.
+                parent_project_id = getattr(project, "parent_project_id", None)
+                session_project_id = parent_project_id or project.id
+                if parent_project_id:
+                    s_stats = await self._sync_sessions(
+                        session_project_id,
+                        sessions_dir,
+                        force,
+                        worktree_label=getattr(project, "worktree_label", None),
+                    )
+                else:
+                    s_stats = await self._sync_sessions(project.id, sessions_dir, force)
                 stats["sessions_synced"] = s_stats["synced"]
                 stats["sessions_skipped"] = s_stats["skipped"]
                 # subagent-skill-inheritance: one-hop skill_name inheritance runs
@@ -3395,7 +3409,7 @@ class SyncEngine:
                 # session_name onto subagent sidechains (see
                 # backfill_skill_name_inheritance's docstring); its count is
                 # reported separately as session_name_inherited.
-                skill_inherit_stats = await self.session_repo.backfill_skill_name_inheritance(project.id)
+                skill_inherit_stats = await self.session_repo.backfill_skill_name_inheritance(session_project_id)
                 stats["skill_name_inherited"] = int(skill_inherit_stats.get("rows", 0))
                 stats["session_name_inherited"] = int(skill_inherit_stats.get("session_name_rows", 0))
                 # ica-key-and-spend-capture (v51): derive per-session ICA dollar
@@ -3405,7 +3419,7 @@ class SyncEngine:
                 # backfill_session_intelligence) because it is the derive step
                 # for the raw readings the ordinary upsert just wrote, and it is
                 # idempotent (recomputes from the stored readings).
-                ica_spend_stats = await self.session_repo.backfill_ica_spend_attribution(project.id)
+                ica_spend_stats = await self.session_repo.backfill_ica_spend_attribution(session_project_id)
                 stats["ica_spend_attributed"] = int(ica_spend_stats.get("rows", 0))
                 # provider-channel-credential-entities-v1 (M2-002): derive
                 # provider_dimensions / provider_channels / provider_credentials
@@ -4969,7 +4983,9 @@ class SyncEngine:
         )
         return stats
 
-    async def _sync_sessions(self, project_id: str, sessions_dir: Path, force: bool) -> dict:
+    async def _sync_sessions(
+        self, project_id: str, sessions_dir: Path, force: bool, *, worktree_label: str | None = None
+    ) -> dict:
         stats = {"synced": 0, "skipped": 0, "parse_errors": 0}
         if not sessions_dir.exists():
             return stats
@@ -5043,7 +5059,9 @@ class SyncEngine:
             # must not abort the whole project sync. Log once with the file path,
             # record a parser-failure metric, count it, and continue.
             try:
-                synced = await self._sync_single_session(project_id, jsonl_file, force)
+                synced = await self._sync_single_session(
+                    project_id, jsonl_file, force, worktree_label=worktree_label
+                )
             except Exception:
                 observability.record_parser_failure("sessions", project_id=project_id)
                 logger.exception(
@@ -5075,7 +5093,9 @@ class SyncEngine:
         for jsonl_file in backfill_files:
             # Resilience-by-default: same per-file isolation as the recent window.
             try:
-                synced = await self._sync_single_session(project_id, jsonl_file, force)
+                synced = await self._sync_single_session(
+                    project_id, jsonl_file, force, worktree_label=worktree_label
+                )
             except Exception:
                 observability.record_parser_failure("sessions", project_id=project_id)
                 logger.exception(
@@ -5141,7 +5161,9 @@ class SyncEngine:
                 return True
         return False
 
-    async def _sync_single_session(self, project_id: str, path: Path, force: bool = False) -> bool:
+    async def _sync_single_session(
+        self, project_id: str, path: Path, force: bool = False, *, worktree_label: str | None = None
+    ) -> bool:
         """Parse and upsert a single session file. Returns True if actually synced."""
         file_path = str(path)
         sync_file_path = self._canonical_source_key(project_id, path, "session")
@@ -5204,7 +5226,7 @@ class SyncEngine:
                 # decide "am I running under a worktree?" — the fact is in the
                 # path. NULL == main-repo session; upsert is capture-once via
                 # COALESCE so re-ingest of an already-labeled row cannot wipe it.
-                worktree_name = worktree_name_for_source(path)
+                worktree_name = worktree_label or worktree_name_for_source(path)
                 if worktree_name is not None:
                     session_payload["worktreeName"] = worktree_name
                 # T11-004: launch-time capture sidecar fields (launcher, profile,

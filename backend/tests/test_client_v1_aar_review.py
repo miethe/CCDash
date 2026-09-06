@@ -396,6 +396,11 @@ class TestClientV1AarReview(unittest.TestCase):
         capabilities = resp.json()["data"]["capabilities"]
         self.assertIn("aar-review", capabilities)
 
+    def test_capabilities_endpoint_advertises_worktree_children(self) -> None:
+        resp = self.client.get("/api/v1/capabilities")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIn("projects:worktree-children", resp.json()["data"]["capabilities"])
+
     # ------------------------------------------------------------------
     # OpenAPI schema: new path registered
     # ------------------------------------------------------------------

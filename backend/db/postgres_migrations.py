@@ -86,7 +86,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 56
+SCHEMA_VERSION = 57
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1303,6 +1303,9 @@ CREATE TABLE IF NOT EXISTS projects (
     -- fail-closed and load-bearing -- existing projects never silently
     -- consent to egress. Mirrors sqlite_migrations.py.
     llm_egress_consent   BOOLEAN NOT NULL DEFAULT FALSE,
+    -- worktree-child-projects M1 (v57): nullable child relationship fields.
+    parent_project_id    TEXT,
+    worktree_label       TEXT,
     created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -4540,6 +4543,16 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
             "v56 migrations complete: intent_tree_reopened_events + "
             "intent_tree_self_caught_buckets tables added "
             "(are-we-winning-dashboard-v1 M2 part B)."
+        )
+
+    if current_version < 57:
+        # Mirror SQLite v57. Normal projects retain NULL; a child row stores
+        # its parent id and checkout basename for parent-scoped session ingest.
+        await _ensure_column(db, "projects", "parent_project_id", "TEXT")
+        await _ensure_column(db, "projects", "worktree_label", "TEXT")
+        logger.info(
+            "v57 migrations complete: projects.parent_project_id + "
+            "projects.worktree_label added (nullable worktree-child metadata)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

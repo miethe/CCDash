@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS projects (
     is_active            INTEGER NOT NULL DEFAULT 0,
     repo_path            TEXT,
     llm_egress_consent   INTEGER NOT NULL DEFAULT 0,
+    parent_project_id    TEXT,
+    worktree_label       TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -169,6 +169,8 @@ class PostgresProjectRepository:
             "is_active": bool(project_dict.get("is_active", False)),
             "repo_path": project_dict.get("repoPath") or None,
             "llm_egress_consent": bool(project_dict.get("llm_egress_consent", False)),
+            "parent_project_id": project_dict.get("parent_project_id") or None,
+            "worktree_label": project_dict.get("worktree_label") or None,
             "updated_at": now,
         }
 
@@ -210,14 +212,16 @@ class PostgresProjectRepository:
                     id, name, path, description, repo_url,
                     agent_platforms_json, plan_docs_path, sessions_path, progress_path,
                     path_config_json, test_config_json, skillmeat_json, display_json,
-                    is_active, repo_path, llm_egress_consent, updated_at
+                    is_active, repo_path, llm_egress_consent,
+                    parent_project_id, worktree_label, updated_at
                 ) VALUES (
                     %(id)s, %(name)s, %(path)s, %(description)s, %(repo_url)s,
                     %(agent_platforms_json)s::jsonb, %(plan_docs_path)s, %(sessions_path)s,
                     %(progress_path)s,
                     %(path_config_json)s::jsonb, %(test_config_json)s::jsonb,
                     %(skillmeat_json)s::jsonb, %(display_json)s::jsonb,
-                    %(is_active)s, %(repo_path)s, %(llm_egress_consent)s, %(updated_at)s
+                    %(is_active)s, %(repo_path)s, %(llm_egress_consent)s,
+                    %(parent_project_id)s, %(worktree_label)s, %(updated_at)s
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name=EXCLUDED.name,
@@ -235,6 +239,8 @@ class PostgresProjectRepository:
                     is_active=EXCLUDED.is_active,
                     repo_path=EXCLUDED.repo_path,
                     llm_egress_consent=EXCLUDED.llm_egress_consent,
+                    parent_project_id=EXCLUDED.parent_project_id,
+                    worktree_label=EXCLUDED.worktree_label,
                     updated_at=EXCLUDED.updated_at
                 """,
                 v,

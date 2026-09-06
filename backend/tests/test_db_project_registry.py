@@ -125,6 +125,63 @@ class TestDbProjectRegistryRoundTrip(unittest.TestCase):
             result = mgr.get_project("p-upd")
             self.assertEqual(result.name, "New Name")
 
+    def test_worktree_child_fields_round_trip_without_breaking_plain_project_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _make_manager(tmpdir)
+            plain = Project(id="plain", name="Plain", path=tmpdir)
+            child = Project(
+                id="child",
+                name="Plain (fixture-worktree)",
+                path=tmpdir,
+                parent_project_id="plain",
+                worktree_label="fixture-worktree",
+            )
+            self.assertIsNone(plain.parent_project_id)
+            self.assertIsNone(plain.worktree_label)
+            mgr.add_project(plain)
+            mgr.add_project(child)
+
+            persisted = mgr.get_project("child")
+            self.assertIsNotNone(persisted)
+            self.assertEqual(persisted.parent_project_id, "plain")
+            self.assertEqual(persisted.worktree_label, "fixture-worktree")
+
+    def test_snapshot_discovery_registers_git_proven_unmarked_child_inactive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo_root = root / "fixture-repo"
+            checkout = root / ".wt" / "fixture-worktree"
+            (repo_root / ".git" / "worktrees" / checkout.name).mkdir(parents=True)
+            checkout.mkdir(parents=True)
+            (checkout / ".git").write_text(
+                f"gitdir: {repo_root / '.git' / 'worktrees' / checkout.name}\n"
+            )
+            claude_root = root / "claude-projects"
+            parent_sessions = claude_root / "-tmp-fixture-repo"
+            child_sessions = claude_root / "-tmp--wt-fixture-worktree"
+            parent_sessions.mkdir(parents=True)
+            child_sessions.mkdir()
+            (child_sessions / "abc.jsonl").write_text(
+                f'{{"cwd": "{checkout}", "sessionId": "abc"}}\n'
+            )
+
+            mgr = _make_manager(tmpdir)
+            mgr.add_project(
+                Project(
+                    id="parent",
+                    name="Fixture Repo",
+                    path=str(repo_root),
+                    repoPath=str(repo_root),
+                    sessionsPath=str(parent_sessions),
+                )
+            )
+            mgr.reload()
+
+            children = [p for p in mgr.list_projects() if p.parent_project_id == "parent"]
+            self.assertEqual(len(children), 1)
+            self.assertEqual(children[0].worktree_label, "fixture-worktree")
+            self.assertFalse(children[0].is_active)
+
     def test_llm_egress_consent_defaults_false_for_project_created_without_it(self) -> None:
         """hosted-llm-anthropic-ica-lane-v1 M2: fail-closed default.
 
