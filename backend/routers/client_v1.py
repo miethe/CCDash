@@ -183,6 +183,9 @@ _V1_CAPABILITIES: list[str] = [
                                # makes session_logs rows reachable by an external script over HTTP
                                # without direct postgres access; same {items,cursor,limit,nextCursor}
                                # envelope as sessions:detail's /transcript route.
+    "projects:worktree-children",  # M1/M2 — /api/projects remains a flat list;
+                               # child rows expose parent_project_id/worktree_label while
+                               # their sessions ingest under the parent's project id.
     "provider-credentials:rollup",  # provider-channel-credential-entities-v1 (M3-002) —
                                # GET /api/v1/provider-credentials/rollup: cross-project
                                # per-credential-series spend/token/session rollup, following

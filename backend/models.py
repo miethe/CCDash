@@ -1868,6 +1868,13 @@ class Project(BaseModel):
     # Populated at registration time; None on pre-v38 records.
     # Maps to the `repo_path` column on the projects table (v38 migration).
     repoPath: Optional[str] = None
+    # A Claude sessions directory for a git worktree is represented as a
+    # separate, inactive project row.  Its sessions ingest under this parent's
+    # id; None identifies an ordinary repository project.
+    parent_project_id: Optional[str] = None
+    # Checkout directory basename, preserved on the child row and copied to
+    # sessions.worktree_name during ingest. None for ordinary projects.
+    worktree_label: Optional[str] = None
     # Populated at read-time by the project manager from the DB is_active flag.
     # Never written back to the DB via the Project model itself (the repository
     # manages the flag directly).

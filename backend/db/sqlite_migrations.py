@@ -119,7 +119,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 56
+SCHEMA_VERSION = 57
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1308,6 +1308,10 @@ CREATE TABLE IF NOT EXISTS projects (
     -- fail-closed and load-bearing -- existing projects never silently
     -- consent to egress.
     llm_egress_consent   INTEGER NOT NULL DEFAULT 0,
+    -- worktree-child-projects M1 (v57): nullable relationship fields. A child
+    -- scans its own Claude session dir but attributes sessions to its parent.
+    parent_project_id    TEXT,
+    worktree_label       TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -5090,6 +5094,17 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
             "v56 migrations complete: intent_tree_reopened_events + "
             "intent_tree_self_caught_buckets tables added "
             "(are-we-winning-dashboard-v1 M2 part B)."
+        )
+
+    if current_version < 57:
+        # worktree-child-projects M1. Nullable by design: normal projects have
+        # no parent/label, while child rows carry both. _ensure_column performs
+        # the PRAGMA table_info guard so this is idempotent on retry.
+        await _ensure_column(db, "projects", "parent_project_id", "TEXT")
+        await _ensure_column(db, "projects", "worktree_label", "TEXT")
+        logger.info(
+            "v57 migrations complete: projects.parent_project_id + "
+            "projects.worktree_label added (nullable worktree-child metadata)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

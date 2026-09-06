@@ -11,8 +11,13 @@ from typing import Optional
 from backend import config
 from backend.application.ports.core import ProjectBinding
 from backend.models import Project, ProjectDisplayConfig, ProjectDisplayMetadata
+from backend.parsers.worktree_attribution import worktree_marker
 from backend.services.project_paths.models import ResolvedProjectPath, ResolvedProjectPaths
 from backend.services.project_paths.resolver import ProjectPathResolver
+from backend.services.project_paths.worktree_parent_resolution import (
+    first_cwd_from_session_dir,
+    resolve_unmarked_worktree_child,
+)
 from backend.services.test_config import normalize_project_test_config
 
 logger = logging.getLogger("ccdash")
@@ -432,6 +437,13 @@ class DbProjectManager:
             )
             return
 
+        # This runs on every DB-snapshot reload, including the worker's
+        # existing periodic reconcile pass. Marker-based worktree dirs are
+        # already covered by session_scan_roots; only non-marker directories
+        # that prove their parent via Git metadata become child rows here.
+        self._register_unmarked_worktree_children(repo, rows)
+        rows = repo.list_all()
+
         self._projects = {}
         self._active_project_id = None
         for row in rows:
@@ -460,6 +472,80 @@ class DbProjectManager:
             len(self._projects),
             self._active_project_id,
         )
+
+    @staticmethod
+    def _stable_claude_project_id(dirname: str) -> str:
+        """Match the deterministic id convention in register_claude_projects.py."""
+        return "ccp-" + hashlib.sha1(dirname.encode()).hexdigest()[:12]
+
+    def _register_unmarked_worktree_children(self, repo, rows: list[dict]) -> None:
+        """Register Git-proven unmarked Claude dirs as inactive child projects.
+
+        The registry remains DB-authoritative: discovery is an additive upsert
+        performed by the same repository that owns project rows.  Any unreadable
+        path, malformed session, ambiguous Git metadata, or unknown parent is a
+        no-op rather than a speculative project registration.
+        """
+        candidates: dict[str, Path] = {}
+        parent_names: dict[str, str] = {}
+        session_roots: set[Path] = set()
+        known_sessions: set[Path] = set()
+        for row in rows:
+            if row.get("parent_project_id"):
+                continue
+            project_id = str(row.get("id") or "")
+            repo_path = row.get("repo_path") or row.get("path")
+            if not project_id or not repo_path:
+                continue
+            try:
+                candidates[project_id] = Path(str(repo_path)).expanduser()
+                parent_names[project_id] = str(row.get("name") or project_id)
+                sessions_path = str(row.get("sessions_path") or "").strip()
+                if sessions_path:
+                    resolved_sessions = Path(sessions_path).expanduser().resolve(strict=False)
+                    known_sessions.add(resolved_sessions)
+                    session_roots.add(resolved_sessions.parent)
+            except OSError:
+                continue
+
+        if not candidates:
+            return
+
+        for sessions_root in session_roots:
+            try:
+                entries = list(sessions_root.iterdir())
+            except OSError:
+                continue
+            for sessions_dir in entries:
+                try:
+                    if not sessions_dir.is_dir() or sessions_dir.resolve(strict=False) in known_sessions:
+                        continue
+                except OSError:
+                    continue
+                # The established marker convention remains fan-out-only; this
+                # registration pass must not create duplicate rows for it.
+                if worktree_marker(sessions_dir.name) is not None:
+                    continue
+                resolved = resolve_unmarked_worktree_child(sessions_dir, candidates)
+                if resolved is None:
+                    continue
+                parent_id, label = resolved
+                child = Project(
+                    id=self._stable_claude_project_id(sessions_dir.name),
+                    name=f"{parent_names[parent_id]} ({label})",
+                    path=str(first_cwd_from_session_dir(sessions_dir) or sessions_dir),
+                    sessionsPath=str(sessions_dir.resolve(strict=False)),
+                    parent_project_id=parent_id,
+                    worktree_label=label,
+                    is_active=False,
+                )
+                repo.upsert(child.model_dump())
+                known_sessions.add(sessions_dir.resolve(strict=False))
+                logger.info(
+                    "Registered Git-proven unmarked worktree child %s under parent %s",
+                    child.id,
+                    parent_id,
+                )
 
     def _load_snapshot_from_json(self) -> None:
         """Populate _projects from projects.json (fallback/bootstrap path)."""
@@ -686,6 +772,8 @@ class DbProjectManager:
             # llm_egress_consent (v52, hosted-llm-anthropic-ica-lane-v1 M2):
             # fail-closed per-project egress consent flag. Missing -> False.
             "llm_egress_consent": bool(row.get("llm_egress_consent", False)),
+            "parent_project_id": row.get("parent_project_id") or None,
+            "worktree_label": row.get("worktree_label") or None,
         }
         path_cfg = row.get("path_config_json")
         if path_cfg:
