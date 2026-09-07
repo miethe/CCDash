@@ -9,6 +9,7 @@ from backend.services.session_transcript_contract import (
     canonical_role_from_log,
     canonical_source_provenance,
 )
+from backend.services.transcript_egress import filter_session_logs
 
 
 def project_session_messages(
@@ -24,6 +25,17 @@ def project_session_messages(
         or session_id
     )
     parent_session_id = str(session_row.get("parentSessionId") or session_row.get("parent_session_id") or "")
+
+    # ── Journal-egress backstop ───────────────────────────────────────────────
+    # The raw-record filter in parse_session_file is the primary defence and covers everything
+    # this process parses. It cannot cover a payload parsed ELSEWHERE: a remote client running
+    # older code POSTs an already-parsed AgentSession, whose logs arrive here having never been
+    # seen as records. session_messages is the table the 208 enumerated journal rows landed in
+    # (node_01M1YV12EH7AQSXSMSFSKQJXM8), so the last gate before it is filtered too.
+    #
+    # Redundant with the parser on the local path, by design — the cost is one pass over logs
+    # that are already in memory; the cost of the gap is a searchable private journal.
+    logs, _ = filter_session_logs(logs, session_row=session_row, source=session_id)
 
     projected: list[dict[str, Any]] = []
     for index, log in enumerate(logs):

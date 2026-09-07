@@ -24,6 +24,7 @@ from backend.models import (
 )
 from backend.date_utils import file_metadata_dates, make_date_value
 from backend.services.session_observability import derive_context_observability
+from backend.services.transcript_egress import filter_transcript_records
 from backend.parsers.platforms.test_runs import (
     aggregate_test_runs,
     enrich_test_run_with_output,
@@ -1937,6 +1938,29 @@ def parse_session_file(path: Path) -> AgentSession | None:
             continue
 
     if not entries:
+        return None
+
+    # ── Journal-egress exclusion — the choke point ─────────────────────────────
+    # A transcript is an egress surface: `op journal write "<text>"` run from an ORDINARY chat
+    # session records the full private-journal entry in THAT session's transcript as the Bash
+    # tool_use input, and again in the paired tool_result. Drop such records here, before
+    # anything reads them — this function is re-entered in full on every scan and is shared by
+    # both write paths (the laptop worker-watch sync engine and the node's ccdash-ingest-daemon
+    # -> POST /api/v1/ingest/sessions), so a record dropped here reaches no session_messages
+    # row, no session_logs row, no FTS entry and no metadata_json blob.
+    #
+    # Placed BEFORE _derive_session_status / _build_entry_graph / the main entry loop so a
+    # dropped record is invisible to session aggregates too. _build_entry_graph keys off the
+    # uuids that are present, so a hole in the parentUuid chain degrades thread linkage rather
+    # than raising.
+    #
+    # Rationale + shape: backend/services/transcript_egress.py; predicate vendored from
+    # agentic_meta_dev/scripts/aos_transcript_filter.py. node_01M1YV12EH7AQSXSMSFSKQJXM8.
+    entries, _egress = filter_transcript_records(entries, source=str(path))
+    if _egress.abandoned or not entries:
+        # A forbidden cwd means the session itself is a journal session — abandon the WHOLE
+        # transcript rather than ingesting the remainder. Returning None skips ingestion; it
+        # never deletes rows already stored (removal is Mode-D, Nick's decision).
         return None
 
     session_id = _make_id(path)

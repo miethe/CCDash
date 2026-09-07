@@ -58,6 +58,30 @@
     but is not yet called by the frontend. The widget states this rather than shipping a dead click
     target.
 
+### Fixed
+
+- **CCDash no longer indexes Metis's private journal.** Running `op journal write "<text>"` from an
+  *ordinary* chat session records the full entry in that session's transcript as the Bash
+  `tool_use` input — and again in the paired `tool_result` — so it carried no marker and no
+  `.metis` path, and CCDash's transcript ingest made it searchable in `session_messages` and the
+  lexical FTS. Measured before the fix: 208 rows across 59 sessions, and still growing (231/61 an
+  hour later) because the ingest daemons tail `~/.claude/projects` continuously.
+  - The shared exclusion predicate is **vendored** from `agentic_meta_dev/scripts/aos_transcript_filter.py`
+    (`backend/services/transcript_filter.py`, sha256 recorded in its header; CCDash must not import
+    that repo at runtime). CHCW vendored the same bytes. A test fails the build if the local copy
+    is edited instead of upstream.
+  - Applied at the **raw-record choke point** (`parse_session_file`), which both write paths share,
+    plus three backstops for payloads parsed by a *remote* client running older code: the
+    projection into `session_messages`, the file-ingest service, and `POST /api/v1/ingest/sessions`.
+    A `~/.metis` session abandons the whole transcript rather than being filtered record-by-record.
+  - Fails **closed at whole-record granularity** and has no opt-out flag. Positive controls for all
+    five rules (`backend/tests/test_transcript_egress_predicate.py`) use a fake sentinel and were
+    mutation-verified to fail when the filter is stubbed out.
+  - **Nothing already indexed was removed** — that is a separate, deliberately human decision.
+    `scripts/journal_egress_enumerate.py` re-counts, read-only, and has no delete path.
+  - ⚠️ Merging this changes nothing until both ingest daemons are updated **and restarted**; see
+    `docs/guides/journal-transcript-egress.md`.
+
 ## [0.3.0] - 2026-08-12
 ### Added
 

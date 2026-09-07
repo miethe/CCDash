@@ -21,6 +21,7 @@ import aiosqlite
 from backend.application.models.ingest import IngestSessionEvent
 from backend.db.repositories.sessions import SqliteSessionRepository, compute_source_ref
 from backend.db.repositories.ingest_cursors import SqliteIngestCursorRepository
+from backend.services.transcript_egress import filter_session_logs
 
 logger = logging.getLogger("ccdash.ingest")
 
@@ -150,6 +151,14 @@ class RemoteSessionIngestService:
             # write, to avoid a spurious delete-then-reinsert-nothing cycle
             # on the common no-logs event.
             logs = event.payload.get("logs")
+            if isinstance(logs, list) and logs:
+                # Journal-egress backstop for the REMOTE path. These logs were parsed by the
+                # client, so parse_session_file's raw-record filter never ran on them in this
+                # process — a daemon still running pre-fix code would otherwise deliver journal
+                # text straight into session_logs. node_01M1YV12EH7AQSXSMSFSKQJXM8.
+                logs, _egress = filter_session_logs(
+                    logs, session_row=event.payload, source=str(event.event_id)
+                )
             if isinstance(logs, list) and logs:
                 session_id = str(event.payload.get("id") or "").strip()
                 if session_id:
