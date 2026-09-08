@@ -12,6 +12,7 @@ This directory contains current CCDash documentation outside the feature-plannin
 | Operate telemetry and sync flows | [guides/operations-panel.md](guides/operations-panel.md), [guides/telemetry-exporter-guide.md](guides/telemetry-exporter-guide.md) |
 | Understand session intelligence | [guides/agentic-sdlc-intelligence.md](guides/agentic-sdlc-intelligence.md), [guides/session-usage-attribution.md](guides/session-usage-attribution.md), [guides/session-block-insights.md](guides/session-block-insights.md) |
 | Work with documents and linking | [guides/document-entity-and-linking.md](guides/document-entity-and-linking.md), [schemas/document_frontmatter/README.md](schemas/document_frontmatter/README.md) |
+| Understand what CCDash refuses to index | [guides/journal-transcript-egress.md](guides/journal-transcript-egress.md) |
 | Find implementation-only references | [developer/](developer/) |
 
 ## Organization

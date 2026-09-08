@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable
 from backend import observability
 from backend.db.repositories.base import SessionMessageRepository, SessionRepository
 from backend.ingestion.models import MergePolicy, NormalizedSessionEnvelope, SessionIngestResult
+from backend.services.transcript_egress import filter_session_logs
 
 logger = logging.getLogger("ccdash.ingestion.session")
 
@@ -169,6 +170,13 @@ class SessionIngestService:
             logs = session_dict.get("logs", [])
             if not isinstance(logs, list):
                 logs = []
+            # Journal-egress backstop before BOTH writes below. project_session_messages
+            # filters again (it is a public helper with other callers); doing it here as well
+            # is what keeps the legacy session_logs write from being the unfiltered sibling.
+            # node_01M1YV12EH7AQSXSMSFSKQJXM8.
+            logs, _egress = filter_session_logs(
+                logs, session_row=session_dict, source=session_id
+            )
             canonical_rows = self.project_session_messages(session_dict, logs)
             result.message_count += len(canonical_rows)
             result.log_count += len(logs)
