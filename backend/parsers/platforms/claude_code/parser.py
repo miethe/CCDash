@@ -4868,6 +4868,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
         durationSeconds=duration,
         tokensIn=tokens_in,
         tokensOut=tokens_out,
+        # node_01M1S9RR6X6KWV7TB1T7T50W02: usage_message_totals is the
+        # dedup'd-by-message-id accumulator (see the first-occurrence guard
+        # around line 3216) — the same source tokens_in/tokens_out draw from.
+        # Wire the cache counters through too so the top-level AgentSession
+        # fields agree with sessionForensics.usageSummary.messageTotals
+        # instead of silently defaulting to 0.
+        cacheCreationInputTokens=usage_message_totals["cacheCreationInputTokens"],
+        cacheReadInputTokens=usage_message_totals["cacheReadInputTokens"],
         **root_context_fields,
         totalCost=round(reported_cost_usd if reported_cost_usd is not None else cost, 4),
         reportedCostUsd=reported_cost_usd,

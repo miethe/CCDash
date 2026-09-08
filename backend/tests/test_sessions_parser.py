@@ -206,6 +206,51 @@ class SessionParserTests(unittest.TestCase):
                 "allTokens": 180,
             },
         )
+        # node_01M1S9RR6X6KWV7TB1T7T50W02: the top-level AgentSession fields
+        # must agree with the dedup'd messageTotals above, not silently
+        # default to 0.
+        self.assertEqual(session.cacheCreationInputTokens, 56)
+        self.assertEqual(session.cacheReadInputTokens, 78)
+
+    def test_agent_session_wires_cache_tokens_from_bedrock_relay_usage(self) -> None:
+        """node_01M1S9RR6X6KWV7TB1T7T50W02: a real Bedrock-relayed transcript
+        (message id pattern ``msg_bdrk_*``) carrying large nonzero cache
+        totals must land on the top-level AgentSession.cacheCreationInputTokens
+        / cacheReadInputTokens fields, not just in the sessionForensics
+        sidecar's usageSummary.messageTotals.
+        """
+        usage = {
+            "input_tokens": 143,
+            "output_tokens": 812,
+            "cache_creation_input_tokens": 49770,
+            "cache_read_input_tokens": 131044,
+        }
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-09-05T10:00:00Z",
+                    "message": {
+                        "id": "msg_bdrk_01AbCdEfGhIjKlMnOpQrStUv",
+                        "role": "assistant",
+                        "model": "claude-sonnet",
+                        "usage": usage,
+                        "content": [{"type": "text", "text": "Working from a Bedrock relay."}],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertEqual(session.cacheCreationInputTokens, 49770)
+        self.assertEqual(session.cacheReadInputTokens, 131044)
+        # Sanity: tokensIn/tokensOut (the sibling fields this fix mirrors)
+        # were already wired correctly before this change.
+        self.assertEqual(session.tokensIn, 143)
+        self.assertEqual(session.tokensOut, 812)
 
     def test_usage_summary_tracks_nested_usage_fields_and_tool_caller_metadata(self) -> None:
         path = self._write_jsonl(
