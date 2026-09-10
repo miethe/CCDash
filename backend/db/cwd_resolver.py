@@ -4,12 +4,17 @@ Resolves a filesystem working directory (cwd) to a CCDash project_id by
 matching against the ``repo_path`` column on registered projects.
 
 Algorithm (D1-a from codex-session-ingestion-v1 plan):
-  1. Normalize both paths with os.path.normpath to remove trailing slashes
+  1. Recognize known worktree layouts before generic prefix matching. Claude
+     worktrees resolve through their filesystem parent; Codex's ephemeral
+     worktrees resolve to a uniquely registered repository with the same name.
+     Unknown Codex worktrees remain unattributed so a home-directory catch-all
+     cannot absorb them.
+  2. Normalize both paths with os.path.normpath to remove trailing slashes
      and redundant separators.
-  2. Exact match: cwd == repo_path → return project_id immediately.
-  3. Longest-prefix match: cwd starts with repo_path + os.sep.  The project
+  3. Exact match: cwd == repo_path → return project_id immediately.
+  4. Longest-prefix match: cwd starts with repo_path + os.sep.  The project
      with the longest matching prefix wins (handles nested worktrees correctly).
-  4. No match → return None.
+  5. No match → return None.
 
 The module is intentionally pure (no IO): ``resolve_project_for_cwd`` accepts
 a list of project dicts (as returned by SqliteProjectRepository.list_all or
@@ -19,7 +24,76 @@ projects from the DB via the existing project repository.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
+
+
+def _project_id_for_repo_path(repo_path: str, projects: list[dict]) -> Optional[str]:
+    """Return the project registered at *repo_path*, if any."""
+    for project in projects:
+        raw_repo = (project.get("repo_path") or "").strip()
+        if raw_repo and os.path.normpath(raw_repo) == repo_path:
+            return project["id"]
+    return None
+
+
+def _worktree_project_id(cwd: str, projects: list[dict]) -> tuple[bool, Optional[str]]:
+    """Resolve known worktree paths without probing the filesystem.
+
+    The boolean records that *cwd* is a recognized Codex layout even if it
+    cannot be mapped.  That prevents generic prefix matching from assigning an
+    unknown ephemeral worktree to a catch-all project rooted at the home dir.
+    """
+    parts = Path(cwd).parts
+    for index, segment in enumerate(parts):
+        if segment == ".claude" and parts[index + 1 : index + 2] == ("worktrees",):
+            # Preserve an explicit project registration for this worktree.
+            # The parent fallback is for the normal one-project-per-repo
+            # registry layout.
+            explicit = _longest_prefix_project_id(cwd, projects)
+            if explicit is not None:
+                explicit_path = next(
+                    os.path.normpath((project.get("repo_path") or "").strip())
+                    for project in projects
+                    if project["id"] == explicit
+                )
+                if ".claude" + os.sep + "worktrees" in explicit_path:
+                    return True, explicit
+            parent = os.path.normpath(str(Path(*parts[:index])))
+            return True, _project_id_for_repo_path(parent, projects)
+
+        if (
+            segment == ".codex"
+            and parts[index + 1 : index + 2] == ("worktrees",)
+            and len(parts) > index + 3
+        ):
+            repo_name = parts[index + 3]
+            matches = [
+                project["id"]
+                for project in projects
+                if (raw_repo := (project.get("repo_path") or "").strip())
+                and os.path.basename(os.path.normpath(raw_repo)) == repo_name
+            ]
+            return True, matches[0] if len(matches) == 1 else None
+
+    return False, None
+
+
+def _longest_prefix_project_id(cwd: str, projects: list[dict]) -> Optional[str]:
+    """Return the generic longest-prefix result without worktree handling."""
+    best_project_id: Optional[str] = None
+    best_prefix_len = -1
+    for project in projects:
+        raw_repo = (project.get("repo_path") or "").strip()
+        if not raw_repo:
+            continue
+        norm_repo = os.path.normpath(raw_repo)
+        if cwd == norm_repo:
+            return project["id"]
+        if cwd.startswith(norm_repo + os.sep) and len(norm_repo) > best_prefix_len:
+            best_prefix_len = len(norm_repo)
+            best_project_id = project["id"]
+    return best_project_id
 
 
 def resolve_project_for_cwd(
@@ -52,27 +126,8 @@ def resolve_project_for_cwd(
 
     norm_cwd = os.path.normpath(cwd)
 
-    best_project_id: Optional[str] = None
-    best_prefix_len: int = -1
+    is_worktree, worktree_project_id = _worktree_project_id(norm_cwd, projects)
+    if is_worktree:
+        return worktree_project_id
 
-    for project in projects:
-        raw_repo = (project.get("repo_path") or "").strip()
-        if not raw_repo:
-            continue
-
-        norm_repo = os.path.normpath(raw_repo)
-
-        # ── Exact match (highest priority) ──────────────────────────────────
-        if norm_cwd == norm_repo:
-            return project["id"]
-
-        # ── Prefix match: cwd must start with repo_path + separator ─────────
-        # Using os.sep prevents false matches like /a/b/repo2 matching /a/b/repo.
-        prefix = norm_repo + os.sep
-        if norm_cwd.startswith(prefix):
-            prefix_len = len(norm_repo)
-            if prefix_len > best_prefix_len:
-                best_prefix_len = prefix_len
-                best_project_id = project["id"]
-
-    return best_project_id
+    return _longest_prefix_project_id(norm_cwd, projects)
