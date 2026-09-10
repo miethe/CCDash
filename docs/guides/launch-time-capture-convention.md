@@ -162,6 +162,39 @@ These are real, permanent characteristics of the design — not open bugs to fix
 
 **Staleness caveat:** `effortLevel` is whatever `/effort` last set for that settings scope — it reflects the last time the user (or a config sync) changed the tier, not necessarily the tier in effect for *this* session if it was changed mid-session or the settings file predates the session by a long margin. Treat it as "the tier this launch environment was configured for," not a verified live value. Limitation 3 above (no direct launch-time effort signal) still holds in spirit — this fallback is a best-effort proxy, not a fix for the underlying gap.
 
+### `effortTierLast` — mid-session capture (G1, sidecar v4)
+
+Limitation 3 above describes `effortTier` as a `SessionStart` snapshot that cannot
+reflect a mid-session `/effort` change — the settings-file fallback closes most of
+the gap, but only observes the tier once, at launch. G1 ("first+last pair", Nick's
+decision 2026-09-10) adds a second field rather than replacing the first:
+
+| Field | Written by | Semantics |
+|-------|-----------|-----------|
+| `effortTier` | `SessionStart` hook | The launch-time value (unchanged meaning). |
+| `effortTierLast` | `UserPromptSubmit` hook | Freshest value observed at any later prompt. `null` == never observed to differ from `effortTier` after start — a legitimate contract state, not a defect. |
+
+The `UserPromptSubmit` hook (same script, dispatched by `hook_event_name`) resolves
+the current tier with the identical `CCDASH_LAUNCH_EFFORT` → settings-`effortLevel`
+precedence used at `SessionStart`, then writes `effortTierLast` **only when that
+value differs from the freshest one already on record** (`effortTierLast` if
+previously set, else `effortTier`). This is a deliberate no-write-amplification
+design: a session whose effort never changes never triggers a sidecar write at
+all — only the settings-file read already needed to resolve the value. It is also
+why an unchanging session's `effortTierLast` stays permanently `null` rather than
+being redundantly set equal to `effortTier`.
+
+Registration: add a `UserPromptSubmit` hook entry alongside the existing
+`SessionStart`/`SessionEnd` ones, same command. Read side: `GET`/list session
+responses expose `effortTierLast` alongside `effortTier` (camelCase, same
+null-means-not-captured contract); `SessionInspector`'s Effort Tier row renders
+`start→last` only when both are present and differ
+(`lib/sessionSemantics.ts::formatEffortTierDisplay`). The routing-rollup effort
+dimension (DI-4c) aggregates each session's *effective* tier —
+`COALESCE(effort_tier_last, effort_tier)` — rather than always the start value.
+
+Implementation: `scripts/hooks/ccdash_capture_session_start.py::update_effort_tier_last`.
+
 ### `effortTierSource` provenance (Gap 4)
 
 `effort_tier` is populated by lanes that differ in trustworthiness by a wide margin, and until Gap 4 a rollup had no way to tell them apart. `effort_tier_source` records **which lane** supplied the value. It is written only where `effort_tier` is resolved, always together with it; a non-null tier with a `null` source means the row predates this column (provenance unknown — a legitimate contract state, never backfilled).
