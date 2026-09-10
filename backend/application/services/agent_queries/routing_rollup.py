@@ -895,9 +895,21 @@ async def _fetch_raw_aggregate_rows(
     # (COUNT(DISTINCT x) ignores NULLs in both dialects) and any one non-null
     # value. When the count is exactly 1, MIN() *is* the single agreed value;
     # any other count means "mixed" (or "none") and the caller resolves to None.
+    #
+    # G1 "first+last pair" rule for this aggregation: each session contributes
+    # its EFFECTIVE per-session effort tier -- COALESCE(effort_tier_last,
+    # effort_tier), i.e. the freshest mid-session observation when one exists,
+    # else the SessionStart value -- rather than always the (possibly stale)
+    # start value. `effort_tier_source`'s aggregation is unchanged (there is no
+    # separate provenance token for `last`; it is resolved by the same
+    # settings-lookup lane as `start`, so `effort_tier_source` still describes
+    # the effective value's lane). A session whose effort never changed has
+    # `effort_tier_last IS NULL`, so COALESCE degrades to plain `effort_tier`
+    # and existing single-tier keys are unaffected byte-for-byte.
+    _EFFORT_EXPR = "COALESCE(effort_tier_last, effort_tier)"
     _EFFORT_AGGREGATES = f"""
-                COUNT(DISTINCT effort_tier) AS effort_tier_distinct_count,
-                MIN(effort_tier) AS effort_tier_any,
+                COUNT(DISTINCT {_EFFORT_EXPR}) AS effort_tier_distinct_count,
+                MIN({_EFFORT_EXPR}) AS effort_tier_any,
                 COUNT(DISTINCT effort_tier_source) AS effort_source_distinct_count,
                 MIN(effort_tier_source) AS effort_source_any,
                 SUM(CASE WHEN effort_tier_source IN ({_AUTHORITATIVE_LIST})
