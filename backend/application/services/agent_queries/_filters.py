@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from typing import Any, Iterable
+
+import aiosqlite
 
 from backend.application.context import ProjectScope, RequestContext
 from backend.application.ports import CorePorts
@@ -91,6 +93,41 @@ def collect_source_refs(*groups: object) -> list[str]:
     """Collect stable source references used to assemble a response."""
 
     return normalize_entity_ids(*groups)
+
+
+# ── ccdash-unattributed-0910 ────────────────────────────────────────────────
+# THE single exclusion predicate for cross-project aggregates/leaderboards/the
+# effort_tier package (routing_rollup.py): a project row with
+# ``bucket_role IS NOT NULL`` (the unattributed-bucket fold's frozen row, or a
+# drained former catch-all kept for audit). Every consumer that builds a
+# multi-project rollup calls this one function rather than re-deriving the
+# excluded id set ad hoc. Session-level reads (a specific project_id's own
+# sessions) must NOT call this -- the bucket's sessions stay directly
+# queryable by design (see scripts/fold_unattributed_bucket.py).
+_BUCKET_ROLE_SQLITE_SQL = "SELECT id FROM projects WHERE bucket_role IS NOT NULL"
+_BUCKET_ROLE_PG_SQL = "SELECT id FROM projects WHERE bucket_role IS NOT NULL"
+
+
+async def fetch_bucket_project_ids(db: Any) -> set[str]:
+    """Return ids of every project flagged ``bucket_role IS NOT NULL``.
+
+    Dual-path for SQLite (aiosqlite) and PostgreSQL (asyncpg), mirroring the
+    ``isinstance(db, aiosqlite.Connection)`` convention established in
+    ``system_metrics.py``. An empty result (the common case pre-fold) means
+    "exclude nothing" -- callers must not treat it as an error.
+    """
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(_BUCKET_ROLE_SQLITE_SQL) as cur:
+            rows = await cur.fetchall()
+            return {row[0] for row in rows}
+    rows = await db.fetch(_BUCKET_ROLE_PG_SQL)
+    return {row["id"] for row in rows}
+
+
+def exclude_bucket_projects(projects: Iterable[Project], excluded_ids: set[str]) -> list[Project]:
+    """Drop any project whose id is in *excluded_ids* (see ``fetch_bucket_project_ids``)."""
+
+    return [p for p in projects if p.id not in excluded_ids]
 
 
 def derive_data_freshness(*values: object) -> datetime:
