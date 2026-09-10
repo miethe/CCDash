@@ -620,6 +620,14 @@ export interface AgentSession {
   // (derived). null == provenance unknown (row predates the column, or no tier).
   // Treat an unrecognised token as unknown rather than failing — vocabulary may grow.
   effortTierSource?: string | null;
+  // G1 "first+last pair": freshest effort tier observed at any
+  // UserPromptSubmit hook fired after SessionStart, written by a separate
+  // hook invocation (never at SessionStart itself). null == never observed to
+  // differ from effortTier after start (or row predates schemaVersion 4) — a
+  // contract state, not a defect. Render "start→last" only when both are
+  // present and differ; use effortTierLast ?? effortTier as the effective
+  // per-session value otherwise.
+  effortTierLast?: string | null;
   modelVariant?: string | null; // launch-time model id (e.g. "claude-opus-4-8[1m]")
   // ica-key-and-spend-capture (v51). Two dimensions the launch sidecar could
   // not carry before. All null == "Not captured" (contract state, never
