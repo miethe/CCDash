@@ -160,14 +160,12 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
         raw_task_status = str(task_raw.get("status", "pending"))
         status = _map_status(raw_task_status)
 
-        # Owner: first assigned_to entry
-        assigned = task_raw.get("assigned_to", [])
-        if isinstance(assigned, str):
-            assigned = [assigned]
-        owner = assigned[0] if assigned else ""
+        # Assignees: full multi-assignee list; owner is the first entry (back-compat)
+        assignees = _flatten_string_list(task_raw.get("assigned_to", []))
+        owner = assignees[0] if assignees else ""
 
         # Model
-        model = _expand_model(task_raw.get("model", ""))
+        model = _expand_model(task_raw.get("assigned_model", ""))
 
         # Priority
         priority = task_raw.get("priority", "medium")
@@ -183,10 +181,8 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
         if effort_match:
             cost = float(effort_match.group(1)) * 0.50  # rough cost: $0.50/unit
 
-        # Dependencies
-        deps = task_raw.get("dependencies", [])
-        if not isinstance(deps, list):
-            deps = []
+        # Dependencies: persisted in full as a structured field, never truncated into tags
+        deps = _flatten_string_list(task_raw.get("dependencies", []))
 
         # Session and commit linking
         session_id = str(task_raw.get("session_id", task_raw.get("sessionId", ""))) if task_raw.get("session_id") or task_raw.get("sessionId") else ""
@@ -214,12 +210,14 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
             priority=priority,
             projectType=str(prd),
             projectLevel=f"Phase {phase}" if phase else "",
-            tags=base_tags + [str(d) for d in deps[:3]] + extra_tags,
+            tags=base_tags + extra_tags,
             updatedAt=str(updated) if updated else "",
             relatedFiles=files_modified[:10],
             sourceFile=source_file,
             sessionId=session_id,
             commitHash=commit_hash,
+            dependencies=deps,
+            assignees=assignees,
         ))
 
     return tasks
