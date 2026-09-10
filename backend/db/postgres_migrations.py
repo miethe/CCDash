@@ -86,7 +86,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 58
+SCHEMA_VERSION = 59
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -317,6 +317,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- The row's project_id already points at the PARENT repo — this preserves
     -- the worktree identity without a per-worktree project row.
     worktree_name      TEXT,
+    -- ccdash-unattributed-0910 (v58): mirror of the SQLite column. Reversibility
+    -- field only -- see scripts/fold_unattributed_bucket.py.
+    prior_project_id  TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -1314,6 +1317,12 @@ CREATE TABLE IF NOT EXISTS projects (
     -- worktree-child-projects M1 (v57): nullable child relationship fields.
     parent_project_id    TEXT,
     worktree_label       TEXT,
+    -- ccdash-unattributed-0910 (v58): mirror of the SQLite column. Closed
+    -- vocabulary 'unattributed_bucket' / 'retired_catchall'; NULL for every
+    -- ordinary project. THE exclusion predicate for per-project metrics/
+    -- leaderboards/the effort_tier package -- see
+    -- backend/application/services/agent_queries/_filters.py:fetch_bucket_project_ids.
+    bucket_role           TEXT,
     created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -4564,14 +4573,23 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         )
 
     if current_version < 58:
+        # Mirror SQLite v58.
+        await _ensure_column(db, "projects", "bucket_role", "TEXT")
+        await _ensure_column(db, "sessions", "prior_project_id", "TEXT")
+        logger.info(
+            "v58 migrations complete: projects.bucket_role + "
+            "sessions.prior_project_id added (unattributed-bucket fold)."
+        )
+
+    if current_version < 59:
         # G1 "first+last pair" (effort-tier-mid-session-capture). Mirror of the
-        # SQLite v58 block. NULL == never observed to differ from effort_tier
+        # SQLite v59 block. NULL == never observed to differ from effort_tier
         # after SessionStart (or the row predates this column) -- never
         # backfilled: the mid-session history that would populate it, if any,
         # is unrecoverable after the fact.
         await _ensure_column(db, "sessions", "effort_tier_last", "TEXT")
         logger.info(
-            "v58 migrations complete: sessions.effort_tier_last added "
+            "v59 migrations complete: sessions.effort_tier_last added "
             "(effort-tier-mid-session-capture, G1)."
         )
 

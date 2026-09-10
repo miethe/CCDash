@@ -821,6 +821,18 @@ def _iso(value: datetime) -> str:
     return value.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+# ccdash-unattributed-0910: THE exclusion predicate for the effort_tier
+# package -- identical text works unmodified in both SQLite and PostgreSQL
+# (a static correlated-free subquery, no bind params), so it is inlined
+# directly into the WHERE clause of both dialect branches below rather than
+# threaded through as a bound parameter. Same column/condition as
+# ``_filters.fetch_bucket_project_ids`` -- see that module's docstring for
+# why session-level reads must never apply this.
+_BUCKET_EXCLUSION_SQL = (
+    "s.project_id NOT IN (SELECT id FROM projects WHERE bucket_role IS NOT NULL)"
+)
+
+
 async def _fetch_raw_aggregate_rows(
     db: Any,
     *,
@@ -1006,6 +1018,7 @@ async def _fetch_raw_aggregate_rows(
             LEFT JOIN tool_usage_per_session tu
                 ON tu.session_id = s.id AND tu.project_id = s.project_id{role_join_sql}
             WHERE s.updated_at >= ? AND s.updated_at <= ?
+              AND {_BUCKET_EXCLUSION_SQL}
               {project_filter_sql}
             GROUP BY s.project_id, s.skill_name, s.model{role_group_by_sql}
         """  # noqa: S608
@@ -1056,6 +1069,7 @@ async def _fetch_raw_aggregate_rows(
                 ON tu.session_id = s.id AND tu.project_id = s.project_id{role_join_sql}
             WHERE s.updated_at >= {window_start_placeholder}
               AND s.updated_at <= {window_end_placeholder}
+              AND {_BUCKET_EXCLUSION_SQL}
               {project_filter_sql}
             GROUP BY s.project_id, s.skill_name, s.model{role_group_by_sql}
         """  # noqa: S608

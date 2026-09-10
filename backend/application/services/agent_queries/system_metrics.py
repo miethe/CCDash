@@ -45,6 +45,7 @@ from backend.models import (
 )
 from backend.observability import otel
 
+from ._filters import exclude_bucket_projects, fetch_bucket_project_ids
 from .cache import memoized_query
 
 logger = logging.getLogger(__name__)
@@ -336,9 +337,15 @@ class SystemMetricsQueryService:
             "system_metrics.get_system_active_count",
             {"window_seconds": config.CCDASH_LIVE_AGENTS_WINDOW_SECONDS},
         ) as span:
-            projects = ports.workspace_registry.list_projects()
             db = ports.storage.db
             sessions_repo = ports.storage.sessions()
+            # ccdash-unattributed-0910: this is a cross-project aggregate --
+            # exclude the unattributed bucket (and any retired catch-all row)
+            # per _filters.fetch_bucket_project_ids's single predicate.
+            projects = exclude_bucket_projects(
+                ports.workspace_registry.list_projects(),
+                await fetch_bucket_project_ids(db),
+            )
 
             semaphore = asyncio.Semaphore(config.CCDASH_SYSTEM_METRICS_CONCURRENCY)
             window_seconds = config.CCDASH_LIVE_AGENTS_WINDOW_SECONDS
@@ -432,12 +439,18 @@ class SystemMetricsQueryService:
             "system_metrics.get_system_token_rollup",
             {"period": period},
         ):
-            projects = ports.workspace_registry.list_projects()
+            db = ports.storage.db
+            # ccdash-unattributed-0910: cross-project rollup -- exclude the
+            # bucket per _filters.fetch_bucket_project_ids's single predicate,
+            # THEN apply the caller's own project_ids allow-list (if any).
+            projects = exclude_bucket_projects(
+                ports.workspace_registry.list_projects(),
+                await fetch_bucket_project_ids(db),
+            )
             if project_ids is not None:
                 allowed = set(project_ids)
                 projects = [p for p in projects if p.id in allowed]
 
-            db = ports.storage.db
             semaphore = asyncio.Semaphore(config.CCDASH_SYSTEM_METRICS_CONCURRENCY)
 
             # Per-project token stats.
