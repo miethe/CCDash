@@ -432,5 +432,32 @@ Body
                         self.assertIn(expected_field, doc.metadata.docTypeFields)
 
 
+    def test_body_over_5000_chars_survives_ingestion(self) -> None:
+        """AC: the 5000-char body truncation is lifted so long plans' AC sections survive."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            path = docs_dir / "long-plan.md"
+            long_body = "## Acceptance Criteria\n" + ("x" * 6000) + "\nEND-OF-BODY-MARKER"
+            path.write_text(
+                f"""---
+title: Long Plan
+status: in-progress
+---
+{long_body}
+""",
+                encoding="utf-8",
+            )
+
+            doc = parse_document_file(path, docs_dir, project_root=root)
+            self.assertIsNotNone(doc)
+            assert doc is not None
+            self.assertIsNotNone(doc.content)
+            assert doc.content is not None
+            self.assertIn("END-OF-BODY-MARKER", doc.content)
+            self.assertGreater(len(doc.content), 5000)
+
+
 if __name__ == "__main__":
     unittest.main()

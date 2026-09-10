@@ -1452,6 +1452,8 @@ class ProjectTask(BaseModel):
     commitHash: str = ""       # linked git commit hash (from frontmatter)
     featureId: Optional[str] = None
     phaseId: Optional[str] = None
+    dependencies: list[str] = Field(default_factory=list)  # full task-id dependency list (untruncated)
+    assignees: list[str] = Field(default_factory=list)     # full assigned_to list; `owner` is assignees[0]
 
 
 # ── Analytics models ───────────────────────────────────────────────

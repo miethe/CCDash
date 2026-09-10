@@ -955,7 +955,7 @@ def parse_document_file(
         metadata=metadata,
         dates=dates,
         timeline=timeline,
-        content=body[:5000] if body else None,
+        content=body if body else None,
     )
 
 
