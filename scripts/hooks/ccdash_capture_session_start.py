@@ -12,15 +12,16 @@ Fail-open contract
 * Any error → no sidecar written (session simply carries null capture fields).
 * No blocking stdout output is ever emitted.
 
-Schema (schemaVersion=3)
+Schema (schemaVersion=4)
 ------------------------
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "sessionId": "<uuid>",
   "launcher": "<str|null>",
   "profile": "<str|null>",
   "effortTier": "<str|null>",
   "effortTierSource": "<'launch_env'|'claude_settings'|null>",
+  "effortTierLast": "<str|null>",  # G1: freshest value seen after SessionStart
   "modelVariant": "<str|null>",
   "icaKey": "<str|null>",          # ICA key NAME (CC1..CC6), never secret bytes
   "icaSpendStart": "<str|null>",   # raw x-litellm-key-spend at session start
@@ -30,6 +31,15 @@ Schema (schemaVersion=3)
 
 All non-schemaVersion/sessionId fields are nullable.
 Unknown / unset env vars → null, NEVER defaulted.
+
+``effortTierLast`` (v4, G1 "first+last pair") is written by a separate
+``UserPromptSubmit`` hook invocation of this same script (see
+``update_effort_tier_last()``) rather than by the SessionStart write path.
+``effortTier`` above stays the SessionStart-captured value (the "start");
+``effortTierLast`` is the freshest value observed at any later prompt.  It
+stays ``null`` for a session whose effort was never observed to differ from
+``effortTier`` after start — see ``update_effort_tier_last`` for the
+no-write-amplification rule that produces that null.
 
 ``icaKey`` / ``icaSpend*`` (v51) carry the two dimensions this sidecar could not
 before: WHICH ICA key ran the session and how many dollars it cost. ``icaKey`` is
@@ -66,9 +76,10 @@ Operator installation (do NOT apply these automatically — T11-008 documents it
 #    # CCDASH_LAUNCH_EFFORT — only set when the effort tier is known (e.g. Ultracode)
 #
 # 2. Register hook in ~/.claude/settings.json AND ~/.claude/ica-settings.json
-#    for BOTH SessionStart and SessionEnd (the same script handles both; the end
-#    event supplies the closing spend reading). Add in both files, or a shared
-#    user-global block both inherit:
+#    for SessionStart, SessionEnd, AND UserPromptSubmit (the same script
+#    dispatches on hook_event_name; UserPromptSubmit only ever touches
+#    effortTierLast — see update_effort_tier_last()). Add in both files, or a
+#    shared user-global block both inherit:
 #
 #    {
 #      "hooks": {
@@ -84,6 +95,17 @@ Operator installation (do NOT apply these automatically — T11-008 documents it
 #          }
 #        ],
 #        "SessionEnd": [
+#          {
+#            "matcher": "",
+#            "hooks": [
+#              {
+#                "type": "command",
+#                "command": "python3 /path/to/CCDash/scripts/hooks/ccdash_capture_session_start.py"
+#              }
+#            ]
+#          }
+#        ],
+#        "UserPromptSubmit": [
 #          {
 #            "matcher": "",
 #            "hooks": [
@@ -113,7 +135,7 @@ logger = logging.getLogger("ccdash.hooks.capture_session_start")
 # Public API (importable — used directly by tests)
 # ---------------------------------------------------------------------------
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _FALLBACK_CAPTURE_DIR = "data/capture"
 
 # Gap 4 provenance tokens for effortTier.  MUST stay identical to
@@ -277,6 +299,129 @@ def _settings_effort_level(env: dict, project_dir: Optional[Path]) -> Optional[s
     return None
 
 
+def _resolve_effort_tier(
+    env: dict, project_dir: Optional[Path]
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve ``(effort_tier, effort_tier_source)`` with the shared precedence.
+
+    1. ``CCDASH_LAUNCH_EFFORT`` env — explicit launcher intent, highest priority.
+    2. ``effortLevel`` from settings files (see ``_settings_effort_level``) — the
+       only lane that can reflect a mid-session ``/effort`` change, since the env
+       var is fixed for the process lifetime.
+
+    Isolated in its own try/except so a bad settings file only yields ``(None,
+    None)`` — it must never raise into a caller that has other fields to write.
+    Shared by both the SessionStart writer (``write_capture_sidecar``) and the
+    UserPromptSubmit writer (``update_effort_tier_last``) so the two lanes can
+    never disagree on precedence.
+    """
+    effort_tier = _nullable_str(env, "CCDASH_LAUNCH_EFFORT")
+    if effort_tier is not None:
+        return effort_tier, _EFFORT_SOURCE_LAUNCH_ENV
+    try:
+        effort_tier = _settings_effort_level(env, project_dir)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "ccdash_capture: settings effortLevel lookup failed (ignored): %s", exc
+        )
+        return None, None
+    if effort_tier is not None:
+        return effort_tier, _EFFORT_SOURCE_CLAUDE_SETTINGS
+    return None, None
+
+
+def _extract_session_id(payload: dict) -> Optional[str]:
+    """Shared ``session_id``/``sessionId`` extraction, stripped, empty → None."""
+    raw_sid = payload.get("session_id") or payload.get("sessionId")
+    if not raw_sid:
+        return None
+    return str(raw_sid).strip() or None
+
+
+def _resolve_project_dir(payload: dict) -> Path:
+    """Shared ``cwd`` resolution for the settings-lookup precedence chain."""
+    raw_cwd = payload.get("cwd")
+    if raw_cwd and str(raw_cwd).strip():
+        return Path(str(raw_cwd).strip()).expanduser()
+    return Path.cwd()
+
+
+def update_effort_tier_last(
+    payload: dict[str, Any],
+    env: dict[str, str],
+    *,
+    fallback_base: Optional[Path] = None,
+) -> Optional[Path]:
+    """Overwrite ``effortTierLast`` on a ``UserPromptSubmit`` event (G1).
+
+    Design decision (Nick, 2026-09-10, "first+last pair" — chosen over a single
+    overwritten value or a full timeline): ``effortTier`` stays the
+    SessionStart-captured value (the "start"). This function writes
+    ``effortTierLast`` — the freshest value observed at any later prompt —
+    without touching any other sidecar field (``icaSpend*``/``capturedAt``/etc.
+    are left exactly as SessionStart wrote them; this is not a start/end event).
+
+    No-write-amplification contract: this performs a file write ONLY when the
+    freshly resolved effort tier differs from the freshest value already on
+    record (``effortTierLast`` if previously set, else the original
+    ``effortTier``). A session whose effort never changes therefore resolves the
+    same value on every prompt and never writes at all — the settings-file read
+    already needed to resolve the value is the only per-turn cost, matching the
+    "no per-turn write amplification" constraint. This is also why
+    ``effortTierLast`` stays permanently ``null`` for such a session ("never
+    observed to differ from start") rather than being redundantly set equal to
+    the start value — the G1 positive-control fixture (unchanging effort) relies
+    on exactly this to render ``last`` as absent.
+
+    Fail-open: any error is swallowed and ``None`` is returned; never raises,
+    never writes partial state (the existing sidecar is read once, mutated in
+    memory, and written back atomically as a whole document).
+    """
+    try:
+        session_id = _extract_session_id(payload)
+        if not session_id:
+            logger.debug("ccdash_capture: no session_id in payload — skipping")
+            return None
+
+        transcript_path: Optional[str] = (
+            payload.get("transcript_path") or payload.get("transcriptPath")
+        )
+        sidecar_path = _resolve_sidecar_path(
+            session_id, transcript_path, fallback_base=fallback_base
+        )
+        if sidecar_path is None:
+            return None
+
+        existing = _load_existing_sidecar(sidecar_path)
+        if not existing:
+            # No SessionStart sidecar on disk yet — nothing to pair a "last"
+            # observation against. Never originate a sidecar from this event.
+            logger.debug(
+                "ccdash_capture: no existing sidecar for UserPromptSubmit — skipping: %s",
+                sidecar_path,
+            )
+            return None
+
+        project_dir = _resolve_project_dir(payload)
+        new_value, _ = _resolve_effort_tier(env, project_dir)
+        if new_value is None:
+            return None
+
+        freshest = existing.get("effortTierLast") or existing.get("effortTier")
+        if new_value == freshest:
+            return None  # idempotent no-op — the whole point of the freshest check
+
+        existing["effortTierLast"] = new_value
+        existing["schemaVersion"] = _SCHEMA_VERSION
+        sidecar_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        logger.debug("ccdash_capture: updated effortTierLast → %s", sidecar_path)
+        return sidecar_path
+
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ccdash_capture: error updating effortTierLast (ignored): %s", exc)
+        return None
+
+
 def _resolve_sidecar_path(
     session_id: str,
     transcript_path: Optional[str],
@@ -366,35 +511,26 @@ def write_capture_sidecar(
         except Exception:
             captured_at = None
 
+        # Loaded once, up front, so both effortTierLast (below) and the ICA
+        # merge (further down) read the same on-disk snapshot.
+        existing = _load_existing_sidecar(sidecar_path)
+
         # effortTier: explicit launcher env wins; otherwise fall back to the
-        # Claude Code settings.json `effortLevel` convention. Isolated in its
-        # own try/except so a bad settings file only nulls this one field —
-        # it must never take down launcher/profile/modelVariant.
+        # Claude Code settings.json `effortLevel` convention. Shared with the
+        # UserPromptSubmit lane via _resolve_effort_tier so the two can never
+        # disagree on precedence.
         #
         # effortTierSource (Gap 4) is set at each resolution point and stays
         # null whenever effortTier is null — provenance is never invented.
-        effort_tier_source: Optional[str] = None
-        effort_tier = _nullable_str(env, "CCDASH_LAUNCH_EFFORT")
-        if effort_tier is not None:
-            effort_tier_source = _EFFORT_SOURCE_LAUNCH_ENV
-        if effort_tier is None:
-            try:
-                raw_cwd = payload.get("cwd")
-                project_dir = (
-                    Path(str(raw_cwd).strip()).expanduser()
-                    if raw_cwd and str(raw_cwd).strip()
-                    else Path.cwd()
-                )
-                effort_tier = _settings_effort_level(env, project_dir)
-                if effort_tier is not None:
-                    effort_tier_source = _EFFORT_SOURCE_CLAUDE_SETTINGS
-            except Exception as exc:  # noqa: BLE001
-                logger.debug(
-                    "ccdash_capture: settings effortLevel lookup failed (ignored): %s",
-                    exc,
-                )
-                effort_tier = None
-                effort_tier_source = None
+        effort_tier, effort_tier_source = _resolve_effort_tier(
+            env, _resolve_project_dir(payload)
+        )
+        # effortTierLast (G1, v4): SessionStart never populates this — it is
+        # exclusively the UserPromptSubmit lane's field (update_effort_tier_last).
+        # Preserve whatever a prior UserPromptSubmit already wrote (a SessionEnd
+        # write for the same session must not wipe it); a genuinely first write
+        # for this session has no existing sidecar, so this is None.
+        effort_tier_last = existing.get("effortTierLast")
 
         # ── ICA key identity + spend (v51) ──────────────────────────────
         # Key NAME from the launcher env (null == not an ICA session; never CC1).
@@ -403,7 +539,6 @@ def write_capture_sidecar(
         # into the end write. The gateway probe fires once per hook event and is
         # attributed to the correct phase; a non-ICA session skips it entirely
         # (both readings stay null -- a contract state, not a failure).
-        existing = _load_existing_sidecar(sidecar_path)
         is_end = _is_session_end(payload)
         probe = _probe_key_spend(env)
         prev_start = existing.get("icaSpendStart")
@@ -425,6 +560,10 @@ def write_capture_sidecar(
             "profile": _nullable_str(env, "CCDASH_LAUNCH_PROFILE"),
             "effortTier": effort_tier,
             "effortTierSource": effort_tier_source,
+            # G1 (v4): freshest value observed at any later UserPromptSubmit.
+            # Never resolved here — only carried forward from the existing
+            # sidecar (see the effort_tier_last assignment above).
+            "effortTierLast": effort_tier_last,
             "modelVariant": _nullable_str(env, "CCDASH_LAUNCH_MODEL"),
             # ICA key identity + raw spend readings (v51). Null == not captured.
             "icaKey": ica_key,
@@ -450,7 +589,12 @@ def write_capture_sidecar(
 # ---------------------------------------------------------------------------
 
 def _main() -> None:
-    """Read SessionStart JSON payload from stdin and write the capture sidecar.
+    """Read the hook JSON payload from stdin and dispatch on its event type.
+
+    ``UserPromptSubmit`` → ``update_effort_tier_last`` (G1, v4): the cheap,
+    write-amplification-free path that only ever touches ``effortTierLast``.
+    Every other event (``SessionStart``/``SessionEnd``/unset) → the existing
+    ``write_capture_sidecar`` full-sidecar writer, unchanged.
 
     Always exits 0 — fail-open contract.
     """
@@ -461,7 +605,12 @@ def _main() -> None:
             sys.exit(0)
 
         payload = json.loads(raw_input)
-        write_capture_sidecar(payload, dict(os.environ))
+        event = str(payload.get("hook_event_name") or payload.get("hookEventName") or "").strip()
+        env = dict(os.environ)
+        if event == "UserPromptSubmit":
+            update_effort_tier_last(payload, env)
+        else:
+            write_capture_sidecar(payload, env)
     except Exception as exc:  # noqa: BLE001
         # Log to stderr only (not stdout) so it does not pollute hook output
         logger.debug("ccdash_capture: unhandled error in __main__ (ignored): %s", exc)

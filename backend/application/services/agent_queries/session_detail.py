@@ -291,6 +291,10 @@ def _apply_launch_capture(session_payload: dict[str, Any]) -> None:
     session_payload["launcher"] = session_payload.get("launcher")
     session_payload["profile"] = session_payload.get("profile")
     session_payload["effortTier"] = session_payload.get("effort_tier")
+    # G1 "first+last pair": freshest effort tier observed at any
+    # UserPromptSubmit after SessionStart. None == never observed to differ
+    # from effortTier (or the row predates schemaVersion 4).
+    session_payload["effortTierLast"] = session_payload.get("effort_tier_last")
     session_payload["modelVariant"] = session_payload.get("model_variant")
     # Worktree attribution (worktree-as-first-class). NULL == main-repo session.
     # The row's project_id already targets the parent repo; this label carries

@@ -36,6 +36,7 @@ _mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
 spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 write_capture_sidecar = _mod.write_capture_sidecar
+update_effort_tier_last = _mod.update_effort_tier_last
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +122,9 @@ class TestWriteCaptureSidecar:
         data = json.loads(result.read_text())
 
         # Required structure
-        # v51: writer emits schemaVersion 3 (ica-key-and-spend-capture). The
-        # reader still accepts v1/v2 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
-        assert data["schemaVersion"] == 3
+        # G1 (v4): writer now emits schemaVersion 4 ("first+last pair"). The
+        # reader still accepts v1/v2/v3 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
+        assert data["schemaVersion"] == 4
         assert data["sessionId"] == _ICA_SESSION_ID
 
         # ica-delegate profile MUST be present
@@ -131,6 +132,9 @@ class TestWriteCaptureSidecar:
         assert data["launcher"] == "ica-claude.sh"
         assert data["effortTier"] == "high"
         assert data["modelVariant"] == "claude-opus-4-8[1m]"
+        # SessionStart never populates effortTierLast — only a later
+        # UserPromptSubmit (update_effort_tier_last) does.
+        assert data["effortTierLast"] is None
 
         # capturedAt must be an ISO-8601 UTC string
         captured_at = data["capturedAt"]
@@ -138,11 +142,12 @@ class TestWriteCaptureSidecar:
         assert captured_at.endswith("Z")
 
         # No extra top-level keys beyond the current schema fields. v51 added
-        # effortTierSource (Gap 4) and ica-key-and-spend-capture fields; older
-        # sidecars on disk keep parsing via _SUPPORTED_SCHEMA_VERSIONS.
+        # effortTierSource (Gap 4) and ica-key-and-spend-capture fields; G1 (v4)
+        # added effortTierLast; older sidecars on disk keep parsing via
+        # _SUPPORTED_SCHEMA_VERSIONS.
         schema_keys = {
             "schemaVersion", "sessionId", "launcher", "profile",
-            "effortTier", "effortTierSource", "modelVariant",
+            "effortTier", "effortTierSource", "effortTierLast", "modelVariant",
             "icaKey", "icaSpendStart", "icaSpendEnd", "capturedAt",
         }
         assert set(data.keys()) == schema_keys
@@ -160,13 +165,14 @@ class TestWriteCaptureSidecar:
         assert result is not None
         data = json.loads(result.read_text())
 
-        # v51: writer emits schemaVersion 3 (ica-key-and-spend-capture). The
-        # reader still accepts v1/v2 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
-        assert data["schemaVersion"] == 3
+        # G1 (v4): writer now emits schemaVersion 4. The reader still accepts
+        # v1/v2/v3 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
+        assert data["schemaVersion"] == 4
         assert data["sessionId"] == _ICA_SESSION_ID
         assert data["launcher"] is None
         assert data["profile"] is None
         assert data["effortTier"] is None
+        assert data["effortTierLast"] is None
         assert data["modelVariant"] is None
 
     def test_partial_env_only_set_vars_populated(self, tmp_path: Path) -> None:
@@ -552,18 +558,203 @@ class TestSettingsEffortLevelFallback:
             dict(os.environ),
         )
         data = json.loads(result.read_text())
-        # v51: writer emits effortTierSource + icaKey / icaSpendStart / icaSpendEnd
-        # in addition to the earlier keys. Order is deterministic (dict-insertion
+        # v51 added effortTierSource + icaKey / icaSpendStart / icaSpendEnd; G1
+        # (v4) added effortTierLast. Order is deterministic (dict-insertion
         # order in the writer). If a future version adds another field, extend
         # this list in the same insertion position the writer uses.
         assert list(data.keys()) == [
             "schemaVersion", "sessionId", "launcher", "profile",
-            "effortTier", "effortTierSource", "modelVariant",
+            "effortTier", "effortTierSource", "effortTierLast", "modelVariant",
             "icaKey", "icaSpendStart", "icaSpendEnd", "capturedAt",
         ]
-        # v51: writer emits schemaVersion 3 (ica-key-and-spend-capture). The
-        # reader still accepts v1/v2 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
-        assert data["schemaVersion"] == 3
+        # G1 (v4): writer now emits schemaVersion 4. The reader still accepts
+        # v1/v2/v3 -- see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS.
+        assert data["schemaVersion"] == 4
+
+
+class TestUpdateEffortTierLast:
+    """G1 'first+last pair': mid-session effort-change capture via UserPromptSubmit.
+
+    Node decision (Nick, 2026-09-10): keep the SessionStart value as
+    ``effortTier`` (start); overwrite ``effortTierLast`` on each UserPromptSubmit
+    with the freshest observed value, writing the sidecar ONLY when that value
+    differs from the freshest one already on record (no per-turn write
+    amplification; also why an unchanging session's ``effortTierLast`` stays
+    permanently null rather than redundantly equal to ``effortTier``).
+    """
+
+    def _write_json(self, path: Path, data: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def _prompt_payload(self, session_id: str, transcript_path: str) -> dict:
+        return {
+            "session_id": session_id,
+            "transcript_path": transcript_path,
+            "hook_event_name": "UserPromptSubmit",
+        }
+
+    def test_start_only_no_prompt_submit_last_stays_null(self, tmp_path: Path) -> None:
+        """SessionStart only, no UserPromptSubmit ever fires -> effortTierLast null."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CCDASH_LAUNCH_EFFORT": "medium"},
+        )
+        data = json.loads((tmp_path / f"{_ICA_SESSION_ID}.capture.json").read_text())
+        assert data["effortTier"] == "medium"
+        assert data["effortTierLast"] is None
+
+    def test_start_then_change_writes_last(self, tmp_path: Path) -> None:
+        """Start(medium) then a prompt observing a DIFFERENT settings value -> last updates."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+
+        write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CCDASH_LAUNCH_EFFORT": "medium"},
+        )
+
+        # /effort changed mid-session -> settings.json now reads "xhigh". The
+        # env passed to update_effort_tier_last carries NO CCDASH_LAUNCH_EFFORT
+        # so resolution falls through to the settings lane.
+        self._write_json(config_dir / "settings.json", {"effortLevel": "xhigh"})
+        result = update_effort_tier_last(
+            self._prompt_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CLAUDE_CONFIG_DIR": str(config_dir)},
+        )
+        assert result is not None
+
+        data = json.loads((tmp_path / f"{_ICA_SESSION_ID}.capture.json").read_text())
+        assert data["effortTier"] == "medium"  # start untouched
+        assert data["effortTierLast"] == "xhigh"
+        assert data["schemaVersion"] == 4
+
+    def test_two_changes_last_wins(self, tmp_path: Path) -> None:
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+
+        write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CCDASH_LAUNCH_EFFORT": "medium"},
+        )
+
+        self._write_json(config_dir / "settings.json", {"effortLevel": "high"})
+        update_effort_tier_last(
+            self._prompt_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CLAUDE_CONFIG_DIR": str(config_dir)},
+        )
+        self._write_json(config_dir / "settings.json", {"effortLevel": "xhigh"})
+        update_effort_tier_last(
+            self._prompt_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CLAUDE_CONFIG_DIR": str(config_dir)},
+        )
+
+        data = json.loads((tmp_path / f"{_ICA_SESSION_ID}.capture.json").read_text())
+        assert data["effortTierLast"] == "xhigh"
+
+    def test_unchanged_session_no_write_no_amplification(self, tmp_path: Path) -> None:
+        """Positive control (never-changes fixture): a prompt observing the SAME
+        value as start performs NO file write at all (mtime unchanged) and
+        effortTierLast stays null — the exact rendering the read side needs to
+        show "no last" for an unchanging session."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+
+        write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CCDASH_LAUNCH_EFFORT": "medium"},
+        )
+        sidecar = tmp_path / f"{_ICA_SESSION_ID}.capture.json"
+        mtime_before = sidecar.stat().st_mtime_ns
+
+        self._write_json(config_dir / "settings.json", {"effortLevel": "medium"})
+        result = update_effort_tier_last(
+            self._prompt_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CLAUDE_CONFIG_DIR": str(config_dir)},
+        )
+        assert result is None  # idempotent no-op: same as the freshest value on record
+
+        data = json.loads(sidecar.read_text())
+        assert data["effortTierLast"] is None
+        assert sidecar.stat().st_mtime_ns == mtime_before
+
+    def test_repeat_call_with_same_new_value_is_idempotent_noop(self, tmp_path: Path) -> None:
+        """After a real change, a SECOND prompt observing the SAME new value
+        performs no further write (idempotency once ``last`` is non-null)."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+
+        write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CCDASH_LAUNCH_EFFORT": "medium"},
+        )
+        self._write_json(config_dir / "settings.json", {"effortLevel": "high"})
+        first = update_effort_tier_last(
+            self._prompt_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CLAUDE_CONFIG_DIR": str(config_dir)},
+        )
+        assert first is not None
+
+        sidecar = tmp_path / f"{_ICA_SESSION_ID}.capture.json"
+        mtime_after_first = sidecar.stat().st_mtime_ns
+
+        second = update_effort_tier_last(
+            self._prompt_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CLAUDE_CONFIG_DIR": str(config_dir)},
+        )
+        assert second is None
+        assert sidecar.stat().st_mtime_ns == mtime_after_first
+
+    def test_no_existing_sidecar_is_a_noop(self, tmp_path: Path) -> None:
+        """UserPromptSubmit before any SessionStart sidecar exists -> no-op;
+        never originates a sidecar from this event."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        result = update_effort_tier_last(
+            self._prompt_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CCDASH_LAUNCH_EFFORT": "high"},
+        )
+        assert result is None
+        assert not (tmp_path / f"{_ICA_SESSION_ID}.capture.json").exists()
+
+    def test_does_not_touch_other_sidecar_fields(self, tmp_path: Path) -> None:
+        """Only effortTierLast (+ schemaVersion) changes; icaKey/profile/etc.
+        untouched — this is not a start/end event."""
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+
+        write_capture_sidecar(_make_payload(_ICA_SESSION_ID, str(jsonl)), _FULL_ENV)
+        sidecar = tmp_path / f"{_ICA_SESSION_ID}.capture.json"
+        before = json.loads(sidecar.read_text())
+
+        self._write_json(config_dir / "settings.json", {"effortLevel": "xhigh"})
+        update_effort_tier_last(
+            self._prompt_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CLAUDE_CONFIG_DIR": str(config_dir)},
+        )
+
+        after = json.loads(sidecar.read_text())
+        for key in (
+            "sessionId", "launcher", "profile", "modelVariant", "capturedAt",
+            "icaKey", "icaSpendStart", "icaSpendEnd",
+        ):
+            assert after[key] == before[key], key
+        assert after["effortTier"] == before["effortTier"]  # start untouched
+        assert after["effortTierLast"] == "xhigh"
+
+    def test_missing_session_id_returns_none(self, tmp_path: Path) -> None:
+        result = update_effort_tier_last(
+            {"transcript_path": str(tmp_path / "x.jsonl"), "hook_event_name": "UserPromptSubmit"},
+            {"CCDASH_LAUNCH_EFFORT": "high"},
+        )
+        assert result is None
 
 
 class TestMainEntrypoint:
@@ -622,3 +813,41 @@ class TestMainEntrypoint:
         assert data["launcher"] == "ica-claude.sh"
         assert data["effortTier"] is None
         assert data["modelVariant"] is None
+
+    def test_main_dispatches_userpromptsubmit_to_update_effort_tier_last(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_main() routes hook_event_name=UserPromptSubmit to the cheap,
+        write-amplification-free path rather than the full sidecar writer."""
+        import io
+
+        jsonl = tmp_path / f"{_ICA_SESSION_ID}.jsonl"
+        jsonl.touch()
+        config_dir = tmp_path / "user_config"
+        (config_dir).mkdir(parents=True, exist_ok=True)
+        (config_dir / "settings.json").write_text(
+            json.dumps({"effortLevel": "xhigh"}), encoding="utf-8"
+        )
+
+        write_capture_sidecar(
+            _make_payload(_ICA_SESSION_ID, str(jsonl)),
+            {"CCDASH_LAUNCH_EFFORT": "medium"},
+        )
+
+        payload = {
+            "session_id": _ICA_SESSION_ID,
+            "transcript_path": str(jsonl),
+            "hook_event_name": "UserPromptSubmit",
+        }
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+        monkeypatch.delenv("CCDASH_LAUNCH_EFFORT", raising=False)
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _mod._main()
+        assert exc_info.value.code == 0
+
+        sidecar = tmp_path / f"{_ICA_SESSION_ID}.capture.json"
+        data = json.loads(sidecar.read_text())
+        assert data["effortTier"] == "medium"
+        assert data["effortTierLast"] == "xhigh"

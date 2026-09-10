@@ -56,8 +56,10 @@ describe('T11-005 — all-null session renders "Not captured" fallback (never un
     expect(SESSION_INSPECTOR_SOURCE).toContain("session.profile || 'Not captured'");
   });
 
-  it('session.effortTier is coalesced to "Not captured" when null/absent', () => {
-    expect(SESSION_INSPECTOR_SOURCE).toContain("session.effortTier || 'Not captured'");
+  it('session.effortTier is coalesced to "Not captured" when null/absent (via formatEffortTierDisplay, G1)', () => {
+    expect(SESSION_INSPECTOR_SOURCE).toContain(
+      "formatEffortTierDisplay(session.effortTier, session.effortTierLast) || 'Not captured'",
+    );
   });
 
   it('session.modelVariant is coalesced to "Not captured" when null/absent', () => {
@@ -136,5 +138,23 @@ describe('T11-005 — types.ts declares the four launch-capture fields on AgentS
 
   it('declares modelVariant?: string | null', () => {
     expect(TYPES_SOURCE).toContain('modelVariant?: string | null');
+  });
+});
+
+// ── 7. G1 "first+last pair" — effortTierLast surface ─────────────────────────
+describe('G1 — effortTierLast (mid-session effort-change capture)', () => {
+  it('types.ts declares effortTierLast?: string | null on AgentSession', () => {
+    expect(TYPES_SOURCE).toContain('effortTierLast?: string | null');
+  });
+
+  it('SessionInspector imports formatEffortTierDisplay from lib/sessionSemantics', () => {
+    expect(SESSION_INSPECTOR_SOURCE).toContain('formatEffortTierDisplay');
+    expect(SESSION_INSPECTOR_SOURCE).toMatch(/from ['"]\.\.\/lib\/sessionSemantics['"]/);
+  });
+
+  it('Effort Tier row renders via formatEffortTierDisplay(session.effortTier, session.effortTierLast)', () => {
+    expect(SESSION_INSPECTOR_SOURCE).toContain(
+      'formatEffortTierDisplay(session.effortTier, session.effortTierLast)',
+    );
   });
 });

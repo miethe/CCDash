@@ -911,6 +911,12 @@ async def list_sessions(
             # Gap 4: provenance token for effortTier. None == unknown provenance
             # (row predates the column) — FE renders an explicit fallback.
             effortTierSource=s.get("effort_tier_source"),
+            # G1 "first+last pair": freshest effort tier observed at any
+            # UserPromptSubmit after SessionStart. None == never observed to
+            # differ from effortTier (or row predates schemaVersion 4) — FE
+            # shows only effortTier when this is None/equal, "start→last" when
+            # it differs.
+            effortTierLast=s.get("effort_tier_last"),
             modelVariant=s.get("model_variant"),
             # ica-key-and-spend-capture (v51). None == not captured.
             icaKey=s.get("ica_key"),
@@ -1347,6 +1353,11 @@ async def get_session(
         # Gap 4: provenance token for effortTier. None == unknown provenance
         # (row predates the column) — FE renders an explicit fallback.
         effortTierSource=s.get("effort_tier_source"),
+        # G1 "first+last pair": freshest effort tier observed at any
+        # UserPromptSubmit after SessionStart. None == never observed to
+        # differ from effortTier (or row predates schemaVersion 4) — FE shows
+        # only effortTier when this is None/equal, "start→last" when it differs.
+        effortTierLast=s.get("effort_tier_last"),
         modelVariant=s.get("model_variant"),
         # ica-key-and-spend-capture (v51). None == not captured.
         icaKey=s.get("ica_key"),

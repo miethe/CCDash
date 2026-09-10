@@ -86,7 +86,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 58
+SCHEMA_VERSION = 59
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -267,6 +267,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- in backend/parsers/effort_provenance.py. NULL == provenance unknown (row
     -- written before this column, or effort_tier itself NULL). No backfill.
     effort_tier_source TEXT,
+    -- G1 "first+last pair" (v58, effort-tier-mid-session-capture). Nullable;
+    -- freshest effort tier observed at any UserPromptSubmit hook AFTER
+    -- SessionStart, written by a separate hook invocation from effort_tier
+    -- itself. NULL == never observed to differ from effort_tier after start
+    -- (or the row predates this column) -- a legitimate contract state, never
+    -- backfilled (the mid-session history that would populate it, if any, is
+    -- unrecoverable after the fact).
+    effort_tier_last   TEXT,
     -- ica-key-and-spend-capture (v51). All nullable TEXT. ica_key is the ICA
     -- key NAME (CC1..CC6), NEVER secret bytes; NULL == not an ICA-launched
     -- session (never defaulted to CC1). ica_spend_start/end are raw
@@ -4571,6 +4579,18 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         logger.info(
             "v58 migrations complete: projects.bucket_role + "
             "sessions.prior_project_id added (unattributed-bucket fold)."
+        )
+
+    if current_version < 59:
+        # G1 "first+last pair" (effort-tier-mid-session-capture). Mirror of the
+        # SQLite v59 block. NULL == never observed to differ from effort_tier
+        # after SessionStart (or the row predates this column) -- never
+        # backfilled: the mid-session history that would populate it, if any,
+        # is unrecoverable after the fact.
+        await _ensure_column(db, "sessions", "effort_tier_last", "TEXT")
+        logger.info(
+            "v59 migrations complete: sessions.effort_tier_last added "
+            "(effort-tier-mid-session-capture, G1)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────

@@ -144,10 +144,10 @@ class TestHookLiteralParity(unittest.TestCase):
             msg="hook claude_settings literal drifted from effort_provenance constant",
         )
 
-    def test_hook_declares_schema_version_3(self) -> None:
-        # v51 (ica-key-and-spend-capture) bumped the sidecar to v3. Older
+    def test_hook_declares_schema_version_4(self) -> None:
+        # G1 (effort-tier-mid-session-capture) bumped the sidecar to v4. Older
         # sidecars still parse (see capture_sidecar._SUPPORTED_SCHEMA_VERSIONS).
-        self.assertIn("_SCHEMA_VERSION = 3", self.hook_src)
+        self.assertIn("_SCHEMA_VERSION = 4", self.hook_src)
 
     def test_hook_does_not_import_backend(self) -> None:
         """Importing backend would break the hook at launch time (no venv)."""
@@ -208,9 +208,10 @@ class TestHookWritePath(unittest.TestCase):
             )
         self.assertEqual(doc["effortTier"], "xhigh")
         self.assertEqual(doc["effortTierSource"], EFFORT_SOURCE_LAUNCH_ENV)
-        # v51: sidecar bumped to 3 (ica-key-and-spend-capture). The prior 1/2
-        # remain accepted by the reader; the writer emits the current version.
-        self.assertEqual(doc["schemaVersion"], 3)
+        # G1: sidecar bumped to 4 (effort-tier-mid-session-capture). Prior
+        # versions remain accepted by the reader; the writer emits the
+        # current version.
+        self.assertEqual(doc["schemaVersion"], 4)
 
     def test_settings_fallback_stamps_claude_settings_source(self) -> None:
         with TemporaryDirectory() as td:

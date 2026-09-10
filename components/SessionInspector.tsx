@@ -28,7 +28,7 @@ import { Badge, ModelBadge, StableBadge } from './ui/badge';
 import { formatModelDisplayName } from '../lib/modelIdentity';
 import { getInlineContentViewerPayload, getTranscriptContentViewerPayload } from '../lib/sessionContentViewer';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
-import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../lib/sessionSemantics';
+import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, formatEffortTierDisplay, resolveDisplayCost } from '../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
 import { mergeSessionTranscriptAppend } from '../lib/sessionTranscriptLive';
 import { isSessionBlockInsightsEnabled, isUsageAttributionEnabled } from '../services/agenticIntelligence';
@@ -3603,7 +3603,12 @@ const SessionForensicsView = React.memo<{ session: AgentSession }>(({ session })
                             Render an explicit muted fallback; never "undefined", never crash. */}
                         <div className="flex justify-between gap-4"><span className="text-muted-foreground">Launcher</span><span className={`font-mono truncate max-w-[60%] ${session.launcher ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.launcher || 'Not captured'}</span></div>
                         <div className="flex justify-between gap-4"><span className="text-muted-foreground">Profile</span><span className={`font-mono truncate max-w-[60%] ${session.profile ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.profile || 'Not captured'}</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Effort Tier</span><span className={`font-mono truncate max-w-[60%] ${session.effortTier ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{session.effortTier || 'Not captured'}</span></div>
+                        {/* G1 "first+last pair": formatEffortTierDisplay renders "start→last"
+                            only when both are present and differ (session.effortTierLast is
+                            only ever set by a later UserPromptSubmit observing a value
+                            different from start — see update_effort_tier_last), otherwise the
+                            single effortTier value, otherwise null → 'Not captured' fallback. */}
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Effort Tier</span><span className={`font-mono truncate max-w-[60%] ${session.effortTier ? 'text-panel-foreground' : 'text-muted-foreground/60 italic'}`}>{formatEffortTierDisplay(session.effortTier, session.effortTierLast) || 'Not captured'}</span></div>
                         {/* Gap 4 provenance. Three distinct states, all explicit: a known
                             source token; 'Unknown' when a tier exists but predates this
                             column; 'Not captured' when there is no tier to explain. */}

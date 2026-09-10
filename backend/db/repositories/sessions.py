@@ -104,8 +104,9 @@ class SqliteSessionRepository:
                 source_ref, cwd, effort_tier_source,
                 worktree_name, skill_name_source,
                 session_name, session_name_source,
-                ica_key, ica_spend_start, ica_spend_end, ica_spend_delta, ica_spend_attribution
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ica_key, ica_spend_start, ica_spend_end, ica_spend_delta, ica_spend_attribution,
+                effort_tier_last
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -212,7 +213,15 @@ class SqliteSessionRepository:
                 -- target NULL rows -- not this upsert, which is the sole
                 -- provider_persisted writer in M1.
                 session_name=COALESCE(excluded.session_name, sessions.session_name),
-                session_name_source=COALESCE(excluded.session_name_source, sessions.session_name_source)
+                session_name_source=COALESCE(excluded.session_name_source, sessions.session_name_source),
+                -- G1 "first+last pair": same capture-once posture as effort_tier
+                -- itself. A re-ingest's incoming value is whatever the sidecar
+                -- currently holds (the freshest UserPromptSubmit observation, or
+                -- still null if none has diverged from the start value) --
+                -- excluded non-null always wins so a re-sync surfaces the latest
+                -- on-disk value; a transiently absent sidecar never wipes a
+                -- previously-captured one.
+                effort_tier_last=COALESCE(excluded.effort_tier_last, sessions.effort_tier_last)
             WHERE sessions.workspace_id = excluded.workspace_id
             """,
             (
@@ -326,6 +335,10 @@ class SqliteSessionRepository:
                 session_data.get("icaSpendEnd"),
                 session_data.get("icaSpendDelta"),
                 session_data.get("icaSpendAttribution"),
+                # G1 "first+last pair": freshest value observed at any
+                # UserPromptSubmit after SessionStart. None == never observed
+                # to differ from effortTier (or the sidecar predates v4).
+                session_data.get("effortTierLast"),
             ),
         )
         await self._commit()
