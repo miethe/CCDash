@@ -1,0 +1,16 @@
+{"arm": "local", "case": "fix-null-pointer-session-detail", "title": "Fixing Null Pointer Bug in Session Detail Service", "raw": "Fixing Null Pointer Bug in Session Detail Service", "latency_s": 23.807, "error": null}
+{"arm": "local", "case": "add-anthropic-adapter", "title": "Integrating Anthropic API Adapter", "raw": "Integrating Anthropic API Adapter", "latency_s": 0.635, "error": null}
+{"arm": "local", "case": "refactor-session-repo-queries", "title": "Refactoring Session Repository Pagination Queries", "raw": "Refactoring Session Repository Pagination Queries", "latency_s": 0.575, "error": null}
+{"arm": "local", "case": "write-tests-naming-prompt", "title": "Unit Testing Session Naming Prompt Builder", "raw": "Unit Testing Session Naming Prompt Builder", "latency_s": 0.585, "error": null}
+{"arm": "local", "case": "tune-ollama-timeout-config", "title": "Ollama Timeout Configuration Adjustment", "raw": "Ollama Timeout Configuration Adjustment", "latency_s": 0.573, "error": null}
+{"arm": "local", "case": "migrate-projects-consent-column", "title": "Project Egress Consent Migration Update", "raw": "Project Egress Consent Migration Update", "latency_s": 0.634, "error": null}
+{"arm": "local", "case": "debug-watcher-hot-reload-loop", "title": "File Watcher Sync Issue Resolution", "raw": "File Watcher Sync Issue Resolution", "latency_s": 0.624, "error": null}
+{"arm": "local", "case": "improve-redaction-tool-aware-fields", "title": "Redacting Structured Fields Awareness Update", "raw": "Redacting Structured Fields Awareness Update", "latency_s": 0.694, "error": null}
+{"arm": "local", "case": "frontend-planning-board-branch-links", "title": "Updating Session Board Links", "raw": "Updating Session Board Links", "latency_s": 0.516, "error": null}
+{"arm": "local", "case": "cli-offline-mode-projects-json", "title": "Offline CLI Mode Implementation", "raw": "Offline CLI Mode Implementation", "latency_s": 0.511, "error": null}
+{"arm": "local", "case": "perf-investigate-slow-sync-tick", "title": "Sync Engine Optimization Updates", "raw": "Sync Engine Optimization Updates", "latency_s": 0.506, "error": null}
+{"arm": "local", "case": "docs-update-external-api-guide", "title": "Updating External API Deployment Guide", "raw": "Updating External API Deployment Guide", "latency_s": 0.554, "error": null}
+{"arm": "local", "case": "fix-worktree-cwd-resolution", "title": "Worktree Cwd Resolution Fix", "raw": "Worktree Cwd Resolution Fix", "latency_s": 0.596, "error": null}
+{"arm": "local", "case": "add-provider-pricing-catalog-entry", "title": "Updating Pricing Model Integration", "raw": "Updating Pricing Model Integration", "latency_s": 0.518, "error": null}
+{"arm": "local", "case": "review-egress-consent-gate-tests", "title": "Egress Consent Gate Test Coverage Review", "raw": "Egress Consent Gate Test Coverage Review", "latency_s": 0.621, "error": null}
+{"arm": "local", "case": "hotfix-ica-spend-attribution-null", "title": "Hotfix Null Ica Spend Attribution", "raw": "Hotfix Null Ica Spend Attribution", "latency_s": 0.711, "error": null}
