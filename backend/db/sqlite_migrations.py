@@ -119,7 +119,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -300,6 +300,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- in backend/parsers/effort_provenance.py. NULL == provenance unknown (row
     -- written before this column, or effort_tier itself NULL). No backfill.
     effort_tier_source TEXT,
+    -- G1 "first+last pair" (v58, effort-tier-mid-session-capture). Nullable;
+    -- freshest effort tier observed at any UserPromptSubmit hook AFTER
+    -- SessionStart, written by a separate hook invocation from effort_tier
+    -- itself. NULL == never observed to differ from effort_tier after start
+    -- (or the row predates this column) -- a legitimate contract state, never
+    -- backfilled (the mid-session history that would populate it, if any, is
+    -- unrecoverable after the fact).
+    effort_tier_last   TEXT,
     -- ica-key-and-spend-capture (v51). All nullable; the two dimensions the
     -- launcher sidecar could not carry. ica_key is the ICA key NAME (CC1..CC6),
     -- NEVER secret bytes; NULL == not an ICA-launched session (never defaulted
@@ -3524,6 +3532,8 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
     await _ensure_column(db, "sessions", "model_variant", "TEXT")
     # Gap 4 effort-tier provenance (v44). Nullable; no backfill.
     await _ensure_column(db, "sessions", "effort_tier_source", "TEXT")
+    # G1 "first+last pair" (v58). Nullable; no backfill.
+    await _ensure_column(db, "sessions", "effort_tier_last", "TEXT")
     # ica-key-and-spend-capture (v51). Nullable; no backfill in-migration.
     await _ensure_column(db, "sessions", "ica_key", "TEXT")
     await _ensure_column(db, "sessions", "ica_spend_start", "TEXT")
@@ -5105,6 +5115,20 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v57 migrations complete: projects.parent_project_id + "
             "projects.worktree_label added (nullable worktree-child metadata)."
+        )
+
+    # ── v58 migrations (G1: effort-tier mid-session "first+last pair") ──────
+    if current_version < 58:
+        # Nullable TEXT, mirror of effort_tier's own posture. NULL == never
+        # observed to differ from effort_tier after SessionStart (or the row
+        # predates this column) -- never backfilled: the mid-session history
+        # that would populate it, if any, is unrecoverable after the fact.
+        # Capture-once-per-observed-change on upsert, like its sibling capture
+        # columns (see the repository UPSERT's COALESCE clause).
+        await _ensure_column(db, "sessions", "effort_tier_last", "TEXT")
+        logger.info(
+            "v58 migrations complete: sessions.effort_tier_last added "
+            "(effort-tier-mid-session-capture, G1)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────
