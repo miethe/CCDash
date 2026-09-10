@@ -119,7 +119,7 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS: int = int(
     os.environ.get("CCDASH_MIGRATION_LOCK_TIMEOUT_SECONDS", "30")
 )
 
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -342,6 +342,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- main-repo sessions. is_worktree is derived (worktree_name IS NOT NULL).
     -- project_id already points at the PARENT repo — no per-worktree row.
     worktree_name      TEXT,
+    -- ccdash-unattributed-0910 (v58): the project_id this session was
+    -- attributed to immediately before the unattributed-bucket fold moved it.
+    -- NULL for every session never touched by that fold (the overwhelming
+    -- majority). Reversibility field only -- no read path derives attribution
+    -- from it; see scripts/fold_unattributed_bucket.py.
+    prior_project_id  TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -1312,6 +1318,15 @@ CREATE TABLE IF NOT EXISTS projects (
     -- scans its own Claude session dir but attributes sessions to its parent.
     parent_project_id    TEXT,
     worktree_label       TEXT,
+    -- ccdash-unattributed-0910 (v58): NULL for every ordinary project. Closed
+    -- vocabulary: 'unattributed_bucket' marks the one frozen row that
+    -- genuinely-unattributable sessions were folded into -- per-project
+    -- metrics/leaderboards/the effort_tier package exclude it, but direct
+    -- session-level reads by project_id stay unaffected. 'retired_catchall'
+    -- marks a drained former catch-all row kept only for audit/reversibility.
+    -- This single column is THE exclusion predicate -- see
+    -- backend/application/services/agent_queries/_filters.py:fetch_bucket_project_ids.
+    bucket_role           TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -5105,6 +5120,18 @@ async def _run_migrations_inner(db: aiosqlite.Connection, current_version: int) 
         logger.info(
             "v57 migrations complete: projects.parent_project_id + "
             "projects.worktree_label added (nullable worktree-child metadata)."
+        )
+
+    if current_version < 58:
+        # ccdash-unattributed-0910: projects.bucket_role (exclusion predicate
+        # for the unattributed-bucket fold) + sessions.prior_project_id
+        # (reversibility). Both nullable by design; _ensure_column's
+        # PRAGMA table_info guard makes this idempotent on retry.
+        await _ensure_column(db, "projects", "bucket_role", "TEXT")
+        await _ensure_column(db, "sessions", "prior_project_id", "TEXT")
+        logger.info(
+            "v58 migrations complete: projects.bucket_role + "
+            "sessions.prior_project_id added (unattributed-bucket fold)."
         )
 
     # ── Ensure idx_sessions_git_branch exists on all pre-v34 databases ───────

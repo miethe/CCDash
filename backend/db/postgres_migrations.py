@@ -86,7 +86,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -309,6 +309,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- The row's project_id already points at the PARENT repo — this preserves
     -- the worktree identity without a per-worktree project row.
     worktree_name      TEXT,
+    -- ccdash-unattributed-0910 (v58): mirror of the SQLite column. Reversibility
+    -- field only -- see scripts/fold_unattributed_bucket.py.
+    prior_project_id  TEXT,
     PRIMARY KEY (project_id, id)
 );
 
@@ -1306,6 +1309,12 @@ CREATE TABLE IF NOT EXISTS projects (
     -- worktree-child-projects M1 (v57): nullable child relationship fields.
     parent_project_id    TEXT,
     worktree_label       TEXT,
+    -- ccdash-unattributed-0910 (v58): mirror of the SQLite column. Closed
+    -- vocabulary 'unattributed_bucket' / 'retired_catchall'; NULL for every
+    -- ordinary project. THE exclusion predicate for per-project metrics/
+    -- leaderboards/the effort_tier package -- see
+    -- backend/application/services/agent_queries/_filters.py:fetch_bucket_project_ids.
+    bucket_role           TEXT,
     created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -4553,6 +4562,15 @@ async def _run_migrations_inner(db: asyncpg.Connection) -> None:
         logger.info(
             "v57 migrations complete: projects.parent_project_id + "
             "projects.worktree_label added (nullable worktree-child metadata)."
+        )
+
+    if current_version < 58:
+        # Mirror SQLite v58.
+        await _ensure_column(db, "projects", "bucket_role", "TEXT")
+        await _ensure_column(db, "sessions", "prior_project_id", "TEXT")
+        logger.info(
+            "v58 migrations complete: projects.bucket_role + "
+            "sessions.prior_project_id added (unattributed-bucket fold)."
         )
 
     # ── T3-011: ensure migrations_applied table exists for pre-DDL-path DBs ─────
