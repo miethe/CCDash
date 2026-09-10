@@ -1010,7 +1010,8 @@ def _collect_capture_sidecar(
     """Locate and parse the launch-time capture sidecar for a session (T11-004).
 
     Returns a dict with keys ``launcher``, ``profile``, ``effortTier``,
-    ``effortTierSource``, ``modelVariant`` (all ``None`` on any miss).
+    ``effortTierSource``, ``effortTierLast``, ``modelVariant`` (all ``None`` on
+    any miss).
 
     Capture targets the **root** session only: subagent records legitimately carry
     null capture fields (a contract state, not a defect). Family-root propagation
@@ -1026,6 +1027,8 @@ def _collect_capture_sidecar(
         "profile": None,
         "effortTier": None,
         "effortTierSource": None,
+        # G1 "first+last pair" (v4): freshest value seen after SessionStart.
+        "effortTierLast": None,
         "modelVariant": None,
         # ica-key-and-spend-capture (v51). ica_spend_delta / attribution are
         # NOT parser-derived (they need the cross-session ledger); the parser
@@ -1075,6 +1078,9 @@ def _collect_capture_sidecar(
         "effortTier": sidecar.effort_tier,   # snake_case → camelCase for AgentSession
         # Gap 4: null on v1 sidecars (key predates them) — provenance unknown.
         "effortTierSource": sidecar.effort_tier_source,
+        # G1 "first+last pair" (v4): null on v1-v3 sidecars (key predates them)
+        # or when no later UserPromptSubmit observed a different value.
+        "effortTierLast": sidecar.effort_tier_last,
         "modelVariant": sidecar.model_variant,  # snake_case → camelCase for AgentSession
         # ica-key-and-spend-capture (v51): key NAME + raw spend readings only.
         "icaKey": sidecar.ica_key,
@@ -4907,6 +4913,10 @@ def parse_session_file(path: Path) -> AgentSession | None:
         effortTier=capture_sidecar.get("effortTier"),
         # Gap 4: which lane supplied effortTier (launch_env vs claude_settings).
         effortTierSource=capture_sidecar.get("effortTierSource"),
+        # G1 "first+last pair": freshest effort tier observed at any
+        # UserPromptSubmit after SessionStart. None == never observed to
+        # differ from effortTier (or predates v4).
+        effortTierLast=capture_sidecar.get("effortTierLast"),
         modelVariant=capture_sidecar.get("modelVariant"),
         # ica-key-and-spend-capture (v51). Delta/attribution stay None here and
         # are filled by backfill_ica_spend_attribution after the upsert.

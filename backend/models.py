@@ -304,6 +304,14 @@ class AgentSession(BaseModel):
     # vs derived). Token vocabulary: backend/parsers/effort_provenance.py.
     # None == provenance unknown (row predates the column, or effortTier is None).
     effortTierSource: Optional[str] = None
+    # G1 "first+last pair" (v4): freshest effort tier observed at any
+    # UserPromptSubmit hook fired after SessionStart, written by a separate,
+    # write-amplification-free hook invocation (never at SessionStart itself).
+    # None == never observed to differ from effortTier after start (or the
+    # sidecar predates schemaVersion 4) — a legitimate contract state, not a
+    # defect. See scripts/hooks/ccdash_capture_session_start.py::
+    # update_effort_tier_last for the capture rule.
+    effortTierLast: Optional[str] = None
     modelVariant: Optional[str] = None
     # ica-key-and-spend-capture (v51). Written for ICA-launched sessions.
     # icaKey is the ICA key NAME (CC1..CC6), never secret bytes; None == not an

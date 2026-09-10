@@ -51,8 +51,9 @@ class PostgresSessionRepository:
                 workspace_id, source_ref, cwd, effort_tier_source,
                 worktree_name, skill_name_source,
                 session_name, session_name_source,
-                ica_key, ica_spend_start, ica_spend_end, ica_spend_delta, ica_spend_attribution
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74)
+                ica_key, ica_spend_start, ica_spend_end, ica_spend_delta, ica_spend_attribution,
+                effort_tier_last
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75)
             ON CONFLICT(project_id, id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -155,7 +156,15 @@ class PostgresSessionRepository:
                 ica_spend_start=COALESCE(EXCLUDED.ica_spend_start, sessions.ica_spend_start),
                 ica_spend_end=COALESCE(EXCLUDED.ica_spend_end, sessions.ica_spend_end),
                 ica_spend_delta=COALESCE(EXCLUDED.ica_spend_delta, sessions.ica_spend_delta),
-                ica_spend_attribution=COALESCE(EXCLUDED.ica_spend_attribution, sessions.ica_spend_attribution)
+                ica_spend_attribution=COALESCE(EXCLUDED.ica_spend_attribution, sessions.ica_spend_attribution),
+                -- G1 "first+last pair": same capture-once posture as effort_tier
+                -- itself. The incoming value is whatever the sidecar currently
+                -- holds (the freshest UserPromptSubmit observation, or still
+                -- null if none has diverged from the start value) -- EXCLUDED
+                -- non-null always wins so a re-sync surfaces the latest on-disk
+                -- value; a transiently absent sidecar never wipes a
+                -- previously-captured one.
+                effort_tier_last=COALESCE(EXCLUDED.effort_tier_last, sessions.effort_tier_last)
             WHERE sessions.workspace_id = EXCLUDED.workspace_id
         """
         _conn = _pg_conn if _pg_conn is not None else self.db
@@ -254,6 +263,10 @@ class PostgresSessionRepository:
             session_data.get("icaSpendEnd"),
             session_data.get("icaSpendDelta"),
             session_data.get("icaSpendAttribution"),
+            # G1 "first+last pair": freshest value observed at any
+            # UserPromptSubmit after SessionStart. None == never observed to
+            # differ from effortTier (or the sidecar predates v4).
+            session_data.get("effortTierLast"),
         )
 
     async def backfill_skill_name_inheritance(self, project_id: str) -> dict[str, int]:

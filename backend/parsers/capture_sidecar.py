@@ -26,6 +26,11 @@ logger = logging.getLogger("ccdash.parsers.capture_sidecar")
 
 # Schema versions this parser accepts. Bump when the sidecar schema changes.
 #
+# v3 → v4 (G1, "first+last pair") added the optional ``effortTierLast`` key,
+# written by a separate UserPromptSubmit hook invocation rather than at
+# SessionStart. Older sidecars simply parse it as ``None`` — "never observed
+# after start", a legitimate contract state, not an error.
+#
 # v2 → v3 (v51) added the optional ``icaKey`` / ``icaSpendStart`` / ``icaSpendEnd``
 # keys for ICA-launched sessions. As with v1→v2, ALL prior versions stay
 # accepted: an older sidecar simply parses those fields as ``None``.
@@ -35,7 +40,7 @@ logger = logging.getLogger("ccdash.parsers.capture_sidecar")
 # them would blind the whole capture lane to win a cosmetic version check.  A v1
 # sidecar parses with ``effort_tier_source=None`` — "provenance unknown", which
 # is exactly the truth for a value written before the source was recorded.
-_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3})
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4})
 
 
 @dataclass
@@ -48,7 +53,8 @@ class CaptureSidecar:
     Attribute names are **snake_case** here (Python convention); callers that
     promote these onto ``AgentSession`` must map to the model's camelCase attrs:
     ``effort_tier`` → ``effortTier``, ``model_variant`` → ``modelVariant``,
-    ``effort_tier_source`` → ``effortTierSource``.
+    ``effort_tier_source`` → ``effortTierSource``,
+    ``effort_tier_last`` → ``effortTierLast``.
     """
 
     session_id: Optional[str] = None
@@ -60,6 +66,11 @@ class CaptureSidecar:
     #: ``None`` on v1 sidecars (written before the key existed) and whenever
     #: ``effort_tier`` itself is ``None``.
     effort_tier_source: Optional[str] = None
+    #: G1 "first+last pair" (v4): freshest effort tier observed at any
+    #: UserPromptSubmit after SessionStart. ``None`` on v1-v3 sidecars (key
+    #: predates them) and whenever no later prompt observed a value — see
+    #: ``scripts/hooks/ccdash_capture_session_start.py::update_effort_tier_last``.
+    effort_tier_last: Optional[str] = None
     model_variant: Optional[str] = None
     #: ICA key NAME (CC1..CC6) for ICA-launched sessions (v51). NEVER secret
     #: bytes. ``None`` == not captured / not an ICA session (never defaulted).
@@ -132,6 +143,7 @@ def parse_capture_sidecar(path: Path) -> Optional[CaptureSidecar]:
         profile=_opt_str("profile"),
         effort_tier=effort_tier,
         effort_tier_source=effort_tier_source,
+        effort_tier_last=_opt_str("effortTierLast"),
         model_variant=_opt_str("modelVariant"),
         ica_key=_opt_str("icaKey"),
         ica_spend_start=_opt_str("icaSpendStart"),
