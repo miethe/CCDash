@@ -120,6 +120,42 @@ class TestResolveProjectForCwdPure(unittest.TestCase):
         )
         self.assertEqual(result, "p_sub")
 
+    def test_claude_worktree_resolves_to_registered_parent_repo(self):
+        """A Claude sibling worktree belongs to the repository that owns it."""
+        projects = [
+            self._make_project("catch_all", "/home/user"),
+            self._make_project("repo", "/code/skillmeat"),
+        ]
+
+        result = resolve_project_for_cwd(
+            "/code/skillmeat/.claude/worktrees/feature-x/src", projects
+        )
+
+        self.assertEqual(result, "repo")
+
+    def test_codex_ephemeral_worktree_resolves_by_registered_repo_name(self):
+        """Codex's home-directory worktree layout must not hit a catch-all."""
+        projects = [
+            self._make_project("catch_all", "/home/user"),
+            self._make_project("repo", "/code/skillmeat"),
+        ]
+
+        result = resolve_project_for_cwd(
+            "/home/user/.codex/worktrees/a1b2c3/skillmeat/src", projects
+        )
+
+        self.assertEqual(result, "repo")
+
+    def test_unmatched_codex_ephemeral_worktree_does_not_hit_catch_all(self):
+        """Unknown worktrees remain unattributed instead of polluting home."""
+        projects = [self._make_project("catch_all", "/home/user")]
+
+        result = resolve_project_for_cwd(
+            "/home/user/.codex/worktrees/a1b2c3/unknown-repo/src", projects
+        )
+
+        self.assertIsNone(result)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DB persistence test — repo_path column write + direct-count assertion (ADR-007)
