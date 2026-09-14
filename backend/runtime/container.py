@@ -59,6 +59,7 @@ from backend.runtime.storage_contract import (
 from backend.project_manager import db_project_manager
 from backend.runtime_ports import build_core_ports, build_runtime_metadata, build_workspace_registry
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
+from backend.services.project_paths.providers.base import PathResolutionError
 from backend.services.session_naming_local_backend import resolve_naming_backend
 from backend.adapters.auth.workspace_token import get_snapshot_health
 
@@ -1981,10 +1982,20 @@ class RuntimeContainer:
             project_id = str(getattr(project, "id", "") or "")
             if not project_id:
                 continue
-            binding = workspace_registry.resolve_project_binding(
-                project_id,
-                allow_active_fallback=False,
-            )
+            try:
+                binding = workspace_registry.resolve_project_binding(
+                    project_id,
+                    allow_active_fallback=False,
+                )
+            except PathResolutionError as exc:
+                logger.warning(
+                    "worker-watch fan-out: skipping project_id=%s due to path resolution "
+                    "error (code=%s): %s",
+                    project_id,
+                    exc.code,
+                    exc.message,
+                )
+                continue
             if binding is None:
                 logger.warning(
                     "worker-watch fan-out: could not resolve binding for project_id=%s — skipping",
