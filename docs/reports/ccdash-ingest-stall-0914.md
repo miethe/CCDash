@@ -59,7 +59,7 @@ re-raises directly, and `run_daemon()` end-to-end raises within a bounded timeou
 hanging — the hang IS the pre-fix zombie state). Full `packages/ccdash_cli` suite: 255 passed, 0
 failed, run in the foreground.
 
-PR: (opened after this commit — see the follow-up commit on this branch for the real link).
+PR: https://github.com/miethe/CCDash/pull/92 (base `main`).
 Landing-queue row added to `~/.local/share/aos/landing-queue/CCDash.jsonl`.
 
 ## Recovery — gated for Nick, NOT executed
