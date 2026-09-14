@@ -344,12 +344,24 @@ async def _tail_coroutine(
     try:
         parse_session_file = _import_parse_session_file()
     except ImportError as exc:
+        # FATAL, deliberately. Swallowing this here (as the cold-start backfill
+        # scan does — that gap is tolerable once) reproduces the silent-zombie
+        # trap documented in infra/agentic-node/CCDASH-NODE-INGEST.md §(b): the
+        # tail coroutine returns, `flush_task` keeps running forever with
+        # nothing to flush, `systemctl status` / `daemon status` both report
+        # healthy, and ingestion is permanently dead with zero operator-visible
+        # signal — measured as a fleet-wide 5-day session-ingest outage
+        # (node_01M2GV5XJ63HYV282W02N7DF2R). Re-raising propagates through
+        # asyncio.gather() in run_daemon(), crashing the process so
+        # Restart=on-failure actually fires and the failure lands in
+        # journalctl as a repeating error instead of one silent line.
         _LOG.error(
             "Cannot import backend.parsers.sessions: %s. "
-            "Ensure the CCDash backend package is installed alongside ccdash-cli.",
+            "Ensure the CCDash backend package is installed alongside ccdash-cli. "
+            "This is fatal — the tail coroutine cannot run without it.",
             exc,
         )
-        return
+        raise
 
     _LOG.info("Tail coroutine started; watching %s", config.sessions_dir)
     batch_id = uuid7()  # shared across the current accumulation window
