@@ -13,6 +13,8 @@ Everything uses ``tmp_path`` -- never touches the real ``~/.claude/projects``.
 from __future__ import annotations
 
 from pathlib import Path
+import json
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -30,6 +32,35 @@ def _mkdirs(*paths: Path) -> None:
 
 
 class TestSiblingWorktreeSessionDirs:
+    @pytest.mark.parametrize("layout", [".wt", ".claude/worktrees", "sibling"])
+    def test_git_proven_worktree_layouts_are_discovered(self, tmp_path: Path, layout: str) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        gitdir = repo / ".git" / "worktrees" / "feature"
+        gitdir.mkdir(parents=True)
+        checkout = (
+            repo / ".wt" / "feature" if layout == ".wt" else
+            repo / ".claude" / "worktrees" / "feature" if layout == ".claude/worktrees" else
+            tmp_path / "repo-worktrees" / "feature"
+        )
+        checkout.mkdir(parents=True)
+        (checkout / ".git").write_text(f"gitdir: {gitdir}\n")
+        encoded = lambda path: str(path).replace("/", "-").replace("_", "-").replace(".", "-")
+        parent = tmp_path / "projects" / encoded(repo)
+        child = parent.parent / encoded(checkout)
+        _mkdirs(parent, child)
+        (child / "session.jsonl").write_text(json.dumps({"cwd": str(checkout)}) + "\n")
+
+        assert child in sibling_worktree_session_dirs(parent)
+
+    def test_similar_slug_without_git_proof_is_excluded(self, tmp_path: Path) -> None:
+        parent = tmp_path / "-Users-me-repo"
+        sibling = tmp_path / "-Users-me-repo--wt-unrelated"
+        _mkdirs(parent, sibling)
+        (sibling / "session.jsonl").write_text('{"cwd":"/unrelated"}\n')
+
+        assert sibling_worktree_session_dirs(parent) == []
+
     def test_claude_worktrees_marker_is_discovered(self, tmp_path: Path) -> None:
         parent = tmp_path / "-Users-m-dev-CCDash"
         sibling = tmp_path / "-Users-m-dev-CCDash--claude-worktrees-fix-foo"
@@ -260,6 +291,38 @@ class TestSyncSessionsScanDiscoversSiblingTranscripts:
 
         assert parent_transcript in all_files
         assert sibling_transcript not in all_files
+
+    @pytest.mark.asyncio
+    async def test_failed_scan_does_not_advance_light_mode_manifest(self, tmp_path: Path) -> None:
+        sessions_dir = tmp_path / "-Users-m-dev-repo"
+        sessions_dir.mkdir()
+        (sessions_dir / "session.jsonl").write_text("{}\n")
+        engine = _make_sync_engine()
+        engine._light_mode_scan_skip = AsyncMock(return_value=False)
+        engine._sync_single_session = AsyncMock(side_effect=[TimeoutError("db down"), True])
+        engine._update_manifest_for_roots = AsyncMock()
+
+        first = await engine._sync_sessions("project-1", sessions_dir, False)
+        second = await engine._sync_sessions("project-1", sessions_dir, False)
+
+        assert first["parse_errors"] == 1
+        assert second["synced"] == 1
+        engine._update_manifest_for_roots.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_bypasses_manifest_but_honors_session_mtime(self, tmp_path: Path) -> None:
+        sessions_dir = tmp_path / "-Users-m-dev-repo"
+        sessions_dir.mkdir()
+        (sessions_dir / "session.jsonl").write_text("{}\n")
+        engine = _make_sync_engine()
+        engine._light_mode_scan_skip = AsyncMock(return_value=False)
+        engine._sync_single_session = AsyncMock(return_value=False)
+        engine._update_manifest_for_roots = AsyncMock()
+
+        await engine._sync_sessions("project-1", sessions_dir, False, skip_manifest=True)
+
+        assert engine._light_mode_scan_skip.await_args.args[-1] is True
+        assert engine._sync_single_session.await_args.args[2] is False
 
 
 class TestSyncChangedFilesScopeCheck:
