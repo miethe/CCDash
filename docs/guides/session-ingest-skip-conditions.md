@@ -3,10 +3,31 @@ title: Session ingest skip conditions
 description: Every condition under which a transcript that exists on disk does not appear in GET /api/sessions, and how to attribute a specific absence.
 audience: operators, agents
 status: current
-last_verified: 2026-08-22
+last_verified: 2026-09-26
 ---
 
 # Session ingest skip conditions
+
+## 2026-09-26 repair note
+
+The S1, S9, S10, and S12 descriptions below record the 2026-08-22 diagnosis.
+Current direct-worker behavior differs in two ways:
+
+- Session scans and watchers include marker-named worktree sibling directories.
+  They also include `.wt/*` and `<repo>-worktrees/*` session siblings when a
+  transcript's `cwd` points to a checkout whose `.git` file proves the registered
+  repository is its parent. Unknown siblings still fail closed.
+- Periodic `reconcile` scans session paths even when the light-mode manifest is
+  unchanged. An unchanged mtime only skips parsing if a session row still exists
+  for the source. A failed scan does not advance the manifest. Thus a watcher
+  timeout or transient Postgres failure can be recovered on a later reconcile
+  without another filesystem event.
+
+To inspect a specific date's gaps without database writes, use
+`python3 scripts/reconcile_session_date.py --date YYYY-MM-DD --report PATH/TO/night-report.json --dry-run`.
+The script reads registered paths from `CCDASH_API` and uses `CCDASH_TOKEN` for
+the read-only projects request. After reviewing its file list, source the
+worker's Postgres environment and rerun with `--apply` to re-ingest those files.
 
 A Claude Code transcript existing on disk is **not** sufficient for it to appear in
 `GET /api/sessions`. This guide enumerates every skip condition on the path from file to API, so

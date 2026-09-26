@@ -3393,9 +3393,12 @@ class SyncEngine:
                         sessions_dir,
                         force,
                         worktree_label=getattr(project, "worktree_label", None),
+                        skip_manifest=trigger == "reconcile",
                     )
                 else:
-                    s_stats = await self._sync_sessions(project.id, sessions_dir, force)
+                    s_stats = await self._sync_sessions(
+                        project.id, sessions_dir, force, skip_manifest=trigger == "reconcile"
+                    )
                 stats["sessions_synced"] = s_stats["synced"]
                 stats["sessions_skipped"] = s_stats["skipped"]
                 # subagent-skill-inheritance: one-hop skill_name inheritance runs
@@ -4984,7 +4987,8 @@ class SyncEngine:
         return stats
 
     async def _sync_sessions(
-        self, project_id: str, sessions_dir: Path, force: bool, *, worktree_label: str | None = None
+        self, project_id: str, sessions_dir: Path, force: bool, *,
+        worktree_label: str | None = None, skip_manifest: bool = False,
     ) -> dict:
         stats = {"synced": 0, "skipped": 0, "parse_errors": 0}
         if not sessions_dir.exists():
@@ -5011,7 +5015,7 @@ class SyncEngine:
         # convention already used by `_sync_documents`.
         manifest_key = "|".join(str(root) for root in resolved_roots)
         skipped = await self._light_mode_scan_skip(
-            resolved_roots, "*.jsonl", manifest_key, force
+            resolved_roots, "*.jsonl", manifest_key, force or skip_manifest
         )
         if skipped:
             return stats
@@ -5146,14 +5150,18 @@ class SyncEngine:
             )
         # ── End Phase 7 recent-first ──────────────────────────────────────────
 
-        # Update manifest after full walk so next run can skip when nothing changed.
-        await self._update_manifest_for_roots(resolved_roots, "*.jsonl")
+        # A failed file must remain eligible for the next light-mode pass even
+        # when its mtime is unchanged (e.g. Postgres returned after timeout).
+        if stats["parse_errors"] == 0:
+            await self._update_manifest_for_roots(resolved_roots, "*.jsonl")
         return stats
 
     async def _session_source_needs_lineage_backfill(self, file_path: str) -> bool:
         rows = await self.session_repo.list_by_source(file_path)
         if not rows:
-            return False
+            # A failed or cancelled persist can leave an old sync_state mtime
+            # after delete_by_source removed the row. Reparse on reconciliation.
+            return True
         for row in rows:
             thread_kind = str(row.get("thread_kind") or "").strip().lower()
             conversation_family_id = str(row.get("conversation_family_id") or "").strip()

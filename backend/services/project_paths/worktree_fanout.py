@@ -27,6 +27,10 @@ import os
 from pathlib import Path
 
 from backend.parsers.worktree_attribution import split_worktree_dirname
+from backend.services.project_paths.worktree_parent_resolution import (
+    first_cwd_from_session_dir,
+    resolve_git_worktree_parent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,15 +96,28 @@ def sibling_worktree_session_dirs(sessions_dir: Path) -> list[Path]:
             except OSError:
                 continue
             split = split_worktree_dirname(entry.name)
-            if split is None:
-                continue
-            candidate_parent, worktree_name = split
-            if candidate_parent != sessions_dir.name:
-                continue
-            if not worktree_name:
-                # Empty suffix (dirname ends exactly at the marker) -- not a
-                # real worktree, exclude rather than fold into the parent.
-                continue
+            if split is not None:
+                candidate_parent, worktree_name = split
+                if candidate_parent != sessions_dir.name or not worktree_name:
+                    continue
+            else:
+                # .wt/* and <repo>-worktrees/* have no unambiguous slug marker.
+                # Require the checkout's git worktree pointer to prove its parent.
+                if not entry.name.startswith(sessions_dir.name + "-"):
+                    continue
+                cwd = first_cwd_from_session_dir(Path(entry.path))
+                if cwd is None:
+                    continue
+                parent_repo = None
+                for checkout in (cwd, *cwd.parents):
+                    parent_repo = resolve_git_worktree_parent(checkout)
+                    if parent_repo is not None:
+                        break
+                if parent_repo is None:
+                    continue
+                encoded_parent = str(parent_repo).replace("/", "-").replace("_", "-").replace(".", "-")
+                if encoded_parent != sessions_dir.name:
+                    continue
             siblings.append(Path(entry.path))
     finally:
         scandir_iter.close()

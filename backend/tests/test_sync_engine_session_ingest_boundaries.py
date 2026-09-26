@@ -22,6 +22,31 @@ class _ParsedSession:
 
 
 class SyncEngineSessionIngestBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_persist_with_old_mtime_is_retried_next_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            session_path = Path(tmp_dir) / "session.jsonl"
+            session_path.write_text('{"type":"user"}\n')
+            mtime = session_path.stat().st_mtime
+            self.engine.sync_repo.get_sync_state = AsyncMock(return_value={"file_mtime": mtime})  # type: ignore[method-assign]
+            self.engine.sync_repo.upsert_sync_state = AsyncMock()  # type: ignore[method-assign]
+            self.engine.session_repo.list_by_source = AsyncMock(return_value=[])  # type: ignore[method-assign]
+            self.engine.session_repo.delete_by_source = AsyncMock()  # type: ignore[method-assign]
+            self.engine.session_repo.delete_relationships_for_source = AsyncMock()  # type: ignore[method-assign]
+            service = Mock()
+            service.persist_envelope = AsyncMock(side_effect=[TimeoutError("postgres unavailable"), None])
+            self.engine._get_session_ingest_service = Mock(return_value=service)  # type: ignore[method-assign]
+            parsed = _ParsedSession({"id": "S-retry", "logs": [], "toolsUsed": [], "updatedFiles": [], "linkedArtifacts": []})
+            with (
+                patch("backend.db.sync_engine.parse_session_file", return_value=parsed),
+                patch("backend.db.sync_engine.observability.start_span", return_value=nullcontext()),
+                patch("backend.db.sync_engine.observability.record_ingestion"),
+            ):
+                with self.assertRaises(TimeoutError):
+                    await self.engine._sync_single_session("project-1", session_path)
+                self.assertTrue(await self.engine._sync_single_session("project-1", session_path))
+            self.assertEqual(service.persist_envelope.await_count, 2)
+            self.engine.sync_repo.upsert_sync_state.assert_awaited_once()  # type: ignore[attr-defined]
+
     async def asyncSetUp(self) -> None:
         self.db = await aiosqlite.connect(":memory:")
         self.db.row_factory = aiosqlite.Row
