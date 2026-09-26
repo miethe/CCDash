@@ -166,12 +166,29 @@ class ArtifactIntelligenceQueryServiceTests(unittest.IsolatedAsyncioTestCase):
             artifact_uuid="uuid-expensive",
             recommendation_type="optimization_target",
         )
-        recommendations = await self.service.get_recommendations(
-            self.context,
-            self.ports,
-            period="30d",
-            recommendation_type="optimization_target",
-        )
+        # The recommendation service classifies staleness by comparing real
+        # wall-clock time against the fixture's fixed 2026-05-07 snapshot
+        # timestamps (CCDASH_SNAPSHOT_FRESHNESS_OPTIMIZATION_TARGET_SECONDS,
+        # default 30d) — without freezing "now" near the fixture dates, this
+        # row silently ages into `stale_snapshot` and the optimization_target
+        # recommendation never fires. Freeze "now" like
+        # test_snapshot_diagnostics_returns_repository_values does above.
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                fixed = datetime(2026, 5, 7, 10, 10, tzinfo=timezone.utc)
+                return fixed.astimezone(tz) if tz else fixed
+
+        with patch(
+            "backend.services.artifact_recommendation_service.datetime",
+            _FixedDatetime,
+        ):
+            recommendations = await self.service.get_recommendations(
+                self.context,
+                self.ports,
+                period="30d",
+                recommendation_type="optimization_target",
+            )
 
         self.assertEqual(rankings.status, "ok")
         self.assertEqual(rankings.total, 1)

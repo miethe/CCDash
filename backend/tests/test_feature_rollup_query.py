@@ -72,7 +72,7 @@ async def _seed_session(
             parent_session_id, started_at, ended_at, created_at, updated_at, source_file,
             thread_kind, root_session_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO NOTHING""",
+        ON CONFLICT(project_id, id) DO NOTHING""",
         (
             session_id, PROJECT_ID, "", "completed", model,
             "Claude Code", total_cost, display_cost_usd,

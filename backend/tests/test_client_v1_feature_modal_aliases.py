@@ -22,14 +22,14 @@ class _FakeFeatureRepo:
             }
         ]
 
-    async def get_by_id(self, feature_id: str):
+    async def get_by_id(self, feature_id: str, *, workspace_id: str = "default-local"):
         self.requested_ids.append(feature_id)
         for row in self.rows:
             if row["id"] == feature_id:
                 return row
         return None
 
-    async def list_all(self, project_id: str):
+    async def list_all(self, project_id: str, *, workspace_id: str = "default-local"):
         return self.rows
 
 
