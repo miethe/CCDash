@@ -296,6 +296,15 @@ class RuntimeContainer:
         validate_migration_governance_contract()
         self.auth_config = config.resolve_auth_provider_config(self.profile.name)
         config.validate_runtime_environment_contract(self.profile.name, self.storage_profile)
+        # Node node_01M20SZBBX00X4W618A90TSYMY: migrations MUST run before any
+        # schema-dependent query. _resolve_startup_project_binding() (below) can
+        # reach _resolve_watcher_fan_out_bindings() -> workspace_registry.list_projects(),
+        # which queries live schema -- so a pending additive migration (e.g. the
+        # v57 parent_project_id column) must already be applied before that call,
+        # not after it.
+        self.db = await connection.get_connection()
+        await migrations.run_migrations(self.db)
+        self.migration_status = "applied"
         self.project_binding, self.watcher_fan_out_bindings = self._resolve_startup_project_binding()
         startup_metadata = self._runtime_metadata()
         logger.info(
@@ -325,9 +334,6 @@ class RuntimeContainer:
 
         initialize_observability(app)
 
-        self.db = await connection.get_connection()
-        await migrations.run_migrations(self.db)
-        self.migration_status = "applied"
         init_postgres_cache_backend(self.db)
         await self._warn_enterprise_ingestion_misconfiguration()
         # T1-003: bootstrap the project registry before the SyncEngine is
