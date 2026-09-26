@@ -212,6 +212,43 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
             )
             """
         )
+        # Legacy detail tables (pre-v30/v31 shape: single-column session_id FK,
+        # no project_id) must exist alongside session_logs, exactly as they do
+        # on any real DB that has reached v18 -- otherwise executescript(_TABLES)
+        # creates them fresh with the current composite (project_id, session_id)
+        # FK to sessions(project_id, id), which mismatches this legacy sessions
+        # table's single-column PK before v31 has a chance to widen it.
+        await db.execute(
+            """
+            CREATE TABLE session_tool_usage (
+                session_id    TEXT NOT NULL,
+                tool_name     TEXT NOT NULL,
+                call_count    INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                total_ms      INTEGER DEFAULT 0,
+                PRIMARY KEY (session_id, tool_name)
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE session_file_updates (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                file_path    TEXT NOT NULL,
+                action       TEXT DEFAULT 'update',
+                file_type    TEXT DEFAULT 'Other',
+                action_timestamp TEXT DEFAULT '',
+                additions    INTEGER DEFAULT 0,
+                deletions    INTEGER DEFAULT 0,
+                agent_name   TEXT DEFAULT '',
+                thread_session_id TEXT DEFAULT '',
+                root_session_id TEXT DEFAULT '',
+                source_log_id TEXT,
+                source_tool_name TEXT
+            )
+            """
+        )
         await db.commit()
 
         await sqlite_migrations.run_migrations(db)
@@ -270,6 +307,61 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 source_file TEXT NOT NULL
+            )
+            """
+        )
+        # Legacy detail tables (pre-v30/v31 shape: single-column session_id FK,
+        # no project_id) must exist alongside sessions, exactly as they do on
+        # any real DB that has reached v17 -- otherwise executescript(_TABLES)
+        # creates them fresh with the current composite (project_id, session_id)
+        # FK to sessions(project_id, id), which mismatches this legacy sessions
+        # table's single-column PK before v31 has a chance to widen it.
+        await db.execute(
+            """
+            CREATE TABLE session_logs (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id     TEXT NOT NULL,
+                log_index      INTEGER NOT NULL,
+                timestamp      TEXT NOT NULL,
+                speaker        TEXT NOT NULL,
+                type           TEXT NOT NULL,
+                content        TEXT DEFAULT '',
+                agent_name     TEXT,
+                tool_name      TEXT,
+                tool_args      TEXT,
+                tool_output    TEXT,
+                tool_status    TEXT DEFAULT 'success'
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE session_tool_usage (
+                session_id    TEXT NOT NULL,
+                tool_name     TEXT NOT NULL,
+                call_count    INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                total_ms      INTEGER DEFAULT 0,
+                PRIMARY KEY (session_id, tool_name)
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE session_file_updates (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                file_path    TEXT NOT NULL,
+                action       TEXT DEFAULT 'update',
+                file_type    TEXT DEFAULT 'Other',
+                action_timestamp TEXT DEFAULT '',
+                additions    INTEGER DEFAULT 0,
+                deletions    INTEGER DEFAULT 0,
+                agent_name   TEXT DEFAULT '',
+                thread_session_id TEXT DEFAULT '',
+                root_session_id TEXT DEFAULT '',
+                source_log_id TEXT,
+                source_tool_name TEXT
             )
             """
         )
