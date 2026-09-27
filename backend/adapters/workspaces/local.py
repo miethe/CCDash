@@ -33,6 +33,16 @@ class ProjectManagerWorkspaceRegistry:
         if callable(_reload):
             _reload()
 
+    def registry_snapshot_is_authoritative(self) -> bool:
+        """Whether ``list_projects()`` reflects the authoritative registry.
+
+        The DB-backed manager reports False while it serves the projects.json read-fallback
+        (DB unavailable).  Managers without the notion (the legacy JSON manager, whose file IS
+        its registry) are authoritative by definition.
+        """
+        _probe = getattr(self._manager, "snapshot_is_authoritative", None)
+        return bool(_probe()) if callable(_probe) else True
+
     def get_project(self, project_id: str) -> Project | None:
         return self._manager.get_project(project_id)
 
