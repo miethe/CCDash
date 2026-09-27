@@ -650,8 +650,8 @@ Audit script:
 
 Typical usage:
 
-- Global: `python backend/scripts/link_audit.py --db data/ccdash_cache.db --limit 50`
-- Per feature: `python backend/scripts/link_audit.py --db data/ccdash_cache.db --feature <feature-id> --limit 50`
+- Global: `python backend/scripts/link_audit.py --limit 50` (uses the configured SKNVME-backed default)
+- Per feature: `python backend/scripts/link_audit.py --feature <feature-id> --limit 50`
 
 Rebuild workflow:
 

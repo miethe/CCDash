@@ -124,9 +124,19 @@ SESSIONS_DIR = DATA_DIR / "claude-sessions"
 DOCUMENTS_DIR = DATA_DIR / "project_plans"
 PROGRESS_DIR = DATA_DIR / "progress"
 
+# Local large-data root. Keep SQLite and checked-out workspace caches off the
+# primary drive; a missing SKNVME volume should fail a local runtime rather
+# than silently recreating a multi-GB cache inside the checkout.
+DEFAULT_LOCAL_STORAGE_ROOT = Path("/Volumes/SKNVME/ccdash")
+LOCAL_STORAGE_ROOT = Path(
+    os.getenv("CCDASH_LOCAL_STORAGE_ROOT", str(DEFAULT_LOCAL_STORAGE_ROOT))
+).expanduser()
+
 # Database
 DEFAULT_DATABASE_URL = "postgresql://user:password@localhost/ccdash"
-DB_PATH = Path(os.getenv("CCDASH_DB_PATH", str(PROJECT_ROOT / "data" / "ccdash_cache.db")))
+DB_PATH = Path(
+    os.getenv("CCDASH_DB_PATH", str(LOCAL_STORAGE_ROOT / "data" / "ccdash_cache.db"))
+).expanduser()
 DB_BACKEND = os.getenv("CCDASH_DB_BACKEND", "sqlite")
 DATABASE_URL = os.getenv("CCDASH_DATABASE_URL", DEFAULT_DATABASE_URL)
 LINKING_LOGIC_VERSION = os.getenv("CCDASH_LINKING_LOGIC_VERSION", "1")
@@ -604,7 +614,7 @@ INTEGRATIONS_SETTINGS_FILE = Path(
     os.getenv("CCDASH_INTEGRATIONS_SETTINGS_FILE", str(PROJECT_ROOT / ".ccdash-integrations.json"))
 ).expanduser()
 REPO_WORKSPACE_CACHE_DIR = Path(
-    os.getenv("CCDASH_REPO_WORKSPACE_CACHE_DIR", str(PROJECT_ROOT / ".ccdash-repo-cache"))
+    os.getenv("CCDASH_REPO_WORKSPACE_CACHE_DIR", str(LOCAL_STORAGE_ROOT / "repo-workspace-cache"))
 ).expanduser()
 
 # Telemetry exporter
@@ -1283,12 +1293,20 @@ def resolve_runtime_environment_contract(
     )
     local_only = (
         _build_env_contract_entry(
+            name="CCDASH_LOCAL_STORAGE_ROOT",
+            scope="local_only",
+            environ=env,
+            default_when_missing=True,
+            active=runtime_profile in {"local", "test"},
+            notes="Root for local SQLite and large workspace caches; defaults to /Volumes/SKNVME/ccdash.",
+        ),
+        _build_env_contract_entry(
             name="CCDASH_DB_PATH",
             scope="local_only",
             environ=env,
             default_when_missing=True,
             active=runtime_profile in {"local", "test"},
-            notes="SQLite file path for local-first runtimes; hosted runtimes must not rely on it.",
+            notes="SQLite file path for local-first runtimes; defaults under CCDASH_LOCAL_STORAGE_ROOT and hosted runtimes must not rely on it.",
         ),
         _build_env_contract_entry(
             name="CCDASH_SESSION_MAPPINGS_FILE",

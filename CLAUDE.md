@@ -134,7 +134,7 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 
 ## Key Conventions
 
-- **DB backend**: Default SQLite at `data/ccdash_cache.db`. Set `CCDASH_DB_BACKEND=postgres` + `CCDASH_DATABASE_URL` for PostgreSQL.
+- **DB backend**: Default local SQLite is `/Volumes/SKNVME/ccdash/data/ccdash_cache.db`; large local caches also live under `/Volumes/SKNVME/ccdash`. Set `CCDASH_DB_BACKEND=postgres` + `CCDASH_DATABASE_URL` for PostgreSQL.
 - **Config via env vars**: All backend config is in `backend/config.py` reading from `CCDASH_*` env vars. Copy `.env.example` for local overrides.
 - **CLI timeout**: `CCDASH_TIMEOUT` (default 30s; overridden by `--timeout` flag). See `docs/guides/cli-timeout-debugging.md`.
 - **Query cache**: `CCDASH_QUERY_CACHE_TTL_SECONDS` (default 60; 0 disables). `CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS` (default 300; background warming). See `docs/guides/query-cache-tuning-guide.md`.

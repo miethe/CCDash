@@ -12,12 +12,13 @@ status: validated
 # SQLite VACUUM Runbook
 
 This runbook covers the full VACUUM lifecycle for the CCDash SQLite database
-(`data/ccdash_cache.db`): pre-VACUUM snapshot, execution, post-VACUUM
+(`/Volumes/SKNVME/ccdash/data/ccdash_cache.db` by default): pre-VACUUM snapshot, execution, post-VACUUM
 verification, WAL-checkpoint strategy (OQ-02 decision), rollback procedure, and
 scope boundaries for related reclaim work owned by other PRDs.
 
-All path references are relative to the CCDash repo root unless otherwise noted.
-`$DATA` refers to `data/` throughout.
+`$DATA` refers to `${CCDASH_LOCAL_STORAGE_ROOT:-/Volumes/SKNVME/ccdash}/data`
+throughout. Do not place a production-sized local SQLite file or its snapshots
+inside the repository checkout or on the primary drive.
 
 ---
 
