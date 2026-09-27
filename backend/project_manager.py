@@ -377,6 +377,12 @@ class DbProjectManager:
         self._projects: dict[str, Project] | None = None
         self._active_project_id: str | None = None
         self._snapshot_loaded: bool = False
+        # False while the snapshot came from the projects.json read-fallback (DB unavailable).
+        # That fallback is a stale bootstrap file, not the registry: consumers that DIFF the
+        # project set (the watcher reconcile loop) must not read a project's absence from it as
+        # deregistration.  Measured 2026-09-26 22:36/22:47 EDT: two DB timeouts made the loop
+        # see 5 projects instead of 428 and stop 320 live watchers (node_01M3EXGG6DFXGN4GCRCYP8JDST).
+        self._snapshot_authoritative: bool = False
 
     # ------------------------------------------------------------------
     # Repository accessor (lazy init)
@@ -417,6 +423,7 @@ class DbProjectManager:
                 "DB unavailable (%s); falling back to projects.json", exc
             )
             self._load_snapshot_from_json()
+            self._snapshot_authoritative = False
             return
 
         if not rows:
@@ -429,6 +436,7 @@ class DbProjectManager:
                 self._create_default_project_in_snapshot()
                 self._flush_snapshot_to_db()
             self._snapshot_loaded = True
+            self._snapshot_authoritative = True
             logger.info(
                 "DbProjectManager: snapshot bootstrap complete "
                 "(projects=%d, active=%s)",
@@ -466,6 +474,7 @@ class DbProjectManager:
                     elected.is_active = True
 
         self._snapshot_loaded = True
+        self._snapshot_authoritative = True
         logger.info(
             "DbProjectManager: snapshot loaded from DB "
             "(projects=%d, active=%s)",
@@ -808,6 +817,16 @@ class DbProjectManager:
     def list_projects(self) -> list[Project]:
         self._ensure_snapshot()
         return [_mark_active(_mark_seed(p), self._active_project_id) for p in self._projects.values()]
+
+    def snapshot_is_authoritative(self) -> bool:
+        """True when the snapshot most recently served was read from the DB registry.
+
+        False when it was the projects.json read-fallback taken because the DB was unavailable
+        (or before any snapshot was served).  Deliberately does NOT reload: a caller that just
+        diffed ``list_projects()`` must get the authority of THAT snapshot, and a reload here
+        could succeed and report True for a list that came from the fallback.
+        """
+        return self._snapshot_authoritative
 
     def get_project(self, project_id: str) -> Optional[Project]:
         self._ensure_snapshot()

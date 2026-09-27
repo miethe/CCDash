@@ -33,6 +33,22 @@ from backend.services.test_config import effective_test_flags, resolve_test_sour
 logger = logging.getLogger("ccdash.runtime.jobs")
 
 
+async def _await_bounded(awaitable: Any, timeout: float) -> bool:
+    """Await *awaitable* for at most *timeout* seconds WITHOUT waiting for its cancellation.
+
+    ``asyncio.wait_for`` cancels on timeout and then awaits the cancellation, which hangs again
+    if the target ignores or stalls on cancel.  ``asyncio.wait`` returns at the deadline.
+    Returns True when it finished (successfully or with an exception), False on timeout.
+    """
+    task = awaitable if isinstance(awaitable, asyncio.Future) else asyncio.ensure_future(awaitable)
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        if not task.cancelled():
+            task.exception()  # retrieve so an exception is never "never retrieved"
+        return True
+    return False
+
+
 class WatcherRebindError(Exception):
     """Raised when a watcher rebind cannot proceed or fails atomically."""
 
@@ -1130,6 +1146,154 @@ class RuntimeJobAdapter:
             task.get_name(),
         )
 
+    async def _watcher_reconcile_tick(self, semaphore: asyncio.Semaphore | None) -> str | None:
+        """One T3-004 watcher reconcile tick: diff the registry against the active watcher set.
+
+        Returns a non-fatal tick warning (surfaced as ``lastReconcileError``) or ``None``.
+        Removals are skipped when the registry snapshot is a non-authoritative DB fallback, and
+        every per-watcher stop is bounded by ``WATCHER_RECONCILE_STOP_TIMEOUT_SECONDS`` so one
+        stuck watcher cannot wedge the loop.
+        """
+        stop_timeout = int(getattr(config, "WATCHER_RECONCILE_STOP_TIMEOUT_SECONDS", 30))
+        workspace_registry = self.ports.workspace_registry
+
+        # Reload the registry snapshot so newly added projects surface
+        # without a process restart.
+        _reload = getattr(workspace_registry, "reload_projects", None)
+        if callable(_reload):
+            try:
+                _reload()
+            except Exception:
+                logger.exception(
+                    "T3-004 watcher reconcile: reload_projects() failed — continuing"
+                )
+
+        _list_fn = getattr(workspace_registry, "list_projects", None)
+        all_projects = list(_list_fn()) if callable(_list_fn) else []
+        registry_ids: set[str] = set()
+        for proj in all_projects:
+            pid = str(getattr(proj, "id", "") or "")
+            if pid:
+                registry_ids.add(pid)
+
+        active_ids: set[str] = set(self.state.fan_out_watcher_tasks.keys())
+        new_ids = registry_ids - active_ids
+        removed_ids = active_ids - registry_ids
+        tick_warning: str | None = None
+
+        # A registry snapshot served from the projects.json read-fallback (DB unavailable) is
+        # not the registry: a project's absence from it is NOT deregistration.  Additions are
+        # still safe (they are idempotent and bound from the same registry); removals are
+        # skipped until an authoritative snapshot confirms them.
+        _authority = getattr(workspace_registry, "registry_snapshot_is_authoritative", None)
+        if removed_ids and callable(_authority) and not _authority():
+            tick_warning = (
+                f"registry snapshot is a non-authoritative fallback (DB unavailable); "
+                f"skipped {len(removed_ids)} watcher removal(s)"
+            )
+            logger.warning("T3-004 watcher reconcile: %s", tick_warning)
+            removed_ids = set()
+
+        # Add watchers for new projects.
+        for pid in new_ids:
+            try:
+                binding = workspace_registry.resolve_project_binding(
+                    pid, allow_active_fallback=False, refresh=True
+                )
+                if binding is None:
+                    logger.warning(
+                        "T3-004 watcher reconcile: no binding for new project '%s' — "
+                        "will retry next tick",
+                        pid,
+                    )
+                    continue
+                # Use the existing fan-out infrastructure (semaphore + supervisor).
+                # Build a minimal supervisor callback for dynamically added projects.
+                def _make_minimal_cb(project_id: str):
+                    def _cb(task: asyncio.Task[None]) -> None:
+                        if task.cancelled():
+                            return
+                        exc = task.exception() if not task.cancelled() else None
+                        if exc is not None:
+                            logger.error(
+                                "T3-004 reconcile: fan-out watcher for project_id=%s "
+                                "raised exception: %s",
+                                project_id, exc, exc_info=exc,
+                            )
+                            self.state.fan_out_watcher_health[project_id] = "degraded"
+                            self.state.fan_out_watcher_tasks.pop(project_id, None)
+                    return _cb
+
+                _cb = _make_minimal_cb(pid)
+                await self._start_single_fan_out_watcher(
+                    binding=binding,
+                    semaphore=semaphore or asyncio.Semaphore(
+                        getattr(config, "WATCHER_SYNC_CONCURRENCY", 20)
+                    ),
+                    supervisor_callback=_cb,
+                    start_singleton=False,
+                )
+                logger.info(
+                    "T3-004 watcher reconcile: added watcher for new project '%s'", pid
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "T3-004 watcher reconcile: failed to add watcher for project '%s' — "
+                    "will retry next tick",
+                    pid,
+                )
+
+        # Remove watchers for deregistered projects.
+        for pid in removed_ids:
+            try:
+                task = self.state.fan_out_watcher_tasks.pop(pid, None)
+                if task is not None and not task.done():
+                    task.cancel()
+                    if not await _await_bounded(task, stop_timeout):
+                        logger.error(
+                            "T3-004 watcher reconcile: watcher task for project '%s' did not stop "
+                            "within %ss after cancel — continuing (not blocking the loop)",
+                            pid,
+                            stop_timeout,
+                        )
+                self.state.fan_out_watcher_health.pop(pid, None)
+                if not await _await_bounded(file_watcher_registry.unregister(pid), stop_timeout):
+                    logger.error(
+                        "T3-004 watcher reconcile: unregister for project '%s' did not finish "
+                        "within %ss — continuing (not blocking the loop)",
+                        pid,
+                        stop_timeout,
+                    )
+                logger.info(
+                    "T3-004 watcher reconcile: removed watcher for deregistered project '%s'",
+                    pid,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "T3-004 watcher reconcile: failed to remove watcher for project '%s' — "
+                    "will retry next tick",
+                    pid,
+                )
+
+        if new_ids or removed_ids:
+            logger.info(
+                "T3-004 watcher reconcile tick: added=%d removed=%d active=%d",
+                len(new_ids),
+                len(removed_ids),
+                len(self.state.fan_out_watcher_tasks),
+            )
+        else:
+            logger.debug(
+                "T3-004 watcher reconcile tick: no changes (active=%d)",
+                len(self.state.fan_out_watcher_tasks),
+            )
+
+        return tick_warning
+
     def _start_watcher_reconcile_task(self) -> asyncio.Task[None] | None:
         """T3-004: periodic watcher fan-out reconcile loop.
 
@@ -1171,120 +1335,7 @@ class RuntimeJobAdapter:
                 await asyncio.sleep(interval_seconds)
                 tick_error: str | None = None
                 try:
-                    workspace_registry = adapter_ref.ports.workspace_registry
-
-                    # Reload the registry snapshot so newly added projects surface
-                    # without a process restart.
-                    _reload = getattr(workspace_registry, "reload_projects", None)
-                    if callable(_reload):
-                        try:
-                            _reload()
-                        except Exception:
-                            logger.exception(
-                                "T3-004 watcher reconcile: reload_projects() failed — continuing"
-                            )
-
-                    _list_fn = getattr(workspace_registry, "list_projects", None)
-                    all_projects = list(_list_fn()) if callable(_list_fn) else []
-                    registry_ids: set[str] = set()
-                    for proj in all_projects:
-                        pid = str(getattr(proj, "id", "") or "")
-                        if pid:
-                            registry_ids.add(pid)
-
-                    active_ids: set[str] = set(adapter_ref.state.fan_out_watcher_tasks.keys())
-                    new_ids = registry_ids - active_ids
-                    removed_ids = active_ids - registry_ids
-
-                    # Add watchers for new projects.
-                    for pid in new_ids:
-                        try:
-                            binding = workspace_registry.resolve_project_binding(
-                                pid, allow_active_fallback=False, refresh=True
-                            )
-                            if binding is None:
-                                logger.warning(
-                                    "T3-004 watcher reconcile: no binding for new project '%s' — "
-                                    "will retry next tick",
-                                    pid,
-                                )
-                                continue
-                            # Use the existing fan-out infrastructure (semaphore + supervisor).
-                            # Build a minimal supervisor callback for dynamically added projects.
-                            def _make_minimal_cb(project_id: str):
-                                def _cb(task: asyncio.Task[None]) -> None:
-                                    if task.cancelled():
-                                        return
-                                    exc = task.exception() if not task.cancelled() else None
-                                    if exc is not None:
-                                        logger.error(
-                                            "T3-004 reconcile: fan-out watcher for project_id=%s "
-                                            "raised exception: %s",
-                                            project_id, exc, exc_info=exc,
-                                        )
-                                        adapter_ref.state.fan_out_watcher_health[project_id] = "degraded"
-                                        adapter_ref.state.fan_out_watcher_tasks.pop(project_id, None)
-                                return _cb
-
-                            _cb = _make_minimal_cb(pid)
-                            await adapter_ref._start_single_fan_out_watcher(
-                                binding=binding,
-                                semaphore=semaphore or asyncio.Semaphore(
-                                    getattr(config, "WATCHER_SYNC_CONCURRENCY", 20)
-                                ),
-                                supervisor_callback=_cb,
-                                start_singleton=False,
-                            )
-                            logger.info(
-                                "T3-004 watcher reconcile: added watcher for new project '%s'", pid
-                            )
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            logger.exception(
-                                "T3-004 watcher reconcile: failed to add watcher for project '%s' — "
-                                "will retry next tick",
-                                pid,
-                            )
-
-                    # Remove watchers for deregistered projects.
-                    for pid in removed_ids:
-                        try:
-                            task = adapter_ref.state.fan_out_watcher_tasks.pop(pid, None)
-                            if task is not None and not task.done():
-                                task.cancel()
-                                try:
-                                    await task
-                                except (asyncio.CancelledError, Exception):
-                                    pass
-                            adapter_ref.state.fan_out_watcher_health.pop(pid, None)
-                            await file_watcher_registry.unregister(pid)
-                            logger.info(
-                                "T3-004 watcher reconcile: removed watcher for deregistered project '%s'",
-                                pid,
-                            )
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            logger.exception(
-                                "T3-004 watcher reconcile: failed to remove watcher for project '%s' — "
-                                "will retry next tick",
-                                pid,
-                            )
-
-                    if new_ids or removed_ids:
-                        logger.info(
-                            "T3-004 watcher reconcile tick: added=%d removed=%d active=%d",
-                            len(new_ids),
-                            len(removed_ids),
-                            len(adapter_ref.state.fan_out_watcher_tasks),
-                        )
-                    else:
-                        logger.debug(
-                            "T3-004 watcher reconcile tick: no changes (active=%d)",
-                            len(adapter_ref.state.fan_out_watcher_tasks),
-                        )
-
+                    tick_error = await adapter_ref._watcher_reconcile_tick(semaphore)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
