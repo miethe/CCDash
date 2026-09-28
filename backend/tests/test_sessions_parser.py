@@ -812,6 +812,116 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(len(fork_relationships), 1)
         self.assertEqual(fork_relationships[0]["childSessionId"], expected_fork_id)
 
+    def test_fork_session_wires_cache_tokens_from_fork_branch_usage(self) -> None:
+        # node_01M1ZAGCKQY2ZBJ45GP3MEQDJV: the fork-session AgentSession
+        # constructor must accumulate cache_creation_input_tokens /
+        # cache_read_input_tokens from the fork branch's own assistant
+        # messages, not leave them at the implicit Pydantic 0 default.
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-01T10:00:00Z",
+                    "uuid": "u0",
+                    "message": {"role": "user", "content": "Start task"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-01T10:00:01Z",
+                    "uuid": "a1",
+                    "parentUuid": "u0",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-0-20251001",
+                        "content": [{"type": "text", "text": "Plan options"}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-01T10:00:02Z",
+                    "uuid": "u2",
+                    "parentUuid": "a1",
+                    "message": {"role": "user", "content": "Take option A"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-01T10:00:02.5Z",
+                    "uuid": "a2",
+                    "parentUuid": "u2",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-0-20251001",
+                        "content": [{"type": "text", "text": "Implementing A"}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-01T10:00:03Z",
+                    "uuid": "u3",
+                    "parentUuid": "a1",
+                    "message": {"role": "user", "content": "Fork to option B"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-01T10:00:03.5Z",
+                    "uuid": "a3",
+                    "parentUuid": "u3",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-0-20251001",
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 200,
+                            "cache_creation_input_tokens": 345,
+                            "cache_read_input_tokens": 678,
+                        },
+                        "content": [{"type": "text", "text": "Implementing B"}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-01T10:00:04Z",
+                    "uuid": "u4",
+                    "parentUuid": "a3",
+                    "message": {"role": "user", "content": "Keep going on B"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-01T10:00:05Z",
+                    "uuid": "a4",
+                    "parentUuid": "u4",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-0-20251001",
+                        "usage": {
+                            "input_tokens": 50,
+                            "output_tokens": 60,
+                            "cache_creation_input_tokens": 22,
+                            "cache_read_input_tokens": 33,
+                        },
+                        "content": [{"type": "text", "text": "Finished B"}],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        derived_sessions = session.derivedSessions or []
+        self.assertEqual(len(derived_sessions), 1)
+        fork_session = derived_sessions[0]
+        self.assertEqual(fork_session["threadKind"], "fork")
+
+        # Both fork-branch assistant messages (a3, a4) contribute: cache
+        # creation = 345 + 22 = 367, cache read = 678 + 33 = 711. Token
+        # totals must accumulate the same way (100+50, 200+60).
+        self.assertEqual(fork_session["cacheCreationInputTokens"], 367)
+        self.assertEqual(fork_session["cacheReadInputTokens"], 711)
+        self.assertEqual(fork_session["tokensIn"], 150)
+        self.assertEqual(fork_session["tokensOut"], 260)
+
     def test_task_tool_extracts_metadata_from_description_and_prompt(self) -> None:
         path = self._write_jsonl(
             [
