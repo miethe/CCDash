@@ -4106,6 +4106,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
                     fork_tokens_in = 0
                     fork_tokens_out = 0
+                    fork_cache_creation_input_tokens = 0
+                    fork_cache_read_input_tokens = 0
                     fork_tool_counter: Counter[str] = Counter()
                     fork_tool_success: Counter[str] = Counter()
                     fork_tool_total: Counter[str] = Counter()
@@ -4121,6 +4123,12 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             metadata = fork_log.metadata if isinstance(fork_log.metadata, dict) else {}
                             fork_tokens_in += _coerce_int(metadata.get("inputTokens"), 0)
                             fork_tokens_out += _coerce_int(metadata.get("outputTokens"), 0)
+                            fork_cache_creation_input_tokens += _coerce_int(
+                                metadata.get("cache_creation_input_tokens"), 0
+                            )
+                            fork_cache_read_input_tokens += _coerce_int(
+                                metadata.get("cache_read_input_tokens"), 0
+                            )
                         if fork_log.type == "tool" and fork_log.toolCall:
                             tool_name = str(fork_log.toolCall.name or "").strip()
                             if not tool_name:
@@ -4163,6 +4171,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         "toolsUsed": fork_tools_used,
                         "tokensIn": fork_tokens_in,
                         "tokensOut": fork_tokens_out,
+                        "cacheCreationInputTokens": fork_cache_creation_input_tokens,
+                        "cacheReadInputTokens": fork_cache_read_input_tokens,
                         "durationSeconds": fork_duration,
                         "startedAt": fork_first_ts,
                         "endedAt": fork_last_ts,
@@ -4803,6 +4813,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 durationSeconds=_coerce_int(partition.get("durationSeconds"), 0),
                 tokensIn=_coerce_int(partition.get("tokensIn"), 0),
                 tokensOut=_coerce_int(partition.get("tokensOut"), 0),
+                cacheCreationInputTokens=_coerce_int(partition.get("cacheCreationInputTokens"), 0),
+                cacheReadInputTokens=_coerce_int(partition.get("cacheReadInputTokens"), 0),
                 **_agent_session_context_fields(partition.get("logs", []), model, None),
                 totalCost=round(
                     _estimate_cost(
