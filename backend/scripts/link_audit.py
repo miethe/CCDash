@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.link_audit import analyze_suspect_links, suspects_as_dicts
+from backend.config import DB_PATH
 
 
 def _load_links(
@@ -88,7 +89,7 @@ def _fanout_map(conn: sqlite3.Connection, project_id: str | None) -> dict[str, i
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--db", default="data/ccdash_cache.db")
+    parser.add_argument("--db", default=str(DB_PATH))
     parser.add_argument("--feature", default="")
     parser.add_argument("--project", default="")
     parser.add_argument("--primary-floor", type=float, default=0.55)

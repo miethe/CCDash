@@ -425,7 +425,8 @@ All backend variables are read in [`backend/config.py`](../backend/config.py); f
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CCDASH_DB_BACKEND` | `sqlite` | `sqlite` or `postgres` |
-| `CCDASH_DB_PATH` | `.ccdash.db` | SQLite file path |
+| `CCDASH_LOCAL_STORAGE_ROOT` | `/Volumes/SKNVME/ccdash` | Root for local SQLite and large workspace caches; local runs never default to the primary drive |
+| `CCDASH_DB_PATH` | `/Volumes/SKNVME/ccdash/data/ccdash_cache.db` | SQLite file path |
 | `CCDASH_DATABASE_URL` | — | PostgreSQL connection URL |
 | `CCDASH_SQLITE_BUSY_TIMEOUT_MS` | `30000` | SQLite busy-timeout (ms); floor 1000 |
 | `CCDASH_STORAGE_PROFILE` | `local` | `local` or `enterprise` |
@@ -445,7 +446,7 @@ All backend variables are read in [`backend/config.py`](../backend/config.py); f
 | `CCDASH_CODEX_SESSIONS_ROOT` | — | Codex sessions discovery root |
 | `CCDASH_SESSION_DISCOVERY_ROOT` | — | Generic session discovery root |
 | `CCDASH_INTEGRATIONS_SETTINGS_FILE` | `.ccdash-integrations.json` | Integrations settings file |
-| `CCDASH_REPO_WORKSPACE_CACHE_DIR` | `.ccdash-repo-cache` | Repo workspace cache |
+| `CCDASH_REPO_WORKSPACE_CACHE_DIR` | `/Volumes/SKNVME/ccdash/repo-workspace-cache` | Repo workspace cache |
 | `CCDASH_TEST_RESULTS_DIR` | — | Override path for test result ingestion |
 | `CCDASH_SESSION_MAPPINGS_FILE` | — | JSON file with session-mapping overrides |
 | `CCDASH_SESSION_MAPPINGS_JSON` | — | Inline JSON session-mapping overrides |
