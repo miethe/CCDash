@@ -72,6 +72,11 @@ class CaptureSidecar:
     #: ``scripts/hooks/ccdash_capture_session_start.py::update_effort_tier_last``.
     effort_tier_last: Optional[str] = None
     model_variant: Optional[str] = None
+    # Optional native v4 metadata: explicit platform and measured model source.
+    platform_type: Optional[str] = None
+    launcher_source: Optional[str] = None
+    profile_source: Optional[str] = None
+    model_variant_source: Optional[str] = None
     #: ICA key NAME (CC1..CC6) for ICA-launched sessions (v51). NEVER secret
     #: bytes. ``None`` == not captured / not an ICA session (never defaulted).
     ica_key: Optional[str] = None
@@ -145,6 +150,10 @@ def parse_capture_sidecar(path: Path) -> Optional[CaptureSidecar]:
         effort_tier_source=effort_tier_source,
         effort_tier_last=_opt_str("effortTierLast"),
         model_variant=_opt_str("modelVariant"),
+        platform_type=_opt_str("platformType"),
+        launcher_source=_opt_str("launcherSource"),
+        profile_source=_opt_str("profileSource"),
+        model_variant_source=_opt_str("modelVariantSource"),
         ica_key=_opt_str("icaKey"),
         ica_spend_start=_opt_str("icaSpendStart"),
         ica_spend_end=_opt_str("icaSpendEnd"),

@@ -22,6 +22,9 @@ from backend.parsers.session_name_provenance import (
     SESSION_NAME_SOURCE_PROVIDER_PERSISTED,
 )
 from backend.parsers.platforms.codex.tool_outcome import classify_tool_outcome
+from backend.parsers.platforms.codex.capture import (
+    collect_capture_sidecar, resolve_child_session, session_metadata_id,
+)
 from backend.parsers.platforms.test_runs import (
     aggregate_test_runs,
     enrich_test_run_with_output,
@@ -38,7 +41,8 @@ _DB_TOOL_PATTERN = re.compile(r"\b(psql|mysql|sqlite3|mongosh|mongo|redis-cli|pg
 _DOCKER_PATTERN = re.compile(r"\bdocker(?:\s+compose|[- ]compose|\s+\w+)")
 _SERVICE_PATTERN = re.compile(r"\b(pm2|systemctl)\b")
 _COMMAND_TOOL_NAMES = {"exec_command", "shell_command", "shell"}
-_SUBAGENT_TOOL_NAMES = {"task", "agent"}
+_NATIVE_SUBAGENT_TOOL_NAMES = {"collaborationspawn_agent", "collaboration.spawn_agent", "spawn_agent"}
+_SUBAGENT_TOOL_NAMES = {"task", "agent"} | _NATIVE_SUBAGENT_TOOL_NAMES
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
 _COMMAND_ARGS_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
 _SLASH_COMMAND_LINE_PATTERN = re.compile(
@@ -483,7 +487,10 @@ def parse_session_file(path: Path) -> AgentSession | None:
     fs_dates = file_metadata_dates(path)
     session_status = _derive_status(entries, path)
     session_id = _make_id(path)
-    raw_session_id = path.stem
+    # Keep legacy DB session_id, but native identity comes from session_meta.
+    native_session_id = session_metadata_id(entries)
+    raw_session_id = native_session_id or path.stem
+    capture = collect_capture_sidecar(path, native_session_id)
     model = ""
     # Gap 3 (codex-effort-tier-ingestion): resolved reasoning-effort value for
     # sessions.effort_tier. None until a non-empty value is found; never guessed.
@@ -729,11 +736,24 @@ def parse_session_file(path: Path) -> AgentSession | None:
         clean = str(raw_agent_id or "").strip()
         if not clean:
             return
-        if clean.lower().startswith("agent-"):
-            clean = clean.split("agent-", 1)[-1] or clean
-
-        linked_session = _normalize_session_id(f"agent-{clean}")
         tool_log_idx = tool_logs_by_call_id.get(call_id)
+        native_spawn = (
+            tool_log_idx is not None and logs[tool_log_idx].toolCall
+            and logs[tool_log_idx].toolCall.name.lower() in _NATIVE_SUBAGENT_TOOL_NAMES
+        )
+        if native_spawn:
+            # Requested model/effort is intent. Returned child ID is a receipt;
+            # only a confirmed same-source rollout establishes a DB correlation.
+            linked_session = resolve_child_session(path, clean)
+            logs[tool_log_idx].metadata["nativeChildSessionId"] = clean
+            logs[tool_log_idx].metadata["nativeChildIdSource"] = "codex.spawn_result"
+            logs[tool_log_idx].metadata["nativeChildCorrelation"] = (
+                "same_source_session_meta" if linked_session else "unresolved"
+            )
+        else:
+            if clean.lower().startswith("agent-"):
+                clean = clean.split("agent-", 1)[-1] or clean
+            linked_session = _normalize_session_id(f"agent-{clean}")
         subagent_name = ""
         source_tool_name = "Agent"
         if tool_log_idx is not None:
@@ -750,6 +770,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
         emitted_subagent_starts.add(emit_key)
 
         metadata: dict[str, Any] = {"agentId": clean}
+        if native_spawn:
+            metadata["nativeChildIdSource"] = "codex.spawn_result"
+            metadata["liveness"] = "unmeasured"
         if subagent_name:
             metadata["subagentName"] = subagent_name
             metadata["subagentType"] = subagent_name
@@ -993,11 +1016,12 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     or args_payload.get("subagentType")
                     or args_payload.get("agent_name")
                     or args_payload.get("agentName")
+                    or args_payload.get("agent_type")
                     or ""
                 ).strip()
-                task_name = str(args_payload.get("name") or "").strip()
+                task_name = str(args_payload.get("name") or args_payload.get("task_name") or "").strip()
                 task_description = str(args_payload.get("description") or "").strip()
-                task_prompt = _coerce_text_blob(args_payload.get("prompt"))
+                task_prompt = _coerce_text_blob(args_payload.get("prompt") or args_payload.get("message"))
                 task_mode = str(args_payload.get("mode") or "").strip()
                 task_model = str(args_payload.get("model") or "").strip()
 
@@ -1016,6 +1040,12 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     tool_log.metadata["taskMode"] = task_mode[:120]
                 if task_model:
                     tool_log.metadata["taskModel"] = task_model[:120]
+
+                if tool_name.lower() in _NATIVE_SUBAGENT_TOOL_NAMES:
+                    requested_effort = args_payload.get("reasoning_effort")
+                    if isinstance(requested_effort, str) and requested_effort.strip():
+                        tool_log.metadata["taskRequestedReasoningEffort"] = requested_effort.strip()[:120]
+                    tool_log.metadata["taskModelProvenance"] = "request_intent" if task_model else None
 
                 run_in_background = args_payload.get("run_in_background")
                 if isinstance(run_in_background, bool):
@@ -1259,6 +1289,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
         "platform": "codex",
         "schemaVersion": 1,
         "rawSessionId": raw_session_id,
+        "nativeSessionId": native_session_id or None,
+        "nativeSessionIdSource": "codex.session_meta.id" if native_session_id else None,
+        "captureSidecarJoined": capture is not None,
+        "captureEffortTier": capture.effort_tier if capture else None,
+        "captureEffortTierSource": capture.effort_tier_source if capture else None,
+        "captureModelVariantSource": capture.model_variant_source if capture else None,
+        "captureModelMeaning": "payload_observation" if capture and capture.model_variant_source else None,
+        "captureLauncherSource": capture.launcher_source if capture else None,
+        "captureProfileSource": capture.profile_source if capture else None,
         "sessionFile": str(path),
         "entryContext": {
             "workingDirectories": sorted(working_directories),
@@ -1378,9 +1417,27 @@ def parse_session_file(path: Path) -> AgentSession | None:
         agentId=None,
         # Gap 3 (codex-effort-tier-ingestion): resolved above from
         # payload.effort / payload.collaboration_mode.settings.reasoning_effort.
-        effortTier=effort_tier,
+        launcher=(capture.launcher if capture
+                  and capture.launcher_source == "codex_payload_launcher" else None),
+        profile=(capture.profile if capture
+                 and capture.profile_source == "codex_payload_profile" else None),
+        modelVariant=(capture.model_variant if capture
+                      and capture.model_variant_source == "codex_payload_model" else None),
+        effortTierLast=capture.effort_tier_last if capture else None,
+        # Harness observations retain precedence. Native sidecar fallback only
+        # accepts provenance from the same explicit native metadata fields.
+        effortTier=effort_tier or (
+            capture.effort_tier if capture and capture.effort_tier_source in {
+                EFFORT_SOURCE_CODEX_PAYLOAD_EFFORT, EFFORT_SOURCE_CODEX_COLLABORATION_MODE
+            } else None
+        ),
         # Gap 4: which of those two fields the value came from.
-        effortTierSource=effort_tier_source,
+        effortTierSource=effort_tier_source or (
+            capture.effort_tier_source if capture and capture.effort_tier
+            and capture.effort_tier_source in {
+                EFFORT_SOURCE_CODEX_PAYLOAD_EFFORT, EFFORT_SOURCE_CODEX_COLLABORATION_MODE
+            } else None
+        ),
         durationSeconds=duration,
         tokensIn=tokens_in,
         tokensOut=tokens_out,

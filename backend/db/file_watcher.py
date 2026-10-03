@@ -672,7 +672,12 @@ class FileWatcher:
                 if in_sessions_scope and change_type != Change.deleted:
                     stem = path.name[: -len(_CAPTURE_SIDECAR_SUFFIX)]
                     sibling = path.with_name(f"{stem}.jsonl")
-                    if sibling.exists():
+                    if not sibling.exists():
+                        # Native rollouts have a prefix; UUID is only a candidate
+                        # selector until a bounded header confirms session_meta.id.
+                        from backend.parsers.platforms.codex.capture import resolve_session_path
+                        sibling = resolve_session_path(path.parent, stem)
+                    if sibling is not None and sibling.exists():
                         result.append(("modified", sibling))
                 # Never forward the sidecar itself — nothing downstream parses it.
                 continue
