@@ -741,6 +741,8 @@ def _main() -> None:
             "requiresTranscriptPath": True,
             "sessionEnd": "preserve_existing_start_or_skip",
             "requiresCallerDeadlineSeconds": 1.8,
+            "resultContract": {"capability": "ccdash.capture.native.result", "contractVersion": 1,
+                               "statuses": ["captured", "unavailable"]},
         }))
         return
     try:
@@ -751,11 +753,27 @@ def _main() -> None:
 
         payload = json.loads(raw_input)
         event = str(payload.get("hook_event_name") or payload.get("hookEventName") or "").strip()
-        env = dict(os.environ)
-        if event == "UserPromptSubmit":
-            update_effort_tier_last(payload, env)
+        if _capture_platform(payload) == "codex":
+            # Native result is metadata only. Captured means this invocation's
+            # function returned a Path after a write; it is not ingestion/liveness.
+            result = None
+            if event == "UserPromptSubmit":
+                result = update_effort_tier_last(payload, {})
+            elif event in {"SessionStart", "SessionEnd"}:
+                result = write_capture_sidecar(payload, {})
+            print(json.dumps({
+                "capability": "ccdash.capture.native.result", "contractVersion": 1,
+                "status": "captured" if result is not None else "unavailable",
+                "sessionId": _extract_session_id(payload), "event": event,
+                "schemaVersion": _SCHEMA_VERSION,
+                "sidecarPath": str(result) if result is not None else None,
+            }))
         else:
-            write_capture_sidecar(payload, env)
+            env = dict(os.environ)
+            if event == "UserPromptSubmit":
+                update_effort_tier_last(payload, env)
+            else:
+                write_capture_sidecar(payload, env)
     except Exception as exc:  # noqa: BLE001
         # Log to stderr only (not stdout) so it does not pollute hook output
         logger.debug("ccdash_capture: unhandled error in __main__ (ignored): %s", exc)

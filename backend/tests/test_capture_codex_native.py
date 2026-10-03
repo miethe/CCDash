@@ -310,3 +310,59 @@ def test_native_consumer_withholds_labels_without_native_source(tmp_path):
     sidecar.write_text(json.dumps(data))
     session = parse_codex_session_file(path)
     assert session.launcher is None and session.profile is None
+
+
+@pytest.mark.parametrize("event", ["SessionStart", "SessionEnd", "UserPromptSubmit"])
+def test_native_cli_result_reports_actual_write_and_end_preservation(tmp_path, event):
+    import subprocess
+    import sys
+    path = rollout(tmp_path)
+    start = payload(path, model="start-model", effort="medium")
+    script = ROOT / "scripts/hooks/ccdash_capture_session_start.py"
+    def run(p):
+        process = subprocess.run([sys.executable, str(script)], input=json.dumps(p), cwd=tmp_path,
+                                 env={"HOME":str(tmp_path)}, capture_output=True, text=True, timeout=1.8)
+        assert process.returncode == 0 and process.stderr == ""
+        return json.loads(process.stdout)
+    initial = run(start)
+    sidecar = path.with_name(f"{SID}.capture.json")
+    before = json.loads(sidecar.read_text())
+    result = initial if event == "SessionStart" else run(payload(path, event, model="later", effort="high"))
+    assert result == {"capability":"ccdash.capture.native.result","contractVersion":1,"status":"captured",
+                      "sessionId":SID,"event":event,"schemaVersion":4,"sidecarPath":str(sidecar)}
+    after = json.loads(sidecar.read_text())
+    if event == "SessionEnd":
+        assert after == before
+    if event == "UserPromptSubmit":
+        assert after["effortTierLast"] == "high" and after["effortTier"] == "medium"
+
+
+@pytest.mark.parametrize("failure", ["missing_path", "write_failure", "end_without_start"])
+def test_native_cli_result_does_not_claim_missing_or_failed_write(tmp_path, failure):
+    import subprocess
+    import sys
+    path = rollout(tmp_path)
+    p = payload(path, "SessionEnd" if failure == "end_without_start" else "SessionStart")
+    if failure == "missing_path":
+        del p["transcript_path"]
+    if failure == "write_failure":
+        # A parent that is a regular file reliably refuses mkdir/write under root too.
+        blocker = tmp_path / "blocker"; blocker.write_text("synthetic")
+        p["transcript_path"] = str(blocker / "rollout.jsonl")
+    process = subprocess.run([sys.executable, str(ROOT / "scripts/hooks/ccdash_capture_session_start.py")], input=json.dumps(p), cwd=tmp_path,
+                             env={"HOME":str(tmp_path)}, capture_output=True, text=True, timeout=1.8)
+    assert process.returncode == 0 and process.stderr == ""
+    result = json.loads(process.stdout)
+    assert result["status"] == "unavailable" and result["sidecarPath"] is None
+    assert result["sessionId"] == SID and result["event"] == p["hook_event_name"]
+    assert result["capability"] == "ccdash.capture.native.result" and result["contractVersion"] == 1
+
+
+def test_legacy_claude_cli_remains_silent(tmp_path):
+    import subprocess
+    import sys
+    path = tmp_path / f"{SID}.jsonl"
+    process = subprocess.run([sys.executable, str(ROOT / "scripts/hooks/ccdash_capture_session_start.py")], input=json.dumps({"session_id":SID,"transcript_path":str(path)}), cwd=tmp_path,
+                             env={"HOME":str(tmp_path),"CLAUDE_CONFIG_DIR":str(tmp_path / "empty")}, capture_output=True, text=True, timeout=1.8)
+    assert process.returncode == 0 and process.stdout == "" and process.stderr == ""
+    assert path.with_suffix(".capture.json").exists()
