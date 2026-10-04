@@ -92,7 +92,7 @@ async def _seed_session(
                      'Claude Code', 0.0,
                      ?, ?, ?, ?, ?,
                      ?)
-           ON CONFLICT(id) DO NOTHING""",
+           ON CONFLICT(project_id, id) DO NOTHING""",
         (session_id, PROJECT_ID, ts, ts, ts, ts, f"{session_id}.jsonl", root),
     )
 

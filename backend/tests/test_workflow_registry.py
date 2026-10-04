@@ -210,6 +210,7 @@ class WorkflowRegistryServiceTests(unittest.IsolatedAsyncioTestCase):
                     "metadata": {"args": "docs/plan.md"},
                 }
             ],
+            project_id="project-1",
         )
 
     async def _seed_sessions_and_observations(self) -> None:

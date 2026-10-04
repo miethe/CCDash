@@ -48,6 +48,7 @@ class SyncEngineContextObservabilityTests(unittest.IsolatedAsyncioTestCase):
                     },
                 }
             ],
+            project_id="project-1",
         )
 
     async def asyncTearDown(self) -> None:
