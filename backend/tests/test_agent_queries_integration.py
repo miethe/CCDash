@@ -152,6 +152,7 @@ class AgentQueryIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     "content": "/dev:execute-phase 1 docs/project_plans/plan.md",
                 }
             ],
+            project_id="project-1",
         )
         await self.link_repo.upsert(
             {
