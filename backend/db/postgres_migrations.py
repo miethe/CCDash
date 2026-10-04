@@ -2871,12 +2871,38 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     before executing any DDL so that concurrent API/worker pods do not race on
     first-boot.  The lock is released unconditionally in a finally block.
     SQLite callers never reach this function (see backend.db.migrations).
+
+    Pool callers (``backend.runtime.container`` passes an ``asyncpg.Pool``)
+    MUST be pinned to ONE connection for the whole run.  ``Pool.execute``
+    acquires and releases a connection per statement, and asyncpg's release
+    reset query runs ``SELECT pg_advisory_unlock_all(); RESET ALL;`` — so on a
+    pool the advisory lock was dropped and ``lock_timeout`` reset immediately
+    after being set.  That is how api + worker both ran the idempotent index
+    checks concurrently and hung forever behind an ``idle in transaction``
+    INSERT on ``sessions`` (node_01M268RE15A6AR73W8856F0DF0, 40h outage).
     """
+    if isinstance(db, asyncpg.Pool):
+        async with db.acquire() as conn:
+            await _run_migrations_on_connection(conn)
+        return
+    await _run_migrations_on_connection(db)
+
+
+async def _run_migrations_on_connection(db: asyncpg.Connection) -> None:
+    """Advisory-lock bracket around the migration body on a single connection."""
     await db.execute(
         "SELECT pg_advisory_lock($1)", _PG_MIGRATION_ADVISORY_LOCK_KEY
     )
     try:
         await _run_migrations_inner(db)
+    except asyncpg.exceptions.LockNotAvailableError:
+        logger.error(
+            "Postgres migrations aborted: lock_timeout exceeded waiting on a "
+            "table lock (bounded failure instead of hanging startup). Look for "
+            "'idle in transaction' backends: SELECT pid, state, xact_start, query "
+            "FROM pg_stat_activity WHERE state = 'idle in transaction';"
+        )
+        raise
     finally:
         # Reset lock_timeout before releasing the advisory lock so the
         # connection is clean for any subsequent use (e.g. health checks).
