@@ -236,6 +236,7 @@ class TestClientV1FeatureSurfaceContract(unittest.TestCase):
                     },
                 }
             ],
+            project_id=cls._PROJECT_ID,
         )
         await storage.entity_links().upsert(
             {

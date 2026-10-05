@@ -109,6 +109,7 @@ class StackObservationBackfillTests(unittest.IsolatedAsyncioTestCase):
                     },
                 },
             ],
+            project_id="project-1",
         )
         await self.session_repo.upsert_artifacts(
             "session-1",
@@ -121,10 +122,12 @@ class StackObservationBackfillTests(unittest.IsolatedAsyncioTestCase):
                     "url": "http://skillmeat.local/context/planning",
                 }
             ],
+            project_id="project-1",
         )
         await self.session_repo.upsert_file_updates(
             "session-1",
             [{"filePath": "docs/plan.md", "additions": 10, "deletions": 0}],
+            project_id="project-1",
         )
 
     async def asyncTearDown(self) -> None:

@@ -67,7 +67,7 @@ class TestSqliteUpsertLogsDedupe(unittest.IsolatedAsyncioTestCase):
         ]
 
         # Must not raise IntegrityError.
-        await self.repo.upsert_logs("S-DEDUPE-1", logs)
+        await self.repo.upsert_logs("S-DEDUPE-1", logs, project_id="project-1")
 
         async with self.db.execute(
             "SELECT COUNT(*) FROM session_logs WHERE session_id = ?",
@@ -87,7 +87,7 @@ class TestSqliteUpsertLogsDedupe(unittest.IsolatedAsyncioTestCase):
         ]
 
         with self.assertLogs("ccdash.db.sessions", level="WARNING") as log_cm:
-            await self.repo.upsert_logs("S-DEDUPE-1", logs)
+            await self.repo.upsert_logs("S-DEDUPE-1", logs, project_id="project-1")
 
         # Exactly one warning should be emitted per call.
         warning_lines = [m for m in log_cm.output if "WARNING" in m]
@@ -106,7 +106,7 @@ class TestSqliteUpsertLogsDedupe(unittest.IsolatedAsyncioTestCase):
         ]
 
         with self.assertNoLogs("ccdash.db.sessions", level="WARNING"):
-            await self.repo.upsert_logs("S-DEDUPE-1", logs)
+            await self.repo.upsert_logs("S-DEDUPE-1", logs, project_id="project-1")
 
         async with self.db.execute(
             "SELECT COUNT(*) FROM session_logs WHERE session_id = ?",
@@ -123,7 +123,7 @@ class TestSqliteUpsertLogsDedupe(unittest.IsolatedAsyncioTestCase):
             {"id": "", "timestamp": "T2", "speaker": "user", "type": "message", "content": "no-id-2"},
         ]
 
-        await self.repo.upsert_logs("S-DEDUPE-1", logs)
+        await self.repo.upsert_logs("S-DEDUPE-1", logs, project_id="project-1")
 
         async with self.db.execute(
             "SELECT COUNT(*) FROM session_logs WHERE session_id = ?",

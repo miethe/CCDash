@@ -19,6 +19,12 @@ class FilesystemProjectPathProvider:
         raw_value = str(reference.filesystemPath or "").strip()
         if not raw_value and reference.field == "sessions":
             raw_value = str(Path.home() / ".claude" / "sessions")
+        if not raw_value and reference.field == "root":
+            # ``Project.path`` is the legacy mirror of the root reference (see
+            # ``Project._derive_legacy_fields``).  A row whose stored pathConfig carries a
+            # blank root but whose ``path`` column is populated must still resolve, rather
+            # than raising on every watcher/reconcile tick (node_01M44GE8XNP7ZEA3PM1C2D7YGK).
+            raw_value = str(getattr(project, "path", "") or "").strip()
         if not raw_value:
             raise PathResolutionError("missing_filesystem_path", f"Field '{reference.field}' requires a filesystem path.")
 
