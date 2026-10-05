@@ -27,6 +27,7 @@ from backend.adapters.jobs.intenttree_events_ingest_job import IntentTreeEventsI
 from backend.adapters.jobs.routing_rollup_sweep_job import RoutingRollupSweepJob
 from backend.adapters.jobs.session_naming_sweep_job import SessionNamingSweepJob
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
+from backend.services.project_paths.providers.base import PathResolutionError
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
 from backend.services.test_config import effective_test_flags, resolve_test_sources
 
@@ -163,6 +164,10 @@ class RuntimeJobState:
     # cannot be restarted every reconcile tick forever; the crashed/missing
     # ("not_running") self-heal path never reads this and is unaffected.
     watcher_self_heal_last_restart_at: dict[str, float] = field(default_factory=dict)
+    # node_01M44GE8XNP7ZEA3PM1C2D7YGK: last-logged ``time.monotonic()`` per
+    # (project_id, PathResolutionError.code) so an unresolvable project is logged once per
+    # suppression window instead of with a traceback every reconcile tick.
+    unresolvable_project_logged_at: dict[tuple[str, str], float] = field(default_factory=dict)
     job_observations: dict[str, RuntimeJobObservation] = field(default_factory=dict)
 
 
@@ -1146,6 +1151,30 @@ class RuntimeJobAdapter:
             task.get_name(),
         )
 
+    def _log_unresolvable_project_once(self, project_id: str, exc: PathResolutionError) -> bool:
+        """Log a project whose paths do not resolve, at most once per suppression window.
+
+        Returns ``True`` when a log line was emitted.  No traceback: the condition is a
+        project-row data problem, and the message + code identify it fully.
+        """
+        window = float(getattr(config, "WATCHER_UNRESOLVABLE_PROJECT_LOG_INTERVAL_SECONDS", 3600))
+        key = (str(project_id), str(getattr(exc, "code", "") or "unknown"))
+        now = time.monotonic()
+        last = self.state.unresolvable_project_logged_at.get(key)
+        if last is not None and (now - last) < window:
+            return False
+        self.state.unresolvable_project_logged_at[key] = now
+        logger.warning(
+            "T3-004 watcher reconcile: skipping project '%s' — paths do not resolve "
+            "(code=%s): %s Fix the project's pathConfig/root; this message is "
+            "suppressed for %.0fs.",
+            project_id,
+            key[1],
+            exc,
+            window,
+        )
+        return True
+
     async def _watcher_reconcile_tick(self, semaphore: asyncio.Semaphore | None) -> str | None:
         """One T3-004 watcher reconcile tick: diff the registry against the active watcher set.
 
@@ -1238,6 +1267,12 @@ class RuntimeJobAdapter:
                 )
             except asyncio.CancelledError:
                 raise
+            except PathResolutionError as exc:
+                # A project whose root does not resolve to a filesystem path is a data
+                # condition, not a transient failure: retrying it every tick with a full
+                # traceback grew the worker err log ~9KB/s (node_01M44GE8XNP7ZEA3PM1C2D7YGK).
+                # Skip it and log once per (project, code) per suppression window.
+                self._log_unresolvable_project_once(pid, exc)
             except Exception:
                 logger.exception(
                     "T3-004 watcher reconcile: failed to add watcher for project '%s' — "
@@ -1796,6 +1831,7 @@ class RuntimeJobAdapter:
                 reconciled = 0
                 healed = 0
                 failed_project_ids: list[str] = []
+                unresolvable_project_ids: list[str] = []
                 expected_ids: list[str] = []
 
                 for project in projects:
@@ -1815,6 +1851,12 @@ class RuntimeJobAdapter:
                     except asyncio.CancelledError:
                         self._mark_job_cancelled("reconcile", started, backlog_count=0)
                         raise
+                    except PathResolutionError as exc:
+                        # Data condition, not a transient failure: skip quietly (rate-limited)
+                        # rather than a traceback every run (node_01M44GE8XNP7ZEA3PM1C2D7YGK).
+                        self._log_unresolvable_project_once(pid, exc)
+                        unresolvable_project_ids.append(pid)
+                        continue
                     except Exception:
                         logger.exception(
                             "reconcile: resolve_project_binding failed for project '%s' — skipping",
@@ -1959,6 +2001,7 @@ class RuntimeJobAdapter:
                     "projectsReconciled": reconciled,
                     "watchersHealed": healed,
                     "failedProjectIds": failed_project_ids,
+                    "unresolvableProjectIds": unresolvable_project_ids,
                     "codexReconcileFailed": codex_reconcile_failed,
                 }
                 if failed_project_ids or codex_reconcile_failed:
