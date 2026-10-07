@@ -163,7 +163,7 @@ class StorageProfileConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             contract.secret_variables,
-            ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"),
+            ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN", "CCDASH_API_TOKEN"),
         )
         self.assertEqual(contract.shared[2].name, "CCDASH_DATABASE_URL")
         self.assertEqual(contract.shared[2].status, "configured")
@@ -228,7 +228,13 @@ class StorageProfileConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             contract.secret_variables,
-            ("CCDASH_DATABASE_URL", "CCDASH_CLERK_SECRET_KEY", "CCDASH_CLERK_JWT_KEY"),
+            (
+                "CCDASH_DATABASE_URL",
+                "CCDASH_CLERK_SECRET_KEY",
+                "CCDASH_CLERK_JWT_KEY",
+                # T10-004 / OQ-6: optional LAN bearer, secret-marked but never required.
+                "CCDASH_API_TOKEN",
+            ),
         )
         self.assertIn(
             "Runtime profile 'api' auth provider 'clerk' requires non-empty environment variables before serving traffic: "
@@ -269,7 +275,10 @@ class StorageProfileConfigTests(unittest.TestCase):
                 "CCDASH_OIDC_JWKS_URL",
             ),
         )
-        self.assertEqual(contract.secret_variables, ("CCDASH_DATABASE_URL", "CCDASH_OIDC_CLIENT_SECRET"))
+        self.assertEqual(
+            contract.secret_variables,
+            ("CCDASH_DATABASE_URL", "CCDASH_OIDC_CLIENT_SECRET", "CCDASH_API_TOKEN"),
+        )
         self.assertIn(
             "Runtime profile 'api' auth provider 'oidc' requires non-empty environment variables before serving traffic: "
             "CCDASH_OIDC_ISSUER, CCDASH_OIDC_AUDIENCE, CCDASH_OIDC_CLIENT_ID, CCDASH_OIDC_CLIENT_SECRET, "
