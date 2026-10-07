@@ -119,20 +119,14 @@ class SqliteCountActiveTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         from backend.db.repositories.sessions import SqliteSessionRepository
+        from backend.db.sqlite_migrations import run_migrations
 
         self.db = await aiosqlite.connect(":memory:")
         self.db.row_factory = aiosqlite.Row
-        # Create the minimal sessions schema needed for count_active
-        await self.db.execute("""
-            CREATE TABLE sessions (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                status TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                session_type TEXT
-            )
-        """)
-        await self.db.commit()
+        # Build the real sessions schema from migrations rather than a hand-kept
+        # copy: count_active now filters on workspace_id (#51, 41fc559), which a
+        # hand-built minimal table silently drifted away from.
+        await run_migrations(self.db)
         self.repo = SqliteSessionRepository(self.db)
 
     async def asyncTearDown(self) -> None:
@@ -151,9 +145,10 @@ class SqliteCountActiveTests(unittest.IsolatedAsyncioTestCase):
         session_type: str | None = None,
     ) -> None:
         await self.db.execute(
-            "INSERT INTO sessions (id, project_id, status, updated_at, session_type) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (session_id, project_id, status, updated_at, session_type),
+            "INSERT INTO sessions "
+            "(id, project_id, status, created_at, updated_at, source_file, session_type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, project_id, status, updated_at, updated_at, "", session_type),
         )
         await self.db.commit()
 
@@ -377,7 +372,8 @@ class PostgresListActiveTests(unittest.IsolatedAsyncioTestCase):
     TC-PG1  Attribute guard: PostgresSessionRepository exposes list_active.
     TC-PG2  Active predicate: correct WHERE / ORDER BY SQL emitted.
     TC-PG3  include_subagents=False appends session_type exclusion to WHERE.
-    TC-PG4  limit kwarg appends LIMIT $4 with the correct value.
+    TC-PG4  limit kwarg appends LIMIT $5 (after the workspace_id $4 param) with
+            the correct value.
     TC-PG5  Return shape: asyncpg Record rows are converted to plain dicts.
     TC-PG6  Empty result: returns [] when fetch returns no rows.
     """
@@ -455,15 +451,22 @@ class PostgresListActiveTests(unittest.IsolatedAsyncioTestCase):
     # TC-PG4 ──────────────────────────────────────────────────────────────────
 
     async def test_limit_appends_limit_clause_and_param(self) -> None:
-        """When limit is not None, LIMIT $4 is appended and its value is the 4th param."""
+        """When limit is not None, LIMIT $5 is appended and its value is the 5th param.
+
+        Workspace scoping (#51, 41fc559) inserted ``workspace_id = $4`` into the
+        WHERE clause, so the limit placeholder moved from $4 to $5.
+        """
         repo, conn = self._make_repo()
         conn.fetch.return_value = []
-        await repo.list_active("proj-1", limit=10)
+        await repo.list_active("proj-1", limit=10, workspace_id="ws-1")
         call_args = conn.fetch.call_args
         sql: str = call_args[0][0]
         positional_params = call_args[0][1:]
-        self.assertIn("LIMIT $4", sql, "LIMIT clause must reference $4 (4th positional param)")
-        self.assertEqual(positional_params[3], 10, "4th param must be the limit value")
+        self.assertIn("workspace_id = $4", sql)
+        self.assertEqual(positional_params[3], "ws-1", "4th param must be the workspace_id")
+        self.assertIn("LIMIT $5", sql, "LIMIT clause must reference $5 (5th positional param)")
+        self.assertEqual(len(positional_params), 5)
+        self.assertEqual(positional_params[4], 10, "5th param must be the limit value")
 
     # TC-PG5 ──────────────────────────────────────────────────────────────────
 

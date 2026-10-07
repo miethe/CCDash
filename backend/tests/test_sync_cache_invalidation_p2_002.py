@@ -173,7 +173,16 @@ class SyncProjectCacheInvalidationTests(unittest.IsolatedAsyncioTestCase):
                 engine._rglob_cache = {}
                 engine._active_operation_ids = set()
                 engine._operations = {}
+                # In-process coalescing guard (Core Remediation Phase 7).
+                engine._sync_in_flight = set()
                 engine.session_repo = MagicMock()
+                # Per-pass session-repo derive steps run unconditionally.
+                engine.session_repo.backfill_skill_name_inheritance = AsyncMock(return_value={"rows": 0})
+                engine.session_repo.backfill_ica_spend_attribution = AsyncMock(return_value={"rows": 0})
+                engine.provider_dimensions_repo = MagicMock()
+                engine.provider_dimensions_repo.backfill_provider_dimensions_from_sessions = AsyncMock(
+                    return_value={"providers_inserted": 0}
+                )
                 engine.document_repo = MagicMock()
                 engine.task_repo = MagicMock()
                 engine.feature_repo = MagicMock()

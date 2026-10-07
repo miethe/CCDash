@@ -7,6 +7,21 @@ import {
   reviewSessionMemoryDraft,
 } from '../skillmeat';
 
+// Since 265b14e every service request goes through apiClient.apiFetch, which
+// normalizes init.headers into a Headers instance (adding the project-scope
+// header only when a scope is selected) and defaults credentials to
+// 'same-origin'. Assert on the request the wrapper actually sends — URL,
+// credentials, and the real header contents — rather than the pre-wrapper
+// argument shape.
+function fetchCall(fetchMock: ReturnType<typeof vi.fn>, callIndex = 0) {
+  const [url, init] = fetchMock.mock.calls[callIndex] as [string, RequestInit | undefined];
+  return {
+    url,
+    init: init ?? {},
+    headers: Object.fromEntries(new Headers(init?.headers).entries()),
+  };
+}
+
 describe('skillmeat memory draft helpers', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -31,10 +46,13 @@ describe('skillmeat memory draft helpers', () => {
 
     await listSessionMemoryDrafts('project-1', { limit: 8, sessionId: 'session-1', status: 'approved' });
 
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchCall(fetchMock);
+    expect(call.url).toBe(
       '/api/integrations/skillmeat/memory-drafts?projectId=project-1&offset=0&limit=8&sessionId=session-1&status=approved',
-      { credentials: 'same-origin' },
     );
+    expect(call.init.credentials).toBe('same-origin');
+    expect(call.headers).toEqual({});
   });
 
   it('serializes generate, review, and publish actions against assumed draft routes', async () => {
@@ -131,35 +149,27 @@ describe('skillmeat memory draft helpers', () => {
     await reviewSessionMemoryDraft('project-1', 17, { decision: 'approved', actor: 'ops-panel', notes: 'Looks good' });
     await publishSessionMemoryDraft('project-1', 17, { actor: 'ops-panel', notes: 'Publish it' });
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      '/api/integrations/skillmeat/memory-drafts/generate?projectId=project-1',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: 'session-1', limit: 5, actor: 'ops-panel' }),
-        credentials: 'same-origin',
-      }),
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/integrations/skillmeat/memory-drafts/17/review?projectId=project-1',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision: 'approved', actor: 'ops-panel', notes: 'Looks good' }),
-        credentials: 'same-origin',
-      }),
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
-      '/api/integrations/skillmeat/memory-drafts/17/publish?projectId=project-1',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actor: 'ops-panel', notes: 'Publish it' }),
-        credentials: 'same-origin',
-      }),
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const call1 = fetchCall(fetchMock, 0);
+    expect(call1.url).toBe('/api/integrations/skillmeat/memory-drafts/generate?projectId=project-1');
+    expect(call1.init.method).toBe('POST');
+    expect(call1.init.credentials).toBe('same-origin');
+    expect(call1.init.body).toBe(JSON.stringify({ sessionId: 'session-1', limit: 5, actor: 'ops-panel' }));
+    // JSON POSTs must still carry Content-Type through the wrapper's Headers.
+    expect(call1.headers).toEqual({ 'content-type': 'application/json' });
+    const call2 = fetchCall(fetchMock, 1);
+    expect(call2.url).toBe('/api/integrations/skillmeat/memory-drafts/17/review?projectId=project-1');
+    expect(call2.init.method).toBe('POST');
+    expect(call2.init.credentials).toBe('same-origin');
+    expect(call2.init.body).toBe(JSON.stringify({ decision: 'approved', actor: 'ops-panel', notes: 'Looks good' }));
+    // JSON POSTs must still carry Content-Type through the wrapper's Headers.
+    expect(call2.headers).toEqual({ 'content-type': 'application/json' });
+    const call3 = fetchCall(fetchMock, 2);
+    expect(call3.url).toBe('/api/integrations/skillmeat/memory-drafts/17/publish?projectId=project-1');
+    expect(call3.init.method).toBe('POST');
+    expect(call3.init.credentials).toBe('same-origin');
+    expect(call3.init.body).toBe(JSON.stringify({ actor: 'ops-panel', notes: 'Publish it' }));
+    // JSON POSTs must still carry Content-Type through the wrapper's Headers.
+    expect(call3.headers).toEqual({ 'content-type': 'application/json' });
   });
 });

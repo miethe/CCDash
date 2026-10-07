@@ -13,10 +13,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
+import aiosqlite
+
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.application.services.agent_queries.planning import PlanningQueryService
 from backend.application.services.agent_queries.cache import clear_cache
+from backend.db.repositories.oq_resolutions import OQResolutionsRepository
+from backend.db.sqlite_migrations import run_migrations
 from backend.models import Feature, FeaturePhase, LinkedDocument, PlanningPhaseBatch
 
 
@@ -236,6 +240,19 @@ def _ports(
         job_scheduler=types.SimpleNamespace(schedule=lambda job, **_: job),
         integration_client=types.SimpleNamespace(invoke=AsyncMock(return_value={})),
     )
+
+
+async def _migrated_sqlite_db() -> aiosqlite.Connection:
+    """Return an in-memory SQLite connection with the full migrated schema.
+
+    ``resolve_open_question`` persists the overlay to ``oq_resolutions``
+    (DB-authoritative since the Enterprise Edition v1 change) and re-raises
+    write failures, so its tests need a real ``storage.db``.
+    """
+    db = await aiosqlite.connect(":memory:")
+    db.row_factory = aiosqlite.Row
+    await run_migrations(db)
+    return db
 
 
 # ── Helper: patch load_execution_documents to return empty list ───────────────
@@ -856,7 +873,9 @@ class ResolveOpenQuestionServiceTests(unittest.IsolatedAsyncioTestCase):
             list_all=AsyncMock(return_value=[]),
             list_paginated=AsyncMock(return_value=[]),
         )
-        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+        db = await _migrated_sqlite_db()
+        self.addAsyncCleanup(db.close)
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo, db=db)
 
         class _Span:
             def __init__(self) -> None:
@@ -893,6 +912,9 @@ class ResolveOpenQuestionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.oq.pending_sync)
         self.assertEqual(result.oq.answer_text, "Resolved")
         self.assertEqual(span.attrs["success"], True)
+        persisted = await OQResolutionsRepository(db).get_one("project-1", "feat-oq", "OQ-1")
+        assert persisted is not None
+        self.assertEqual(persisted["answer_text"], "Resolved")
 
     async def test_resolve_open_question_rejects_empty_answer(self) -> None:
         row = _feature_row(_feature(fid="feat-empty", name="Empty"))

@@ -73,9 +73,13 @@ describe('MPCC-602 — Render budget: 100 cards', () => {
   it('renders 100 cards across 5 groups without error', async () => {
     const { MultiProjectSessionBoard } = await import('../MultiProjectSessionBoard');
 
-    // 5 groups × 20 cards each = 100 total
+    // 5 groups × 20 cards each = 100 total.
+    // 33dae56 (collapsible board columns) starts done-state columns
+    // ('completed' / 'done' / 'cancelled') collapsed and skips rendering their
+    // cards, so the render budget uses five expanded (non-done) state groups to
+    // keep all 100 cards on the render path.
     const cards = Array.from({ length: 20 }, (_, i) => makeCard(`sess-${i}`));
-    const groups = ['running', 'thinking', 'completed', 'failed', 'cancelled'].map((k) =>
+    const groups = ['running', 'thinking', 'waiting', 'queued', 'failed'].map((k) =>
       makeGroup(k, cards),
     );
 
@@ -178,9 +182,11 @@ describe('MPCC-604 — Board group heading semantics', () => {
 
     const html = renderToStaticMarkup(
       createElement(MultiProjectSessionBoard, {
+        // Two expanded columns: since 33dae56 a done-state column ('completed')
+        // starts collapsed as a strip button with no heading.
         data: makeSessionBoardData([
           makeGroup('running', [makeCard('s1')]),
-          makeGroup('completed', [makeCard('s2')]),
+          makeGroup('failed', [makeCard('s2')]),
         ]),
         loading: false,
         error: null,

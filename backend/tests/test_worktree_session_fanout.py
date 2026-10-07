@@ -12,6 +12,7 @@ Everything uses ``tmp_path`` -- never touches the real ``~/.claude/projects``.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import json
 from unittest.mock import AsyncMock
@@ -292,8 +293,10 @@ class TestSyncSessionsScanDiscoversSiblingTranscripts:
         assert parent_transcript in all_files
         assert sibling_transcript not in all_files
 
-    @pytest.mark.asyncio
-    async def test_failed_scan_does_not_advance_light_mode_manifest(self, tmp_path: Path) -> None:
+    # Sync wrappers over asyncio.run(): pytest-asyncio is not a repo test
+    # dependency (requirements-dev.txt), matching the tmp_path-based async
+    # tests elsewhere in this suite (e.g. test_worktree_parent_resolution.py).
+    def test_failed_scan_does_not_advance_light_mode_manifest(self, tmp_path: Path) -> None:
         sessions_dir = tmp_path / "-Users-m-dev-repo"
         sessions_dir.mkdir()
         (sessions_dir / "session.jsonl").write_text("{}\n")
@@ -302,15 +305,18 @@ class TestSyncSessionsScanDiscoversSiblingTranscripts:
         engine._sync_single_session = AsyncMock(side_effect=[TimeoutError("db down"), True])
         engine._update_manifest_for_roots = AsyncMock()
 
-        first = await engine._sync_sessions("project-1", sessions_dir, False)
-        second = await engine._sync_sessions("project-1", sessions_dir, False)
+        async def _scan_twice() -> tuple[dict, dict]:
+            first = await engine._sync_sessions("project-1", sessions_dir, False)
+            second = await engine._sync_sessions("project-1", sessions_dir, False)
+            return first, second
+
+        first, second = asyncio.run(_scan_twice())
 
         assert first["parse_errors"] == 1
         assert second["synced"] == 1
         engine._update_manifest_for_roots.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_reconcile_bypasses_manifest_but_honors_session_mtime(self, tmp_path: Path) -> None:
+    def test_reconcile_bypasses_manifest_but_honors_session_mtime(self, tmp_path: Path) -> None:
         sessions_dir = tmp_path / "-Users-m-dev-repo"
         sessions_dir.mkdir()
         (sessions_dir / "session.jsonl").write_text("{}\n")
@@ -319,7 +325,7 @@ class TestSyncSessionsScanDiscoversSiblingTranscripts:
         engine._sync_single_session = AsyncMock(return_value=False)
         engine._update_manifest_for_roots = AsyncMock()
 
-        await engine._sync_sessions("project-1", sessions_dir, False, skip_manifest=True)
+        asyncio.run(engine._sync_sessions("project-1", sessions_dir, False, skip_manifest=True))
 
         assert engine._light_mode_scan_skip.await_args.args[-1] is True
         assert engine._sync_single_session.await_args.args[2] is False

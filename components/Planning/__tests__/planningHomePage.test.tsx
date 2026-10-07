@@ -18,6 +18,8 @@
  *   8. PlanningHomePage (outer shell) – loading state on initial synchronous render.
  *   9. PlanningHomePage – no-project state on initial render.
  */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -124,6 +126,16 @@ beforeEach(() => {
 });
 
 // ── PlanningSummaryPanel ──────────────────────────────────────────────────────
+
+
+// 1c33b35 (TanStack Query migration) made PlanningHomePage call useQueryClient() and
+// TQ query hooks unconditionally, so it must render inside a QueryClientProvider.
+// A fresh, empty client leaves every query pending on the synchronous SSR pass,
+// preserving the initial-render states these tests assert.
+function withQueryClient(node: ReactElement): ReactElement {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+}
 
 describe('PlanningSummaryPanel', () => {
   it('renders metric tiles with correct counts', () => {
@@ -296,9 +308,11 @@ describe('PlanningHomePage (initial render — no-project)', () => {
   it('renders no-project empty state when activeProject is null', () => {
     vi.mocked(getProjectPlanningSummary).mockReturnValue(new Promise(() => {}));
     const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <PlanningHomePage />
-      </MemoryRouter>,
+      withQueryClient(
+        <MemoryRouter>
+          <PlanningHomePage />
+        </MemoryRouter>,
+      ),
     );
     expect(html).toContain('No project selected');
     expect(html).toContain('Select a project from the sidebar');
@@ -318,9 +332,11 @@ describe('PlanningHomePage (initial render — with project, loading)', () => {
     // when fetch is unresolved. We confirm the initial synchronous render
     // of PlanningHomePage (with no-project mock) renders null-project state.
     const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <PlanningHomePage />
-      </MemoryRouter>,
+      withQueryClient(
+        <MemoryRouter>
+          <PlanningHomePage />
+        </MemoryRouter>,
+      ),
     );
     // With current mock (activeProject=null), we get no-project shell.
     // This confirms the component tree is renderable without crashing.

@@ -14,6 +14,8 @@
  *   7. LinkedArtifactsPanel — artifact refs without matching documents render as static spans
  *   8. DocumentModal is rendered when selectedDoc is set (state injection)
  */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -69,13 +71,24 @@ import {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// 1c33b35 (TanStack Query migration) made PlanningNodeDetail call useQueryClient() and
+// TQ query hooks unconditionally, so it must render inside a QueryClientProvider.
+// A fresh, empty client leaves every query pending on the synchronous SSR pass,
+// preserving the initial-render states these tests assert.
+function withQueryClient(node: ReactElement): ReactElement {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+}
+
 function renderDetail(featureId = 'feat-1'): string {
   return renderToStaticMarkup(
-    <MemoryRouter initialEntries={[`/planning/feature/${featureId}`]}>
-      <Routes>
-        <Route path="/planning/feature/:featureId" element={<PlanningNodeDetail />} />
-      </Routes>
-    </MemoryRouter>,
+    withQueryClient(
+      <MemoryRouter initialEntries={[`/planning/feature/${featureId}`]}>
+        <Routes>
+          <Route path="/planning/feature/:featureId" element={<PlanningNodeDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    ),
   );
 }
 

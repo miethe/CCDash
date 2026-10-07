@@ -2,6 +2,7 @@ import json
 import unittest
 from unittest.mock import patch
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.models import Feature, FeatureExecutionAnalyticsSummary, FeaturePhase, LinkedDocument
 from backend.services.feature_execution import build_execution_context, build_execution_recommendation, load_feature_execution_derived_state
 
@@ -277,15 +278,17 @@ class FeatureExecutionDerivedStateTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self, rows: list[dict]) -> None:
                 self.rows = rows
 
-            async def list_all(self, project_id: str | None = None) -> list[dict]:
-                return self.rows
+            async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+                # Mirror the real repository's workspace scoping (ADR-008).
+                return [row for row in self.rows if row.get("workspace_id", DEFAULT_WORKSPACE_ID) == workspace_id]
 
         class _DocumentRepo:
             def __init__(self, rows: list[dict]) -> None:
                 self.rows = rows
 
-            async def list_all(self, project_id: str | None = None) -> list[dict]:
-                return self.rows
+            async def list_all(self, project_id: str | None = None, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+                # Mirror the real repository's workspace scoping (ADR-008).
+                return [row for row in self.rows if row.get("workspace_id", DEFAULT_WORKSPACE_ID) == workspace_id]
 
         project = "project-1"
         with (

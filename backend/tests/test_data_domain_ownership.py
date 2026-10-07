@@ -1,4 +1,6 @@
+import io
 import re
+import tokenize
 import unittest
 from pathlib import Path
 
@@ -22,7 +24,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _migration_tables(relative_path: str) -> set[str]:
-    text = (_REPO_ROOT / relative_path).read_text()
+    """Return table names created by DDL in a migration module.
+
+    Python comments are dropped before matching: migration modules carry prose
+    comments such as "CREATE TABLE IF NOT EXISTS is a no-op ..." that would
+    otherwise be parsed as a table named ``is``.
+    """
+    source = (_REPO_ROOT / relative_path).read_text()
+    tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+    text = tokenize.untokenize(
+        (tok.type, tok.string) for tok in tokens if tok.type != tokenize.COMMENT
+    )
     return set(_CREATE_TABLE_RE.findall(text))
 
 

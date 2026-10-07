@@ -190,6 +190,7 @@ class GetPlanningCommandCenterTests(unittest.IsolatedAsyncioTestCase):
                     sort_direction="asc",
                     page=2,
                     page_size=25,
+                    hide_done=True,
                     request_context=object(),
                     core_ports=object(),
                 )
@@ -211,6 +212,7 @@ class GetPlanningCommandCenterTests(unittest.IsolatedAsyncioTestCase):
             sort_direction="asc",
             page=2,
             page_size=25,
+            hide_done=True,
         )
 
 

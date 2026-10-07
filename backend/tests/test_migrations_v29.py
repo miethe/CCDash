@@ -288,7 +288,8 @@ class MigrationV37Tests(unittest.IsolatedAsyncioTestCase):
             row = await cur.fetchone()
 
         self.assertEqual(row[0], sqlite_migrations.SCHEMA_VERSION)
-        self.assertEqual(sqlite_migrations.SCHEMA_VERSION, 37)
+        # Later migrations keep bumping SCHEMA_VERSION; v37 only guarantees a floor.
+        self.assertGreaterEqual(sqlite_migrations.SCHEMA_VERSION, 37)
 
     # ── Idempotency ───────────────────────────────────────────────────────────
 

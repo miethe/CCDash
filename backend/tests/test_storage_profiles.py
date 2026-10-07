@@ -734,8 +734,11 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertIn("watcher_runtime", status["degradedReasonCodes"])
         self.assertIn("startup_sync", status["degradedReasonCodes"])
 
-    def test_worker_watch_startup_binding_requires_project_id(self) -> None:
-        container = RuntimeContainer(profile=get_runtime_profile("worker-watch"))
+    def test_worker_startup_binding_requires_project_id(self) -> None:
+        # Since T3-001 / ADR-006 (7c07c8d) an unpinned worker-watch fans out over the
+        # registry instead of raising (covered in test_p3_worker_bootstrap); the
+        # non-empty project-id requirement now applies to the single-project worker.
+        container = RuntimeContainer(profile=get_runtime_profile("worker"))
         container.storage_profile = resolve_storage_profile_config(
             {
                 "CCDASH_STORAGE_PROFILE": "enterprise",
@@ -751,7 +754,7 @@ class StorageProfileConfigTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 RuntimeError,
-                "Runtime profile 'worker-watch' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+                "Runtime profile 'worker' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
             ):
                 container._resolve_startup_project_binding()
 

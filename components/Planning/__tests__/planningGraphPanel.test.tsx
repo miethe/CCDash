@@ -22,6 +22,8 @@
  *   9. PlanningNodeDetail – mismatch banner surfaced when isMismatch=true.
  *  10. PlanningNodeDetail – no-project shell when activeProject is absent.
  */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -281,15 +283,26 @@ describe('PlanningGraphPanel sub-component markup helpers', () => {
   });
 });
 
+// 1c33b35 (TanStack Query migration) made PlanningNodeDetail call useQueryClient() and
+// TQ query hooks unconditionally, so it must render inside a QueryClientProvider.
+// A fresh, empty client leaves every query pending on the synchronous SSR pass,
+// preserving the initial-render states these tests assert.
+function withQueryClient(node: ReactElement): ReactElement {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+}
+
 // ── PlanningNodeDetail initial render states ──────────────────────────────────
 
 describe('PlanningNodeDetail (initial render state)', () => {
   it('renders skeleton on initial synchronous render when featureId is present', () => {
     vi.mocked(getFeaturePlanningContext).mockReturnValue(new Promise(() => {}));
     const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <PlanningNodeDetail />
-      </MemoryRouter>,
+      withQueryClient(
+        <MemoryRouter>
+          <PlanningNodeDetail />
+        </MemoryRouter>,
+      ),
     );
     expect(html).toContain('animate-pulse');
   });
@@ -301,9 +314,11 @@ describe('PlanningNodeDetail (initial render state)', () => {
     // and the shell text exists in the module's source.
     vi.mocked(getFeaturePlanningContext).mockReturnValue(new Promise(() => {}));
     const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <PlanningNodeDetail />
-      </MemoryRouter>,
+      withQueryClient(
+        <MemoryRouter>
+          <PlanningNodeDetail />
+        </MemoryRouter>,
+      ),
     );
     // With current mock (activeProject set), we get skeleton — confirms rendering.
     expect(html.length).toBeGreaterThan(0);

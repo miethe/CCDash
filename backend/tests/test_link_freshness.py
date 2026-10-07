@@ -99,6 +99,30 @@ def _make_engine_stub():
 # ── T4-004: Config default ────────────────────────────────────────────────────
 
 
+def _import_fresh_config():
+    """Import a throwaway copy of ``backend.config`` and return (fresh, restore).
+
+    ``restore()`` puts the ORIGINAL module object back in ``sys.modules`` and on
+    the ``backend`` package. Re-importing instead would leave a second config
+    module behind: modules that did ``from backend import config`` (e.g.
+    backend.runtime.bootstrap) would keep the old object, and any later test that
+    reloads config would silently diverge from them (order-dependent under xdist).
+    """
+    import sys
+    import backend
+
+    original = sys.modules.get("backend.config")
+    sys.modules.pop("backend.config", None)
+    import backend.config as fresh
+
+    def restore() -> None:
+        if original is not None:
+            sys.modules["backend.config"] = original
+            backend.config = original
+
+    return fresh, restore
+
+
 class TestConfigDefaultTrue(unittest.TestCase):
     """AC-T4-004: CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED defaults to True."""
 
@@ -109,10 +133,9 @@ class TestConfigDefaultTrue(unittest.TestCase):
 
         # Strip env var if present, then reload config
         env_backup = os.environ.pop("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED", None)
+        restore = None
         try:
-            if "backend.config" in sys.modules:
-                del sys.modules["backend.config"]
-            import backend.config as cfg
+            cfg, restore = _import_fresh_config()
 
             self.assertTrue(
                 cfg.INCREMENTAL_LINK_REBUILD_ENABLED,
@@ -121,10 +144,8 @@ class TestConfigDefaultTrue(unittest.TestCase):
         finally:
             if env_backup is not None:
                 os.environ["CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED"] = env_backup
-            # Restore original module
-            if "backend.config" in sys.modules:
-                del sys.modules["backend.config"]
-            import backend.config  # re-import so other tests see a clean module
+            if restore is not None:
+                restore()
 
     def test_env_override_false_disables_flag(self) -> None:
         """AC-T4-004: setting CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED=false disables it."""
@@ -132,11 +153,10 @@ class TestConfigDefaultTrue(unittest.TestCase):
         import sys
 
         env_backup = os.environ.get("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED")
+        restore = None
         try:
             os.environ["CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED"] = "false"
-            if "backend.config" in sys.modules:
-                del sys.modules["backend.config"]
-            import backend.config as cfg
+            cfg, restore = _import_fresh_config()
 
             self.assertFalse(cfg.INCREMENTAL_LINK_REBUILD_ENABLED)
         finally:
@@ -144,9 +164,8 @@ class TestConfigDefaultTrue(unittest.TestCase):
                 os.environ["CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED"] = env_backup
             else:
                 os.environ.pop("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED", None)
-            if "backend.config" in sys.modules:
-                del sys.modules["backend.config"]
-            import backend.config  # noqa: F401
+            if restore is not None:
+                restore()
 
     def test_env_override_zero_disables_flag(self) -> None:
         """AC-T4-004: setting CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED=0 disables it."""
@@ -154,11 +173,10 @@ class TestConfigDefaultTrue(unittest.TestCase):
         import sys
 
         env_backup = os.environ.get("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED")
+        restore = None
         try:
             os.environ["CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED"] = "0"
-            if "backend.config" in sys.modules:
-                del sys.modules["backend.config"]
-            import backend.config as cfg
+            cfg, restore = _import_fresh_config()
 
             self.assertFalse(cfg.INCREMENTAL_LINK_REBUILD_ENABLED)
         finally:
@@ -166,9 +184,8 @@ class TestConfigDefaultTrue(unittest.TestCase):
                 os.environ["CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED"] = env_backup
             else:
                 os.environ.pop("CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED", None)
-            if "backend.config" in sys.modules:
-                del sys.modules["backend.config"]
-            import backend.config  # noqa: F401
+            if restore is not None:
+                restore()
 
 
 # ── T4-007: document_linking.session_family_scope_key ────────────────────────

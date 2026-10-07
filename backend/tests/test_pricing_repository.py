@@ -90,6 +90,9 @@ class PricingCatalogRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "pricing_model_source": "claude-sonnet-4-5",
                 "total_cost": 0.42,
             },
+            # FC-1 (5daed98): parent-row UPDATEs are project-scoped; the owning
+            # project must be threaded or the write is a no-op on owned rows.
+            "project-1",
         )
         row = await self.session_repo.get_by_id("S-1")
         assert row is not None

@@ -10,6 +10,21 @@ import {
 import { runWorkflowRegistryAction } from '../../components/Workflows/workflowRegistryUtils';
 import type { WorkflowRegistryAction } from '../../types';
 
+// Since 265b14e every service request goes through apiClient.apiFetch, which
+// normalizes init.headers into a Headers instance (adding the project-scope
+// header only when a scope is selected) and defaults credentials to
+// 'same-origin'. Assert on the request the wrapper actually sends — URL,
+// credentials, and the real header contents — rather than the pre-wrapper
+// argument shape.
+function fetchCall(fetchMock: ReturnType<typeof vi.fn>, callIndex = 0) {
+  const [url, init] = fetchMock.mock.calls[callIndex] as [string, RequestInit | undefined];
+  return {
+    url,
+    init: init ?? {},
+    headers: Object.fromEntries(new Headers(init?.headers).entries()),
+  };
+}
+
 describe('workflow registry service helpers', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -58,9 +73,11 @@ describe('workflow registry service helpers', () => {
       limit: 25,
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/analytics/workflow-registry?search=phase&correlationState=strong&offset=0&limit=25',
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchCall(fetchMock);
+    expect(call.url).toBe('/api/analytics/workflow-registry?search=phase&correlationState=strong&offset=0&limit=25');
+    expect(call.init.credentials).toBe('same-origin');
+    expect(call.headers).toEqual({});
   });
 
   it('loads detail by registry id', async () => {
@@ -115,9 +132,11 @@ describe('workflow registry service helpers', () => {
 
     await workflowRegistryService.getDetail('workflow:phase-execution');
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/analytics/workflow-registry/detail?registryId=workflow%3Aphase-execution',
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchCall(fetchMock);
+    expect(call.url).toBe('/api/analytics/workflow-registry/detail?registryId=workflow%3Aphase-execution');
+    expect(call.init.credentials).toBe('same-origin');
+    expect(call.headers).toEqual({});
   });
 
   it('surfaces disabled-state hints from API failures', async () => {

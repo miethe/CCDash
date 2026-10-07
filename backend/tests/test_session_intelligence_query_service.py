@@ -5,6 +5,7 @@ from pathlib import Path
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.application.services.session_intelligence import SessionIntelligenceQueryService
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.session_embeddings import SqliteSessionEmbeddingRepository
 
 
@@ -77,10 +78,17 @@ class _FakeSessionRepo:
             rows = [row for row in rows if row["root_session_id"] == filters["root_session_id"]]
         return rows[offset : offset + limit]
 
-    async def get_by_id(self, session_id):
+    async def get_by_id(self, session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        # Mirror the real repository: a non-empty project_id is a strict
+        # equality filter, and workspace_id always scopes (ADR-008).
         for row in self.rows:
-            if row["id"] == session_id:
-                return dict(row)
+            if row["id"] != session_id:
+                continue
+            if row.get("workspace_id", DEFAULT_WORKSPACE_ID) != workspace_id:
+                return None
+            if project_id and row.get("project_id") != project_id:
+                return None
+            return dict(row)
         return None
 
 
@@ -328,10 +336,10 @@ class SessionIntelligenceQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         call_log: list[str] = []
 
         class _TrackedSessionRepo(_FakeSessionRepo):
-            async def get_by_id(self, session_id):  # type: ignore[override]
+            async def get_by_id(self, session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):  # type: ignore[override]
                 call_log.append("get_by_id:start")
                 await _asyncio.sleep(0)  # yield to event loop
-                result = await super().get_by_id(session_id)
+                result = await super().get_by_id(session_id, project_id, workspace_id=workspace_id)
                 call_log.append("get_by_id:end")
                 return result
 

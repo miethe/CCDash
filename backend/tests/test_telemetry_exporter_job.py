@@ -304,6 +304,8 @@ class TelemetryExportCoordinatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_execute_purges_old_synced_rows_after_batch_run(self) -> None:
         old_item = await self._insert_queue_event("session-old")
         fresh_item = await self._insert_queue_event("session-fresh")
+        # Relative to now so "fresh" stays inside the retention window.
+        fresh_ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         self.coordinator._client = _StubClient((True, None))
 
         outcome = await self.coordinator.execute(trigger="scheduled", raise_on_busy=False)
@@ -332,7 +334,7 @@ class TelemetryExportCoordinatorTests(unittest.IsolatedAsyncioTestCase):
             SET created_at = ?, last_attempt_at = ?, status = 'synced'
             WHERE id = ?
             """,
-            ("2026-03-20T00:00:00+00:00", "2026-03-20T00:00:00+00:00", fresh_item["id"]),
+            (fresh_ts, fresh_ts, fresh_item["id"]),
         )
         await self.db.commit()
 

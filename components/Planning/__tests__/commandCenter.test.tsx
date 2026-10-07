@@ -66,6 +66,20 @@ vi.mock('../../../services/planningTelemetry', () => ({
   trackCommandCenterAction: vi.fn(),
 }));
 
+// P5-001: the shell now reads the multi-project flag from the runtime
+// capabilities query (not the MULTI_PROJECT_COMMAND_CENTER_ENABLED constant).
+// Mock it at hook level, in its loading state (data: undefined), so the shell
+// applies MULTI_PROJECT_COMMAND_CENTER_ENABLED_DEFAULT (false) — the "flag off
+// (default)" path — without a QueryClientProvider.
+vi.mock('../../../services/queries/capabilities', () => ({
+  useLaunchCapabilitiesQuery: vi.fn().mockReturnValue({
+    data: undefined,
+    isLoading: true,
+    isError: false,
+    error: null,
+  }),
+}));
+
 import {
   PlanningCommandCenter,
   PlanningCommandCenterShell,

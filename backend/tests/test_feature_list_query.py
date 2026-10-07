@@ -428,7 +428,8 @@ class TestFeatureListQuery(unittest.IsolatedAsyncioTestCase):
         self.assertIn("planned_at", where_sql)
         self.assertIn("started_at", where_sql)
         self.assertNotIn("data_json", where_sql)
-        self.assertEqual(params[0], "proj-1")
+        # workspace scope is bound first, then project.
+        self.assertEqual(params[:2], ["default-local", "proj-1"])
 
     def test_postgres_latest_activity_sort_uses_rollup_join_not_updated_at_fallback(self) -> None:
         q = FeatureListQuery(sort_by=FeatureSortKey.LATEST_ACTIVITY)

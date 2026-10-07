@@ -348,8 +348,15 @@ describe('Planning Command Center list view', () => {
 
     // The old fixed min-w-[1380px] should no longer appear
     expect(html).not.toContain('min-w-[1380px]');
-    // The new smaller min-width should be present
-    expect(html).toContain('min-w-[900px]');
+    // 33dae56 (collapsible board columns) replaced the fixed
+    // `grid min-w-[900px] grid-cols-5` with a flex row whose floor is computed
+    // from the collapsed-strip and expanded-column widths (inline style), and
+    // whose expanded columns share the remaining width (flex: 1 1 0).
+    expect(html).not.toContain('grid-cols-5');
+    const rowMinWidth = html.match(/class="flex gap-3" style="min-width:(\d+)px"/);
+    expect(rowMinWidth).not.toBeNull();
+    expect(Number(rowMinWidth![1])).toBeLessThan(1380);
+    expect(html).toMatch(/data-testid="board-bucket-column-expanded"[^>]*style="flex:1 1 0;min-width:200px"/);
   });
 
   // AC-PHASE-SESSION-LINKS: phase rows with linked sessions show session list

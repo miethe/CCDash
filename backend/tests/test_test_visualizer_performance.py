@@ -210,6 +210,14 @@ class TestTestVisualizerPerformance(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
+        # test_results / test_feature_mappings reference test_definitions(test_id).
+        await self.db.executemany(
+            """
+            INSERT INTO test_definitions (test_id, project_id, path, name, framework)
+            VALUES (?, 'project-perf', ?, ?, 'pytest')
+            """,
+            [(row[1], f"tests/perf/{row[1]}.py", row[1]) for row in result_rows],
+        )
         await self.db.executemany(
             """
             INSERT INTO test_results (run_id, test_id, status, duration_ms)

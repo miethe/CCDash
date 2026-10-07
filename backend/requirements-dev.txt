@@ -1,0 +1,7 @@
+# Backend test dependencies, installed on top of requirements.txt:
+#   backend/.venv/bin/python -m pip install -r backend/requirements-dev.txt
+# Run the suite in parallel (serial takes ~40 min; -n 6 takes ~4 min):
+#   backend/.venv/bin/python -m pytest backend/tests/ -q -n 6 --timeout=300
+pytest>=8.0
+pytest-xdist>=3.5
+pytest-timeout>=2.3

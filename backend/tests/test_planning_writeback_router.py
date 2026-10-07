@@ -1,6 +1,7 @@
 """Tests for the planning writeback router."""
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import unittest
@@ -11,12 +12,19 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from backend.application.services.agent_queries.cache import clear_cache, get_cache
+from backend.application.services.agent_queries.cache import clear_cache, compute_cache_key, get_cache
 from backend.application.services.agent_queries import OpenQuestionResolutionDTO, PlanningOpenQuestionItem
 from backend.request_scope import get_core_ports, get_request_context
 from backend.routers import planning as planning_router
 from backend.runtime.bootstrap import build_runtime_app
-from backend.tests.test_planning_query_service import _context, _feature, _feature_row, _ports
+from backend.db.repositories.oq_resolutions import OQResolutionsRepository
+from backend.tests.test_planning_query_service import (
+    _context,
+    _feature,
+    _feature_row,
+    _migrated_sqlite_db,
+    _ports,
+)
 
 
 class PlanningWritebackRouterRegistrationTests(unittest.TestCase):
@@ -151,7 +159,11 @@ class ResolveOpenQuestionApiIntegrationTests(unittest.TestCase):
             list_all=AsyncMock(return_value=[]),
             list_paginated=AsyncMock(return_value=[]),
         )
-        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+        # The resolve path writes the overlay to oq_resolutions (authoritative)
+        # and re-raises DB failures, so wire a real migrated SQLite connection.
+        db = asyncio.run(_migrated_sqlite_db())
+        self.addCleanup(lambda: asyncio.run(db.close()))
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo, db=db)
         request_context = _context()
 
         app = FastAPI()
@@ -159,8 +171,14 @@ class ResolveOpenQuestionApiIntegrationTests(unittest.TestCase):
         app.dependency_overrides[get_request_context] = lambda: request_context
         app.dependency_overrides[get_core_ports] = lambda: ports
 
+        # Resolution evicts only the resolved project's cache entries (P2-006
+        # project-scoped eviction), so plant one stale entry for this project
+        # and one for another project that must survive.
         cache = get_cache()
-        cache["planning-api-stale-entry"] = object()
+        stale_key = compute_cache_key("planning_summary", "project-1", {}, "stale-fp")
+        other_project_key = compute_cache_key("planning_summary", "project-2", {}, "other-fp")
+        cache[stale_key] = object()
+        cache[other_project_key] = object()
 
         class _Span:
             def __init__(self) -> None:
@@ -200,7 +218,8 @@ class ResolveOpenQuestionApiIntegrationTests(unittest.TestCase):
         self.assertEqual(body["oq"]["answer_text"], "Use phased rollout.")
         self.assertTrue(body["oq"]["resolved"])
         self.assertTrue(body["oq"]["pending_sync"])
-        self.assertEqual(list(cache.keys()), [])
+        self.assertNotIn(stale_key, cache)
+        self.assertIn(other_project_key, cache)
 
         publish_mock.assert_awaited_once_with(
             "project-1",
@@ -218,3 +237,7 @@ class ResolveOpenQuestionApiIntegrationTests(unittest.TestCase):
         self.assertEqual(attributes["answer_length"], len("Use phased rollout."))
         self.assertEqual(attributes["success"], False)
         self.assertEqual(span.attrs["success"], True)
+
+        persisted = asyncio.run(OQResolutionsRepository(db).get_one("project-1", "feat-api-oq", "OQ-9"))
+        assert persisted is not None
+        self.assertEqual(persisted["answer_text"], "Use phased rollout.")

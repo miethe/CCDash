@@ -3585,6 +3585,7 @@ class TestMetricSummaryDTO(BaseModel):
     total_metrics: int = 0
     by_platform: dict[str, int] = Field(default_factory=dict)
     by_metric_type: dict[str, int] = Field(default_factory=dict)
+    latest_collected_at: str = ""
 
 
 # ── System-wide metrics DTOs ────────────────────────────────────────
@@ -3613,7 +3614,6 @@ class SystemActiveCountDTO(BaseModel):
     generated_at: datetime
     window_seconds: int
     status: Literal["ok", "partial"]
-    latest_collected_at: str = ""
 
 
 # ── Multi-Project Planning Command Center DTOs (MPCC-101) ───────────────────
