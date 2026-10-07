@@ -49,6 +49,20 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
         await self.feature_repo.upsert({"id": "feature-auth-login", "name": "Auth Login"}, project_id="project-1", workspace_id="default-local")
         await self.feature_repo.upsert({"id": "checkout", "name": "Checkout"}, project_id="project-1", workspace_id="default-local")
 
+    async def _seed_definitions(self, definitions: list[dict], domain_ids: tuple[str, ...] = ()) -> None:
+        """Persist FK parents: test_feature_mappings references test_definitions and test_domains."""
+        for definition in definitions:
+            await self.db.execute(
+                "INSERT OR IGNORE INTO test_definitions (test_id, project_id, path, name, framework) VALUES (?, 'project-1', ?, ?, 'pytest')",
+                (definition["test_id"], definition.get("path", ""), definition.get("name", "")),
+            )
+        for domain_id in domain_ids:
+            await self.db.execute(
+                "INSERT OR IGNORE INTO test_domains (domain_id, project_id, name) VALUES (?, 'project-1', ?)",
+                (domain_id, domain_id),
+            )
+        await self.db.commit()
+
     async def test_providers_implement_protocol(self) -> None:
         self.assertIsInstance(RepoHeuristicsProvider(self.db), MappingProvider)
         self.assertIsInstance(TestMetadataProvider(self.db), MappingProvider)
@@ -211,9 +225,11 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
                 return [MappingCandidate("test-1", "checkout", "dom-b", 0.4, self.name)]
 
         resolver = MappingResolver(self.db, providers=[_ProviderA(), _ProviderB(), _ProviderLow()])
+        definitions = [{"test_id": "test-1", "path": "tests/test_any.py", "name": "test_any"}]
+        await self._seed_definitions(definitions, domain_ids=("dom-a", "dom-b"))
         result = await resolver.resolve(
             project_id="project-1",
-            test_definitions=[{"test_id": "test-1", "path": "tests/test_any.py", "name": "test_any"}],
+            test_definitions=definitions,
             context={"run_id": "run-mock", "version": 1},
         )
 
@@ -233,6 +249,7 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
 
         resolver = MappingResolver(self.db, providers=[_Provider()])
         definition = [{"test_id": "test-cache-1", "path": "tests/auth/test_login.py", "name": "test_login"}]
+        await self._seed_definitions(definition, domain_ids=("dom-cache",))
 
         first = await resolver.resolve(
             project_id="project-1",
@@ -275,11 +292,11 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
 
     async def test_path_fallback_provider_maps_unknown_tests(self) -> None:
         resolver = MappingResolver(self.db, provider_sources=["path_fallback"])
+        definitions = [{"test_id": "test-fallback-1", "path": "tests/odd/shape/spec_case.py", "name": "spec_case"}]
+        await self._seed_definitions(definitions)
         result = await resolver.resolve(
             project_id="project-1",
-            test_definitions=[
-                {"test_id": "test-fallback-1", "path": "tests/odd/shape/spec_case.py", "name": "spec_case"}
-            ],
+            test_definitions=definitions,
             context={"source": "unit_test", "version": 2, "force_recompute": True},
         )
 

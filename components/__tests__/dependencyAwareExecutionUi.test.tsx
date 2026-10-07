@@ -1,4 +1,5 @@
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
@@ -178,6 +179,23 @@ vi.mock('../../services/queries/tasks', () => ({
   useTasksQuery: () => ({ data: { items: [], total: 0, page: 0, pageSize: 100 }, isLoading: false, error: null }),
   TASKS_PAGE_SIZE: 100,
 }));
+
+// 00c8f15 moved the board modal's tab bodies behind FeatureDetailShell's
+// TabStateView, and sections load on demand: on the synchronous SSR pass the
+// overview section is still 'idle' (its load() fires from a useEffect), so the
+// shell renders nothing for it. Run the real hook, but present the overview
+// section as loaded so these tests can assert the overview content that
+// ProjectBoard wires from the feature (execution gate, family, dependencies).
+vi.mock('../../services/useFeatureModalData', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/useFeatureModalData')>();
+  return {
+    ...actual,
+    useFeatureModalData: (...args: Parameters<typeof actual.useFeatureModalData>) => {
+      const store = actual.useFeatureModalData(...args);
+      return { ...store, overview: { ...store.overview, status: 'success' as const } };
+    },
+  };
+});
 
 import { DocumentModal } from '../DocumentModal';
 import { PlanCatalog } from '../PlanCatalog';
@@ -562,12 +580,18 @@ const sampleExecutionContext: FeatureExecutionContext = {
   generatedAt: '2026-03-23T09:30:00Z',
 };
 
+// 1c33b35 (TanStack Query migration) made ProjectBoard and PlanCatalog call
+// useQueryClient() unconditionally, so they must render inside a
+// QueryClientProvider. The provider adds no useState calls of its own (it lives
+// in node_modules and uses the real React), so the call-order useState
+// overrides below still address the same component state slots.
 const renderMarkup = (node: React.ReactElement, overrides: Record<number, unknown> = {}) => {
   resetStateOverrides();
   Object.entries(overrides).forEach(([key, value]) => {
     setStateOverride(Number(key), value);
   });
-  return renderToStaticMarkup(node);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderToStaticMarkup(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
 };
 
 describe('dependency-aware execution UI', () => {
@@ -592,7 +616,9 @@ describe('dependency-aware execution UI', () => {
     });
 
     expect(html).toContain('Hard Dependencies');
-    expect(html).toContain('Family Sequence');
+    // 00c8f15 (#47) folded the "Family Sequence" section into OverviewTab's
+    // PlanningFamilySection, headed "Family Position".
+    expect(html).toContain('Family Position');
     expect(html).toContain('feature-0');
     expect(html).toContain('feature-next');
   });

@@ -8,7 +8,9 @@ export default defineConfig({
         },
     },
     test: {
-        exclude: [...configDefaults.exclude, '.claude/**', 'examples/**'],
+        // .claude/** and .codex/** hold agent tooling, not CCDash tests;
+        // .codex/{agents,skills} are tracked symlinks into ../skillmeat/.claude/*.
+        exclude: [...configDefaults.exclude, '.claude/**', '.codex/**', 'examples/**'],
         server: {
             deps: {
                 // @miethe/ui ships extensionless ESM imports (tsc emit); inline it

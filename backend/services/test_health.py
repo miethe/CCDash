@@ -124,7 +124,9 @@ class TestHealthService:
         rows: list[dict[str, Any]] = []
         offset = 0
         while True:
-            page = await repo.list_paginated(offset=offset, limit=page_size, project_id=project_id, workspace_id="default-local")  # TODO(workspace-routing)
+            # Test-visualizer repositories (TestDomainRepository et al.) are
+            # project-scoped only; their list_paginated takes no workspace_id.
+            page = await repo.list_paginated(offset=offset, limit=page_size, project_id=project_id)
             if not page:
                 break
             rows.extend(page)

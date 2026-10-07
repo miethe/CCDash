@@ -1,14 +1,40 @@
+import inspect
 import json
 import types
 import unittest
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from fastapi.params import Param
 
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.routers import api as api_router
 from backend.routers import analytics as analytics_router
+
+
+async def _call_endpoint(endpoint, **kwargs):
+    """Invoke a FastAPI endpoint directly, resolving ``Query(...)`` defaults.
+
+    Called as a plain coroutine, an endpoint sees the ``Query`` marker object
+    itself as the default for every omitted parameter -- FastAPI only swaps in
+    ``Query.default`` at request time. Since #55 (57e06f4) ``list_sessions``
+    feeds ``project_id`` into ``resolve_project``, where a stringified marker
+    looks like an unknown project id and yields an empty page.
+    """
+    resolved = {
+        name: param.default.default
+        for name, param in inspect.signature(endpoint).parameters.items()
+        if isinstance(param.default, Param) and name not in kwargs
+    }
+    return await endpoint(**resolved, **kwargs)
+
+
+def _in_workspace(row, workspace_id):
+    """ADR-008 scoping as the real repositories apply it: unscoped fixture
+    rows belong to the default workspace."""
+    return (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id
 
 
 class _FakeIdentityProvider:
@@ -146,8 +172,12 @@ class _FakeRepo:
         self.last_include_subagents_for_facets = None
         self.last_include_subagents_for_platform_facets = None
 
-    async def list_paginated(self, offset, limit, project_id, sort_by, sort_order, filters):
+    async def list_paginated(self, offset, limit, project_id, sort_by, sort_order, filters, *, workspace_id=DEFAULT_WORKSPACE_ID):
         self.last_filters = dict(filters)
+        rows = self._rows()
+        return [row for row in rows if _in_workspace(row, workspace_id)]
+
+    def _rows(self):
         return [
             {
                 "id": "S-main",
@@ -196,21 +226,25 @@ class _FakeRepo:
             }
         ]
 
-    async def count(self, project_id, filters):
-        return 1
+    async def count(self, project_id, filters, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        return len([row for row in self._rows() if _in_workspace(row, workspace_id)])
 
     async def get_logs(self, session_id):
         return []
 
-    async def get_model_facets(self, project_id, include_subagents=True):
+    async def get_model_facets(self, project_id, include_subagents=True, *, workspace_id=DEFAULT_WORKSPACE_ID):
         self.last_include_subagents_for_facets = include_subagents
+        if workspace_id != DEFAULT_WORKSPACE_ID:
+            return []
         return [
             {"model": "claude-opus-4-5-20251101", "count": 7},
             {"model": "claude-sonnet-4-0-20251001", "count": 3},
         ]
 
-    async def get_platform_facets(self, project_id, include_subagents=True):
+    async def get_platform_facets(self, project_id, include_subagents=True, *, workspace_id=DEFAULT_WORKSPACE_ID):
         self.last_include_subagents_for_platform_facets = include_subagents
+        if workspace_id != DEFAULT_WORKSPACE_ID:
+            return []
         return [
             {"platform_type": "Claude Code", "platform_version": "2.1.52", "count": 9},
             {"platform_type": "Claude Code", "platform_version": "2.1.51", "count": 2},
@@ -218,10 +252,14 @@ class _FakeRepo:
 
 
 class _FakeSessionDetailRepo:
-    async def get_by_id(self, session_id):
-        if session_id == "S-main":
-            return {"id": session_id}
-        return None
+    async def get_by_id(self, session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        # Mirror the real repository: non-empty project_id is a strict
+        # equality filter; workspace_id always scopes (ADR-008).
+        if session_id != "S-main" or workspace_id != DEFAULT_WORKSPACE_ID:
+            return None
+        if project_id and project_id != "project-1":
+            return None
+        return {"id": session_id, "project_id": "project-1"}
 
 
 class _FakeFullSessionRepo:
@@ -517,7 +555,9 @@ class _MutableFakeLinkRepo:
 
 
 class _FakeFeatureRepo:
-    async def get_by_id(self, feature_id):
+    async def get_by_id(self, feature_id, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        if workspace_id != DEFAULT_WORKSPACE_ID:
+            return None
         feature_map = {
             "feat-alpha": {
                 "id": "feat-alpha",
@@ -717,7 +757,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         core_ports = _core_ports(project=project, session_repo=repo)
 
         with patch.object(api_router, "load_session_mappings", return_value=[]):
-            response = await api_router.list_sessions(
+            response = await _call_endpoint(
+                api_router.list_sessions,
                 include_subagents=False,
                 request_context=_request_context(project.id),
                 core_ports=core_ports,
@@ -734,13 +775,14 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].cacheInputTokens, 8)
         self.assertEqual(response.items[0].toolReportedTokens, 13)
         self.assertAlmostEqual(response.items[0].cacheShare, 0.8)
-        self.assertAlmostEqual(response.items[0].cacheHitRatio, 5 / 9)
+        # _usage_ratio rounds to 4 dp (2d6fe0f); compare at that precision.
+        self.assertAlmostEqual(response.items[0].cacheHitRatio, 5 / 9, places=4)
         self.assertAlmostEqual(response.items[0].outputShare, 0.5)
 
     async def test_list_sessions_uses_canonical_logs_for_title_and_badges(self) -> None:
         class _FakeCanonicalListRepo(_FakeRepo):
             async def list_paginated(self, offset, limit, project_id=None, sort_by="started_at", sort_order="desc", filters=None, *, workspace_id: str = "default-local"):
-                rows = await super().list_paginated(offset, limit, project_id, sort_by, sort_order, filters, workspace_id=workspace_id)
+                rows = await super().list_paginated(offset, limit, project_id, sort_by, sort_order, filters or {}, workspace_id=workspace_id)
                 rows[0]["session_type"] = "subagent"
                 rows[0]["parent_session_id"] = "S-parent"
                 return rows
@@ -754,7 +796,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(api_router, "load_session_mappings", return_value=[]):
-            response = await api_router.list_sessions(
+            response = await _call_endpoint(
+                api_router.list_sessions,
                 include_subagents=True,
                 request_context=_request_context(project.id),
                 core_ports=core_ports,
@@ -770,7 +813,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         core_ports = _core_ports(project=project, session_repo=repo)
 
         with patch.object(api_router, "load_session_mappings", return_value=[]):
-            await api_router.list_sessions(
+            await _call_endpoint(
+                api_router.list_sessions,
                 include_subagents=True,
                 root_session_id="S-main",
                 thread_kind="fork",
@@ -789,7 +833,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         project = types.SimpleNamespace(id="project-1")
         core_ports = _core_ports(project=project, session_repo=repo)
         with patch.object(api_router, "load_session_mappings", return_value=[]):
-            await api_router.list_sessions(
+            await _call_endpoint(
+                api_router.list_sessions,
                 model_provider="Claude",
                 model_family="Opus",
                 model_version="Opus 4.5",
@@ -806,7 +851,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         project = types.SimpleNamespace(id="project-1")
         core_ports = _core_ports(project=project, session_repo=repo)
         with patch.object(api_router, "load_session_mappings", return_value=[]):
-            await api_router.list_sessions(
+            await _call_endpoint(
+                api_router.list_sessions,
                 platform_type="Claude Code",
                 platform_version="2.1.52",
                 request_context=_request_context(project.id),
@@ -991,7 +1037,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.toolResultCacheCreationInputTokens, 55)
         self.assertEqual(response.toolResultCacheReadInputTokens, 89)
         self.assertAlmostEqual(response.cacheShare, 0.8)
-        self.assertAlmostEqual(response.cacheHitRatio, 5 / 9)
+        # _usage_ratio rounds to 4 dp (2d6fe0f); compare at that precision.
+        self.assertAlmostEqual(response.cacheHitRatio, 5 / 9, places=4)
 
     def test_cache_hit_ratio_excludes_output_tokens(self) -> None:
         row = {
@@ -1120,7 +1167,9 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_session_uses_canonical_logs_for_title_and_badges(self) -> None:
         class _FakeCanonicalFullSessionRepo(_FakeFullSessionRepo):
-            async def get_by_id(self, session_id):
+            async def get_by_id(self, session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+                if workspace_id != DEFAULT_WORKSPACE_ID or (project_id and project_id != "project-1"):
+                    return None
                 if session_id == "S-main":
                     row = await super().get_by_id(session_id)
                     assert row is not None

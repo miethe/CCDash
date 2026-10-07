@@ -26,12 +26,43 @@ from backend.application.context import Principal, ProjectScope, RequestContext,
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.application.services.agent_queries.cache import clear_cache
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 
 # ---------------------------------------------------------------------------
 # Shared helpers (mirrors existing forensics test infrastructure)
 # ---------------------------------------------------------------------------
 
 _PROJECT_ID = "project-cache-test"
+
+
+def _row_visible(row: dict, project_id, workspace_id) -> bool:
+    """ADR-008 / FC-1 scoping as the real session repository applies it.
+
+    A non-empty ``project_id`` is a strict equality filter; ``workspace_id``
+    always scopes (unscoped fixture rows belong to the default workspace).
+    """
+    if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id:
+        return False
+    return not project_id or row.get("project_id") == project_id
+
+
+def _scoped_get_by_id(sessions_data: dict):
+    async def get_by_id(session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        row = sessions_data.get(session_id)
+        return row if row is not None and _row_visible(row, project_id, workspace_id) else None
+
+    return get_by_id
+
+
+def _scoped_get_many(sessions_data: dict):
+    async def get_many_by_ids(ids, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        return {
+            sid: sessions_data[sid]
+            for sid in ids
+            if sid in sessions_data and _row_visible(sessions_data[sid], project_id, workspace_id)
+        }
+
+    return get_many_by_ids
 
 
 class _IdentityProvider:
@@ -105,13 +136,10 @@ class _Storage:
     def sessions(self):
         sessions_data = self._sessions_data
 
-        async def get_by_id(session_id):
-            return sessions_data.get(session_id)
-
-        async def get_many_by_ids(ids):
-            return {sid: sessions_data[sid] for sid in ids if sid in sessions_data}
-
-        return types.SimpleNamespace(get_by_id=get_by_id, get_many_by_ids=get_many_by_ids)
+        return types.SimpleNamespace(
+            get_by_id=_scoped_get_by_id(sessions_data),
+            get_many_by_ids=_scoped_get_many(sessions_data),
+        )
 
     def documents(self):
         return self._doc_repo
@@ -332,6 +360,7 @@ class CacheInvalidationOnNewSessionTests(unittest.IsolatedAsyncioTestCase):
             await _insert_session(self._db, session_id, updated_at)
             self._sessions_data[session_id] = {
                 "id": session_id,
+                "project_id": _PROJECT_ID,
                 "status": "completed",
                 "started_at": updated_at,
                 "ended_at": updated_at,
@@ -383,10 +412,12 @@ class CacheInvalidationOnNewSessionTests(unittest.IsolatedAsyncioTestCase):
         call_count = 0
         original_sessions_data = self._sessions_data
 
-        async def spy_get_by_id(session_id):
+        scoped_get_by_id = _scoped_get_by_id(original_sessions_data)
+
+        async def spy_get_by_id(session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
             nonlocal call_count
             call_count += 1
-            return original_sessions_data.get(session_id)
+            return await scoped_get_by_id(session_id, project_id, workspace_id=workspace_id)
 
         self._ports.storage._sessions_data = original_sessions_data
 
@@ -419,6 +450,7 @@ class CacheInvalidationOnNewSessionTests(unittest.IsolatedAsyncioTestCase):
         await _insert_session(self._db, new_session_id, new_updated_at)
         self._sessions_data[new_session_id] = {
             "id": new_session_id,
+            "project_id": _PROJECT_ID,
             "status": "completed",
             "started_at": new_updated_at,
             "ended_at": new_updated_at,
@@ -474,6 +506,7 @@ class CacheInvalidationOnFeatureUpdateTests(unittest.IsolatedAsyncioTestCase):
         await _insert_session(self._db, session_id, "2026-04-14T08:05:00+00:00")
         self._sessions_data[session_id] = {
             "id": session_id,
+            "project_id": _PROJECT_ID,
             "status": "completed",
             "started_at": "2026-04-14T08:05:00+00:00",
             "ended_at": "2026-04-14T08:10:00+00:00",
@@ -512,9 +545,9 @@ class CacheInvalidationOnFeatureUpdateTests(unittest.IsolatedAsyncioTestCase):
         first = await _call_forensics(self._service, self._ctx, self._ports, self._feature_id)
         self.assertEqual(first.feature_id, self._feature_id)
 
-        spy_get_many = AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data})
+        spy_get_many = AsyncMock(side_effect=_scoped_get_many(self._sessions_data))
         spy_sessions_repo = types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
+            get_by_id=AsyncMock(side_effect=_scoped_get_by_id(self._sessions_data)),
             get_many_by_ids=spy_get_many,
         )
 
@@ -525,8 +558,8 @@ class CacheInvalidationOnFeatureUpdateTests(unittest.IsolatedAsyncioTestCase):
 
         # Reset sessions() to normal before the bump
         self._ports.storage.sessions = lambda: types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
-            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data}),
+            get_by_id=AsyncMock(side_effect=_scoped_get_by_id(self._sessions_data)),
+            get_many_by_ids=AsyncMock(side_effect=_scoped_get_many(self._sessions_data)),
         )
 
         # Bump features.updated_at in the DB — fingerprint must advance
@@ -586,6 +619,7 @@ class CacheIsolationBetweenFeaturesTests(unittest.IsolatedAsyncioTestCase):
         await _insert_session(self._db, "sess-s3-a", "2026-04-14T08:10:00+00:00")
         self._sessions_data["sess-s3-a"] = {
             "id": "sess-s3-a",
+            "project_id": _PROJECT_ID,
             "status": "completed",
             "started_at": "2026-04-14T08:10:00+00:00",
             "ended_at": "2026-04-14T08:15:00+00:00",
@@ -617,6 +651,7 @@ class CacheIsolationBetweenFeaturesTests(unittest.IsolatedAsyncioTestCase):
         await _insert_session(self._db, "sess-s3-b", "2026-04-14T08:20:00+00:00")
         self._sessions_data["sess-s3-b"] = {
             "id": "sess-s3-b",
+            "project_id": _PROJECT_ID,
             "status": "completed",
             "started_at": "2026-04-14T08:20:00+00:00",
             "ended_at": "2026-04-14T08:25:00+00:00",
@@ -677,8 +712,8 @@ class CacheIsolationBetweenFeaturesTests(unittest.IsolatedAsyncioTestCase):
 
         # Spy: if A's cache is still live, sessions() for A's session will not be called
         spy_a_sessions = types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
-            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data}),
+            get_by_id=AsyncMock(side_effect=_scoped_get_by_id(self._sessions_data)),
+            get_many_by_ids=AsyncMock(side_effect=_scoped_get_many(self._sessions_data)),
         )
         self._ports.storage.sessions = lambda: spy_a_sessions
 
@@ -693,8 +728,8 @@ class CacheIsolationBetweenFeaturesTests(unittest.IsolatedAsyncioTestCase):
         # Reset spy count, then touch B
         spy_a_sessions.get_many_by_ids.reset_mock()
         self._ports.storage.sessions = lambda: types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
-            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data}),
+            get_by_id=AsyncMock(side_effect=_scoped_get_by_id(self._sessions_data)),
+            get_many_by_ids=AsyncMock(side_effect=_scoped_get_many(self._sessions_data)),
         )
         later = "2026-04-14T12:00:00+00:00"
         await _bump_feature_updated_at(self._db, self._feat_b, later)
@@ -705,8 +740,8 @@ class CacheIsolationBetweenFeaturesTests(unittest.IsolatedAsyncioTestCase):
 
         # Attach fresh spy for A's next call
         spy_a_after_b_touch = types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid)),
-            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: self._sessions_data[sid] for sid in ids if sid in self._sessions_data}),
+            get_by_id=AsyncMock(side_effect=_scoped_get_by_id(self._sessions_data)),
+            get_many_by_ids=AsyncMock(side_effect=_scoped_get_many(self._sessions_data)),
         )
         self._ports.storage.sessions = lambda: spy_a_after_b_touch
 

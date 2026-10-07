@@ -2517,7 +2517,11 @@ class SyncEngine:
                 current_fields = _observability_field_snapshot(session)
                 logs = await self.session_repo.get_logs(session_id)
                 derived_fields = await self._derive_session_observability_fields(project_id, session, logs)
-                if derived_fields == current_fields:
+                # Compare only the persisted column set: hydration also emits
+                # response-only keys (e.g. cost_pricing_status) that have no
+                # sessions column, so a raw dict comparison never converges and
+                # every pass would rewrite every Claude Code session.
+                if _observability_field_snapshot(derived_fields) == current_fields:
                     continue
                 await self.session_repo.update_observability_fields(session_id, derived_fields, project_id)
                 sessions_updated += 1

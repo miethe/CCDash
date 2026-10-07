@@ -89,8 +89,9 @@ npm run build
 
 # Run backend tests
 backend/.venv/bin/python -m unittest backend.tests.test_runtime_bootstrap backend.tests.test_request_context
-# Or, if pytest is installed in the venv:
-backend/.venv/bin/python -m pytest backend/tests/ -v
+# Full suite (test deps: backend/requirements-dev.txt; serial takes ~40 min, so run it in parallel):
+backend/.venv/bin/python -m pip install -r backend/requirements-dev.txt
+backend/.venv/bin/python -m pytest backend/tests/ -q -n 6 --timeout=300
 
 # Query surfaces (repo-local CLI)
 backend/.venv/bin/ccdash --help

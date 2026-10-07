@@ -303,6 +303,80 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         migration_managed=True,
     )
 
+    # Tables added after the DPM-003 freeze, classified 2026-10-06 so the
+    # matrix again covers every migration-managed table.
+    register_many(
+        ("projects", "workspaces", "workspace_tokens"),
+        kind="table",
+        domain="workspace_project_metadata",
+        durability="canonical",
+        local_owner="local filesystem + SQLite app metadata",
+        enterprise_owner="enterprise Postgres canonical app metadata",
+        ownership_posture="scope-owned",
+        notes=(
+            "Project registry (P3-001, replaces projects.json), workspace roots, and workspace-scoped "
+            "API tokens (hashed) are governed by workspace scope, not direct ownership."
+        ),
+        migration_managed=True,
+    )
+    register_many(
+        ("council_reviews", "research_notes", "oq_resolutions"),
+        kind="table",
+        domain="observed_product_entities",
+        durability="mixed",
+        local_owner="SQLite cache + local metadata",
+        enterprise_owner="enterprise Postgres canonical or mixed-mode hosted storage",
+        ownership_posture="inherits-parent-ownership",
+        notes="Project/feature-scoped review, research, and open-question rows inherit from the governing feature.",
+        migration_managed=True,
+    )
+    register_many(
+        ("query_cache", "filesystem_scan_manifest", "ingest_cursors"),
+        kind="table",
+        domain="ingestion_cache_state",
+        durability="derived",
+        local_owner="profile-local storage adapter",
+        enterprise_owner="profile-local storage adapter",
+        ownership_posture="scope-owned",
+        notes="Query cache, filesystem scan manifest, and ingest cursors are rebuildable adapter state.",
+        migration_managed=True,
+    )
+    register_many(
+        (
+            "rf_events",
+            "research_runs",
+            "intent_tree_events",
+            "intent_tree_reopened_events",
+            "intent_tree_self_caught_buckets",
+            "aar_reviews",
+            "provider_dimensions",
+            "provider_channels",
+            "provider_credentials",
+        ),
+        kind="table",
+        domain="integration_snapshots",
+        durability="refreshable",
+        local_owner="SQLite refreshable snapshot cache",
+        enterprise_owner="enterprise Postgres refreshable snapshot store",
+        ownership_posture="scope-owned",
+        notes=(
+            "Rows ingested from sibling AOS subsystems (Research Foundry, IntentTree, ARC) and the provider "
+            "dimension registry; re-derivable from their sources and scope-governed."
+        ),
+        migration_managed=True,
+    )
+    register_many(
+        ("migrations_applied", "job_queue", "routing_rollup", "planning_worktree_contexts"),
+        kind="table",
+        domain="operational_job_data",
+        durability="operational",
+        local_owner="local adapter allowed for local mode",
+        enterprise_owner="enterprise Postgres preferred for hosted mode",
+        ownership_posture="scope-owned",
+        notes="Migration bookkeeping, the durable job queue, routing rollups, and worktree launch contexts stay scope-aware only.",
+        migration_managed=True,
+    )
+
     register_many(
         ("principals", "scope_identifiers"),
         kind="placeholder",

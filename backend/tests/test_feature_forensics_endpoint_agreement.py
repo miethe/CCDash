@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.feature_queries import LinkedSessionPage
 from backend.routers._client_v1_features import get_feature_detail_v1, get_feature_sessions_v1
 
@@ -190,6 +191,7 @@ _FEATURE_ROW = {
 _SESSION_ROWS = {
     "session-a": {
         "id": "session-a",
+        "project_id": "project-1",
         "status": "completed",
         "started_at": "2026-04-14T08:00:00+00:00",
         "ended_at": "2026-04-14T08:30:00+00:00",
@@ -200,6 +202,7 @@ _SESSION_ROWS = {
     },
     "session-b": {
         "id": "session-b",
+        "project_id": "project-1",
         "status": "completed",
         "started_at": "2026-04-14T09:00:00+00:00",
         "ended_at": "2026-04-14T09:45:00+00:00",
@@ -210,6 +213,7 @@ _SESSION_ROWS = {
     },
     "session-c": {
         "id": "session-c",
+        "project_id": "project-1",
         "status": "completed",
         "started_at": "2026-04-14T10:00:00+00:00",
         "ended_at": "2026-04-14T10:15:00+00:00",
@@ -256,11 +260,24 @@ _EXPECTED_SESSION_IDS = {"session-a", "session-b", "session-c"}
 
 
 def _make_sessions_repo():
-    async def get_by_id(session_id):
-        return _SESSION_ROWS.get(session_id)
+    # Mirror the real repository's scoping: a non-empty project_id is a strict
+    # equality filter; workspace_id always scopes (rows default to the default
+    # workspace).
+    def _visible(row, project_id, workspace_id):
+        if row.get("workspace_id", DEFAULT_WORKSPACE_ID) != workspace_id:
+            return False
+        return not project_id or row.get("project_id") == project_id
 
-    async def get_many_by_ids(session_ids):
-        return {sid: _SESSION_ROWS[sid] for sid in session_ids if sid in _SESSION_ROWS}
+    async def get_by_id(session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        row = _SESSION_ROWS.get(session_id)
+        return row if row is not None and _visible(row, project_id, workspace_id) else None
+
+    async def get_many_by_ids(session_ids, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        return {
+            sid: _SESSION_ROWS[sid]
+            for sid in session_ids
+            if sid in _SESSION_ROWS and _visible(_SESSION_ROWS[sid], project_id, workspace_id)
+        }
 
     return types.SimpleNamespace(get_by_id=get_by_id, get_many_by_ids=get_many_by_ids)
 
@@ -276,8 +293,10 @@ def _make_links_repo():
 
 
 def _make_features_repo():
-    async def get_by_id(feature_id):
-        if feature_id == _FEATURE_ID:
+    async def get_by_id(feature_id, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        # Mirror the real repository's workspace scoping (ADR-008): a row in
+        # another workspace is invisible (callers surface it as 404).
+        if feature_id == _FEATURE_ID and _FEATURE_ROW.get("workspace_id", DEFAULT_WORKSPACE_ID) == workspace_id:
             return _FEATURE_ROW
         return None
 

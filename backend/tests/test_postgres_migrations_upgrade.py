@@ -552,10 +552,16 @@ class TestPostgresMigrationsUpgradeFromV0(unittest.TestCase):
 
 
 class TestPostgresMigrationsAlreadyAtV35(unittest.TestCase):
-    """Idempotency: v35 DB must skip _TABLES and not re-insert schema_version."""
+    """Idempotency: an already-current DB must skip _TABLES and not re-insert schema_version.
+
+    Written when SCHEMA_VERSION was 35; it now tracks the live SCHEMA_VERSION so the
+    "already current" premise stays true as migrations are added.
+    """
 
     def setUp(self) -> None:
-        self.db = _run_migrations(starting_version=35)
+        from backend.db import postgres_migrations as pm
+
+        self.db = _run_migrations(starting_version=pm.SCHEMA_VERSION)
 
     def test_no_exception_raised(self) -> None:
         """_run_migrations_inner must not raise for an already-current DB."""
@@ -569,13 +575,13 @@ class TestPostgresMigrationsAlreadyAtV35(unittest.TestCase):
         )
         self.assertFalse(
             found,
-            "Should NOT INSERT INTO schema_version when already at SCHEMA_VERSION=35",
+            "Should NOT INSERT INTO schema_version when already at SCHEMA_VERSION",
         )
 
     def test_tables_ddl_skipped(self) -> None:
         """_TABLES DDL blob must be skipped for an already-current DB."""
         found = any(self.db.is_tables_blob(s) for s in self.db.executed_statements())
-        self.assertFalse(found, "_TABLES must not run when DB is already at v35")
+        self.assertFalse(found, "_TABLES must not run when DB is already at SCHEMA_VERSION")
 
 
 # ---------------------------------------------------------------------------

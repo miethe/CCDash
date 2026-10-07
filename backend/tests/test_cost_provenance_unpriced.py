@@ -9,14 +9,17 @@ Verifies:
 """
 from __future__ import annotations
 
+import inspect
 import types
 import unittest
 from unittest.mock import patch
 
+from fastapi.params import Param
 from pydantic import ValidationError
 
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.models import AgentSession
 from backend.routers import api as api_router
 
@@ -194,16 +197,21 @@ class _ProvenanceMixedRepo:
     def __init__(self, rows) -> None:
         self.rows = rows
 
+    def _scoped(self, workspace_id):
+        # ADR-008 scoping as the real repository applies it: unscoped fixture
+        # rows belong to the default workspace.
+        return [row for row in self.rows if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
+
     async def list_paginated(
         self, offset, limit, project_id, sort_by, sort_order, filters,
-        *, workspace_id="default-local"
+        *, workspace_id=DEFAULT_WORKSPACE_ID
     ):
-        _ = offset, limit, project_id, sort_by, sort_order, filters, workspace_id
-        return self.rows
+        _ = offset, limit, project_id, sort_by, sort_order, filters
+        return self._scoped(workspace_id)
 
-    async def count(self, project_id, filters, *, workspace_id="default-local"):
-        _ = project_id, filters, workspace_id
-        return len(self.rows)
+    async def count(self, project_id, filters, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        _ = project_id, filters
+        return len(self._scoped(workspace_id))
 
     async def get_logs(self, session_id, **kwargs):
         _ = session_id, kwargs
@@ -211,6 +219,23 @@ class _ProvenanceMixedRepo:
 
     async def update_session_badges(self, *args, **kwargs):
         _ = args, kwargs
+
+
+async def _call_endpoint(endpoint, **kwargs):
+    """Invoke a FastAPI endpoint directly, resolving ``Query(...)`` defaults.
+
+    Called as a plain coroutine, an endpoint sees the ``Query`` marker object
+    itself as the default for every omitted parameter -- FastAPI only swaps in
+    ``Query.default`` at request time. Since #55 (57e06f4) ``list_sessions``
+    feeds ``project_id`` into ``resolve_project``, where a stringified marker
+    looks like an unknown project id and yields an empty page.
+    """
+    resolved = {
+        name: param.default.default
+        for name, param in inspect.signature(endpoint).parameters.items()
+        if isinstance(param.default, Param) and name not in kwargs
+    }
+    return await endpoint(**resolved, **kwargs)
 
 
 def _request_context(project_id: str = "p-1") -> RequestContext:
@@ -250,7 +275,8 @@ class TestListSessionsUnpricedResilience(unittest.IsolatedAsyncioTestCase):
         rows = [_make_row("sess-1", cost_provenance="unpriced")]
         repo = _ProvenanceMixedRepo(rows)
         with patch.object(api_router, "load_session_mappings", return_value=[]):
-            response = await api_router.list_sessions(
+            response = await _call_endpoint(
+                api_router.list_sessions,
                 request_context=_request_context(),
                 core_ports=_core_ports(repo),
             )
@@ -266,7 +292,8 @@ class TestListSessionsUnpricedResilience(unittest.IsolatedAsyncioTestCase):
         ]
         repo = _ProvenanceMixedRepo(rows)
         with patch.object(api_router, "load_session_mappings", return_value=[]):
-            response = await api_router.list_sessions(
+            response = await _call_endpoint(
+                api_router.list_sessions,
                 request_context=_request_context(),
                 core_ports=_core_ports(repo),
             )

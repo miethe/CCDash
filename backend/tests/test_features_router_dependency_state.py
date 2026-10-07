@@ -3,6 +3,7 @@ import types
 import unittest
 from unittest.mock import patch
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.models import (
     ExecutionGateState,
     FeatureDependencyEvidence,
@@ -19,21 +20,41 @@ _USE_DEFAULT_RECOMMENDED_ITEM = object()
 
 
 class _FeatureRepo:
+    """Fake feature repo mirroring the real repository's workspace scoping (ADR-008).
+
+    Rows without an explicit ``workspace_id`` belong to the default workspace;
+    rows in any other workspace are invisible to reads.
+    """
+
     def __init__(self, rows: list[dict]) -> None:
         self._rows = rows
         self._by_id = {str(row.get("id")): row for row in rows}
 
-    async def get_by_id(self, feature_id: str) -> dict | None:
-        return self._by_id.get(feature_id)
+    @staticmethod
+    def _in_workspace(row: dict, workspace_id: str) -> bool:
+        return row.get("workspace_id", DEFAULT_WORKSPACE_ID) == workspace_id
+
+    def _scoped(self, project_id: str | None, workspace_id: str) -> list[dict]:
+        return [
+            row
+            for row in self._rows
+            if self._in_workspace(row, workspace_id) and (not project_id or row.get("project_id") == project_id)
+        ]
+
+    async def get_by_id(self, feature_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
+        row = self._by_id.get(feature_id)
+        return row if row is not None and self._in_workspace(row, workspace_id) else None
 
     async def get_phases(self, feature_id: str) -> list[dict]:
         return []
 
-    async def list_paginated(self, project_id: str, offset: int, limit: int) -> list[dict]:
-        return list(self._rows[offset : offset + limit])
+    async def list_paginated(
+        self, project_id: str, offset: int, limit: int, *, workspace_id: str = DEFAULT_WORKSPACE_ID
+    ) -> list[dict]:
+        return list(self._scoped(project_id, workspace_id)[offset : offset + limit])
 
-    async def count(self, project_id: str) -> int:
-        return len(self._rows)
+    async def count(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> int:
+        return len(self._scoped(project_id, workspace_id))
 
 
 class FeatureRouterDependencyStateTests(unittest.IsolatedAsyncioTestCase):

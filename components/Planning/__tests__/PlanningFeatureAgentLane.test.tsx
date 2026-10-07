@@ -20,6 +20,7 @@
  * an async useEffect fetch — identical to the pattern used across Planning tests.
  */
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -57,11 +58,17 @@ import { PlanningFeatureAgentLane } from '../PlanningFeatureAgentLane';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function renderLane(featureId = 'FEAT-001'): string {
+// T3-002 moved the board fetch to usePlanningFeatureSessionBoardQuery, so the lane
+// needs a QueryClient. A fresh, empty client keeps the initial render pending
+// (isPending=true), which is the loading-skeleton state these tests assert.
+function renderLane(featureId = 'FEAT-001', className?: string): string {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(
-    <MemoryRouter>
-      <PlanningFeatureAgentLane featureId={featureId} />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <PlanningFeatureAgentLane featureId={featureId} className={className} />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -191,11 +198,7 @@ describe('PlanningFeatureAgentLane — component export', () => {
   });
 
   it('accepts featureId and optional className props (compile-time)', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <PlanningFeatureAgentLane featureId="FEAT-001" className="custom" />
-      </MemoryRouter>,
-    );
+    const html = renderLane('FEAT-001', 'custom');
     expect(html).toBeTruthy();
   });
 });

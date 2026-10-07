@@ -14,6 +14,7 @@ import types
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.feature_queries import PhaseSummary, PhaseSummaryBulkQuery
 from backend.routers import features as features_router
 from backend.application.services.agent_queries import cache as _cache_module
@@ -210,7 +211,13 @@ class TestListFeaturesMemoization(unittest.IsolatedAsyncioTestCase):
 
         repo = MagicMock()
         # Return different rows depending on offset
-        async def _paginated(proj_id: str, offset: int, limit: int) -> list[dict]:
+        async def _paginated(
+            proj_id: str, offset: int, limit: int, *, workspace_id: str = DEFAULT_WORKSPACE_ID
+        ) -> list[dict]:
+            # Mirror the real repository's workspace scoping (ADR-008): fixture
+            # rows live in the default workspace only.
+            if workspace_id != DEFAULT_WORKSPACE_ID:
+                return []
             return rows_offset_0 if offset == 0 else rows_offset_1
 
         repo.list_paginated = AsyncMock(side_effect=_paginated)
