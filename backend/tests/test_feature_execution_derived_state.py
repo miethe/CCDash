@@ -2,6 +2,7 @@ import json
 import unittest
 from unittest.mock import patch
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.models import Feature, LinkedDocument, LinkedFeatureRef
 from backend.services import feature_execution
 
@@ -10,16 +11,20 @@ class _FeatureRepo:
     def __init__(self, rows: list[dict]) -> None:
         self._rows = rows
 
-    async def list_all(self, project_id: str) -> list[dict]:
-        return list(self._rows)
+    async def list_all(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+        # Mirror the real repository's workspace scoping (ADR-008): rows without
+        # an explicit workspace_id belong to the default workspace.
+        return [row for row in self._rows if row.get("workspace_id", DEFAULT_WORKSPACE_ID) == workspace_id]
 
 
 class _DocumentRepo:
     def __init__(self, rows: list[dict]) -> None:
         self._rows = rows
 
-    async def list_all(self, project_id: str) -> list[dict]:
-        return list(self._rows)
+    async def list_all(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[dict]:
+        # Mirror the real repository's workspace scoping (ADR-008): rows without
+        # an explicit workspace_id belong to the default workspace.
+        return [row for row in self._rows if row.get("workspace_id", DEFAULT_WORKSPACE_ID) == workspace_id]
 
 
 class FeatureExecutionDerivedStateTests(unittest.IsolatedAsyncioTestCase):

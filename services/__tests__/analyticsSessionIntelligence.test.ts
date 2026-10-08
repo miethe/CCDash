@@ -2,6 +2,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { analyticsService, AnalyticsApiError } from '../analytics';
 
+// Since 265b14e every service request goes through apiClient.apiFetch, which
+// normalizes init.headers into a Headers instance (adding the project-scope
+// header only when a scope is selected) and defaults credentials to
+// 'same-origin'. Assert on the request the wrapper actually sends — URL,
+// credentials, and the real header contents — rather than the pre-wrapper
+// argument shape.
+function fetchCall(fetchMock: ReturnType<typeof vi.fn>, callIndex = 0) {
+  const [url, init] = fetchMock.mock.calls[callIndex] as [string, RequestInit | undefined];
+  return {
+    url,
+    init: init ?? {},
+    headers: Object.fromEntries(new Headers(init?.headers).entries()),
+  };
+}
+
 describe('analyticsService session intelligence helpers', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -39,9 +54,13 @@ describe('analyticsService session intelligence helpers', () => {
       limit: 6,
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchCall(fetchMock);
+    expect(call.url).toBe(
       '/api/analytics/session-intelligence/search?query=scope+drift&offset=0&limit=6&feature_id=feature-1&root_session_id=root-1&session_id=session-1',
     );
+    expect(call.init.credentials).toBe('same-origin');
+    expect(call.headers).toEqual({});
   });
 
   it('loads rollups and detail payloads from the additive intelligence routes', async () => {
@@ -79,14 +98,15 @@ describe('analyticsService session intelligence helpers', () => {
     await analyticsService.getSessionIntelligence({ featureId: 'feature-1', limit: 10 });
     await analyticsService.getSessionIntelligenceDetail('session-1');
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      '/api/analytics/session-intelligence?offset=0&limit=10&feature_id=feature-1',
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/analytics/session-intelligence/detail?session_id=session-1',
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const rollupCall = fetchCall(fetchMock, 0);
+    expect(rollupCall.url).toBe('/api/analytics/session-intelligence?offset=0&limit=10&feature_id=feature-1');
+    expect(rollupCall.init.credentials).toBe('same-origin');
+    expect(rollupCall.headers).toEqual({});
+    const detailCall = fetchCall(fetchMock, 1);
+    expect(detailCall.url).toBe('/api/analytics/session-intelligence/detail?session_id=session-1');
+    expect(detailCall.init.credentials).toBe('same-origin');
+    expect(detailCall.headers).toEqual({});
   });
 
   it('surfaces disabled-state hints from intelligence drilldown failures', async () => {

@@ -163,7 +163,7 @@ class StorageProfileConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             contract.secret_variables,
-            ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"),
+            ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN", "CCDASH_API_TOKEN"),
         )
         self.assertEqual(contract.shared[2].name, "CCDASH_DATABASE_URL")
         self.assertEqual(contract.shared[2].status, "configured")
@@ -228,7 +228,13 @@ class StorageProfileConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             contract.secret_variables,
-            ("CCDASH_DATABASE_URL", "CCDASH_CLERK_SECRET_KEY", "CCDASH_CLERK_JWT_KEY"),
+            (
+                "CCDASH_DATABASE_URL",
+                "CCDASH_CLERK_SECRET_KEY",
+                "CCDASH_CLERK_JWT_KEY",
+                # T10-004 / OQ-6: optional LAN bearer, secret-marked but never required.
+                "CCDASH_API_TOKEN",
+            ),
         )
         self.assertIn(
             "Runtime profile 'api' auth provider 'clerk' requires non-empty environment variables before serving traffic: "
@@ -269,7 +275,10 @@ class StorageProfileConfigTests(unittest.TestCase):
                 "CCDASH_OIDC_JWKS_URL",
             ),
         )
-        self.assertEqual(contract.secret_variables, ("CCDASH_DATABASE_URL", "CCDASH_OIDC_CLIENT_SECRET"))
+        self.assertEqual(
+            contract.secret_variables,
+            ("CCDASH_DATABASE_URL", "CCDASH_OIDC_CLIENT_SECRET", "CCDASH_API_TOKEN"),
+        )
         self.assertIn(
             "Runtime profile 'api' auth provider 'oidc' requires non-empty environment variables before serving traffic: "
             "CCDASH_OIDC_ISSUER, CCDASH_OIDC_AUDIENCE, CCDASH_OIDC_CLIENT_ID, CCDASH_OIDC_CLIENT_SECRET, "
@@ -734,8 +743,11 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertIn("watcher_runtime", status["degradedReasonCodes"])
         self.assertIn("startup_sync", status["degradedReasonCodes"])
 
-    def test_worker_watch_startup_binding_requires_project_id(self) -> None:
-        container = RuntimeContainer(profile=get_runtime_profile("worker-watch"))
+    def test_worker_startup_binding_requires_project_id(self) -> None:
+        # Since T3-001 / ADR-006 (7c07c8d) an unpinned worker-watch fans out over the
+        # registry instead of raising (covered in test_p3_worker_bootstrap); the
+        # non-empty project-id requirement now applies to the single-project worker.
+        container = RuntimeContainer(profile=get_runtime_profile("worker"))
         container.storage_profile = resolve_storage_profile_config(
             {
                 "CCDASH_STORAGE_PROFILE": "enterprise",
@@ -751,7 +763,7 @@ class StorageProfileConfigTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 RuntimeError,
-                "Runtime profile 'worker-watch' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+                "Runtime profile 'worker' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
             ):
                 container._resolve_startup_project_binding()
 

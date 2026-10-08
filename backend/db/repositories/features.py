@@ -50,7 +50,7 @@ def _build_feature_list_where_clause(
     with ``WHERE`` and always includes the ``workspace_id`` and ``project_id``
     predicates.  ``params`` uses positional ``?`` placeholders (SQLite style).
     """
-    conditions: list[str] = ["workspace_id = ?", "project_id = ?"]
+    conditions: list[str] = ["features.workspace_id = ?", "features.project_id = ?"]
     params: list[Any] = [workspace_id, project_id]
 
     # ── text search ─────────────────────────────────────────────────────────
@@ -154,21 +154,25 @@ def _add_date_range(
 def _build_rollup_sort_join_clause(query: FeatureListQuery) -> str:
     if query.sort_by not in _ROLLUP_SORT_KEYS:
         return ""
+    # SQLite has no LATERAL: a derived table cannot reference the outer
+    # ``features`` row, so the workspace match is carried as a join key.
     return """
 LEFT JOIN (
     SELECT
         el.source_id AS feature_id,
+        s.workspace_id AS workspace_id,
         COUNT(DISTINCT el.target_id) AS session_count,
         MAX(CASE
             WHEN COALESCE(s.updated_at, '') > COALESCE(s.started_at, '') THEN s.updated_at
             ELSE s.started_at
         END) AS latest_activity_at
     FROM entity_links el
-    JOIN sessions s ON s.id = el.target_id AND s.project_id = ? AND s.workspace_id = features.workspace_id
+    JOIN sessions s ON s.id = el.target_id AND s.project_id = ?
     WHERE el.source_type = 'feature'
       AND el.target_type = 'session'
-    GROUP BY el.source_id
+    GROUP BY el.source_id, s.workspace_id
 ) feature_session_rollups ON feature_session_rollups.feature_id = features.id
+    AND feature_session_rollups.workspace_id = features.workspace_id
 """
 
 

@@ -318,6 +318,9 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
                 types.SimpleNamespace(),
                 feature_id="feature-1",
                 project_id="project-1",
+                # Fixture runs are dated 2026-02-28; pin the window so the
+                # default "last 90 days" does not age them out.
+                since="2026-02-01T00:00:00Z",
             )
             alerts = await router.list_integrity_alerts(
                 types.SimpleNamespace(),

@@ -113,7 +113,15 @@ def _create_test_db(path: str) -> None:
         finally:
             await db.close()
 
-    asyncio.get_event_loop().run_until_complete(_bootstrap())
+    # Private loop: asyncio.get_event_loop() raises under py3.12 once any earlier
+    # test (or asyncio.run) has cleared the policy's current loop, and
+    # asyncio.run() would clear it again for later tests.  A throwaway loop
+    # leaves global loop state untouched.
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_bootstrap())
+    finally:
+        loop.close()
 
 
 def _insert_session_direct(db_path: str, session_id: str, *, project_id: str, workspace_id: str) -> None:

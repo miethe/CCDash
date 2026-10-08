@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 
 
 class _IdentityProvider:
@@ -239,6 +240,7 @@ class FeatureForensicsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         session_rows = {
             "session-opus": {
                 "id": "session-opus",
+                "project_id": "project-1",
                 "status": "completed",
                 "model": "claude-opus-4-1-20260101",
                 "observed_tokens": 120,
@@ -247,6 +249,7 @@ class FeatureForensicsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
             },
             "session-sonnet": {
                 "id": "session-sonnet",
+                "project_id": "project-1",
                 "status": "completed",
                 "model": "claude-sonnet-4-5-20260101",
                 "observed_tokens": 80,
@@ -255,6 +258,7 @@ class FeatureForensicsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
             },
             "session-haiku": {
                 "id": "session-haiku",
+                "project_id": "project-1",
                 "status": "completed",
                 "model": "claude-haiku-3-5-20260101",
                 "observed_tokens": 40,
@@ -263,6 +267,7 @@ class FeatureForensicsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
             },
             "session-other": {
                 "id": "session-other",
+                "project_id": "project-1",
                 "status": "completed",
                 "model": "gpt-5",
                 "observed_tokens": 25,
@@ -270,9 +275,27 @@ class FeatureForensicsQueryServiceTests(unittest.IsolatedAsyncioTestCase):
                 "ended_at": "2026-04-11T09:40:00+00:00",
             },
         }
+        # Mirror the real repository's scoping (FC-1 / ADR-008): a non-empty
+        # project_id is a strict equality filter; workspace_id always scopes.
+        def _visible(row, project_id, workspace_id):
+            if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id:
+                return False
+            return not project_id or row.get("project_id") == project_id
+
+        async def _get_by_id(session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+            row = session_rows.get(session_id)
+            return row if row is not None and _visible(row, project_id, workspace_id) else None
+
+        async def _get_many_by_ids(ids, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+            return {
+                sid: session_rows[sid]
+                for sid in ids
+                if sid in session_rows and _visible(session_rows[sid], project_id, workspace_id)
+            }
+
         sessions_repo = types.SimpleNamespace(
-            get_by_id=AsyncMock(side_effect=lambda session_id: session_rows.get(session_id)),
-            get_many_by_ids=AsyncMock(side_effect=lambda ids: {sid: session_rows[sid] for sid in ids if sid in session_rows}),
+            get_by_id=AsyncMock(side_effect=_get_by_id),
+            get_many_by_ids=AsyncMock(side_effect=_get_many_by_ids),
         )
         documents_repo = types.SimpleNamespace(list_paginated=AsyncMock(return_value=[]))
         tasks_repo = types.SimpleNamespace(list_by_feature=AsyncMock(return_value=[]))

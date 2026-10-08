@@ -20,29 +20,6 @@ from backend.db.sqlite_migrations import run_migrations
 
 
 # ---------------------------------------------------------------------------
-# Minimal DDL for entity_links (run_migrations covers the rest)
-# ---------------------------------------------------------------------------
-
-_ENTITY_LINKS_DDL = """
-CREATE TABLE IF NOT EXISTS entity_links (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_type   TEXT NOT NULL,
-    source_id     TEXT NOT NULL,
-    target_type   TEXT NOT NULL,
-    target_id     TEXT NOT NULL,
-    link_type     TEXT DEFAULT 'related',
-    origin        TEXT DEFAULT 'auto',
-    confidence    REAL DEFAULT 1.0,
-    depth         INTEGER DEFAULT 0,
-    sort_order    INTEGER DEFAULT 0,
-    metadata_json TEXT,
-    created_at    TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_links_upsert
-    ON entity_links(source_type, source_id, target_type, target_id, link_type);
-"""
-
-# ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
@@ -245,7 +222,9 @@ class TestEntityLinkGetLinksForMany(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.db = await aiosqlite.connect(":memory:")
         self.db.row_factory = aiosqlite.Row
-        await self.db.executescript(_ENTITY_LINKS_DDL)
+        # Real schema from migrations: entity_links gained workspace_id (#51,
+        # 41fc559); the hand-kept minimal DDL this replaced had drifted.
+        await run_migrations(self.db)
         self.repo = SqliteEntityLinkRepository(self.db)
 
         # f1 → session-a
@@ -328,9 +307,14 @@ class TestFeatureForensicsBulkCallsite(unittest.IsolatedAsyncioTestCase):
             get_by_id_call_count += 1
             return {"id": sid, "status": "completed", "started_at": "", "ended_at": "", "total_cost": 0.0, "observed_tokens": 0}
 
-        async def _get_many_by_ids(ids: list[str]) -> dict[str, dict]:
+        seen_project_ids: list[str | None] = []
+
+        async def _get_many_by_ids(ids: list[str], project_id: str | None = None) -> dict[str, dict]:
+            # Mirrors SqliteSessionRepository.get_many_by_ids, whose caller now
+            # forwards project_id for project scoping (b9c97d9).
             nonlocal get_many_by_ids_call_count
             get_many_by_ids_call_count += 1
+            seen_project_ids.append(project_id)
             return {sid: {"id": sid, "status": "completed", "started_at": "", "ended_at": "", "total_cost": 0.0, "observed_tokens": 0} for sid in ids}
 
         sessions_repo = types.SimpleNamespace(
@@ -354,8 +338,11 @@ class TestFeatureForensicsBulkCallsite(unittest.IsolatedAsyncioTestCase):
             trace=TraceContext(request_id="r1"),
         )
 
-        result = await _load_feature_session_rows(context, ports, "feature-1", ["s1", "s2", "s3"])
+        result = await _load_feature_session_rows(
+            context, ports, "feature-1", ["s1", "s2", "s3"], project_id="p1"
+        )
 
         self.assertEqual(get_by_id_call_count, 0, "get_by_id must NOT be called")
         self.assertEqual(get_many_by_ids_call_count, 1, "get_many_by_ids must be called exactly once")
+        self.assertEqual(seen_project_ids, ["p1"], "project_id must be forwarded to the bulk fetch")
         self.assertEqual(len(result), 3)

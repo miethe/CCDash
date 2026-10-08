@@ -1,5 +1,7 @@
+import functools
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -7,12 +9,23 @@ from fastapi import HTTPException
 
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.models import ArtifactRecommendation
 from backend.routers import analytics as analytics_router
 
 
+# The ranking fixtures below were authored against this instant (170e31f,
+# 2026-05-07). Recommendation freshness is time-relative (30d for
+# optimization_target), so endpoints that consult the wall clock must be
+# pinned to it or the fixture silently goes stale.
+_FIXTURE_NOW = datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc)
+
+
 class _FakeSessionRepo:
-    async def get_project_stats(self, project_id: str):
+    async def get_project_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID):
+        # Mirror ADR-008 scoping: fixture data lives in the default workspace.
+        if workspace_id != DEFAULT_WORKSPACE_ID:
+            return {"count": 0, "cost": 0.0, "tokens": 0, "duration": 0.0}
         return {
             "count": 3,
             "cost": 4.5,
@@ -435,18 +448,24 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         repo = _FakeArtifactRankingRepo([_artifact_ranking_row(workflow_id="")])
         project = types.SimpleNamespace(id="project-1")
 
-        payload = await analytics_router.get_artifact_recommendations(
-            project="project-1",
-            recommendation_type="optimization_target",
-            min_confidence=0.7,
-            period="30d",
-            collection="collection-a",
-            user="user-a",
-            workflow=None,
-            limit=100,
-            request_context=_request_context(project.id),
-            core_ports=_core_ports(project=project, artifact_rankings_repo=repo),
-        )
+        service = analytics_router.artifact_recommendation_service
+        with patch.object(
+            service,
+            "generate_recommendations",
+            functools.partial(service.generate_recommendations, now=_FIXTURE_NOW),
+        ):
+            payload = await analytics_router.get_artifact_recommendations(
+                project="project-1",
+                recommendation_type="optimization_target",
+                min_confidence=0.7,
+                period="30d",
+                collection="collection-a",
+                user="user-a",
+                workflow=None,
+                limit=100,
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, artifact_rankings_repo=repo),
+            )
 
         self.assertEqual(payload.total, 1)
         self.assertEqual(payload.recommendations[0].recommendation_type, "optimization_target")
@@ -558,7 +577,9 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         project = types.SimpleNamespace(id="project-1")
 
         class _TaskRepo:
-            async def get_project_stats(self, project_id: str):
+            async def get_project_stats(self, project_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID):
+                if workspace_id != DEFAULT_WORKSPACE_ID:
+                    return {"completed": 0, "completion_pct": 0.0}
                 return {"completed": 7, "completion_pct": 63.0}
 
         class _SessionRepo(_FakeSessionRepo):
@@ -1190,8 +1211,8 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                 return []
 
         class _FeatureRepo:
-            async def get_by_id(self, feature_id: str):
-                if feature_id == "F-1":
+            async def get_by_id(self, feature_id: str, *, workspace_id: str = DEFAULT_WORKSPACE_ID):
+                if feature_id == "F-1" and workspace_id == DEFAULT_WORKSPACE_ID:
                     return {"name": "Feature One"}
                 return None
 

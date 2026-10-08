@@ -264,7 +264,10 @@ def test_clerk_login_start_fails_clearly_without_browser_redirect_surface() -> N
 
 def test_auth_router_is_registered_in_runtime_bootstrap() -> None:
     app = build_runtime_app("test")
-    routes = {getattr(route, "path", "") for route in app.routes}
+    # FastAPI >= 0.142 `include_router` adds a lazy `_IncludedRouter` to
+    # `app.routes` instead of flattening child routes, so top-level paths are not
+    # visible there.  The generated OpenAPI schema resolves the full route tree.
+    routes = set(app.openapi()["paths"])
 
     assert "/api/auth/session" in routes
     assert "/api/auth/login/start" in routes

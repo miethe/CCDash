@@ -72,6 +72,14 @@ def _make_minimal_sync_engine() -> Any:
 
     # Repositories (not called for the in-process coalescing path)
     engine.session_repo = MagicMock()
+    # sync_project runs these two session-repo derive passes on every sync
+    # (skill_name/session_name inheritance, ICA spend attribution).
+    engine.session_repo.backfill_skill_name_inheritance = AsyncMock(return_value={"rows": 0})
+    engine.session_repo.backfill_ica_spend_attribution = AsyncMock(return_value={"rows": 0})
+    engine.provider_dimensions_repo = MagicMock()
+    engine.provider_dimensions_repo.backfill_provider_dimensions_from_sessions = AsyncMock(
+        return_value={"providers_inserted": 0}
+    )
     engine.document_repo = MagicMock()
     engine.task_repo = MagicMock()
     engine.feature_repo = MagicMock()
@@ -283,7 +291,7 @@ class TestInProcessCoalescing(unittest.IsolatedAsyncioTestCase):
 
         actual_sync_call_count = 0
 
-        async def _yielding_sessions(project_id, sessions_dir, force):
+        async def _yielding_sessions(project_id, sessions_dir, force, **kwargs):
             nonlocal actual_sync_call_count
             await asyncio.sleep(0)  # yield → lets tasks 2 & 3 observe in-flight key
             actual_sync_call_count += 1
@@ -341,7 +349,7 @@ class TestInProcessCoalescing(unittest.IsolatedAsyncioTestCase):
 
         actual_sync_call_count = 0
 
-        async def _yielding_sessions(project_id, sessions_dir, force):
+        async def _yielding_sessions(project_id, sessions_dir, force, **kwargs):
             nonlocal actual_sync_call_count
             await asyncio.sleep(0)
             actual_sync_call_count += 1

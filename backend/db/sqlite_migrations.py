@@ -166,7 +166,8 @@ CREATE TABLE IF NOT EXISTS entity_links (
     sort_order    INTEGER DEFAULT 0,
     metadata_json TEXT,
     created_at    TEXT NOT NULL,
-    project_id    TEXT
+    project_id    TEXT,
+    workspace_id   TEXT NOT NULL DEFAULT 'default-local'
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_source ON entity_links(source_type, source_id);
@@ -603,7 +604,8 @@ CREATE TABLE IF NOT EXISTS documents (
     updated_at     TEXT DEFAULT '',
     last_modified  TEXT DEFAULT '',
     frontmatter_json TEXT NOT NULL,
-    source_file    TEXT NOT NULL
+    source_file    TEXT NOT NULL,
+    workspace_id   TEXT NOT NULL DEFAULT 'default-local'
 );
 
 CREATE INDEX IF NOT EXISTS idx_docs_project ON documents(project_id);
@@ -648,7 +650,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at     TEXT DEFAULT '',
     completed_at   TEXT DEFAULT '',
     source_file    TEXT NOT NULL,
-    data_json      TEXT NOT NULL
+    data_json      TEXT NOT NULL,
+    workspace_id   TEXT NOT NULL DEFAULT 'default-local'
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_feature ON tasks(feature_id, phase_id);
@@ -673,7 +676,8 @@ CREATE TABLE IF NOT EXISTS features (
     created_at      TEXT DEFAULT '',
     updated_at      TEXT DEFAULT '',
     completed_at    TEXT DEFAULT '',
-    data_json       TEXT NOT NULL
+    data_json       TEXT NOT NULL,
+    workspace_id   TEXT NOT NULL DEFAULT 'default-local'
 );
 
 -- ── 7b. Council Reviews (feature-scoped AI review scaffold) ────────
@@ -1789,6 +1793,52 @@ CREATE INDEX IF NOT EXISTS idx_provider_credentials_channel
     ON provider_credentials(channel, credential_name);
 CREATE INDEX IF NOT EXISTS idx_provider_credentials_rotated_from
     ON provider_credentials(rotated_from_id);
+
+-- ── ADR-008/ADR-009 baseline mirror (ingest_cursors, workspaces, workspace_tokens) ──
+-- These tables are created inline by the version-gated v36/v37 migrations. They are
+-- ALSO declared here (same convention as rf_events/research_runs) so the static
+-- migration-governance scan, which reads only _TABLES, classifies them. DDL is
+-- identical to the v36/v37 migration-path DDL (CREATE IF NOT EXISTS => no-op once
+-- created), including ingest_cursors.workspace_id DEFAULT 'default' (the v36 contract
+-- pinned by test_migrations_v28; v37 rewrites rows and, on Postgres only, ALTERs the
+-- default afterwards).
+CREATE TABLE IF NOT EXISTS ingest_cursors (
+    source_id      TEXT NOT NULL,
+    project_id     TEXT NOT NULL,
+    workspace_id   TEXT NOT NULL DEFAULT 'default',
+    last_cursor    TEXT,
+    last_ingest_at TEXT,
+    error_count    INTEGER NOT NULL DEFAULT 0,
+    last_error     TEXT,
+    last_error_at  TEXT,
+    PRIMARY KEY (source_id, project_id, workspace_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_ingest_cursors_workspace ON ingest_cursors (workspace_id);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+    workspace_id TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'active',
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workspace_tokens (
+    token_id     TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    project_id   TEXT NOT NULL,
+    hashed_token TEXT NOT NULL UNIQUE,
+    scope        TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at   TEXT,
+    description  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_workspace_tokens_workspace
+    ON workspace_tokens (workspace_id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_workspace_tokens_hash
+    ON workspace_tokens (hashed_token) WHERE revoked_at IS NULL;
 """
 
 _PLANNING_WORKTREE_CONTEXTS_DDL = """

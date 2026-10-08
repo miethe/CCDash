@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import aiosqlite
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.db.repositories.pricing import SqlitePricingCatalogRepository
 from backend.db.sqlite_migrations import run_migrations
 from backend.services.pricing_catalog import GLOBAL_PRICING_PROJECT_ID, PricingCatalogService
@@ -12,8 +13,10 @@ class _FakeSessionRepository:
     def __init__(self, rows=None) -> None:
         self.rows = rows or []
 
-    async def get_model_facets(self, project_id, include_subagents=True):
-        return list(self.rows)
+    async def get_model_facets(self, project_id, include_subagents=True, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        # Mirror the real repository's workspace scoping (ADR-008): facet rows
+        # without an explicit workspace belong to the default workspace.
+        return [row for row in self.rows if row.get("workspace_id", DEFAULT_WORKSPACE_ID) == workspace_id]
 
 
 class PricingCatalogServiceTests(unittest.IsolatedAsyncioTestCase):

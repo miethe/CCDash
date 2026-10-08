@@ -123,6 +123,18 @@ class TestMigrationConcurrency(unittest.TestCase):
             ref_tables = self._reference_tables(ref_path)
             from backend.db.sqlite_migrations import SCHEMA_VERSION
 
+            # Put the fresh file in WAL mode once, up front (WAL is persistent).
+            # Two connections switching a brand-new file to WAL at the same
+            # instant get SQLITE_BUSY immediately -- busy_timeout does not cover
+            # the journal-mode change -- which failed this test ~5/6 runs before
+            # either worker reached run_migrations. The race under test is the
+            # run_migrations flock, not the PRAGMA.
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+            finally:
+                conn.close()
+
             # Now race two fresh processes on the real db_path
             queue: multiprocessing.Queue[str] = multiprocessing.Queue()
             p1 = multiprocessing.Process(

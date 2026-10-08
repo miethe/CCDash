@@ -229,14 +229,20 @@ def _extract_table_schema_map(ddl: str) -> dict[str, str | None]:
 
 
 def _backend_table_blocks(module: object) -> dict[str, str]:
-    """Extract table blocks from shared DDL strings (_TABLES, _TEST_VISUALIZER_TABLES)."""
+    """Extract table blocks from shared DDL strings.
+
+    Scans _TABLES, _TEST_VISUALIZER_TABLES and _PLANNING_WORKTREE_CONTEXTS_DDL (the
+    last holds planning_worktree_contexts + filesystem_scan_manifest and is executed
+    by both backends' run_migrations as a standalone constant).
+    """
     blocks: dict[str, str] = {}
     primary = getattr(module, "_TABLES", "")
     if isinstance(primary, str):
         blocks.update(_extract_table_blocks(primary))
-    gated = getattr(module, "_TEST_VISUALIZER_TABLES", "")
-    if isinstance(gated, str):
-        blocks.update(_extract_table_blocks(gated))
+    for attr in ("_TEST_VISUALIZER_TABLES", "_PLANNING_WORKTREE_CONTEXTS_DDL"):
+        gated = getattr(module, attr, "")
+        if isinstance(gated, str):
+            blocks.update(_extract_table_blocks(gated))
     return blocks
 
 

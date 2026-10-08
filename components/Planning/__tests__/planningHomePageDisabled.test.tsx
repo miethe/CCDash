@@ -4,6 +4,8 @@
  * Verifies that when getLaunchCapabilities() returns planningEnabled=false,
  * the component renders the DisabledShell instead of normal planning content.
  */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -37,6 +39,16 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+
+// 1c33b35 (TanStack Query migration) made PlanningHomePage call useQueryClient() and
+// TQ query hooks unconditionally, so it must render inside a QueryClientProvider.
+// A fresh, empty client leaves every query pending on the synchronous SSR pass,
+// preserving the initial-render states these tests assert.
+function withQueryClient(node: ReactElement): ReactElement {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+}
+
 describe('PlanningHomePage — disabled-state (PCP-603)', () => {
   it('renders DisabledShell when planningEnabled is false', () => {
     vi.mocked(getLaunchCapabilities).mockResolvedValue({
@@ -47,9 +59,11 @@ describe('PlanningHomePage — disabled-state (PCP-603)', () => {
     });
 
     const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <PlanningHomePage />
-      </MemoryRouter>,
+      withQueryClient(
+        <MemoryRouter>
+          <PlanningHomePage />
+        </MemoryRouter>,
+      ),
     );
 
     // DisabledShell is rendered on initial synchronous pass (planningEnabled
@@ -72,9 +86,11 @@ describe('PlanningHomePage — disabled-state (PCP-603)', () => {
     });
 
     const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <PlanningHomePage />
-      </MemoryRouter>,
+      withQueryClient(
+        <MemoryRouter>
+          <PlanningHomePage />
+        </MemoryRouter>,
+      ),
     );
 
     // With planningEnabled=true in capabilities, initial state is also true,

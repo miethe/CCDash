@@ -44,6 +44,25 @@ from backend.runtime.dependencies import get_request_context
 from backend.runtime.profiles import get_runtime_profile
 
 
+def _iter_api_routes(routes, prefix: str = ""):
+    """Yield ``(effective_path, leaf_route)`` pairs across FastAPI versions.
+
+    FastAPI >= 0.142 no longer flattens ``include_router()`` into ``app.routes``;
+    it appends a lazy ``_IncludedRouter`` wrapper (exposing ``original_router``
+    and an ``include_context`` carrying any include-time prefix). Older
+    versions store flattened ``APIRoute`` objects directly. Walk both shapes.
+    """
+    for route in routes:
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            include_prefix = getattr(getattr(route, "include_context", None), "prefix", "") or ""
+            yield from _iter_api_routes(original_router.routes, prefix + include_prefix)
+            continue
+        path = getattr(route, "path", None)
+        if path is not None:
+            yield prefix + path, route
+
+
 class LocalAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_local_identity_provider_returns_local_operator_principal(self) -> None:
         provider = LocalIdentityProvider()
@@ -533,7 +552,7 @@ class RequestContextRouteIntegrationTests(unittest.TestCase):
 
     def test_projects_route_declares_core_ports_dependency(self) -> None:
         app = build_test_app()
-        route = next(route for route in app.routes if getattr(route, "path", None) == "/api/projects")
+        route = next(route for path, route in _iter_api_routes(app.routes) if path == "/api/projects")
         dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
 
         self.assertIn(get_core_ports, dependency_calls)

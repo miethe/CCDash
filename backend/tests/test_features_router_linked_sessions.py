@@ -3,14 +3,21 @@ import types
 import unittest
 from unittest.mock import patch
 
+from backend.db.repositories.base import DEFAULT_WORKSPACE_ID
 from backend.models import LinkedDocument
 from backend.routers import features as features_router
 from backend.session_mappings import default_session_mappings
 
 
+def _in_workspace(row, workspace_id):
+    """Mirror the real repositories' ADR-008 scoping: unscoped fixture rows
+    belong to the default workspace; any other workspace cannot see them."""
+    return (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id
+
+
 class _FakeFeatureRepo:
-    async def get_by_id(self, feature_id):
-        if feature_id != "feat-1":
+    async def get_by_id(self, feature_id, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        if feature_id != "feat-1" or workspace_id != DEFAULT_WORKSPACE_ID:
             return None
         return {"id": "feat-1", "name": "Feature One"}
 
@@ -26,8 +33,8 @@ class _FakeFeatureRepo:
 
 
 class _FakeTaskRepo:
-    async def list_by_feature(self, feature_id, phase_id=None):
-        if feature_id != "feat-1":
+    async def list_by_feature(self, feature_id, phase_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        if feature_id != "feat-1" or workspace_id != DEFAULT_WORKSPACE_ID:
             return []
         return [
             {
@@ -148,20 +155,26 @@ class _FakeSessionRepo:
         }
         self.root_members = root_members or {"S-1": ["S-1"]}
 
-    async def get_by_id(self, session_id):
-        return self.rows.get(session_id)
+    async def get_by_id(self, session_id, project_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+        row = self.rows.get(session_id)
+        if row is None or not _in_workspace(row, workspace_id):
+            return None
+        if project_id and row.get("project_id") not in (None, project_id):
+            return None
+        return row
 
     async def get_logs(self, session_id):
         return self.logs_by_id.get(session_id, [])
 
-    async def count(self, project_id, filters=None, *, workspace_id=None):
+    async def count(self, project_id, filters=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
         filters = filters or {}
         root_id = filters.get("root_session_id")
         if root_id:
-            return len(self.root_members.get(root_id, []))
-        return len(self.rows)
+            ids = self.root_members.get(root_id, [])
+            return len([sid for sid in ids if sid in self.rows and _in_workspace(self.rows[sid], workspace_id)])
+        return len([row for row in self.rows.values() if _in_workspace(row, workspace_id)])
 
-    async def list_paginated(self, offset, limit, project_id=None, sort_by="started_at", sort_order="desc", filters=None, *, workspace_id=None):
+    async def list_paginated(self, offset, limit, project_id=None, sort_by="started_at", sort_order="desc", filters=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
         filters = filters or {}
         root_id = filters.get("root_session_id")
         if root_id:
@@ -169,13 +182,14 @@ class _FakeSessionRepo:
             members = [self.rows[sid] for sid in ids if sid in self.rows]
         else:
             members = list(self.rows.values())
+        members = [row for row in members if _in_workspace(row, workspace_id)]
         return members[offset : offset + limit]
 
 
 class FeatureLinkedSessionsTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_feature_returns_synthetic_feature_for_design_spec_only_item(self) -> None:
         class _MissingFeatureRepo:
-            async def get_by_id(self, feature_id):
+            async def get_by_id(self, feature_id, *, workspace_id=DEFAULT_WORKSPACE_ID):
                 return None
 
         design_doc = LinkedDocument(
@@ -202,7 +216,7 @@ class FeatureLinkedSessionsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_linked_sessions_allows_design_spec_only_item_with_document_evidence(self) -> None:
         class _MissingFeatureRepo:
-            async def get_by_id(self, feature_id):
+            async def get_by_id(self, feature_id, *, workspace_id=DEFAULT_WORKSPACE_ID):
                 return None
 
             async def get_phases(self, feature_id):
@@ -459,8 +473,8 @@ class FeatureLinkedSessionsTests(unittest.IsolatedAsyncioTestCase):
         project = types.SimpleNamespace(id="project-1")
 
         class _SsoTaskRepo:
-            async def list_by_feature(self, feature_id, phase_id=None):
-                if feature_id != "feat-1":
+            async def list_by_feature(self, feature_id, phase_id=None, *, workspace_id=DEFAULT_WORKSPACE_ID):
+                if feature_id != "feat-1" or workspace_id != DEFAULT_WORKSPACE_ID:
                     return []
                 return [
                     {

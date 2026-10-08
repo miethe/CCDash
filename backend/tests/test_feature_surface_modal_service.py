@@ -185,7 +185,7 @@ class FeatureModalDetailServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.data["phases"]), 1)
         self.assertEqual(len(result.data["phases"][0]["tasks"]), 2)
         storage._features_repo.list_phase_summaries_for_features.assert_awaited_once()
-        storage._tasks_repo.list_by_feature.assert_awaited_once_with("feature-1")
+        storage._tasks_repo.list_by_feature.assert_awaited_once_with("feature-1", workspace_id="default-local")
 
     async def test_sessions_use_source_paged_repository(self) -> None:
         session_repo = types.SimpleNamespace(
@@ -213,7 +213,7 @@ class FeatureModalDetailServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.section, "sessions")
         self.assertEqual(result.data["rows"], [{"session_id": "session-1"}])
         self.assertEqual(result.data["total"], 3)
-        storage._features_repo.get_by_id.assert_awaited_once_with("feature-1")
+        storage._features_repo.get_by_id.assert_awaited_once_with("feature-1", workspace_id="default-local")
         call = session_repo.list_feature_session_refs.await_args
         self.assertEqual(call.args[0], "project-1")
         self.assertEqual(call.args[1].feature_id, "feature-1")

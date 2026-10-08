@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import aiosqlite
@@ -191,7 +192,8 @@ class TelemetryQueueRepositoryTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.db.execute(
             "UPDATE outbound_telemetry_queue SET created_at = ? WHERE id = ?",
-            ("2026-03-20T00:00:00+00:00", new_synced["id"]),
+            # Relative to now so the "new" row stays inside the 30-day window.
+            ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(), new_synced["id"]),
         )
         await self.db.execute(
             "UPDATE outbound_telemetry_queue SET created_at = ? WHERE id = ?",

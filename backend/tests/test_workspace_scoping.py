@@ -101,6 +101,13 @@ EXEMPT_METHODS: dict[str, str] = {
     "sessions.SqliteSessionRepository.list_relationships": "detail sub-table keyed by project + session; cross-workspace access already blocked upstream",
     "sessions.SqliteSessionRepository.update_session_badges": "write path (UPDATE by PK), no workspace filter needed",
     "sessions.PostgresSessionRepository.update_session_badges": "write path (UPDATE by PK), no workspace filter needed",
+    # Per-sync derive passes (v49 skill_name inheritance, v51 ICA spend
+    # attribution): UPDATE-only write paths scoped by project_id against the
+    # (project_id, id) sessions key; they return row counts only, never rows.
+    "sessions.SqliteSessionRepository.backfill_skill_name_inheritance": "write path (project-scoped derive UPDATE), returns counts only",
+    "sessions.PostgresSessionRepository.backfill_skill_name_inheritance": "write path (project-scoped derive UPDATE), returns counts only",
+    "sessions.SqliteSessionRepository.backfill_ica_spend_attribution": "write path (project-scoped derive SELECT+UPDATE), returns counts only",
+    "sessions.PostgresSessionRepository.backfill_ica_spend_attribution": "write path (project-scoped derive SELECT+UPDATE), returns counts only",
 
     # ── Tasks: write paths / non-workspace-partitioned detail reads ──────────
     "tasks.SqliteTaskRepository.upsert": "write path, workspace_id passed as parameter to INSERT",
