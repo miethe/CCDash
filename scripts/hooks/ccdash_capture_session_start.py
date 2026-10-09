@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CCDash launch-time capture writer — Claude Code SessionStart hook.
+"""CCDash lifecycle metadata writer — Claude Code and explicit native Codex events.
 
 Reads the SessionStart hook JSON payload from stdin (fields: ``session_id``,
 ``transcript_path``), reads the CCDASH_LAUNCH_* env contract, and writes a
@@ -28,6 +28,24 @@ Schema (schemaVersion=4)
   "icaSpendEnd": "<str|null>",     # raw x-litellm-key-spend at session end
   "capturedAt": "<ISO-8601 UTC|null>"
 }
+
+Native callers must supply ``platformType=Codex``. Native model/effort comes
+only from measured ``model``, ``effort`` or ``collaboration_mode.settings``
+``reasoning_effort`` metadata; never from launch env, Claude settings or a model
+name. Unknown stays null. Native v4 sidecars add ``platformType`` and nullable
+``modelVariantSource=codex_payload_model``. SessionEnd only preserves an existing
+native start snapshot; without it, capture is unavailable and no file is created.
+Native launcher/profile requires explicit payload values with respectively
+``launcherSource=codex_payload_launcher`` / ``profileSource=codex_payload_profile``;
+otherwise null. Launcher environment cannot establish those observations.
+Explicit unknown/blank/null platform returns before any sidecar lookup or write.
+Native model source means a payload observation, not independently proven model
+realization. Native events without an explicit transcript path are unavailable; they never
+create the legacy cwd fallback store. The path is a metadata join pointer and
+its transcript contents are never opened by this writer.
+``--capabilities`` emits a static compatibility document without reading stdin,
+env, settings, transcript or network. The caller must validate that document and
+own the shared preflight/write deadline (native SessionEnd <=1.8s).
 
 All non-schemaVersion/sessionId fields are nullable.
 Unknown / unset env vars → null, NEVER defaulted.
@@ -330,6 +348,58 @@ def _resolve_effort_tier(
     return None, None
 
 
+def _capture_platform(payload: dict[str, Any]) -> str:
+    """Absent platform retains the legacy Claude hook contract; explicit unknown
+    platforms never enter Claude settings or ICA transport branches.
+    Native adapters must supply platformType=Codex, rather than relying on env.
+    """
+    if "platformType" in payload:
+        raw = payload["platformType"]
+    elif "platform_type" in payload:
+        raw = payload["platform_type"]
+    else:
+        return "claude"
+    value = str(raw).strip().lower()
+    return {"codex": "codex", "claude": "claude", "claude code": "claude"}.get(value, "unknown")
+
+
+def _native_observations(payload: dict[str, Any]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Only recorded native fields qualify. Launch env is intent, not realization.
+    Unknown model/effort stays null; model names never imply effort.
+    """
+    def text(value: Any) -> Optional[str]:
+        return value.strip() or None if isinstance(value, str) else None
+
+    model = text(payload.get("model"))
+    effort = text(payload.get("effort"))
+    if effort:
+        return model, effort, "codex_payload_effort"
+    mode = payload.get("collaboration_mode")
+    settings = mode.get("settings") if isinstance(mode, dict) else None
+    effort = text(settings.get("reasoning_effort")) if isinstance(settings, dict) else None
+    return model, effort, "codex_collaboration_mode" if effort else None
+
+
+def _native_label(payload: dict[str, Any], field: str) -> Optional[str]:
+    """Label is captured only with an explicit native payload observation/source.
+    Stale launcher environment is never evidence for a native launcher/profile.
+    """
+    if payload.get(f"{field}Source") != f"codex_payload_{field}":
+        return None
+    value = payload.get(field)
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _capture_effort(payload: dict[str, Any], env: dict[str, str]) -> tuple[Optional[str], Optional[str]]:
+    platform = _capture_platform(payload)
+    if platform == "codex":
+        _, effort, source = _native_observations(payload)
+        return effort, source
+    if platform == "claude":
+        return _resolve_effort_tier(env, _resolve_project_dir(payload))
+    return None, None
+
+
 def _extract_session_id(payload: dict) -> Optional[str]:
     """Shared ``session_id``/``sessionId`` extraction, stripped, empty → None."""
     raw_sid = payload.get("session_id") or payload.get("sessionId")
@@ -378,14 +448,24 @@ def update_effort_tier_last(
     memory, and written back atomically as a whole document).
     """
     try:
+        platform = _capture_platform(payload)
+        if platform == "unknown":
+            return None
         session_id = _extract_session_id(payload)
         if not session_id:
             logger.debug("ccdash_capture: no session_id in payload — skipping")
             return None
 
+        if _capture_platform(payload) == "codex" and (
+            session_id in {".", ".."} or "/" in session_id or "\\" in session_id
+        ):
+            return None
         transcript_path: Optional[str] = (
             payload.get("transcript_path") or payload.get("transcriptPath")
         )
+        if _capture_platform(payload) == "codex" and not transcript_path:
+            # No native source path means no join authority. Do not guess cwd.
+            return None
         sidecar_path = _resolve_sidecar_path(
             session_id, transcript_path, fallback_base=fallback_base
         )
@@ -402,8 +482,12 @@ def update_effort_tier_last(
             )
             return None
 
-        project_dir = _resolve_project_dir(payload)
-        new_value, _ = _resolve_effort_tier(env, project_dir)
+        if existing.get("sessionId") != session_id:
+            return None
+        if (_capture_platform(payload) == "codex"
+                and existing.get("platformType") != "Codex"):
+            return None
+        new_value, _ = _capture_effort(payload, env)
         if new_value is None:
             return None
 
@@ -430,8 +514,8 @@ def _resolve_sidecar_path(
 ) -> Optional[Path]:
     """Derive the sidecar output path.
 
-    Primary: co-located sibling of the transcript JSONL, derived via
-    ``path.with_name(f"{stem}.capture.json")``.
+    Primary: co-located sibling named by the actual session ID, even when
+    the transcript filename is a Codex rollout prefix plus UUID.
 
     Fallback (used when *transcript_path* is absent): a directory under the
     CCDash data dir, resolved relative to *fallback_base* (default: ``Path.cwd()``).
@@ -481,6 +565,9 @@ def write_capture_sidecar(
     Never.  All exceptions are caught and result in a ``None`` return.
     """
     try:
+        platform = _capture_platform(payload)
+        if platform == "unknown":
+            return None
         session_id: Optional[str] = None
         raw_sid = payload.get("session_id") or payload.get("sessionId")
         if raw_sid:
@@ -490,10 +577,17 @@ def write_capture_sidecar(
             logger.debug("ccdash_capture: no session_id in payload — skipping")
             return None
 
+        if _capture_platform(payload) == "codex" and (
+            session_id in {".", ".."} or "/" in session_id or "\\" in session_id
+        ):
+            return None
         transcript_path: Optional[str] = (
             payload.get("transcript_path") or payload.get("transcriptPath")
         )
 
+        if _capture_platform(payload) == "codex" and not transcript_path:
+            # No native source path means no join authority. Do not guess cwd.
+            return None
         sidecar_path = _resolve_sidecar_path(
             session_id,
             transcript_path,
@@ -514,16 +608,26 @@ def write_capture_sidecar(
         # Loaded once, up front, so both effortTierLast (below) and the ICA
         # merge (further down) read the same on-disk snapshot.
         existing = _load_existing_sidecar(sidecar_path)
+        # Never preserve observations from a sidecar with a different identity.
+        if existing.get("sessionId") != session_id:
+            existing = {}
+        platform = _capture_platform(payload)
+        if platform == "codex" and existing.get("platformType") != "Codex":
+            existing = {}
+        if platform == "codex" and _is_session_end(payload) and not existing:
+            # End cannot originate or repair a start snapshot. Coverage absent.
+            return None
 
-        # effortTier: explicit launcher env wins; otherwise fall back to the
-        # Claude Code settings.json `effortLevel` convention. Shared with the
-        # UserPromptSubmit lane via _resolve_effort_tier so the two can never
-        # disagree on precedence.
+        # Native values use only recorded payload fields; Claude retains its
+        # launcher env/settings precedence. The prompt lane shares this branch.
         #
         # effortTierSource (Gap 4) is set at each resolution point and stays
         # null whenever effortTier is null — provenance is never invented.
-        effort_tier, effort_tier_source = _resolve_effort_tier(
-            env, _resolve_project_dir(payload)
+        effort_tier, effort_tier_source = _capture_effort(payload, env)
+        model_variant = (
+            _native_observations(payload)[0] if platform == "codex"
+            else _nullable_str(env, "CCDASH_LAUNCH_MODEL") if platform == "claude"
+            else None
         )
         # effortTierLast (G1, v4): SessionStart never populates this — it is
         # exclusively the UserPromptSubmit lane's field (update_effort_tier_last).
@@ -534,15 +638,15 @@ def write_capture_sidecar(
 
         # ── ICA key identity + spend (v51) ──────────────────────────────
         # Key NAME from the launcher env (null == not an ICA session; never CC1).
-        ica_key = _nullable_str(env, _ICA_KEY_ENV)
+        ica_key = _nullable_str(env, _ICA_KEY_ENV) if platform == "claude" else None
         # Merge with any sidecar already on disk so the start reading survives
         # into the end write. The gateway probe fires once per hook event and is
         # attributed to the correct phase; a non-ICA session skips it entirely
         # (both readings stay null -- a contract state, not a failure).
         is_end = _is_session_end(payload)
-        probe = _probe_key_spend(env)
-        prev_start = existing.get("icaSpendStart")
-        prev_end = existing.get("icaSpendEnd")
+        probe = _probe_key_spend(env) if platform == "claude" else None
+        prev_start = existing.get("icaSpendStart") if platform == "claude" else None
+        prev_end = existing.get("icaSpendEnd") if platform == "claude" else None
         if is_end:
             ica_spend_start = prev_start  # preserve the start reading
             ica_spend_end = probe if probe is not None else prev_end
@@ -550,27 +654,44 @@ def write_capture_sidecar(
             ica_spend_start = probe if probe is not None else prev_start
             ica_spend_end = prev_end
         # Preserve a previously captured key name if this event could not read one.
-        if ica_key is None and existing.get("icaKey"):
+        if platform == "claude" and ica_key is None and existing.get("icaKey"):
             ica_key = str(existing.get("icaKey")).strip() or None
 
         sidecar: dict[str, Any] = {
             "schemaVersion": _SCHEMA_VERSION,
             "sessionId": session_id,
-            "launcher": _nullable_str(env, "CCDASH_LAUNCHER"),
-            "profile": _nullable_str(env, "CCDASH_LAUNCH_PROFILE"),
+            "launcher": (_native_label(payload, "launcher") if platform == "codex"
+                         else _nullable_str(env, "CCDASH_LAUNCHER")),
+            "profile": (_native_label(payload, "profile") if platform == "codex"
+                        else _nullable_str(env, "CCDASH_LAUNCH_PROFILE")),
             "effortTier": effort_tier,
             "effortTierSource": effort_tier_source,
             # G1 (v4): freshest value observed at any later UserPromptSubmit.
             # Never resolved here — only carried forward from the existing
             # sidecar (see the effort_tier_last assignment above).
             "effortTierLast": effort_tier_last,
-            "modelVariant": _nullable_str(env, "CCDASH_LAUNCH_MODEL"),
+            "modelVariant": model_variant,
             # ICA key identity + raw spend readings (v51). Null == not captured.
             "icaKey": ica_key,
             "icaSpendStart": ica_spend_start,
             "icaSpendEnd": ica_spend_end,
             "capturedAt": captured_at,
         }
+
+        if platform == "codex":
+            # Native-only provenance extension to the optional v4 metadata.
+            sidecar["platformType"] = "Codex"
+            for field in ("launcher", "profile"):
+                sidecar[f"{field}Source"] = f"codex_payload_{field}" if sidecar[field] else None
+            sidecar["modelVariantSource"] = "codex_payload_model" if model_variant else None
+
+        # Native SessionEnd is advisory. Preserve the original start snapshot,
+        # including unknowns and timestamp; no end event may erase or backfill it.
+        # Last effort remains the separately observed UserPromptSubmit value.
+        if platform == "codex" and is_end and existing:
+            for key in ("launcher", "launcherSource", "profile", "profileSource", "effortTier", "effortTierSource",
+                        "effortTierLast", "modelVariant", "modelVariantSource", "capturedAt"):
+                sidecar[key] = existing.get(key)
 
         # Ensure parent directory exists
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
@@ -598,6 +719,32 @@ def _main() -> None:
 
     Always exits 0 — fail-open contract.
     """
+    if sys.argv[1:] == ["--capabilities"]:
+        # Static, no-stdin/no-env/no-network compatibility preflight. An older
+        # writer exits 0 without this document; exit status alone is insufficient.
+        print(json.dumps({
+            "capability": "ccdash.capture.native",
+            "contractVersion": 1,
+            "platformType": "Codex",
+            "schemaVersion": 4,
+            "events": ["SessionStart", "UserPromptSubmit", "SessionEnd"],
+            "modelSource": "codex_payload_model",
+            "metadataFields": ["session_id", "sessionId", "transcript_path", "transcriptPath", "cwd",
+                               "hook_event_name", "hookEventName", "platformType", "platform_type",
+                               "model", "effort", "collaboration_mode.settings.reasoning_effort",
+                               "launcher", "launcherSource", "profile", "profileSource"],
+            "labelSources": {"launcher": "codex_payload_launcher", "profile": "codex_payload_profile"},
+            "modelMeaning": "payload_observation_not_independent_realization_proof",
+            "effortSources": ["codex_payload_effort", "codex_collaboration_mode"],
+            "networkCalls": 0,
+            "readsTranscript": False,
+            "requiresTranscriptPath": True,
+            "sessionEnd": "preserve_existing_start_or_skip",
+            "requiresCallerDeadlineSeconds": 1.8,
+            "resultContract": {"capability": "ccdash.capture.native.result", "contractVersion": 1,
+                               "statuses": ["captured", "unavailable"]},
+        }))
+        return
     try:
         raw_input = sys.stdin.read()
         if not raw_input.strip():
@@ -606,11 +753,27 @@ def _main() -> None:
 
         payload = json.loads(raw_input)
         event = str(payload.get("hook_event_name") or payload.get("hookEventName") or "").strip()
-        env = dict(os.environ)
-        if event == "UserPromptSubmit":
-            update_effort_tier_last(payload, env)
+        if _capture_platform(payload) == "codex":
+            # Native result is metadata only. Captured means this invocation's
+            # function returned a Path after a write; it is not ingestion/liveness.
+            result = None
+            if event == "UserPromptSubmit":
+                result = update_effort_tier_last(payload, {})
+            elif event in {"SessionStart", "SessionEnd"}:
+                result = write_capture_sidecar(payload, {})
+            print(json.dumps({
+                "capability": "ccdash.capture.native.result", "contractVersion": 1,
+                "status": "captured" if result is not None else "unavailable",
+                "sessionId": _extract_session_id(payload), "event": event,
+                "schemaVersion": _SCHEMA_VERSION,
+                "sidecarPath": str(result) if result is not None else None,
+            }))
         else:
-            write_capture_sidecar(payload, env)
+            env = dict(os.environ)
+            if event == "UserPromptSubmit":
+                update_effort_tier_last(payload, env)
+            else:
+                write_capture_sidecar(payload, env)
     except Exception as exc:  # noqa: BLE001
         # Log to stderr only (not stdout) so it does not pollute hook output
         logger.debug("ccdash_capture: unhandled error in __main__ (ignored): %s", exc)

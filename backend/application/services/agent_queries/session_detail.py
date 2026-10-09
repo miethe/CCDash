@@ -291,6 +291,7 @@ def _apply_launch_capture(session_payload: dict[str, Any]) -> None:
     session_payload["launcher"] = session_payload.get("launcher")
     session_payload["profile"] = session_payload.get("profile")
     session_payload["effortTier"] = session_payload.get("effort_tier")
+    session_payload["effortTierSource"] = session_payload.get("effort_tier_source")
     # G1 "first+last pair": freshest effort tier observed at any
     # UserPromptSubmit after SessionStart. None == never observed to differ
     # from effortTier (or the row predates schemaVersion 4).

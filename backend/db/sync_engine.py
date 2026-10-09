@@ -277,6 +277,12 @@ def _session_input_mtime(path: Path) -> float:
         # Fallback location mirrored from the parser's _collect_capture_sidecar.
         path.parent.parent / "data" / "capture" / f"{stem}.capture.json",
     )
+    # Native rollouts are not named by their SID. Reuse the same bounded
+    # metadata identity and candidate authority as the native parser.
+    from backend.parsers.platforms.codex.capture import (
+        capture_sidecar_candidates, read_session_metadata_id,
+    )
+    candidates += capture_sidecar_candidates(path, read_session_metadata_id(path))
     for sidecar in candidates:
         try:
             newest = max(newest, sidecar.stat().st_mtime)
