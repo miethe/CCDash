@@ -3299,7 +3299,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     timestamp=current_ts,
                     speaker=speaker,
                     type="message",
-                    content=content[:4000],
+                    content=content,
                     agentName=agent_name,
                     metadata=message_metadata,
                 )
@@ -3333,7 +3333,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     timestamp=current_ts,
                     speaker=speaker,
                     type="message",
-                    content=content[:4000],
+                    content=content,
                     agentName=agent_name,
                     metadata=message_metadata,
                 )
@@ -3803,7 +3803,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 timestamp=current_ts,
                 speaker=speaker,
                 type="message",
-                content=message_text[:8000],
+                content=message_text,
                 agentName=agent_name,
                 metadata=message_metadata,
             )
