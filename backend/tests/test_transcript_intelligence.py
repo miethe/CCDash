@@ -69,6 +69,39 @@ def test_effort_timeline_keeps_launch_metadata_and_command_transitions() -> None
     assert index.effortTimeline[2].fromEffort == "high"
 
 
+def test_effort_distribution_uses_record_effort_and_reports_changes() -> None:
+    index = build_transcript_intelligence_index(
+        {"id": "sess-mid-chat"},
+        [
+            {**_log("r1", content="first", metadata={"messageId": "m1", "effort": "medium", "inputTokens": 10, "outputTokens": 2}), "speaker": "agent"},
+            {**_log("r1-tool", content="Called Read", log_type="tool", metadata={"messageId": "m1", "effort": "medium", "inputTokens": 10, "outputTokens": 2}), "speaker": "agent"},
+            {**_log("r2", content="second", metadata={"messageId": "m2", "effort": "high", "inputTokens": 20, "outputTokens": 3}), "speaker": "agent"},
+            {**_log("r3", content="third", metadata={"messageId": "m3", "effort": "high", "inputTokens": 4, "outputTokens": 1}), "speaker": "agent"},
+        ],
+    )
+    distribution = index.effortDistribution
+    assert distribution.changeCount == 1
+    assert distribution.byLevel["medium"].records == 1
+    assert distribution.byLevel["medium"].tokens == 12
+    assert distribution.byLevel["high"].records == 2
+    assert distribution.byLevel["high"].tokens == 28
+
+
+def test_effort_distribution_prefers_preserved_provider_records() -> None:
+    index = build_transcript_intelligence_index(
+        {"id": "sess-provider-records"},
+        [_log("rollup", content="", log_type="system", metadata={
+            "effortRecords": [
+                {"messageId": "a", "effort": "medium", "inputTokens": 4, "outputTokens": 2},
+                {"messageId": "b", "effort": "high", "inputTokens": 8, "outputTokens": 2},
+            ],
+        })],
+    )
+    assert index.effortDistribution.changeCount == 1
+    assert index.effortDistribution.byLevel["medium"].tokens == 6
+    assert index.effortDistribution.byLevel["high"].tokens == 10
+
+
 def test_markers_and_registers_capture_tasks_workflows_and_plan_links() -> None:
     index = build_transcript_intelligence_index(
         {"id": "sess-2"},

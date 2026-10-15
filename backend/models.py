@@ -180,6 +180,16 @@ class SessionEffortTransition(BaseModel):
     confidence: float = 0.0
 
 
+class SessionEffortBucket(BaseModel):
+    records: int = 0
+    tokens: int = 0
+
+
+class SessionEffortDistribution(BaseModel):
+    byLevel: dict[str, SessionEffortBucket] = Field(default_factory=dict)
+    changeCount: int = 0
+
+
 class TranscriptMarker(BaseModel):
     id: str
     logId: str = ""
@@ -250,6 +260,7 @@ class TranscriptIntelligenceIndex(BaseModel):
     sessionId: str
     title: SessionInferredTitle
     effortTimeline: list[SessionEffortTransition] = Field(default_factory=list)
+    effortDistribution: SessionEffortDistribution = Field(default_factory=SessionEffortDistribution)
     markers: list[TranscriptMarker] = Field(default_factory=list)
     taskRegister: list[TranscriptTaskRegisterItem] = Field(default_factory=list)
     workflowRegister: list[TranscriptWorkflowRegisterItem] = Field(default_factory=list)
