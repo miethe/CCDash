@@ -2,7 +2,7 @@
 title: "Implementation Plan — Phase 0: Cross-project session correctness"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-06-10
 updated: 2026-06-10
 phase: 0
@@ -40,6 +40,8 @@ exit_criteria:
   - "`get_session_family_v1` is project-scoped; family anchor derives and propagates project_id end-to-end."
   - "All ~11 ID-based call sites thread project_id; existing backend suites pass; no regression in active-project reads."
   - "NULL/'' project_id inputs tolerated (documented behavior, not a crash)."
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Implementation Plan — Phase 0: Cross-project session correctness

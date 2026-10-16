@@ -96,6 +96,8 @@ commit_refs:
 - 2d7920d
 - 04d8140
 - 22ec25e
+itt_node_id: node_01M52V1FMB3J9DJM6PN38CCEDD
+status_source: intenttree
 ---
 
 # Implementation Plan: Planning Agent Session Board V1

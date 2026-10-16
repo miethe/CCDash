@@ -11,6 +11,7 @@ exploration_charter_ref: docs/project_plans/exploration/research-foundry-run-tel
 related_documents:
 - docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-feasibility-brief.md
 - docs/project_plans/exploration/research-foundry-run-telemetry/rf-transport-handoff-addendum.md
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # ADR (Proposed): Research Foundry Run Telemetry — Transport & Correlation

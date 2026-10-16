@@ -25,6 +25,7 @@ research_questions:
   - "RQ-7: Hook-based registration — can a CCDash daemon register as an 'agent' in Entire's hook system to receive live events, or is that reserved? Investigate the Agent interface in the Entire codebase."
   - "RQ-8: Coexistence with other session sources — many devs will have both Claude Code JSONL logs AND Entire checkpoints for the same work session. How do we dedupe/merge? Provenance labeling in UI."
   - "RQ-9: License, redaction, and privacy — Entire redacts secrets on its side best-effort. What does CCDash need to do on re-ingest? Any upstream telemetry concerns when CCDash parses these files?"
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
 ---
 
 # Entire.io OSS CLI Integration — Charter

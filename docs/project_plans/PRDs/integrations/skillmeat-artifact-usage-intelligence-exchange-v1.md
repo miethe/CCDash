@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: integration_prd
-status: draft
+status: completed
 category: integrations
 title: "PRD: SkillMeat Artifact Usage Intelligence Exchange V1"
 description: "Extend the CCDash and SkillMeat feedback loop so project, collection, user, and artifact usage rollups drive rankings, context-optimization guidance, and artifact improvement recommendations."
@@ -79,6 +79,8 @@ context_files:
   - components/Settings.tsx
   - types.ts
 implementation_plan_ref: "docs/project_plans/implementation_plans/integrations/skillmeat-artifact-usage-intelligence-exchange-v1.md"
+itt_node_id: node_01M52V70DKFG0MXPQN8S1E4D1E
+status_source: intenttree
 ---
 
 # PRD: SkillMeat Artifact Usage Intelligence Exchange V1

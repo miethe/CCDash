@@ -199,6 +199,8 @@ acceptance_criteria:
 - 'AC DEF003-CHIP-SMOKE: PlanningTopBar branch chip renders when worktree.branch is non-null/non-empty and is absent (no error) otherwise.'
 points: 26
 execution_mode: agent
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
+status_source: intenttree
 ---
 
 # Implementation Plan: Branch-Aware Planning Intelligence v2

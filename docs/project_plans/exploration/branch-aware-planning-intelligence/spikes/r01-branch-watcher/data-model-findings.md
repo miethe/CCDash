@@ -24,6 +24,7 @@ grounded_in:
   - backend/application/services/agent_queries/session_correlation.py (_correlate_command_tokens, correlate_session)
   - backend/models.py (Feature.commitRefs, AgentSession.gitBranch)
   - docs/project_plans/adrs/adr-007-db-write-failure-surfacing-standard.md
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # R-01: Data Model, Cache Key, and Branch-to-Feature Linkage Findings

@@ -71,6 +71,8 @@ context_files:
   - services/live/
   - types.ts
 implementation_plan_ref: ""
+itt_node_id: node_01M52TQQM5BFYV1VGSH6S10HB5
+status_source: intenttree
 ---
 
 # PRD: CCDash Planning Control Plane V1

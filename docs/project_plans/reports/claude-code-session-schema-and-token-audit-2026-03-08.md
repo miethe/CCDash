@@ -8,6 +8,7 @@ author: codex
 created: 2026-03-08
 updated: 2026-03-08
 tags: [sessions, claude-code, schema, tokens, analytics, forensics]
+itt_node_id: node_01M52TTASMQ1E77Q9E5X32YC8M
 ---
 
 # Claude Code Session Schema And Token Audit (2026-03-08)

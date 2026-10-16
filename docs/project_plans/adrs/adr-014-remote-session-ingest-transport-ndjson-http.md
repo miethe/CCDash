@@ -6,6 +6,7 @@ created: "2026-05-10"
 parent_prd: "docs/project_plans/PRDs/features/remote-ccdash-streaming-v1.md"
 depends_on_spike: "docs/project_plans/SPIKEs/remote-ccdash-streaming.md"
 tags: ["adr", "transport", "ingest", "ndjson", "remote", "streaming"]
+itt_node_id: node_01M52TKCSMX61EAQW19DD113ZJ
 ---
 
 # ADR-014: Remote Session Ingest Transport — Chunked NDJSON over HTTPS POST

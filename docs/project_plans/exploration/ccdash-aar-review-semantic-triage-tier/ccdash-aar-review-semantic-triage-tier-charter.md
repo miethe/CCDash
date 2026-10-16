@@ -73,6 +73,7 @@ verdict_rationale: "All four legs converge on no-go for a CCDash-side build. Ris
   API."
 output_artifacts: []
 updated: '2026-07-23'
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # CCDash AAR Review — Autonomous Semantic-Triage Tier (v2) — Exploration Charter

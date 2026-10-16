@@ -100,6 +100,8 @@ files_affected:
 - .claude/skills/ccdash/recipes/feature-retrospective.md
 - .claude/skills/ccdash/recipes/unreachable-server.md
 - .claude/worknotes/ccdash-query-caching-and-cli-ergonomics/feature-guide.md
+itt_node_id: node_01M52TRBRGHNAJ8CA1ZGFW68ES
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Query Caching and CLI Ergonomics

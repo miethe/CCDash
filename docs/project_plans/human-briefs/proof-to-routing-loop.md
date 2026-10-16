@@ -20,6 +20,7 @@ confidence: 0.75
 created: 2026-07-29
 updated: 2026-07-29
 tags: [human-brief, infrastructure, routing-feedback, cross-repo, no-llm]
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Proof → Routing Loop — Human Brief

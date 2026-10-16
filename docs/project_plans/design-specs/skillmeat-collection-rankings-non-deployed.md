@@ -18,6 +18,7 @@ tags:
   - non-deployed-artifacts
   - artifact-discovery
 problem_statement: "Collection owners may want rankings for artifacts that belong to a SkillMeat collection but are not deployed in the current CCDash project, yet the V1 ranking semantics are defined around observed project usage and deployed snapshot membership."
+itt_node_id: node_01M52V70DKFG0MXPQN8S1E4D1E
 ---
 
 # SkillMeat Collection Rankings for Non-Deployed Artifacts

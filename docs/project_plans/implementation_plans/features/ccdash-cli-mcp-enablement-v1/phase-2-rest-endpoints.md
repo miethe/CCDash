@@ -3,7 +3,7 @@ schema_version: "1.0"
 doc_type: phase_plan
 title: "Phase 2: REST Composite Endpoints"
 description: "Expose Phase 1 agent query services over /api/agent/* routes using current CCDash router, DI, registration, and test conventions."
-status: in-progress
+status: completed
 created: "2026-04-02"
 updated: "2026-04-11"
 phase: 2
@@ -26,6 +26,8 @@ effort_estimate: 4-5
 effort_estimate_unit: story_points
 duration_estimate: 2-3
 duration_estimate_unit: days
+itt_node_id: node_01M52TN7GYRRF1FVP8HYPFED23
+status_source: intenttree
 ---
 
 # Phase 2: REST Composite Endpoints

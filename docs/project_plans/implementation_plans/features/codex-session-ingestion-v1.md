@@ -15,6 +15,8 @@ tags:
 - watcher
 - attribution
 prd_ref: ''
+itt_node_id: node_01M52TV1631EP35XDRJZH54Q6N
+status_source: intenttree
 ---
 
 # Codex Session Ingestion v1

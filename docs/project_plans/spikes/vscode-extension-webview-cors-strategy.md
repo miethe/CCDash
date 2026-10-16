@@ -6,6 +6,7 @@ created: "2026-04-02"
 time_box: "2 days"
 parent_prd: "docs/project_plans/PRDs/features/vscode-ccdash-extension-v1.md"
 tags: ["spike", "webview", "cors", "vscode", "extension", "csp"]
+itt_node_id: node_01M52V90PD2GD3CFKZZH5ACVPR
 ---
 
 # SPIKE: VSCode Extension Webview Architecture & CORS Strategy

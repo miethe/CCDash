@@ -28,6 +28,8 @@ exit_criteria:
   - All 4 entry points share TestStatusView components
   - Live polling works on active sessions
 tags: [implementation, frontend, test-visualizer, routing, integration, tabs]
+itt_node_id: node_01M52V7Z9ACDRP71GSX20F2AGH
+status_source: intenttree
 ---
 
 # Phase 6: Page & Tab Integration

@@ -18,6 +18,7 @@ related_documents:
 - docs/project_plans/exploration/proof-to-routing-loop/spikes/value-findings.md
 - docs/project_plans/exploration/proof-to-routing-loop/spikes/risk-findings.md
 - docs/project_plans/design-specs/proof-to-routing-loop.md
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Proof → Routing Feedback Loop — Feasibility Brief

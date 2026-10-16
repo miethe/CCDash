@@ -37,6 +37,8 @@ tags:
 - ux
 - wireframes
 - components
+itt_node_id: node_01M52V7Z9ACDRP71GSX20F2AGH
+status_source: intenttree
 ---
 
 # Phase 4: UI/UX Design

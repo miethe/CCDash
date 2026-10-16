@@ -5,6 +5,7 @@ conclusion: "RF search-run telemetry requires a **new entity + DB table + tab**,
 run_concept_exists: no
 recommendation: build_new_entity
 cheapest_extension_point: "backend/application/services/agent_queries/ (new run_intelligence.py service); backend/routers/agent.py (new /api/agent/research-runs endpoint); frontend: new /research tab route in App.tsx + PlanningRouteLayout-style shell"
+itt_node_id: node_01M52V27CSY3DPHPAP8G5AWEW2
 ---
 
 # CCDash Prior Art Spike: Research Foundry Run Telemetry Entity Analysis

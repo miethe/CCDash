@@ -27,6 +27,8 @@ exit_criteria:
   - SyncEngine has a hook to trigger mapping resolution after ingestion
   - Feature flag gates the entire pipeline
 tags: [implementation, ingestion, test-visualizer, parsing, api]
+itt_node_id: node_01M52V7Z9ACDRP71GSX20F2AGH
+status_source: intenttree
 ---
 
 # Phase 2: Ingestion Pipeline

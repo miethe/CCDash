@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 1 — Storage Hygiene & DB Performance"
-status: approved
+status: completed
 created: 2026-05-30
 updated: 2026-05-30
 phase: 1
@@ -23,6 +23,8 @@ exit_criteria:
   - GET /api/sessions serves materialized badge columns (no per-session log fetch)
   - SQLite and Postgres report identical SCHEMA_VERSION
   - task-completion-validator sign-off
+itt_node_id: node_01KVTHFST6QK9CWSEWKAYWP67D
+status_source: intenttree
 ---
 
 # Phase 1 — Storage Hygiene & DB Performance

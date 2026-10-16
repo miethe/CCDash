@@ -47,6 +47,8 @@ contributors:
 complexity: Medium
 track: Standard
 timeline_estimate: 1-2 weeks across 4 phases
+itt_node_id: node_01M52TZ6719KG2FTF8WHVHY2JX
+status_source: intenttree
 ---
 
 # Implementation Plan: Live Update Animation System

@@ -2,7 +2,7 @@
 title: "Phase 1: Ingest transport + rf_events persistence"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-07-21
 updated: 2026-07-21
 feature_slug: "research-foundry-run-telemetry"
@@ -46,6 +46,8 @@ files_affected:
   - backend/db/postgres_migrations.py
   - backend/application/services/agent_queries/ingest_sources.py
   - backend/routers/client_v1.py
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
+status_source: intenttree
 ---
 
 # Phase 1: Ingest transport + `rf_events` persistence

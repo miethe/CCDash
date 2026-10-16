@@ -14,6 +14,7 @@ related_documents:
 raw_evidence:
   - .claude/worknotes/ccdash-core-remediation/evidence/diagnostic-roadmap-raw.json
   - .claude/worknotes/ccdash-core-remediation/evidence/verification-verdicts-raw.json
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
 ---
 
 # CCDash Core Remediation Diagnostic

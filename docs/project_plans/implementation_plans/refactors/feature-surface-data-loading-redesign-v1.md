@@ -50,6 +50,8 @@ commit_refs:
 - 7b69b56
 related:
 - /docs/project_plans/PRDs/refactors/feature-surface-data-loading-redesign-v1.md
+itt_node_id: node_01M52TXQ5071ZBKS58PX5E2BM2
+status_source: intenttree
 ---
 
 # Implementation Plan: Feature Surface Data Loading Redesign

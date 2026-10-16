@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 0 — Enterprise Liveness Hotfix"
-status: approved
+status: completed
 created: 2026-05-30
 updated: 2026-05-30
 phase: 0
@@ -20,6 +20,8 @@ exit_criteria:
   - No PermissionError on projects.json write at boot
   - frontend depends_on api service_healthy confirmed working
   - task-completion-validator sign-off
+itt_node_id: node_01KVTHFST6QK9CWSEWKAYWP67D
+status_source: intenttree
 ---
 
 # Phase 0 — Enterprise Liveness Hotfix

@@ -2,7 +2,7 @@
 title: "Phase 2: Data Layer"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-07-29
 updated: 2026-07-29
 feature_slug: "proof-to-routing-loop"
@@ -43,6 +43,8 @@ files_affected:
   - backend/db/migration_governance.py
   - backend/db/repositories/routing_rollup.py
   - backend/tests/test_routing_rollup_repo.py
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
+status_source: intenttree
 ---
 
 # Phase 2: Data Layer

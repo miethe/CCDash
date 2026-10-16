@@ -4,7 +4,7 @@ schema_version: 2
 doc_type: feature_contract
 it_schema: 1
 description: "Introduce TextCompletionPort + PromptEnvelope over httpx and move the three existing LLM call sites behind it, with zero observable behaviour change."
-status: draft
+status: completed
 created: 2026-08-10
 updated: 2026-08-10
 feature_slug: textcompletionport-seam-p1
@@ -44,6 +44,8 @@ files_affected:
   - backend/services/session_naming_local_backend.py
   - backend/services/session_naming_hosted_backend.py
   - backend/services/ai_insight.py
+itt_node_id: node_01M52V8KNE86PT7SWAEHYEXWV4
+status_source: intenttree
 ---
 
 ```json autopilot-graph

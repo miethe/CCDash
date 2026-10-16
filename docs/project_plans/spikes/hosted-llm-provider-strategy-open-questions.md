@@ -9,6 +9,7 @@ updated: 2026-08-06
 feature_slug: hosted-llm-provider-strategy
 charter_ref: docs/project_plans/spikes/hosted-llm-provider-strategy-charter.md
 spike_ref: docs/project_plans/spikes/hosted-llm-provider-strategy.md
+itt_node_id: node_01KZCA2MAA0K0TWEPW0KZGC4WF
 ---
 
 # Hosted LLM Provider Strategy — Open Questions

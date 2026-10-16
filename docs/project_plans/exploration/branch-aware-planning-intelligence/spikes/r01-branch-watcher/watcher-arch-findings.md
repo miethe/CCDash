@@ -15,6 +15,7 @@ research_questions_answered:
   - RQ1: operator-registered vs auto-discovery watching under ADR-006
   - RQ2: BranchWatcherRegistry abstraction over FileWatcher
   - RQ4: perf/write-amplification envelope for N worktrees
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # R-01 Spike: Branch Watcher Architecture Findings

@@ -4,7 +4,7 @@ schema_version: 2
 doc_type: feature_contract
 it_schema: 1
 description: "Parse .meta.json teammate sidecars for team attribution (needed); document SessionRef.tool_names as empty-by-construction on /family (no consumer needs it)."
-status: draft
+status: completed
 created: 2026-08-03
 updated: 2026-08-03
 feature_slug: session-family-residue
@@ -45,6 +45,8 @@ files_affected:
   - backend/application/services/agent_queries/models.py
   - backend/routers/_client_v1_sessions.py
   - .claude/worknotes/session-family-and-team-sidecar/implementation-notes.md
+itt_node_id: node_01M52V66HH9G4DD8GHDN3N6VPA
+status_source: intenttree
 ---
 
 <!--

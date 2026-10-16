@@ -27,6 +27,8 @@ files_affected:
   - "/Users/miethe/dev/homelab/development/MeatySkills/skills/ccdash/SKILL.md"
   - "/Users/miethe/dev/homelab/development/MeatySkills/skills/ccdash/scripts/router-table.json"
   - "/Users/miethe/dev/homelab/development/MeatySkills/skills/ccdash/CHANGELOG.md"
+itt_node_id: node_01M52TS0VAY9Y32YYR4Q7PGPQY
+status_source: intenttree
 ---
 
 # Feature Contract: CCDash Skill Refresh and SPEC.md Authorship

@@ -2,6 +2,7 @@
 leg: risk
 confidence: 0.72
 deal_killer_assessment: partially-triggered
+itt_node_id: node_01M52V5T894EXYTTDFYNMT255R
 ---
 
 # Risk / Blast-Radius Spike — Proof → Routing Feedback Loop

@@ -41,6 +41,8 @@ tags:
 related_documents:
   - docs/project_plans/implementation_plans/integrations/otel-session-metrics-ingestion-v1.md
   - docs/project_plans/PRDs/integrations/otel-session-metrics-ingestion-v1.md
+itt_node_id: node_01M52TZNAK2K5S5N03JF8A0MCN
+status_source: intenttree
 ---
 
 ## 1. Purpose & Method

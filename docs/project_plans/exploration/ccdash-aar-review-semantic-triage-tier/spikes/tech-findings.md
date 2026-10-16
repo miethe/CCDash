@@ -7,6 +7,7 @@ leg: tech
 open_question: OQ-B
 created: 2026-07-23
 status: complete
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Tech Feasibility Leg — Semantic-Triage Job Lane (OQ-B)

@@ -4,6 +4,7 @@ confidence: 0.92
 conclusion: "RF's 'CCDash telemetry' is real, wired, and schema-validated, but it is a same-repo local-file writeback (YAML mirrored under RF's own workspace root) with zero network/DB/OTEL egress toward CCDash — nothing crosses the process or filesystem boundary today, so CCDash cannot consume it via any existing seam and needs a new transport."
 telemetry_state: defined_stubbed
 recommended_transport: new_endpoint (POST /api/v1/ingest/rf-events, NDJSON/JSON, workspace-token auth) OR filesystem-watch adapter over RF's ccdash/events/ tree — new_endpoint preferred
+itt_node_id: node_01M52V7SKMQEZK3448GT1TB6EQ
 ---
 
 # Tech Spike: Research Foundry → CCDash Telemetry Transport

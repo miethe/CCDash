@@ -9,6 +9,7 @@ feature_slug: branch-aware-planning-intelligence
 leg: tech
 confidence: 0.85
 partial: false
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # Tech Findings: Branch-Aware Planning Intelligence

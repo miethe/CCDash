@@ -8,6 +8,7 @@ created: 2026-07-23
 assigned_to: ica-executor
 deal_killer_ruling: confirm
 confidence: 0.82
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Risk Leg — Semantic-Triage Tier (OQ-A ownership, OQ-C cost/quota/guards)

@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: prd
 title: "CCDash Enterprise Liveness Hotfix & Storage Hygiene (Phase 0 + Phase 1)"
-status: approved
+status: completed
 created: 2026-05-30
 updated: 2026-05-30
 feature_slug: ccdash-enterprise-edition-v1
@@ -20,6 +20,8 @@ related_documents:
   - docs/project_plans/planning/ccdash-enterprise-edition-v1/06-implementation-roadmap.md
   - docs/project_plans/planning/ccdash-enterprise-edition-v1/07-issue-task-backlog.md
   - .claude/worknotes/ccdash-enterprise-edition-v1/synthesis-brief.md
+itt_node_id: node_01KVTHFST6QK9CWSEWKAYWP67D
+status_source: intenttree
 ---
 
 # CCDash Enterprise Liveness Hotfix & Storage Hygiene — PRD

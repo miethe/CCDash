@@ -7,6 +7,7 @@ reviewed_document: "docs/project_plans/vscode-bob-extension-technical-specificat
 reviewer: "Senior Architecture Review"
 overall_grade: "C+ / Needs Significant Revision"
 tags: ["vscode", "extension", "review", "architecture"]
+itt_node_id: node_01M52V8ZGW87VAKGR0SVFR2E6W
 ---
 
 # VSCode Extension Technical Spec Review

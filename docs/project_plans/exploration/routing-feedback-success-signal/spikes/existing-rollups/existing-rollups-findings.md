@@ -4,6 +4,7 @@ leg_id: existing-rollups
 confidence: 0.75
 status: complete
 created: 2026-08-03
+itt_node_id: node_01M52TX1DK37WM6SC4MED4CZD1
 ---
 
 # Existing-Rollups Leg — Findings

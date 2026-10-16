@@ -368,6 +368,8 @@ decisions:
 acceptance_criteria:
 - Any agent can pull full session detail (transcript, subagents, workflow content, tokens, artifacts, links) for any session in any project via REST, MCP, and CLI, with secret/PII redaction
 definition_of_done: 'All 13 phases (0–12) complete across six waves: Phase 0 cross-project session correctness green, Phases 1–3 expose transport-neutral session_detail over REST/MCP/CLI, Phases 4–8 harden freshness/detection/pricing/sync, Phase 9 Postgres/container convergence gate passes, Phases 10–11 add external API + launch-time capture, Phase 12 closes docs + CHANGELOG + a karen end-of-feature acceptance pass.'
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Core Remediation v1

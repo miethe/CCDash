@@ -14,6 +14,7 @@ all_lanes_points: 18           # sum of every lane evaluated (1+4+4+9); includes
 recommended_tier: 2
 recommended_lanes: [B]         # contested — see §2/§9; Lane A costs the same (4 pts) with strictly
                                # better constraint-3 posture. Orchestrator flagged for operator decision.
+itt_node_id: node_01M52TKV5RKQSN3J6V1Q1BJY6K
 ---
 
 # Derived Session Naming — Feasibility Spike (4th leg)

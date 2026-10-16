@@ -13,6 +13,7 @@ related_documents:
   - docs/guides/containerized-deployment-quickstart.md
   - docs/project_plans/adrs/adr-006-db-authoritative-project-registry.md
 prd_ref: null
+itt_node_id: node_01M52TRP995AP292548SQQRS04
 ---
 
 # CCDash Runtime & Deploy Remediation — Live-Stack Investigation

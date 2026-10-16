@@ -74,6 +74,7 @@ output_artifacts:
 related_documents:
 - ../../../../../research-foundry/docs/project_plans/design-specs/research_foundry_search_router_spec.md
 updated: '2026-07-20'
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # Research Foundry Run Telemetry in CCDash — Exploration Charter

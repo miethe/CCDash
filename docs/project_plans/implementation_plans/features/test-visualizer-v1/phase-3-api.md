@@ -26,6 +26,8 @@ exit_criteria:
   - TestHealthService computes domain and feature rollups
   - All endpoints return 503 when feature flag disabled
 tags: [implementation, api, test-visualizer, rest, fastapi]
+itt_node_id: node_01M52V7Z9ACDRP71GSX20F2AGH
+status_source: intenttree
 ---
 
 # Phase 3: API Layer

@@ -83,6 +83,7 @@ wave_plan:
       exit_criteria:
         - "Seeded multi-verdict fixture returns an attributed-only spend total plus the correct excluded count across >=2 projects; unknown attribution token does not raise."
       gate_lens: [validator]
+status_source: intenttree
 ---
 
 # Implementation Plan — Provider, Channel & Credential Entities

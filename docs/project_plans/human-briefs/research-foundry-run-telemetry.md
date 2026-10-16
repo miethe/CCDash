@@ -39,6 +39,7 @@ updated: "2026-07-21"
 target_release: ""
 
 tags: [human-brief, research-foundry, telemetry, ingest, analytics]
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # Research Foundry Run Telemetry in CCDash — Human Brief

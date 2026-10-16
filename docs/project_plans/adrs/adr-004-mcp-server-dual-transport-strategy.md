@@ -6,6 +6,7 @@ created: "2026-04-02"
 parent_prd: "docs/project_plans/PRDs/features/cli-enablement.md"
 depends_on_spike: "docs/project_plans/spikes/mcp-server-implementation-spike.md"
 tags: ["adr", "mcp", "claude-code", "architecture", "transport", "stdio", "http"]
+itt_node_id: node_01M52TK8EYFC2N7JJ658T60807
 ---
 
 # ADR-004: MCP Server Dual Transport Strategy

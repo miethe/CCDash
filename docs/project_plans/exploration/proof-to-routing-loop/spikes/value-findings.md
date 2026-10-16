@@ -2,6 +2,7 @@
 leg: value
 confidence: 0.75
 signal_viable: conditional-on-coarsening
+itt_node_id: node_01M52V8TGXGTWD9SVHR4G8NVTA
 ---
 
 # Value Leg — Data-Signal Viability Findings
