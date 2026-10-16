@@ -80,6 +80,7 @@ waves:
         status: planned
         artifacts:
           spec: docs/project_plans/design-specs/planning-collab-threads-v1.md
+itt_node_id: node_01M52TWCDXSY5WMPTC205CVZET
 ---
 
 # CCDash Design-Spec Backlog — Meta-Plan v1

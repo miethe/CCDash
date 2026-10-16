@@ -78,6 +78,8 @@ context_files:
 - components/Layout.tsx
 - types.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
+itt_node_id: node_01M52V96PTDHMG2VV96GCJ0JJX
+status_source: intenttree
 ---
 # PRD: Workflow Registry and Correlation Surface V1
 

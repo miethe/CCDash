@@ -13,6 +13,7 @@ related:
   - docs/project_plans/implementation_plans/enhancements/agentic-sdlc-intelligence-foundation-v1.md
   - docs/project_plans/implementation_plans/enhancements/agentic-sdlc-intelligence-foundation-v2.md
   - .claude/worknotes/ccdash-integration/integration-audit.md
+itt_node_id: node_01M52TKP68FWXCGH2T8S2B9M2Q
 ---
 
 # Agentic SDLC Intelligence V2 Integration Overview

@@ -81,6 +81,8 @@ files_affected:
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-4-progress.md
   - .claude/progress/live-ingest-source-path-canonicalization-hardening-v1/phase-5-progress.md
   - docs/project_plans/implementation_plans/infrastructure/live-ingest-source-path-canonicalization-hardening-v1.md
+itt_node_id: node_01M52TYZH1J7WM9ZYG8MXV6DW6
+status_source: intenttree
 ---
 
 # Implementation Plan: Live Ingest Source Path Canonicalization Hardening V1

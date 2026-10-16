@@ -83,6 +83,8 @@ files_affected:
 - backend/tests/test_cli_commands.py
 - backend/tests/test_mcp_server.py
 - CHANGELOG.md
+itt_node_id: node_01M52TMCPW79BRF0M83BZDQ1XH
+status_source: intenttree
 ---
 
 # Feature Contract: CCDash AAR Review MVP — Deterministic AAR↔Session Triage

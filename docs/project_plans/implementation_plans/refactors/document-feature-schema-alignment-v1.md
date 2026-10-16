@@ -23,6 +23,8 @@ linked_features: []
 related_documents:
   - docs/schemas/document_frontmatter/README.md
   - docs/schemas/document_frontmatter/document-and-feature-mapping.md
+itt_node_id: node_01M52TWJYYN6T3WHTA65BXNBAQ
+status_source: intenttree
 ---
 
 # Implementation Plan: Document + Feature Schema Alignment V1

@@ -8,6 +8,7 @@ depends_on_spike: "docs/project_plans/spikes/hosted-llm-provider-strategy.md"
 supersedes: null
 related_adrs: ["adr-016-provider-agnostic-llm-client-seam-over-httpx.md", "adr-017-anthropic-wire-format-canonical-hosted-lane.md"]
 tags: ["adr", "llm", "redaction", "egress", "security", "type-safety"]
+itt_node_id: node_01M52TKEC5SN04S2N9AMPCK85F
 ---
 
 # ADR-018: Redaction Provenance Is Carried by Type, Not by Convention

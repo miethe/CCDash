@@ -64,6 +64,8 @@ context_files:
 - backend/routers/analytics.py
 - contexts/DataContext.tsx
 implementation_plan_ref: docs/project_plans/implementation_plans/refactors/ccdash-hexagonal-foundation-v1.md
+itt_node_id: node_01M52TQ96WBBTKMB803KG2RGYS
+status_source: intenttree
 ---
 # PRD: CCDash Hexagonal Foundation V1
 

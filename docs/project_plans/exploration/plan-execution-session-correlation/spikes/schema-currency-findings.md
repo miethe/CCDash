@@ -1,6 +1,7 @@
 ---
 leg: schema-currency
 confidence: 0.78
+itt_node_id: node_01M52V6155DB4YWRT3GP6Q0WGN
 ---
 
 # Summary

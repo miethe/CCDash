@@ -11,6 +11,7 @@ charter_ref: docs/project_plans/spikes/entire-io-integration-charter.md
 parent_spike: docs/project_plans/spikes/entire-io-integration.md
 related_documents:
   - docs/project_plans/spikes/entire-io-integration/checkpoint-schema.md
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
 ---
 
 # Session ↔ Commit Linkage Design

@@ -9,6 +9,7 @@ related_adrs:
   - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
   - docs/project_plans/adrs/adr-011-entire-ingest-path-decision.md
 tags: ["adr", "schema", "identity", "entire", "migration"]
+itt_node_id: node_01M52TKC14VQZ8KKH9RXEGQZYS
 ---
 
 # ADR-012: Entire.io Session Identity — Reuse ADR-009 `source_ref` with `entire:` Scheme

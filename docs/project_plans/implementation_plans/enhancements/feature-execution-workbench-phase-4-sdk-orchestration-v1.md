@@ -40,6 +40,8 @@ contributors: [ai-agents]
 complexity: High
 track: Phase 4
 timeline_estimate: "2-4 weeks across 7 phases"
+itt_node_id: node_01M52TXN17ZZNP1HAWNWS2JGDQ
+status_source: intenttree
 ---
 
 # Implementation Plan: Feature Execution Workbench Phase 4 - SDK Orchestration

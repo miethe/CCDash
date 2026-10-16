@@ -252,6 +252,8 @@ wave_plan:
   - - P4
     - P5
   - - P6
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
+status_source: intenttree
 ---
 
 # Implementation Plan: Proof → Routing Feedback Loop — CCDash Producer Surface (BP-6)

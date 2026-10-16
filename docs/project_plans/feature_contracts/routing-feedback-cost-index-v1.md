@@ -39,6 +39,8 @@ files_affected:
   - backend/tests/test_routing_rollup_metrics.py
   - backend/tests/test_client_v1_routing_rollup.py
   - docs/guides/routing-feedback-loop.md
+itt_node_id: node_01M52V5VS91J8MPAH6H2TXTJJV
+status_source: intenttree
 ---
 
 # Feature Contract: Routing Feedback Cost Index (DI-4a)

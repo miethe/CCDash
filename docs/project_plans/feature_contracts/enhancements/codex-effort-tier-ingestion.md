@@ -64,6 +64,8 @@ pr_refs: []
 files_affected:
 - backend/parsers/platforms/codex/parser.py
 - backend/tests/test_sessions_codex_parser.py
+itt_node_id: node_01M52TTXM9ZTCG12AK4FA17WAZ
+status_source: intenttree
 ---
 
 # Feature Contract: Ingest Codex `payload.effort` into `sessions.effort_tier`

@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: prd
 title: "System-Wide Metrics - PRD"
-status: draft
+status: completed
 created: 2026-05-20
 updated: 2026-05-20
 feature_slug: system-wide-metrics
@@ -37,6 +37,8 @@ references:
   specs: []
   related_prds:
     - docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
+itt_node_id: node_01M52V7D0PZG1HXRJAZSCKC2QH
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

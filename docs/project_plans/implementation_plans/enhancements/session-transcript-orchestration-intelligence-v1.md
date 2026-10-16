@@ -155,6 +155,8 @@ tasks:
     phase: P3
     assigned_to: ui-engineer-enhanced
     estimate: 2
+itt_node_id: node_01M52V6PZ028G5F3VHDG2SMZY5
+status_source: intenttree
 ---
 
 # Implementation Plan: Session Transcript Orchestration Intelligence V1

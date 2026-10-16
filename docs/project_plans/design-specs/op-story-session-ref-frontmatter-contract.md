@@ -28,6 +28,7 @@ description: |
   correlation confidence from 0.64–1.0 to 1.0 and reducing binding-constraint latency
   on entity-link freshness. Addresses open question OQ-3 from the PRD.
 schema_version: 2
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Design Spec: op story Session Reference Frontmatter Contract (OQ-3)

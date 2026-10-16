@@ -26,6 +26,8 @@ exit_criteria:
   - Components tested manually against live API
   - Feature flag check in service (returns null/empty when disabled)
 tags: [implementation, frontend, test-visualizer, react, typescript, components]
+itt_node_id: node_01M52V7Z9ACDRP71GSX20F2AGH
+status_source: intenttree
 ---
 
 # Phase 5: Core UI Components

@@ -7,7 +7,7 @@ description: CCDash pairs each agent-written AAR back to the session log(s) it d
   computes deterministic surface flags over already-ingested data, and emits a model-free
   aar_review_candidate event so op/ARC/SkillMeat can close the AAR-to-system-improvement
   loop at their own gates.
-status: draft
+status: completed
 created: '2026-07-21'
 updated: '2026-07-21'
 feature_slug: ccdash-automated-aar-review
@@ -113,6 +113,8 @@ agent_title: CCDash Automated AAR Review Loop (Tier 3 north-star)
 agent_summary: Producer-side deterministic AAR-to-session triage service (P1 MVP) plus
   the phased roadmap (P2-P4) for a persisted rollup, an op-side consumer contract, and
   HITL-gated writeback/autonomy — CCDash never dispatches swarm work or writes SkillMeat/agents.
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

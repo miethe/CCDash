@@ -7,7 +7,7 @@ description: "CCDash emits a deterministic, opt-in, no-LLM (task_class \xD7 mode
   \ routing-feedback rollup \u2014 vendored against the pinned aos.routing.feedback\
   \ v1.0.0 cross-repo contract \u2014 that the MeatySkills delegation-router PULLs\
   \ as an empirical routing prior, without CCDash ever actuating a routing decision."
-status: approved
+status: completed
 created: '2026-07-29'
 updated: '2026-07-29'
 feature_slug: proof-to-routing-loop
@@ -143,6 +143,8 @@ agent_title: "Proof \u2192 Routing Feedback Loop \u2014 CCDash producer surface 
 agent_summary: "Emit a deterministic, opt-in, no-LLM (task_class \xD7 model) routing-feedback\
   \ rollup via routing_rollup + agent_queries + REST/MCP/CLI, cloning the shipped\
   \ AAR-review PULL pattern; router-side consumption is out of scope."
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

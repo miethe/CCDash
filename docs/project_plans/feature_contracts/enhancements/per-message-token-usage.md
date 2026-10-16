@@ -33,6 +33,8 @@ files_affected:
   - components/SessionInspector/TranscriptView.tsx
   - components/__tests__/perMessageTokenUsage.test.ts
   - CHANGELOG.md
+itt_node_id: node_01M52TZTH6XPSAHWJ7N6AZ9D58
+status_source: intenttree
 ---
 
 # Feature Contract: Per-Message Token Usage in Session Transcript

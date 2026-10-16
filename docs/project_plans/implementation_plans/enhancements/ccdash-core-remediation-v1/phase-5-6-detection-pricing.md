@@ -2,7 +2,7 @@
 title: "Phase 5–6: Detection (log-derivable) + Pricing Correctness"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-06-10
 updated: 2026-06-10
 phase: 5
@@ -34,6 +34,8 @@ exit_criteria:
   - "FE renders an unpriced badge/indicator without crash when cost_estimate is null/unpriced."
   - "Runtime smoke recorded for the UI-touching surfaces (R-P4) for both phases, or runtime_smoke: skipped + reason."
   - "task-completion-validator sign-off for each phase."
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Phase 5–6: Detection (log-derivable) + Pricing Correctness

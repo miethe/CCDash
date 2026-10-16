@@ -82,6 +82,8 @@ context_files:
 - docs/setup-user-guide.md
 - deploy/observability/docker-compose.yml
 - .claude/skill-specs/ccdash-skill/implementation-plan.md
+itt_node_id: node_01M52TW3J4VH2CTS93PW0HWNAJ
+status_source: intenttree
 ---
 
 # Implementation Plan: Deployment and Runtime Modularization V1

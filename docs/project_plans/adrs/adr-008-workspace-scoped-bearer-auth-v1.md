@@ -6,6 +6,7 @@ created: "2026-05-10"
 parent_prd: "docs/project_plans/PRDs/features/remote-ccdash-streaming-v1.md"
 depends_on_spike: "docs/project_plans/SPIKEs/remote-ccdash-streaming.md"
 tags: ["adr", "auth", "security", "multi-tenant", "workspaces"]
+itt_node_id: node_01M52TKAAQHXX8RMJ3GEW5H3BR
 ---
 
 # ADR-008: Workspace-Scoped Bearer Tokens for Multi-Workspace Remote CCDash

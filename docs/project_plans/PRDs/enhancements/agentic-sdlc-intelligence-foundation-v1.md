@@ -59,6 +59,8 @@ contributors:
 complexity: High
 track: Foundation
 timeline_estimate: 4-6 weeks across 6 phases
+itt_node_id: node_01M52TKFBYVP7F113CJ72NEK9G
+status_source: intenttree
 ---
 # PRD: Agentic SDLC Intelligence Foundation V1
 

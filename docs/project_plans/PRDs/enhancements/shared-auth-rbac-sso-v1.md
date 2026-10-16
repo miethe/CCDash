@@ -43,6 +43,8 @@ context_files:
   - backend/project_manager.py
   - contexts/DataContext.tsx
 implementation_plan_ref: "docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-sso-v1.md"
+itt_node_id: node_01M52V6SWA103XESTNWDRXXCS6
+status_source: intenttree
 ---
 
 # PRD: Shared Auth, RBAC, and SSO V1

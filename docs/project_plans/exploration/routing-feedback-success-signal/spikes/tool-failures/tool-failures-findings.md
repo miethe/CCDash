@@ -4,6 +4,7 @@ leg_id: tool-failures
 confidence: 0.85
 status: complete
 created: 2026-08-03
+itt_node_id: node_01M52V8QX40MT2J6R2J9EHS14F
 ---
 
 # tool-failures — Tool Use/Result Error Rate as a Failure Signal

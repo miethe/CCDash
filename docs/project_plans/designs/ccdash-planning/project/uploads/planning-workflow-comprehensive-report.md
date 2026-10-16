@@ -25,6 +25,7 @@ related_documents:
   - .claude/skills/dev-execution/SKILL.md
   - .claude/specs/doc-policy-spec.md
   - docs/project_plans/reports/trackers/dvcs-future-work.md
+itt_node_id: node_01M52V262MMCAP7Z58GX4MGX9K
 ---
 
 # SkillMeat Planning Workflow: A Comprehensive Analysis of AI-Native SDLC

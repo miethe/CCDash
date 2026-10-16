@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: implementation_plan
 title: "Implementation Plan: CCDash Next.js / SSR Migration v1 (STUB)"
-status: draft
+status: completed
 created: '2026-05-29'
 updated: '2026-05-29'
 feature_slug: ccdash-frontend-data-layer-refactor
@@ -40,6 +40,8 @@ related_documents:
   - docs/project_plans/PRDs/refactors/ccdash-frontend-data-layer-refactor-v1.md
   - docs/project_plans/implementation_plans/refactors/ccdash-frontend-data-layer-refactor-v1.md
   - .claude/worknotes/ccdash-frontend-data-layer-refactor/inventory-priorart.md
+itt_node_id: node_01M52TPYJ22ZX8SXPWVRR7G32B
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Next.js / SSR Migration v1 (STUB)

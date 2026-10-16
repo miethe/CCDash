@@ -69,6 +69,8 @@ related_documents:
 - components/Planning/CommandCenter/PlanningCommandCenter.tsx
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/multi-project-planning-command-center-v1.md
 spike_ref: docs/project_plans/spikes/multi-project-planning-command-center-v1.md
+itt_node_id: node_01M52TZAK58C7M56D73X4K99PN
+status_source: intenttree
 ---
 
 # PRD: Multi-Project Planning Command Center V1

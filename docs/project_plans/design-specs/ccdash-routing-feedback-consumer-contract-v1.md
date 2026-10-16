@@ -24,6 +24,7 @@ description: |
   Specifies the PULL transport (REST/MCP/CLI), empirical metric inputs, mapping fidelity guardrails,
   and CCDash-side invariants. Consumers route based on `(task_class × model)` tuples and empirical
   metrics (`success_rate`, `cost_index`, `regression_rate`); CCDash never actuates routing decisions.
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # CCDash Routing Feedback Consumer Contract v1

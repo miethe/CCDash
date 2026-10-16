@@ -38,6 +38,7 @@ recommendations:
   - "Normalize Codex-side usage and sidecar parity so closed-loop telemetry is not Claude-centric."
   - "Promote high-value sidecar signals out of session_forensics_json into first-class tables where cross-session analytics need stable querying."
   - "Retain commit_correlations payload_json, but expose multi-feature and multi-task windows as first-class queryable fields."
+itt_node_id: node_01M52V1E8RYX758J8SG7R4KG83
 ---
 
 # PLAN 2: CCDash Observability & Integration Analysis

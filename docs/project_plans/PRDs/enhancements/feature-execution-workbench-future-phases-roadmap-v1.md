@@ -35,6 +35,8 @@ contributors: [ai-agents]
 complexity: High
 track: Multi-phase
 timeline_estimate: "6-10 weeks after V1"
+itt_node_id: node_01M52TXBZN742NPG6E7FEAB074
+status_source: intenttree
 ---
 
 # PRD: Feature Execution Workbench Future Phases Roadmap

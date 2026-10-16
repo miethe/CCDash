@@ -4,7 +4,7 @@ schema_version: 2
 doc_type: prd
 it_schema: 1
 description: "Promote provider/channel/credential from session attributes into addressable entities with their own identity, history, and cross-project rollups, so questions can be asked of a key or a channel without aggregating a session query."
-status: ready
+status: completed
 created: 2026-08-10
 updated: 2026-08-10
 feature_slug: provider-channel-credential-entities
@@ -77,6 +77,7 @@ success_metrics:
 agent_title: "Promote provider/channel/credential to entities with cross-project credential rollups"
 agent_summary: "Persist the existing providerId slug as a dimension key, add a credential entity keyed (channel, credential_name) with a rotation-lineage pointer, and add a cross-project per-credential spend/token/session rollup read — dual SQLite+Postgres DDL, SCHEMA_VERSION 51->52."
 required_artifacts: []
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

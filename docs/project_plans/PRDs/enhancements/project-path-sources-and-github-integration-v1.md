@@ -46,6 +46,8 @@ context_files:
   - backend/routers/projects.py
   - backend/routers/integrations.py
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/project-path-sources-and-github-integration-v1.md
+itt_node_id: node_01M52V28Z6H6T4T8AB9DWGF0TB
+status_source: intenttree
 ---
 
 # PRD: Project Path Sources and GitHub Integration V1

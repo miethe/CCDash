@@ -28,6 +28,7 @@ description: |
   currently blocked by `live_consumption_disabled`. Documents the contract bridge,
   numeric merge algorithm candidates, and promotion readiness criteria.
 schema_version: 2
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Design Spec: Routing Feedback Router Merge Handoff (DI-1)

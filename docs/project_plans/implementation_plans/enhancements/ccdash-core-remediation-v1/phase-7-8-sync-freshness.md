@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "CCDash Core Remediation v1 — Phases 7 & 8: Sync Coalescing + Cross-Project Freshness"
-status: draft
+status: completed
 created: 2026-06-10
 updated: 2026-06-10
 phase: 7
@@ -23,6 +23,8 @@ exit_criteria:
   - "Recent sessions queryable within seconds of startup via recent-first window; backfill count == baseline full-scan count (no silent partial)."
   - "A plan/doc added to a non-active project appears within one reconcile interval; crashed watcher self-heals within one reconcile interval; non-active writeback stays off."
   - "task-completion-validator signs off both phases; ultrathink-debugger concurrency review (Phase 7) signed off."
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Implementation Plan — Phases 7 & 8: Sync Coalescing + Cross-Project Freshness Hardening

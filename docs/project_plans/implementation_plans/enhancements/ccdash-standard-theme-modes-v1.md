@@ -58,6 +58,8 @@ context_files:
 - components/Analytics/TrendChart.tsx
 - components/content/UnifiedContentViewer.tsx
 - contexts/ModelColorsContext.tsx
+itt_node_id: node_01M52TSFHF00P9BXC62NH2ZDRA
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Standard Theme Modes V1

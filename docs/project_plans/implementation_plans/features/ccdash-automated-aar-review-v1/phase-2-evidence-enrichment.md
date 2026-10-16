@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 2: Full-Metadata Evidence Enrichment"
-status: draft
+status: completed
 created: 2026-07-22
 phase: 2
 phase_title: "Full-Metadata Evidence Enrichment"
@@ -16,6 +16,8 @@ exit_criteria:
   just session ids).
 - Unit-tested over fixtures covering the enrichment traversal's deterministic paths.
 - A test asserts NO model client is importable/invoked on the compute path (Hard Invariant #1).
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
+status_source: intenttree
 ---
 
 # Phase 2: Full-Metadata Evidence Enrichment

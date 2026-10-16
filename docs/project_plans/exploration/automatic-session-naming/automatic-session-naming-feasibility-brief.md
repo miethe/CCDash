@@ -11,6 +11,7 @@ verdict_confidence: 0.87
 exploration_charter_ref: docs/project_plans/exploration/automatic-session-naming/automatic-session-naming-charter.md
 proposed_adr_ref: null
 recommended_next_action: "/plan:plan-feature --tier=2"
+itt_node_id: node_01M52TKV5RKQSN3J6V1Q1BJY6K
 ---
 
 # Automatic Session Naming — Feasibility Brief

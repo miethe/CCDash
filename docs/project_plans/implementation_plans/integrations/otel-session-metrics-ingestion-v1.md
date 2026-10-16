@@ -72,6 +72,8 @@ context_files:
   - backend/routers/cache.py
   - backend/observability/otel.py
   - types.ts
+itt_node_id: node_01M52TZNAK2K5S5N03JF8A0MCN
+status_source: intenttree
 ---
 
 # Implementation Plan: OTel Session Metrics Ingestion V1

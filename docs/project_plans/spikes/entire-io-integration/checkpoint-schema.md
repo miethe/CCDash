@@ -17,6 +17,7 @@ related_documents:
   - docs/project_plans/adrs/adr-012-entire-session-identity-unification.md
 upstream_source: https://github.com/entireio/cli
 upstream_branch_layout: "entire/checkpoints/v1/<XX>/<12hex-id>.json"
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
 ---
 
 # Entire.io Checkpoint Schema — Canonical Reference

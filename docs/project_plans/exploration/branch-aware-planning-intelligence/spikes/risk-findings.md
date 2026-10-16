@@ -10,6 +10,7 @@ assigned_to: backend-architect
 charter_ref: docs/project_plans/exploration/branch-aware-planning-intelligence/branch-aware-planning-intelligence-charter.md
 deal_killer_verdict: NOT TRIGGERED — partial
 partial: false
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # Risk Findings: Branch-Aware Planning Intelligence

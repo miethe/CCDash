@@ -25,6 +25,8 @@ tags:
 - integration
 - background-jobs
 - observability
+itt_node_id: node_01M52TSPD7X7MS6FS9WYX3NW5X
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Telemetry Exporter V1

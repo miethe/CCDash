@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 1: Verdict Reconciliation + Persistence Foundation"
-status: draft
+status: completed
 created: 2026-07-22
 phase: 1
 phase_title: "Verdict Reconciliation + Persistence Foundation"
@@ -20,6 +20,8 @@ exit_criteria:
 - COLUMN_PARITY_DRIFT_ALLOWLIST updated; parity test green on both SQLite and PostgreSQL.
 - Guard-input columns (skill_name/workflow_id provenance passthrough, (aar_document_id, session_id)
   dedup key) are present on aar_reviews even though guards are not enforced until Phase 6.
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
+status_source: intenttree
 ---
 
 # Phase 1: Verdict Reconciliation + Persistence Foundation

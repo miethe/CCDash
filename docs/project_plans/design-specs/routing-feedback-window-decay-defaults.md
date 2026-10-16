@@ -29,6 +29,7 @@ description: |
   before locking defaults. Documents current spike findings, tuning rationale,
   and promotion criteria for Phase 7+ empirical refinement.
 schema_version: 2
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Design Spec: Routing Feedback Window/Decay Numeric Defaults (DI-3)

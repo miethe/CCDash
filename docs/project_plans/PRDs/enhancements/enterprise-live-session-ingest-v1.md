@@ -70,6 +70,8 @@ context_files:
 - backend/routers/live.py
 - deploy/runtime/compose.yaml
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/enterprise-live-session-ingest-v1.md
+itt_node_id: node_01M52TWRPB0AQ1JN4EMMTQ6QZ9
+status_source: intenttree
 ---
 
 # PRD: Enterprise Live Session Ingest V1

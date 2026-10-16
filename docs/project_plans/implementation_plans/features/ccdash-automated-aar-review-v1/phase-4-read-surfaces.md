@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 4: Read Surfaces — FE Panel + v1 LAN Endpoint"
-status: draft
+status: completed
 created: 2026-07-22
 phase: 4
 phase_title: "Read Surfaces: FE Panel + v1 LAN Endpoint + Capability"
@@ -20,6 +20,8 @@ exit_criteria:
 - v1 LAN endpoint returns the persisted verdict (redaction-applied), reusing @memoized_query.
 - aar-review capability string advertised at /api/v1/capabilities.
 - Runtime smoke recorded (browser + endpoint) per CLAUDE.md's Runtime smoke gate convention.
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
+status_source: intenttree
 ---
 
 # Phase 4: Read Surfaces — FE Panel + v1 LAN Endpoint + Capability

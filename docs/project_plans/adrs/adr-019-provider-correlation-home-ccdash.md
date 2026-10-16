@@ -6,6 +6,7 @@ created: "2026-08-10"
 updated: "2026-08-10"
 parent_prd: "docs/project_plans/PRDs/enhancements/provider-channel-credential-entities-v1.md"
 tags: ["adr", "provider-identity", "credentials", "cost-attribution", "entity-model"]
+itt_node_id: node_01M52TKES18EVKKT0E4ZX6MMQ9
 ---
 
 # ADR-019: Provider/Channel/Credential Correlation Home — CCDash

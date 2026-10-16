@@ -26,6 +26,7 @@ inherits_adrs:
   - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
   - docs/project_plans/adrs/adr-008-workspace-scoped-bearer-auth-v1.md
   - docs/project_plans/adrs/adr-014-remote-session-ingest-transport-ndjson-http.md
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
 ---
 
 # Entire.io OSS CLI Integration — Findings Summary

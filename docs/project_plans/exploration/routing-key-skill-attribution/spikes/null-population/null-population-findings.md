@@ -11,6 +11,7 @@ confidence: 0.75
 exploration_charter_ref: docs/project_plans/exploration/routing-key-skill-attribution/routing-key-skill-attribution-charter.md
 related_documents:
   - docs/project_plans/exploration/routing-feedback-success-signal/spikes/SHARED-CONTEXT.md
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Null-Population Leg — What Are the 114 NULL skill_name Routing Keys?

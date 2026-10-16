@@ -45,6 +45,8 @@ context_files:
   - components/Settings.tsx
   - contexts/ModelColorsContext.tsx
 implementation_plan_ref: docs/project_plans/implementation_plans/refactors/ccdash-theme-system-foundation-v1.md
+itt_node_id: node_01M52TT22T9MQ0DTYT0KN0CCAG
+status_source: intenttree
 ---
 
 # PRD: CCDash Theme System Modernization V1

@@ -87,6 +87,8 @@ context_files:
   - components/execution/WorkflowEffectivenessSurface.tsx
   - backend/tests/test_session_messages_groundwork.py
   - backend/tests/test_session_transcript_projection.py
+itt_node_id: node_01M52V6AGQYPC495RDV6K3VHM6
+status_source: intenttree
 ---
 
 # Implementation Plan: Session Intelligence Canonical Storage V1

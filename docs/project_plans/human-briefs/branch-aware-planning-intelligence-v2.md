@@ -32,6 +32,7 @@ related_documents:
   - docs/project_plans/exploration/branch-aware-planning-intelligence/spikes/risk-findings.md
   - docs/project_plans/exploration/branch-aware-planning-intelligence/spikes/ux-value-findings.md
 tags: [human-brief, branch-watcher, multi-branch, session-correlation, phase-2]
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # Branch-Aware Planning Intelligence — Human Brief

@@ -6,6 +6,7 @@ created: "2026-05-10"
 parent_prd: "docs/project_plans/PRDs/features/remote-ccdash-streaming-v1.md"
 depends_on_spike: "docs/project_plans/SPIKEs/remote-ccdash-streaming.md"
 tags: ["adr", "sync-engine", "port-adapter", "cursor", "ingest"]
+itt_node_id: node_01M52TKAPNJHAFHZSKD3WRKJX2
 ---
 
 # ADR-009: SessionIngestSource Port + ingest_cursors Watermark Table

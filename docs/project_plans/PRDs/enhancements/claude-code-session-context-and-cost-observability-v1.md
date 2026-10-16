@@ -65,6 +65,8 @@ contributors:
 complexity: High
 track: Standard
 timeline_estimate: 2-4 weeks across 6 phases
+itt_node_id: node_01M52TT3X4VZVASMB0SAQBB95T
+status_source: intenttree
 ---
 
 # PRD: Claude Code Session Context And Cost Observability V1
