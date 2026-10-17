@@ -19,6 +19,25 @@ class SessionParserTests(unittest.TestCase):
         path.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
         return path
 
+    def test_claude_transcript_message_keeps_text_over_4000_characters(self) -> None:
+        transcript = "x" * 5000
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {"role": "user", "content": transcript},
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+
+        self.assertIsNotNone(session)
+        assert session is not None
+        message = next(log for log in session.logs if log.type == "message")
+        self.assertEqual(message.content, transcript)
+
     def test_tool_use_and_result_are_merged(self) -> None:
         path = self._write_jsonl(
             [
