@@ -68,6 +68,7 @@ output_artifacts:
   status: finalized
   verdict: conditional
 updated: '2026-06-04'
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # Branch-Aware Planning Intelligence — Exploration Charter

@@ -19,6 +19,8 @@ priority: high
 risk_level: medium
 category: "refactor"
 tags: [implementation, refactor, performance, testing, test-visualizer]
+itt_node_id: node_01M52V8FEKFMH6C4PB5XN0C4N9
+status_source: intenttree
 ---
 
 # Implementation Plan: Testing Page Performance Pass

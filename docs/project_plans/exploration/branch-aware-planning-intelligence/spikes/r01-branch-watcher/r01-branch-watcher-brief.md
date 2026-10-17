@@ -37,6 +37,7 @@ spike_legs:
 - id: ux-value
   confidence: 0.82
   status: complete
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # Branch-Aware Planning Intelligence (R-01: BranchWatcherRegistry) — Feasibility Brief

@@ -77,6 +77,7 @@ explored_alternatives:
 related_prds:
 - docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
 - docs/project_plans/PRDs/enhancements/multi-project-planning-command-center-v1.md
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # Phase 2 Multi-Branch Watcher — BranchWatcherRegistry & S2 Branch-Signal Correlation

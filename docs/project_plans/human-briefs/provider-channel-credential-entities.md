@@ -35,6 +35,7 @@ updated: 2026-08-10
 target_release: ""
 
 tags: [human-brief, provider-identity, entity-model, credentials, cost-attribution]
+itt_node_id: node_01KZKZC504A3G77J6Y5VGNEDNA
 ---
 
 # Provider, Channel & Credential Entities — Human Brief

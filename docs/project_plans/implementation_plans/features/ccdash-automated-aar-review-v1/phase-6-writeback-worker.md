@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 6: Gated Writeback Seam + Autonomous Worker + Guards"
-status: draft
+status: completed
 created: 2026-07-22
 phase: 6
 phase_title: "Gated Writeback Seam + Autonomous Worker + Guards"
@@ -16,6 +16,8 @@ exit_criteria:
 - AARReviewSweepJob worker is incremental, coalescing-guarded, and off the sync/watcher hot path by
   default (CCDASH_AAR_REVIEW_AUTONOMOUS_WORKER_ENABLED default-off).
 - Writeback seam is driven exclusively by op approve.
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
+status_source: intenttree
 ---
 
 # Phase 6: Gated Writeback Seam + Autonomous Worker + Guards

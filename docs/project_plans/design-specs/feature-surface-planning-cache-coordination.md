@@ -22,6 +22,7 @@ problem_statement: >
 open_questions: []
 explored_alternatives:
   - "Option B: explicit write-through — document authoritative cache per key class and fan out at write sites manually."
+itt_node_id: node_01M52TXQ5071ZBKS58PX5E2BM2
 ---
 
 # Feature-Surface / Planning Cache Coordination

@@ -6,6 +6,7 @@ confidence: 0.8
 title: "Scope Leg — Value Slice & MVP Carve"
 feature_slug: ccdash-automated-aar-review
 created: 2026-07-21
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Scope Leg — Value Slice & MVP Carve

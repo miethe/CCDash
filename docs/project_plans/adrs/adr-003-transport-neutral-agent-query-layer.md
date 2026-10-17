@@ -6,6 +6,7 @@ created: "2026-04-02"
 parent_prd: "docs/project_plans/PRDs/features/cli-enablement.md"
 depends_on_spike: "docs/project_plans/spikes/cli-framework-and-packaging-spike.md"
 tags: ["adr", "architecture", "agent-queries", "cli", "mcp", "transport"]
+itt_node_id: node_01M52TK83CXTTZSB9A74SHG2RY
 ---
 
 # ADR-003: Transport-Neutral Agent Query Layer

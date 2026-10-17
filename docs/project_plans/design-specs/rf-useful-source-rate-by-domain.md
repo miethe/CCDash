@@ -18,6 +18,7 @@ tags:
   - deferred
   - source-cards
 problem_statement: "CCDash cannot compute useful-source rate by domain for Research Foundry (RF) search runs, because domain identity lives on RF's per-source `source_card.url`/`canonical_url`, not on the run-level `execution_event` this feature ingests."
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # RF Useful-Source Rate by Domain

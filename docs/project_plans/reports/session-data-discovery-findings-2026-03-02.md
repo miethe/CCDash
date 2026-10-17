@@ -8,6 +8,7 @@ author: codex
 created: 2026-03-02
 updated: 2026-03-02
 tags: [sessions, discovery, schema, claude-code, codex, forensics]
+itt_node_id: node_01M52V66567HW9M6GA4V7EWRZ7
 ---
 
 # Session Data Discovery Findings (2026-03-02)

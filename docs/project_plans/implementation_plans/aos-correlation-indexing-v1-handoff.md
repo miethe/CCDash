@@ -4,6 +4,8 @@ status: completed
 updated: 2026-07-06
 source_plan: /Users/miethe/dev/homelab/development/agentic_meta_dev/.claude/plans/aos-universal-correlation-ids-v1.md
 contract: /Users/miethe/dev/homelab/development/agentic_meta_dev/docs/agentic-operator/contracts/aos-correlation.md
+itt_node_id: node_01M52TKPWBN67HG6YWSHC6BRP4
+status_source: intenttree
 ---
 
 # AOS Correlation Indexing v1 - CCDash Handoff

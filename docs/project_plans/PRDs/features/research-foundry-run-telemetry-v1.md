@@ -6,7 +6,7 @@ it_schema: 1
 description: Ingest, persist, correlate, and visualize Research Foundry (RF) search-run
   telemetry as a first-class CCDash run entity, linked to sessions, so the operator
   can close RF's evidence-driven provider-selection loop.
-status: draft
+status: completed
 created: '2026-07-21'
 updated: '2026-07-21'
 feature_slug: research-foundry-run-telemetry
@@ -111,6 +111,8 @@ agent_title: RF run telemetry ingest + entity + analytics tab
 agent_summary: Add a new ingest endpoint + rf_events/research_runs tables + run_intelligence
   query service + a 4-panel analytics tab so RF search-run telemetry becomes a queryable,
   session-correlated CCDash entity.
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

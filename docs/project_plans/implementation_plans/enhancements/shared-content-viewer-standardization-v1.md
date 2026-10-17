@@ -44,6 +44,8 @@ contributors: [ai-agents]
 complexity: Medium
 track: Standard
 timeline_estimate: "3-5 implementation days across 4 phases"
+itt_node_id: node_01M52V6WJHJ7JWY18B8QMFVARR
+status_source: intenttree
 ---
 
 # Implementation Plan: Shared Content Viewer Standardization V1

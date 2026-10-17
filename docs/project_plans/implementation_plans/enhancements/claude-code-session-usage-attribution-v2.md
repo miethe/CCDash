@@ -63,6 +63,8 @@ contributors:
 complexity: High
 track: Attribution
 timeline_estimate: 3-5 weeks across 7 phases
+itt_node_id: node_01M52TTFHHD1RGJ7S9WC7ESCFA
+status_source: intenttree
 ---
 
 # Implementation Plan: Claude Code Session Usage Attribution V2

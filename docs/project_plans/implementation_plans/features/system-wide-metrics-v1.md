@@ -116,6 +116,8 @@ wave_plan:
     - [P2, P3]
     - [P4]
     - [P5]
+itt_node_id: node_01M52V7D0PZG1HXRJAZSCKC2QH
+status_source: intenttree
 ---
 
 # Implementation Plan: System-Wide Metrics

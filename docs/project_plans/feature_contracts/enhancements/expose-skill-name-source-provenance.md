@@ -24,6 +24,8 @@ files_affected:
   - backend/routers/api.py
   - types.ts
   - components/SessionInspector.tsx
+itt_node_id: node_01M52TX2MSPZFDMED4YDB7JVDM
+status_source: intenttree
 ---
 
 ```json autopilot-graph

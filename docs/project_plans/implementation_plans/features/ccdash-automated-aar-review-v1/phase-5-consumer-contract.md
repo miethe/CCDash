@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 5: Cross-Repo Consumer Contract + Transport Decision"
-status: draft
+status: completed
 created: 2026-07-22
 phase: 5
 phase_title: "Cross-Repo Consumer Contract + Event Transport Decision"
@@ -17,6 +17,8 @@ exit_criteria:
 - Best-effort cross-repo smoke shows op consuming a real verdict and producing a routed decision with
   NO CCDash code change.
 - human_triage_required verdicts never auto-route to op council (asserted in the smoke harness).
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
+status_source: intenttree
 ---
 
 # Phase 5: Cross-Repo Consumer Contract + Event Transport Decision

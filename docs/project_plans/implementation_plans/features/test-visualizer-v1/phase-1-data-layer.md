@@ -26,6 +26,8 @@ exit_criteria:
   - Pydantic DTOs defined in models.py
   - Feature flag CCDASH_TEST_VISUALIZER_ENABLED gates table creation
 tags: [implementation, data-layer, test-visualizer, migrations, repositories]
+itt_node_id: node_01M52V7Z9ACDRP71GSX20F2AGH
+status_source: intenttree
 ---
 
 # Phase 1: Data Layer

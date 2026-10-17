@@ -36,6 +36,7 @@ related_documents:
   - contexts/DataContext.tsx
   - components/Planning/CommandCenter/PlanningCommandCenter.tsx
   - components/Planning/PlanningAgentSessionBoard.tsx
+itt_node_id: node_01M52TZAK58C7M56D73X4K99PN
 ---
 
 # Multi-Project Planning Command Center V1 - SPIKE Research

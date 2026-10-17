@@ -2,7 +2,7 @@
 title: "Phase 4: Worker Sweep Job"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-07-29
 updated: 2026-07-29
 feature_slug: "proof-to-routing-loop"
@@ -39,6 +39,8 @@ files_affected:
   - backend/adapters/jobs/runtime.py
   - backend/runtime/container.py
   - backend/tests/test_routing_rollup_sweep_job.py
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
+status_source: intenttree
 ---
 
 # Phase 4: Worker Sweep Job

@@ -2,7 +2,7 @@
 title: "PRD: Release Versioning v1"
 schema_version: 2
 doc_type: prd
-status: draft
+status: completed
 created: 2026-04-28
 updated: 2026-04-28
 feature_slug: release-versioning-v1
@@ -48,6 +48,8 @@ files_affected:
   - .claude/specs/changelog-spec.md
   - .claude/hooks/check-changelog-entry.sh
   - .claude/hooks/check-changelog-entry.py
+itt_node_id: node_01M52V3WFNYWT8D62GPP4JW7N9
+status_source: intenttree
 ---
 
 # PRD: Release Versioning v1

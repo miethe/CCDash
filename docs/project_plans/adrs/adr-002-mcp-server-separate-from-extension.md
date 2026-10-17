@@ -6,6 +6,7 @@ created: "2026-04-02"
 parent_prd: "docs/project_plans/PRDs/features/vscode-ccdash-extension-v1.md"
 depends_on_spike: "docs/project_plans/spikes/vscode-extension-mcp-server-feasibility.md"
 tags: ["adr", "mcp", "claude-code", "architecture", "vscode"]
+itt_node_id: node_01M52TK7QH11FYJKJZF8W8XHHK
 ---
 
 # ADR-002: CCDash MCP Server as Separate Package from VSCode Extension

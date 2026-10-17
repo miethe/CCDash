@@ -9,6 +9,7 @@ completed_date: 2026-05-11
 feature_slug: remote-ccdash-streaming
 charter_ref: docs/project_plans/spikes/entire-io-integration-charter.md
 parent_spike: docs/project_plans/spikes/entire-io-integration.md
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
 ---
 
 # Upstream Feedback Memo — Items to Raise with entireio/cli

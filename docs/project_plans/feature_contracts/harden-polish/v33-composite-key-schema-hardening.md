@@ -21,6 +21,8 @@ plan_ref: null
 commit_refs: []
 pr_refs: []
 files_affected: []
+itt_node_id: node_01M52V8SG0HDVPV2VG1GY9W6NY
+status_source: intenttree
 ---
 
 # Feature Contract: v33 Composite-Key Schema Hardening

@@ -2,7 +2,7 @@
 title: "Phase 3: Analytics visualization tab"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-07-21
 updated: 2026-07-21
 feature_slug: "research-foundry-run-telemetry"
@@ -43,6 +43,8 @@ files_affected:
   - components/Analytics/AnalyticsDashboard.tsx
   - services/queryKeys.ts
   - types.ts
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
+status_source: intenttree
 ---
 
 # Phase 3: Analytics visualization tab

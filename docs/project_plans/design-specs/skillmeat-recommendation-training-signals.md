@@ -18,6 +18,7 @@ tags:
   - training-signals
   - review-outcomes
 problem_statement: "CCDash can generate artifact recommendations, but SkillMeat cannot yet ingest reviewer decisions about those recommendations as privacy-safe training signals for future ranking and recommendation quality."
+itt_node_id: node_01M52V70DKFG0MXPQN8S1E4D1E
 ---
 
 # SkillMeat Recommendation Training Signals

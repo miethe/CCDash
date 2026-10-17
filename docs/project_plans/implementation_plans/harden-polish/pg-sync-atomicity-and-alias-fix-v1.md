@@ -40,6 +40,8 @@ commit_refs:
 pr_refs: []
 merge_commit: null  # squash-merged to main (no merge commit); see commit_refs
 merge_branch: worktree-autopilot+pg-sync-streaming-fixes
+itt_node_id: node_01M52V00PQ4NEF8ABH3P14CNPZ
+status_source: intenttree
 ---
 
 ```json

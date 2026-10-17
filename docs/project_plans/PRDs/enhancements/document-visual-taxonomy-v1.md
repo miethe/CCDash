@@ -49,6 +49,8 @@ files_affected:
   - components/CodebaseExplorer.tsx
   - components/BlockingFeatureList.tsx
   - types.ts
+itt_node_id: node_01M52TWQN5SWX75QND89B4RKVB
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

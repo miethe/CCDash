@@ -32,6 +32,7 @@ related_documents:
 - docs/project_plans/implementation_plans/features/ccdash-automated-aar-review-v1.md
 - docs/project_plans/exploration/ccdash-automated-aar-review/ccdash-automated-aar-review-proposed-adr.md
 prd_ref: null
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # CCDash AAR Review — Autonomous Semantic-Triage Tier (v2)

@@ -72,6 +72,8 @@ context_files:
 - components/OpsPanel.tsx
 - services/execution.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/sse-live-update-platform-v1.md
+itt_node_id: node_01M52V78JXKQ9FGBRA4E2X08QP
+status_source: intenttree
 ---
 # PRD: SSE Live Update Platform V1
 

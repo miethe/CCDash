@@ -63,6 +63,8 @@ related:
 - types.ts
 plan_ref: project-path-sources-and-github-integration-v1
 linked_sessions: []
+itt_node_id: node_01M52V28Z6H6T4T8AB9DWGF0TB
+status_source: intenttree
 ---
 
 # Implementation Plan: Project Path Sources and GitHub Integration V1

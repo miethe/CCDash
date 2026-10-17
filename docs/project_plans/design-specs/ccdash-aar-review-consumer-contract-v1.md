@@ -21,6 +21,7 @@ description: |
   Specifies the PULL transport (REST/MCP/CLI), routing decision inputs, verdict semantics,
   and CCDash-side invariants. Consumers route based on `correlation.confidence` and
   `triage_verdict`; `human_triage_required` verdicts MUST route to human review only.
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # CCDash AAR Review Consumer Contract v1

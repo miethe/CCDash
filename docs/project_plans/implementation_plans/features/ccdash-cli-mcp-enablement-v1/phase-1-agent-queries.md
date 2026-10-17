@@ -25,6 +25,8 @@ effort_estimate: 8-10
 effort_estimate_unit: story_points
 duration_estimate: 5-7
 duration_estimate_unit: days
+itt_node_id: node_01M52TN7GYRRF1FVP8HYPFED23
+status_source: intenttree
 ---
 
 # Phase 1: Agent Query Foundation

@@ -40,6 +40,8 @@ architecture_summary: "EntireCheckpointSource subclasses the SessionIngestSource
   \ in SPIKE-B)."
 owner: null
 contributors: []
+itt_node_id: node_01M52TX0FJ602AW6N4124R1WHM
+status_source: intenttree
 ---
 
 # Entire.io Checkpoint Ingest — Implementation Plan

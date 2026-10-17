@@ -66,6 +66,8 @@ files_affected:
 - backend/ingestion/session_ingest_service.py
 - backend/tests/test_ingest_endpoint.py
 - CHANGELOG.md
+itt_node_id: node_01M52V5FMBD3EFHMDFF7M796JS
+status_source: intenttree
 ---
 
 # Feature Contract: Remote Session Ingest Silently Drops `payload.logs`

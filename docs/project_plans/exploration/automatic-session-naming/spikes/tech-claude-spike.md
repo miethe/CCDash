@@ -8,6 +8,7 @@ feature_slug: automatic-session-naming
 leg_id: tech-claude
 confidence: 0.9
 feasibility: feasible
+itt_node_id: node_01M52TKV5RKQSN3J6V1Q1BJY6K
 ---
 
 # Claude Code Session Naming — Availability Spike

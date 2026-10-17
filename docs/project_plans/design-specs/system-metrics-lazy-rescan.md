@@ -14,6 +14,7 @@ tags: [metrics, freshness, rescan, deferred]
 related_documents:
   - .claude/worknotes/system-wide-live-metrics-spike/spike.md
   - docs/project_plans/feature_contracts/features/watcher-rebind-on-active-project-switch-v1.md
+itt_node_id: node_01M52V7D0PZG1HXRJAZSCKC2QH
 ---
 
 # System Metrics Lazy On-Demand Rescan

@@ -28,6 +28,8 @@ related_documents:
   - docs/project_plans/adrs/adr-003-transport-neutral-agent-query-layer.md
   - docs/project_plans/adrs/adr-004-mcp-server-dual-transport-strategy.md
   - docs/project_plans/PRDs/features/vscode-ccdash-extension-v1.md
+itt_node_id: node_01M52TN7GYRRF1FVP8HYPFED23
+status_source: intenttree
 ---
 
 # PRD: CCDash CLI and MCP Enablement v1

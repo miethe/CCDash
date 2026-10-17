@@ -71,6 +71,8 @@ contributors:
 complexity: High
 track: V2 Integration Hardening
 timeline_estimate: 3-5 weeks across 7 phases
+itt_node_id: node_01M52TKKN3X3Z49C0BEZ54MAVR
+status_source: intenttree
 ---
 
 # Implementation Plan: Agentic SDLC Intelligence Foundation V2

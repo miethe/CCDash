@@ -71,6 +71,7 @@ pr_refs:
   - '#71'
 merge_commit: b506fb5
 merge_branch: main
+status_source: intenttree
 ---
 
 # Implementation Plan — Are-We-Winning Dashboard v1

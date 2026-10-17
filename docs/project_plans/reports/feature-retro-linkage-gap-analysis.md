@@ -8,6 +8,7 @@ updated: 2026-07-26
 category: analysis
 status: draft
 related: ["../../guides/aar-review-loop.md", "../../guides/feature-session-linkage.md", "../../guides/launch-time-capture-convention.md"]
+itt_node_id: node_01M52TXPFFDHGABYTRWQFPGMK6
 ---
 
 # Feature Retro Linkage — Gap Analysis

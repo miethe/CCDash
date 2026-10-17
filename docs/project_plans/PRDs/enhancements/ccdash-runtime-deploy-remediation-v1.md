@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: prd
 title: "CCDash Runtime & Deploy Remediation v1 — PRD"
-status: draft
+status: completed
 created: 2026-06-12
 updated: 2026-06-12
 feature_slug: ccdash-runtime-deploy-remediation
@@ -28,6 +28,8 @@ changelog_required: true
 owner: null
 contributors: []
 tags: [prd, deploy, registry, postgres, watcher, remediation]
+itt_node_id: node_01M52TRP995AP292548SQQRS04
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

@@ -9,6 +9,7 @@ category: "Architecture Review"
 status: "published"
 related_documents:
   - "docs/project_plans/ccdash-cli-mcp-enablement-plan.md"
+itt_node_id: node_01M52TNJ4K8JTYQ9CCVY265XE8
 ---
 
 # CCDash CLI/MCP Enablement Plan Review

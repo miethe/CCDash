@@ -24,6 +24,7 @@ related_documents:
   - backend/runtime/container.py
   - backend/runtime/bootstrap.py
   - backend/application/services/
+itt_node_id: node_01M52TZ8SH1BFK18YNF03V77CC
 ---
 
 # MCP Server Implementation - SPIKE Research

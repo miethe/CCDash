@@ -2,6 +2,7 @@
 leg: risk-blast-radius
 confidence: 0.72
 deal_killer: refuted
+itt_node_id: node_01M52V5SW2JDSZ4585GYZV0MJQ
 ---
 
 # Risk / Blast-Radius Findings — Plan-Execution ↔ Session Correlation

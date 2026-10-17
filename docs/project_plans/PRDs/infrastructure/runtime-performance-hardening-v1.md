@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: prd
 title: "CCDash Runtime Performance Hardening v1 - PRD"
-status: completed
+status: in-progress
 created: 2026-04-20
 updated: 2026-04-28
 feature_slug: runtime-performance-hardening
@@ -36,6 +36,8 @@ commit_refs: []
 pr_refs: []
 files_affected: []
 changelog_required: true
+itt_node_id: node_01M52V5YJETHAJ71FRTE38M2BC
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

@@ -60,6 +60,8 @@ files_affected:
   - types.ts
   - components/SessionInspector.tsx
   - components/Planning/PlanningAgentSessionBoard.tsx
+itt_node_id: node_01M52TYMPA234BW539JT52PQMA
+status_source: intenttree
 ---
 
 # PRD: JSONL Shape Gap Coverage V1

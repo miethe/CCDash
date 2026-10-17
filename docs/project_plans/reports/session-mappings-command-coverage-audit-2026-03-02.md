@@ -8,6 +8,7 @@ author: codex
 created: 2026-03-02
 updated: 2026-03-02
 tags: [session-mappings, commands, parser, linking, claude-code, codex]
+itt_node_id: node_01M52V6EYWJPHJEZZSJBTK3XZ8
 ---
 
 # Session Mappings Command Coverage Audit (2026-03-02)

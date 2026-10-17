@@ -47,6 +47,8 @@ related_documents:
 - docs/project_plans/design-specs/cli-versioned-api-surface.md
 - docs/guides/standalone-cli-guide.md
 - docs/guides/cli-migration-guide.md
+itt_node_id: node_01M52TSBTG9P3YDY45W9WRW4SN
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Standalone Global CLI Gap Remediation

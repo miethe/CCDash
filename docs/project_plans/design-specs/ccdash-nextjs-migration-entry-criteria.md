@@ -27,6 +27,7 @@ problem_statement: >
   execution is permitted to begin.
 open_questions: []
 explored_alternatives: []
+itt_node_id: node_01M52TPYJ22ZX8SXPWVRR7G32B
 ---
 
 # CCDash Next.js / SSR Migration — Entry Criteria

@@ -83,6 +83,8 @@ context_files:
 - services/execution.ts
 - types.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/planning-agent-session-board-v1.md
+itt_node_id: node_01M52V1FMB3J9DJM6PN38CCEDD
+status_source: intenttree
 ---
 
 # PRD: Planning Agent Session Board V1

@@ -14,6 +14,8 @@ plan_ref: docs/project_plans/implementation_plans/enhancements/readme-build-syst
 related_documents:
   - docs/project_plans/implementation_plans/enhancements/readme-build-system-v1.md
   - .github/readme/data/screenshots.json
+itt_node_id: node_01M52V3TDA74NQVZ28S09EVTA4
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash README - Screenshot Capture Plan (Route 2)

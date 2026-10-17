@@ -73,6 +73,7 @@ output_artifacts:
     status: complete
 related_documents:
   - docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Routing Feedback Success Signal — Exploration Charter

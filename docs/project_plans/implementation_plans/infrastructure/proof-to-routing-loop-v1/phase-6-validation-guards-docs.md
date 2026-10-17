@@ -2,7 +2,7 @@
 title: "Phase 6: Validation, Guards & Docs"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-07-29
 updated: 2026-07-29
 feature_slug: "proof-to-routing-loop"
@@ -66,6 +66,8 @@ files_affected:
   - docs/project_plans/design-specs/routing-feedback-model-provider-namespacing.md
   - docs/project_plans/design-specs/routing-feedback-window-decay-defaults.md
   - CHANGELOG.md
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
+status_source: intenttree
 ---
 
 # Phase 6: Validation, Guards & Docs

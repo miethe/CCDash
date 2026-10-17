@@ -4,6 +4,7 @@ charter: ccdash-automated-aar-review
 dealkiller: unresolved
 confidence: 0.65
 created: 2026-07-21
+itt_node_id: node_01M52V5T894EXYTTDFYNMT255R
 ---
 
 # Risk Findings — CCDash Automated AAR Review Loop

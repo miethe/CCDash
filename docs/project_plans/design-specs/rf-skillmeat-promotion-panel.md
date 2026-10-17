@@ -44,6 +44,7 @@ tags:
   - cross-system
 audience: developers
 category: design-spec
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # DF-006: Reusable-Patterns-Promoted-to-SkillMeat Panel for Research Foundry Run Telemetry

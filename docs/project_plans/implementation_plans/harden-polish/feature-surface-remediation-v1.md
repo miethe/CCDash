@@ -56,6 +56,8 @@ files_affected:
 - backend/tests/test_client_v1_write_paths.py
 - components/FeatureExecutionWorkbench.tsx
 - .claude/progress/feature-surface-remediation-v1/phase-1-progress.md
+itt_node_id: node_01M52TY1GGD74BYQ4GJ9XKF1K2
+status_source: intenttree
 ---
 
 # Implementation Plan: Feature Surface Remediation

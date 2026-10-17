@@ -9,6 +9,7 @@ feature_slug: routing-key-skill-attribution
 leg_id: key-redefinition
 confidence: 0.75
 exploration_charter_ref: docs/project_plans/exploration/routing-key-skill-attribution/routing-key-skill-attribution-charter.md
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Key Redefinition — DI-4f Leg

@@ -20,6 +20,7 @@ related_documents:
   - docs/project_plans/exploration/branch-aware-planning-intelligence/spikes/risk-findings.md
   - docs/project_plans/exploration/branch-aware-planning-intelligence/spikes/ux-value-findings.md
   - docs/project_plans/exploration/branch-aware-planning-intelligence/spikes/r01-branch-watcher/
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # Branch-Aware Planning Intelligence — Human Brief
