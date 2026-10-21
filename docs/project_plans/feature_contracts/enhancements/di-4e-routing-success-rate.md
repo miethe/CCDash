@@ -55,6 +55,8 @@ files_affected:
   - backend/config.py
   - backend/routers/_client_v1_routing_rollup.py
   - backend/tests/test_client_v1_routing_rollup.py
+itt_node_id: node_01M52TWDWZJVK4YFHBXNWY9GED
+status_source: intenttree
 ---
 
 # Feature Contract: Populate `routing_rollup.success_rate` (DI-4e)

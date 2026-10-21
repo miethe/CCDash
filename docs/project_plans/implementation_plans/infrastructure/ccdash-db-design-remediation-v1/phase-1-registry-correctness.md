@@ -10,6 +10,8 @@ phase_title: Registry Correctness & Authority
 feature_slug: ccdash-db-design-remediation
 prd_ref: docs/project_plans/PRDs/infrastructure/ccdash-db-design-remediation-v1.md
 plan_ref: docs/project_plans/implementation_plans/infrastructure/ccdash-db-design-remediation-v1.md
+itt_node_id: node_01M52TP9VV47S5Z5SNA08ZJD1T
+status_source: intenttree
 ---
 
 # Phase 1 — Registry Correctness & Authority (~11 pts)

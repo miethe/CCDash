@@ -1,7 +1,7 @@
 ---
 schema_version: 2
 doc_type: implementation_plan
-status: completed
+status: in-progress
 created: 2026-04-20
 updated: '2026-04-26'
 commit_refs:
@@ -84,6 +84,8 @@ milestone: null
 commit_refs: []
 pr_refs: []
 files_affected: []
+itt_node_id: node_01M52TR4EJEF2D7YFEREWBE2DQ
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Planning Reskin v2

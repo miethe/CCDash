@@ -26,6 +26,8 @@ prd_ref: null
 plan_ref: null
 commit_refs: []
 pr_refs: []
+itt_node_id: node_01M52TNJM9J14PZNFMBMEN158V
+status_source: intenttree
 ---
 
 # Feature Contract: CCDash CLI Project Init (`ccdash project` command group)

@@ -25,6 +25,7 @@ description: |
   tuning knobs, and signals for revision. Also documents the pre-production hardening
   checklist derived from P6 integration work. Addresses open question OQ-4 from the PRD.
 schema_version: 2
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Design Spec: AAR Review Escalation Quota & Pre-Production Hardening (OQ-4)

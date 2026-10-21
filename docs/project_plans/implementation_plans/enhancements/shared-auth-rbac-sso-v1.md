@@ -53,6 +53,8 @@ context_files:
   - contexts/AppSessionContext.tsx
   - contexts/AppRuntimeContext.tsx
   - services/apiClient.ts
+itt_node_id: node_01M52V6SWA103XESTNWDRXXCS6
+status_source: intenttree
 ---
 
 # Implementation Plan: Shared Auth, RBAC, and SSO V1

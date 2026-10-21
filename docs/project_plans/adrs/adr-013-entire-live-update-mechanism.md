@@ -9,6 +9,7 @@ related_adrs:
   - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
   - docs/project_plans/adrs/adr-011-entire-ingest-path-decision.md
 tags: ["adr", "live-update", "fs-watch", "git-fetch", "entire"]
+itt_node_id: node_01M52TKCD7QA1D2PAZPDBJ4QSN
 ---
 
 # ADR-013: Entire.io Live-Update Mechanism — fs-watch Primary, git-fetch Fallback

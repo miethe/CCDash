@@ -39,6 +39,8 @@ files_affected:
   - CHANGELOG.md
   - components/Dashboard.tsx
   - components/__tests__/DashboardLiveAgentsChip.test.tsx
+itt_node_id: node_01M52TYTYXV39W6ZX368KTW6M4
+status_source: intenttree
 ---
 
 # Feature Contract: Live Agents Count (per-project)

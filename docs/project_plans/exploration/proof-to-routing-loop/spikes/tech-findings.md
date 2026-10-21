@@ -2,6 +2,7 @@
 leg: tech
 confidence: 0.75
 feasibility: feasible-with-constraints
+itt_node_id: node_01M52V7Q6G6DAF6BDN2SY5FTY9
 ---
 
 # Tech Feasibility Spike — Proof → Routing Feedback Loop

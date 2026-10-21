@@ -27,6 +27,8 @@ files_affected:
   - backend/tests/test_watcher_rebind.py
   - backend/tests/test_project_paths.py
   - CHANGELOG.md
+itt_node_id: node_01M52V926NQ614RPDQG2VH8QEA
+status_source: intenttree
 ---
 
 # Feature Contract: Watcher Rebind on Active Project Switch

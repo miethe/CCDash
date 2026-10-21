@@ -28,6 +28,8 @@ exit_criteria:
   - Async integrity check background task wired from Phase 2 stubs
   - CCDASH_INTEGRITY_SIGNALS_ENABLED flag gates integrity pipeline
 tags: [implementation, mapping, integrity, test-visualizer, python, git]
+itt_node_id: node_01M52V7Z9ACDRP71GSX20F2AGH
+status_source: intenttree
 ---
 
 # Phase 7: Domain Mapping & Integrity Signals

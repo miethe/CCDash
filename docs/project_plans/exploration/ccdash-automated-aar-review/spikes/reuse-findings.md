@@ -8,6 +8,7 @@ feature_slug: ccdash-automated-aar-review
 question: "What already exists across the AOS that an automated-AAR-review loop MUST reuse/extend rather than duplicate; the honest delta; and where the ownership seams sit."
 persona_directive: "close seams, don't add tools"
 updated: '2026-07-21'
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Reuse Leg — AOS Seam Mapping (op story / ARC / RF / SkillMeat / IntentTree)

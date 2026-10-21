@@ -13,6 +13,7 @@ category: features
 tags: [metrics, widget, api, auth, deferred]
 related_documents:
   - .claude/worknotes/system-wide-live-metrics-spike/spike.md
+itt_node_id: node_01M52V7D0PZG1HXRJAZSCKC2QH
 ---
 
 # System Metrics Widget API Hardening

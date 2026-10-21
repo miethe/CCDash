@@ -5,6 +5,7 @@ conclusion: "A new RF run entity is mechanically tractable within CCDash's layer
 tractability: tractable_with_conditions
 correlation_strategy: "Do not extend aos_correlation.py's UUID-URN sidecar graph (RF ids are non-UUID semantic strings, e.g. intent_research_foundry_search_router). Link via a dedicated entity_links row (kind=research_run) keyed by RF's UUID run_id, carrying intent_id/task_node_id as opaque string attributes for display, not as join keys."
 plumbing_estimate_points: 20
+itt_node_id: node_01M52V5TVYZYV8Z5ZS3YKDKV87
 ---
 
 # Risk Spike: Research Foundry Run Telemetry — Correlation, DDL, Volume, Coupling

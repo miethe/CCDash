@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: implementation_plan
 title: CCDash Release Versioning v1 — Implementation Plan
-status: in-progress
+status: completed
 created: 2026-04-28
 updated: '2026-04-28'
 feature_slug: release-versioning
@@ -54,6 +54,8 @@ files_affected:
 - pyproject.toml
 - packages/ccdash_cli/pyproject.toml
 - packages/ccdash_contracts/pyproject.toml
+itt_node_id: node_01M52V3WFNYWT8D62GPP4JW7N9
+status_source: intenttree
 ---
 
 # Implementation Plan: Release Versioning v1

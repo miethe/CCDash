@@ -41,6 +41,8 @@ context_files:
   - contexts/ModelColorsContext.tsx
   - lib/modelColors.ts
   - components/ui/badge.tsx
+itt_node_id: node_01M52TP8Q81K8GC9S73WAXSDQ7
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Custom Theming V1

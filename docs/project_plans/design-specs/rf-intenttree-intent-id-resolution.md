@@ -79,6 +79,7 @@ explored_alternatives:
   table without a backend resolution call at all. Cheapest option that still improves on plain
   text, but does not surface the node's title/status inline — the operator still has to leave
   CCDash to see what the id names."
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # RF Run Telemetry: IntentTree intent_id/task_node_id Resolution

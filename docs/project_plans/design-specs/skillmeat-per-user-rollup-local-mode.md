@@ -18,6 +18,7 @@ tags:
   - local-mode
   - privacy
 problem_statement: "The SkillMeat artifact intelligence exchange needs per-user rollups, but local CCDash deployments may not have authenticated users and must not export stable personal identifiers by accident."
+itt_node_id: node_01M52V70DKFG0MXPQN8S1E4D1E
 ---
 
 # SkillMeat Per-User Rollup Local Mode

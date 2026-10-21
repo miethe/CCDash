@@ -7,6 +7,7 @@ updated: "2026-04-02"
 version: "1.0"
 authors: ["Bob (Planning Mode)"]
 tags: ["vscode", "extension", "bob", "integration", "architecture"]
+itt_node_id: node_01M52V8W8M2VJNEH8J3SZCDRVG
 ---
 
 # VSCode/Bob Extension for CCDash Integration

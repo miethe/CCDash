@@ -10,6 +10,7 @@ related_adrs:
   - docs/project_plans/adrs/adr-012-entire-session-identity-unification.md
   - docs/project_plans/adrs/adr-013-entire-live-update-mechanism.md
 tags: ["adr", "ingest", "entire", "git", "pygit2", "dulwich"]
+itt_node_id: node_01M52TKBK981XC40CNKG81H383
 ---
 
 # ADR-011: Entire.io Ingest Path — Branch-Parse Primary, CLI-Wrap Fallback

@@ -24,6 +24,8 @@ feature_slug: session-intelligence-canonical-storage-v1
 feature_family: ccdash-data-platform
 feature_version: v1
 owner: data-platform
+itt_node_id: node_01M52V6AGQYPC495RDV6K3VHM6
+status_source: intenttree
 ---
 
 # PRD: Session Intelligence & Canonical Storage Modernization

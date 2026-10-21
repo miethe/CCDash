@@ -4,7 +4,7 @@ schema_version: 2
 doc_type: prd
 it_schema: 1
 description: "A CCDash view that renders weekly created/completed/reopened node trendlines and a self-caught defect ratio from IntentTree event data, with drill-through on every count and zero model calls on the render path."
-status: not_started
+status: completed
 planning_maturity: draft
 created: 2026-08-14
 updated: 2026-08-14
@@ -74,6 +74,7 @@ success_metrics:
 agent_title: "Are-we-winning dashboard: IntentTree delivery trendlines v1"
 agent_summary: "Ingest IntentTree lifecycle events into a CCDash-local cache and expose weekly created/completed/reopened trendlines plus a 3-bucket self-caught ratio, each with drill-through, entirely off cached data (no live IntentTree calls or model calls on render)."
 required_artifacts: []
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

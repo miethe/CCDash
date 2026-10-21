@@ -78,6 +78,8 @@ research_sources:
   - https://code.claude.com/docs/en/monitoring-usage
   - https://code.claude.com/docs/en/changelog
   - https://code.claude.com/docs/en/agent-sdk/observability
+itt_node_id: node_01M52TZNAK2K5S5N03JF8A0MCN
+status_source: intenttree
 ---
 
 # PRD: OTel Session Metrics Ingestion V1

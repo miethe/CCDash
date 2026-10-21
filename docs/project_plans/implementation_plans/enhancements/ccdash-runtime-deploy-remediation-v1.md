@@ -114,6 +114,8 @@ wave_plan:
     - [P0, P1, P2]
     - [P3, P4]
     - [P5]
+itt_node_id: node_01M52TRP995AP292548SQQRS04
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Runtime & Deploy Remediation v1

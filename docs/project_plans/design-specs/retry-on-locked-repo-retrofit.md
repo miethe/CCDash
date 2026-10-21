@@ -8,6 +8,7 @@ created: '2026-06-03'
 updated: '2026-06-03'
 prd_ref: docs/project_plans/PRDs/infrastructure/ccdash-db-design-remediation-v1.md
 tags: [database, reliability, observability, retrofit, technical-debt]
+itt_node_id: node_01M52TP9VV47S5Z5SNA08ZJD1T
 ---
 
 # retry_on_locked Retrofit for Legacy Write Repositories

@@ -34,6 +34,7 @@ updated: 2026-05-20
 target_release: null
 
 tags: [human-brief, observability, system-metrics, cross-project]
+itt_node_id: node_01M52V7D0PZG1HXRJAZSCKC2QH
 ---
 
 # System-Wide Metrics — Human Brief

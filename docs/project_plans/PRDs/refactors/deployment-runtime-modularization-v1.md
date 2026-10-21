@@ -41,6 +41,8 @@ context_files:
   - scripts/dev.mjs
   - scripts/backend.mjs
 implementation_plan_ref: docs/project_plans/implementation_plans/refactors/deployment-runtime-modularization-v1.md
+itt_node_id: node_01M52TW3J4VH2CTS93PW0HWNAJ
+status_source: intenttree
 ---
 
 # PRD: Deployment and Runtime Modularization V1

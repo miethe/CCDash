@@ -51,6 +51,8 @@ files_affected:
   - deploy/runtime/frontend/default.conf.template
   - deploy/runtime/.env.example
   - docs/guides/containerized-deployment-quickstart.md
+itt_node_id: node_01M52TV60V3R251CBW4CGCNKM4
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

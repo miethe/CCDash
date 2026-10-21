@@ -6,6 +6,7 @@ created: "2026-04-02"
 parent_prd: "docs/project_plans/PRDs/features/cli-enablement.md"
 depends_on_spike: "docs/project_plans/spikes/cli-framework-and-packaging-spike.md"
 tags: ["adr", "cli", "typer", "python", "framework", "tooling"]
+itt_node_id: node_01M52TK8YJDM9G1MZB6CG33VFH
 ---
 
 # ADR-005: CLI Framework Selection - Typer

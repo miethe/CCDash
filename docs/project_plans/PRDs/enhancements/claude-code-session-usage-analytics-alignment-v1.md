@@ -75,6 +75,8 @@ contributors:
 complexity: High
 track: Standard
 timeline_estimate: 2-3 weeks across 6 phases
+itt_node_id: node_01M52TTCHV4442EMHBE0TSMRBC
+status_source: intenttree
 ---
 # PRD: Claude Code Session Usage Analytics Alignment V1
 

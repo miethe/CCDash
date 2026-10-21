@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: draft
+status: completed
 category: enhancements
 title: "PRD: Session Transcript Orchestration Intelligence V1"
 description: "Promote CCDash session transcripts into a navigable orchestration view with inferred titles, minimap navigation, workflow/team/task registers, effort transitions, plan metadata, and token usage rails."
@@ -72,6 +72,8 @@ changelog_required: true
 commit_refs: []
 pr_refs: []
 files_affected: []
+itt_node_id: node_01M52V6PZ028G5F3VHDG2SMZY5
+status_source: intenttree
 ---
 
 # PRD: Session Transcript Orchestration Intelligence V1

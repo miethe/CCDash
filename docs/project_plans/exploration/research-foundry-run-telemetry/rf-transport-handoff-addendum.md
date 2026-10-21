@@ -12,6 +12,7 @@ exploration_charter_ref: docs/project_plans/exploration/research-foundry-run-tel
 related_documents:
 - docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-feasibility-brief.md
 - docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-proposed-adr.md
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # RF Transport Handoff Addendum

@@ -42,6 +42,8 @@ context_files:
   - backend/config.py
   - backend/db/migrations.py
 implementation_plan_ref: null
+itt_node_id: node_01M52TYJ5YDXJ0Z2R5AQ1969G4
+status_source: intenttree
 ---
 
 # PRD: IntentTree Session Correlation API v1

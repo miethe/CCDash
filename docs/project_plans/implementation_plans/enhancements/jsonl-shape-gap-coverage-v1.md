@@ -107,6 +107,8 @@ wave_plan:
     - [P4, P5]
     - [P6]
     - [P7]
+itt_node_id: node_01M52TYMPA234BW539JT52PQMA
+status_source: intenttree
 ---
 
 # Implementation Plan: JSONL Shape Gap Coverage

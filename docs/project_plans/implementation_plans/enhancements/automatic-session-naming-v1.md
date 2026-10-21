@@ -4,7 +4,7 @@ schema_version: 2
 feature_slug: automatic-session-naming
 title: "Automatic Session Naming \u2014 implementation plan"
 doc_type: implementation_plan
-status: draft
+status: completed
 prd_ref: docs/project_plans/PRDs/enhancements/automatic-session-naming-v1.md
 plan_ref: null
 commit_refs:
@@ -118,6 +118,8 @@ wave_plan:
 updated: '2026-08-05'
 merge_commit: 0de559a
 merge_branch: main
+itt_node_id: node_01M52TKV5RKQSN3J6V1Q1BJY6K
+status_source: intenttree
 ---
 
 # Implementation Plan — Automatic Session Naming

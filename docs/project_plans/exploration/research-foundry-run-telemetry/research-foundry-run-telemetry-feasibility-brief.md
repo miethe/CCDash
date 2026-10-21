@@ -18,6 +18,7 @@ related_documents:
 - docs/project_plans/exploration/research-foundry-run-telemetry/research-foundry-run-telemetry-charter.md
 - docs/project_plans/exploration/research-foundry-run-telemetry/rf-transport-handoff-addendum.md
 - ../../../../research-foundry/docs/project_plans/design-specs/research_foundry_search_router_spec.md
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # Research Foundry Run Telemetry in CCDash — Feasibility Brief

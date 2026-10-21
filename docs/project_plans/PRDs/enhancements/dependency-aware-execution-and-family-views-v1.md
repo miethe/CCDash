@@ -69,6 +69,8 @@ context_files:
 - components/DocumentModal.tsx
 - types.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
+itt_node_id: node_01M52TVYGNSBD7M9WDBEGWV7HR
+status_source: intenttree
 ---
 # PRD: Dependency-Aware Execution and Family Views V1
 

@@ -202,6 +202,8 @@ wave_plan:
     - [P2]
     - [P3]
     - [P4]
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
+status_source: intenttree
 ---
 
 # Implementation Plan: Research Foundry Run Telemetry in CCDash

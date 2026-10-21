@@ -24,6 +24,8 @@ files_affected: []
 related_documents:
   - docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
   - docs/project_plans/vscode-bob-extension-technical-specification.md
+itt_node_id: node_01M52V8X7VXP2DBZR02FEZWDAP
+status_source: intenttree
 ---
 
 # PRD: VSCode CCDash Extension v1

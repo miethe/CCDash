@@ -3,7 +3,7 @@ schema_version: 2
 doc_type: prd
 title: "Remote CCDash Streaming + Entire.io Integration"
 description: "Run CCDash as a remote service that ingests session data from local developer daemons over a transport-neutral channel, and add Entire.io git-branch checkpoints as a first-class session source. Draft pending SPIKE findings."
-status: draft
+status: completed
 created: 2026-04-19
 updated: 2026-04-19
 feature_slug: remote-ccdash-streaming
@@ -29,6 +29,8 @@ findings_doc_ref: null
 commit_refs: []
 pr_refs: []
 files_affected: []
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
+status_source: intenttree
 ---
 
 # Remote CCDash Streaming + Entire.io Integration

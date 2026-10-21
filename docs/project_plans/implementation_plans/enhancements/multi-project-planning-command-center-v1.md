@@ -81,6 +81,8 @@ files_affected:
 - components/Planning/PlanningHomePage.tsx
 - components/Planning/PlanningAgentSessionBoard.tsx
 - components/ProjectSelector.tsx
+itt_node_id: node_01M52TZAK58C7M56D73X4K99PN
+status_source: intenttree
 ---
 
 # Implementation Plan: Multi-Project Planning Command Center V1

@@ -3,7 +3,7 @@ schema_version: "1.0"
 doc_type: prd
 title: "CCDash Persona Extract — universal persona memory capture"
 description: "Add a `ccdash persona extract` CLI verb that mines a single Claude Code session's JSONL post-session and emits high-signal persona-candidate lines into the universal persona memory bank's _inbox/capture.jsonl queue. Zero per-turn cost, additive third capture source for the agentic_meta_dev persona system (P4)."
-status: pending
+status: completed
 created: "2026-06-16"
 updated: "2026-06-16"
 feature_slug: "ccdash-persona-extract"
@@ -30,6 +30,8 @@ external_references:
   - /Users/miethe/dev/homelab/development/agentic_meta_dev/docs/persona-memory/00-PERSONA-MEMORY-DESIGN.md
   - /Users/miethe/dev/homelab/development/agentic_meta_dev/docs/agentic-operator/contracts/persona.md
   - ~/.claude/memory/MEMORY.md
+itt_node_id: node_01M52TQKRAW5YXJS0FXNRPJRYE
+status_source: intenttree
 ---
 
 # PRD: CCDash Persona Extract v1

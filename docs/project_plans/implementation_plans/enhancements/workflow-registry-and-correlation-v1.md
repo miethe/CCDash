@@ -70,6 +70,8 @@ related:
 - components/Layout.tsx
 plan_ref: workflow-registry-and-correlation-v1
 linked_sessions: []
+itt_node_id: node_01M52V96PTDHMG2VV96GCJ0JJX
+status_source: intenttree
 ---
 
 # Implementation Plan: Workflow Registry and Correlation Surface V1

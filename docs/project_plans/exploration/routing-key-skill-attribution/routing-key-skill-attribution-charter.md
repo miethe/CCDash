@@ -86,6 +86,7 @@ related_documents:
 - docs/project_plans/exploration/routing-feedback-success-signal/routing-feedback-success-signal-synthesis.md
 - docs/project_plans/design-specs/routing-feedback-router-merge-handoff.md
 updated: '2026-08-03'
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Routing Key Skill Attribution — Exploration Charter

@@ -14,6 +14,7 @@ prd_ref: null
 plan_ref: docs/project_plans/implementation_plans/features/hosted-llm-anthropic-ica-lane-v1.md
 intent_ref: null
 epic_ref: null
+itt_node_id: node_01KZEXTPYXYB4TKGFE111ZRXPE
 ---
 
 # Anthropic/ICA lane + egress consent gating — Human Brief

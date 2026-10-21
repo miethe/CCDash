@@ -54,6 +54,8 @@ references:
     - docs/project_plans/PRDs/enhancements/planning-agent-session-board-v1.md
     - docs/project_plans/PRDs/enhancements/multi-project-planning-command-center-v1.md
 effort_estimate: "~21–27 pts"
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

@@ -187,6 +187,8 @@ wave_plan:
   - - P3
   - - P4
   - - P7
+itt_node_id: node_01M52TPYJ22ZX8SXPWVRR7G32B
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Frontend Data Layer Refactor v1

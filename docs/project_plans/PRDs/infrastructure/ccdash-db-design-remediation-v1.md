@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: prd
 title: CCDash DB Design Remediation
-status: approved
+status: completed
 created: '2026-06-03'
 updated: '2026-06-03'
 feature_slug: ccdash-db-design-remediation
@@ -33,6 +33,8 @@ tags:
 - registry
 - migration
 - reliability
+itt_node_id: node_01M52TP9VV47S5Z5SNA08ZJD1T
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

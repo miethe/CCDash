@@ -12,6 +12,7 @@ parent_spike: docs/project_plans/spikes/entire-io-integration.md
 related_documents:
   - docs/project_plans/adrs/adr-012-entire-session-identity-unification.md
   - docs/project_plans/adrs/adr-009-session-ingest-source-port-and-cursor-table.md
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
 ---
 
 # Coexistence & Dedup Policy — Entire Sessions Alongside Native Source-of-Truth

@@ -85,6 +85,7 @@ wave_plan:
       gate_lens: [security]
       gate_lens_reason: irreversible-outward
 source_artifact_id: srcart_01KZP8ZDFQ4XWVPBH5N1PRQC4D
+status_source: intenttree
 ---
 
 # Implementation Plan — Anthropic/ICA lane + egress consent gating

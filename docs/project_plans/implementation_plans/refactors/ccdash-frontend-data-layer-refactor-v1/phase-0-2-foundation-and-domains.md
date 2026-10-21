@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "CCDash FE Data Layer Refactor — P0–P2: Foundation, Sessions Slice & Remaining Domains"
-status: draft
+status: completed
 created: 2026-05-28
 updated: 2026-05-28
 phase: "0-2"
@@ -18,6 +18,8 @@ exit_criteria:
   - "P1: Sessions on TQ; one cold-load session fetch (was 2); back-nav no spinner; useData() sessions facade intact"
   - "P2: All 6 entity domains on TQ; tasks/features paginated; limit=5000 gone from entity contexts; runtime smoke PlanCatalog + ProjectBoard"
 integration_owner: null
+itt_node_id: node_01M52TPYJ22ZX8SXPWVRR7G32B
+status_source: intenttree
 ---
 
 # Phase 0–2: Foundation, Sessions Slice & Remaining Domains

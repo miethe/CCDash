@@ -2,7 +2,7 @@
 title: "Phase 4: Hardening + docs + deferred specs"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-07-21
 updated: 2026-07-21
 feature_slug: "research-foundry-run-telemetry"
@@ -47,6 +47,8 @@ files_affected:
   - docs/project_plans/design-specs/rf-claim-ledger-panel.md
   - docs/project_plans/design-specs/rf-skillmeat-promotion-panel.md
   - docs/project_plans/design-specs/rf-intenttree-intent-id-resolution.md
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
+status_source: intenttree
 ---
 
 # Phase 4: Hardening + docs + deferred specs

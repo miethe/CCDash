@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: implementation_plan
 title: CCDash Runtime Performance Hardening v1 - Implementation Plan
-status: completed
+status: in-progress
 created: 2026-04-20
 updated: '2026-04-27'
 feature_slug: runtime-performance-hardening
@@ -88,6 +88,8 @@ files_affected:
 - docs/project_plans/design-specs/agent-query-cache-lru-v1.md
 - docs/project_plans/design-specs/transcript-fetch-on-demand-v1.md
 - lib/featureFlags.ts
+itt_node_id: node_01M52V5YJETHAJ71FRTE38M2BC
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Runtime Performance Hardening v1

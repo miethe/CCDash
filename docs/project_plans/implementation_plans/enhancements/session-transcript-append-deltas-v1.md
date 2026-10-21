@@ -80,6 +80,8 @@ context_files:
 request_log_id: ''
 commits: []
 prs: []
+itt_node_id: node_01M52V6GG1A3PYBJWE2Q5N75NR
+status_source: intenttree
 ---
 
 # Implementation Plan: Session Transcript Append Deltas V1

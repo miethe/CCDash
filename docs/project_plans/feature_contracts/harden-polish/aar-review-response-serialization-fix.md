@@ -42,6 +42,8 @@ files_affected:
   - backend/application/services/agent_queries/cache.py
   - backend/tests/test_client_v1_aar_review.py
   - backend/tests/test_query_cache.py
+itt_node_id: node_01M52TK60GNV9KHD86VZ8R05VN
+status_source: intenttree
 ---
 
 # Feature Contract: Fix GET /api/v1/project/aar-review 500 (response-serialization boundary)

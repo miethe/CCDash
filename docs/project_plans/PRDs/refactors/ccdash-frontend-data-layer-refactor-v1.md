@@ -2,7 +2,7 @@
 title: "PRD: CCDash Frontend Data Layer Refactor v1"
 schema_version: 2
 doc_type: prd
-status: draft
+status: completed
 created: 2026-05-28
 updated: 2026-05-28
 feature_slug: "ccdash-frontend-data-layer-refactor"
@@ -48,6 +48,8 @@ files_affected:
   - App.tsx
   - backend/routers/api.py
   - backend/routers/client_v1.py
+itt_node_id: node_01M52TPYJ22ZX8SXPWVRR7G32B
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

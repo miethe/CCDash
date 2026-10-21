@@ -8,6 +8,7 @@ depends_on_spike: "docs/project_plans/spikes/hosted-llm-provider-strategy.md"
 supersedes: null
 related_adrs: ["adr-016-provider-agnostic-llm-client-seam-over-httpx.md", "adr-018-redaction-provenance-carried-by-type.md"]
 tags: ["adr", "llm", "hosted-egress", "anthropic", "ica", "provider-strategy"]
+itt_node_id: node_01M52TKDYCF6PVX25A1V226X0P
 ---
 
 # ADR-017: Anthropic Wire Format Is the Canonical Hosted Lane; ICA Is the Default Endpoint

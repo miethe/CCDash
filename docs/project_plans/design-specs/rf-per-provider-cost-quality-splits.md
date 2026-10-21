@@ -36,6 +36,7 @@ tags:
   - provider-economics
 audience: developers
 category: design-spec
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # DF-001: Per-Provider Cost/Quality Splits for Research Foundry Run Telemetry

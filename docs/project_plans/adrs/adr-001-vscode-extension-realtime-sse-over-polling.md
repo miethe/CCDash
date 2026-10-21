@@ -5,6 +5,7 @@ status: "accepted"
 created: "2026-04-02"
 parent_prd: "docs/project_plans/PRDs/features/vscode-ccdash-extension-v1.md"
 tags: ["adr", "sse", "realtime", "vscode", "extension"]
+itt_node_id: node_01M52TK7B1G8KFT471ZYH912ZX
 ---
 
 # ADR-001: SSE for Real-time Updates in VSCode Extension

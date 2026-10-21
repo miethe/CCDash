@@ -23,6 +23,7 @@ research_questions:
   - "RQ-6: What are the failure modes and ops posture? Daemon disconnected, server 5xx, partial batch success, schema skew between daemon and server. Propose retry/backoff, dead-letter behavior, and operator-visible health signals (extend `/api/health`)."
   - "RQ-7: What does the frontend need? 'Session source' attribution in the UI, daemon health indicator, live-update cadence (polling vs SSE subscription), handling of historical vs live sessions."
   - "RQ-8: What is the migration story for existing local-mode users? No-op by default? Opt-in flag? Dual-source (filesystem + ingest) support during transition?"
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
 ---
 
 # SPIKE Charter: Remote CCDash Operation + Local Daemon Session Streaming

@@ -8,6 +8,7 @@ feature_slug: ccdash-planning-control-plane-v1
 report_category: audit
 created: 2026-04-17
 updated: 2026-04-17
+itt_node_id: node_01M52TQQM5BFYV1VGSH6S10HB5
 ---
 
 # Phase 7 Extraction Manifest — Planning UI Consolidation

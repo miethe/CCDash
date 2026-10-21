@@ -4,6 +4,7 @@ confidence: 0.78
 conclusion: "The §16.2 panel set does NOT justify a top-level tab — a 4-panel 'Research / Provider Economics' tab inside the existing AnalyticsDashboard makes the cost/quality evidence loop legible, and matches the just-emerging embedded-analytics pattern."
 surface_recommendation: extend_existing
 mvp_panel_count: 4
+itt_node_id: node_01M52V8VV31R9CE58T8HB766K4
 ---
 
 # Value Spike — RF Run Telemetry Visualization Slice

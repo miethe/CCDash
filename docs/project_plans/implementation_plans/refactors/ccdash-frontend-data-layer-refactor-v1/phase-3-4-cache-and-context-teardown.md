@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "CCDash FE Data Layer Refactor — P3–P4: Cache Consolidation & Context Teardown"
-status: draft
+status: completed
 created: 2026-05-28
 updated: 2026-05-28
 phase: "3-4"
@@ -17,6 +17,8 @@ exit_criteria:
   - "P3: planning.ts LRU Maps deleted; featureSurfaceCache.ts + featureCacheBus.ts deleted; useFeatureSurface public API preserved via TQ-backed adapter; FeatureSurfaceRegressionMatrix.test green"
   - "P4: AppEntityDataContext deleted; AppRuntimeContext client-state-only; Dashboard cold load ≤2 requests; all 15 screens individually migrated and runtime-smoked; contexts client-state-only; mutations optimistic via TQ; karen milestone"
 integration_owner: ui-engineer-enhanced
+itt_node_id: node_01M52TPYJ22ZX8SXPWVRR7G32B
+status_source: intenttree
 ---
 
 # Phase 3–4: Cache Consolidation & Context Teardown

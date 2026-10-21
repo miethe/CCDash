@@ -40,6 +40,8 @@ related_documents:
 - docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
 - docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1.md
 - docs/guides/cli-user-guide.md
+itt_node_id: node_01M52TS3C3RW40G6G7XFAQ482A
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Standalone Global CLI

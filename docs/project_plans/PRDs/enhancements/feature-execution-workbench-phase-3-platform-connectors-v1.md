@@ -33,6 +33,8 @@ contributors: [ai-agents]
 complexity: High
 track: Phase 3
 timeline_estimate: "2-3 weeks"
+itt_node_id: node_01M52TXKYQTZ94WHPXY62FGBRB
+status_source: intenttree
 ---
 
 # PRD: Feature Execution Workbench Phase 3 - Platform Connectors

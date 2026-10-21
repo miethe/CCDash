@@ -24,6 +24,7 @@ related_documents:
   - "docs/project_plans/designs/ccdash-planning/README.md"
   - "docs/project_plans/designs/ccdash-planning/project/CLAUDE.md"
 tags: [planning, live-updates, streaming, roster]
+itt_node_id: node_01M52TR4EJEF2D7YFEREWBE2DQ
 ---
 
 # Live Agent SSE Streaming v1

@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: prd
 title: "Automatic Session Naming — PRD"
-status: draft
+status: completed
 created: 2026-08-04
 updated: 2026-08-04
 feature_slug: automatic-session-naming
@@ -45,6 +45,8 @@ success_metrics: []
 agent_title: "Automatic session naming (provider ingest + deterministic exclusion + dual-backend derived-naming worker)"
 agent_summary: "Stop discarding provider-persisted session titles already present in Claude Code and Codex JSONL, add deterministic exclusion for structurally name-less sessions, and add a worker-side derived-naming job with a local-default / hosted-opt-in backend split."
 required_artifacts: []
+itt_node_id: node_01M52TKV5RKQSN3J6V1Q1BJY6K
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata
