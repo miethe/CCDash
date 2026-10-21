@@ -2,7 +2,7 @@
 title: "Phase 1: Contract & Envelope Foundations"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-07-29
 updated: 2026-07-29
 feature_slug: "proof-to-routing-loop"
@@ -46,6 +46,8 @@ files_affected:
   - backend/routers/client_v1.py
   - backend/config.py
   - backend/tests/test_routing_feedback_contract_parity.py
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
+status_source: intenttree
 ---
 
 # Phase 1: Contract & Envelope Foundations

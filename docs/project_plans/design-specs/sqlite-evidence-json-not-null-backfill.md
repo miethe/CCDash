@@ -21,6 +21,7 @@ tags:
   - schema-drift
   - column-parity
 audience: developers
+itt_node_id: node_01M52TP9VV47S5Z5SNA08ZJD1T
 ---
 
 # Design Spec: SQLite `evidence_json` NOT NULL Backfill (DRIFT-004/005/006)

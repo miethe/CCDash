@@ -11,6 +11,7 @@ exploration_charter_ref: docs/project_plans/exploration/ccdash-automated-aar-rev
 feasibility: feasible-with-constraints
 confidence: 0.82
 dealkiller_correlation: exists
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Tech Leg — CCDash Data & Query-Surface Feasibility

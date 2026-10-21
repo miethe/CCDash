@@ -2,7 +2,7 @@
 title: CCDash Planning Reskin & Enhancement Wave v2
 schema_version: 2
 doc_type: prd
-status: completed
+status: in-progress
 created: 2026-04-20
 updated: '2026-04-26'
 feature_slug: ccdash-planning-reskin-v2
@@ -59,6 +59,8 @@ deferred_items_spec_refs:
 - docs/project_plans/design-specs/planning-lightmode-tokens-v1.md
 - docs/project_plans/design-specs/planning-graph-virtualization-v1.md
 findings_doc_ref: null
+itt_node_id: node_01M52TR4EJEF2D7YFEREWBE2DQ
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

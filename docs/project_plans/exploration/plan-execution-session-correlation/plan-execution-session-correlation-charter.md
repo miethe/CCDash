@@ -72,6 +72,7 @@ output_artifacts: []
 related_documents:
 - docs/project_plans/reports/feature-retro-linkage-gap-analysis.md
 updated: '2026-07-26'
+itt_node_id: node_01M52TYJ5YDXJ0Z2R5AQ1969G4
 ---
 
 # Plan-Execution ↔ Session Correlation & Frontmatter Enrichment — Exploration Charter

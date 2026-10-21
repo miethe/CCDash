@@ -68,6 +68,8 @@ context_files:
 - components/ProjectBoard.tsx
 - services/featureSurface.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/refactors/planning-forensics-boundary-extraction-v1.md
+itt_node_id: node_01M52V1YCT9YNKM6QYFN58CRWE
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

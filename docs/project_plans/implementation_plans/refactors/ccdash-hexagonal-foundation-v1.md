@@ -65,6 +65,8 @@ context_files:
 - backend/routers/execution.py
 - backend/routers/integrations.py
 - contexts/DataContext.tsx
+itt_node_id: node_01M52TQ96WBBTKMB803KG2RGYS
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Hexagonal Foundation V1

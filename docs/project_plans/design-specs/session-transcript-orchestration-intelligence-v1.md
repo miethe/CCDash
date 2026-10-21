@@ -30,6 +30,7 @@ related_documents:
   - docs/project_plans/implementation_plans/enhancements/planning-agent-session-board-v1.md
   - docs/project_plans/implementation_plans/enhancements/session-transcript-append-deltas-v1.md
 prd_ref: docs/project_plans/PRDs/enhancements/session-transcript-orchestration-intelligence-v1.md
+itt_node_id: node_01M52V6PZ028G5F3VHDG2SMZY5
 ---
 
 # Session Transcript Orchestration Intelligence V1

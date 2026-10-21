@@ -61,6 +61,7 @@ asset_refs: []
 owner: platform-engineering
 owners: [platform-engineering, frontend-engineering]
 contributors: [codex]
+itt_node_id: node_01M52V6GG1A3PYBJWE2Q5N75NR
 ---
 
 # Design Spec: Session Transcript Append Deltas V1

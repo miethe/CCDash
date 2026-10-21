@@ -7,6 +7,7 @@ updated: "2026-04-11"
 version: "1.0"
 authors: ["Codex"]
 tags: ["skill", "bob", "shell", "delegation", "agent", "cli"]
+itt_node_id: node_01M52TM17D97FPQGDX5MP6H0CR
 ---
 
 # Bob Shell Delegation Skill - Technical Specification

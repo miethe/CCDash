@@ -24,6 +24,7 @@ description: |
   each with its disposition, the reason it was NOT built in v1, and what would have to
   become true for it to be picked up. Authored at M3 per the plan's "Deferred items"
   table so the deferrals are a record rather than an omission.
+itt_node_id: node_01KZKZC504A3G77J6Y5VGNEDNA
 ---
 
 # Deferred items — provider/channel/credential entities v1

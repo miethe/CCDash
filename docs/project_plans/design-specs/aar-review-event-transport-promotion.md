@@ -28,6 +28,7 @@ description: |
   implemented if a real trigger event materializes. Addresses open question OQ-6 and
   deferred item D5 from the PRD.
 schema_version: 2
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Design Spec: AAR Review Event Transport Promotion (OQ-6 / D5)

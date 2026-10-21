@@ -2,7 +2,7 @@
 title: "Phase 3: Rollup Compute Service"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: completed
 created: 2026-07-29
 updated: 2026-07-29
 feature_slug: "proof-to-routing-loop"
@@ -41,6 +41,8 @@ files_affected:
   - backend/application/services/agent_queries/models.py
   - backend/tests/test_routing_rollup_determinism.py
   - backend/tests/test_routing_rollup_no_llm_imports.py
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
+status_source: intenttree
 ---
 
 # Phase 3: Rollup Compute Service

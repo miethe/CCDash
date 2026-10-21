@@ -7,7 +7,7 @@ description: "Attribute a parent session's detected skill to its subagent sessio
   \ skill is never mistaken for an observed one. Session-detail correctness and per-skill\
   \ analytics only \u2014 explicitly not a routing-feedback unblocker."
 owner: nick
-status: completed-pending-verification
+status: completed
 created: '2026-08-03'
 updated: '2026-08-03'
 feature_slug: subagent-skill-inheritance
@@ -34,6 +34,8 @@ commit_refs:
 - cf44ac5
 - 848deae
 - fb9f65d
+itt_node_id: node_01M52V7B0RN3Z6C8FAZC1705KZ
+status_source: intenttree
 ---
 
 # Subagent Skill Inheritance — Feature Contract

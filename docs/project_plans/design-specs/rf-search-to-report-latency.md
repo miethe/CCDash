@@ -16,6 +16,7 @@ related_documents:
   - docs/project_plans/design-specs/rf-per-provider-cost-quality-splits.md
   - docs/project_plans/design-specs/rf-useful-source-rate-by-domain.md
   - docs/project_plans/design-specs/rf-extraction-failure-rate-by-extractor.md
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # Research Foundry Search→Report Latency Panel

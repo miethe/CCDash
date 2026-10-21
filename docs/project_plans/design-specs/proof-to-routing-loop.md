@@ -34,6 +34,7 @@ related_documents:
   # CROSS-REPO CONSUMERS (not specified here — named only):
   #   - delegation-router (MeatySkills repo, branch `ibm-main`) — produces immutable RoutingRecords; would ingest this rollup as a prior
   #   - ~/.claude/config/model-registry.yaml (`scores:` per model) — the §1.5 manual scorecard this feeds as an empirical layer
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Proof → Routing Feedback Loop

@@ -71,6 +71,7 @@ verdict_rationale: "All three legs converged independently at/above the 0.7 bar 
   machinery may be built speculatively in parallel."
 output_artifacts: []
 updated: '2026-07-23'
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Proof → Routing Feedback Loop — Exploration Charter

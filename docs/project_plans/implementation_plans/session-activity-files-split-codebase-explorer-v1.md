@@ -36,6 +36,8 @@ contributors: [ai-agents]
 complexity: High
 track: Standard
 timeline_estimate: "3-5 days across 5 phases"
+itt_node_id: node_01M52V61KYXH38CF10110PY387
+status_source: intenttree
 ---
 
 # Implementation Plan: Session Activity/Files Split + Codebase Explorer V1

@@ -50,6 +50,8 @@ wave_plan:
         - "legitimately idle-and-quiet (no ticks, no pending work) is NOT flagged (AC4b)."
         - "/api/health/detail's watcher probe surfaces the new per-watcher progress/staleness fields, with an explicit fallback when absent (AC5)."
       gate_lens: [validator]
+itt_node_id: node_01M52TRK3DHWCEB1MWCAV53HCG
+status_source: intenttree
 ---
 
 # Implementation Plan — CCDash relay loop resilience

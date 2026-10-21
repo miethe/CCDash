@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 11 — Launch-time profile/effort capture (fast-follow)"
-status: draft
+status: completed
 created: 2026-06-10
 updated: 2026-06-10
 phase: 11
@@ -26,6 +26,8 @@ exit_criteria:
   - "Frontend fallbacks for profile/effort/launcher/model-variant render without crash when fields are absent or null (R-P2)."
   - "Runtime smoke for SessionInspector recorded against a live dev server (R-P4); not substitutable by unit-test pass."
   - "task-completion-validator sign-off."
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Phase 11 — Launch-time profile/effort capture (fast-follow)

@@ -3,6 +3,7 @@ leg: correlation-crux
 confidence: 0.78
 feasibility: feasible-with-constraints
 deal_killer: conditional
+itt_node_id: node_01M52TVGM620FCY0ZZDA6M14Z9
 ---
 
 # Correlation Crux — Level-Granular Session Correlation & Performance Signals

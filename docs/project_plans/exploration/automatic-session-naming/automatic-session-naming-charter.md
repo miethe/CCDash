@@ -68,6 +68,7 @@ output_artifacts:
 - docs/project_plans/exploration/automatic-session-naming/spikes/derived-naming-spike.md
 - docs/project_plans/exploration/automatic-session-naming/automatic-session-naming-feasibility-brief.md
 updated: '2026-08-04'
+itt_node_id: node_01M52TKV5RKQSN3J6V1Q1BJY6K
 ---
 
 # Automatic Session Naming — Exploration Charter

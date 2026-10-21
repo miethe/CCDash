@@ -42,6 +42,8 @@ tags:
 - no-db-writes
 related_documents:
 - docs/project_plans/PRDs/features/ccdash-persona-extract-v1.md
+itt_node_id: node_01M52TQKRAW5YXJS0FXNRPJRYE
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Persona Extract v1

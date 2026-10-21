@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "CCDash Core Remediation v1 — Phases 1-3: Session Access (Transcript Service, REST v1, MCP/CLI)"
-status: draft
+status: completed
 created: 2026-06-10
 updated: 2026-06-10
 phase: 1
@@ -18,6 +18,8 @@ exit_criteria:
   - "agent_queries/session_detail.py returns transcript + subagents + tokens + artifacts + links for ANY project_id via include-flags and cursor pagination; redaction unit-tested; no duplicate transcript reader introduced."
   - "GET /api/v1/sessions/{id}/detail?project_id=<id> returns full detail incl. transcript for a NON-active project; envelope pinned by contract test; redaction runs before serialization."
   - "MCP session_search/session_detail/session_transcript + repo-CLI session group return full detail for a non-active project; MCP/CLI/REST parity test green; MCP payload-size/chunk budget defined and documented; SKILL.md updated; runtime smoke recorded."
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Implementation Plan — Phases 1-3: Session Access

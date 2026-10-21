@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "CCDash Core Remediation v1 — Phase 4: Live Link Freshness"
-status: draft
+status: completed
 created: 2026-06-10
 updated: 2026-06-10
 phase: 4
@@ -22,6 +22,8 @@ exit_criteria:
   - "Family-scoped rebuild: only the affected session family's links are recomputed on a watcher event, not the whole project graph."
   - "CCDASH_INCREMENTAL_LINK_REBUILD_ENABLED defaults True in backend/config.py; existing suites pass with new default."
   - "task-completion-validator sign-off; causal-link proof reviewed (ultrathink-debugger)."
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Phase 4: Live Link Freshness

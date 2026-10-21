@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 7: Documentation Finalization + Deferred-Items Design Specs"
-status: draft
+status: completed
 created: 2026-07-22
 phase: 7
 phase_title: "Documentation Finalization + Deferred-Items Design Specs"
@@ -17,6 +17,8 @@ exit_criteria:
   explicit N/A rationale.
 - CHANGELOG [Unreleased] entry present.
 - ac-coverage-report + validate-phase-completion clean.
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
+status_source: intenttree
 ---
 
 # Phase 7: Documentation Finalization + Deferred-Items Design Specs

@@ -10,6 +10,7 @@ leg: ux-value
 created: 2026-06-04
 updated: 2026-06-04
 charter_ref: docs/project_plans/exploration/branch-aware-planning-intelligence/branch-aware-planning-intelligence-charter.md
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
 ---
 
 # Branch-Aware Planning Intelligence — UX Value & Shape Findings

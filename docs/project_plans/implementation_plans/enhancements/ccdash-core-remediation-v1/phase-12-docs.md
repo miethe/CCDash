@@ -23,6 +23,8 @@ exit_criteria:
   - "analytics.py:553 per-lifecycle-event in+out sum verified NOT surfaced as a workload total in any dashboard panel."
   - "Runtime smoke for all UI-touching phases (3, 5, 6, 11) recorded or re-executed (R-P4)."
   - "karen end-of-feature pass signed off; task-completion-validator pass on this phase."
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Phase 12: Docs Finalization + CHANGELOG + karen

@@ -61,6 +61,8 @@ files_affected:
   - components/FeatureExecutionWorkbench.tsx
   - components/CodebaseExplorer.tsx
   - components/BlockingFeatureList.tsx
+itt_node_id: node_01M52TWQN5SWX75QND89B4RKVB
+status_source: intenttree
 ---
 
 # Implementation Plan: Document Visual Taxonomy

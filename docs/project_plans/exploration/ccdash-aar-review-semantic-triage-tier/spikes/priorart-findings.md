@@ -7,6 +7,7 @@ feature_slug: ccdash-aar-review-semantic-triage-tier
 assigned_to: ica-executor
 updated: 2026-07-23
 confidence: 0.82
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # Prior Art Findings — OQ-E (Does ARC already own the capable-model rung?)

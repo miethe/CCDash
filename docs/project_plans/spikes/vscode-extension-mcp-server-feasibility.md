@@ -6,6 +6,7 @@ created: "2026-04-02"
 time_box: "3 days"
 parent_prd: "docs/project_plans/PRDs/features/vscode-ccdash-extension-v1.md"
 tags: ["spike", "mcp", "claude-code", "vscode", "extension"]
+itt_node_id: node_01M52V8XSMZ71JYBCFJR5J5PT0
 ---
 
 # SPIKE: CCDash MCP Server Integration Feasibility

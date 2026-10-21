@@ -2,6 +2,7 @@
 leg: hierarchy-ingestion
 confidence: 0.72
 feasibility: feasible-with-constraints
+itt_node_id: node_01M52TY9ZXJASQK3JXVE65E7TH
 ---
 
 # Hierarchy Ingestion Findings — Wave→Gate→Phase→Task→AC

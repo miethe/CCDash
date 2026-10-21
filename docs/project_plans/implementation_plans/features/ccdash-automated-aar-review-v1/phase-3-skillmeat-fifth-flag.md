@@ -2,7 +2,7 @@
 schema_version: 2
 doc_type: phase_plan
 title: "Phase 3: SkillMeat Artifact-Review Linkage + 5th Flag"
-status: draft
+status: completed
 created: 2026-07-22
 phase: 3
 phase_title: "SkillMeat Artifact-Review Linkage + 5th Flag"
@@ -16,6 +16,8 @@ exit_criteria:
 - SkillMeat linkage is deterministic and strictly read-only.
 - Recommendation evidence is attached to flag output; no SkillMeat catalog mutation exists anywhere
   in the diff.
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
+status_source: intenttree
 ---
 
 # Phase 3: SkillMeat Artifact-Review Linkage + 5th Flag

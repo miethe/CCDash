@@ -63,6 +63,8 @@ architecture_summary: Chunked NDJSON over HTTPS POST to /api/v1/ingest/sessions 
   via AuthContext.project_id (ADR-010).
 owner: null
 contributors: []
+itt_node_id: node_01M52V45W5WB6TRGJEW97BFDW9
+status_source: intenttree
 ---
 
 # Remote CCDash Streaming + Entire.io Integration — Implementation Plan

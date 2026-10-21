@@ -93,6 +93,8 @@ context_files:
 - backend/routers/execution.py
 - backend/routers/live.py
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/planning-command-center-v1.md
+itt_node_id: node_01M52V1QWYR3KPAJA6FC4V3QAX
+status_source: intenttree
 ---
 
 # PRD: Planning Command Center V1

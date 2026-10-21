@@ -46,6 +46,8 @@ contributors: [ai-agents]
 complexity: High
 track: Phase 2
 timeline_estimate: "2-3 weeks across 7 phases"
+itt_node_id: node_01M52TXEGR09KA5PH57DM87T4T
+status_source: intenttree
 ---
 
 # Implementation Plan: Feature Execution Workbench Phase 2 - Local Terminal Execution

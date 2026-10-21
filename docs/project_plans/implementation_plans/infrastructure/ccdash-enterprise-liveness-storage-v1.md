@@ -141,6 +141,8 @@ acceptance_criteria:
 - 'Phase 1 exit gate: entity_graph 1 commit/rebuild'
 definition_of_done: 'Both phase quality gates pass: Feature exit gate is P0-013 CI e2e smoke passing; Phase 1 exit requires measurable DB-size/row-count/query-count assertions (>=3 GB reclaimed; analytics_entries ~50x reduction; _capture_analytics single-digit queries/snapshot; entity_graph 1 commit/rebuild). task-completion-validator per phase; karen at feature end.'
 planning_maturity: shipped
+itt_node_id: node_01KVTHFST6QK9CWSEWKAYWP67D
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash Enterprise Liveness Hotfix & Storage Hygiene

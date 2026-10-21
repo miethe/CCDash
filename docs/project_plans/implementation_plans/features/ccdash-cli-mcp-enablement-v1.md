@@ -44,6 +44,8 @@ related_documents:
   - docs/project_plans/ccdash-cli-mcp-enablement-plan.md
   - docs/project_plans/spikes/mcp-server-implementation-spike.md
   - docs/project_plans/spikes/cli-framework-and-packaging-spike.md
+itt_node_id: node_01M52TN7GYRRF1FVP8HYPFED23
+status_source: intenttree
 ---
 
 # Implementation Plan: CCDash CLI and MCP Enablement

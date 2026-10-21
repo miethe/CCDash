@@ -21,6 +21,8 @@ plan_ref: null
 commit_refs: []
 pr_refs: []
 files_affected: []
+itt_node_id: node_01M52V63A8ZSM5E3TN5RRYR99T
+status_source: intenttree
 ---
 
 # Feature Contract: Session Child-Writer project_id Threading

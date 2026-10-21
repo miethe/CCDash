@@ -14,6 +14,8 @@ related:
 - backend/parsers/
 - docs/project_plans/adrs/adr-006-db-authoritative-project-registry.md
 updated: '2026-06-15'
+itt_node_id: node_01M52TQF9MS344FDEY7QH2YFY8
+status_source: intenttree
 ---
 
 # Offline-Capable CCDash CLI — Direct-from-Source Session Access

@@ -39,6 +39,7 @@ updated: 2026-05-28
 target_release: ""
 
 tags: [human-brief, tanstack-query, data-layer, refactor, performance]
+itt_node_id: node_01M52TPYJ22ZX8SXPWVRR7G32B
 ---
 
 # CCDash Frontend Data Layer Refactor — Human Brief

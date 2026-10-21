@@ -30,6 +30,8 @@ related:
 - docs/project_plans/PRDs/enhancements/enterprise-live-session-ingest-v1.md
 - docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
 - docs/project_plans/PRDs/refactors/deployment-runtime-modularization-v1.md
+itt_node_id: node_01M52TWRPB0AQ1JN4EMMTQ6QZ9
+status_source: intenttree
 ---
 
 # Implementation Plan: Enterprise Live Session Ingest V1

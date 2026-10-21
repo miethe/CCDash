@@ -2,7 +2,7 @@
 title: 'Implementation Plan: Branch-Aware Planning Intelligence v1'
 schema_version: 2
 doc_type: implementation_plan
-status: completed
+status: in-progress
 created: '2026-06-04'
 updated: '2026-06-04'
 feature_slug: branch-aware-planning-intelligence
@@ -179,6 +179,8 @@ wave_plan:
   - - P3
   - - P4
   - - P5
+itt_node_id: node_01KVTHBWF809BXV9F62BE0FGSJ
+status_source: intenttree
 ---
 
 # Implementation Plan: Branch-Aware Planning Intelligence v1

@@ -48,6 +48,8 @@ contributors: [ai-agents]
 complexity: High
 track: Standard
 timeline_estimate: "2-3 weeks across 5 phases"
+itt_node_id: node_01M52TTBWSF4GGKTHF9MJGY9QF
+status_source: intenttree
 ---
 
 # PRD: Claude Code Session Thread Scope Rollups V1

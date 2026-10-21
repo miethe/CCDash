@@ -55,6 +55,7 @@ related_documents:
   - .claude/worknotes/ccdash-runtime-deploy-remediation/w2-watcher-fanout-design.md
   - docs/project_plans/implementation_plans/enhancements/ccdash-runtime-deploy-remediation-v1.md
   - docs/project_plans/design-specs/container-project-onboarding-and-watchers-v1.md
+itt_node_id: node_01M52TRP995AP292548SQQRS04
 ---
 
 # D-002: W2 Dynamic Watcher Rebind — Hot-Reload Signaling Design

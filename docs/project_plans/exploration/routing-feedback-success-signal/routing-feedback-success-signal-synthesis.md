@@ -7,6 +7,7 @@ created: 2026-08-03
 feature_slug: routing-feedback-success-signal
 verdict: conditional
 parent_charter: docs/project_plans/exploration/routing-feedback-success-signal/routing-feedback-success-signal-charter.md
+itt_node_id: node_01M52V2K9Y31XP10W4XZAASAGQ
 ---
 
 # Routing Feedback Success Signal — Synthesis & Verdict

@@ -57,6 +57,8 @@ files_affected:
 - backend/services/codebase_explorer.py
 - vite.config.ts
 - package.json
+itt_node_id: node_01M52TTN5E74MMXCV6X91SZAX3
+status_source: intenttree
 ---
 
 # Implementation Plan: Code Health Cleanup v1

@@ -19,6 +19,7 @@ complexity: medium
 estimated_research_time: "4h"
 related_documents:
   - docs/project_plans/ccdash-cli-mcp-enablement-plan.md
+itt_node_id: node_01M52TN722NHGNFATXM3H0XE3G
 ---
 
 # CLI Framework and Packaging - SPIKE

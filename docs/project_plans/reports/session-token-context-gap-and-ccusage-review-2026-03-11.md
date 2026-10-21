@@ -37,6 +37,7 @@ recommendations:
   - Add explicit cost semantics: reported cost, recalculated cost, and confidence/calibration status.
   - Add pricing validation and mismatch audit workflows before changing default cost semantics.
   - Consider a billing-block or burn-rate view for long Claude Code sessions.
+itt_node_id: node_01M52V6FX1T9MF2VWY05DQ3VG5
 ---
 
 # Session Token Context Gap And ccusage Review

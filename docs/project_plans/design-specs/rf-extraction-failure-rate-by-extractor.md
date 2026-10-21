@@ -23,6 +23,7 @@ related_documents:
   - docs/project_plans/implementation_plans/features/research-foundry-run-telemetry-v1.md
   - docs/project_plans/implementation_plans/features/research-foundry-run-telemetry-v1/phase-4-hardening-docs.md
   - docs/project_plans/PRDs/features/research-foundry-run-telemetry-v1.md
+itt_node_id: node_01M52V5H40QTJ3ZMTG7W6VVH21
 ---
 
 # Research Foundry Run Telemetry: Extraction Failure Rate by Extractor

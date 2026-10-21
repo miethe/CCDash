@@ -53,6 +53,8 @@ context_files:
   - components/TestVisualizer/hooks.ts
   - components/OpsPanel.tsx
   - services/execution.ts
+itt_node_id: node_01M52V78JXKQ9FGBRA4E2X08QP
+status_source: intenttree
 ---
 
 # Implementation Plan: SSE Live Update Platform V1

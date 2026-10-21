@@ -68,6 +68,7 @@ verdict_rationale: 'All four legs support go (tech 0.82, reuse 0.82, scope 0.80,
   gates. Human sign-off: approved go + Tier 1 MVP handoff 2026-07-21.'
 output_artifacts: []
 updated: '2026-07-21'
+itt_node_id: node_01M52TMHV8PS6DWQVQTDEHC2ZT
 ---
 
 # CCDash Automated AAR Review Loop — Exploration Charter

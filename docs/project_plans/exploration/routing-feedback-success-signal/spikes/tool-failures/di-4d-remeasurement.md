@@ -8,6 +8,7 @@ status: complete
 created: 2026-08-03
 method: reparse
 same_denominator: true
+itt_node_id: node_01M52TWD9RWHQQ7QRPVVX6MTNA
 ---
 
 # DI-4d Re-measurement — Codex tool-error detection, before vs. after

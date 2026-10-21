@@ -2,7 +2,7 @@
 title: CCDash Core Remediation v1
 schema_version: 2
 doc_type: prd
-status: approved
+status: completed
 created: '2026-06-10'
 updated: '2026-06-11'
 feature_slug: ccdash-core-remediation
@@ -36,6 +36,8 @@ commit_refs: []
 pr_refs: []
 files_affected: []
 changelog_required: true
+itt_node_id: node_01KVTHFRE5H50NJ7KN4GYB8NY4
+status_source: intenttree
 ---
 
 # Feature Brief & Metadata

@@ -2,7 +2,7 @@
 schema_version: 3
 doc_type: phase_plan
 title: "Phase 2: Snapshot Ingestion & Storage"
-status: draft
+status: completed
 created: 2026-05-07
 updated: 2026-05-07
 phase: 2
@@ -22,6 +22,8 @@ exit_criteria:
   - Existing skillmeat_client.py behavior unaffected
 integration_owner: python-backend-engineer
 ui_touched: false
+itt_node_id: node_01M52V70DKFG0MXPQN8S1E4D1E
+status_source: intenttree
 ---
 
 # Phase 2: Snapshot Ingestion & Storage
