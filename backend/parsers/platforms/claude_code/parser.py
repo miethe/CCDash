@@ -1969,6 +1969,36 @@ def parse_session_file(path: Path) -> AgentSession | None:
         # never deletes rows already stored (removal is Mode-D, Nick's decision).
         return None
 
+    # Preserve the provider's per-message effort dimension before the richer
+    # log projection folds streaming assistant records into visible messages.
+    # Claude repeats message ids across content blocks; retain one usage record
+    # per logical assistant message, in transcript order.
+    effort_records: list[dict[str, Any]] = []
+    seen_effort_record_ids: set[str] = set()
+    for record in entries:
+        if record.get("type") != "assistant":
+            continue
+        message = record.get("message")
+        if not isinstance(message, dict):
+            continue
+        raw_effort = record.get("effort") or message.get("effort")
+        if not isinstance(raw_effort, str) or not raw_effort.strip():
+            continue
+        message_id = str(message.get("id") or record.get("uuid") or "").strip()
+        if message_id and message_id in seen_effort_record_ids:
+            continue
+        if message_id:
+            seen_effort_record_ids.add(message_id)
+        usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
+        effort_records.append({
+            "messageId": message_id,
+            "effort": raw_effort.strip(),
+            "inputTokens": _coerce_int(usage.get("input_tokens"), 0),
+            "outputTokens": _coerce_int(usage.get("output_tokens"), 0),
+            "cacheCreationInputTokens": _coerce_int(usage.get("cache_creation_input_tokens"), 0),
+            "cacheReadInputTokens": _coerce_int(usage.get("cache_read_input_tokens"), 0),
+        })
+
     session_id = _make_id(path)
     session_status = _derive_session_status(entries, path)
     fs_dates = file_metadata_dates(path)
@@ -3165,6 +3195,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         current_message_type = ""
         current_stop_reason = ""
         current_stop_sequence = ""
+        current_effort = ""
         message_usage_in = 0
         message_usage_out = 0
         message_usage_extra: dict[str, Any] = {}
@@ -3182,6 +3213,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
             stop_sequence = message.get("stop_sequence")
             if isinstance(stop_sequence, str) and stop_sequence.strip():
                 current_stop_sequence = stop_sequence.strip()
+            # Claude Code writes effort on the top-level assistant JSONL
+            # record; accept nested message effort too for older/alternate shapes.
+            effort = entry.get("effort") or message.get("effort")
+            if isinstance(effort, str) and effort.strip():
+                current_effort = effort.strip()
         if isinstance(message, dict) and speaker == "agent":
             assistant_message_count += 1
             msg_model = message.get("model")
@@ -3289,6 +3325,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     message_metadata["stopReason"] = current_stop_reason
                 if current_stop_sequence:
                     message_metadata["stopSequence"] = current_stop_sequence
+                if speaker == "agent" and current_effort:
+                    message_metadata["effort"] = current_effort
                 if speaker == "agent" and (message_usage_in or message_usage_out):
                     message_metadata["inputTokens"] = message_usage_in
                     message_metadata["outputTokens"] = message_usage_out
@@ -3323,6 +3361,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     message_metadata["stopReason"] = current_stop_reason
                 if current_stop_sequence:
                     message_metadata["stopSequence"] = current_stop_sequence
+                if speaker == "agent" and current_effort:
+                    message_metadata["effort"] = current_effort
                 if speaker == "agent" and (message_usage_in or message_usage_out):
                     message_metadata["inputTokens"] = message_usage_in
                     message_metadata["outputTokens"] = message_usage_out
@@ -3366,6 +3406,13 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         type="thought",
                         content=thinking[:8000],
                         agentName=agent_name,
+                        metadata={
+                            **({"effort": current_effort} if current_effort else {}),
+                            **({"messageId": current_message_id} if current_message_id else {}),
+                            **({"inputTokens": message_usage_in, "outputTokens": message_usage_out,
+                               "totalTokens": message_usage_in + message_usage_out}
+                               if message_usage_in or message_usage_out else {}),
+                        },
                     )
             elif block_type == "tool_use":
                 tool_name = str(block.get("name", "unknown"))
@@ -3376,6 +3423,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     "toolInputKeys": list(tool_input.keys()) if isinstance(tool_input, dict) else [],
                     "signature": str(block.get("signature") or "").strip(),
                 }
+                if current_effort:
+                    tool_metadata["effort"] = current_effort
+                if current_message_id:
+                    tool_metadata["messageId"] = current_message_id
+                if message_usage_in or message_usage_out:
+                    tool_metadata["inputTokens"] = message_usage_in
+                    tool_metadata["outputTokens"] = message_usage_out
+                    tool_metadata["totalTokens"] = message_usage_in + message_usage_out
                 caller_payload = block.get("caller")
                 if isinstance(caller_payload, dict):
                     caller_meta: dict[str, Any] = {}
@@ -3793,6 +3848,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 message_metadata["stopReason"] = current_stop_reason
             if current_stop_sequence:
                 message_metadata["stopSequence"] = current_stop_sequence
+            if speaker == "agent" and current_effort:
+                message_metadata["effort"] = current_effort
             if speaker == "agent" and (message_usage_in or message_usage_out):
                 message_metadata["inputTokens"] = message_usage_in
                 message_metadata["outputTokens"] = message_usage_out
@@ -3808,6 +3865,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 metadata=message_metadata,
             )
             postprocess_message_log(idx, message_text, speaker, entry)
+
+    if effort_records:
+        append_log(
+            timestamp=last_ts,
+            speaker="system",
+            type="system",
+            content="Assistant effort records captured",
+            metadata={"eventType": "effort-records", "effortRecords": effort_records},
+        )
 
     # automatic-session-naming (M2/T2-003): rank-4, last-resort fallback --
     # "first user message, truncated" -- closes the ~100%-coverage floor of

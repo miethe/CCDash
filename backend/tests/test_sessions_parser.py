@@ -147,6 +147,26 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(metadata.get("toolOutput"), "/tmp/project")
         self.assertIn("pwd", str(metadata.get("toolArgs") or ""))
 
+    def test_claude_assistant_records_preserve_effort_changes(self) -> None:
+        path = self._write_jsonl([
+            {"type": "assistant", "timestamp": "2026-09-02T10:00:00Z", "effort": "medium", "message": {
+                "id": "effort-1", "role": "assistant",
+                "usage": {"input_tokens": 10, "output_tokens": 2},
+                "content": [{"type": "text", "text": "Before the change."}],
+            }},
+            {"type": "assistant", "timestamp": "2026-09-02T10:00:01Z", "effort": "high", "message": {
+                "id": "effort-2", "role": "assistant",
+                "usage": {"input_tokens": 20, "output_tokens": 3},
+                "content": [{"type": "text", "text": "After the change."}],
+            }},
+        ])
+        session = parse_session_file(path)
+        assert session is not None
+        logs = [log for log in session.logs if log.type == "message"]
+        self.assertEqual([log.metadata.get("effort") for log in logs], ["medium", "high"])
+        effort_log = next(log for log in session.logs if log.metadata.get("eventType") == "effort-records")
+        self.assertEqual([record["effort"] for record in effort_log.metadata["effortRecords"]], ["medium", "high"])
+
     def test_agent_message_usage_is_persisted_on_message_log_metadata(self) -> None:
         path = self._write_jsonl(
             [
