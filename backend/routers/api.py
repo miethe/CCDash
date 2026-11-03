@@ -1,6 +1,7 @@
 """API routers for sessions, documents, tasks, and analytics."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -23,7 +24,7 @@ from backend.application.services.session_intelligence import SessionIntelligenc
 from backend.application.services.sessions import SessionFacetService, SessionTranscriptService
 from backend import config
 from backend.models import (
-    AgentSession, PlanDocument, ProjectTask, Project, ProjectPathReference,
+    AgentSession, PlanDocument, ProjectTask, Project, ProjectPathReference, SessionContextAttribution,
     PaginatedResponse,
 )
 from backend.session_mappings import (
@@ -49,6 +50,7 @@ from backend.services.aos_correlation import derive_aos_correlation
 from backend.services.repo_workspaces.cache import RepoWorkspaceCache
 from backend.services.repo_workspaces.manager import RepoWorkspaceError, RepoWorkspaceManager
 from backend.services.session_usage_analytics import get_session_usage_attribution_details
+from backend.services.session_context_attribution import load_session_context_attribution
 from backend.request_scope import get_core_ports, get_request_context, require_http_authorization
 from backend.application.services.agent_queries.session_detail import derive_session_source
 
@@ -1064,6 +1066,23 @@ async def get_session_logs(
     }
 
 
+@sessions_router.get("/{session_id}/context-attribution", response_model=SessionContextAttribution)
+async def get_session_context_attribution(
+    session_id: str,
+    project_id: str | None = Query(None),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    """Metadata-only context evidence, requiring an explicit project and exact join."""
+    if not project_id or not project_id.strip():
+        raise HTTPException(status_code=400, detail="project_id is required")
+    project = resolve_project(request_context, core_ports, requested_project_id=project_id, required=True)
+    row = await core_ports.storage.sessions().get_by_id(session_id, project_id=project.id)
+    if not row or row.get("project_id") != project.id:
+        raise HTTPException(status_code=404, detail="Session not found in the requested project")
+    return await asyncio.to_thread(load_session_context_attribution, row)
+
+
 @sessions_router.get("/{session_id}", response_model=AgentSession)
 async def get_session(
     session_id: str,
@@ -1426,6 +1445,7 @@ async def get_session(
         usageAttributions=usage_attribution_details["usageAttributions"],
         usageAttributionSummary=usage_attribution_details["usageAttributionSummary"],
         usageAttributionCalibration=usage_attribution_details["usageAttributionCalibration"],
+        contextAttribution=await asyncio.to_thread(load_session_context_attribution, s),
         intelligenceSummary=intelligence_detail.summary if intelligence_detail else None,
         transcriptIntelligence=transcript_intelligence,
         aosCorrelation=aos_correlation or None,

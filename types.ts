@@ -567,6 +567,40 @@ export interface AOSCorrelation {
   diagnostics?: string[];
 }
 
+export interface SessionContextLayer {
+  name: string;
+  amount: number | null;
+  unit: 'characters' | 'bytes' | 'tokens' | 'unknown';
+  source: string;
+  sourceVersion: string | null;
+  attribution: 'attributed' | 'measured' | 'unattributed' | 'missing';
+}
+export interface SessionContextStage {
+  id: string;
+  phase: string;
+  observedAt: string | null;
+  source: string;
+  sourceVersion: string | null;
+  unit: 'characters' | 'bytes' | 'tokens' | 'unknown';
+  amount: number | null;
+  method: string;
+  provenance: string;
+  layers: SessionContextLayer[];
+}
+export interface SessionContextAttribution {
+  schemaVersion: 1;
+  status: 'measured' | 'partial' | 'unmeasured';
+  generatedAt: string | null;
+  coverage: {
+    joinStatus: 'matched' | 'unmatched' | 'ambiguous' | 'source_unavailable';
+    stageCount: number;
+    source: string;
+    sourceVersion: string | null;
+  };
+  stages: SessionContextStage[];
+  unknowns: string[];
+}
+
 export interface AgentSession {
   id: string;
   title?: string;
@@ -717,6 +751,7 @@ export interface AgentSession {
   usageAttributions?: SessionUsageAttribution[];
   usageAttributionSummary?: SessionUsageAggregateResponse | null;
   usageAttributionCalibration?: SessionUsageCalibrationSummary | null;
+  contextAttribution?: SessionContextAttribution | null;
   intelligenceSummary?: SessionIntelligenceSessionRollup | null;
   // Git Integration
   gitCommitHash?: string;

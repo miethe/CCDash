@@ -30,6 +30,8 @@ export interface SessionFilters {
 
 export interface SessionFetchOptions {
   force?: boolean;
+  /** Per-call project scope for shared session links; never switches the active project. */
+  projectId?: string;
 }
 
 export interface PaginatedResponse<T> {
