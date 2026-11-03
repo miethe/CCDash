@@ -1,3 +1,4 @@
+import { sameSessionScope, sessionDetailPollKey, scopedSessionFallback } from '../lib/sessionDetailScope';
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -6035,6 +6036,7 @@ export const SessionInspector: React.FC = () => {
     const sessionLiveEnabled = isSessionLiveUpdatesEnabled();
     const selectedSessionId = selectedSession?.id ?? null;
     const selectedSessionStatus = selectedSession?.status ?? null;
+    const selectedSessionProjectId = selectedSession?.projectId ?? null;
 
     const updateSessionSearchParams = useCallback((
         sessionId: string | null,
@@ -6105,7 +6107,7 @@ export const SessionInspector: React.FC = () => {
             return;
         }
 
-        if (fallback) {
+        if (fallback && (!options?.projectId || fallback.projectId === options.projectId)) {
             setSelectedSession(fallback);
             setActiveSessionTab(nextTab);
             setSessionOpenLoading(false);
@@ -6125,7 +6127,7 @@ export const SessionInspector: React.FC = () => {
         const refreshed = await getSessionById(sessionId, { force: true, projectId: selectedSession?.projectId || undefined });
         if (!refreshed) return;
         setSelectedSession(current => {
-            if (!current || current.id !== refreshed.id) return current;
+            if (!current || !sameSessionScope(current, refreshed)) return current;
             if (
                 current.status === refreshed.status
                 && current.updatedAt === refreshed.updatedAt
@@ -6260,8 +6262,8 @@ export const SessionInspector: React.FC = () => {
         && (!sessionLiveEnabled || ['backoff', 'closed'].includes(selectedSessionLiveStatus)),
     );
     const { data: polledSessionDetail } = useQuery({
-        queryKey: ['session-detail-poll', selectedSessionId],
-        queryFn: () => getSessionById(selectedSessionId!, { force: true }),
+        queryKey: sessionDetailPollKey(selectedSessionId, selectedSessionProjectId),
+        queryFn: () => getSessionById(selectedSessionId!, { force: true, projectId: selectedSessionProjectId || undefined }),
         enabled: sessionDetailPollEnabled && !!selectedSessionId,
         staleTime: 0,
         // Visibility-aware: refetchIntervalInBackground defaults to false.
@@ -6271,7 +6273,7 @@ export const SessionInspector: React.FC = () => {
     useEffect(() => {
         if (!polledSessionDetail) return;
         setSelectedSession(current => {
-            if (!current || current.id !== polledSessionDetail.id) return current;
+            if (!current || !sameSessionScope(current, polledSessionDetail)) return current;
             if (
                 current.status === polledSessionDetail.status
                 && current.updatedAt === polledSessionDetail.updatedAt
@@ -6331,7 +6333,7 @@ export const SessionInspector: React.FC = () => {
             return;
         }
 
-        const existing = sessions.find(session => session.id === requestedSessionId);
+        const existing = scopedSessionFallback(sessions, requestedSessionId, requestedProjectId);
         setSessionBackStack([]);
         void openSession(requestedSessionId, existing, {
             syncUrl: false,
