@@ -232,6 +232,7 @@ services:
     environment:
       <<: [*backend-shared-env, *postgres-connection]
       CCDASH_RUNTIME_PROFILE: "api"
+      CCDASH_SESSION_CONTEXT_ATTRIBUTION_PATH: "/run/ccdash/session-context-attribution/session-context-attribution.json"
       CCDASH_API_BEARER_TOKEN: "${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}"
       # External /api/v1 LAN token -- see the matching comment on the
       # `backend` service above for the full explanation. SEPARATE from
@@ -246,6 +247,16 @@ services:
         required: false
     ports:
       - "${CCDASH_API_PORT:-8000}:8000"
+    volumes:
+      # Mount the containing directory, not the file: the Mac receipt publisher
+      # atomically replaces the NUC file, and a file bind would pin the old inode.
+      # The API has read-only access; workers and other services do not receive it.
+      - type: bind
+        source: "${CCDASH_SESSION_CONTEXT_ATTRIBUTION_HOST:-/home/miethe/.local/share/aos/estate-pulse/ingress}"
+        target: /run/ccdash/session-context-attribution
+        read_only: true
+        bind:
+          selinux: Z
 
   worker:
     <<: *backend-service
