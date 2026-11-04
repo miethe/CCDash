@@ -248,6 +248,49 @@ services:
     ports:
       - "${CCDASH_API_PORT:-8000}:8000"
     volumes:
+      # Compose replaces (rather than appends) the sequence inherited from
+      # `x-backend-service`; keep its registry and workspace mounts here so
+      # the API cannot seed Postgres from the image's default projects.json.
+      - type: bind
+        source: "${CCDASH_PROJECTS_FILE:-../../projects.json}"
+        target: /app/projects.json
+        read_only: false
+      - type: bind
+        source: "${CCDASH_WORKSPACE_HOST_ROOT:-../../..}"
+        target: "${CCDASH_WORKSPACE_CONTAINER_ROOT:-/workspace}"
+        read_only: true
+      - type: bind
+        source: "${CCDASH_CLAUDE_HOME:-~/.claude}"
+        target: "${CCDASH_CLAUDE_CONTAINER_HOME:-/home/ccdash/.claude}"
+        read_only: true
+      - type: bind
+        source: "${CCDASH_CODEX_HOME:-~/.codex}"
+        target: "${CCDASH_CODEX_CONTAINER_HOME:-/home/ccdash/.codex}"
+        read_only: true
+      - type: bind
+        source: "${CCDASH_EXTRA_MOUNT_1_HOST:-./empty-mounts/optional-1}"
+        target: "${CCDASH_EXTRA_MOUNT_1_CONTAINER:-/mnt/ccdash/optional-1}"
+        read_only: true
+      - type: bind
+        source: "${CCDASH_EXTRA_MOUNT_2_HOST:-./empty-mounts/optional-2}"
+        target: "${CCDASH_EXTRA_MOUNT_2_CONTAINER:-/mnt/ccdash/optional-2}"
+        read_only: true
+      - type: bind
+        source: "${CCDASH_EXTRA_MOUNT_3_HOST:-./empty-mounts/optional-3}"
+        target: "${CCDASH_EXTRA_MOUNT_3_CONTAINER:-/mnt/ccdash/optional-3}"
+        read_only: true
+      - type: bind
+        source: "${CCDASH_EXTRA_MOUNT_4_HOST:-./empty-mounts/optional-4}"
+        target: "${CCDASH_EXTRA_MOUNT_4_CONTAINER:-/mnt/ccdash/optional-4}"
+        read_only: true
+      - type: bind
+        source: "${CCDASH_EXTRA_MOUNT_5_HOST:-./empty-mounts/optional-5}"
+        target: "${CCDASH_EXTRA_MOUNT_5_CONTAINER:-/mnt/ccdash/optional-5}"
+        read_only: true
+      - type: bind
+        source: "${CCDASH_EXTRA_MOUNT_6_HOST:-./empty-mounts/optional-6}"
+        target: "${CCDASH_EXTRA_MOUNT_6_CONTAINER:-/mnt/ccdash/optional-6}"
+        read_only: true
       # Mount the containing directory, not the file: the Mac receipt publisher
       # atomically replaces the NUC file, and a file bind would pin the old inode.
       # The API has read-only access; workers and other services do not receive it.
