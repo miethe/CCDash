@@ -142,6 +142,10 @@ DATABASE_URL = os.getenv("CCDASH_DATABASE_URL", DEFAULT_DATABASE_URL)
 LINKING_LOGIC_VERSION = os.getenv("CCDASH_LINKING_LOGIC_VERSION", "1")
 SESSION_MAPPINGS_JSON = os.getenv("CCDASH_SESSION_MAPPINGS_JSON", "")
 SESSION_MAPPINGS_FILE = os.getenv("CCDASH_SESSION_MAPPINGS_FILE", "")
+CCDASH_SESSION_CONTEXT_ATTRIBUTION_PATH = os.getenv(
+    "CCDASH_SESSION_CONTEXT_ATTRIBUTION_PATH",
+    str(Path.home() / ".local/share/aos/estate-pulse/session-context-attribution.json"),
+)
 # CCDASH_PROJECTS_FILE — path to the projects registry JSON (advertised in compose.yaml mount).
 # Defaults to projects.json at the project root so compose bind-mounts work without extra config.
 _projects_file_env = os.getenv("CCDASH_PROJECTS_FILE", "").strip()

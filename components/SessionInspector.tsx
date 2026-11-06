@@ -1,3 +1,4 @@
+import { sameSessionScope, sessionDetailPollKey, scopedSessionFallback } from '../lib/sessionDetailScope';
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -46,6 +47,7 @@ import { apiFetch } from '../services/apiClient';
 import { isMemoryGuardEnabled } from '../lib/featureFlags';
 import { uiStateKeys } from '../services/queryKeys';
 import { SessionFeaturesView, TranscriptView } from './SessionInspector/TranscriptView';
+import { SessionContextAttributionPanel } from './SessionInspector/SessionContextAttribution';
 import { SessionSourceChip, SessionUnattributedBadge } from './SessionSourceChip';
 import { buildAOSCorrelationView, type AOSCorrelationView, type AOSParentLinkKind } from '../lib/aosCorrelation';
 import { deriveProviderIdentity, getProviderTone, getChartSeriesColor, type ProviderIdentity } from '../lib/providerIdentity';
@@ -55,10 +57,11 @@ const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
 const LIVE_IN_FLIGHT_WINDOW_MS = 10 * 60 * 1000;
 const ACTIVE_SESSION_DETAIL_POLL_MS = 5_000;
-type SessionInspectorTab = 'transcript' | 'activity' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features' | 'test-status';
+type SessionInspectorTab = 'context' | 'transcript' | 'activity' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features' | 'test-status';
 
 const isSessionInspectorTab = (value: string | null): value is SessionInspectorTab => (
-    value === 'transcript'
+    value === 'context'
+    || value === 'transcript'
     || value === 'activity'
     || value === 'forensics'
     || value === 'analytics'
@@ -5566,6 +5569,7 @@ const SessionDetail = React.memo<{
     const platformDisplay = platformVersion ? `${platformValue} ${platformVersion}` : platformValue;
     const sessionDetailTabs: Array<{ id: SessionInspectorTab; icon: React.ComponentType<{ size?: number }>; label: string }> = [
         { id: 'transcript', icon: MessageSquare, label: 'Transcript' },
+        { id: 'context', icon: Layers, label: 'Context' },
         { id: 'forensics', icon: ShieldAlert, label: 'Forensics' },
         { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
         { id: 'test-status', icon: TestTube2, label: 'Test Status' },
@@ -5907,6 +5911,7 @@ const SessionDetail = React.memo<{
                         </div>
                     )
                 )}
+                {activeTab === 'context' && <SessionContextAttributionPanel attribution={effectiveSession.contextAttribution} />}
                 {activeTab === 'forensics' && <SessionForensicsView session={effectiveSession} />}
                 {activeTab === 'activity' && (
                     <ActivityView
@@ -6031,20 +6036,23 @@ export const SessionInspector: React.FC = () => {
     const sessionLiveEnabled = isSessionLiveUpdatesEnabled();
     const selectedSessionId = selectedSession?.id ?? null;
     const selectedSessionStatus = selectedSession?.status ?? null;
+    const selectedSessionProjectId = selectedSession?.projectId ?? null;
 
     const updateSessionSearchParams = useCallback((
         sessionId: string | null,
         tab: SessionInspectorTab = 'transcript',
-        options?: { replace?: boolean }
+        options?: { replace?: boolean; projectId?: string }
     ) => {
         const nextParams = new URLSearchParams(searchParams);
         nextParams.delete('session_id');
         if (sessionId && sessionId.trim()) {
             nextParams.set('session', sessionId.trim());
             nextParams.set('tab', tab);
+            if (options?.projectId) nextParams.set('project_id', options.projectId);
         } else {
             nextParams.delete('session');
             nextParams.delete('tab');
+            nextParams.delete('project_id');
         }
         if (nextParams.toString() === searchParams.toString()) return;
         setSearchParams(nextParams, { replace: options?.replace ?? false });
@@ -6058,6 +6066,7 @@ export const SessionInspector: React.FC = () => {
             syncUrl?: boolean;
             replaceUrl?: boolean;
             tab?: SessionInspectorTab;
+            projectId?: string;
         }
     ) => {
         const normalizedSessionId = sessionId.trim();
@@ -6082,7 +6091,7 @@ export const SessionInspector: React.FC = () => {
         const requestId = openSessionRequestRef.current + 1;
         openSessionRequestRef.current = requestId;
 
-        const full = await getSessionById(normalizedSessionId);
+        const full = await getSessionById(normalizedSessionId, { projectId: options?.projectId || fallback?.projectId || selectedSession?.projectId || undefined });
         if (openSessionRequestRef.current !== requestId) {
             return;
         }
@@ -6093,18 +6102,18 @@ export const SessionInspector: React.FC = () => {
             setSessionOpenLoading(false);
             setOpenTargetSessionId(null);
             if (options?.syncUrl !== false) {
-                updateSessionSearchParams(normalizedSessionId, nextTab, { replace: options?.replaceUrl });
+                updateSessionSearchParams(normalizedSessionId, nextTab, { replace: options?.replaceUrl, projectId: full.projectId || options?.projectId });
             }
             return;
         }
 
-        if (fallback) {
+        if (fallback && (!options?.projectId || fallback.projectId === options.projectId)) {
             setSelectedSession(fallback);
             setActiveSessionTab(nextTab);
             setSessionOpenLoading(false);
             setOpenTargetSessionId(null);
             if (options?.syncUrl !== false) {
-                updateSessionSearchParams(normalizedSessionId, nextTab, { replace: options?.replaceUrl });
+                updateSessionSearchParams(normalizedSessionId, nextTab, { replace: options?.replaceUrl, projectId: fallback.projectId || options?.projectId });
             }
             return;
         }
@@ -6115,10 +6124,10 @@ export const SessionInspector: React.FC = () => {
     }, [activeSessionTab, getSessionById, selectedSession, updateSessionSearchParams]);
 
     const refreshSelectedSessionDetail = useCallback(async (sessionId: string) => {
-        const refreshed = await getSessionById(sessionId, { force: true });
+        const refreshed = await getSessionById(sessionId, { force: true, projectId: selectedSession?.projectId || undefined });
         if (!refreshed) return;
         setSelectedSession(current => {
-            if (!current || current.id !== refreshed.id) return current;
+            if (!current || !sameSessionScope(current, refreshed)) return current;
             if (
                 current.status === refreshed.status
                 && current.updatedAt === refreshed.updatedAt
@@ -6128,7 +6137,7 @@ export const SessionInspector: React.FC = () => {
             }
             return refreshed;
         });
-    }, [getSessionById]);
+    }, [getSessionById, selectedSession?.projectId]);
 
     useEffect(() => {
         if (!sessionLiveEnabled || !selectedSessionId || selectedSessionStatus !== 'active') {
@@ -6253,8 +6262,8 @@ export const SessionInspector: React.FC = () => {
         && (!sessionLiveEnabled || ['backoff', 'closed'].includes(selectedSessionLiveStatus)),
     );
     const { data: polledSessionDetail } = useQuery({
-        queryKey: ['session-detail-poll', selectedSessionId],
-        queryFn: () => getSessionById(selectedSessionId!, { force: true }),
+        queryKey: sessionDetailPollKey(selectedSessionId, selectedSessionProjectId),
+        queryFn: () => getSessionById(selectedSessionId!, { force: true, projectId: selectedSessionProjectId || undefined }),
         enabled: sessionDetailPollEnabled && !!selectedSessionId,
         staleTime: 0,
         // Visibility-aware: refetchIntervalInBackground defaults to false.
@@ -6264,7 +6273,7 @@ export const SessionInspector: React.FC = () => {
     useEffect(() => {
         if (!polledSessionDetail) return;
         setSelectedSession(current => {
-            if (!current || current.id !== polledSessionDetail.id) return current;
+            if (!current || !sameSessionScope(current, polledSessionDetail)) return current;
             if (
                 current.status === polledSessionDetail.status
                 && current.updatedAt === polledSessionDetail.updatedAt
@@ -6299,6 +6308,7 @@ export const SessionInspector: React.FC = () => {
     // Deep-link sync: open session from URL and preserve shareable query params.
     useEffect(() => {
         const requestedSessionId = getSessionIdFromQuery(searchParams);
+        const requestedProjectId = searchParams.get('project_id')?.trim() || undefined;
         const tabParam = searchParams.get('tab');
         const requestedTab = isSessionInspectorTab(tabParam) ? tabParam : 'transcript';
 
@@ -6316,18 +6326,19 @@ export const SessionInspector: React.FC = () => {
             return;
         }
 
-        if (selectedSession?.id === requestedSessionId) {
+        if (selectedSession?.id === requestedSessionId && (!requestedProjectId || selectedSession.projectId === requestedProjectId)) {
             if (activeSessionTab !== requestedTab) {
                 setActiveSessionTab(requestedTab);
             }
             return;
         }
 
-        const existing = sessions.find(session => session.id === requestedSessionId);
+        const existing = scopedSessionFallback(sessions, requestedSessionId, requestedProjectId);
         setSessionBackStack([]);
         void openSession(requestedSessionId, existing, {
             syncUrl: false,
             tab: requestedTab,
+            projectId: requestedProjectId,
         });
     }, [activeSessionTab, openSession, searchParams, selectedSession, sessions, updateSessionSearchParams]);
 
@@ -6621,6 +6632,7 @@ export const SessionInspector: React.FC = () => {
                         void openSession(failedSessionId, fallback, {
                             syncUrl: false,
                             tab: requestedTab,
+                            projectId: searchParams.get('project_id')?.trim() || undefined,
                         });
                     }}
                     className="px-3 py-1.5 rounded-md border border-panel-border bg-panel text-xs text-foreground hover:border-indigo-500/40 hover:text-indigo-200 transition-colors"
