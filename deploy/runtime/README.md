@@ -340,6 +340,7 @@ These examples split environment variables by runtime role. Shared values may li
 | `CCDASH_DB_BACKEND` | backend, api, worker | `sqlite` for the local profile; `postgres` for the hosted profiles |
 | `CCDASH_DATABASE_URL` | api, worker | built from the Postgres values in the compose example |
 | `CCDASH_PROJECT_ROOT` | api, worker | repo root inside the container; defaults to `/app` |
+| `CCDASH_SESSION_CONTEXT_ATTRIBUTION_PATH` | api | optional metadata-only Estate Pulse receipt; compose mounts only its containing directory read-only so atomic file replacement remains visible |
 | `CCDASH_API_BEARER_TOKEN` | api | protects `/api/v1/*` only |
 | `CCDASH_AUTH_PROVIDER` | api | auth provider selector: `static_bearer` by default for API runtime, or `local`, `clerk`, `oidc` |
 | `CCDASH_LOCAL_NO_AUTH_ENABLED` | api, local | explicit local no-auth switch; local/test default to no-auth, hosted API requires explicit opt-in for `CCDASH_AUTH_PROVIDER=local` |
