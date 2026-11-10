@@ -17,6 +17,9 @@ compact boundary. Missing named layers remain visible.
   returns the metadata-only contract directly. An explicit project is required
   (400 if absent); nonexistent projects/sessions are 404. The route uses the
   existing authenticated request context and project-scoped session repository.
+  It requires `session:read` on the requested project before reading session or
+  attribution metadata; authenticated callers without that permission receive
+  the standard 403 authorization denial, including for cross-project requests.
 - Shared links use `/#/sessions?session={id}&project_id={project_id}&tab=context`.
   The explicit project is a per-call scope/cache key; it does not change the
   server's globally active project.

@@ -8,10 +8,16 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from backend.adapters.auth.local import PermitAllAuthorizationPolicy
+from backend.application.context import (
+    AuthProviderMetadata, Principal, PrincipalMembership, ProjectScope,
+    RequestContext, TraceContext,
+)
+from backend.application.services.authorization import RoleBindingAuthorizationPolicy
 from backend.routers.api import sessions_router
 from backend.request_scope import get_core_ports, get_request_context
 from backend.services.session_context_attribution import (
@@ -157,12 +163,11 @@ class ContextAttributionTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(sessions_router)
         app.dependency_overrides[get_core_ports] = lambda: SimpleNamespace(
+            authorization_policy=PermitAllAuthorizationPolicy(),
             storage=SimpleNamespace(sessions=lambda: Repo()),
             workspace_registry=Registry(),
         )
-        app.dependency_overrides[get_request_context] = lambda: SimpleNamespace(
-            project=SimpleNamespace(project_id="project-b")
-        )
+        app.dependency_overrides[get_request_context] = lambda: self.hosted_context("project-b")
         with (
             patch(
                 "backend.config.CCDASH_SESSION_CONTEXT_ATTRIBUTION_PATH", str(self.path)
@@ -181,3 +186,76 @@ class ContextAttributionTests(unittest.TestCase):
             self.assertEqual(
                 response.json()["stages"][0]["layers"][0]["unit"], "unknown"
             )
+
+    def hosted_context(self, project_id, authorized_projects=None):
+        return RequestContext(
+            principal=Principal(
+                subject="synthetic-user", display_name="Synthetic user", auth_mode="oidc",
+                provider=AuthProviderMetadata(provider_id="synthetic", hosted=True),
+                memberships=tuple(
+                    PrincipalMembership(
+                        workspace_id=key, role="viewer", scope_type="project", scope_id=key,
+                    )
+                    for key in (authorized_projects or (project_id,))
+                ),
+            ),
+            workspace=None,
+            project=ProjectScope(
+                project_id=project_id, project_name=project_id,
+                root_path=Path("/synthetic"), sessions_dir=Path("/synthetic/sessions"),
+                docs_dir=Path("/synthetic/docs"), progress_dir=Path("/synthetic/progress"),
+            ),
+            runtime_profile="api", trace=TraceContext(request_id="synthetic-scope-check"),
+        )
+
+    def test_http_authorizes_target_project_before_reading_metadata(self):
+        cases = (
+            ("cross-project denied", "project-b", ("project-b",), 403),
+            ("own project allowed", "project-a", ("project-a",), 200),
+            ("cross-project authorized", "project-b", ("project-b", "project-a"), 200),
+        )
+        for label, current_project, authorized_projects, expected_status in cases:
+            with self.subTest(label=label):
+                context = self.hosted_context(current_project, authorized_projects)
+                repo = SimpleNamespace(get_by_id=AsyncMock(return_value=self.row))
+                policy = RoleBindingAuthorizationPolicy()
+                policy.authorize = AsyncMock(wraps=policy.authorize)
+                ports = SimpleNamespace(
+                    authorization_policy=policy,
+                    storage=SimpleNamespace(sessions=lambda: repo),
+                    workspace_registry=SimpleNamespace(
+                        get_project=lambda key: SimpleNamespace(id=key),
+                    ),
+                )
+                app = FastAPI()
+                app.include_router(sessions_router)
+                app.dependency_overrides[get_request_context] = lambda: context
+                app.dependency_overrides[get_core_ports] = lambda: ports
+                with (
+                    patch("backend.config.CCDASH_SESSION_CONTEXT_ATTRIBUTION_PATH", str(self.path)),
+                    patch("backend.routers.api.load_session_context_attribution", wraps=load_session_context_attribution) as loader,
+                    TestClient(app) as client,
+                ):
+                    response = client.get(
+                        "/api/sessions/local_synthetic/context-attribution?project_id=project-a"
+                    )
+                    self.assertEqual(response.status_code, expected_status)
+                    policy.authorize.assert_awaited_once_with(
+                        context, action="session:read", resource="project:project-a",
+                    )
+                    if expected_status == 403:
+                        self.assertEqual(response.json()["detail"], {
+                            "error": "forbidden",
+                            "code": "permission_not_granted",
+                            "reason": "Permission 'session:read' is not granted for the requested scope.",
+                            "action": "session:read",
+                            "resource": "project:project-a",
+                        })
+                        repo.get_by_id.assert_not_awaited()
+                        loader.assert_not_called()
+                    else:
+                        self.assertEqual(response.json()["coverage"]["joinStatus"], "matched")
+                        repo.get_by_id.assert_awaited_once_with(
+                            "local_synthetic", project_id="project-a",
+                        )
+                        loader.assert_called_once()

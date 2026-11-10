@@ -1077,6 +1077,12 @@ async def get_session_context_attribution(
     if not project_id or not project_id.strip():
         raise HTTPException(status_code=400, detail="project_id is required")
     project = resolve_project(request_context, core_ports, requested_project_id=project_id, required=True)
+    await require_http_authorization(
+        request_context,
+        core_ports,
+        action="session:read",
+        resource=f"project:{project.id}",
+    )
     row = await core_ports.storage.sessions().get_by_id(session_id, project_id=project.id)
     if not row or row.get("project_id") != project.id:
         raise HTTPException(status_code=404, detail="Session not found in the requested project")
