@@ -52,6 +52,8 @@ class SessionIngestServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_persist_complete_jsonl_envelope_returns_session_and_relationship_counts(self) -> None:
         session_repo = _SessionRepo()
         message_repo = _SessionMessageRepo()
+        publish_transcript_appends = AsyncMock(return_value=False)
+        publish_session_snapshot = AsyncMock(return_value=None)
         service = SessionIngestService(
             session_repo=session_repo,
             session_message_repo=message_repo,
@@ -64,8 +66,8 @@ class SessionIngestServiceTests(unittest.IsolatedAsyncioTestCase):
             replace_session_commit_correlations=AsyncMock(return_value=0),
             replace_session_intelligence_facts=AsyncMock(return_value=0),
             maybe_enqueue_telemetry_export=AsyncMock(return_value=None),
-            publish_transcript_appends=AsyncMock(return_value=False),
-            publish_session_snapshot=AsyncMock(return_value=None),
+            publish_transcript_appends=publish_transcript_appends,
+            publish_session_snapshot=publish_session_snapshot,
         )
         envelope = jsonl_session_to_envelope(
             {
@@ -108,6 +110,12 @@ class SessionIngestServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session_repo.sessions[0][0]["sessionForensics"]["observedSourceFile"], "/tmp/session.jsonl")
         self.assertEqual(session_repo.relationships[0][1], "source/session.jsonl")
         self.assertTrue(session_repo.relationships[0][2][0]["id"].startswith("REL-"))
+        self.assertEqual(publish_transcript_appends.await_count, 2)
+        self.assertEqual(publish_session_snapshot.await_count, 2)
+        self.assertEqual(
+            [(call.args[0]["id"], *call.args[1:]) for call in publish_session_snapshot.await_args_list],
+            [("S-root", 1, "sync"), ("S-child", 0, "sync")],
+        )
 
 
 if __name__ == "__main__":

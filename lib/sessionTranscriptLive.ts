@@ -1,4 +1,4 @@
-import type { SessionLog, SessionTranscriptAppendPayload } from '@/types';
+import type { AgentSession, SessionLog, SessionTranscriptAppendPayload } from '@/types';
 
 export type SessionTranscriptAppendDecision =
   | { action: 'append'; nextLogs: SessionLog[]; appendedLog: SessionLog }
@@ -9,6 +9,15 @@ const normalizeText = (value: unknown): string => String(value ?? '').trim();
 
 export const getSessionTranscriptEntryId = (log: Pick<SessionLog, 'id'> | Pick<SessionTranscriptAppendPayload, 'entryId'> | null | undefined): string =>
   normalizeText((log as { id?: unknown } | null | undefined)?.id ?? (log as { entryId?: unknown } | null | undefined)?.entryId);
+
+export const getKnownSessionTranscriptLogCount = (
+  session: Pick<AgentSession, 'logs' | 'transcriptTruncated'>,
+): number => session.logs.length + Math.max(0, session.transcriptTruncated?.droppedCount ?? 0);
+
+export const hasSessionTranscriptCountMismatch = (
+  session: Pick<AgentSession, 'logs' | 'transcriptTruncated'>,
+  serverLogCount: number,
+): boolean => getKnownSessionTranscriptLogCount(session) !== serverLogCount;
 
 export const toSessionTranscriptLog = (payload: SessionTranscriptAppendPayload): SessionLog => {
   const data = payload.payload;

@@ -31,7 +31,11 @@ import { getInlineContentViewerPayload, getTranscriptContentViewerPayload } from
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, formatEffortTierDisplay, resolveDisplayCost } from '../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
-import { mergeSessionTranscriptAppend } from '../lib/sessionTranscriptLive';
+import {
+    getKnownSessionTranscriptLogCount,
+    hasSessionTranscriptCountMismatch,
+    mergeSessionTranscriptAppend,
+} from '../lib/sessionTranscriptLive';
 import { isSessionBlockInsightsEnabled, isUsageAttributionEnabled } from '../services/agenticIntelligence';
 import { SessionIntelligencePanel } from './session-intelligence/SessionIntelligencePanel';
 import {
@@ -6169,7 +6173,7 @@ export const SessionInspector: React.FC = () => {
                     if (!current || current.id !== sessionId) return current;
                     const logCount = typeof event.payload.logCount === 'number' && Number.isFinite(event.payload.logCount)
                         ? event.payload.logCount
-                        : current.logs.length;
+                        : getKnownSessionTranscriptLogCount(current);
                     const rawStatus = typeof event.payload.status === 'string' ? event.payload.status.trim() : '';
                     const nextStatus: AgentSession['status'] = rawStatus === 'active' || rawStatus === 'completed'
                         ? rawStatus
@@ -6177,7 +6181,7 @@ export const SessionInspector: React.FC = () => {
                     const nextUpdatedAt = typeof event.payload.updatedAt === 'string' && event.payload.updatedAt.trim()
                         ? event.payload.updatedAt
                         : current.updatedAt;
-                    shouldRefetch = nextStatus !== current.status || logCount < current.logs.length;
+                    shouldRefetch = nextStatus !== current.status || hasSessionTranscriptCountMismatch(current, logCount);
                     if (shouldRefetch) return current;
                     if (nextStatus === current.status && nextUpdatedAt === current.updatedAt) return current;
                     return {

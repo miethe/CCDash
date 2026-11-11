@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { mergeSessionTranscriptAppend } from '../../lib/sessionTranscriptLive';
+import {
+  getKnownSessionTranscriptLogCount,
+  hasSessionTranscriptCountMismatch,
+  mergeSessionTranscriptAppend,
+} from '../../lib/sessionTranscriptLive';
 import { LiveConnectionManager } from '../../services/live/connectionManager';
 import { sessionTopic, sessionTranscriptTopic } from '../../services/live/topics';
 import type { EventSourceLike, LiveEventEnvelope } from '../../services/live/types';
@@ -91,6 +95,7 @@ describe('TEST-003 Session Inspector live SSE smoke', () => {
     expect(sessionInspectorSource).toContain('sharedLiveConnectionManager.subscribe({\n            topic: sessionTopic(sessionId)');
     expect(sessionInspectorSource).toContain('sharedLiveConnectionManager.subscribe({\n                topic: sessionTranscriptTopic(sessionId)');
     expect(sessionInspectorSource).toContain("event.kind !== 'invalidate' || event.payload.resource !== 'session'");
+    expect(sessionInspectorSource).toContain('hasSessionTranscriptCountMismatch(current, logCount)');
     expect(sessionInspectorSource).toContain('mergeSessionTranscriptAppend(current.logs, payload)');
     expect(sessionInspectorSource).toContain('logs: decision.nextLogs');
     expect(sessionInspectorSource).toContain('void refreshSelectedSessionDetail(sessionId)');
@@ -117,14 +122,16 @@ describe('TEST-003 Session Inspector live SSE smoke', () => {
       onStatusChange: status => statuses.push(status),
       onEvent: event => {
         if (event.kind !== 'invalidate' || event.payload.resource !== 'session') return;
-        const logCount = typeof event.payload.logCount === 'number' ? event.payload.logCount : selectedSession.logs.length;
+        const logCount = typeof event.payload.logCount === 'number'
+          ? event.payload.logCount
+          : getKnownSessionTranscriptLogCount(selectedSession);
         const nextStatus = event.payload.status === 'active' || event.payload.status === 'completed'
           ? event.payload.status
           : selectedSession.status;
         const nextUpdatedAt = typeof event.payload.updatedAt === 'string'
           ? event.payload.updatedAt
           : selectedSession.updatedAt;
-        const shouldRefetch = nextStatus !== selectedSession.status || logCount < selectedSession.logs.length;
+        const shouldRefetch = nextStatus !== selectedSession.status || hasSessionTranscriptCountMismatch(selectedSession, logCount);
         if (shouldRefetch) {
           refreshSelectedSessionDetail(sessionId);
           return;
