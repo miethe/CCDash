@@ -6,6 +6,23 @@ from backend.db.sync_engine import _publish_session_transcript_appends
 
 
 class SyncEngineTranscriptLiveUpdateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publish_session_transcript_appends_skips_historical_cold_start(self) -> None:
+        session_dict = {"id": "session-1", "updatedAt": "2026-03-23T12:00:00Z"}
+        current_logs = [
+            {"id": f"log-{idx}", "timestamp": "2026-03-23T11:58:00Z", "type": "message"}
+            for idx in range(1000)
+        ]
+
+        with patch("backend.db.sync_engine.publish_session_transcript_append", new_callable=AsyncMock) as publish_mock:
+            published = await _publish_session_transcript_appends(
+                session_dict,
+                previous_logs=[],
+                current_logs=current_logs,
+            )
+
+        self.assertFalse(published)
+        publish_mock.assert_not_awaited()
+
     async def test_publish_session_transcript_appends_emits_only_strict_prefix_growth(self) -> None:
         session_dict = {"id": "session-1", "updatedAt": "2026-03-23T12:00:00Z"}
         previous_logs = [

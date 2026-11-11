@@ -492,6 +492,14 @@ async def _publish_session_transcript_appends(
     if not current_logs:
         return False
 
+    # A filesystem cold-start has no prior transcript to append to. Sending
+    # every historical log through Postgres NOTIFY one at a time can mean tens
+    # of thousands of awaited round trips while the session's persistence
+    # transaction remains open. The snapshot invalidation published by the
+    # caller lets clients fetch the full transcript in pages instead.
+    if not previous_logs:
+        return False
+
     previous_ids = [_normalize_log_identity(log, idx) for idx, log in enumerate(previous_logs)]
     current_ids = [_normalize_log_identity(log, idx) for idx, log in enumerate(current_logs)]
 
