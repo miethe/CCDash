@@ -872,7 +872,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     timestamp=timestamp,
                     speaker=speaker,
                     type="message",
-                    content=text[:8000],
+                    content=text,
                     metadata={"entryType": entry_type_lower, "payloadType": payload_type},
                 )
                 command_invocations = _extract_command_invocations(text)

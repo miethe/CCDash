@@ -13,6 +13,8 @@ from typing import Any
 
 from backend.models import (
     SessionEffortTransition,
+    SessionEffortBucket,
+    SessionEffortDistribution,
     SessionInferredTitle,
     TranscriptIntelligenceIndex,
     TranscriptMarker,
@@ -99,6 +101,7 @@ def build_transcript_intelligence_index(
             latest_summary=latest_summary,
         ),
         effortTimeline=_derive_effort_timeline(session_row, logs),
+        effortDistribution=_derive_effort_distribution(logs),
         markers=markers,
         taskRegister=list(tasks.values()),
         workflowRegister=list(workflows.values()),
@@ -381,6 +384,65 @@ def _derive_effort_timeline(
         current = normalized
 
     return timeline
+
+
+def _derive_effort_distribution(logs: list[dict[str, Any]]) -> SessionEffortDistribution:
+    """Roll up per-assistant-record effort and token metadata without scalarizing it."""
+    buckets: dict[str, SessionEffortBucket] = {}
+    observed: list[str] = []
+    seen_records: set[str] = set()
+    raw_records = [
+        record
+        for log in logs
+        for record in _safe_json_dict(log.get("metadata")).get("effortRecords", [])
+        if isinstance(record, dict)
+    ]
+    if raw_records:
+        for record in raw_records:
+            raw_effort = str(record.get("effort") or "").strip()
+            if not raw_effort:
+                continue
+            normalized = _normalize_effort(raw_effort)
+            level = normalized[1] if normalized else raw_effort.lower()
+            record_id = str(record.get("messageId") or "")
+            if record_id and record_id in seen_records:
+                continue
+            if record_id:
+                seen_records.add(record_id)
+            bucket = buckets.setdefault(level, SessionEffortBucket())
+            bucket.records += 1
+            bucket.tokens += sum(
+                value for value in (record.get("inputTokens"), record.get("outputTokens"),
+                                    record.get("cacheCreationInputTokens"), record.get("cacheReadInputTokens"))
+                if isinstance(value, (int, float))
+            )
+            observed.append(level)
+        return SessionEffortDistribution(
+            byLevel=buckets,
+            changeCount=sum(1 for previous, current in zip(observed, observed[1:]) if previous != current),
+        )
+    for index, log in enumerate(logs):
+        if str(log.get("speaker") or "").lower() not in {"agent", "assistant"}:
+            continue
+        metadata = _safe_json_dict(log.get("metadata"))
+        raw_effort = str(metadata.get("effort") or "").strip()
+        if not raw_effort:
+            continue
+        normalized = _normalize_effort(raw_effort)
+        level = normalized[1] if normalized else raw_effort.lower()
+        record_id = str(metadata.get("messageId") or log.get("id") or index)
+        if record_id in seen_records:
+            continue
+        seen_records.add(record_id)
+        bucket = buckets.setdefault(level, SessionEffortBucket())
+        bucket.records += 1
+        token_values = [metadata.get(key, 0) for key in _TOKEN_KEYS]
+        bucket.tokens += sum(value for value in token_values if isinstance(value, (int, float)))
+        observed.append(level)
+    return SessionEffortDistribution(
+        byLevel=buckets,
+        changeCount=sum(1 for previous, current in zip(observed, observed[1:]) if previous != current),
+    )
 
 
 def _derive_plan_links(logs: list[dict[str, Any]]) -> list[TranscriptPlanLink]:

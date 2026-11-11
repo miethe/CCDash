@@ -377,16 +377,17 @@ export function useData(): DataContextValue {
   // ── getSessionById (direct fetch shim) ─────────────────────────────────────
   const getSessionById = useCallback(async (sessionId: string, options?: SessionFetchOptions): Promise<AgentSession | null> => {
     const normalizedSessionId = sessionId.trim();
-    if (!normalizedSessionId || !projectId) return null;
+    const scopedProjectId = options?.projectId?.trim() || projectId;
+    if (!normalizedSessionId || !scopedProjectId) return null;
 
-    const queryKey = sessionsKeys.detail(projectId, normalizedSessionId);
+    const queryKey = sessionsKeys.detail(scopedProjectId, normalizedSessionId);
     if (!options?.force) {
       const cached = queryClient.getQueryData<AgentSession>(queryKey);
       if (cached) return cached;
     }
 
     try {
-      const fetched = await client.getSession(normalizedSessionId, projectId);
+      const fetched = await client.getSession(normalizedSessionId, scopedProjectId);
       queryClient.setQueryData(queryKey, fetched);
       return fetched;
     } catch {

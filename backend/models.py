@@ -180,6 +180,16 @@ class SessionEffortTransition(BaseModel):
     confidence: float = 0.0
 
 
+class SessionEffortBucket(BaseModel):
+    records: int = 0
+    tokens: int = 0
+
+
+class SessionEffortDistribution(BaseModel):
+    byLevel: dict[str, SessionEffortBucket] = Field(default_factory=dict)
+    changeCount: int = 0
+
+
 class TranscriptMarker(BaseModel):
     id: str
     logId: str = ""
@@ -250,11 +260,43 @@ class TranscriptIntelligenceIndex(BaseModel):
     sessionId: str
     title: SessionInferredTitle
     effortTimeline: list[SessionEffortTransition] = Field(default_factory=list)
+    effortDistribution: SessionEffortDistribution = Field(default_factory=SessionEffortDistribution)
     markers: list[TranscriptMarker] = Field(default_factory=list)
     taskRegister: list[TranscriptTaskRegisterItem] = Field(default_factory=list)
     workflowRegister: list[TranscriptWorkflowRegisterItem] = Field(default_factory=list)
     planLinks: list[TranscriptPlanLink] = Field(default_factory=list)
     tokenCoverage: TranscriptTokenCoverage = Field(default_factory=TranscriptTokenCoverage)
+
+
+class SessionContextLayer(BaseModel):
+    name: str
+    amount: Optional[float] = None
+    unit: Literal["characters", "bytes", "tokens", "unknown"]
+    source: str = "unrecorded"
+    sourceVersion: Optional[str] = None
+    attribution: Literal["attributed", "measured", "unattributed", "missing"] = "missing"
+
+
+class SessionContextStage(BaseModel):
+    id: str
+    phase: str = "unknown"
+    observedAt: Optional[str] = None
+    source: str = "unrecorded"
+    sourceVersion: Optional[str] = None
+    unit: Literal["characters", "bytes", "tokens", "unknown"]
+    amount: Optional[float] = None
+    method: str = "unrecorded"
+    provenance: str = "unrecorded"
+    layers: list[SessionContextLayer] = Field(default_factory=list)
+
+
+class SessionContextAttribution(BaseModel):
+    schemaVersion: Literal[1] = 1
+    status: Literal["measured", "partial", "unmeasured"] = "unmeasured"
+    generatedAt: Optional[str] = None
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    stages: list[SessionContextStage] = Field(default_factory=list)
+    unknowns: list[str] = Field(default_factory=list)
 
 
 class AgentSession(BaseModel):
@@ -415,6 +457,7 @@ class AgentSession(BaseModel):
     usageAttributions: list["SessionUsageAttribution"] = Field(default_factory=list)
     usageAttributionSummary: Optional["SessionUsageAggregateResponse"] = None
     usageAttributionCalibration: Optional["SessionUsageCalibrationSummary"] = None
+    contextAttribution: Optional[SessionContextAttribution] = None
     intelligenceSummary: Optional["SessionIntelligenceSessionRollup"] = None
     transcriptIntelligence: Optional["TranscriptIntelligenceIndex"] = None
     aosCorrelation: Optional[dict[str, Any]] = None

@@ -15,6 +15,30 @@ class CodexSessionParserTests(unittest.TestCase):
         path.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
         return path
 
+    def test_codex_transcript_message_keeps_full_text(self) -> None:
+        transcript = "x" * 9000
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-02-17T10:00:01Z",
+                    "payload": {
+                        "type": "user_message",
+                        "role": "user",
+                        "content": transcript,
+                    },
+                }
+            ],
+            relative_path=".codex/sessions/2026/02/17/session-long.jsonl",
+        )
+
+        session = parse_session_file(path)
+
+        self.assertIsNotNone(session)
+        assert session is not None
+        message = next(log for log in session.logs if log.type == "message")
+        self.assertEqual(message.content, transcript)
+
     def test_codex_session_parses_payload_signals_and_resources(self) -> None:
         path = self._write_jsonl(
             [
