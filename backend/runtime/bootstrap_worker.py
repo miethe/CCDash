@@ -38,8 +38,10 @@ def build_worker_probe_app(container: RuntimeContainer | None = None) -> FastAPI
     app.state.runtime_profile = runtime_container.profile
     app.state.runtime_container = runtime_container
 
+    # Watchers occupy AnyIO worker threads; keep these in-memory probes on the
+    # event loop so health checks cannot queue behind filesystem watch jobs.
     @app.get("/livez")
-    def livez() -> dict[str, Any]:
+    async def livez() -> dict[str, Any]:
         payload = _worker_probe_payload(runtime_container)
         return {
             "schemaVersion": payload["schemaVersion"],
@@ -48,7 +50,7 @@ def build_worker_probe_app(container: RuntimeContainer | None = None) -> FastAPI
         }
 
     @app.get("/readyz")
-    def readyz(response: Response) -> dict[str, Any]:
+    async def readyz(response: Response) -> dict[str, Any]:
         payload = _worker_probe_payload(runtime_container)
         ready = payload["ready"]
         if not bool(ready.get("ready", False)):
@@ -61,7 +63,7 @@ def build_worker_probe_app(container: RuntimeContainer | None = None) -> FastAPI
         }
 
     @app.get("/detailz")
-    def detailz() -> dict[str, Any]:
+    async def detailz() -> dict[str, Any]:
         return _worker_probe_payload(runtime_container)
 
     return app
