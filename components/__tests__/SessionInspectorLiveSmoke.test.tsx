@@ -4,8 +4,8 @@ import * as path from 'node:path';
 
 import {
   getKnownSessionTranscriptLogCount,
-  hasSessionTranscriptCountMismatch,
   mergeSessionTranscriptAppend,
+  shouldRefetchSessionTranscript,
 } from '../../lib/sessionTranscriptLive';
 import { LiveConnectionManager } from '../../services/live/connectionManager';
 import { sessionTopic, sessionTranscriptTopic } from '../../services/live/topics';
@@ -95,7 +95,7 @@ describe('TEST-003 Session Inspector live SSE smoke', () => {
     expect(sessionInspectorSource).toContain('sharedLiveConnectionManager.subscribe({\n            topic: sessionTopic(sessionId)');
     expect(sessionInspectorSource).toContain('sharedLiveConnectionManager.subscribe({\n                topic: sessionTranscriptTopic(sessionId)');
     expect(sessionInspectorSource).toContain("event.kind !== 'invalidate' || event.payload.resource !== 'session'");
-    expect(sessionInspectorSource).toContain('hasSessionTranscriptCountMismatch(current, logCount)');
+    expect(sessionInspectorSource).toContain('shouldRefetchSessionTranscript(');
     expect(sessionInspectorSource).toContain('mergeSessionTranscriptAppend(current.logs, payload)');
     expect(sessionInspectorSource).toContain('logs: decision.nextLogs');
     expect(sessionInspectorSource).toContain('void refreshSelectedSessionDetail(sessionId)');
@@ -131,7 +131,7 @@ describe('TEST-003 Session Inspector live SSE smoke', () => {
         const nextUpdatedAt = typeof event.payload.updatedAt === 'string'
           ? event.payload.updatedAt
           : selectedSession.updatedAt;
-        const shouldRefetch = nextStatus !== selectedSession.status || hasSessionTranscriptCountMismatch(selectedSession, logCount);
+        const shouldRefetch = nextStatus !== selectedSession.status || shouldRefetchSessionTranscript(selectedSession, logCount);
         if (shouldRefetch) {
           refreshSelectedSessionDetail(sessionId);
           return;

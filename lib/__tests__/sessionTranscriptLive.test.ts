@@ -4,6 +4,7 @@ import {
   getKnownSessionTranscriptLogCount,
   hasSessionTranscriptCountMismatch,
   mergeSessionTranscriptAppend,
+  shouldRefetchSessionTranscript,
   toSessionTranscriptLog,
 } from '../sessionTranscriptLive';
 import type { SessionLog } from '@/types';
@@ -58,6 +59,19 @@ describe('session transcript count reconciliation', () => {
     expect(getKnownSessionTranscriptLogCount(session)).toBe(6000);
     expect(hasSessionTranscriptCountMismatch(session, 6000)).toBe(false);
     expect(hasSessionTranscriptCountMismatch(session, 6001)).toBe(true);
+  });
+
+  it('does not repeat the same refetch when detail responses are capped without a truncation marker', () => {
+    const session = { logs: Array.from({ length: 5000 }, (_, index) => ({
+      id: `log-${index}`,
+      timestamp: '2026-03-23T12:00:00Z',
+      speaker: 'agent' as const,
+      type: 'message' as const,
+      content: '',
+    })) };
+    expect(shouldRefetchSessionTranscript(session, 6000)).toBe(true);
+    expect(shouldRefetchSessionTranscript(session, 6000, 6000)).toBe(false);
+    expect(shouldRefetchSessionTranscript(session, 6001, 6000)).toBe(true);
   });
 });
 

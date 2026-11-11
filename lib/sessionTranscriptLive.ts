@@ -19,6 +19,15 @@ export const hasSessionTranscriptCountMismatch = (
   serverLogCount: number,
 ): boolean => getKnownSessionTranscriptLogCount(session) !== serverLogCount;
 
+export const shouldRefetchSessionTranscript = (
+  session: Pick<AgentSession, 'logs' | 'transcriptTruncated'>,
+  serverLogCount: number,
+  lastRefetchedServerLogCount?: number,
+): boolean => (
+  hasSessionTranscriptCountMismatch(session, serverLogCount)
+  && lastRefetchedServerLogCount !== serverLogCount
+);
+
 export const toSessionTranscriptLog = (payload: SessionTranscriptAppendPayload): SessionLog => {
   const data = payload.payload;
   return {
