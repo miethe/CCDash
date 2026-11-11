@@ -12,6 +12,10 @@ from backend.services.transcript_egress import filter_session_logs
 
 logger = logging.getLogger("ccdash.ingestion.session")
 
+# Fetch one extra transcript row beyond the repository cap to distinguish a
+# complete live-append baseline from a truncated history.
+MAX_TRANSCRIPT_APPEND_BASELINE = 5000
+
 SessionProjector = Callable[[dict[str, Any], list[dict[str, Any]]], list[dict[str, Any]]]
 ApplyUsageFields = Callable[[dict[str, Any]], dict[str, int]]
 ShouldWriteLegacyLogs = Callable[[list[dict[str, Any]]], bool]
@@ -183,10 +187,16 @@ class SessionIngestService:
 
             write_legacy_logs = self.should_write_legacy_session_logs(canonical_rows)
             if write_legacy_logs:
-                previous_logs = await self.session_repo.get_logs(session_id)
+                previous_logs = await self.session_repo.get_logs(
+                    session_id,
+                    limit=MAX_TRANSCRIPT_APPEND_BASELINE + 1,
+                )
                 await self.session_repo.upsert_logs(session_id, logs, project_id, **_pg_conn_kw)
             else:
-                previous_logs = await self.session_message_repo.list_by_session(session_id)
+                previous_logs = await self.session_message_repo.list_by_session(
+                    session_id,
+                    limit=MAX_TRANSCRIPT_APPEND_BASELINE + 1,
+                )
                 await self.session_repo.upsert_logs(session_id, [], project_id, **_pg_conn_kw)
             await self.session_message_repo.replace_session_messages(session_id, canonical_rows, project_id, **_pg_conn_kw)
 

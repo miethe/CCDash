@@ -33,7 +33,10 @@ from backend.services.project_paths.worktree_fanout import session_scan_roots
 from backend.parsers.workflow_sidecar import scan_workflow_sidecars
 from backend.db.repositories.provider_dimensions import get_provider_dimensions_repository
 from backend.ingestion.jsonl_adapter import jsonl_session_to_envelope
-from backend.ingestion.session_ingest_service import SessionIngestService
+from backend.ingestion.session_ingest_service import (
+    MAX_TRANSCRIPT_APPEND_BASELINE,
+    SessionIngestService,
+)
 from backend.parsers.documents import parse_document_file
 from backend.parsers.progress import parse_progress_file
 from backend.parsers.features import scan_features
@@ -490,6 +493,19 @@ async def _publish_session_transcript_appends(
     current_logs: list[dict[str, Any]],
 ) -> bool:
     if not current_logs:
+        return False
+
+    # A filesystem cold-start has no prior transcript to append to. Sending
+    # every historical log through Postgres NOTIFY one at a time can mean tens
+    # of thousands of awaited round trips while the session's persistence
+    # transaction remains open. The snapshot invalidation published by the
+    # caller lets clients fetch the full transcript in pages instead.
+    if not previous_logs:
+        return False
+    if len(previous_logs) > MAX_TRANSCRIPT_APPEND_BASELINE:
+        # The caller fetched the 5000-row baseline plus a sentinel row. There
+        # may be arbitrarily many older logs beyond that cap, so none of the
+        # current suffix can safely be treated as newly appended.
         return False
 
     previous_ids = [_normalize_log_identity(log, idx) for idx, log in enumerate(previous_logs)]

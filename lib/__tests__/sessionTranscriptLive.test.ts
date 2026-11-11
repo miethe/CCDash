@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeSessionTranscriptAppend, toSessionTranscriptLog } from '../sessionTranscriptLive';
+import {
+  getKnownSessionTranscriptLogCount,
+  hasSessionTranscriptCountMismatch,
+  mergeSessionTranscriptAppend,
+  shouldRefetchSessionTranscript,
+  toSessionTranscriptLog,
+} from '../sessionTranscriptLive';
 import type { SessionLog } from '@/types';
 import type { SessionTranscriptAppendPayload } from '@/types';
 
@@ -31,6 +37,41 @@ describe('toSessionTranscriptLog', () => {
     expect(log.timestamp).toBe('2026-03-23T12:00:00Z');
     expect(log.content).toBe('hello');
     expect(log.toolCall?.name).toBe('write_file');
+  });
+});
+
+describe('session transcript count reconciliation', () => {
+  it('detects a cold-start invalidation when the selected session has no logs', () => {
+    expect(hasSessionTranscriptCountMismatch({ logs: [] }, 1)).toBe(true);
+  });
+
+  it('accounts for the rows intentionally dropped by the transcript ring buffer', () => {
+    const session = {
+      logs: Array.from({ length: 5000 }, (_, index) => ({
+        id: `log-${index}`,
+        timestamp: '2026-03-23T12:00:00Z',
+        speaker: 'agent' as const,
+        type: 'message' as const,
+        content: '',
+      })),
+      transcriptTruncated: { droppedCount: 1000 },
+    };
+    expect(getKnownSessionTranscriptLogCount(session)).toBe(6000);
+    expect(hasSessionTranscriptCountMismatch(session, 6000)).toBe(false);
+    expect(hasSessionTranscriptCountMismatch(session, 6001)).toBe(true);
+  });
+
+  it('does not repeat the same refetch when detail responses are capped without a truncation marker', () => {
+    const session = { logs: Array.from({ length: 5000 }, (_, index) => ({
+      id: `log-${index}`,
+      timestamp: '2026-03-23T12:00:00Z',
+      speaker: 'agent' as const,
+      type: 'message' as const,
+      content: '',
+    })) };
+    expect(shouldRefetchSessionTranscript(session, 6000)).toBe(true);
+    expect(shouldRefetchSessionTranscript(session, 6000, 6000)).toBe(false);
+    expect(shouldRefetchSessionTranscript(session, 6001, 6000)).toBe(true);
   });
 });
 

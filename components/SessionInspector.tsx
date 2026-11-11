@@ -31,7 +31,11 @@ import { getInlineContentViewerPayload, getTranscriptContentViewerPayload } from
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, formatEffortTierDisplay, resolveDisplayCost } from '../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
-import { mergeSessionTranscriptAppend } from '../lib/sessionTranscriptLive';
+import {
+    getKnownSessionTranscriptLogCount,
+    mergeSessionTranscriptAppend,
+    shouldRefetchSessionTranscript,
+} from '../lib/sessionTranscriptLive';
 import { isSessionBlockInsightsEnabled, isUsageAttributionEnabled } from '../services/agenticIntelligence';
 import { SessionIntelligencePanel } from './session-intelligence/SessionIntelligencePanel';
 import {
@@ -6031,6 +6035,7 @@ export const SessionInspector: React.FC = () => {
     const [analyticsModalLoading, setAnalyticsModalLoading] = useState(false);
     const [analyticsModalError, setAnalyticsModalError] = useState<string | null>(null);
     const [selectedSessionLiveStatus, setSelectedSessionLiveStatus] = useState<LiveConnectionStatus>('idle');
+    const refetchedTranscriptCountRef = useRef<{ sessionId: string; logCount: number } | null>(null);
     const openSessionRequestRef = useRef(0);
     const analyticsModalRequestRef = useRef(0);
     const sessionLiveEnabled = isSessionLiveUpdatesEnabled();
@@ -6123,9 +6128,12 @@ export const SessionInspector: React.FC = () => {
         setSessionOpenError(`Unable to load session ${normalizedSessionId}.`);
     }, [activeSessionTab, getSessionById, selectedSession, updateSessionSearchParams]);
 
-    const refreshSelectedSessionDetail = useCallback(async (sessionId: string) => {
+    const refreshSelectedSessionDetail = useCallback(async (sessionId: string, serverLogCount?: number) => {
         const refreshed = await getSessionById(sessionId, { force: true, projectId: selectedSession?.projectId || undefined });
         if (!refreshed) return;
+        if (typeof serverLogCount === 'number' && Number.isFinite(serverLogCount)) {
+            refetchedTranscriptCountRef.current = { sessionId, logCount: serverLogCount };
+        }
         setSelectedSession(current => {
             if (!current || !sameSessionScope(current, refreshed)) return current;
             if (
@@ -6165,11 +6173,13 @@ export const SessionInspector: React.FC = () => {
                 }
 
                 let shouldRefetch = false;
+                let serverLogCountForRefresh: number | undefined;
                 setSelectedSession(current => {
                     if (!current || current.id !== sessionId) return current;
                     const logCount = typeof event.payload.logCount === 'number' && Number.isFinite(event.payload.logCount)
                         ? event.payload.logCount
-                        : current.logs.length;
+                        : getKnownSessionTranscriptLogCount(current);
+                    serverLogCountForRefresh = logCount;
                     const rawStatus = typeof event.payload.status === 'string' ? event.payload.status.trim() : '';
                     const nextStatus: AgentSession['status'] = rawStatus === 'active' || rawStatus === 'completed'
                         ? rawStatus
@@ -6177,7 +6187,13 @@ export const SessionInspector: React.FC = () => {
                     const nextUpdatedAt = typeof event.payload.updatedAt === 'string' && event.payload.updatedAt.trim()
                         ? event.payload.updatedAt
                         : current.updatedAt;
-                    shouldRefetch = nextStatus !== current.status || logCount < current.logs.length;
+                    shouldRefetch = nextStatus !== current.status || shouldRefetchSessionTranscript(
+                        current,
+                        logCount,
+                        refetchedTranscriptCountRef.current?.sessionId === sessionId
+                            ? refetchedTranscriptCountRef.current.logCount
+                            : undefined,
+                    );
                     if (shouldRefetch) return current;
                     if (nextStatus === current.status && nextUpdatedAt === current.updatedAt) return current;
                     return {
@@ -6187,7 +6203,7 @@ export const SessionInspector: React.FC = () => {
                     };
                 });
                 if (shouldRefetch) {
-                    void refreshSelectedSessionDetail(sessionId).catch(() => {
+                    void refreshSelectedSessionDetail(sessionId, serverLogCountForRefresh).catch(() => {
                         // Polling fallback handles transient errors.
                     });
                 }
@@ -6237,7 +6253,7 @@ export const SessionInspector: React.FC = () => {
                         };
                     });
                     if (shouldRefetch) {
-                        void refreshSelectedSessionDetail(sessionId).catch(() => {
+                        void refreshSelectedSessionDetail(sessionId, payload.sequenceNo).catch(() => {
                             // Polling fallback handles transient errors.
                         });
                     }
