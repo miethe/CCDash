@@ -8,7 +8,7 @@ export type SessionTranscriptAppendDecision =
 const normalizeText = (value: unknown): string => String(value ?? '').trim();
 
 export const getSessionTranscriptEntryId = (log: Pick<SessionLog, 'id'> | Pick<SessionTranscriptAppendPayload, 'entryId'> | null | undefined): string =>
-  normalizeText((log as { id?: unknown } | { entryId?: unknown } | null | undefined)?.id ?? (log as { entryId?: unknown } | null | undefined)?.entryId);
+  normalizeText((log as { id?: unknown } | null | undefined)?.id ?? (log as { entryId?: unknown } | null | undefined)?.entryId);
 
 export const toSessionTranscriptLog = (payload: SessionTranscriptAppendPayload): SessionLog => {
   const data = payload.payload;

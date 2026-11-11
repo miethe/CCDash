@@ -309,7 +309,7 @@ describe('loadMoreDocuments — no unbounded array growth (TEST-502 / FE-103)', 
   });
 
   it('array stays bounded across multiple sequential appends', () => {
-    let state = Array.from({ length: 500 }, (_, i) => ({ id: `doc-${i}` }));
+    let state: Record<string, unknown>[] = Array.from({ length: 500 }, (_, i) => ({ id: `doc-${i}` }));
     const documentTotal = 10_000;
 
     // Simulate 20 append rounds, each adding 500 items
