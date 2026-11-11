@@ -6,6 +6,24 @@ why "errors" need louder handling than pytest gives them by default.
 from __future__ import annotations
 
 from collections import defaultdict
+import os
+from pathlib import Path
+import tempfile
+
+
+def pytest_configure(config) -> None:
+    """Isolate import-time registry/cache state in every pytest process.
+
+    Backend modules are imported during collection, before fixtures run. Each
+    xdist worker must choose its own paths here so its global project manager
+    cannot race another worker's projects.tmp or use the Mac's live cache.
+    """
+    storage = tempfile.TemporaryDirectory(prefix="ccdash-pytest-")
+    config.add_cleanup(storage.cleanup)
+    root = Path(storage.name)
+    os.environ["CCDASH_LOCAL_STORAGE_ROOT"] = str(root)
+    os.environ["CCDASH_DB_PATH"] = str(root / "data" / "ccdash_cache.db")
+    os.environ["CCDASH_PROJECTS_FILE"] = str(root / "projects.json")
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
