@@ -16,7 +16,7 @@ class _SessionRepo:
     async def upsert(self, session_data: dict, project_id: str, *, workspace_id: str = "default-local") -> None:
         self.sessions.append((dict(session_data), project_id))
 
-    async def get_logs(self, session_id: str) -> list[dict]:
+    async def get_logs(self, session_id: str, limit: int = 5000, offset: int = 0) -> list[dict]:
         return []
 
     async def upsert_logs(self, session_id: str, logs: list[dict], project_id: str = "") -> None:
